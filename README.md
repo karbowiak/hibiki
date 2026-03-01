@@ -1,58 +1,96 @@
-![Tauri Spotify Clone](https://i.imgur.com/BBRJkFA.png)
+# Plexify
 
-# Tauri Spotify Clone
+A Spotify-inspired desktop music client for [Plex](https://www.plex.tv/), built with Tauri 2 and React 19. Browse your Plex music library, play tracks with a native audio engine, manage playlists, and explore artists and albums — all from a fast, frameless desktop app.
 
-This project is a clone of the Spotify desktop app built using Tauri and Tailwind. It includes some simple functionality such as "routing".
+> Frontend layout and design based on [tauri-spotify-clone](https://github.com/agmmnn/tauri-spotify-clone) by [@agmmnn](https://github.com/agmmnn).
 
-> You can download pre-built final bundles from the [Releases](https://github.com/agmmnn/tauri-spotify-clone/releases) section.
+## Features
 
-![gif](https://user-images.githubusercontent.com/16024979/236287892-e13e466f-afdf-405d-a947-e8e3ac07502d.gif)
+- **Native audio engine** — Rust-based decoder (Symphonia) + CoreAudio output (cpal); supports FLAC, MP3, AAC, Ogg
+- **Library browsing** — Home feed, Recently Added, Hubs/recommendations
+- **Artist & Album pages** — Popular tracks, discography, singles, related artists
+- **Playlists** — Browse, create, and play smart playlists with infinite scroll and virtual scrolling for large libraries
+- **Search** — Full-text search across tracks, albums, and artists
+- **Liked Tracks** — Quick access to your starred/rated tracks
+- **Image caching** — Custom `pleximg://` URI scheme with on-disk cache for instant artwork
+- **Settings persistence** — Plex server URL and token saved between sessions
+- **Activity indicator** — Background prefetch progress shown in the top bar
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| UI framework | React 19 + TypeScript |
+| Styling | Tailwind CSS v3 |
+| Routing | Wouter |
+| State | Zustand v5 |
+| Desktop shell | Tauri v2 |
+| Backend | Rust |
+| Audio decode | Symphonia 0.5 |
+| Audio output | cpal 0.15 (CoreAudio) |
+| Package manager | Bun |
 
 ## Getting Started
 
-```
-gh repo clone agmmnn/tauri-spotify-clone
-cd tauri-spotify-clone
+```bash
+git clone <repo>
+cd plexmusicclient
 bun install
 ```
 
+```bash
+bun run tauri dev   # development
+bun run tauri build # production bundle
 ```
-bun run tauri dev
-bun run tauri build
+
+You'll need a running Plex Media Server with a music library. On first launch, open Settings and enter your server URL (e.g. `https://192.168.1.100:32400`) and your [Plex token](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/).
+
+## Project Structure
+
 ```
-
-## Customization
-
-The template can be customized by editing the following files:
-
-- [src-tauri/tauri.conf.json](src-tauri/tauri.conf.json)
-- [package.json](/package.json)
-- [src-tauri/cargo.toml](src-tauri/Cargo.toml)
-- To change the app icon, update `app-icon.png`, and then run `bun run tauri icon`. This will automatically generate icon files into _src-tauri/icons_.
-
-## Folder Structure
-
-```js
 .
-├── public
-├── src               //frontend src:
-│   ├── assets
-│   ├── components
-│   ├── data
-├── src-tauri         //backend src:
-│   ├── build.rs
-│   ├── Cargo.lock
-│   ├── Cargo.toml    //https://doc.rust-lang.org/cargo/reference/manifest.html
-│   ├── icons
-│   ├── src           //rust codes
-│   └── tauri.conf.json  //tauri config file https://next--tauri.netlify.app/next/api/config
-├── index.html
-├── package.json
-├── postcss.config.js
-├── prettier.config.cjs     //prettier config file https://prettier.io/docs/en/configuration.html
-├── tailwind.config.js     //tailwind config file https://tailwindcss.com/docs/configuration
-└── tsconfig.json          //typescript config file https://www.typescriptlang.org/docs/handbook/tsconfig-json.html
-└── vite.config.ts         //vite config file https://vitejs.dev/config/
+├── src/                     # React/TypeScript frontend
+│   ├── components/
+│   │   ├── Pages/           # Full-page views (Home, Artist, Album, Playlist, Search, …)
+│   │   ├── Player.tsx       # Playback bar
+│   │   ├── SideBar.tsx
+│   │   └── TopBar.tsx
+│   ├── stores/              # Zustand stores (connection, library, player, search, ui)
+│   ├── lib/
+│   │   └── plex.ts          # TypeScript wrappers around Tauri invoke() commands
+│   └── types/
+│       └── plex.ts          # TypeScript interfaces mirroring Rust models
+│
+└── src-tauri/src/           # Rust backend
+    ├── main.rs              # App setup, Tauri state, command registration
+    ├── commands.rs          # All #[tauri::command] handlers (35+ commands)
+    ├── plex/                # Plex API client library
+    │   ├── client.rs        # HTTP client with retry/backoff
+    │   ├── models.rs        # Serde data types (Track, Album, Artist, Playlist, …)
+    │   ├── library.rs       # Browse sections, search, on_deck, recently_added
+    │   ├── playlist.rs      # Playlist CRUD + smart playlists
+    │   ├── playqueue.rs     # PlayQueue management
+    │   ├── discovery.rs     # Hubs & recommendations
+    │   ├── history.rs       # Playback tracking & scrobbling
+    │   ├── collection.rs    # Collections & favorites
+    │   ├── streaming.rs     # Stream URL builders
+    │   ├── server.rs        # Server identity & info
+    │   └── auth.rs          # Settings persistence
+    └── audio/               # Native audio engine
+        ├── engine.rs        # AudioEngine — spawns decoder + event emitter threads
+        ├── decoder.rs       # HTTP fetch → Symphonia decode → ringbuf
+        ├── output.rs        # cpal CoreAudio output stream
+        └── types.rs         # AudioCommand / AudioEvent enums
+```
+
+## Running Tests
+
+Integration tests hit a live Plex server. Set your server address in `src-tauri/src/plex/` test helpers before running.
+
+```bash
+bun run test
+# or directly:
+cd src-tauri && cargo test
 ```
 
 ## Recommended IDE Setup
