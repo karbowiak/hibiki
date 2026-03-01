@@ -6,6 +6,7 @@ import "./App.css"
 import { TailwindIndicator } from "./components/tailwind-indicator"
 import { Player } from "./components/Player"
 import { CreatePlaylist } from "./components/Pages/CreatePlaylist"
+import { QueuePanel } from "./components/QueuePanel"
 import { useConnectionStore, useLibraryStore, useUIStore } from "./stores"
 
 function App() {
@@ -63,6 +64,8 @@ function App() {
       </div>
 
       <TailwindIndicator />
+
+      <QueuePanel />
 
       {showCreatePlaylist && (
         <CreatePlaylist onClose={() => setShowCreatePlaylist(false)} />

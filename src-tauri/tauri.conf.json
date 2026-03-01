@@ -10,18 +10,19 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "Plexify",
         "width": 1400,
         "height": 890,
         "resizable": true,
-        "center": true,
         "decorations": true,
         "titleBarStyle": "Overlay",
         "transparent": true,
         "fullscreen": false,
-        "hiddenTitle": true
+        "hiddenTitle": true,
+        "visible": false
       }
     ],
     "security": {

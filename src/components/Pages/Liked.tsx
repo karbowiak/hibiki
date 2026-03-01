@@ -1,6 +1,7 @@
 import { useEffect } from "react"
 import { Link } from "wouter"
 import { useLibraryStore, usePlayerStore, useConnectionStore, buildPlexImageUrl, useUIStore } from "../../stores"
+import { prefetchTrackAudio } from "../../stores/playerStore"
 
 function formatMs(ms: number): string {
   const s = Math.floor(ms / 1000)
@@ -69,21 +70,35 @@ export function Liked() {
             </p>
           </div>
 
-          {/* Bottom row: stats left, play button right */}
+          {/* Bottom row: stats left, buttons right */}
           <div className="flex items-center justify-between">
             <p className="text-sm text-gray-400">
               {count} {count === 1 ? "song" : "songs"}
               {totalMs > 0 && <> · {formatTotalMs(totalMs)}</>}
             </p>
-            <button
-              onClick={() => count > 0 && void playTrack(tracks[0], tracks)}
-              disabled={count === 0}
-              className="flex h-14 w-14 items-center justify-center rounded-full bg-[#1db954] text-black shadow-lg hover:bg-[#1ed760] hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <svg viewBox="0 0 16 16" width="22" height="22" fill="currentColor">
-                <polygon points="3,2 13,8 3,14" />
-              </svg>
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => { if (count === 0) return; const s = [...tracks].sort(() => Math.random() - 0.5); void playTrack(s[0], s) }}
+                disabled={count === 0}
+                title="Shuffle"
+                className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <svg role="img" height="18" width="18" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M13.151.922a.75.75 0 1 0-1.06 1.06L13.109 3H11.16a3.75 3.75 0 0 0-2.873 1.34l-6.173 7.356A2.25 2.25 0 0 1 .39 12.5H0V14h.391a3.75 3.75 0 0 0 2.873-1.34l6.173-7.356a2.25 2.25 0 0 1 1.724-.804h1.947l-1.017 1.018a.75.75 0 0 0 1.06 1.06L15.98 3.75 13.15.922zM.391 3.5H0V2h.391c1.109 0 2.16.49 2.873 1.34L4.89 5.277l-.979 1.167-1.796-2.14A2.25 2.25 0 0 0 .39 3.5z" />
+                  <path d="m7.5 10.723.98-1.167.957 1.14a2.25 2.25 0 0 0 1.724.804h1.947l-1.017-1.018a.75.75 0 1 1 1.06-1.06l2.829 2.828-2.829 2.828a.75.75 0 1 1-1.06-1.06L13.109 13H11.16a3.75 3.75 0 0 1-2.873-1.34l-.787-.938z" />
+                </svg>
+              </button>
+              <button
+                onClick={() => count > 0 && void playTrack(tracks[0], tracks)}
+                disabled={count === 0}
+                title="Play"
+                className="flex h-14 w-14 items-center justify-center rounded-full bg-[#1db954] text-black shadow-lg hover:bg-[#1ed760] hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <svg viewBox="0 0 16 16" width="22" height="22" fill="currentColor">
+                  <polygon points="3,2 13,8 3,14" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -112,6 +127,7 @@ export function Liked() {
                   key={track.rating_key}
                   className="group cursor-pointer hover:bg-white/5 rounded"
                   onClick={() => void playTrack(track, tracks)}
+                  onMouseEnter={() => prefetchTrackAudio(track)}
                 >
                   <td className="p-2 text-center w-8">
                     <span className="group-hover:hidden">{idx + 1}</span>

@@ -201,6 +201,115 @@ impl PlexClient {
             .context("Failed to delete play queue")
     }
 
+    /// Create a radio play queue seeded from any Plex item.
+    ///
+    /// Uses PlexAmp's `plex://radio` URI scheme to generate a server-side station
+    /// that streams sonically-curated recommendations continuously.
+    ///
+    /// # Arguments
+    /// * `rating_key` - Rating key of the seed item (track, album, or artist)
+    /// * `degrees_of_separation` - Recommendation diversity: `None` = unlimited (-1),
+    ///   0 = closest matches only, 3+ = adventurous
+    /// * `include_external` - Include content from external/cloud sources
+    /// * `shuffle` - Shuffle the initial queue
+    #[instrument(skip(self))]
+    pub async fn create_radio_queue(
+        &self,
+        rating_key: i64,
+        degrees_of_separation: Option<i32>,
+        include_external: bool,
+        shuffle: bool,
+    ) -> Result<PlayQueue> {
+        let station_key = format!(
+            "/library/metadata/{}/station/{}",
+            rating_key,
+            uuid::Uuid::new_v4(),
+        );
+        let degrees = degrees_of_separation.unwrap_or(-1);
+        let radio_uri = format!(
+            "plex://radio?stationKey={station_key}&initialRatingKey={rating_key}&degreesOfSeparation={degrees}&includeExternal={ext}",
+            ext = if include_external { "true" } else { "false" },
+        );
+        debug!(
+            "Creating radio queue: ratingKey={} stationKey={}",
+            rating_key, station_key
+        );
+        // Reuse create_play_queue — the plex://radio URI is treated like any other library URI.
+        self.create_play_queue(&radio_uri, shuffle, 0).await
+    }
+
+    /// Create a smart-shuffle (Guest DJ) play queue.
+    ///
+    /// Same as `create_radio_queue` but sends `smartShuffle=1` and a DJ-specific
+    /// `X-Plex-Client-Identifier` header. Plex uses this to enable the AI-curated
+    /// "Guest DJ" persona that generates more contextually intelligent recommendations.
+    ///
+    /// # Arguments
+    /// * `rating_key` - Rating key of the seed item
+    /// * `degrees_of_separation` - Recommendation diversity (`None` = unlimited)
+    /// * `include_external` - Include external sources
+    /// * `client_id` - Stable installation UUID; `-transient-deejay` is appended
+    #[instrument(skip(self))]
+    pub async fn create_smart_shuffle_queue(
+        &self,
+        rating_key: i64,
+        degrees_of_separation: Option<i32>,
+        include_external: bool,
+        client_id: &str,
+    ) -> Result<PlayQueue> {
+        let station_key = format!(
+            "/library/metadata/{}/station/{}",
+            rating_key,
+            uuid::Uuid::new_v4(),
+        );
+        let degrees = degrees_of_separation.unwrap_or(-1);
+        let radio_uri = format!(
+            "plex://radio?stationKey={station_key}&initialRatingKey={rating_key}&degreesOfSeparation={degrees}&includeExternal={ext}",
+            ext = if include_external { "true" } else { "false" },
+        );
+
+        let base = self.build_url("/playQueues");
+        let mut url = Url::parse(&base).context("Failed to parse playQueues URL")?;
+        url.query_pairs_mut()
+            .append_pair("type", "audio")
+            .append_pair("uri", &radio_uri)
+            .append_pair("shuffle", "1")
+            .append_pair("smartShuffle", "1")
+            .append_pair("includeChapters", "1")
+            .append_pair("includeRelated", "1");
+
+        let dj_id = format!("{}-transient-deejay", client_id);
+        debug!(
+            "Creating smart shuffle queue: ratingKey={} djId={}",
+            rating_key, dj_id
+        );
+
+        let response = self
+            .client
+            .post(&url.to_string())
+            .header("X-Plex-Token", &self.token)
+            .header("X-Plex-Client-Identifier", &dj_id)
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .context("Failed to create smart shuffle queue")?;
+
+        if !response.status().is_success() {
+            return Err(anyhow::anyhow!(
+                "HTTP {} creating smart shuffle queue",
+                response.status()
+            ));
+        }
+
+        let wrapper: PlexApiResponse<PlayQueue> = response
+            .json()
+            .await
+            .context("Failed to parse smart shuffle queue response")?;
+
+        debug!("Created smart shuffle queue ID={}", wrapper.container.id);
+        Ok(wrapper.container)
+    }
+
     /// Build a library URI for a single track or item.
     ///
     /// Convenience helper: given a section UUID and a track/album/playlist rating key,

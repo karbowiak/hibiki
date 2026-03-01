@@ -7,6 +7,7 @@
 use tauri::State;
 use tokio::sync::Mutex;
 
+use crate::mediasession::{MediaSessionState, MediaUpdate};
 use crate::plex::{
     Hub, IdentityResponse, Level, LibrarySection, PlayQueue, Playlist, PlexClient,
     PlexClientConfig, PlexSettings, ServerInfo, Tag, Track,
@@ -422,6 +423,50 @@ pub async fn add_to_play_queue(
         .map_err(|e| format!("{:#}", e))
 }
 
+/// Create a radio play queue seeded from any Plex item (track, album, or artist).
+///
+/// Uses PlexAmp's `plex://radio` URI scheme so the Plex server generates
+/// continuously refreshing, sonically-curated recommendations.
+#[tauri::command]
+pub async fn create_radio_queue(
+    rating_key: i64,
+    degrees_of_separation: Option<i32>,
+    include_external: bool,
+    shuffle: bool,
+    state: State<'_, PlexState>,
+) -> Result<PlayQueue, String> {
+    let c = client!(state);
+    c.create_radio_queue(rating_key, degrees_of_separation, include_external, shuffle)
+        .await
+        .map_err(|e| format!("{:#}", e))
+}
+
+/// Create a smart-shuffle (Guest DJ) play queue.
+///
+/// Same as `create_radio_queue` but with Plex's AI-curated `smartShuffle` mode
+/// and the DJ persona header. Reads the installation's client ID from saved settings.
+#[tauri::command]
+pub async fn create_smart_shuffle_queue(
+    rating_key: i64,
+    degrees_of_separation: Option<i32>,
+    include_external: bool,
+    state: State<'_, PlexState>,
+    app: tauri::AppHandle,
+) -> Result<PlayQueue, String> {
+    use tauri::Manager;
+    let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
+    let settings = crate::plex::load_settings(&config_dir).map_err(|e| format!("{:#}", e))?;
+    let client_id = if settings.client_id.is_empty() {
+        "plexify-client".to_string()
+    } else {
+        settings.client_id
+    };
+    let c = client!(state);
+    c.create_smart_shuffle_queue(rating_key, degrees_of_separation, include_external, &client_id)
+        .await
+        .map_err(|e| format!("{:#}", e))
+}
+
 // ---------------------------------------------------------------------------
 // Playback tracking
 // ---------------------------------------------------------------------------
@@ -731,6 +776,7 @@ pub async fn test_server_connection(url: String, token: String) -> Result<u64, S
 // Plex.tv OAuth (PIN-based authentication)
 // ---------------------------------------------------------------------------
 
+
 /// Start the Plex OAuth PIN flow.
 ///
 /// Generates (or reuses) a stable client_id, creates a PIN on plex.tv,
@@ -894,8 +940,116 @@ pub fn audio_preload_next(
     }))
 }
 
+/// Warm the audio disk cache for a URL in the background.
+/// Returns immediately — the fetch happens asynchronously.
+#[tauri::command]
+pub fn audio_prefetch(url: String, state: State<'_, AudioEngineState>) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| format!("Audio lock poisoned: {e}"))?;
+    match guard.as_ref() {
+        Some(engine) => { engine.prefetch_url(url); Ok(()) }
+        None => Err("Audio engine not initialized.".to_string()),
+    }
+}
+
+/// Serializable audio cache stats.
+#[derive(serde::Serialize)]
+pub struct AudioCacheInfo {
+    pub size_bytes: u64,
+    pub file_count: u32,
+}
+
+/// Return current audio cache usage (size in bytes + file count).
+#[tauri::command]
+pub fn audio_cache_info(state: State<'_, AudioEngineState>) -> Result<AudioCacheInfo, String> {
+    let guard = state.0.lock().map_err(|e| format!("Audio lock poisoned: {e}"))?;
+    match guard.as_ref() {
+        Some(engine) => {
+            let (size_bytes, file_count) = engine.cache_info();
+            Ok(AudioCacheInfo { size_bytes, file_count })
+        }
+        None => Err("Audio engine not initialized.".to_string()),
+    }
+}
+
+/// Delete all audio cache files from disk.
+#[tauri::command]
+pub fn audio_clear_cache(state: State<'_, AudioEngineState>) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| format!("Audio lock poisoned: {e}"))?;
+    match guard.as_ref() {
+        Some(engine) => { engine.clear_cache(); Ok(()) }
+        None => Err("Audio engine not initialized.".to_string()),
+    }
+}
+
+/// Set the maximum audio cache size in bytes.
+/// Pass 0 for unlimited. Default is 1 GB (1_073_741_824).
+#[tauri::command]
+pub fn audio_set_cache_max_bytes(
+    max_bytes: u64,
+    state: State<'_, AudioEngineState>,
+) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| format!("Audio lock poisoned: {e}"))?;
+    match guard.as_ref() {
+        Some(engine) => { engine.set_max_cache_bytes(max_bytes); Ok(()) }
+        None => Err("Audio engine not initialized.".to_string()),
+    }
+}
+
 // ---------------------------------------------------------------------------
-// Cache management
+// Now Playing / system media controls
+// ---------------------------------------------------------------------------
+
+/// Push track metadata to the OS Now Playing system (macOS Control Centre,
+/// Windows SMTC lock screen, Linux MPRIS2 panel).
+///
+/// `thumb_path` is a Plex path like `/library/metadata/123/thumb`.
+/// The Rust side builds the full authenticated URL so the token never touches
+/// the frontend logs.
+#[tauri::command]
+pub async fn update_now_playing(
+    title: String,
+    artist: String,
+    album: String,
+    thumb_path: Option<String>,
+    duration_ms: u64,
+    plex_state: State<'_, PlexState>,
+    media_state: State<'_, MediaSessionState>,
+) -> Result<(), String> {
+    let cover_url = {
+        let guard = plex_state.0.lock().await;
+        guard
+            .as_ref()
+            .and_then(|c| thumb_path.as_ref().map(|p| c.thumb_url(p)))
+    };
+
+    media_state
+        .0
+        .send(MediaUpdate::Metadata { title, artist, album, cover_url, duration_ms })
+        .map_err(|e| format!("Media session channel closed: {e}"))
+}
+
+/// Update the playback state shown in the OS media controls.
+///
+/// `playback_state` is `"playing"`, `"paused"`, or `"stopped"`.
+#[tauri::command]
+pub fn set_now_playing_state(
+    playback_state: String,
+    position_ms: Option<u64>,
+    state: State<'_, MediaSessionState>,
+) -> Result<(), String> {
+    let update = match playback_state.as_str() {
+        "playing" => MediaUpdate::Playing { position_ms: position_ms.unwrap_or(0) },
+        "paused" => MediaUpdate::Paused { position_ms: position_ms.unwrap_or(0) },
+        _ => MediaUpdate::Stopped,
+    };
+    state
+        .0
+        .send(update)
+        .map_err(|e| format!("Media session channel closed: {e}"))
+}
+
+// ---------------------------------------------------------------------------
+// Image cache management
 // ---------------------------------------------------------------------------
 
 /// Delete all cached Plex artwork from disk.

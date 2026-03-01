@@ -1,7 +1,9 @@
 #![allow(dead_code)]
 
+use std::fs::File;
 use std::io::Cursor;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crossbeam_channel::{Receiver, Sender};
@@ -12,7 +14,7 @@ use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
 use symphonia::core::io::MediaSourceStream;
-use symphonia::core::meta::MetadataOptions;
+use symphonia::core::meta::{Limit, MetadataOptions};
 use symphonia::core::probe::Hint;
 use tracing::{debug, error, info, warn};
 
@@ -53,10 +55,17 @@ pub struct DecoderShared {
     pub volume_millths: AtomicI64,
     /// Output device sample rate (set once at startup by output.rs)
     pub device_sample_rate: AtomicI64,
+    /// Directory for audio file cache (None = caching disabled)
+    pub cache_dir: Option<PathBuf>,
+    /// Maximum audio cache size in bytes (0 = unlimited)
+    pub max_cache_bytes: AtomicU64,
+    /// Set to true when a new Play command is received so the output callback
+    /// can instantly drain stale samples from the previous track.
+    pub flush_pending: AtomicBool,
 }
 
 impl DecoderShared {
-    pub fn new() -> Self {
+    pub fn new(cache_dir: Option<PathBuf>) -> Self {
         Self {
             position_samples: AtomicI64::new(0),
             sample_rate: AtomicI64::new(44100),
@@ -65,6 +74,9 @@ impl DecoderShared {
             finished: AtomicBool::new(false),
             volume_millths: AtomicI64::new(800), // 0.8 default
             device_sample_rate: AtomicI64::new(44100),
+            cache_dir,
+            max_cache_bytes: AtomicU64::new(1_073_741_824), // 1 GB default
+            flush_pending: AtomicBool::new(false),
         }
     }
 
@@ -147,9 +159,150 @@ fn fetch_audio(url: &str) -> Result<Vec<u8>, String> {
         })
 }
 
-/// Probe an audio stream and return a format reader + decoder + track info
+/// Derive a deterministic cache filename from a URL.
+///
+/// Strips the scheme, host, and query string — keeping only the path.
+/// Example: `https://plex.example.com:32400/library/parts/42/file.flac?token=abc`
+///       → `library_parts_42_file.flac.audio`
+fn audio_cache_key(url: &str) -> String {
+    let without_query = url.split('?').next().unwrap_or(url);
+    let path = without_query
+        .split("://")
+        .nth(1)
+        .and_then(|rest| rest.splitn(2, '/').nth(1))
+        .unwrap_or(without_query);
+    format!("{}.audio", path.replace('/', "_"))
+}
+
+/// Open a URL for streaming decode.
+///
+/// - **Cache hit**: opens the cached `.audio` file directly (~1 ms, no full RAM copy)
+/// - **Cache miss**: fetches from network, writes to cache, then opens the cache file
+///
+/// Using a `File`-backed `MediaSourceStream` lets symphonia stream packets on-demand
+/// rather than loading the entire file into memory before decoding starts.
+fn open_for_decode(url: &str, shared: &Arc<DecoderShared>) -> Result<(MediaSourceStream, String), String> {
+    if let Some(ref cache_dir) = shared.cache_dir {
+        let _ = std::fs::create_dir_all(cache_dir);
+        let cache_path = cache_dir.join(audio_cache_key(url));
+        if cache_path.exists() {
+            info!(url = url, "Audio cache hit — streaming from disk");
+            let file = File::open(&cache_path)
+                .map_err(|e| format!("Failed to open cached audio: {e}"))?;
+            let mss = MediaSourceStream::new(Box::new(file), Default::default());
+            return Ok((mss, url.to_string()));
+        }
+    }
+
+    // Cache miss — fetch from network
+    let bytes = fetch_audio(url)?;
+
+    // Save to cache, then open from disk (avoids keeping the whole file in RAM during decode)
+    if let Some(ref cache_dir) = shared.cache_dir {
+        let cache_path = cache_dir.join(audio_cache_key(url));
+        if std::fs::write(&cache_path, &bytes).is_ok() {
+            let max_bytes = shared.max_cache_bytes.load(Ordering::Relaxed);
+            if max_bytes > 0 {
+                evict_cache_if_needed(cache_dir, max_bytes);
+            }
+            if let Ok(file) = File::open(&cache_path) {
+                let mss = MediaSourceStream::new(Box::new(file), Default::default());
+                return Ok((mss, url.to_string()));
+            }
+        }
+    }
+
+    // Fallback: in-memory cursor (no cache dir configured or write failed)
+    let cursor = Cursor::new(bytes);
+    let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
+    Ok((mss, url.to_string()))
+}
+
+/// Delete oldest `.audio` cache files until total size is within `max_bytes`.
+fn evict_cache_if_needed(cache_dir: &std::path::Path, max_bytes: u64) {
+    let mut entries: Vec<(std::path::PathBuf, u64, std::time::SystemTime)> =
+        match std::fs::read_dir(cache_dir) {
+            Ok(rd) => rd
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    e.path().extension().and_then(|x| x.to_str()) == Some("audio")
+                })
+                .filter_map(|e| {
+                    let meta = e.metadata().ok()?;
+                    let mtime = meta.modified().ok()?;
+                    Some((e.path(), meta.len(), mtime))
+                })
+                .collect(),
+            Err(_) => return,
+        };
+
+    let total: u64 = entries.iter().map(|(_, size, _)| size).sum();
+    if total <= max_bytes {
+        return;
+    }
+
+    // Oldest first
+    entries.sort_by_key(|(_, _, mtime)| *mtime);
+
+    let mut remaining = total;
+    for (path, size, _) in entries {
+        if remaining <= max_bytes {
+            break;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            remaining = remaining.saturating_sub(size);
+            debug!(path = ?path, "Evicted audio cache entry");
+        }
+    }
+}
+
+/// Warm the audio disk cache for `url` in the background.
+///
+/// No-op if the file is already cached. Fire-and-forget; never blocks the caller.
+pub fn prefetch_url_bg(url: String, shared: Arc<DecoderShared>) {
+    DECODER_RT.spawn(async move {
+        // Skip if already cached
+        if let Some(ref cache_dir) = shared.cache_dir {
+            let cache_path = cache_dir.join(audio_cache_key(&url));
+            if cache_path.exists() {
+                debug!(url = %url, "Audio prefetch: already cached");
+                return;
+            }
+            let _ = std::fs::create_dir_all(cache_dir);
+        } else {
+            return; // caching disabled
+        }
+
+        // Fetch and store
+        match AUDIO_HTTP.get(&url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                match resp.bytes().await {
+                    Ok(bytes) => {
+                        if let Some(ref cache_dir) = shared.cache_dir {
+                            let cache_path = cache_dir.join(audio_cache_key(&url));
+                            let _ = std::fs::write(&cache_path, &bytes);
+                            let max_bytes = shared.max_cache_bytes.load(Ordering::Relaxed);
+                            if max_bytes > 0 {
+                                evict_cache_if_needed(cache_dir, max_bytes);
+                            }
+                            info!(url = %url, size = bytes.len(), "Audio prefetch complete");
+                        }
+                    }
+                    Err(e) => warn!(url = %url, error = %e, "Audio prefetch: failed to read bytes"),
+                }
+            }
+            Ok(resp) => warn!(url = %url, status = %resp.status(), "Audio prefetch: bad status"),
+            Err(e) => warn!(url = %url, error = %e, "Audio prefetch: request failed"),
+        }
+    });
+}
+
+/// Probe a `MediaSourceStream` and return a format reader + decoder + track info.
+///
+/// Accepts any MSS (file-backed, in-memory, etc.) — symphonia streams packets
+/// on-demand so decoding begins immediately after reading just the headers.
 fn probe_audio(
-    data: Vec<u8>,
+    mss: MediaSourceStream,
     url: &str,
 ) -> Result<
     (
@@ -161,9 +314,6 @@ fn probe_audio(
     ),
     String,
 > {
-    let cursor = Cursor::new(data);
-    let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
-
     // Hint the container from the URL extension
     let mut hint = Hint::new();
     if let Some(ext) = url.rsplit('.').next() {
@@ -175,7 +325,12 @@ fn probe_audio(
         enable_gapless: true,
         ..Default::default()
     };
-    let metadata_opts = MetadataOptions::default();
+    // Skip embedded artwork (PICTURE blocks can be 3–10 MB in FLAC files).
+    // We load artwork via Plex's thumb endpoint, not from audio tags.
+    let metadata_opts = MetadataOptions {
+        limit_metadata_bytes: Limit::Maximum(16 * 1024),
+        limit_visual_bytes: Limit::Maximum(0),
+    };
 
     let probed = symphonia::default::get_probe()
         .format(&hint, mss, &format_opts, &metadata_opts)
@@ -419,14 +574,19 @@ fn handle_command(
         AudioCommand::Play(meta) => {
             info!(rating_key = meta.rating_key, url = %meta.url, "Play command received");
 
+            // Signal the output callback to drain stale samples from the previous track
+            // immediately. The next cpal callback (~10 ms away) will empty the ring buffer
+            // and output silence for that single period — no old audio bleeds through.
+            shared.flush_pending.store(true, Ordering::Release);
+
             // Emit buffering state
             let _ = event_tx.send(AudioEvent::State {
                 state: PlaybackState::Buffering,
             });
 
-            // Fetch + probe
-            match fetch_audio(&meta.url) {
-                Ok(data) => match probe_audio(data, &meta.url) {
+            // Open for streaming decode (cache hit → File::open, ~1 ms; miss → fetch + save)
+            match open_for_decode(&meta.url, shared) {
+                Ok((mss, url)) => match probe_audio(mss, &url) {
                     Ok((fmt, dec, tid, sr, ch)) => {
                         *format_reader = Some(fmt);
                         *decoder = Some(dec);
@@ -537,9 +697,11 @@ fn handle_command(
             shared.set_volume(vol);
         }
 
-        AudioCommand::PreloadNext(_meta) => {
-            // Phase B: pre-buffer next track
-            debug!("PreloadNext received (not yet implemented in Phase A)");
+        AudioCommand::PreloadNext(meta) => {
+            // Warm the disk cache for the next track so open_for_decode() is near-instant.
+            // Fire-and-forget — never blocks the decoder thread.
+            debug!(rating_key = meta.rating_key, url = %meta.url, "PreloadNext: warming cache");
+            prefetch_url_bg(meta.url.clone(), Arc::clone(shared));
         }
 
         AudioCommand::Shutdown => {

@@ -1,6 +1,10 @@
 import { useEffect, useRef } from "react"
+import { useShallow } from "zustand/react/shallow"
 import { usePlayerStore, useConnectionStore, buildPlexImageUrl } from "../stores"
-import { reportTimeline } from "../lib/plex"
+import { useUIStore } from "../stores/uiStore"
+import { reportTimeline, audioSetCacheMaxBytes } from "../lib/plex"
+
+const CACHE_SIZE_KEY = "plexify-audio-cache-max-bytes"
 
 function formatMs(ms: number): string {
   if (!ms || isNaN(ms)) return "0:00"
@@ -30,6 +34,8 @@ export function Player() {
     volume,
     shuffle,
     repeat,
+    isRadioMode,
+    guestDjEnabled,
     pause,
     resume,
     next,
@@ -38,16 +44,25 @@ export function Player() {
     setVolume,
     toggleShuffle,
     cycleRepeat,
+    toggleGuestDj,
     initAudioEvents,
   } = usePlayerStore()
 
   const { baseUrl, token } = useConnectionStore()
+  const { isQueueOpen, setQueueOpen } = useUIStore(useShallow(s => ({ isQueueOpen: s.isQueueOpen, setQueueOpen: s.setQueueOpen })))
 
   // Keep positionRef in sync for the timeline reporting interval
   positionRef.current = positionMs
 
-  // Initialize Rust audio engine event listeners on mount
+  // Initialize Rust audio engine event listeners on mount.
+  // Also apply any persisted cache size limit before playback starts.
   useEffect(() => {
+    const saved = localStorage.getItem(CACHE_SIZE_KEY)
+    if (saved !== null) {
+      const bytes = parseInt(saved, 10)
+      if (!isNaN(bytes)) void audioSetCacheMaxBytes(bytes).catch(() => {})
+    }
+
     let cleanup: (() => void) | undefined
     initAudioEvents().then((fn) => {
       cleanup = fn
@@ -235,8 +250,43 @@ export function Player() {
               </div>
             </div>
 
-            {/* Right: volume */}
+            {/* Right: queue toggle + volume */}
             <div ref={volumeAreaRef} className="flex w-[30%] min-w-[11.25rem] items-center justify-end gap-1">
+
+              {/* Radio mode indicator — shown when a station is active */}
+              {isRadioMode && (
+                <span className="mr-1 flex-shrink-0 flex items-center gap-1 rounded-full bg-[#1db954]/15 border border-[#1db954]/30 px-2 py-0.5 text-[0.625rem] font-semibold uppercase tracking-wider text-[#1db954]">
+                  <svg viewBox="0 0 16 16" width="8" height="8" fill="currentColor">
+                    <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6A3 3 0 0 0 8 5zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
+                  </svg>
+                  {guestDjEnabled ? "DJ" : "Radio"}
+                </span>
+              )}
+
+              {/* Guest DJ toggle — AI smart-shuffle for radio mode */}
+              <button
+                onClick={toggleGuestDj}
+                title={guestDjEnabled ? "Guest DJ: On — click to disable" : "Guest DJ: Off — click for AI-curated radio"}
+                className={`flex-shrink-0 flex h-8 w-8 items-center justify-center transition-colors ${guestDjEnabled ? "text-[#1db954]" : "text-white/40 hover:text-white/70"}`}
+                aria-label="Toggle Guest DJ"
+              >
+                {/* Headphones icon */}
+                <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor">
+                  <path d="M8 1a6 6 0 0 0-6 6v2.5a2.5 2.5 0 0 0 2.5 2.5H5a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1H3.05A5 5 0 0 1 13 7H11a1 1 0 0 0-1 1v3a1 1 0 0 0 1 1h.5A2.5 2.5 0 0 0 14 9.5V7a6 6 0 0 0-6-6z" />
+                </svg>
+              </button>
+
+              {/* Queue toggle */}
+              <button
+                onClick={() => setQueueOpen(!isQueueOpen)}
+                className={`flex-shrink-0 mr-1 flex h-8 w-8 items-center justify-center transition-colors ${isQueueOpen ? "text-[#1db954]" : "text-white/70 hover:text-white"}`}
+                aria-label="Queue"
+              >
+                <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+                  <path d="M15 15H1v-1.5h14V15zm0-4.5H1V9h14v1.5zm-14-7A2.5 2.5 0 0 1 3.5 1h9a2.5 2.5 0 0 1 0 5h-9A2.5 2.5 0 0 1 1 3.5zm2.5-1a1 1 0 0 0 0 2h9a1 1 0 0 0 0-2h-9z" />
+                </svg>
+              </button>
+
               {/* Volume icon — muted / low / full */}
               <button onClick={() => setVolume(volume === 0 ? 80 : 0)} className="flex-shrink-0 text-white/70 hover:text-white transition-colors">
                 {volume === 0 ? (

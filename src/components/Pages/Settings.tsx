@@ -3,7 +3,7 @@ import { useLocation } from "wouter"
 import { open } from "@tauri-apps/plugin-shell"
 import clsx from "clsx"
 import { useConnectionStore, useLibraryStore } from "../../stores"
-import { plexAuthPoll, plexGetResources, testServerConnection } from "../../lib/plex"
+import { plexAuthPoll, plexGetResources, testServerConnection, audioCacheInfo, audioClearCache, audioSetCacheMaxBytes } from "../../lib/plex"
 import type { PlexResource } from "../../types/plex"
 
 type Section = "account" | "playback" | "downloads" | "ai" | "experience"
@@ -56,6 +56,108 @@ const NAV: { id: Section; label: string; icon: React.ReactNode }[] = [
     ),
   },
 ]
+
+// ---------------------------------------------------------------------------
+// Playback section — audio cache controls
+// ---------------------------------------------------------------------------
+
+const CACHE_SIZE_KEY = "plexify-audio-cache-max-bytes"
+
+const CACHE_OPTIONS = [
+  { label: "256 MB", bytes: 268_435_456 },
+  { label: "512 MB", bytes: 536_870_912 },
+  { label: "1 GB", bytes: 1_073_741_824 },
+  { label: "2 GB", bytes: 2_147_483_648 },
+  { label: "4 GB", bytes: 4_294_967_296 },
+  { label: "Unlimited", bytes: 0 },
+] as const
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B"
+  const units = ["B", "KB", "MB", "GB"]
+  const i = Math.floor(Math.log(bytes) / Math.log(1024))
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
+}
+
+function PlaybackSection() {
+  const [cacheInfo, setCacheInfo] = useState<{ size_bytes: number; file_count: number } | null>(null)
+  const [maxBytes, setMaxBytes] = useState<number>(1_073_741_824)
+  const [isClearing, setIsClearing] = useState(false)
+
+  useEffect(() => {
+    // Restore and apply saved cache limit.
+    const saved = localStorage.getItem(CACHE_SIZE_KEY)
+    const savedBytes = saved !== null ? parseInt(saved, 10) : 1_073_741_824
+    if (!isNaN(savedBytes)) {
+      setMaxBytes(savedBytes)
+      void audioSetCacheMaxBytes(savedBytes).catch(() => {})
+    }
+    void audioCacheInfo().then(info => setCacheInfo(info)).catch(() => {})
+  }, [])
+
+  async function handleMaxChange(bytes: number) {
+    setMaxBytes(bytes)
+    localStorage.setItem(CACHE_SIZE_KEY, String(bytes))
+    await audioSetCacheMaxBytes(bytes).catch(() => {})
+  }
+
+  async function handleClear() {
+    setIsClearing(true)
+    try {
+      await audioClearCache()
+      const info = await audioCacheInfo()
+      setCacheInfo(info)
+    } finally {
+      setIsClearing(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-8">
+      {/* Cache size limit */}
+      <div>
+        <h3 className="text-base font-semibold text-white mb-1">Audio Cache Size</h3>
+        <p className="text-sm text-white/40 mb-3">
+          Tracks are cached to disk for instant replay. Older files are removed automatically when the limit is reached.
+        </p>
+        <div className="flex gap-2 flex-wrap">
+          {CACHE_OPTIONS.map(opt => (
+            <button
+              key={opt.bytes}
+              onClick={() => void handleMaxChange(opt.bytes)}
+              className={`rounded-full px-4 py-1.5 text-sm transition-colors ${
+                maxBytes === opt.bytes
+                  ? "bg-[#1db954] text-black font-semibold"
+                  : "bg-white/10 text-white hover:bg-white/20"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Cache usage + clear */}
+      <div>
+        <h3 className="text-base font-semibold text-white mb-1">Cache Usage</h3>
+        {cacheInfo ? (
+          <p className="text-sm text-white/40 mb-3">
+            {formatBytes(cacheInfo.size_bytes)} used · {cacheInfo.file_count} {cacheInfo.file_count === 1 ? "file" : "files"}
+          </p>
+        ) : (
+          <p className="text-sm text-white/30 mb-3">Loading…</p>
+        )}
+        <button
+          onClick={() => void handleClear()}
+          disabled={isClearing || cacheInfo?.file_count === 0}
+          className="rounded-md bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {isClearing ? "Clearing…" : "Clear Audio Cache"}
+        </button>
+      </div>
+    </div>
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Placeholder for unimplemented sections
@@ -531,9 +633,7 @@ export function SettingsPage() {
         </h1>
 
         {section === "account" && <AccountSection />}
-        {section === "playback" && (
-          <ComingSoon title="Playback" description="Crossfade, audio quality, equalizer and gapless playback settings will appear here." />
-        )}
+        {section === "playback" && <PlaybackSection />}
         {section === "downloads" && (
           <ComingSoon title="Downloads" description="Offline caching and download quality settings will appear here." />
         )}

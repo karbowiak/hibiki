@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react"
 import { useLocation } from "wouter"
+import { useShallow } from "zustand/shallow"
 import clsx from "clsx"
 import { useSearchStore, useConnectionStore, buildPlexImageUrl } from "../../stores"
-import { getSectionTags } from "../../lib/plex"
-import type { LibraryTag, PlexMedia } from "../../types/plex"
+import { getSectionTags, getSectionStations, buildRadioPlayQueueUri } from "../../lib/plex"
+import type { KnownPlexMedia, LibraryTag, PlexMedia, Track } from "../../types/plex"
 import { MediaCard } from "../MediaCard"
 import { prefetchArtist, prefetchAlbum } from "../../stores/metadataCache"
+import { usePlayerStore } from "../../stores/playerStore"
 
 type MediaType = "artist" | "album" | "track" | "playlist"
 
@@ -32,21 +34,21 @@ const BG_COLORS = [
   "bg-yellow-700",
 ]
 
-// Station types available as browse cards
-const STATIONS = [
-  { id: "library-radio", label: "Library Radio", isPlaceholder: false },
-  { id: "deep-cuts-radio", label: "Deep Cuts Radio", isPlaceholder: false },
-  { id: "time-travel-radio", label: "Time Travel Radio", isPlaceholder: false },
-  { id: "random-album-radio", label: "Random Album Radio", isPlaceholder: false },
-  { id: "genre-radio", label: "Genre Radio", isPlaceholder: false },
-  { id: "style-radio", label: "Style Radio", isPlaceholder: false },
-  { id: "mood-radio", label: "Mood Radio", isPlaceholder: false },
-  { id: "decade-radio", label: "Decade Radio", isPlaceholder: false },
-  { id: "artist-mix", label: "Artist Mix Builder", isPlaceholder: true },
-  { id: "album-mix", label: "Album Mix Builder", isPlaceholder: true },
+// Dark palette for station cards (distinct from the genre palette)
+const STATION_BG_COLORS = [
+  "#1a3a5c",
+  "#2d1b4e",
+  "#1a4a3a",
+  "#4a2d1a",
+  "#4a1a2d",
+  "#1a2d4a",
+  "#3a1a4a",
+  "#1a4a4a",
+  "#4a3a1a",
+  "#2d3a1a",
 ]
 
-// Station icon (music note / radio wave)
+// Station icon (music note)
 function StationIcon() {
   return (
     <svg
@@ -121,29 +123,67 @@ function getInfo(item: PlexMedia, baseUrl: string, token: string) {
 export function Search() {
   const [, navigate] = useLocation()
   const { results, isSearching, query, setQuery } = useSearchStore()
-  const { baseUrl, token, musicSectionId } = useConnectionStore()
-  const [genres, setGenres] = useState<LibraryTag[]>([])
+  const { baseUrl, token, musicSectionId, sectionUuid } = useConnectionStore(
+    useShallow(s => ({
+      baseUrl: s.baseUrl,
+      token: s.token,
+      musicSectionId: s.musicSectionId,
+      sectionUuid: s.sectionUuid,
+    }))
+  )
+  const playFromUri = usePlayerStore(s => s.playFromUri)
+  const playTrack = usePlayerStore(s => s.playTrack)
+  const [moods, setMoods] = useState<LibraryTag[]>([])
+  const [styles, setStyles] = useState<LibraryTag[]>([])
+  const [tagsLoaded, setTagsLoaded] = useState(false)
+  const [stations, setStations] = useState<KnownPlexMedia[]>([])
+  const [stationsLoaded, setStationsLoaded] = useState(false)
 
   const showResults = query.trim().length > 0
   const groups = groupByType(results)
 
-  // Fetch genres from Plex when connected
+  // Fetch moods and styles from Plex when connected
   useEffect(() => {
     if (!musicSectionId) return
-    getSectionTags(musicSectionId, "genre")
-      .then(tags => setGenres(tags.sort((a, b) => a.tag.localeCompare(b.tag))))
-      .catch(() => {/* silently ignore — genres are non-critical */})
+    Promise.allSettled([
+      getSectionTags(musicSectionId, "mood"),
+      getSectionTags(musicSectionId, "style"),
+    ]).then(([moodResult, styleResult]) => {
+      if (moodResult.status === "fulfilled")
+        setMoods(moodResult.value.sort((a, b) => a.tag.localeCompare(b.tag)))
+      if (styleResult.status === "fulfilled")
+        setStyles(styleResult.value.sort((a, b) => a.tag.localeCompare(b.tag)))
+      setTagsLoaded(true)
+    })
   }, [musicSectionId])
 
-  const handleGenreClick = (genre: string) => {
-    setQuery(genre)
+  // Fetch available stations from Plex
+  useEffect(() => {
+    if (!musicSectionId) return
+    getSectionStations(musicSectionId)
+      .then(hubs => {
+        const items = hubs
+          .filter(h => h.hub_identifier.includes("station"))
+          .flatMap(h => h.metadata)
+          .filter((item): item is KnownPlexMedia => item.type !== "unknown" && Boolean(item.title))
+        setStations(items)
+      })
+      .catch(() => {})
+      .finally(() => setStationsLoaded(true))
+  }, [musicSectionId])
+
+  const handleTagClick = (tag: string) => {
+    setQuery(tag)
     navigate("/search")
   }
 
-  const handleStationClick = (stationId: string, isPlaceholder: boolean) => {
-    if (!isPlaceholder) {
-      navigate(`/radio/${stationId}`)
-    }
+  const handleStationClick = (item: KnownPlexMedia) => {
+    if (!sectionUuid) return
+    const uri = buildRadioPlayQueueUri(sectionUuid, item.key)
+    void playFromUri(uri)
+    // Derive route slug from GUID: "tv.plex://station/library" → "library"
+    const typeSlug = item.guid?.replace("tv.plex://station/", "") ?? encodeURIComponent(item.key)
+    navigate(`/radio/${typeSlug}`)
   }
 
   return (
@@ -157,11 +197,14 @@ export function Search() {
           {GROUP_ORDER.map(type => {
             const items = groups[type]
             if (!items || items.length === 0) return null
+            const tracks = type === "track"
+              ? items.filter((i): i is Track & { type: "track" } => i.type === "track")
+              : []
             return (
               <div key={type}>
                 <div className="mb-3 text-xl font-bold">{GROUP_LABELS[type]}</div>
-                <div className="grid grid-cols-4 gap-4 2xl:grid-cols-5">
-                  {items.slice(0, 5).map((item, idx) => {
+                <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))" }}>
+                  {items.slice(0, 10).map((item, idx) => {
                     const info = getInfo(item, baseUrl, token)
                     if (!info) return null
                     const prefetch = info.itemType === "artist"
@@ -169,6 +212,9 @@ export function Search() {
                       : info.itemType === "album"
                         ? () => prefetchAlbum(info.ratingKey)
                         : undefined
+                    const onClick = info.itemType === "track"
+                      ? () => void playTrack(tracks[idx], tracks)
+                      : undefined
                     return (
                       <MediaCard
                         key={idx}
@@ -177,6 +223,7 @@ export function Search() {
                         thumb={info.thumb}
                         isArtist={info.isArtist}
                         href={info.href ?? undefined}
+                        onClick={onClick}
                         prefetch={prefetch}
                       />
                     )
@@ -188,42 +235,44 @@ export function Search() {
         </div>
       ) : (
         <div className="space-y-8">
-          {/* PlexAmp Stations */}
+          {/* Stations — from Plex server */}
           <div>
             <div className="mb-4 text-2xl font-bold">Stations</div>
-            <div className="grid grid-cols-5 gap-3 2xl:grid-cols-6">
-              {STATIONS.map((station, idx) => (
-                <div
-                  key={station.id}
-                  onClick={() => handleStationClick(station.id, station.isPlaceholder)}
-                  className={clsx(
-                    "relative aspect-square overflow-hidden rounded-lg select-none",
-                    "bg-[#2a1f5a]",
-                    station.isPlaceholder
-                      ? "opacity-50 cursor-not-allowed"
-                      : "cursor-pointer hover:brightness-110 transition-[filter]"
-                  )}
-                  style={{ background: STATION_BG_COLORS[idx % STATION_BG_COLORS.length] }}
-                  title={station.isPlaceholder ? `${station.label} — coming soon` : station.label}
-                >
-                  <span className="line-clamp-2 p-3 text-sm font-bold leading-snug">
-                    {station.label}
-                  </span>
-                  <StationIcon />
-                </div>
-              ))}
-            </div>
+            {!stationsLoaded && (
+              <div className="text-sm text-gray-400">Loading stations…</div>
+            )}
+            {stationsLoaded && stations.length === 0 && (
+              <div className="text-sm text-gray-400">No stations available on this server.</div>
+            )}
+            {stations.length > 0 && (
+              <div className="grid grid-cols-5 gap-3 2xl:grid-cols-6">
+                {stations.map((item, idx) => (
+                  <div
+                    key={item.key}
+                    onClick={() => handleStationClick(item)}
+                    className="relative aspect-square cursor-pointer overflow-hidden rounded-lg select-none hover:brightness-110 transition-[filter]"
+                    style={{ background: STATION_BG_COLORS[idx % STATION_BG_COLORS.length] }}
+                    title={item.title}
+                  >
+                    <span className="line-clamp-2 p-3 text-sm font-bold leading-snug">
+                      {item.title}
+                    </span>
+                    <StationIcon />
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* Genres from Plex library */}
-          {genres.length > 0 && (
+          {/* Moods from Plex library */}
+          {moods.length > 0 && (
             <div>
-              <div className="mb-4 text-2xl font-bold">Browse by Genre</div>
+              <div className="mb-4 text-2xl font-bold">Browse by Mood</div>
               <div className="grid grid-cols-5 gap-3 2xl:grid-cols-6">
-                {genres.map((g, idx) => (
+                {moods.map((g, idx) => (
                   <div
                     key={g.tag}
-                    onClick={() => handleGenreClick(g.tag)}
+                    onClick={() => handleTagClick(g.tag)}
                     className={clsx(
                       "relative aspect-square cursor-pointer overflow-hidden rounded-lg select-none",
                       "hover:brightness-110 transition-[filter]",
@@ -237,29 +286,34 @@ export function Search() {
             </div>
           )}
 
-          {/* Loading state — genres not yet fetched */}
-          {genres.length === 0 && musicSectionId && (
+          {/* Styles from Plex library */}
+          {styles.length > 0 && (
             <div>
-              <div className="mb-4 text-2xl font-bold">Browse by Genre</div>
-              <div className="text-sm text-gray-400">Loading genres…</div>
+              <div className="mb-4 text-2xl font-bold">Browse by Style</div>
+              <div className="grid grid-cols-5 gap-3 2xl:grid-cols-6">
+                {styles.map((g, idx) => (
+                  <div
+                    key={g.tag}
+                    onClick={() => handleTagClick(g.tag)}
+                    className={clsx(
+                      "relative aspect-square cursor-pointer overflow-hidden rounded-lg select-none",
+                      "hover:brightness-110 transition-[filter]",
+                      BG_COLORS[(idx + 4) % BG_COLORS.length]
+                    )}
+                  >
+                    <span className="line-clamp-2 p-3 text-sm font-bold leading-snug">{g.tag}</span>
+                  </div>
+                ))}
+              </div>
             </div>
+          )}
+
+          {/* Loading state — tags not yet fetched */}
+          {!tagsLoaded && musicSectionId && (
+            <div className="text-sm text-gray-400">Loading…</div>
           )}
         </div>
       )}
     </div>
   )
 }
-
-// Dark palette for station cards (distinct from the genre palette)
-const STATION_BG_COLORS = [
-  "#1a3a5c",
-  "#2d1b4e",
-  "#1a4a3a",
-  "#4a2d1a",
-  "#4a1a2d",
-  "#1a2d4a",
-  "#3a1a4a",
-  "#1a4a4a",
-  "#4a3a1a",
-  "#2d3a1a",
-]

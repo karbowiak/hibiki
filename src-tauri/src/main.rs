@@ -3,12 +3,15 @@
 
 mod audio;
 mod commands;
+mod mediasession;
 mod plex;
 mod plextv;
 
 use commands::{AudioEngineState, PlexState};
+use mediasession::MediaSessionState;
 use once_cell::sync::Lazy;
 use tauri::Manager;
+use tauri_plugin_window_state::{StateFlags, WindowExt};
 
 // ---------------------------------------------------------------------------
 // Image cache — persistent disk cache for Plex artwork.
@@ -65,11 +68,29 @@ pub fn run() {
         .manage(PlexState::new())
         .manage(AudioEngineState::new())
         .setup(|app| {
-            // Start the audio engine — spawns decoder + output threads
-            let engine = audio::AudioEngine::start(app.handle().clone())
+            // Compute audio cache directory alongside the image cache.
+            let audio_cache_dir = app.path().app_cache_dir().ok().map(|d| d.join("plexaudio"));
+
+            // Start the audio engine — spawns decoder + output threads.
+            let engine = audio::AudioEngine::start(app.handle().clone(), audio_cache_dir)
                 .expect("Failed to start audio engine");
             let state = app.state::<AudioEngineState>();
             *state.0.lock().unwrap() = Some(engine);
+
+            // Start the system Now Playing / media-key integration.
+            // Must be called from setup (main thread) so macOS can register
+            // MPRemoteCommandCenter before the runloop starts.
+            let media_session = MediaSessionState::start(app.handle());
+            app.manage(media_session);
+
+            // Restore saved window size/position before making the window visible.
+            // The window starts hidden (visible: false in tauri.conf.json) so there
+            // is no position-flash when the plugin moves it to the saved bounds.
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.restore_state(StateFlags::all());
+                let _ = win.show();
+            }
+
             Ok(())
         })
         // ---- Custom image-caching protocol ----
@@ -165,6 +186,8 @@ pub fn run() {
             commands::create_play_queue,
             commands::get_play_queue,
             commands::add_to_play_queue,
+            commands::create_radio_queue,
+            commands::create_smart_shuffle_queue,
             // Playback tracking
             commands::mark_played,
             commands::mark_unplayed,
@@ -203,6 +226,14 @@ pub fn run() {
             commands::audio_seek,
             commands::audio_set_volume,
             commands::audio_preload_next,
+            // Audio cache
+            commands::audio_prefetch,
+            commands::audio_cache_info,
+            commands::audio_clear_cache,
+            commands::audio_set_cache_max_bytes,
+            // Now Playing / media controls
+            commands::update_now_playing,
+            commands::set_now_playing_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -71,7 +71,7 @@ export function TopBar() {
   }
 
   const handleInputFocus = () => {
-    if (localQuery.trim().length > 0) setShowDropdown(true)
+    if (location !== "/search" && localQuery.trim().length > 0) setShowDropdown(true)
     setActiveIndex(-1)
   }
 
@@ -108,7 +108,7 @@ export function TopBar() {
 
   const handleQueryChange = (value: string) => {
     setLocalQuery(value)
-    setShowDropdown(value.trim().length > 0)
+    setShowDropdown(location !== "/search" && value.trim().length > 0)
     setActiveIndex(-1)
   }
 

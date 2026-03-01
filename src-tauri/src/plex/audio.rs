@@ -496,9 +496,13 @@ impl PlexClient {
     ///
     /// Returns discovery hubs from `GET /hubs/sections/{id}?includeStations=1`.
     /// Hubs whose `hub_identifier` contains "stations" hold the station playlists.
+    /// Uses the same parameters as PlexAmp to get full station directory metadata.
     #[instrument(skip(self))]
     pub async fn section_stations(&self, section_id: i64) -> Result<Vec<Hub>> {
-        let path = format!("/hubs/sections/{}?includeStations=1", section_id);
+        let path = format!(
+            "/hubs/sections/{}?includeStations=1&includeStationDirectories=1&count=8",
+            section_id
+        );
         debug!("Fetching section stations for section {}", section_id);
         let container: MediaContainer<Hub> = self.get(&path)
             .await

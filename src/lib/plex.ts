@@ -261,6 +261,53 @@ export function addToPlayQueue(
   return invoke("add_to_play_queue", { queueId, uri, next })
 }
 
+/**
+ * Create a radio play queue seeded from any Plex item.
+ *
+ * Uses PlexAmp's `plex://radio` URI scheme — the Plex server generates a
+ * continuously-refreshing, sonically-curated stream of recommendations.
+ *
+ * @param ratingKey  Seed item (track, album, or artist rating key)
+ * @param degreesOfSeparation  Diversity: -1 = unlimited, 0 = closest only, 3+ = adventurous
+ * @param includeExternal  Include tracks from external/cloud sources
+ * @param shuffle  Shuffle the initial queue
+ */
+export function createRadioQueue(
+  ratingKey: number,
+  degreesOfSeparation?: number,
+  includeExternal?: boolean,
+  shuffle?: boolean
+): Promise<PlayQueue> {
+  return invoke("create_radio_queue", {
+    ratingKey,
+    degreesOfSeparation: degreesOfSeparation ?? null,
+    includeExternal: includeExternal ?? false,
+    shuffle: shuffle ?? false,
+  })
+}
+
+/**
+ * Create a Guest DJ (smart-shuffle) play queue.
+ *
+ * Like `createRadioQueue` but uses Plex's AI-curated `smartShuffle` mode and
+ * the "Guest DJ" persona header for richer contextual recommendations.
+ *
+ * @param ratingKey  Seed item rating key
+ * @param degreesOfSeparation  Diversity: -1 = unlimited
+ * @param includeExternal  Include external sources
+ */
+export function createSmartShuffleQueue(
+  ratingKey: number,
+  degreesOfSeparation?: number,
+  includeExternal?: boolean
+): Promise<PlayQueue> {
+  return invoke("create_smart_shuffle_queue", {
+    ratingKey,
+    degreesOfSeparation: degreesOfSeparation ?? null,
+    includeExternal: includeExternal ?? false,
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Playback tracking
 // ---------------------------------------------------------------------------
@@ -545,6 +592,61 @@ export function audioPreloadNext(
   return invoke("audio_preload_next", { url, ratingKey, durationMs, partId, parentKey, trackIndex })
 }
 
+/** Warm the audio disk cache for a URL in the background. Returns immediately. */
+export function audioPrefetch(url: string): Promise<void> {
+  return invoke("audio_prefetch", { url })
+}
+
+/** Get current audio cache usage: bytes used and file count. */
+export function audioCacheInfo(): Promise<{ size_bytes: number; file_count: number }> {
+  return invoke("audio_cache_info")
+}
+
+/** Delete all audio cache files from disk. */
+export function audioClearCache(): Promise<void> {
+  return invoke("audio_clear_cache")
+}
+
+/** Set the maximum audio cache size in bytes. Pass 0 for unlimited. */
+export function audioSetCacheMaxBytes(maxBytes: number): Promise<void> {
+  return invoke("audio_set_cache_max_bytes", { maxBytes })
+}
+
+// ---------------------------------------------------------------------------
+// Now Playing / system media controls
+// ---------------------------------------------------------------------------
+
+/**
+ * Push track metadata to the OS Now Playing system.
+ *
+ * - macOS: Control Centre, lock screen, AirPlay targets
+ * - Windows: SMTC lock screen / taskbar
+ * - Linux: MPRIS2 panel
+ *
+ * `thumbPath` is a Plex path like `/library/metadata/123/thumb`; Rust builds
+ * the authenticated URL so the token never appears in frontend logs.
+ */
+export function updateNowPlaying(
+  title: string,
+  artist: string,
+  album: string,
+  thumbPath: string | null,
+  durationMs: number,
+): Promise<void> {
+  return invoke("update_now_playing", { title, artist, album, thumbPath, durationMs })
+}
+
+/**
+ * Update the playback state in the OS media controls.
+ * `playbackState` must be `"playing"`, `"paused"`, or `"stopped"`.
+ */
+export function setNowPlayingState(
+  playbackState: "playing" | "paused" | "stopped",
+  positionMs?: number,
+): Promise<void> {
+  return invoke("set_now_playing_state", { playbackState, positionMs })
+}
+
 // ---------------------------------------------------------------------------
 // URI helpers (client-side, no invoke needed)
 // ---------------------------------------------------------------------------
@@ -557,4 +659,15 @@ export function buildItemUri(sectionUuid: string, itemKey: string): string {
 /** Build a library directory URI for an album or playlist's children. */
 export function buildDirectoryUri(sectionUuid: string, itemKey: string): string {
   return `library://${sectionUuid}/directory/${itemKey}/children`
+}
+
+/**
+ * Build a radio station play queue URI.
+ *
+ * `stationKey` is the `key` field from a station hub item (e.g. from getSectionStations).
+ * Pass the result to `createPlayQueue` / `playFromUri` to start station playback.
+ * URI format matches PlexAmp: `library://{uuid}/station/{encoded-key}`.
+ */
+export function buildRadioPlayQueueUri(sectionUuid: string, stationKey: string): string {
+  return `library://${sectionUuid}/station/${encodeURIComponent(stationKey)}`
 }

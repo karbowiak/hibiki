@@ -190,6 +190,9 @@ export type PlexMedia =
   | (Playlist & { type: "playlist" })
   | { type: "unknown" }
 
+/** PlexMedia narrowed to only known variants (excludes the `{ type: "unknown" }` fallback). */
+export type KnownPlexMedia = Exclude<PlexMedia, { type: "unknown" }>
+
 export interface Hub {
   title: string
   hub_identifier: string

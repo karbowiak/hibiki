@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
@@ -23,11 +24,11 @@ pub struct AudioEngine {
 impl AudioEngine {
     /// Create and start the audio engine.
     /// Spawns the decoder thread, starts the cpal output, and begins the event emitter.
-    pub fn start(app_handle: AppHandle) -> Result<Self, String> {
+    pub fn start(app_handle: AppHandle, cache_dir: Option<PathBuf>) -> Result<Self, String> {
         let (cmd_tx, cmd_rx) = bounded::<AudioCommand>(32);
         let (event_tx, event_rx) = bounded::<AudioEvent>(128);
 
-        let shared = Arc::new(DecoderShared::new());
+        let shared = Arc::new(DecoderShared::new(cache_dir));
 
         // Create ring buffer (SPSC)
         let rb = HeapRb::<f32>::new(RING_BUFFER_SIZE);
@@ -89,6 +90,48 @@ impl AudioEngine {
     /// Check if current track has finished
     pub fn is_finished(&self) -> bool {
         self.shared.finished.load(Ordering::Relaxed)
+    }
+
+    /// Warm the audio disk cache for a URL in the background.
+    pub fn prefetch_url(&self, url: String) {
+        super::decoder::prefetch_url_bg(url, Arc::clone(&self.shared));
+    }
+
+    /// Update the maximum audio cache size. Pass 0 for unlimited.
+    pub fn set_max_cache_bytes(&self, max_bytes: u64) {
+        self.shared.max_cache_bytes.store(max_bytes, Ordering::Relaxed);
+    }
+
+    /// Return (total_bytes, file_count) for the audio cache directory.
+    pub fn cache_info(&self) -> (u64, u32) {
+        let Some(ref cache_dir) = self.shared.cache_dir else {
+            return (0, 0);
+        };
+        let Ok(rd) = std::fs::read_dir(cache_dir) else {
+            return (0, 0);
+        };
+        let mut total_bytes: u64 = 0;
+        let mut file_count: u32 = 0;
+        for entry in rd.filter_map(|e| e.ok()) {
+            if entry.path().extension().and_then(|x| x.to_str()) == Some("audio") {
+                if let Ok(meta) = entry.metadata() {
+                    total_bytes += meta.len();
+                    file_count += 1;
+                }
+            }
+        }
+        (total_bytes, file_count)
+    }
+
+    /// Delete all `.audio` files from the cache directory.
+    pub fn clear_cache(&self) {
+        let Some(ref cache_dir) = self.shared.cache_dir else { return; };
+        let Ok(rd) = std::fs::read_dir(cache_dir) else { return; };
+        for entry in rd.filter_map(|e| e.ok()) {
+            if entry.path().extension().and_then(|x| x.to_str()) == Some("audio") {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
     }
 
     /// Spawn the event emitter task that bridges AudioEvents to Tauri events.

@@ -19,21 +19,25 @@ const TTL_MS = {
 }
 
 /**
- * How many tracks to fetch on the very first load of a playlist.
- * Kept small so even a 50,000-track smart playlist renders quickly.
+ * Playlists at or below this size are loaded in a single request and fully cached.
+ * Playlists above this use infinite scroll (INITIAL_PAGE_SIZE first, then PAGE_SIZE pages).
+ */
+const SMALL_PLAYLIST_THRESHOLD = 1000
+
+/**
+ * First-page size for large playlists (> SMALL_PLAYLIST_THRESHOLD).
+ * Kept small so even a 50,000-track smart playlist renders the first rows quickly.
  */
 const INITIAL_PAGE_SIZE = 50
 
-/** Tracks per page for all subsequent "load more" fetches and background prefetch.
- *  Kept small so React renders a manageable number of new rows per scroll trigger.
- *  500 caused the UI to stall while rendering 500+ DOM nodes at once. */
+/** Tracks per page for infinite-scroll fetches on large playlists. */
 const PAGE_SIZE = 100
 
 /**
- * Playlists with more tracks than this are NOT pre-fetched on startup.
- * They load the first page on navigation, then more via infinite scroll.
+ * Background prefetch is limited to playlists at or below this size.
+ * Matches SMALL_PLAYLIST_THRESHOLD so that prefetched playlists are always fully loaded.
  */
-const PREFETCH_THRESHOLD = 500
+const PREFETCH_THRESHOLD = SMALL_PLAYLIST_THRESHOLD
 
 /** Milliseconds between sequential background prefetch requests. */
 const PREFETCH_DELAY_MS = 100
@@ -49,10 +53,10 @@ interface FetchOpts {
  */
 const inflight = new Map<number, Promise<Track[]>>()
 
-function fetchFirstPage(playlistId: number): Promise<Track[]> {
+function fetchInitial(playlistId: number, limit: number): Promise<Track[]> {
   const existing = inflight.get(playlistId)
   if (existing) return existing
-  const p = getPlaylistItems(playlistId, INITIAL_PAGE_SIZE, 0).finally(() => {
+  const p = getPlaylistItems(playlistId, limit, 0).finally(() => {
     inflight.delete(playlistId)
   })
   inflight.set(playlistId, p)
@@ -173,11 +177,15 @@ export const useLibraryStore = create<LibraryState>()(persist((set, get) => ({
       return
     }
 
-    // Cache miss — fetch first page with inflight dedup.
+    // Decide fetch strategy: load everything at once for small playlists.
+    const totalCount = playlist?.leaf_count ?? 0
+    const isSmall = totalCount > 0 && totalCount <= SMALL_PLAYLIST_THRESHOLD
+    const limit = isSmall ? totalCount : INITIAL_PAGE_SIZE
+
     set({ isLoading: true, currentPlaylistItems: [] })
     try {
-      const items = await fetchFirstPage(playlistId)
-      const isFullyLoaded = items.length < INITIAL_PAGE_SIZE
+      const items = await fetchInitial(playlistId, limit)
+      const isFullyLoaded = isSmall || items.length < INITIAL_PAGE_SIZE
       set(state => ({
         currentPlaylistItems: items,
         isLoading: false,
@@ -237,8 +245,9 @@ export const useLibraryStore = create<LibraryState>()(persist((set, get) => ({
       }
 
       try {
-        const items = await fetchFirstPage(playlist.rating_key)
-        const isFullyLoaded = items.length < INITIAL_PAGE_SIZE
+        const limit = playlist.leaf_count > 0 ? playlist.leaf_count : INITIAL_PAGE_SIZE
+        const items = await fetchInitial(playlist.rating_key, limit)
+        const isFullyLoaded = true  // prefetch only runs for playlists ≤ PREFETCH_THRESHOLD
         set(state => ({
           playlistItemsCache: { ...state.playlistItemsCache, [playlist.rating_key]: items },
           playlistIsFullyLoaded: { ...state.playlistIsFullyLoaded, [playlist.rating_key]: isFullyLoaded },

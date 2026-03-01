@@ -68,6 +68,21 @@ fn build_f32_stream(
         .build_output_stream(
             config,
             move |data: &mut [f32], _info: &cpal::OutputCallbackInfo| {
+                // A new Play command was received — drain all stale samples from the
+                // previous track instantly so the new track starts without old audio
+                // bleeding through. Uses `data` as a scratch buffer; draining ~192 k f32
+                // samples takes < 0.1 ms (pure memory copies).
+                if shared.flush_pending.swap(false, Ordering::AcqRel) {
+                    loop {
+                        let n = consumer.pop_slice(data);
+                        if n < data.len() {
+                            break;
+                        }
+                    }
+                    data.fill(0.0);
+                    return;
+                }
+
                 // If paused or finished, output silence
                 if shared.paused.load(Ordering::Relaxed) {
                     data.fill(0.0);

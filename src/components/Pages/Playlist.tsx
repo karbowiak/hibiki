@@ -3,6 +3,7 @@ import { Link } from "wouter"
 import { useShallow } from "zustand/react/shallow"
 import { useLibraryStore, usePlayerStore, useConnectionStore, buildPlexImageUrl, useUIStore } from "../../stores"
 import { buildItemUri } from "../../lib/plex"
+import { prefetchTrackAudio } from "../../stores/playerStore"
 import { RichText } from "../RichText"
 import { UltraBlur } from "../UltraBlur"
 import { useScrollContainer } from "../Page"
@@ -53,9 +54,10 @@ export function Playlist({ playlistId }: { playlistId: number }) {
   // Subscribe only to this specific playlist's fullness, not the whole record.
   const isFullyLoaded = useLibraryStore(s => s.playlistIsFullyLoaded[playlistId] ?? false)
 
-  const { playTrack, playFromUri } = usePlayerStore(useShallow(s => ({
+  const { playTrack, playFromUri, playPlaylist } = usePlayerStore(useShallow(s => ({
     playTrack: s.playTrack,
     playFromUri: s.playFromUri,
+    playPlaylist: s.playPlaylist,
   })))
   const { baseUrl, token, sectionUuid } = useConnectionStore(useShallow(s => ({
     baseUrl: s.baseUrl,
@@ -169,10 +171,10 @@ export function Playlist({ playlistId }: { playlistId: number }) {
                   </svg>
                 </button>
 
-                {/* Play in order — uses locally loaded queue */}
+                {/* Play in order — progressive queue loading (100 tracks at a time) */}
                 <button
-                  onClick={() => loadedCount > 0 && void playTrack(currentPlaylistItems[0], currentPlaylistItems)}
-                  disabled={loadedCount === 0}
+                  onClick={() => totalCount > 0 && void playPlaylist(playlistId, totalCount)}
+                  disabled={totalCount === 0}
                   title="Play"
                   className="flex h-14 w-14 items-center justify-center rounded-full bg-[#1db954] text-black shadow-lg hover:bg-[#1ed760] hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                 >
@@ -228,6 +230,7 @@ export function Playlist({ playlistId }: { playlistId: number }) {
                   key={track.rating_key}
                   className="group cursor-pointer hover:bg-white/5 rounded"
                   onClick={() => void playTrack(track, currentPlaylistItems)}
+                  onMouseEnter={() => prefetchTrackAudio(track)}
                 >
                   <td className="p-2 text-center w-8">
                     <span className="group-hover:hidden">{idx + 1}</span>

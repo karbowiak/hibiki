@@ -11,6 +11,7 @@ import {
   getArtistStations,
   buildItemUri,
 } from "../../lib/plex"
+import { prefetchTrackAudio } from "../../stores/playerStore"
 import { useFocalPoint } from "../../lib/focalPoint"
 import type { Artist, Album, Track, Hub, Playlist } from "../../types/plex"
 import { MediaCard } from "../MediaCard"
@@ -62,7 +63,7 @@ const SKIP_HUB_IDS = new Set([
 
 export function ArtistPage({ artistId }: { artistId: number }) {
   const { baseUrl, token, musicSectionId, sectionUuid } = useConnectionStore()
-  const { playTrack, playFromUri } = usePlayerStore()
+  const { playTrack, playFromUri, playRadio } = usePlayerStore()
   const { pageRefreshKey } = useUIStore()
 
   const cached = getCachedArtist(artistId)
@@ -188,10 +189,6 @@ export function ArtistPage({ artistId }: { artistId: number }) {
   const artistUri = sectionUuid
     ? buildItemUri(sectionUuid, `/library/metadata/${artistId}`)
     : null
-  const firstStation = stations[0] ?? null
-  const radioUri = firstStation && sectionUuid
-    ? buildItemUri(sectionUuid, `/library/metadata/${firstStation.rating_key}`)
-    : null
 
   return (
     <div>
@@ -240,18 +237,16 @@ export function ArtistPage({ artistId }: { artistId: number }) {
               <polygon points="3,2 13,8 3,14" />
             </svg>
           </button>
-          {radioUri && (
-            <button
-              onClick={() => void playFromUri(radioUri, false)}
-              title="Artist radio"
-              className="flex h-10 items-center gap-2 rounded-full border border-white/20 px-4 text-sm font-medium text-white hover:border-white/40 hover:bg-white/10 active:scale-95 transition-all"
-            >
-              <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-                <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6A3 3 0 0 0 8 5zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
-              </svg>
-              Radio
-            </button>
-          )}
+          <button
+            onClick={() => void playRadio(artistId, 'artist')}
+            title="Artist Radio — continuous sonically-similar music"
+            className="flex h-10 items-center gap-2 rounded-full border border-white/20 px-4 text-sm font-medium text-white hover:border-white/40 hover:bg-white/10 active:scale-95 transition-all"
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+              <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6A3 3 0 0 0 8 5zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
+            </svg>
+            Radio
+          </button>
         </div>
 
         {/* Main content row */}
@@ -318,7 +313,30 @@ export function ArtistPage({ artistId }: { artistId: number }) {
         {/* ── Popular Tracks ── */}
         {popularTracks.length > 0 && (
           <section>
-            <h2 className="mb-4 text-2xl font-bold">Popular Tracks</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-2xl font-bold">Popular Tracks</h2>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => { const s = [...popularTracks].sort(() => Math.random() - 0.5); void playTrack(s[0], s) }}
+                  title="Shuffle popular tracks"
+                  className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 transition-all"
+                >
+                  <svg role="img" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
+                    <path d="M13.151.922a.75.75 0 1 0-1.06 1.06L13.109 3H11.16a3.75 3.75 0 0 0-2.873 1.34l-6.173 7.356A2.25 2.25 0 0 1 .39 12.5H0V14h.391a3.75 3.75 0 0 0 2.873-1.34l6.173-7.356a2.25 2.25 0 0 1 1.724-.804h1.947l-1.017 1.018a.75.75 0 0 0 1.06 1.06L15.98 3.75 13.15.922zM.391 3.5H0V2h.391c1.109 0 2.16.49 2.873 1.34L4.89 5.277l-.979 1.167-1.796-2.14A2.25 2.25 0 0 0 .39 3.5z" />
+                    <path d="m7.5 10.723.98-1.167.957 1.14a2.25 2.25 0 0 0 1.724.804h1.947l-1.017-1.018a.75.75 0 1 1 1.06-1.06l2.829 2.828-2.829 2.828a.75.75 0 1 1-1.06-1.06L13.109 13H11.16a3.75 3.75 0 0 1-2.873-1.34l-.787-.938z" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => void playTrack(popularTracks[0], popularTracks)}
+                  title="Play popular tracks"
+                  className="flex h-9 w-9 items-center justify-center rounded-full bg-[#1db954] text-black hover:bg-[#1ed760] transition-all"
+                >
+                  <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+                    <polygon points="3,2 13,8 3,14" />
+                  </svg>
+                </button>
+              </div>
+            </div>
             <div className="flex flex-col">
               {popularTracks.map((track, i) => {
                 const albumId = track.parent_key ? track.parent_key.split("/").pop() : null
@@ -326,6 +344,7 @@ export function ArtistPage({ artistId }: { artistId: number }) {
                   <div
                     key={track.rating_key}
                     onClick={() => playTrack(track, popularTracks)}
+                    onMouseEnter={() => prefetchTrackAudio(track)}
                     className="group flex cursor-pointer items-center gap-3 rounded-md px-3 py-1.5 hover:bg-white/10"
                   >
                     <span className="w-5 flex-shrink-0 text-right text-sm text-gray-400 group-hover:hidden">
@@ -354,8 +373,20 @@ export function ArtistPage({ artistId }: { artistId: number }) {
                       )}
                     </div>
                     <Stars rating={track.user_rating} />
-                    <span className="w-12 flex-shrink-0 text-right text-xs tabular-nums text-gray-400">
-                      {fmtDuration(track.duration)}
+                    <span className="w-20 flex-shrink-0 flex items-center justify-end gap-2">
+                      <button
+                        className="hidden group-hover:flex items-center gap-1 text-xs text-gray-400 hover:text-white transition-colors"
+                        title="Track Radio"
+                        onClick={e => { e.stopPropagation(); void playRadio(track.rating_key, 'track') }}
+                      >
+                        <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+                          <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6A3 3 0 0 0 8 5zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
+                        </svg>
+                        Radio
+                      </button>
+                      <span className="text-xs tabular-nums text-gray-400 group-hover:hidden">
+                        {fmtDuration(track.duration)}
+                      </span>
                     </span>
                   </div>
                 )

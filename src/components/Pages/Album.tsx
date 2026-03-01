@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { Link } from "wouter"
 import { useConnectionStore, usePlayerStore, buildPlexImageUrl, useUIStore } from "../../stores"
 import { getAlbum, getAlbumTracks, getRelatedHubs } from "../../lib/plex"
+import { prefetchTrackAudio } from "../../stores/playerStore"
 import type { Album, Artist, Track, Hub, PlexTag } from "../../types/plex"
 import { MediaCard } from "../MediaCard"
 import { ScrollRow } from "../ScrollRow"
@@ -34,7 +35,7 @@ function TagChip({ tag }: { tag: PlexTag }) {
 
 export function AlbumPage({ albumId }: { albumId: number }) {
   const { baseUrl, token, musicSectionId } = useConnectionStore()
-  const { playTrack } = usePlayerStore()
+  const { playTrack, playRadio } = usePlayerStore()
   const { pageRefreshKey } = useUIStore()
 
   // Seed from eager-load cache for an instant first render.
@@ -118,6 +119,27 @@ export function AlbumPage({ albumId }: { albumId: number }) {
 
         {/* Absolute-positioned action buttons — bottom-right, non-blocking */}
         <div className="absolute bottom-8 right-8 z-10 flex items-center gap-3">
+          <button
+            onClick={() => void playRadio(albumId, 'album')}
+            title="Album Radio — continuous sonically-similar music"
+            className="flex h-10 items-center gap-2 rounded-full border border-white/20 px-4 text-sm font-medium text-white hover:border-white/40 hover:bg-white/10 active:scale-95 transition-all"
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+              <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6A3 3 0 0 0 8 5zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
+            </svg>
+            Radio
+          </button>
+          <button
+            onClick={() => { if (tracks.length === 0) return; const s = [...tracks].sort(() => Math.random() - 0.5); void playTrack(s[0], s) }}
+            disabled={tracks.length === 0}
+            title="Shuffle"
+            className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <svg role="img" height="18" width="18" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M13.151.922a.75.75 0 1 0-1.06 1.06L13.109 3H11.16a3.75 3.75 0 0 0-2.873 1.34l-6.173 7.356A2.25 2.25 0 0 1 .39 12.5H0V14h.391a3.75 3.75 0 0 0 2.873-1.34l6.173-7.356a2.25 2.25 0 0 1 1.724-.804h1.947l-1.017 1.018a.75.75 0 0 0 1.06 1.06L15.98 3.75 13.15.922zM.391 3.5H0V2h.391c1.109 0 2.16.49 2.873 1.34L4.89 5.277l-.979 1.167-1.796-2.14A2.25 2.25 0 0 0 .39 3.5z" />
+              <path d="m7.5 10.723.98-1.167.957 1.14a2.25 2.25 0 0 0 1.724.804h1.947l-1.017-1.018a.75.75 0 1 1 1.06-1.06l2.829 2.828-2.829 2.828a.75.75 0 1 1-1.06-1.06L13.109 13H11.16a3.75 3.75 0 0 1-2.873-1.34l-.787-.938z" />
+            </svg>
+          </button>
           <button
             onClick={() => tracks.length > 0 && void playTrack(tracks[0], tracks)}
             disabled={tracks.length === 0}
@@ -230,6 +252,7 @@ export function AlbumPage({ albumId }: { albumId: number }) {
                 key={track.rating_key}
                 className="group cursor-pointer hover:bg-white/5 rounded"
                 onClick={() => void playTrack(track, tracks)}
+                onMouseEnter={() => prefetchTrackAudio(track)}
               >
                 <td className="p-2 text-center w-8">
                   <span className="group-hover:hidden">{track.index || idx + 1}</span>
@@ -245,7 +268,19 @@ export function AlbumPage({ albumId }: { albumId: number }) {
                     <div className="text-xs text-gray-500">{track.original_title}</div>
                   )}
                 </td>
-                <td className="p-2 text-right tabular-nums">{formatMs(track.duration)}</td>
+                <td className="p-2 text-right tabular-nums">
+                  <span className="group-hover:hidden">{formatMs(track.duration)}</span>
+                  <button
+                    className="hidden group-hover:inline-flex items-center gap-1 text-xs text-gray-400 hover:text-white transition-colors px-1"
+                    title="Track Radio"
+                    onClick={e => { e.stopPropagation(); void playRadio(track.rating_key, 'track') }}
+                  >
+                    <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+                      <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6A3 3 0 0 0 8 5zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
+                    </svg>
+                    Radio
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
