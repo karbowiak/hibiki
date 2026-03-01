@@ -6,7 +6,7 @@ import type { Album, Artist, Track, Hub, PlexTag } from "../../types/plex"
 import { MediaCard } from "../MediaCard"
 import { ScrollRow } from "../ScrollRow"
 import { UltraBlur } from "../UltraBlur"
-import { getCachedAlbum, prefetchAlbum, prefetchArtist } from "../../stores/metadataCache"
+import { getCachedAlbum, prefetchAlbum, prefetchArtist, setAlbumCache } from "../../stores/metadataCache"
 
 function formatMs(ms: number): string {
   const s = Math.floor(ms / 1000)
@@ -54,11 +54,12 @@ export function AlbumPage({ albumId }: { albumId: number }) {
     setDescExpanded(false)
     setShowImageModal(false)
 
-    // Seed from cache — avoids "Loading album…" flash on navigation.
+    // Seed ALL state from persistent cache — avoids loading flash.
     const freshCache = getCachedAlbum(albumId)
     if (freshCache) {
       setAlbum(freshCache.album)
       setTracks(freshCache.tracks)
+      setRelatedHubs(freshCache.relatedHubs)
       setIsLoading(false)
     } else {
       setAlbum(null)
@@ -67,7 +68,7 @@ export function AlbumPage({ albumId }: { albumId: number }) {
       setIsLoading(true)
     }
 
-    // Always re-fetch for freshness.
+    // Always re-fetch for freshness (silently when cache-seeded).
     Promise.all([
       getAlbum(albumId),
       getAlbumTracks(albumId),
@@ -77,6 +78,9 @@ export function AlbumPage({ albumId }: { albumId: number }) {
         setAlbum(al)
         setTracks(tr)
         setRelatedHubs(hubs)
+
+        // Update persistent cache for next visit / restart
+        setAlbumCache(albumId, { album: al, tracks: tr, relatedHubs: hubs })
       })
       .catch(e => setError(String(e)))
       .finally(() => setIsLoading(false))

@@ -16,7 +16,7 @@ import type { Artist, Album, Track, Hub, Playlist } from "../../types/plex"
 import { MediaCard } from "../MediaCard"
 import { ScrollRow } from "../ScrollRow"
 import { UltraBlur } from "../UltraBlur"
-import { getCachedArtist, prefetchAlbum, prefetchArtist } from "../../stores/metadataCache"
+import { getCachedArtist, prefetchAlbum, prefetchArtist, setArtistCache } from "../../stores/metadataCache"
 
 function fmtDuration(ms: number) {
   const s = Math.floor(ms / 1000)
@@ -87,7 +87,7 @@ export function ArtistPage({ artistId }: { artistId: number }) {
     setBioExpanded(false)
     setShowHeroModal(false)
 
-    // Seed from cache if available — avoids the "Loading artist…" flash.
+    // Seed ALL state from persistent cache — avoids loading flash AND layout shift.
     // useState(initialValue) only runs on mount, so navigating between artists
     // needs this explicit re-seed at the start of every effect run.
     const freshCache = getCachedArtist(artistId)
@@ -95,6 +95,11 @@ export function ArtistPage({ artistId }: { artistId: number }) {
       setArtist(freshCache.artist)
       setFullAlbums(freshCache.albums)
       setSingles(freshCache.singles)
+      setPopularTracks(freshCache.popularTracks)
+      setSimilarArtists(freshCache.similarArtists)
+      setSonicallySimilar(freshCache.sonicallySimilar)
+      setRelatedHubs(freshCache.relatedHubs)
+      setStations(freshCache.stations)
       setIsLoading(false)
     } else {
       // No cache — clear stale data from previous artist, show loading spinner.
@@ -122,16 +127,31 @@ export function ArtistPage({ artistId }: { artistId: number }) {
       getArtistStations(artistId).catch(() => [] as Playlist[]),
     ])
       .then(([a, allAlbums, singleList, tracks, sim, sonic, hubs, stationList]) => {
-        setArtist(a)
         const dedupedSingles = dedupe(singleList)
         const singleKeys = new Set(dedupedSingles.map(s => s.rating_key))
-        setFullAlbums(dedupe(allAlbums).filter(a => !singleKeys.has(a.rating_key)))
+        const albums = dedupe(allAlbums).filter(a => !singleKeys.has(a.rating_key))
+        const popularTracks = dedupe(tracks)
+
+        setArtist(a)
+        setFullAlbums(albums)
         setSingles(dedupedSingles)
-        setPopularTracks(dedupe(tracks))
+        setPopularTracks(popularTracks)
         setSimilarArtists(sim)
         setSonicallySimilar(sonic)
         setRelatedHubs(hubs)
         setStations(stationList)
+
+        // Update persistent cache for next visit / restart
+        setArtistCache(artistId, {
+          artist: a,
+          albums,
+          singles: dedupedSingles,
+          popularTracks,
+          similarArtists: sim,
+          sonicallySimilar: sonic,
+          relatedHubs: hubs,
+          stations: stationList,
+        })
       })
       .catch(e => setError(String(e)))
       .finally(() => setIsLoading(false))
