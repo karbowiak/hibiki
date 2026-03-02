@@ -3,6 +3,7 @@ import { useShallow } from "zustand/shallow"
 import { useSearchStore, useConnectionStore, buildPlexImageUrl } from "../../stores"
 import type { PlexMedia, Track } from "../../types/plex"
 import { MediaCard } from "../MediaCard"
+import { PriorityMediaCard } from "../PriorityMediaCard"
 import { prefetchArtist, prefetchAlbum } from "../../stores/metadataCache"
 import { usePlayerStore } from "../../stores/playerStore"
 
@@ -41,6 +42,8 @@ function getInfo(item: PlexMedia, baseUrl: string, token: string) {
         href: `/artist/${item.rating_key}`,
         ratingKey: item.rating_key,
         itemType: "artist" as const,
+        artistName: item.title,
+        albumName: null as string | null,
       }
     case "album":
       return {
@@ -51,6 +54,8 @@ function getInfo(item: PlexMedia, baseUrl: string, token: string) {
         href: `/album/${item.rating_key}`,
         ratingKey: item.rating_key,
         itemType: "album" as const,
+        artistName: item.parent_title,
+        albumName: item.title,
       }
     case "track":
       return {
@@ -120,8 +125,10 @@ export function Search() {
                     const onClick = info.itemType === "track"
                       ? () => void playTrack(tracks[idx], tracks)
                       : undefined
+                    const usePriority = info.itemType === "artist" || info.itemType === "album"
+                    const Card = usePriority ? PriorityMediaCard : MediaCard
                     return (
-                      <MediaCard
+                      <Card
                         key={idx}
                         title={info.title}
                         desc={info.desc}
@@ -130,6 +137,8 @@ export function Search() {
                         href={info.href ?? undefined}
                         onClick={onClick}
                         prefetch={prefetch}
+                        artistName={"artistName" in info ? info.artistName : undefined}
+                        albumName={"albumName" in info ? info.albumName : undefined}
                       />
                     )
                   })}

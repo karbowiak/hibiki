@@ -2,10 +2,31 @@ import { useEffect } from "react"
 import { Link } from "wouter"
 import { useLibraryStore, useConnectionStore, buildPlexImageUrl, useUIStore } from "../../stores"
 import { prefetchArtist } from "../../stores/metadataCache"
+import { useArtistImage } from "../../hooks/useMediaImage"
 
 function starsFromRating(rating: number | null): number {
   if (!rating) return 0
   return Math.round(rating / 2)
+}
+
+function ArtistThumb({ title, thumb }: { title: string; thumb: string | null }) {
+  const resolved = useArtistImage(title, thumb)
+  if (resolved) {
+    return (
+      <img
+        src={resolved}
+        alt={title}
+        className="h-full w-full object-cover transition-transform group-hover:scale-105"
+      />
+    )
+  }
+  return (
+    <div className="flex h-full w-full items-center justify-center">
+      <svg viewBox="0 0 24 24" width="40" height="40" fill="#535353">
+        <path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z" />
+      </svg>
+    </div>
+  )
 }
 
 export function LikedArtists() {
@@ -66,19 +87,7 @@ export function LikedArtists() {
                   className="group flex flex-col items-center gap-2 rounded-md p-3 no-underline transition-colors hover:bg-white/10"
                 >
                   <div className="relative w-full aspect-square overflow-hidden rounded-full bg-app-surface shadow-lg">
-                    {thumbUrl ? (
-                      <img
-                        src={thumbUrl}
-                        alt={artist.title}
-                        className="h-full w-full object-cover transition-transform group-hover:scale-105"
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center">
-                        <svg viewBox="0 0 24 24" width="40" height="40" fill="#535353">
-                          <path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z" />
-                        </svg>
-                      </div>
-                    )}
+                    <ArtistThumb title={artist.title} thumb={thumbUrl} />
                   </div>
                   <div className="w-full text-center">
                     <div className="truncate font-semibold text-sm text-white group-hover:text-white">

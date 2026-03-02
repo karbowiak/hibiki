@@ -4,6 +4,8 @@ import { getTrack } from "../lib/plex"
 import type { Track } from "../types/plex"
 import { useLastfmMetadataStore } from "../stores/lastfmMetadataStore"
 import type { LastfmTrackInfo } from "../lib/lastfm"
+import { useDeezerMetadataStore } from "../stores/deezerMetadataStore"
+import type { DeezerArtistInfo } from "../lib/deezer"
 
 function formatDuration(ms: number): string {
   const totalSec = Math.floor(ms / 1000)
@@ -33,6 +35,8 @@ export default function TrackInfoPanel({ onClose }: Props) {
   const [fullTrack, setFullTrack] = useState<Track | null>(null)
   const getLastfmTrack = useLastfmMetadataStore(s => s.getTrack)
   const [lastfmData, setLastfmData] = useState<LastfmTrackInfo | null>(null)
+  const getDeezerArtist = useDeezerMetadataStore(s => s.getArtist)
+  const [deezerArtistData, setDeezerArtistData] = useState<DeezerArtistInfo | null>(null)
 
   // Fetch full metadata to get stream details (bit depth, sample rate, etc.)
   useEffect(() => {
@@ -54,6 +58,17 @@ export default function TrackInfoPanel({ onClose }: Props) {
     })
     return () => { cancelled = true }
   }, [currentTrack?.rating_key, getLastfmTrack])
+
+  // Fetch Deezer artist data for fan count
+  useEffect(() => {
+    if (!currentTrack?.grandparent_title) return
+    let cancelled = false
+    setDeezerArtistData(null)
+    void getDeezerArtist(currentTrack.grandparent_title).then(d => {
+      if (!cancelled && d) setDeezerArtistData(d)
+    })
+    return () => { cancelled = true }
+  }, [currentTrack?.rating_key, getDeezerArtist])
 
   const track = fullTrack ?? currentTrack
   if (!track) return null
@@ -101,6 +116,11 @@ export default function TrackInfoPanel({ onClose }: Props) {
     if (lastfmData.listeners > 0) rows.push(["Listeners (Last.fm)", lastfmData.listeners.toLocaleString()])
     if (lastfmData.play_count > 0) rows.push(["Scrobbles (Last.fm)", lastfmData.play_count.toLocaleString()])
     if (lastfmData.tags.length > 0) rows.push(["Tags (Last.fm)", lastfmData.tags.slice(0, 5).join(", ")])
+  }
+
+  // Deezer stats
+  if (deezerArtistData?.fans && deezerArtistData.fans > 0) {
+    rows.push(["Fans (Deezer)", deezerArtistData.fans.toLocaleString()])
   }
 
   return (

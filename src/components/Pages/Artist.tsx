@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { Link } from "wouter"
 import { useShallow } from "zustand/react/shallow"
-import { useConnectionStore, buildPlexImageUrl, usePlayerStore, useUIStore } from "../../stores"
+import { useConnectionStore, buildPlexImageUrl, usePlayerStore, useUIStore, useLibraryStore } from "../../stores"
 import {
   getArtist,
   getArtistAlbumsInSection,
@@ -19,7 +19,6 @@ import { MediaCard } from "../MediaCard"
 import { ScrollRow } from "../ScrollRow"
 import { UltraBlur } from "../UltraBlur"
 import { getCachedArtist, prefetchAlbum, prefetchArtist, setArtistCache } from "../../stores/metadataCache"
-import { useLastfmStore } from "../../stores/lastfmStore"
 import { useLastfmMetadataStore } from "../../stores/lastfmMetadataStore"
 import type { LastfmArtistInfo } from "../../lib/lastfm"
 import { useDeezerMetadataStore } from "../../stores/deezerMetadataStore"
@@ -27,6 +26,7 @@ import type { DeezerArtistInfo } from "../../lib/deezer"
 import { useItunesMetadataStore } from "../../stores/itunesMetadataStore"
 import type { ItunesArtistInfo } from "../../lib/itunes"
 import { buildMetaImageUrl } from "../../lib/metadataImage"
+import { useMetadataSourceStore } from "../../stores/metadataSourceStore"
 
 function fmtDuration(ms: number) {
   const s = Math.floor(ms / 1000)
@@ -117,9 +117,16 @@ export function ArtistPage({ artistId }: { artistId: number }) {
   const [showHeroModal, setShowHeroModal] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
 
+  // Metadata source priority
+  const priority = useMetadataSourceStore(s => s.priority)
+  const { tagsGenre, tagsMood, tagsStyle } = useLibraryStore(useShallow(s => ({
+    tagsGenre: s.tagsGenre,
+    tagsMood: s.tagsMood,
+    tagsStyle: s.tagsStyle,
+  })))
+
   // LastFM metadata
   const getLastfmArtist = useLastfmMetadataStore(s => s.getArtist)
-  const replaceMetadata = useLastfmStore(s => s.replaceMetadata)
   const [lastfmData, setLastfmData] = useState<LastfmArtistInfo | null>(null)
 
   // Deezer metadata
@@ -225,10 +232,15 @@ export function ArtistPage({ artistId }: { artistId: number }) {
   }, [artist?.title, getLastfmArtist, getDeezerArtist, getItunesArtist])
 
   // Compute artUrl before early returns so useFocalPoint can be called unconditionally.
-  // Fall back to Deezer artist image when Plex has no art/thumb (disk-cached via metaimg://).
-  const artUrl = artist?.art
-    ? buildPlexImageUrl(baseUrl, token, artist.art)
-    : buildMetaImageUrl(deezerData?.image_url)
+  // Respect source priority — iterate through priority order, pick first source with an image.
+  const plexArt   = artist?.art ? buildPlexImageUrl(baseUrl, token, artist.art) : null
+  const deezerUrl = buildMetaImageUrl(deezerData?.image_url)
+  let artUrl: string | null = null
+  for (const src of priority) {
+    if (src === "plex"   && plexArt)   { artUrl = plexArt;   break }
+    if (src === "deezer" && deezerUrl) { artUrl = deezerUrl; break }
+  }
+  if (!artUrl) artUrl = plexArt ?? deezerUrl ?? null
   const heroBgPos = useFocalPoint(artUrl)
 
   // Map from lowercase artist name → Plex ratingKey for "Fans Also Like" linking.
@@ -241,13 +253,23 @@ export function ArtistPage({ artistId }: { artistId: number }) {
     return map
   }, [similarArtists, sonicallySimilar])
 
+  // Must be before early returns — hooks cannot be called conditionally.
+  const plexTagSet = useMemo(
+    () => new Set([...tagsGenre, ...tagsMood, ...tagsStyle].map(t => t.tag.toLowerCase())),
+    [tagsGenre, tagsMood, tagsStyle]
+  )
+
   if (isLoading) return <div className="p-8 text-sm text-gray-400">Loading artist…</div>
   if (error) return <div className="p-8 text-sm text-red-400">{error}</div>
   if (!artist) return null
 
-  const thumbUrl = artist.thumb
-    ? buildPlexImageUrl(baseUrl, token, artist.thumb)
-    : buildMetaImageUrl(deezerData?.image_url)
+  const plexThumb = artist.thumb ? buildPlexImageUrl(baseUrl, token, artist.thumb) : null
+  let thumbUrl: string | null = null
+  for (const src of priority) {
+    if (src === "plex"   && plexThumb) { thumbUrl = plexThumb; break }
+    if (src === "deezer" && deezerUrl) { thumbUrl = deezerUrl; break }
+  }
+  if (!thumbUrl) thumbUrl = plexThumb ?? deezerUrl ?? null
 
   const albumHubs = relatedHubs.filter(h =>
     !SKIP_HUB_IDS.has(h.hub_identifier) &&
@@ -271,24 +293,30 @@ export function ArtistPage({ artistId }: { artistId: number }) {
     ? buildItemUri(sectionUuid, `/library/metadata/${artistId}`)
     : null
 
-  // LastFM computed values
-  // Always prefer LastFM bio when available — Plex bio is the fallback
-  const displayBio = lastfmData?.bio || artist.summary
-  // Merge tags from all sources (deduped by lowercase): LastFM → Plex → iTunes
-  const allSources = [
-    ...(lastfmData?.tags ?? []),
-    ...genres.filter(g => !lastfmData?.tags?.some(t => t.toLowerCase() === g.toLowerCase())),
-    ...(itunesData?.genre && !lastfmData?.tags?.some(t => t.toLowerCase() === itunesData.genre.toLowerCase()) && !genres.some(g => g.toLowerCase() === itunesData.genre.toLowerCase())
-      ? [itunesData.genre]
-      : []),
-  ]
-  const seen = new Set<string>()
-  const mergedTags = allSources.filter(tag => {
-    const key = tag.toLowerCase()
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
+  // Bio: pick from the highest-priority source that has text.
+  // Only Plex and Last.fm have artist bios; Deezer and Apple are skipped.
+  let displayBio: string | undefined
+  for (const src of priority) {
+    if (src === "lastfm" && lastfmData?.bio)  { displayBio = lastfmData.bio;  break }
+    if (src === "plex"   && artist.summary)   { displayBio = artist.summary;  break }
+  }
+
+  // Merge tags in priority order; Plex genres always valid; external tags filtered.
+  const tagsBySource: Record<string, string[]> = {
+    plex:   genres,
+    lastfm: (lastfmData?.tags ?? []).filter(t => plexTagSet.has(t.toLowerCase())),
+    deezer: [],   // artist info has no genre tags
+    apple:  itunesData?.genre && plexTagSet.has(itunesData.genre.toLowerCase())
+      ? [itunesData.genre] : [],
+  }
+  const seenTags = new Set<string>()
+  const mergedTags: string[] = []
+  for (const src of priority) {
+    for (const tag of (tagsBySource[src] ?? [])) {
+      const key = tag.toLowerCase()
+      if (!seenTags.has(key)) { seenTags.add(key); mergedTags.push(tag) }
+    }
+  }
   const heroTags = mergedTags.slice(0, 8)
 
   return (
@@ -667,8 +695,8 @@ export function ArtistPage({ artistId }: { artistId: number }) {
           </ScrollRow>
         )}
 
-        {/* In replace mode hide sonic similar; in augment mode keep it */}
-        {!replaceMetadata && sonicallySimilar.length > 0 && (
+        {/* When Last.fm is top priority, hide Plex sonic similar (Last.fm similar shown below) */}
+        {priority[0] !== "lastfm" && sonicallySimilar.length > 0 && (
           <ScrollRow title="Sonically Similar Artists" restoreKey={`artist-${artistId}-sonic`}>
             {sonicallySimilar.map(a => {
               const matchPct = a.distance != null ? `${Math.round((1 - a.distance) * 100)}% match` : "Artist"
@@ -696,7 +724,7 @@ export function ArtistPage({ artistId }: { artistId: number }) {
         {lastfmData && lastfmData.similar.length > 0 && (
           <section>
             <h2 className="mb-4 text-xl font-bold">
-              {replaceMetadata ? "Similar Artists" : "Fans Also Like"}
+              {priority[0] === "lastfm" ? "Similar Artists" : "Fans Also Like"}
               <span className="ml-2 text-xs font-normal text-gray-500">via Last.fm</span>
             </h2>
             <div className="flex flex-wrap gap-4">

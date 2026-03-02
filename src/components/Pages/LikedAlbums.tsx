@@ -2,10 +2,31 @@ import { useEffect } from "react"
 import { Link } from "wouter"
 import { useLibraryStore, useConnectionStore, buildPlexImageUrl, useUIStore } from "../../stores"
 import { prefetchAlbum } from "../../stores/metadataCache"
+import { useAlbumImage } from "../../hooks/useMediaImage"
 
 function starsFromRating(rating: number | null): number {
   if (!rating) return 0
   return Math.round(rating / 2)
+}
+
+function AlbumThumb({ artist, title, thumb }: { artist: string; title: string; thumb: string | null }) {
+  const resolved = useAlbumImage(artist, title, thumb)
+  if (resolved) {
+    return (
+      <img
+        src={resolved}
+        alt={title}
+        className="h-full w-full object-cover transition-transform group-hover:scale-105"
+      />
+    )
+  }
+  return (
+    <div className="flex h-full w-full items-center justify-center">
+      <svg viewBox="0 0 24 24" width="40" height="40" fill="#535353">
+        <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+      </svg>
+    </div>
+  )
 }
 
 export function LikedAlbums() {
@@ -65,19 +86,7 @@ export function LikedAlbums() {
                   className="group flex flex-col gap-2 rounded-md p-3 no-underline transition-colors hover:bg-white/10"
                 >
                   <div className="relative w-full aspect-square overflow-hidden rounded-md bg-app-surface shadow-lg">
-                    {thumbUrl ? (
-                      <img
-                        src={thumbUrl}
-                        alt={album.title}
-                        className="h-full w-full object-cover transition-transform group-hover:scale-105"
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center">
-                        <svg viewBox="0 0 24 24" width="40" height="40" fill="#535353">
-                          <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
-                        </svg>
-                      </div>
-                    )}
+                    <AlbumThumb artist={album.parent_title} title={album.title} thumb={thumbUrl} />
                   </div>
                   <div className="w-full min-w-0">
                     <div className="truncate font-semibold text-sm text-white">

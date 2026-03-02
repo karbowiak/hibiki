@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Link } from "wouter"
 import { useShallow } from "zustand/react/shallow"
-import { useConnectionStore, usePlayerStore, buildPlexImageUrl, useUIStore } from "../../stores"
+import { useConnectionStore, usePlayerStore, buildPlexImageUrl, useUIStore, useLibraryStore } from "../../stores"
 import { getAlbum, getAlbumTracks, getRelatedHubs } from "../../lib/plex"
 import { prefetchTrackAudio } from "../../stores/playerStore"
 import type { Album, Artist, Track, Hub, PlexTag } from "../../types/plex"
@@ -9,7 +9,6 @@ import { MediaCard } from "../MediaCard"
 import { ScrollRow } from "../ScrollRow"
 import { UltraBlur } from "../UltraBlur"
 import { getCachedAlbum, prefetchAlbum, prefetchArtist, setAlbumCache } from "../../stores/metadataCache"
-import { useLastfmStore } from "../../stores/lastfmStore"
 import { useLastfmMetadataStore } from "../../stores/lastfmMetadataStore"
 import type { LastfmAlbumInfo } from "../../lib/lastfm"
 import { useDeezerMetadataStore } from "../../stores/deezerMetadataStore"
@@ -17,6 +16,7 @@ import type { DeezerAlbumInfo } from "../../lib/deezer"
 import { useItunesMetadataStore } from "../../stores/itunesMetadataStore"
 import type { ItunesAlbumInfo } from "../../lib/itunes"
 import { buildMetaImageUrl } from "../../lib/metadataImage"
+import { useMetadataSourceStore } from "../../stores/metadataSourceStore"
 
 function formatMs(ms: number): string {
   const s = Math.floor(ms / 1000)
@@ -60,9 +60,16 @@ export function AlbumPage({ albumId }: { albumId: number }) {
   const [showImageModal, setShowImageModal] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
 
+  // Metadata source priority
+  const priority = useMetadataSourceStore(s => s.priority)
+  const { tagsGenre, tagsMood, tagsStyle } = useLibraryStore(useShallow(s => ({
+    tagsGenre: s.tagsGenre,
+    tagsMood: s.tagsMood,
+    tagsStyle: s.tagsStyle,
+  })))
+
   // LastFM metadata
   const getLastfmAlbum = useLastfmMetadataStore(s => s.getAlbum)
-  const replaceMetadata = useLastfmStore(s => s.replaceMetadata)
   const [lastfmData, setLastfmData] = useState<LastfmAlbumInfo | null>(null)
 
   // Deezer metadata
@@ -133,9 +140,16 @@ export function AlbumPage({ albumId }: { albumId: number }) {
   if (error) return <div className="p-8 text-sm text-red-400">{error}</div>
   if (!album) return null
 
-  const thumbUrl = album.thumb
-    ? buildPlexImageUrl(baseUrl, token, album.thumb)
-    : (buildMetaImageUrl(deezerData?.cover_url) ?? buildMetaImageUrl(itunesData?.cover_url) ?? null)
+  const plexThumb   = album.thumb ? buildPlexImageUrl(baseUrl, token, album.thumb) : null
+  const deezerCover = buildMetaImageUrl(deezerData?.cover_url)
+  const appleCover  = buildMetaImageUrl(itunesData?.cover_url)
+  let thumbUrl: string | null = null
+  for (const src of priority) {
+    if (src === "plex"   && plexThumb)   { thumbUrl = plexThumb;   break }
+    if (src === "deezer" && deezerCover) { thumbUrl = deezerCover; break }
+    if (src === "apple"  && appleCover)  { thumbUrl = appleCover;  break }
+  }
+  if (!thumbUrl) thumbUrl = plexThumb ?? deezerCover ?? appleCover ?? null
   const parentThumbUrl = album.parent_thumb
     ? buildPlexImageUrl(baseUrl, token, album.parent_thumb)
     : null
@@ -150,32 +164,43 @@ export function AlbumPage({ albumId }: { albumId: number }) {
     ...album.mood,
   ]
 
-  // Metadata computed values
-  // Always prefer LastFM wiki/summary when available, fall back to Plex summary
-  const displayWiki = lastfmData?.wiki || album.summary
-  // Merge all tag sources: Plex first, then unique LastFM tags, then unique Deezer genres
-  const lastfmOnlyTags = lastfmData?.tags.filter(t =>
-    !plexTags.some(pt => pt.tag.toLowerCase() === t.toLowerCase())
-  ) ?? []
-  const deezerOnlyGenres = deezerData?.genres.filter(g =>
-    !plexTags.some(pt => pt.tag.toLowerCase() === g.toLowerCase()) &&
-    !lastfmOnlyTags.some(t => t.toLowerCase() === g.toLowerCase())
-  ) ?? []
-  const allThirdPartyTags = [
-    ...lastfmOnlyTags.map(t => t.toLowerCase()),
-    ...deezerOnlyGenres.map(g => g.toLowerCase()),
-  ]
-  const itunesOnlyGenre = itunesData?.genre && itunesData.genre.length > 0 &&
-    !plexTags.some(pt => pt.tag.toLowerCase() === itunesData.genre.toLowerCase()) &&
-    !allThirdPartyTags.includes(itunesData.genre.toLowerCase())
-    ? [itunesData.genre]
-    : []
-  const allTags = [
-    ...plexTags,
-    ...lastfmOnlyTags.map(t => ({ tag: t, id: null, filter: null })),
-    ...deezerOnlyGenres.map(g => ({ tag: g, id: null, filter: null })),
-    ...itunesOnlyGenre.map(g => ({ tag: g, id: null, filter: null })),
-  ]
+  // Bio: pick from the highest-priority source that has text.
+  // Only Plex and Last.fm have album bios/wiki; Deezer and Apple are skipped.
+  let displayWiki: string | undefined
+  for (const src of priority) {
+    if (src === "lastfm" && lastfmData?.wiki) { displayWiki = lastfmData.wiki; break }
+    if (src === "plex"   && album.summary)    { displayWiki = album.summary;   break }
+  }
+
+  // Build set of all Plex-known tags so external tags can be filtered to only
+  // those that link to something in the library (genre/mood/style stations).
+  const plexTagSet = useMemo(
+    () => new Set([...tagsGenre, ...tagsMood, ...tagsStyle].map(t => t.tag.toLowerCase())),
+    [tagsGenre, tagsMood, tagsStyle]
+  )
+
+  // Merge tags in priority order; Plex tags always valid; external tags filtered.
+  const toPlexTag = (tag: string): PlexTag => ({ tag, id: null, filter: null })
+  const tagsBySource: Record<string, PlexTag[]> = {
+    plex:   plexTags,
+    lastfm: (lastfmData?.tags ?? [])
+      .filter(t => plexTagSet.has(t.toLowerCase()))
+      .map(toPlexTag),
+    deezer: (deezerData?.genres ?? [])
+      .filter(g => plexTagSet.has(g.toLowerCase()))
+      .map(toPlexTag),
+    apple:  itunesData?.genre && plexTagSet.has(itunesData.genre.toLowerCase())
+      ? [toPlexTag(itunesData.genre)]
+      : [],
+  }
+  const seenTagKeys = new Set<string>()
+  const allTags: PlexTag[] = []
+  for (const src of priority) {
+    for (const entry of (tagsBySource[src] ?? [])) {
+      const key = entry.tag.toLowerCase()
+      if (!seenTagKeys.has(key)) { seenTagKeys.add(key); allTags.push(entry) }
+    }
+  }
   // Use Deezer label as fallback when Plex has none.
   // Deezer returns the literal string "[no label]" for unlabelled releases — filter that out.
   const deezerLabel = deezerData?.label && deezerData.label !== "[no label]" ? deezerData.label : null

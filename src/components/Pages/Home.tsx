@@ -7,6 +7,7 @@ import type { PlexMedia, Playlist } from "../../types/plex"
 import { searchLibrary, buildItemUri, getMixTracks } from "../../lib/plex"
 import { ScrollRow } from "../ScrollRow"
 import { MediaCard } from "../MediaCard"
+import { PriorityMediaCard } from "../PriorityMediaCard"
 import { selectMix } from "./Mix"
 
 /** Strip common mix suffixes to get the artist name: "Ado Mix" → "Ado" */
@@ -41,6 +42,8 @@ export function getMediaInfo(item: PlexMedia, baseUrl: string, token: string, op
         href: `/album/${item.rating_key}`,
         ratingKey: item.rating_key,
         itemType: "album" as const,
+        artistName: item.parent_title,
+        albumName: item.title,
       }
     case "artist":
       return {
@@ -51,6 +54,8 @@ export function getMediaInfo(item: PlexMedia, baseUrl: string, token: string, op
         href: `/artist/${item.rating_key}`,
         ratingKey: item.rating_key,
         itemType: "artist" as const,
+        artistName: item.title,
+        albumName: null,
       }
     case "track":
       return {
@@ -230,8 +235,10 @@ export function Home() {
           {recentlyAdded.slice(0, 30).map((item, idx) => {
             const info = getMediaInfo(item, baseUrl, token)
             if (!info) return null
+            const usePriority = info.itemType === "artist" || info.itemType === "album"
+            const Card = usePriority ? PriorityMediaCard : MediaCard
             return (
-              <MediaCard
+              <Card
                 key={idx}
                 title={info.title}
                 desc={info.desc}
@@ -240,6 +247,8 @@ export function Home() {
                 href={info.href ?? undefined}
                 prefetch={makePrefetch(info)}
                 onPlay={makeOnPlay(item)}
+                artistName={"artistName" in info ? info.artistName : undefined}
+                albumName={"albumName" in info ? info.albumName : undefined}
                 scrollItem
               />
             )
@@ -272,8 +281,10 @@ export function Home() {
             {items.slice(0, 30).map((item, idx) => {
               const info = getMediaInfo(item, baseUrl, token, { showYear: isAnniversary })
               if (!info) return null
+              const usePriority = info.itemType === "artist" || info.itemType === "album"
+              const Card = usePriority ? PriorityMediaCard : MediaCard
               return (
-                <MediaCard
+                <Card
                   key={idx}
                   title={info.title}
                   desc={info.desc}
@@ -282,6 +293,8 @@ export function Home() {
                   href={info.href ?? undefined}
                   prefetch={makePrefetch(info)}
                   onPlay={makeOnPlay(item)}
+                  artistName={"artistName" in info ? info.artistName : undefined}
+                  albumName={"albumName" in info ? info.albumName : undefined}
                   scrollItem
                 />
               )

@@ -36,6 +36,10 @@ static AUDIO_HTTP: Lazy<reqwest::Client> = Lazy::new(|| {
         .expect("failed to build audio HTTP client")
 });
 
+/// Limit concurrent audio prefetch downloads to avoid overwhelming the Plex server.
+/// `try_acquire` is used so excess hover events are silently skipped rather than queued.
+static PREFETCH_SEMAPHORE: Lazy<tokio::sync::Semaphore> = Lazy::new(|| tokio::sync::Semaphore::new(2));
+
 /// Dedicated tokio runtime for async HTTP I/O in the decoder thread
 static DECODER_RT: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
     tokio::runtime::Builder::new_multi_thread()
@@ -528,36 +532,73 @@ fn evict_cache_if_needed(cache_dir: &std::path::Path, max_bytes: u64) {
 /// Warm the audio disk cache for `url` in the background.
 pub fn prefetch_url_bg(url: String, shared: Arc<DecoderShared>) {
     DECODER_RT.spawn(async move {
-        if let Some(ref cache_dir) = shared.cache_dir {
-            let cache_path = cache_dir.join(audio_cache_key(&url));
-            if cache_path.exists() {
-                debug!(url = %url, "Audio prefetch: already cached");
+        let Some(ref cache_dir) = shared.cache_dir else { return };
+        let cache_path = cache_dir.join(audio_cache_key(&url));
+        if cache_path.exists() {
+            debug!(url = %url, "Audio prefetch: already cached");
+            return;
+        }
+        let _ = std::fs::create_dir_all(cache_dir);
+
+        // Skip if both slots are occupied — hover fires many events; don't queue them all.
+        let _permit = match PREFETCH_SEMAPHORE.try_acquire() {
+            Ok(p) => p,
+            Err(_) => {
+                debug!(url = %url, "Audio prefetch: skipped (concurrency limit)");
                 return;
             }
-            let _ = std::fs::create_dir_all(cache_dir);
-        } else {
+        };
+
+        // Re-check after acquiring permit (another task may have written it).
+        if cache_path.exists() {
             return;
         }
 
-        match AUDIO_HTTP.get(&url).send().await {
-            Ok(resp) if resp.status().is_success() => match resp.bytes().await {
-                Ok(bytes) => {
-                    if let Some(ref cache_dir) = shared.cache_dir {
-                        let cache_path = cache_dir.join(audio_cache_key(&url));
-                        let _ = std::fs::write(&cache_path, &bytes);
+        let resp = match AUDIO_HTTP.get(&url).send().await {
+            Ok(r) if r.status().is_success() => r,
+            Ok(r) => { warn!(url = %url, status = %r.status(), "Audio prefetch: bad status"); return; }
+            Err(e) => { warn!(url = %url, error = %e, "Audio prefetch: request failed"); return; }
+        };
+
+        // Stream to a .part temp file so large audio files don't buffer entirely in RAM
+        // and a partial write never leaves a corrupt cache entry.
+        let tmp_path = cache_path.with_extension("part");
+        match prefetch_stream_to_file(resp, &tmp_path).await {
+            Ok(total) => {
+                match tokio::fs::rename(&tmp_path, &cache_path).await {
+                    Ok(_) => {
                         let max_bytes = shared.max_cache_bytes.load(Ordering::Relaxed);
-                        if max_bytes > 0 {
-                            evict_cache_if_needed(cache_dir, max_bytes);
-                        }
-                        info!(url = %url, size = bytes.len(), "Audio prefetch complete");
+                        if max_bytes > 0 { evict_cache_if_needed(cache_dir, max_bytes); }
+                        info!(url = %url, size = total, "Audio prefetch complete");
+                    }
+                    Err(e) => {
+                        warn!(url = %url, error = %e, "Audio prefetch: rename failed");
+                        let _ = tokio::fs::remove_file(&tmp_path).await;
                     }
                 }
-                Err(e) => warn!(url = %url, error = %e, "Audio prefetch: failed to read bytes"),
-            },
-            Ok(resp) => warn!(url = %url, status = %resp.status(), "Audio prefetch: bad status"),
-            Err(e) => warn!(url = %url, error = %e, "Audio prefetch: request failed"),
+            }
+            Err(e) => {
+                debug!(url = %url, error = %e, "Audio prefetch: stream failed (non-critical)");
+                let _ = tokio::fs::remove_file(&tmp_path).await;
+            }
         }
     });
+}
+
+/// Stream a reqwest response body to `path`, returning the total bytes written.
+async fn prefetch_stream_to_file(resp: reqwest::Response, path: &std::path::Path) -> anyhow::Result<usize> {
+    use futures::TryStreamExt;
+    use tokio::io::AsyncWriteExt;
+
+    let mut file = tokio::fs::File::create(path).await?;
+    let mut stream = resp.bytes_stream();
+    let mut total = 0usize;
+    while let Some(chunk) = stream.try_next().await? {
+        file.write_all(&chunk).await?;
+        total += chunk.len();
+    }
+    file.flush().await?;
+    Ok(total)
 }
 
 /// Probe a `MediaSourceStream` and return a format reader + decoder + track info.

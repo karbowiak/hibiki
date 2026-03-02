@@ -83,9 +83,6 @@ export default function LyricsPanel() {
   })))
   const currentTrack = usePlayerStore(s => s.currentTrack)
 
-  // When queue is pinned, lyrics live in the queue's Lyrics tab — nothing to render here
-  if (isQueuePinned) return null
-
   // Escape key to close overlay
   useEffect(() => {
     if (!isLyricsOpen || isLyricsPinned) return
@@ -93,6 +90,9 @@ export default function LyricsPanel() {
     document.addEventListener("keydown", onKeyDown)
     return () => document.removeEventListener("keydown", onKeyDown)
   }, [isLyricsOpen, isLyricsPinned])
+
+  // When queue is pinned, lyrics live in the queue's Lyrics tab — nothing to render here
+  if (isQueuePinned) return null
 
   const header = (
     <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)] shrink-0">

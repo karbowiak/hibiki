@@ -106,6 +106,9 @@ pub fn run() {
             let media_session = MediaSessionState::start(app.handle());
             app.manage(media_session);
 
+            // Remove the native OS menu bar (redundant on Windows with our custom titlebar).
+            app.remove_menu().ok();
+
             // Restore saved window size/position before making the window visible.
             // The window starts hidden (visible: false in tauri.conf.json) so there
             // is no position-flash when the plugin moves it to the saved bounds.
