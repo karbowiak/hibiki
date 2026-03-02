@@ -8,6 +8,8 @@ interface Props {
   width?: number | string
   align?: "left" | "right"
   disabled?: boolean
+  /** Pill-shaped button (auto-width) instead of the default square icon button */
+  wide?: boolean
   children: ((close: () => void) => ReactNode) | ReactNode
 }
 
@@ -19,6 +21,7 @@ export default function PlayerPopover({
   width = 224,
   align = "right",
   disabled,
+  wide,
   children,
 }: Props) {
   const [isOpen, setIsOpen] = useState(false)
@@ -95,13 +98,21 @@ export default function PlayerPopover({
           disabled={disabled}
           title={label}
           aria-label={label}
-          className={`flex h-8 w-8 items-center justify-center transition-colors ${
+          className={[
+            "flex items-center justify-center transition-colors",
+            wide
+              ? "h-7 rounded-full px-2.5 gap-1.5"
+              : "h-8 w-8",
             active || isOpen
-              ? "text-accent"
+              ? wide
+                ? "bg-accent/15 border border-accent/40 text-accent"
+                : "text-accent"
               : disabled
                 ? "text-white/20 cursor-default"
-                : "text-white/40 hover:text-white/70"
-          }`}
+                : wide
+                  ? "bg-white/10 hover:bg-white/20 text-white/60 hover:text-white/90"
+                  : "text-white/40 hover:text-white/70",
+          ].join(" ")}
         >
           {icon}
         </button>

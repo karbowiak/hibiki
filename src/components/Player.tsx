@@ -27,8 +27,10 @@ function formatMs(ms: number): string {
 
 export function Player() {
   const positionRef = useRef(0)
-  const volumeAreaRef = useRef<HTMLDivElement>(null)
+  const volumeSliderRef = useRef<HTMLDivElement>(null)
+  const volumeTooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [seekHoverPct, setSeekHoverPct] = useState<number | null>(null)
+  const [volumeTooltipVisible, setVolumeTooltipVisible] = useState(false)
 
   const {
     currentTrack,
@@ -198,9 +200,9 @@ export function Player() {
     return () => clearInterval(id)
   }, [sleepEndsAt])
 
-  // Scroll wheel on volume area — must be non-passive to call preventDefault()
+  // Scroll wheel on volume slider — must be non-passive to call preventDefault()
   useEffect(() => {
-    const el = volumeAreaRef.current
+    const el = volumeSliderRef.current
     if (!el) return
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
@@ -208,6 +210,9 @@ export function Player() {
       const delta = e.deltaY < 0 ? 2.5 : -2.5
       // Read latest volume directly from store (avoids stale closure)
       setVolume(usePlayerStore.getState().volume + delta)
+      setVolumeTooltipVisible(true)
+      if (volumeTooltipTimer.current) clearTimeout(volumeTooltipTimer.current)
+      volumeTooltipTimer.current = setTimeout(() => setVolumeTooltipVisible(false), 1500)
     }
     el.addEventListener("wheel", onWheel, { passive: false })
     return () => el.removeEventListener("wheel", onWheel)
@@ -226,6 +231,25 @@ export function Player() {
 
   const repeatActive = repeat > 0
   const shuffleActive = shuffle
+
+  // Only show album in the subtitle row when contextName isn't already showing the same album
+  const showAlbumInSubtitle = !!(
+    currentTrack?.parent_title && albumId &&
+    (!contextName || contextName !== currentTrack.parent_title)
+  )
+
+  // Media info chip: codec + bitrate shown next to the repeat button.
+  // Plex often omits audioCodec/audioBitrate at the top-level Track for queue items,
+  // so fall back to the first Media entry (same as TrackInfoPanel does).
+  const firstMedia = currentTrack?.media?.[0]
+  const chipCodec = (firstMedia?.audio_codec ?? currentTrack?.audio_codec)?.toUpperCase()
+  const chipBitrate = firstMedia?.bitrate ?? currentTrack?.audio_bitrate
+  const mediaLabel = chipCodec
+    ? chipBitrate ? `${chipCodec} ${chipBitrate}k` : chipCodec
+    : null
+
+  // Short DJ name (strip "DJ " prefix) for inline display
+  const djShortName = djMode ? DJ_MODES.find(d => d.key === djMode)?.name.replace("DJ ", "") ?? djMode : null
 
   return (
     <div className="relative border-t border-[var(--border)]">
@@ -265,11 +289,11 @@ export function Player() {
                           {currentTrack?.grandparent_title ?? ""}
                         </Link>
                       ) : (currentTrack?.grandparent_title ?? "")}
-                      {currentTrack?.parent_title && albumId && (
+                      {showAlbumInSubtitle && (
                         <>
                           <span className="mx-1 text-white/30">·</span>
                           <Link href={`/album/${albumId}`} className="hover:text-white hover:underline transition-colors">
-                            {currentTrack.parent_title}
+                            {currentTrack!.parent_title}
                           </Link>
                         </>
                       )}
@@ -292,7 +316,42 @@ export function Player() {
 
             {/* Center: controls + progress */}
             <div className="flex w-[40%] max-w-[45.125rem] flex-col items-center px-4 pt-2">
-              <div className="flex items-center gap-x-2">
+              <div className="flex items-center gap-x-1.5">
+
+                {/* Radio mode indicator — left of DJ, click to stop */}
+                {isRadioMode && (
+                  <button
+                    onClick={stopRadio}
+                    title="Radio is on — click to stop"
+                    className="flex-shrink-0 rounded-full bg-accent/15 border border-accent/40 px-2 py-0.5 text-[0.625rem] font-bold uppercase tracking-wider text-accent hover:bg-accent/30 transition-colors"
+                  >
+                    RADIO
+                  </button>
+                )}
+
+                {/* Guest DJ — icon only when inactive, icon+name pill when active */}
+                <PlayerPopover
+                  icon={
+                    djMode ? (
+                      <>
+                        <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+                          <path d="M8 1a6 6 0 0 0-6 6v2.5a2.5 2.5 0 0 0 2.5 2.5H5a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1H3.05A5 5 0 0 1 13 7H11a1 1 0 0 0-1 1v3a1 1 0 0 0 1 1h.5A2.5 2.5 0 0 0 14 9.5V7a6 6 0 0 0-6-6z" />
+                        </svg>
+                        <span className="text-[0.6875rem] font-semibold">{djShortName}</span>
+                      </>
+                    ) : (
+                      <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+                        <path d="M8 1a6 6 0 0 0-6 6v2.5a2.5 2.5 0 0 0 2.5 2.5H5a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1H3.05A5 5 0 0 1 13 7H11a1 1 0 0 0-1 1v3a1 1 0 0 0 1 1h.5A2.5 2.5 0 0 0 14 9.5V7a6 6 0 0 0-6-6z" />
+                      </svg>
+                    )
+                  }
+                  wide={!!djMode}
+                  active={!!djMode}
+                  label="Guest DJ"
+                  width={288}
+                >
+                  {(close) => <DjPanel onClose={close} />}
+                </PlayerPopover>
 
                 {/* Shuffle */}
                 <button
@@ -350,6 +409,22 @@ export function Player() {
                     <path d="M0 4.75A3.75 3.75 0 0 1 3.75 1h8.5A3.75 3.75 0 0 1 16 4.75v5a3.75 3.75 0 0 1-3.75 3.75H9.81l1.018 1.018a.75.75 0 1 1-1.06 1.06L6.939 12.75l2.829-2.828a.75.75 0 1 1 1.06 1.06L9.811 12h2.439a2.25 2.25 0 0 0 2.25-2.25v-5a2.25 2.25 0 0 0-2.25-2.25h-8.5A2.25 2.25 0 0 0 1.5 4.75v5A2.25 2.25 0 0 0 3.75 12H5v1.5H3.75A3.75 3.75 0 0 1 0 9.75v-5z" />
                   </svg>
                 </button>
+
+                {/* Media info chip — shows codec + bitrate, opens track info panel */}
+                {currentTrack && mediaLabel && (
+                  <PlayerPopover
+                    icon={
+                      <span className="font-mono text-[0.6875rem] font-semibold tracking-wide">
+                        {mediaLabel}
+                      </span>
+                    }
+                    wide
+                    label="Track info"
+                    width={320}
+                  >
+                    {(close) => <TrackInfoPanel onClose={close} />}
+                  </PlayerPopover>
+                )}
               </div>
 
               {/* Progress / seek bar */}
@@ -394,52 +469,8 @@ export function Player() {
               </div>
             </div>
 
-            {/* Right: queue toggle + volume + extra controls */}
-            <div ref={volumeAreaRef} className="flex w-[30%] min-w-[11.25rem] items-center justify-end gap-1">
-
-              {/* Radio mode indicator — click to turn off auto-refill */}
-              {isRadioMode && (
-                <button
-                  onClick={stopRadio}
-                  title="Radio is on — click to stop"
-                  className="mr-1 flex-shrink-0 flex items-center gap-1 rounded-full bg-accent/15 border border-accent/30 px-2 py-0.5 text-[0.625rem] font-semibold uppercase tracking-wider text-accent hover:bg-accent/30 transition-colors"
-                >
-                  <svg viewBox="0 0 16 16" width="8" height="8" fill="currentColor">
-                    <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6A3 3 0 0 0 8 5zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
-                  </svg>
-                  {djMode ? (DJ_MODES.find(d => d.key === djMode)?.name.replace('DJ ', '') ?? 'DJ') : 'Radio'}
-                </button>
-              )}
-
-              {/* Track info */}
-              <PlayerPopover
-                icon={
-                  <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-                    <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
-                    <path d="m8.93 6.588-2.29.287-.082.38.45.083c.294.07.352.176.288.469l-.738 3.468c-.194.897.105 1.319.808 1.319.545 0 1.178-.252 1.465-.598l.088-.416c-.2.176-.492.246-.686.246-.275 0-.375-.193-.304-.533L8.93 6.588zM9 4.5a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/>
-                  </svg>
-                }
-                label="Track info"
-                disabled={!currentTrack}
-                width={320}
-              >
-                {(close) => <TrackInfoPanel onClose={close} />}
-              </PlayerPopover>
-
-              {/* Guest DJ menu */}
-              <PlayerPopover
-                icon={
-                  <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-                    <path d="M8 1a6 6 0 0 0-6 6v2.5a2.5 2.5 0 0 0 2.5 2.5H5a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1H3.05A5 5 0 0 1 13 7H11a1 1 0 0 0-1 1v3a1 1 0 0 0 1 1h.5A2.5 2.5 0 0 0 14 9.5V7a6 6 0 0 0-6-6z" />
-                  </svg>
-                }
-                label="Guest DJ"
-                active={!!djMode}
-                subtitle={djMode ? DJ_MODES.find(d => d.key === djMode)?.name.replace("DJ ", "") : null}
-                width={288}
-              >
-                {(close) => <DjPanel onClose={close} />}
-              </PlayerPopover>
+            {/* Right: volume + extra controls */}
+            <div className="flex w-[30%] min-w-[11.25rem] items-center justify-end gap-1">
 
               {/* Sleep timer */}
               <PlayerPopover
@@ -574,13 +605,24 @@ export function Player() {
                   </svg>
                 )}
               </button>
-              <div className="flex h-7 w-32 items-center">
+              {/* Slider with volume tooltip */}
+              <div ref={volumeSliderRef} className="relative flex h-7 w-32 items-center">
+                {volumeTooltipVisible && (
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-0.5 rounded-md bg-app-card border border-[var(--border)] text-xs font-bold text-white shadow-lg pointer-events-none whitespace-nowrap">
+                    {Math.round(volume)}%
+                  </div>
+                )}
                 <input
                   type="range"
                   min={0}
                   max={100}
                   value={volume}
-                  onChange={e => setVolume(parseInt(e.target.value, 10))}
+                  onChange={e => {
+                    setVolume(parseInt(e.target.value, 10))
+                    setVolumeTooltipVisible(true)
+                    if (volumeTooltipTimer.current) clearTimeout(volumeTooltipTimer.current)
+                    volumeTooltipTimer.current = setTimeout(() => setVolumeTooltipVisible(false), 1500)
+                  }}
                   className="h-1 w-full cursor-pointer appearance-none rounded-full"
                   style={{
                     background: `linear-gradient(to right, var(--accent) 0%, var(--accent) ${volume}%, #535353 ${volume}%, #535353 100%)`,
