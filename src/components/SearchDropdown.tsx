@@ -81,7 +81,7 @@ export function SearchDropdown({ activeIndex, onActiveIndexChange, onClose }: Pr
   if (results.length === 0) return null
 
   return (
-    <div className="absolute top-full left-0 z-50 mt-1 w-[420px] rounded-xl bg-[#282828] shadow-2xl overflow-hidden">
+    <div className="absolute top-full left-0 z-50 mt-1 w-[420px] rounded-xl bg-app-surface shadow-2xl overflow-hidden">
       {items.map((row, idx) => {
         const isActive = idx === activeIndex
         if (row.kind === "artist") {

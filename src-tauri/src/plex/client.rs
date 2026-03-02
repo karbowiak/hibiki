@@ -171,6 +171,18 @@ impl PlexClient {
         Ok(wrapper.container)
     }
 
+    /// Fetch raw response text — for non-JSON endpoints (e.g., TTML/LRC lyrics).
+    pub async fn get_text(&self, path: &str) -> Result<String> {
+        let url = self.build_url(path);
+        let response = self.client.get(&url)
+            .header("X-Plex-Token", &self.token)
+            .send().await.context("GET request failed")?;
+        if !response.status().is_success() {
+            return Err(anyhow::anyhow!("HTTP error: {} for URL: {}", response.status(), url));
+        }
+        response.text().await.context("Failed to read response text")
+    }
+
     /// Fetch raw response text — for debugging API responses in tests.
     #[cfg(test)]
     pub async fn get_raw(&self, path: &str) -> Result<String> {

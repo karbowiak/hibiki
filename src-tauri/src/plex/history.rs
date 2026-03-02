@@ -370,8 +370,10 @@ impl PlexClient {
     /// ```
     #[instrument(skip(self))]
     pub async fn mark_played(&self, rating_key: i64) -> Result<()> {
+        // Plex expects `key` as the bare integer ratingKey here, NOT the full
+        // /library/metadata/{id} path — the full path returns HTTP 404.
         let path = format!(
-            "/:/scrobble?ratingKey={}&key=/library/metadata/{}&identifier=com.plexapp.plugins.library",
+            "/:/scrobble?ratingKey={}&key={}&identifier=com.plexapp.plugins.library",
             rating_key, rating_key
         );
         let url = self.build_url(&path);
@@ -489,8 +491,9 @@ impl PlexClient {
             PlaybackState::Stopped => "stopped",
         };
 
+        // hasMDE=1 is required by PMS 1.29+ — without it the server returns 400.
         let path = format!(
-            "/:/timeline?ratingKey={}&key=/library/metadata/{}&state={}&time={}&duration={}&identifier=com.plexapp.plugins.library&clientIdentifier={}",
+            "/:/timeline?hasMDE=1&ratingKey={}&key=/library/metadata/{}&state={}&time={}&duration={}&identifier=com.plexapp.plugins.library&clientIdentifier={}",
             rating_key, rating_key, state_str, time, duration, client_identifier
         );
         let url = self.build_url(&path);
@@ -615,10 +618,11 @@ mod tests {
         let client_identifier = "plexify";
 
         let path = format!(
-            "/:/timeline?ratingKey={}&key=/library/metadata/{}&state={}&time={}&duration={}&identifier=com.plexapp.plugins.library&clientIdentifier={}",
+            "/:/timeline?hasMDE=1&ratingKey={}&key=/library/metadata/{}&state={}&time={}&duration={}&identifier=com.plexapp.plugins.library&clientIdentifier={}",
             rating_key, rating_key, state_str, time, duration, client_identifier
         );
 
+        assert!(path.contains("hasMDE=1"));
         assert!(path.contains("ratingKey=12345"));
         assert!(path.contains("state=playing"));
         assert!(path.contains("time=30000"));

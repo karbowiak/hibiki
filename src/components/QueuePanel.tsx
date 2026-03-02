@@ -16,6 +16,7 @@ import { useShallow } from "zustand/react/shallow"
 import { usePlayerStore, useConnectionStore, buildPlexImageUrl } from "../stores"
 import { useUIStore } from "../stores/uiStore"
 import { isDjGenerated, isRadioGenerated } from "../stores/playerStore"
+import { LyricsContent } from "./LyricsPanel"
 
 function formatMs(ms: number): string {
   const s = Math.floor(ms / 1000)
@@ -62,7 +63,7 @@ function SortableItem({
     <div
       ref={setNodeRef}
       style={style}
-      className={`flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer hover:bg-white/5 group ${isCurrent ? "border-l-2 border-[#1db954]" : ""}`}
+      className={`flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer hover:bg-white/5 group ${isCurrent ? "border-l-2 border-accent" : ""}`}
       onClick={onJump}
     >
       {/* Drag handle */}
@@ -81,7 +82,7 @@ function SortableItem({
       {/* Position */}
       <span className="w-5 flex-shrink-0 text-center text-xs text-gray-500 tabular-nums">
         {isCurrent ? (
-          <svg viewBox="0 0 16 16" width="10" height="10" fill="#1db954" className="mx-auto">
+          <svg viewBox="0 0 16 16" width="10" height="10" style={{ fill: "var(--accent)" }} className="mx-auto">
             <polygon points="3,2 13,8 3,14" />
           </svg>
         ) : (
@@ -93,13 +94,13 @@ function SortableItem({
       {thumb ? (
         <img src={thumb} alt="" className="h-10 w-10 rounded-sm flex-shrink-0 object-cover" />
       ) : (
-        <div className="h-10 w-10 rounded-sm flex-shrink-0 bg-[#282828]" />
+        <div className="h-10 w-10 rounded-sm flex-shrink-0 bg-app-surface" />
       )}
 
       {/* Track info */}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5 min-w-0">
-          <span className={`truncate text-sm ${isCurrent ? "text-[#1db954] font-medium" : "text-white"}`}>
+          <span className={`truncate text-sm ${isCurrent ? "text-accent font-medium" : "text-white"}`}>
             {title}
           </span>
           {isGuestDj && (
@@ -143,11 +144,13 @@ export function QueuePanel() {
     removeFromQueue: s.removeFromQueue,
     jumpToQueueItem: s.jumpToQueueItem,
   })))
-  const { isQueueOpen, setQueueOpen, isQueuePinned, setQueuePinned } = useUIStore(useShallow(s => ({
+  const { isQueueOpen, setQueueOpen, isQueuePinned, setQueuePinned, queueActiveTab, setQueueActiveTab } = useUIStore(useShallow(s => ({
     isQueueOpen: s.isQueueOpen,
     setQueueOpen: s.setQueueOpen,
     isQueuePinned: s.isQueuePinned,
     setQueuePinned: s.setQueuePinned,
+    queueActiveTab: s.queueActiveTab,
+    setQueueActiveTab: s.setQueueActiveTab,
   })))
   const { baseUrl, token } = useConnectionStore(useShallow(s => ({ baseUrl: s.baseUrl, token: s.token })))
 
@@ -169,15 +172,41 @@ export function QueuePanel() {
   const displayItems = queue.slice(queueIndex)
 
   const header = (
-    <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 flex-shrink-0">
-      <h2 className="text-sm font-semibold text-white">Queue</h2>
+    <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)] flex-shrink-0">
+      {/* Tab bar when pinned, plain title when overlay */}
+      {isQueuePinned ? (
+        <div className="flex items-center gap-4 flex-1 min-w-0">
+          <button
+            onClick={() => setQueueActiveTab("queue")}
+            className={`text-sm font-semibold pb-0.5 transition-colors border-b-2 ${
+              queueActiveTab === "queue"
+                ? "text-[color:var(--text-primary)] border-accent"
+                : "text-[color:var(--text-muted)] border-transparent hover:text-[color:var(--text-secondary)]"
+            }`}
+          >
+            Queue
+          </button>
+          <button
+            onClick={() => setQueueActiveTab("lyrics")}
+            className={`text-sm font-semibold pb-0.5 transition-colors border-b-2 ${
+              queueActiveTab === "lyrics"
+                ? "text-[color:var(--text-primary)] border-accent"
+                : "text-[color:var(--text-muted)] border-transparent hover:text-[color:var(--text-secondary)]"
+            }`}
+          >
+            Lyrics
+          </button>
+        </div>
+      ) : (
+        <h2 className="text-sm font-semibold text-[color:var(--text-primary)]">Queue</h2>
+      )}
       <div className="flex items-center gap-0.5">
         {/* Pin button — toggles sticky sidebar mode */}
         <button
           onClick={() => setQueuePinned(!isQueuePinned)}
           title={isQueuePinned ? "Unpin queue" : "Pin queue to sidebar"}
           className={`flex h-7 w-7 items-center justify-center rounded transition-colors ${
-            isQueuePinned ? "text-[#1db954] hover:text-[#1db954]/70" : "text-gray-400 hover:text-white"
+            isQueuePinned ? "text-accent hover:text-accent/70" : "text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)]"
           }`}
           aria-label={isQueuePinned ? "Unpin queue" : "Pin queue"}
         >
@@ -193,7 +222,7 @@ export function QueuePanel() {
             if (isQueuePinned) setQueuePinned(false)
             else setQueueOpen(false)
           }}
-          className="flex h-7 w-7 items-center justify-center rounded text-gray-400 hover:text-white transition-colors"
+          className="flex h-7 w-7 items-center justify-center rounded text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)] transition-colors"
           aria-label="Close queue"
         >
           <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
@@ -258,12 +287,12 @@ export function QueuePanel() {
         }`}
       >
         <div
-          className={`flex h-full w-80 flex-col bg-[#121212] border-l border-white/10 transition-transform duration-300 ease-in-out ${
+          className={`flex h-full w-80 flex-col bg-app-bg border-l border-[var(--border)] transition-transform duration-300 ease-in-out ${
             isQueueOpen ? "translate-x-0" : "translate-x-full"
           }`}
         >
           {header}
-          {list}
+          {queueActiveTab === "lyrics" ? <LyricsContent /> : list}
         </div>
       </div>
     )
@@ -279,7 +308,7 @@ export function QueuePanel() {
         />
       )}
       <div
-        className={`fixed right-0 top-0 bottom-24 z-50 w-80 flex flex-col bg-[#121212] border-l border-white/10 shadow-2xl transition-transform duration-300 ease-in-out ${
+        className={`fixed right-0 top-0 bottom-24 z-50 w-80 flex flex-col bg-app-bg border-l border-[var(--border)] shadow-2xl rounded-l-2xl overflow-hidden transition-transform duration-300 ease-in-out ${
           isQueueOpen ? "translate-x-0" : "translate-x-full"
         }`}
       >

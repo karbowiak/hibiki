@@ -11,17 +11,17 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
   const playPlaylist = usePlayerStore(useShallow(s => s.playPlaylist))
 
   return (
-    <div className="flex h-full w-60 flex-shrink-0 flex-col bg-black p-6">
+    <div className="flex h-full w-60 flex-shrink-0 flex-col bg-app-bg p-6">
       <ul className="flex-shrink-0 pt-1 text-sm font-semibold">
         {routes1.map((i, index) => (
           <li key={`${i.href}-${index}`}>
             <Link
               href={i.href}
               className={clsx(
-                "flex h-10 cursor-pointer items-center gap-4 rounded no-underline transition-colors duration-300 hover:fill-white hover:text-white hover:no-underline",
+                "flex h-10 cursor-pointer items-center gap-4 rounded no-underline transition-colors duration-300 hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:no-underline",
                 location !== i.href
                   ? "fill-gray-400 text-gray-400"
-                  : "fill-white text-white"
+                  : "fill-accent text-accent"
               )}
             >
               <svg height="24" width="24" viewBox="0 0 24 24">
@@ -33,13 +33,13 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
         ))}
       </ul>
 
-      <ul className="flex-shrink-0 border-b border-[#282828] pb-1 pt-8 text-sm font-semibold">
+      <ul className="flex-shrink-0 border-b border-[var(--border)] pb-1 pt-8 text-sm font-semibold">
         {routes2.map((i, index) => (
           <li key={`${i.href}-${index}`}>
             {i.href === "/create" ? (
               <button
                 onClick={onCreatePlaylist}
-                className="flex h-10 w-full cursor-pointer items-center gap-4 rounded fill-gray-400 text-gray-400 transition-colors duration-300 hover:fill-white hover:text-white"
+                className="flex h-10 w-full cursor-pointer items-center gap-4 rounded fill-gray-400 text-gray-400 transition-colors duration-300 hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)]"
               >
                 {i.icon}
                 <span>{i.title}</span>
@@ -48,10 +48,10 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
               <Link
                 href={i.href}
                 className={clsx(
-                  "flex h-10 cursor-pointer items-center gap-4 rounded no-underline transition-colors duration-300 hover:fill-white hover:text-white hover:no-underline",
+                  "flex h-10 cursor-pointer items-center gap-4 rounded no-underline transition-colors duration-300 hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:no-underline",
                   location !== i.href
                     ? "fill-gray-400 text-gray-400"
-                    : "fill-white text-white"
+                    : "fill-accent text-accent"
                 )}
               >
                 {i.icon}
@@ -62,7 +62,7 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
         ))}
       </ul>
 
-      <div className="mt-2 min-h-0 flex-1 overflow-y-scroll scrollbar scrollbar-w-1 scrollbar-track-[#1a1a1a] scrollbar-thumb-[#444] hover:scrollbar-thumb-[#666]">
+      <div className="mt-2 min-h-0 flex-1 overflow-y-scroll scrollbar scrollbar-w-1 scrollbar-track-[var(--bg-base)] scrollbar-thumb-[var(--bg-surface)] hover:scrollbar-thumb-[var(--bg-surface-hover)]">
         <ul className="pt-1">
           {playlists.map((playlist) => {
             const href = `/playlist/${playlist.rating_key}`
@@ -73,11 +73,11 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
                 <Link
                   href={href}
                   className={clsx(
-                    "group flex cursor-default items-center gap-3 rounded-md px-1 py-[5px] no-underline hover:bg-white/10 hover:no-underline",
-                    location !== href ? "text-[#b3b3b3]" : "text-white"
+                    "group flex cursor-default items-center gap-3 rounded-md px-1 py-[5px] no-underline hover:bg-app-surface hover:no-underline",
+                    location !== href ? "text-[color:var(--text-secondary)]" : "text-[color:var(--text-primary)]"
                   )}
                 >
-                  <div className="relative h-10 w-10 flex-shrink-0 overflow-hidden rounded bg-[#282828]">
+                  <div className="relative h-10 w-10 flex-shrink-0 overflow-hidden rounded bg-app-surface">
                     {artUrl && (
                       <img src={artUrl} alt="" className="h-full w-full object-cover" />
                     )}
@@ -154,7 +154,7 @@ const routes2 = [
     title: "Create Playlist",
     href: "/create",
     icon: (
-      <span className="flex h-6 w-6 items-center justify-center rounded-sm bg-white bg-opacity-60 text-black group-hover:bg-opacity-100">
+      <span className="flex h-6 w-6 items-center justify-center rounded-sm bg-accent/20 text-accent group-hover:bg-accent/40 transition-colors">
         <svg viewBox="0 0 16 16" width="12" height="12" xmlns="http://www.w3.org/2000/svg">
           <path d="M14 7H9V2H7v5H2v2h5v5h2V9h5z" fill="currentColor"></path>
           <path fill="none" d="M0 0h16v16H0z"></path>

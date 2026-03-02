@@ -20,7 +20,7 @@ export function ScrollRow({ title, children, restoreKey }: ScrollRowProps) {
         <button
           onClick={() => scroll("left")}
           aria-label="Scroll left"
-          className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-black transition-opacity hover:opacity-80 active:opacity-60"
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-black transition-all hover:brightness-110 active:scale-95"
         >
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="15 18 9 12 15 6" />
@@ -29,7 +29,7 @@ export function ScrollRow({ title, children, restoreKey }: ScrollRowProps) {
         <button
           onClick={() => scroll("right")}
           aria-label="Scroll right"
-          className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-black transition-opacity hover:opacity-80 active:opacity-60"
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-black transition-all hover:brightness-110 active:scale-95"
         >
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="9 18 15 12 9 6" />

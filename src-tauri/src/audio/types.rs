@@ -32,6 +32,8 @@ pub enum AudioCommand {
     SetEqEnabled(bool),            // enable/disable EQ bypass
     SetPreampGain(f32),            // pre-amp in dB (−12..+3); applied before EQ
     SetSameAlbumCrossfade(bool),   // when false (default), suppress crossfade for same-album tracks
+    SetVisualizerEnabled(bool),    // gate PCM IPC bridge for visualizer
+    SetPreferredDevice(Option<String>), // preferred CPAL output device name (applied on next Play)
     Shutdown,
 }
 

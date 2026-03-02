@@ -38,7 +38,7 @@ function Stars({ rating }: { rating?: number | null }) {
           fill={i < filled ? "currentColor" : "none"}
           stroke="currentColor"
           strokeWidth="1.5"
-          className={i < filled ? "text-yellow-400" : "text-gray-600"}
+          className={i < filled ? "text-accent" : "text-gray-600"}
         >
           <polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26" />
         </svg>
@@ -196,7 +196,7 @@ export function ArtistPage({ artistId }: { artistId: number }) {
     <div>
       {/* ── Hero ── */}
       <div
-        className="relative flex items-end bg-cover p-8 transition-[min-height] duration-500 ease-in-out min-h-80"
+        className="relative flex items-end bg-cover p-8 transition-[min-height] duration-500 ease-in-out min-h-80 hero-overlay"
         style={artUrl ? { backgroundImage: `url(${artUrl})`, backgroundPosition: heroBgPos } : undefined}
       >
         {/* UltraBlur fallback when there's no wide banner art */}
@@ -219,32 +219,35 @@ export function ArtistPage({ artistId }: { artistId: number }) {
 
         {/* Action buttons — absolutely positioned bottom-right, non-blocking */}
         <div className="absolute bottom-8 right-8 z-20 flex items-center gap-3">
+          {/* Play */}
           <button
             onClick={() => artistUri && void playFromUri(artistUri, false, artist.title, `/artist/${artistId}`)}
             disabled={!artistUri}
             title="Play"
-            className="flex h-14 w-14 items-center justify-center rounded-full bg-[#1db954] text-black shadow-lg hover:bg-[#1ed760] hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex h-14 w-14 items-center justify-center rounded-full bg-black/30 backdrop-blur-sm border border-white/10 text-accent hover:bg-black/45 hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <svg viewBox="0 0 16 16" width="22" height="22" fill="currentColor">
               <polygon points="3,2 13,8 3,14" />
             </svg>
           </button>
+          {/* Shuffle */}
           <button
             onClick={() => artistUri && void playFromUri(artistUri, true, artist.title, `/artist/${artistId}`)}
             disabled={!artistUri}
             title="Shuffle play"
-            className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-black/30 backdrop-blur-sm border border-white/10 text-accent hover:bg-black/45 hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            <svg viewBox="0 0 16 16" width="18" height="18" fill="currentColor">
+            <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
               <path d="M13.151.922a.75.75 0 1 0-1.06 1.06L13.109 3H11.16a3.75 3.75 0 0 0-2.873 1.34l-6.173 7.356A2.25 2.25 0 0 1 .39 12.5H0V14h.391a3.75 3.75 0 0 0 2.873-1.34l6.173-7.356A2.25 2.25 0 0 1 11.16 4.5h1.949l-1.018 1.018a.75.75 0 0 0 1.06 1.06L15.98 3.75 13.15.922zM.391 3.5H0V2h.391c1.109 0 2.16.49 2.873 1.34L4.89 5.277l-.979 1.167-1.796-2.14A2.25 2.25 0 0 0 .39 3.5zm9.831 8.17l.979 1.167.28.334A3.75 3.75 0 0 0 14.36 14.5h1.64V13h-1.64a2.25 2.25 0 0 1-1.726-.83l-.28-.335-1.733-2.063-.979 1.167 1.18 1.731z" />
             </svg>
           </button>
+          {/* Artist Radio */}
           <button
             onClick={() => void playRadio(artistId, 'artist', artist.title)}
             title="Artist Radio — continuous sonically-similar music"
-            className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 hover:scale-105 active:scale-95 transition-all"
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-black/30 backdrop-blur-sm border border-white/10 text-accent hover:bg-black/45 hover:scale-105 active:scale-95 transition-all"
           >
-            <svg viewBox="0 0 16 16" width="18" height="18" fill="currentColor">
+            <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
               <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6A3 3 0 0 0 8 5zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
             </svg>
           </button>
@@ -262,10 +265,10 @@ export function ArtistPage({ artistId }: { artistId: number }) {
             {menuOpen && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
-                <div className="absolute right-0 top-full mt-1 z-50 w-56 rounded-lg bg-[#282828] shadow-xl border border-white/10 py-1">
+                <div className="absolute right-0 top-full mt-1 z-50 w-56 rounded-lg bg-app-surface shadow-xl border border-[var(--border)] py-1">
                   <button
                     onClick={() => { addToQueue(popularTracks); setMenuOpen(false) }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-sm text-gray-200 hover:bg-white/10"
+                    className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
                   >
                     <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
                       <path d="M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2z"/>
@@ -289,7 +292,7 @@ export function ArtistPage({ artistId }: { artistId: number }) {
               className="h-36 w-36 flex-shrink-0 cursor-pointer rounded-full object-cover shadow-2xl ring-2 ring-transparent hover:ring-white/40 transition-all"
             />
           ) : (
-            <div className="h-36 w-36 flex-shrink-0 rounded-full bg-[#282828] shadow-2xl" />
+            <div className="h-36 w-36 flex-shrink-0 rounded-full bg-app-surface shadow-2xl" />
           )}
 
           {/* Info column — no fixed height, flows naturally */}
@@ -342,27 +345,29 @@ export function ArtistPage({ artistId }: { artistId: number }) {
         {/* ── Popular Tracks ── */}
         {popularTracks.length > 0 && (
           <section>
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3 mb-4">
               <h2 className="text-2xl font-bold">Popular Tracks</h2>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => { const s = [...popularTracks].sort(() => Math.random() - 0.5); void playTrack(s[0], s, artist.title, `/artist/${artistId}`) }}
-                  title="Shuffle popular tracks"
-                  className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 transition-all"
-                >
-                  <svg role="img" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
-                    <path d="M13.151.922a.75.75 0 1 0-1.06 1.06L13.109 3H11.16a3.75 3.75 0 0 0-2.873 1.34l-6.173 7.356A2.25 2.25 0 0 1 .39 12.5H0V14h.391a3.75 3.75 0 0 0 2.873-1.34l6.173-7.356a2.25 2.25 0 0 1 1.724-.804h1.947l-1.017 1.018a.75.75 0 0 0 1.06 1.06L15.98 3.75 13.15.922zM.391 3.5H0V2h.391c1.109 0 2.16.49 2.873 1.34L4.89 5.277l-.979 1.167-1.796-2.14A2.25 2.25 0 0 0 .39 3.5z" />
-                    <path d="m7.5 10.723.98-1.167.957 1.14a2.25 2.25 0 0 0 1.724.804h1.947l-1.017-1.018a.75.75 0 1 1 1.06-1.06l2.829 2.828-2.829 2.828a.75.75 0 1 1-1.06-1.06L13.109 13H11.16a3.75 3.75 0 0 1-2.873-1.34l-.787-.938z" />
-                  </svg>
-                </button>
+              <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => void playTrack(popularTracks[0], popularTracks, artist.title, `/artist/${artistId}`)}
                   title="Play popular tracks"
-                  className="flex h-9 w-9 items-center justify-center rounded-full bg-[#1db954] text-black hover:bg-[#1ed760] transition-all"
+                  className="group flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-3 py-1 text-xs font-semibold text-accent transition-all duration-200 hover:border-accent hover:bg-accent/20 active:scale-95"
                 >
-                  <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+                  <svg viewBox="0 0 16 16" width="9" height="9" fill="currentColor" className="transition-transform duration-200 group-hover:scale-110">
                     <polygon points="3,2 13,8 3,14" />
                   </svg>
+                  Play
+                </button>
+                <button
+                  onClick={() => { const s = [...popularTracks].sort(() => Math.random() - 0.5); void playTrack(s[0], s, artist.title, `/artist/${artistId}`) }}
+                  title="Shuffle popular tracks"
+                  className="group flex items-center gap-1.5 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs font-semibold text-gray-300 transition-all duration-200 hover:border-white/30 hover:bg-white/10 hover:text-white active:scale-95"
+                >
+                  <svg viewBox="0 0 16 16" width="11" height="11" fill="currentColor" className="transition-transform duration-200 group-hover:scale-110">
+                    <path d="M13.151.922a.75.75 0 1 0-1.06 1.06L13.109 3H11.16a3.75 3.75 0 0 0-2.873 1.34l-6.173 7.356A2.25 2.25 0 0 1 .39 12.5H0V14h.391a3.75 3.75 0 0 0 2.873-1.34l6.173-7.356a2.25 2.25 0 0 1 1.724-.804h1.947l-1.017 1.018a.75.75 0 0 0 1.06 1.06L15.98 3.75 13.15.922zM.391 3.5H0V2h.391c1.109 0 2.16.49 2.873 1.34L4.89 5.277l-.979 1.167-1.796-2.14A2.25 2.25 0 0 0 .39 3.5z" />
+                    <path d="m7.5 10.723.98-1.167.957 1.14a2.25 2.25 0 0 0 1.724.804h1.947l-1.017-1.018a.75.75 0 1 1 1.06-1.06l2.829 2.828-2.829 2.828a.75.75 0 1 1-1.06-1.06L13.109 13H11.16a3.75 3.75 0 0 1-2.873-1.34l-.787-.938z" />
+                  </svg>
+                  Shuffle
                 </button>
               </div>
             </div>
@@ -379,12 +384,12 @@ export function ArtistPage({ artistId }: { artistId: number }) {
                   >
                     {isActive ? (
                       <>
-                        <span className="w-5 flex-shrink-0 flex items-center justify-center group-hover:hidden text-[#1db954]">
+                        <span className="w-5 flex-shrink-0 flex items-center justify-center group-hover:hidden text-accent">
                           <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
                             <rect x="1" y="3" width="3" height="10" rx="1"/><rect x="6" y="1" width="3" height="12" rx="1"/><rect x="11" y="5" width="3" height="8" rx="1"/>
                           </svg>
                         </span>
-                        <span className="hidden w-5 flex-shrink-0 group-hover:flex items-center justify-center text-[#1db954]">
+                        <span className="hidden w-5 flex-shrink-0 group-hover:flex items-center justify-center text-accent">
                           <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><polygon points="3,2 13,8 3,14" /></svg>
                         </span>
                       </>
@@ -401,7 +406,7 @@ export function ArtistPage({ artistId }: { artistId: number }) {
                       </>
                     )}
                     <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                      <span className={`min-w-0 truncate text-sm font-medium ${isActive ? "text-[#1db954]" : "text-white"}`}>
+                      <span className={`min-w-0 truncate text-sm font-medium ${isActive ? "text-accent" : "text-white"}`}>
                         {track.title}
                       </span>
                       {albumId && (

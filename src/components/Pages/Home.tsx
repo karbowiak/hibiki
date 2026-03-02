@@ -1,23 +1,26 @@
 import { useEffect, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
+import { useLocation } from "wouter"
 import { useLibraryStore, useConnectionStore, buildPlexImageUrl } from "../../stores"
 import { prefetchArtist, prefetchAlbum } from "../../stores/metadataCache"
-import type { PlexMedia } from "../../types/plex"
+import type { PlexMedia, Playlist } from "../../types/plex"
 import { searchLibrary } from "../../lib/plex"
 import { ScrollRow } from "../ScrollRow"
 import { MediaCard } from "../MediaCard"
+import { selectMix } from "./Mix"
 
 /** Strip common mix suffixes to get the artist name: "Ado Mix" → "Ado" */
-function mixTitleToArtistName(title: string): string {
+export function mixTitleToArtistName(title: string): string {
   return title.replace(/\s+(Mix|Radio|Station|Mix Radio)$/i, "").trim()
 }
 
 /**
  * Module-level cache of mix title → artist thumb URL.
  * Survives component unmount/remount so images don't flash grey on navigation.
+ * Shared with StationsPage so the two pages don't duplicate searches.
  * The actual image bytes are cached separately by the pleximg:// Tauri handler.
  */
-const mixThumbCache = new Map<string, string>()
+export const mixThumbCache = new Map<string, string>()
 
 function getItemYear(item: PlexMedia): number {
   if (item.type === "album") return item.year
@@ -89,6 +92,7 @@ export function Home() {
     hubs: s.hubs,
   })))
   const { baseUrl, token, isConnected, isLoading: isConnecting, musicSectionId } = useConnectionStore()
+  const [, navigate] = useLocation()
 
   // Seed from module-level cache so images are available immediately on remount.
   const [mixThumbs, setMixThumbs] = useState<Record<string, string>>(
@@ -165,19 +169,21 @@ export function Home() {
       {mixesItems.length > 0 && (
         <ScrollRow title={mixesTitle} restoreKey="home-mixes">
           {mixesItems.map((item, idx) => {
-            const info = getMediaInfo(item, baseUrl, token)
-            if (!info) return null
-            // Prefer the looked-up artist thumb; fall back to whatever getMediaInfo found.
-            const thumb = (item.type === "playlist" ? mixThumbs[item.title] : null) ?? info.thumb
+            if (item.type !== "playlist") return null
+            const thumb = mixThumbs[item.title]
+              ?? (item.thumb ? buildPlexImageUrl(baseUrl, token, item.thumb) : null)
+              ?? (item.composite ? buildPlexImageUrl(baseUrl, token, item.composite) : null)
             return (
               <MediaCard
                 key={idx}
-                title={info.title}
-                desc={info.desc}
-                thumb={thumb ?? null}
-                isArtist={info.isArtist}
-                href={info.href ?? undefined}
-                prefetch={makePrefetch(info)}
+                title={item.title}
+                desc="Mix for You"
+                thumb={thumb}
+                isArtist={false}
+                onClick={() => {
+                  selectMix(item as Playlist & { type: "playlist" })
+                  navigate("/mix")
+                }}
                 scrollItem
                 large
               />

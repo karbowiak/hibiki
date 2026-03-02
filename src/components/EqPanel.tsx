@@ -42,17 +42,17 @@ export default function EqPanel() {
   return (
     <div
       ref={panelRef}
-      className="absolute bottom-full right-0 mb-2 z-50 w-[460px] rounded-xl bg-[#1a1a1a] border border-[#282828] shadow-2xl select-none"
+      className="absolute bottom-full right-0 mb-2 z-50 w-[460px] rounded-xl bg-app-card border border-[var(--border)] shadow-2xl select-none"
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[#282828]">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)]">
         <span className="text-sm font-semibold text-white tracking-wide">Equalizer</span>
         <div className="flex items-center gap-3">
           <button
             onClick={() => setEnabled(!enabled)}
             className={`text-xs font-bold px-3 py-1 rounded-full transition-colors ${
               enabled
-                ? "bg-[#1db954] text-black"
+                ? "bg-accent text-black"
                 : "bg-white/10 text-white/50 hover:bg-white/20"
             }`}
           >
@@ -71,7 +71,7 @@ export default function EqPanel() {
       </div>
 
       {/* Preset pills */}
-      <div className={`flex flex-wrap gap-1.5 px-4 py-3 border-b border-[#282828] transition-opacity ${!enabled ? "opacity-40 pointer-events-none" : ""}`}>
+      <div className={`flex flex-wrap gap-1.5 px-4 py-3 border-b border-[var(--border)] transition-opacity ${!enabled ? "opacity-40 pointer-events-none" : ""}`}>
         {EQ_PRESETS.map((preset) => {
           const active = preset.gains.every((g, i) => Math.abs(g - gains[i]) < 0.01)
           return (
@@ -80,7 +80,7 @@ export default function EqPanel() {
               onClick={() => applyPreset(preset.gains)}
               className={`text-xs px-2.5 py-1 rounded-full transition-colors ${
                 active
-                  ? "bg-[#1db954] text-black font-semibold"
+                  ? "bg-accent text-black font-semibold"
                   : "bg-white/10 text-white/70 hover:bg-white/20"
               }`}
             >

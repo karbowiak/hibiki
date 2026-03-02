@@ -5,6 +5,7 @@ import {
   audioSetCrossfadeWindow,
   audioSetSameAlbumCrossfade,
   audioSetPreampGain,
+  audioSetOutputDevice,
 } from "../lib/plex"
 
 // ---------------------------------------------------------------------------
@@ -16,11 +17,15 @@ interface AudioSettingsState {
   crossfadeWindowMs: number
   sameAlbumCrossfade: boolean
   preampDb: number
+  albumGainMode: boolean
+  preferredDevice: string | null
 
   setNormalizationEnabled: (enabled: boolean) => void
   setCrossfadeWindowMs: (ms: number) => void
   setSameAlbumCrossfade: (enabled: boolean) => void
   setPreampDb: (db: number) => void
+  setAlbumGainMode: (enabled: boolean) => void
+  setPreferredDevice: (name: string | null) => void
   syncToEngine: () => void
 }
 
@@ -31,6 +36,8 @@ export const useAudioSettingsStore = create<AudioSettingsState>()(
       crossfadeWindowMs: 8000,
       sameAlbumCrossfade: false,
       preampDb: 0,
+      albumGainMode: false,
+      preferredDevice: null,
 
       setNormalizationEnabled: (enabled) => {
         set({ normalizationEnabled: enabled })
@@ -52,12 +59,23 @@ export const useAudioSettingsStore = create<AudioSettingsState>()(
         void audioSetPreampGain(db)
       },
 
+      setAlbumGainMode: (enabled) => {
+        set({ albumGainMode: enabled })
+        // No direct engine call needed — gain value is resolved at play time
+      },
+
+      setPreferredDevice: (name) => {
+        set({ preferredDevice: name })
+        void audioSetOutputDevice(name)
+      },
+
       syncToEngine: () => {
-        const { normalizationEnabled, crossfadeWindowMs, sameAlbumCrossfade, preampDb } = get()
+        const { normalizationEnabled, crossfadeWindowMs, sameAlbumCrossfade, preampDb, preferredDevice } = get()
         void audioSetNormalizationEnabled(normalizationEnabled)
         void audioSetCrossfadeWindow(crossfadeWindowMs)
         void audioSetSameAlbumCrossfade(sameAlbumCrossfade)
         void audioSetPreampGain(preampDb)
+        void audioSetOutputDevice(preferredDevice)
       },
     }),
     {
@@ -67,6 +85,8 @@ export const useAudioSettingsStore = create<AudioSettingsState>()(
         crossfadeWindowMs: state.crossfadeWindowMs,
         sameAlbumCrossfade: state.sameAlbumCrossfade,
         preampDb: state.preampDb,
+        albumGainMode: state.albumGainMode,
+        preferredDevice: state.preferredDevice,
       }),
     },
   ),

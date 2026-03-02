@@ -17,6 +17,7 @@ import type {
   Level,
   LibrarySection,
   LibraryTag,
+  LyricLine,
   PlayQueue,
   Playlist,
   PlexAuthPin,
@@ -210,6 +211,15 @@ export function getLikedArtists(sectionId: number, limit?: number): Promise<Arti
 /** Get albums that the user has rated (liked), sorted by most recently rated. */
 export function getLikedAlbums(sectionId: number, limit?: number): Promise<Album[]> {
   return invoke("get_liked_albums", { sectionId, limit: limit ?? null })
+}
+
+/**
+ * Fetch the track list for a "Mix for You" hub item.
+ * Pass the raw `key` field from the hub mix item — the backend appends
+ * `&type=10` automatically when it's missing.
+ */
+export function getMixTracks(key: string): Promise<Track[]> {
+  return invoke("get_mix_tracks", { key })
 }
 
 /** Get tracks inside a playlist, with optional pagination. */
@@ -679,6 +689,26 @@ export function audioSetSameAlbumCrossfade(enabled: boolean): Promise<void> {
   return invoke("audio_set_same_album_crossfade", { enabled })
 }
 
+/** Fetch parsed lyrics for a track. Returns [] if the track has no lyrics. */
+export function getLyrics(ratingKey: number): Promise<LyricLine[]> {
+  return invoke("get_lyrics", { ratingKey })
+}
+
+/** List available audio output device names for the default CPAL host. */
+export function audioGetOutputDevices(): Promise<string[]> {
+  return invoke("audio_get_output_devices")
+}
+
+/** Set the preferred audio output device by name. Pass null for system default. */
+export function audioSetOutputDevice(name: string | null): Promise<void> {
+  return invoke("audio_set_output_device", { name })
+}
+
+/** Enable or disable the PCM IPC bridge for the visualizer. */
+export function audioSetVisualizerEnabled(enabled: boolean): Promise<void> {
+  return invoke("audio_set_visualizer_enabled", { enabled })
+}
+
 // ---------------------------------------------------------------------------
 // Now Playing / system media controls
 // ---------------------------------------------------------------------------
@@ -737,4 +767,19 @@ export function buildDirectoryUri(sectionUuid: string, itemKey: string): string 
  */
 export function buildRadioPlayQueueUri(sectionUuid: string, stationKey: string): string {
   return `library://${sectionUuid}/station/${encodeURIComponent(stationKey)}`
+}
+
+/**
+ * Build a directory URI that filters tracks by a tag (genre/mood/style).
+ * Pass to `playFromUri(uri, true)` to start a shuffled genre/mood/style queue.
+ * URI format: `library://{uuid}/directory//library/sections/{id}/all?type=10&{tagType}={value}`
+ */
+export function buildTagFilterUri(
+  sectionUuid: string,
+  sectionId: number,
+  tagType: "genre" | "mood" | "style",
+  tagValue: string
+): string {
+  const path = `/library/sections/${sectionId}/all?type=10&${tagType}=${encodeURIComponent(tagValue)}`
+  return `library://${sectionUuid}/directory/${path}`
 }

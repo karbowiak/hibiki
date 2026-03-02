@@ -56,7 +56,7 @@ export function ActivityIndicator() {
         onClick={() => setIsOpen(o => !o)}
         title={isActive ? `${activities.length} active operation${activities.length > 1 ? "s" : ""}` : "No active operations"}
         className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
-          isOpen ? "bg-white/15" : "bg-black/70 hover:bg-[#282828]"
+          isOpen ? "bg-white/15" : "bg-app-surface hover:bg-app-surface-hover"
         }`}
       >
         {/* Vinyl-disc icon — spins when active */}
@@ -85,7 +85,7 @@ export function ActivityIndicator() {
       {isOpen && (
         <div
           ref={panelRef}
-          className="absolute right-0 top-10 z-50 w-72 rounded-lg bg-[#282828] shadow-2xl border border-white/10 overflow-hidden"
+          className="absolute right-0 top-10 z-50 w-72 rounded-lg bg-app-surface shadow-2xl border border-white/10 overflow-hidden"
         >
           <div className="px-4 py-3 border-b border-white/10">
             <span className="text-xs font-semibold uppercase tracking-wider text-white/50">
@@ -102,7 +102,7 @@ export function ActivityIndicator() {
               {activities.map(a => (
                 <li key={a.id} className="flex items-center gap-3 px-4 py-3">
                   <svg
-                    className="h-3.5 w-3.5 flex-shrink-0 text-[#1db954] animate-spin"
+                    className="h-3.5 w-3.5 flex-shrink-0 text-accent animate-spin"
                     viewBox="0 0 24 24"
                     fill="none"
                     style={{ animationDuration: "1s" }}

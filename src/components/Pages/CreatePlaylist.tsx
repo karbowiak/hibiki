@@ -31,7 +31,7 @@ export function CreatePlaylist({ onClose }: { onClose: () => void }) {
       onClick={onClose}
     >
       <div
-        className="w-[400px] rounded-xl bg-[#282828] p-7 shadow-2xl"
+        className="w-[400px] rounded-xl bg-app-surface p-7 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-5 flex items-center justify-between">
@@ -47,7 +47,7 @@ export function CreatePlaylist({ onClose }: { onClose: () => void }) {
         {created ? (
           <div className="py-4 text-center">
             <div className="mb-2 text-4xl">✓</div>
-            <p className="font-semibold text-[#1db954]">Playlist created!</p>
+            <p className="font-semibold text-accent">Playlist created!</p>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">

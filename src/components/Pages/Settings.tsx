@@ -3,9 +3,13 @@ import { useLocation } from "wouter"
 import { open } from "@tauri-apps/plugin-shell"
 import clsx from "clsx"
 import { useConnectionStore, useLibraryStore } from "../../stores"
-import { plexAuthPoll, plexGetResources, testServerConnection, audioCacheInfo, audioClearCache, audioSetCacheMaxBytes } from "../../lib/plex"
+import { plexAuthPoll, plexGetResources, testServerConnection, audioCacheInfo, audioClearCache, audioSetCacheMaxBytes, audioGetOutputDevices } from "../../lib/plex"
 import type { PlexResource } from "../../types/plex"
 import { useAudioSettingsStore } from "../../stores/audioSettingsStore"
+import { useAccentStore, ACCENT_PRESETS } from "../../stores/accentStore"
+import { getTheme, setTheme, subscribeTheme } from "../../stores/themeStore"
+import { getFont, setFont, subscribeFont, FONT_PRESETS } from "../../stores/fontStore"
+import type { FontPreset } from "../../stores/fontStore"
 
 type Section = "account" | "playback" | "downloads" | "ai" | "experience"
 type AuthState = "idle" | "polling" | "picking"
@@ -95,12 +99,15 @@ function PlaybackSection() {
   const [cacheInfo, setCacheInfo] = useState<{ size_bytes: number; file_count: number } | null>(null)
   const [maxBytes, setMaxBytes] = useState<number>(1_073_741_824)
   const [isClearing, setIsClearing] = useState(false)
+  const [outputDevices, setOutputDevices] = useState<string[]>([])
 
   const {
     normalizationEnabled, setNormalizationEnabled,
     crossfadeWindowMs, setCrossfadeWindowMs,
     sameAlbumCrossfade, setSameAlbumCrossfade,
     preampDb, setPreampDb,
+    albumGainMode, setAlbumGainMode,
+    preferredDevice, setPreferredDevice,
   } = useAudioSettingsStore()
 
   useEffect(() => {
@@ -112,6 +119,7 @@ function PlaybackSection() {
       void audioSetCacheMaxBytes(savedBytes).catch(() => {})
     }
     void audioCacheInfo().then(info => setCacheInfo(info)).catch(() => {})
+    void audioGetOutputDevices().then(devs => setOutputDevices(devs)).catch(() => {})
   }, [])
 
   async function handleMaxChange(bytes: number) {
@@ -132,7 +140,7 @@ function PlaybackSection() {
   }
 
   const pillBase = "rounded-full px-4 py-1.5 text-sm transition-colors"
-  const pillActive = "bg-[#1db954] text-black font-semibold"
+  const pillActive = "bg-accent text-black font-semibold"
   const pillInactive = "bg-white/10 text-white hover:bg-white/20"
 
   return (
@@ -173,6 +181,18 @@ function PlaybackSection() {
               ))}
             </div>
           </div>
+
+          {/* Album Gain Mode */}
+          <div>
+            <p className="text-sm font-medium text-white/70 mb-2">ReplayGain Mode</p>
+            <p className="text-xs text-white/35 mb-2">
+              Track mode normalises each track independently. Album mode preserves intended loudness differences between tracks on the same album.
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => setAlbumGainMode(false)} className={`${pillBase} ${!albumGainMode ? pillActive : pillInactive}`}>Track</button>
+              <button onClick={() => setAlbumGainMode(true)} className={`${pillBase} ${albumGainMode ? pillActive : pillInactive}`}>Album</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -207,6 +227,40 @@ function PlaybackSection() {
               <button onClick={() => setSameAlbumCrossfade(false)} className={`${pillBase} ${!sameAlbumCrossfade ? pillActive : pillInactive}`}>Suppress</button>
               <button onClick={() => setSameAlbumCrossfade(true)} className={`${pillBase} ${sameAlbumCrossfade ? pillActive : pillInactive}`}>Allow</button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Output Device ── */}
+      <div>
+        <h3 className="text-base font-semibold text-white mb-4">Output Device</h3>
+        <div className="flex flex-col gap-5">
+          <div>
+            <p className="text-sm font-medium text-white/70 mb-2">Audio Output</p>
+            <p className="text-xs text-white/35 mb-3">
+              Select which audio device to use for playback. Takes effect on the next track.
+            </p>
+            {outputDevices.length === 0 ? (
+              <p className="text-xs text-white/30">No output devices found.</p>
+            ) : (
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  onClick={() => setPreferredDevice(null)}
+                  className={`${pillBase} ${preferredDevice === null ? pillActive : pillInactive}`}
+                >
+                  System Default
+                </button>
+                {outputDevices.map(dev => (
+                  <button
+                    key={dev}
+                    onClick={() => setPreferredDevice(dev)}
+                    className={`${pillBase} ${preferredDevice === dev ? pillActive : pillInactive}`}
+                  >
+                    {dev}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -263,10 +317,161 @@ function PlaybackSection() {
 // Placeholder for unimplemented sections
 // ---------------------------------------------------------------------------
 
-function ComingSoon({ title, description }: { title: string; description: string }) {
+function ComingSoon({ description }: { title: string; description: string }) {
   return (
     <div className="flex flex-col gap-3">
       <p className="text-sm text-white/40">{description}</p>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Experience section — theme, font, accent
+// ---------------------------------------------------------------------------
+
+function ExperienceSection() {
+  const { accent, setAccent } = useAccentStore()
+  const [custom, setCustom] = useState(accent)
+  const [theme, setThemeState] = useState(getTheme)
+  const [font, setFontState] = useState<FontPreset>(getFont)
+
+  useEffect(() => subscribeTheme(t => setThemeState(t)), [])
+  useEffect(() => subscribeFont(f => setFontState(f)), [])
+
+  function handleCustomChange(hex: string) {
+    setCustom(hex)
+    if (/^#[0-9a-fA-F]{6}$/.test(hex)) setAccent(hex)
+  }
+
+  const isCustom = !ACCENT_PRESETS.some(p => p.hex.toLowerCase() === accent.toLowerCase())
+  const pillBase = "rounded-full px-4 py-1.5 text-sm transition-colors"
+  const pillActive = "bg-accent text-black font-semibold"
+  const pillInactive = "bg-white/10 text-white hover:bg-white/20"
+
+  return (
+    <div className="flex flex-col gap-10 max-w-xl">
+
+      {/* ── Theme ── */}
+      <div>
+        <h3 className="text-base font-semibold text-white mb-1">Theme</h3>
+        <p className="text-xs text-white/35 mb-4">
+          Choose between dark, light, or follow your system preference.
+        </p>
+        <div className="flex gap-2">
+          {(["dark", "light", "system"] as const).map(t => (
+            <button
+              key={t}
+              onClick={() => setTheme(t)}
+              className={`${pillBase} ${theme === t ? pillActive : pillInactive} capitalize`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Font ── */}
+      <div>
+        <h3 className="text-base font-semibold text-white mb-1">Font</h3>
+        <p className="text-xs text-white/35 mb-4">
+          Pick a typeface for the entire interface.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {FONT_PRESETS.map(preset => (
+            <button
+              key={preset.name}
+              onClick={() => setFont(preset.name)}
+              style={{ fontFamily: preset.stack }}
+              className={`${pillBase} ${font.name === preset.name ? pillActive : pillInactive}`}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Accent Colour ── */}
+      <div>
+        <h3 className="text-base font-semibold text-white mb-1">Accent Colour</h3>
+        <p className="text-xs text-white/35 mb-5">
+          Highlights, active states, and progress bars all follow this colour.
+        </p>
+
+        {/* Preset swatches */}
+        <div className="flex flex-wrap gap-3 mb-6">
+          {ACCENT_PRESETS.map(preset => {
+            const active = preset.hex.toLowerCase() === accent.toLowerCase()
+            return (
+              <button
+                key={preset.hex}
+                onClick={() => { setAccent(preset.hex); setCustom(preset.hex) }}
+                title={preset.name}
+                className="group relative flex flex-col items-center gap-1.5"
+              >
+                <span
+                  className={`flex h-10 w-10 items-center justify-center rounded-full transition-all duration-150 ${
+                    active
+                      ? "ring-2 ring-offset-2 ring-offset-app-card scale-110"
+                      : "hover:scale-105 ring-2 ring-transparent"
+                  }`}
+                  style={{
+                    backgroundColor: preset.hex,
+                    boxShadow: active ? `0 0 0 2px var(--bg-elevated), 0 0 0 4px ${preset.hex}` : undefined,
+                  }}
+                >
+                  {active && (
+                    <svg viewBox="0 0 16 16" width="14" height="14" fill="black">
+                      <path d="M13.78 3.22a.75.75 0 0 1 0 1.06l-8 8a.75.75 0 0 1-1.06 0l-3.5-3.5a.75.75 0 1 1 1.06-1.06L5.25 10.69l7.47-7.47a.75.75 0 0 1 1.06 0z"/>
+                    </svg>
+                  )}
+                </span>
+                <span className={`text-[10px] transition-colors ${active ? "text-white" : "text-white/40 group-hover:text-white/70"}`}>
+                  {preset.name}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Custom hex input */}
+        <div className="flex items-center gap-3">
+          <div
+            className="h-8 w-8 flex-shrink-0 rounded-full border border-white/20 transition-all"
+            style={{ backgroundColor: /^#[0-9a-fA-F]{6}$/.test(custom) ? custom : accent }}
+          />
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-white/30 select-none">#</span>
+            <input
+              type="text"
+              value={custom.replace(/^#/, "")}
+              onChange={e => handleCustomChange("#" + e.target.value.replace(/[^0-9a-fA-F]/g, "").slice(0, 6))}
+              placeholder="d946ef"
+              maxLength={6}
+              className={`w-28 rounded-lg bg-white/10 py-1.5 pl-7 pr-3 text-sm font-mono text-white placeholder-white/20 focus:outline-none focus:ring-1 transition-colors ${
+                isCustom ? "ring-1 ring-accent" : "focus:ring-white/30"
+              }`}
+            />
+          </div>
+          <span className="text-xs text-white/30">
+            {isCustom ? "Custom colour active" : "Enter a custom hex value"}
+          </span>
+        </div>
+
+        {/* Live preview strip */}
+        <div className="mt-6 rounded-xl bg-white/5 p-4 flex items-center gap-4 border border-white/5">
+          <span className="text-xs text-white/40 w-16 flex-shrink-0">Preview</span>
+          <div className="flex items-center gap-3 flex-wrap">
+            <button className="flex h-8 w-8 items-center justify-center rounded-full text-black text-sm font-bold shadow-md" style={{ backgroundColor: accent }}>
+              <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><polygon points="3,2 13,8 3,14" /></svg>
+            </button>
+            <div className="h-1.5 w-32 rounded-full overflow-hidden bg-white/10">
+              <div className="h-full w-3/5 rounded-full" style={{ backgroundColor: accent }} />
+            </div>
+            <span className="text-sm font-semibold" style={{ color: accent }}>Now Playing</span>
+            <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold text-black" style={{ backgroundColor: accent }}>Active</span>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -464,7 +669,7 @@ function AccountSection() {
     <div className="max-w-xl space-y-8">
       {/* Connection status */}
       <div className="flex items-center gap-3 rounded-xl bg-white/5 px-5 py-4">
-        <span className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${isConnected ? "bg-[#1db954]" : "bg-red-500"}`} />
+        <span className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${isConnected ? "bg-accent" : "bg-red-500"}`} />
         <div className="min-w-0">
           <p className="text-sm font-medium text-white">
             {isConnected ? "Connected" : "Not connected"}
@@ -535,7 +740,7 @@ function AccountSection() {
                     </div>
                     <div className="mt-1 text-xs text-white/40 flex flex-wrap gap-x-3">
                       {localConns.length > 0 && (
-                        <span>{localConns[0].address}:{localConns[0].port} <span className="text-[#1db954]">local</span></span>
+                        <span>{localConns[0].address}:{localConns[0].port} <span className="text-accent">local</span></span>
                       )}
                       {remoteConns.length > 0 && <span>{remoteConns.length} remote</span>}
                       {relayConns.length > 0 && <span>{relayConns.length} relay</span>}
@@ -676,7 +881,7 @@ function AccountSection() {
                   <button
                     type="submit"
                     disabled={isLoading || !url.trim() || !token.trim()}
-                    className="rounded-full bg-[#1db954] px-6 py-2 text-sm font-semibold text-black disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#1ed760] active:scale-95 transition-all"
+                    className="rounded-full bg-accent px-6 py-2 text-sm font-semibold text-black disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110 active:scale-95 transition-all"
                   >
                     {isLoading ? "Connecting…" : isConnected && !isDirty ? "Reconnect" : "Save & Connect"}
                   </button>
@@ -740,9 +945,7 @@ export function SettingsPage() {
         {section === "ai" && (
           <ComingSoon title="AI" description="Sonic recommendations, radio tuning and smart mix settings will appear here." />
         )}
-        {section === "experience" && (
-          <ComingSoon title="Experience" description="Theme, animations, language and display settings will appear here." />
-        )}
+        {section === "experience" && <ExperienceSection />}
       </main>
     </div>
   )

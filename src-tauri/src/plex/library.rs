@@ -18,8 +18,8 @@ pub struct Character {
 /// Tag for genres, moods, styles
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Tag {
-    /// Tag name
-    #[serde(rename = "tag", default)]
+    /// Tag name — Plex returns this as `title` in the genre/mood/style directory
+    #[serde(alias = "tag", rename(deserialize = "title"), default)]
     pub tag: String,
     /// Number of items with this tag
     #[serde(rename = "count", default, deserialize_with = "crate::plex::models::serde_string_or_i64_opt::deserialize")]
@@ -334,6 +334,41 @@ impl PlexClient {
         }).collect())
     }
 
+    /// Fetch the tracks for a "Mix for You" hub item.
+    ///
+    /// Hub mix items (from the `music.mixes` hub) carry a `key` that is an API
+    /// path for the mix's track list. Plex does not always include `type=10` in
+    /// the key, so this method appends it when missing.
+    ///
+    /// # Arguments
+    /// * `key` - The `key` field from the hub mix item (e.g. `/library/sections/5/all?artist.id=548757`)
+    ///
+    /// # Returns
+    /// * `Result<Vec<Track>>` - Tracks in the mix (shuffled by the server)
+    #[instrument(skip(self))]
+    pub async fn mix_tracks(&self, key: &str) -> Result<Vec<Track>> {
+        let path = if key.contains("type=10") {
+            key.to_string()
+        } else if key.contains('?') {
+            format!("{}&type=10", key)
+        } else {
+            format!("{}?type=10", key)
+        };
+
+        debug!("Fetching mix tracks from {}", path);
+
+        let url = self.build_url(&path);
+        let container: MediaContainer<PlexMedia> = self
+            .get_url(&url)
+            .await
+            .with_context(|| format!("Failed to fetch mix tracks from {}", path))?;
+
+        Ok(container.metadata.into_iter().filter_map(|m| match m {
+            PlexMedia::Track(t) => Some(t),
+            _ => None,
+        }).collect())
+    }
+
     /// Get available characters for browsing by first letter
     ///
     /// # Arguments
@@ -425,9 +460,9 @@ impl PlexClient {
     /// ```
     #[instrument(skip(self))]
     pub async fn get_tags(&self, section_id: i64, tag_type: &str) -> Result<Vec<Tag>> {
-        let params = vec![("type".to_string(), tag_type.to_string())];
-        let path = format!("/library/sections/{}/tags", section_id);
-        let url = build_url_from_params(&self.build_url(&path), &params);
+        // e.g. /library/sections/5/genre  (or /mood, /style)
+        let path = format!("/library/sections/{}/{}", section_id, tag_type);
+        let url = self.build_url(&path);
 
         debug!(
             "Fetching {} tags for section {} from {}",
@@ -444,7 +479,8 @@ impl PlexClient {
                 )
             })?;
 
-        Ok(container.metadata)
+        // Genre/mood/style tags come back in the Directory key, not Metadata
+        Ok(container.directory)
     }
 
     /// Get items by tag (genre, mood, style)

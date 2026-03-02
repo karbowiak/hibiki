@@ -421,6 +421,10 @@ pub struct Track {
     /// Media files for this track (contains stream/part info)
     #[serde(rename(deserialize = "Media"), default)]
     pub media: Vec<Media>,
+
+    /// Lyrics streams embedded in the track (populated when `includeLyrics=1` is passed)
+    #[serde(rename(deserialize = "Lyrics"), default)]
+    pub lyrics: Vec<LyricsStream>,
 }
 
 // ---------------------------------------------------------------------------
@@ -511,6 +515,14 @@ pub struct PlexStream {
     #[serde(rename(deserialize = "streamType"), default, deserialize_with = "serde_string_or_i64_opt::deserialize")]
     pub stream_type: Option<i64>,
 
+    /// Fetch key for non-audio streams (e.g. `/library/streams/{id}` for lyrics, streamType=4)
+    #[serde(default)]
+    pub key: Option<String>,
+
+    /// Format string for non-audio streams (e.g. "lrc", "ttml" for lyrics)
+    #[serde(default)]
+    pub format: Option<String>,
+
     /// Track gain in dB from Plex loudness analysis (same as REPLAYGAIN_TRACK_GAIN)
     #[serde(default, deserialize_with = "serde_string_or_f64_opt::deserialize")]
     pub gain: Option<f64>,
@@ -526,6 +538,18 @@ pub struct PlexStream {
     /// Integrated loudness in LUFS
     #[serde(default, deserialize_with = "serde_string_or_f64_opt::deserialize")]
     pub loudness: Option<f64>,
+}
+
+/// A lyrics stream embedded in a track (returned when `includeLyrics=1` is passed).
+/// `format` is "ttml", "lrc", or "txt"; `key` is the path to fetch the raw content.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct LyricsStream {
+    #[serde(default, deserialize_with = "serde_string_or_i64::deserialize")]
+    pub id: i64,
+    #[serde(default)]
+    pub key: String,
+    #[serde(default)]
+    pub format: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -1204,4 +1228,78 @@ pub struct SonicParams {
     /// Target track rating key
     #[serde(rename = "to")]
     pub to: Option<i64>,
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Hub items for dynamically-generated mixes ("Mixes for You") do NOT
+    /// include a `ratingKey` field — they are identified solely by `key`.
+    /// This test ensures:
+    ///   1. A playlist hub item without `ratingKey` deserialises without error.
+    ///   2. `rating_key` defaults to 0 (we must NOT use it for navigation).
+    ///   3. `key` is preserved so the frontend can use it for playback.
+    ///   4. `title` is preserved so the frontend can display the mix name.
+    #[test]
+    fn playlist_hub_item_without_rating_key_deserialises() {
+        let json = r#"{
+            "type": "playlist",
+            "key": "/library/sections/5/all?sort=random&type=10&artist.id=548757",
+            "title": "Ado Mix",
+            "playlistType": "audio",
+            "smart": false,
+            "radio": true,
+            "leafCount": 0
+        }"#;
+
+        let item: PlexMedia = serde_json::from_str(json)
+            .expect("should deserialise a playlist hub item that has no ratingKey");
+
+        match item {
+            PlexMedia::Playlist(p) => {
+                assert_eq!(p.rating_key, 0, "rating_key must default to 0 when absent");
+                assert_eq!(p.title, "Ado Mix");
+                assert!(
+                    !p.key.is_empty(),
+                    "key must be non-empty so playback URI can be constructed"
+                );
+                assert!(p.radio);
+            }
+            other => panic!("expected PlexMedia::Playlist, got {:?}", other),
+        }
+    }
+
+    /// Playlists returned from the /playlists endpoint DO have a ratingKey
+    /// (returned as a JSON string by Plex). Ensure it is correctly parsed.
+    #[test]
+    fn playlist_with_string_rating_key_deserialises() {
+        let json = r#"{
+            "type": "playlist",
+            "ratingKey": "12345",
+            "key": "/playlists/12345/items",
+            "title": "My Playlist",
+            "playlistType": "audio",
+            "smart": false,
+            "radio": false,
+            "leafCount": "42"
+        }"#;
+
+        let item: PlexMedia = serde_json::from_str(json)
+            .expect("should deserialise a regular playlist with string ratingKey");
+
+        match item {
+            PlexMedia::Playlist(p) => {
+                assert_eq!(p.rating_key, 12345);
+                assert_eq!(p.title, "My Playlist");
+                assert_eq!(p.leaf_count, 42);
+                assert!(!p.radio);
+            }
+            other => panic!("expected PlexMedia::Playlist, got {:?}", other),
+        }
+    }
 }

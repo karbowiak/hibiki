@@ -22,9 +22,21 @@ pub fn start_output(
     shared: Arc<DecoderShared>,
 ) -> Result<(Stream, u32), String> {
     let host = cpal::default_host();
-    let device = host
-        .default_output_device()
-        .ok_or("No audio output device found")?;
+
+    // Use the user-preferred device if set; fall back to system default.
+    let preferred = shared.preferred_device_name.try_lock()
+        .ok()
+        .and_then(|g| g.clone());
+    let device = if let Some(ref name) = preferred {
+        host.output_devices()
+            .ok()
+            .and_then(|mut devs| devs.find(|d| d.name().ok().as_deref() == Some(name.as_str())))
+            .or_else(|| host.default_output_device())
+            .ok_or_else(|| format!("Audio output device '{}' not found and no default available", name))?
+    } else {
+        host.default_output_device()
+            .ok_or("No audio output device found")?
+    };
 
     let default_config = device
         .default_output_config()
@@ -67,9 +79,12 @@ fn soft_limit(x: f32) -> f32 {
     if abs <= THRESH {
         x
     } else {
-        let over = abs - THRESH;
+        // Normalize overshoot to [0, ∞) so the result asymptotes to exactly 1.0.
+        // At abs = THRESH: over = 0 → result = THRESH.
+        // As abs → ∞: over → ∞, over/(1+over) → 1 → result → THRESH + (1-THRESH) = 1.0.
+        let over = (abs - THRESH) / (1.0 - THRESH);
         let sign = if x > 0.0 { 1.0f32 } else { -1.0f32 };
-        (THRESH + over / (1.0 + over)) * sign
+        (THRESH + (1.0 - THRESH) * over / (1.0 + over)) * sign
     }
 }
 
@@ -85,6 +100,8 @@ fn build_f32_stream(
     // [band 0..10][channel 0..8] — Direct Form I history per band per channel.
     let mut eq_state = [[BiquadState::default(); 8]; 10];
     let mut eq_was_enabled = false;
+    // PCM accumulator for the visualizer relay — collects mono-mixed samples.
+    let mut vis_accum: Vec<f32> = Vec::with_capacity(512);
 
     let stream = device
         .build_output_stream(
@@ -219,6 +236,28 @@ fn build_f32_stream(
                             }
                         }
                     }
+                }
+                // PCM IPC bridge — feed visualizer when enabled.
+                // Down-mix processed output to mono and batch into 512-sample chunks.
+                if shared.vis_enabled.load(Ordering::Relaxed) && output_channels > 0 {
+                    let frames = data.len() / output_channels;
+                    for f in 0..frames {
+                        let mut mono = 0.0f32;
+                        for ch in 0..output_channels {
+                            mono += data[f * output_channels + ch];
+                        }
+                        vis_accum.push(mono / output_channels as f32);
+                        if vis_accum.len() >= 512 {
+                            if let Ok(guard) = shared.vis_sender.try_lock() {
+                                if let Some(ref tx) = *guard {
+                                    let _ = tx.try_send(vis_accum.clone());
+                                }
+                            }
+                            vis_accum.clear();
+                        }
+                    }
+                } else {
+                    vis_accum.clear();
                 }
             },
             move |err| {

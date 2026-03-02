@@ -38,17 +38,17 @@ export default function SleepTimerPanel() {
   return (
     <div
       ref={panelRef}
-      className="absolute bottom-full right-0 mb-2 z-50 w-56 rounded-xl bg-[#1a1a1a] border border-[#282828] shadow-2xl select-none"
+      className="absolute bottom-full right-0 mb-2 z-50 w-56 rounded-xl bg-app-card border border-[var(--border)] shadow-2xl select-none"
     >
       {/* Header */}
-      <div className="px-4 py-3 border-b border-[#282828]">
+      <div className="px-4 py-3 border-b border-[var(--border)]">
         <span className="text-sm font-semibold text-white tracking-wide">Sleep Timer</span>
       </div>
 
       {endsAt ? (
         /* Active state — show countdown + cancel */
         <div className="px-4 py-4 flex flex-col items-center gap-3">
-          <div className="text-2xl font-mono font-semibold text-[#1db954]">
+          <div className="text-2xl font-mono font-semibold text-accent">
             {formatRemaining(endsAt)}
           </div>
           <p className="text-xs text-white/50 text-center">Pausing after timer ends</p>

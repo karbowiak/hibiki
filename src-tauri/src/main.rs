@@ -62,6 +62,15 @@ fn plex_img_cache_key(src_url: &str) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Initialise tracing so debug!/warn! calls produce output.
+    // RUST_LOG controls the level (e.g. RUST_LOG=plexify=debug).
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .init();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
@@ -177,6 +186,8 @@ pub fn run() {
             commands::get_artist_albums_in_section,
             commands::get_artist_popular_tracks_in_section,
             commands::get_related_hubs,
+            // Mixes
+            commands::get_mix_tracks,
             // Playlists
             commands::get_playlists,
             commands::get_playlist_items,
@@ -239,6 +250,10 @@ pub fn run() {
             commands::audio_set_eq_enabled,
             commands::audio_set_preamp_gain,
             commands::audio_set_same_album_crossfade,
+            commands::get_lyrics,
+            commands::audio_get_output_devices,
+            commands::audio_set_output_device,
+            commands::audio_set_visualizer_enabled,
             // Now Playing / media controls
             commands::update_now_playing,
             commands::set_now_playing_state,

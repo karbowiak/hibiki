@@ -145,7 +145,7 @@ export function RadioPage({ stationType }: Props) {
       {/* Play button */}
       <button
         onClick={handlePlay}
-        className="mb-12 flex items-center gap-3 rounded-full bg-[#1db954] px-8 py-3 text-sm font-bold text-black hover:bg-[#1ed760] transition-colors"
+        className="mb-12 flex items-center gap-3 rounded-full bg-accent px-8 py-3 text-sm font-bold text-black hover:brightness-110 transition-colors"
       >
         {isPlaying ? (
           <>

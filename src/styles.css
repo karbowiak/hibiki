@@ -2,13 +2,110 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  /* Default accent — overridden immediately by accentStore.ts on load */
+  --accent: #d946ef;
+  --accent-rgb: 217 70 239;
+
+  /* Backgrounds (dark mode defaults) */
+  --bg-base:          #121212;
+  --bg-elevated:      #181818;
+  --bg-surface:       #282828;
+  --bg-surface-hover: #333333;
+
+  /* Text */
+  --text-primary:   #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.70);
+  --text-muted:     rgba(255, 255, 255, 0.40);
+
+  /* Borders */
+  --border:        rgba(255, 255, 255, 0.10);
+  --border-subtle: rgba(255, 255, 255, 0.05);
+
+  /* Font — overridden by fontStore.ts */
+  --font-family: CircularSp, CircularSp-Arab, CircularSp-Hebr, CircularSp-Cyrl, CircularSp-Grek, CircularSp-Deva, sans-serif;
+}
+
+[data-theme="light"] {
+  --bg-base:          #f0f0f0;
+  --bg-elevated:      #ffffff;
+  --bg-surface:       #e4e4e4;
+  --bg-surface-hover: #d4d4d4;
+  --text-primary:   #0d0d0d;
+  --text-secondary: rgba(0, 0, 0, 0.65);
+  --text-muted:     rgba(0, 0, 0, 0.40);
+  --border:        rgba(0, 0, 0, 0.10);
+  --border-subtle: rgba(0, 0, 0, 0.05);
+}
+
+/* Light-mode colour overrides — scoped to avoid breaking accent-colour buttons */
+[data-theme="light"] { color: var(--text-primary); }
+[data-theme="light"] .text-white  { color: var(--text-primary); }
+[data-theme="light"] .text-gray-300 { color: var(--text-secondary); }
+[data-theme="light"] .text-gray-400 { color: var(--text-secondary); }
+[data-theme="light"] .text-gray-500 { color: var(--text-muted); }
+[data-theme="light"] .text-gray-600 { color: var(--text-muted); }
+
+/* Opacity-variant white text — generated as separate Tailwind classes, must be listed explicitly */
+[data-theme="light"] .text-white\/70 { color: var(--text-secondary); }
+[data-theme="light"] .text-white\/60 { color: var(--text-secondary); }
+[data-theme="light"] .text-white\/50 { color: var(--text-secondary); }
+[data-theme="light"] .text-white\/40 { color: var(--text-muted); }
+[data-theme="light"] .text-white\/35 { color: var(--text-muted); }
+[data-theme="light"] .text-white\/30 { color: var(--text-muted); }
+
+/* Hover states that also need to flip */
+[data-theme="light"] .hover\:text-white:hover         { color: var(--text-primary); }
+[data-theme="light"] .hover\:text-white\/70:hover     { color: var(--text-secondary); }
+[data-theme="light"] .hover\:text-white\/60:hover     { color: var(--text-secondary); }
+
+/* SVG fill overrides */
+[data-theme="light"] .fill-white          { fill: var(--text-primary); }
+[data-theme="light"] .fill-white\/30      { fill: var(--text-muted); }
+[data-theme="light"] .hover\:fill-white:hover { fill: var(--text-primary); }
+
+/* bg-white/N are subtle dark-mode tints — flip to light-mode surface tints */
+[data-theme="light"] .bg-white\/5  { background-color: var(--border-subtle); }
+[data-theme="light"] .bg-white\/10 { background-color: var(--border); }
+[data-theme="light"] .bg-white\/15 { background-color: var(--bg-surface); }
+[data-theme="light"] .hover\:bg-white\/10:hover { background-color: var(--border); }
+[data-theme="light"] .hover\:bg-white\/20:hover { background-color: var(--bg-surface); }
+
+/* ── Hero overlay ────────────────────────────────────────────────────────── */
+/* Hero sections always sit on a dark UltraBlur / gradient background, so    */
+/* text inside them must stay white regardless of the current theme.          */
+[data-theme="light"] .hero-overlay             { color: white; }
+[data-theme="light"] .hero-overlay .text-white { color: white; }
+[data-theme="light"] .hero-overlay .text-white\/70 { color: rgba(255,255,255,0.70); }
+[data-theme="light"] .hero-overlay .text-white\/60 { color: rgba(255,255,255,0.60); }
+[data-theme="light"] .hero-overlay .text-white\/50 { color: rgba(255,255,255,0.50); }
+[data-theme="light"] .hero-overlay .text-white\/40 { color: rgba(255,255,255,0.40); }
+[data-theme="light"] .hero-overlay .text-white\/35 { color: rgba(255,255,255,0.35); }
+[data-theme="light"] .hero-overlay .text-white\/30 { color: rgba(255,255,255,0.30); }
+[data-theme="light"] .hero-overlay .text-gray-200 { color: rgba(255,255,255,0.90); }
+[data-theme="light"] .hero-overlay .text-gray-300 { color: rgba(255,255,255,0.80); }
+[data-theme="light"] .hero-overlay .text-gray-400 { color: rgba(255,255,255,0.65); }
+[data-theme="light"] .hero-overlay .text-gray-500 { color: rgba(255,255,255,0.50); }
+[data-theme="light"] .hero-overlay .fill-white     { fill: white; }
+[data-theme="light"] .hero-overlay .fill-white\/30 { fill: rgba(255,255,255,0.30); }
+[data-theme="light"] .hero-overlay .bg-white\/5  { background-color: rgba(255,255,255,0.05); }
+[data-theme="light"] .hero-overlay .bg-white\/10 { background-color: rgba(255,255,255,0.10); }
+[data-theme="light"] .hero-overlay .bg-white\/15 { background-color: rgba(255,255,255,0.15); }
+[data-theme="light"] .hero-overlay .hover\:text-white:hover     { color: white; }
+[data-theme="light"] .hero-overlay .hover\:text-white\/70:hover { color: rgba(255,255,255,0.70); }
+[data-theme="light"] .hero-overlay .hover\:fill-white:hover     { fill: white; }
+[data-theme="light"] .hero-overlay .hover\:bg-white\/10:hover   { background-color: rgba(255,255,255,0.10); }
+[data-theme="light"] .hero-overlay .hover\:bg-white\/20:hover   { background-color: rgba(255,255,255,0.20); }
+
+/* Keep text on accent-coloured buttons and error backgrounds dark/white */
+[data-theme="light"] .text-black { color: #000 !important; }
+[data-theme="light"] .bg-red-900\/90 .text-white,
+[data-theme="light"] .bg-red-900\/90 { color: #fff; }
+
 html,
 body {
   @apply h-full overflow-hidden bg-transparent;
-  font-family:
-    CircularSp, CircularSp-Arab, CircularSp-Hebr, CircularSp-Cyrl,
-    CircularSp-Grek, CircularSp-Deva, var(--fallback-fonts, sans-serif),
-    sans-serif;
+  font-family: var(--font-family);
 }
 
 @font-face {
@@ -308,7 +405,7 @@ body {
 .eq-slider::-webkit-slider-runnable-track {
   height: 3px;
   border-radius: 2px;
-  background: #404040;
+  background: var(--bg-surface-hover);
 }
 
 .eq-slider::-webkit-slider-thumb {
@@ -317,14 +414,14 @@ body {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--text-primary);
   cursor: pointer;
   margin-top: -4.5px;
   transition: background 0.15s;
 }
 
 .eq-slider:hover::-webkit-slider-thumb {
-  background: #1db954;
+  background: var(--accent);
 }
 
 .eq-slider::-webkit-slider-container {

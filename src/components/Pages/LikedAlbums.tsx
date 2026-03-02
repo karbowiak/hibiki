@@ -64,7 +64,7 @@ export function LikedAlbums() {
                   onMouseEnter={() => prefetchAlbum(album.rating_key)}
                   className="group flex flex-col gap-2 rounded-md p-3 no-underline transition-colors hover:bg-white/10"
                 >
-                  <div className="relative w-full aspect-square overflow-hidden rounded-md bg-[#282828] shadow-lg">
+                  <div className="relative w-full aspect-square overflow-hidden rounded-md bg-app-surface shadow-lg">
                     {thumbUrl ? (
                       <img
                         src={thumbUrl}
@@ -95,7 +95,7 @@ export function LikedAlbums() {
                             viewBox="0 0 16 16"
                             width="10"
                             height="10"
-                            fill={i < stars ? "#1db954" : "#535353"}
+                            fill={i < stars ? "var(--accent)" : "#535353"}
                           >
                             <path d="M8 .5l1.8 3.7 4.1.6-3 2.9.7 4.1L8 9.8l-3.7 1.9.7-4.1-3-2.9 4.1-.6z" />
                           </svg>

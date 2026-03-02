@@ -260,6 +260,13 @@ export interface Level {
   loudness: number
 }
 
+/** A single timed lyric line parsed from TTML or LRC. */
+export interface LyricLine {
+  start_ms: number
+  end_ms: number
+  text: string
+}
+
 // ---------------------------------------------------------------------------
 // Phase 5: Server info & settings
 // ---------------------------------------------------------------------------

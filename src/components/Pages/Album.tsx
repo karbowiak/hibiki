@@ -115,39 +115,42 @@ export function AlbumPage({ albumId }: { albumId: number }) {
   return (
     <div className="pb-12">
       {/* Header */}
-      <div className="relative flex flex-row items-end p-8 overflow-hidden rounded-t-lg min-h-72 transition-[min-height] duration-500">
+      <div className="relative flex flex-row items-end p-8 overflow-hidden rounded-t-lg min-h-72 transition-[min-height] duration-500 hero-overlay">
         {/* UltraBlur background — album art first, artist art as fallback */}
         <UltraBlur src={thumbUrl ?? parentThumbUrl} />
 
         {/* Absolute-positioned action buttons — bottom-right, non-blocking */}
         <div className="absolute bottom-8 right-8 z-20 flex items-center gap-3">
+          {/* Play */}
           <button
             onClick={() => tracks.length > 0 && void playTrack(tracks[0], tracks, album.title, `/album/${albumId}`)}
             disabled={tracks.length === 0}
             title="Play"
-            className="flex h-14 w-14 items-center justify-center rounded-full bg-[#1db954] text-black shadow-lg hover:bg-[#1ed760] hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex h-14 w-14 items-center justify-center rounded-full bg-black/30 backdrop-blur-sm border border-white/10 text-accent hover:bg-black/45 hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <svg viewBox="0 0 16 16" width="22" height="22" fill="currentColor">
               <polygon points="3,2 13,8 3,14" />
             </svg>
           </button>
+          {/* Shuffle */}
           <button
             onClick={() => { if (tracks.length === 0) return; const s = [...tracks].sort(() => Math.random() - 0.5); void playTrack(s[0], s, album.title, `/album/${albumId}`) }}
             disabled={tracks.length === 0}
             title="Shuffle"
-            className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-black/30 backdrop-blur-sm border border-white/10 text-accent hover:bg-black/45 hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            <svg role="img" height="18" width="18" viewBox="0 0 16 16" fill="currentColor">
+            <svg role="img" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
               <path d="M13.151.922a.75.75 0 1 0-1.06 1.06L13.109 3H11.16a3.75 3.75 0 0 0-2.873 1.34l-6.173 7.356A2.25 2.25 0 0 1 .39 12.5H0V14h.391a3.75 3.75 0 0 0 2.873-1.34l6.173-7.356a2.25 2.25 0 0 1 1.724-.804h1.947l-1.017 1.018a.75.75 0 0 0 1.06 1.06L15.98 3.75 13.15.922zM.391 3.5H0V2h.391c1.109 0 2.16.49 2.873 1.34L4.89 5.277l-.979 1.167-1.796-2.14A2.25 2.25 0 0 0 .39 3.5z" />
               <path d="m7.5 10.723.98-1.167.957 1.14a2.25 2.25 0 0 0 1.724.804h1.947l-1.017-1.018a.75.75 0 1 1 1.06-1.06l2.829 2.828-2.829 2.828a.75.75 0 1 1-1.06-1.06L13.109 13H11.16a3.75 3.75 0 0 1-2.873-1.34l-.787-.938z" />
             </svg>
           </button>
+          {/* Album Radio */}
           <button
             onClick={() => void playRadio(albumId, 'album')}
             title="Album Radio — continuous sonically-similar music"
-            className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 hover:scale-105 active:scale-95 transition-all"
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-black/30 backdrop-blur-sm border border-white/10 text-accent hover:bg-black/45 hover:scale-105 active:scale-95 transition-all"
           >
-            <svg viewBox="0 0 16 16" width="18" height="18" fill="currentColor">
+            <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
               <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6A3 3 0 0 0 8 5zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
             </svg>
           </button>
@@ -165,10 +168,10 @@ export function AlbumPage({ albumId }: { albumId: number }) {
             {menuOpen && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
-                <div className="absolute right-0 top-full mt-1 z-50 w-52 rounded-lg bg-[#282828] shadow-xl border border-white/10 py-1">
+                <div className="absolute right-0 top-full mt-1 z-50 w-52 rounded-lg bg-app-surface shadow-xl border border-[var(--border)] py-1">
                   <button
                     onClick={() => { addToQueue(tracks); setMenuOpen(false) }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-sm text-gray-200 hover:bg-white/10"
+                    className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
                   >
                     <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
                       <path d="M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2z"/>
@@ -191,7 +194,7 @@ export function AlbumPage({ albumId }: { albumId: number }) {
               className="w-52 h-52 rounded-md shadow-2xl object-cover flex-shrink-0 cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all duration-200"
             />
           ) : (
-            <div className="w-52 h-52 rounded-md bg-[#282828] shadow-2xl flex-shrink-0" />
+            <div className="w-52 h-52 rounded-md bg-app-surface shadow-2xl flex-shrink-0" />
           )}
 
           {/* Info column — no fixed height so hero grows with expanded description */}
@@ -288,12 +291,12 @@ export function AlbumPage({ albumId }: { albumId: number }) {
                 <td className="p-2 text-center w-8">
                   {isActive ? (
                     <>
-                      <span className="group-hover:hidden flex items-center justify-center text-[#1db954]">
+                      <span className="group-hover:hidden flex items-center justify-center text-accent">
                         <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
                           <rect x="1" y="3" width="3" height="10" rx="1"/><rect x="6" y="1" width="3" height="12" rx="1"/><rect x="11" y="5" width="3" height="8" rx="1"/>
                         </svg>
                       </span>
-                      <span className="hidden group-hover:flex items-center justify-center text-[#1db954]">
+                      <span className="hidden group-hover:flex items-center justify-center text-accent">
                         <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><polygon points="3,2 13,8 3,14" /></svg>
                       </span>
                     </>
@@ -309,7 +312,7 @@ export function AlbumPage({ albumId }: { albumId: number }) {
                   )}
                 </td>
                 <td className="p-2">
-                  <div className={isActive ? "text-[#1db954]" : "text-white"}>{track.title}</div>
+                  <div className={isActive ? "text-accent" : "text-white"}>{track.title}</div>
                   {track.original_title && (
                     <div className="text-xs text-gray-500">{track.original_title}</div>
                   )}

@@ -12,6 +12,7 @@ use crate::plex::{
     Hub, IdentityResponse, Level, LibrarySection, PlayQueue, Playlist, PlexClient,
     PlexClientConfig, PlexSettings, ServerInfo, Tag, Track,
 };
+use crate::plex::lyrics::LyricLine;
 use crate::plex::models::{Album, Artist};
 
 // ---------------------------------------------------------------------------
@@ -325,6 +326,26 @@ pub async fn get_artist_popular_tracks_in_section(
 ) -> Result<Vec<Track>, String> {
     let c = client!(state);
     c.artist_popular_tracks_in_section(section_id, rating_key, limit)
+        .await
+        .map_err(|e| format!("{:#}", e))
+}
+
+// ---------------------------------------------------------------------------
+// Mixes
+// ---------------------------------------------------------------------------
+
+/// Fetch the track list for a "Mix for You" hub item.
+///
+/// Hub mixes have `rating_key = 0` so they can only be identified by their
+/// `key` field.  This command resolves the key to a list of tracks so the
+/// frontend can display them alongside the normal mix playback controls.
+#[tauri::command]
+pub async fn get_mix_tracks(
+    key: String,
+    state: State<'_, PlexState>,
+) -> Result<Vec<Track>, String> {
+    let c = client!(state);
+    c.mix_tracks(&key)
         .await
         .map_err(|e| format!("{:#}", e))
 }
@@ -1129,6 +1150,56 @@ pub fn audio_set_same_album_crossfade(
     let guard = state.0.lock().map_err(|e| format!("Audio lock poisoned: {e}"))?;
     match guard.as_ref() {
         Some(engine) => { engine.set_same_album_crossfade(enabled); Ok(()) }
+        None => Err("Audio engine not initialized.".to_string()),
+    }
+}
+
+/// Fetch parsed lyrics for a track. Returns an empty list if the track has no lyrics.
+/// Prefers TTML over LRC; falls back to plain text.
+#[tauri::command]
+pub async fn get_lyrics(
+    rating_key: i64,
+    state: State<'_, PlexState>,
+) -> Result<Vec<LyricLine>, String> {
+    let guard = state.0.lock().await;
+    let client = guard.as_ref().ok_or("Plex not connected")?;
+    crate::plex::lyrics::get_lyrics(client, rating_key)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// List available audio output device names for the default CPAL host.
+#[tauri::command]
+pub fn audio_get_output_devices() -> Vec<String> {
+    crate::audio::engine::AudioEngine::get_output_devices()
+}
+
+/// Set the preferred audio output device by name.
+/// Pass `null` to revert to the system default.
+/// The change takes effect on the next Play command.
+#[tauri::command]
+pub fn audio_set_output_device(
+    name: Option<String>,
+    state: State<'_, AudioEngineState>,
+) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| format!("Audio lock poisoned: {e}"))?;
+    match guard.as_ref() {
+        Some(engine) => { engine.set_preferred_device(name); Ok(()) }
+        None => Err("Audio engine not initialized.".to_string()),
+    }
+}
+
+/// Enable or disable the PCM IPC bridge for the visualizer.
+/// When enabled, emits `audio://vis-frame` events with mono PCM chunks.
+/// Disable when the visualizer is closed to avoid unnecessary IPC overhead.
+#[tauri::command]
+pub fn audio_set_visualizer_enabled(
+    enabled: bool,
+    state: State<'_, AudioEngineState>,
+) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| format!("Audio lock poisoned: {e}"))?;
+    match guard.as_ref() {
+        Some(engine) => { engine.set_visualizer_enabled(enabled); Ok(()) }
         None => Err("Audio engine not initialized.".to_string()),
     }
 }

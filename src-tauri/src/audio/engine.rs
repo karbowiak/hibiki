@@ -5,6 +5,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
 
+use cpal::traits::DeviceTrait;
 use crossbeam_channel::{bounded, Receiver, Sender};
 use ringbuf::traits::Split;
 use ringbuf::HeapRb;
@@ -19,6 +20,7 @@ use super::types::{AudioCommand, AudioEvent, PlaybackState};
 pub struct AudioEngine {
     cmd_tx: Sender<AudioCommand>,
     shared: Arc<DecoderShared>,
+    app_handle: AppHandle,
 }
 
 impl AudioEngine {
@@ -65,9 +67,9 @@ impl AudioEngine {
 
         // Spawn event emitter — forwards AudioEvents to Tauri frontend
         let shared_for_events = Arc::clone(&shared);
-        Self::spawn_event_emitter(app_handle, event_rx, shared_for_events);
+        Self::spawn_event_emitter(app_handle.clone(), event_rx, shared_for_events);
 
-        Ok(Self { cmd_tx, shared })
+        Ok(Self { cmd_tx, shared, app_handle })
     }
 
     /// Send a command to the audio engine
@@ -126,6 +128,56 @@ impl AudioEngine {
     /// When false (default), gapless transitions are used for same-album tracks.
     pub fn set_same_album_crossfade(&self, enabled: bool) {
         let _ = self.cmd_tx.send(AudioCommand::SetSameAlbumCrossfade(enabled));
+    }
+
+    /// Enable or disable the PCM IPC bridge for the visualizer.
+    ///
+    /// Enabling creates a bounded crossbeam channel and spawns a relay thread that
+    /// batches PCM chunks from the output callback and emits `audio://vis-frame` events.
+    /// Disabling drops the sender so the relay thread exits naturally.
+    pub fn set_visualizer_enabled(&self, enabled: bool) {
+        if enabled {
+            let (tx, rx) = crossbeam_channel::bounded::<Vec<f32>>(16);
+            *self.shared.vis_sender.lock().unwrap() = Some(tx);
+            let _ = self.cmd_tx.send(AudioCommand::SetVisualizerEnabled(true));
+
+            let app = self.app_handle.clone();
+            thread::Builder::new()
+                .name("audio-vis-relay".into())
+                .spawn(move || {
+                    let mut batch: Vec<f32> = Vec::with_capacity(1024);
+                    while let Ok(chunk) = rx.recv() {
+                        batch.extend_from_slice(&chunk);
+                        if batch.len() >= 512 {
+                            let payload = batch.clone();
+                            let _ = app.emit("audio://vis-frame", payload);
+                            batch.clear();
+                        }
+                    }
+                    // Channel dropped — relay thread exits
+                })
+                .expect("Failed to spawn visualizer relay thread");
+        } else {
+            let _ = self.cmd_tx.send(AudioCommand::SetVisualizerEnabled(false));
+            // Drop the sender; the relay thread will exit when its receiver sees disconnect
+            *self.shared.vis_sender.lock().unwrap() = None;
+        }
+    }
+
+    /// Set the preferred CPAL output device by name.
+    /// Pass `None` to revert to the system default.
+    /// The new device takes effect on the next `Play` command (stream restart).
+    pub fn set_preferred_device(&self, name: Option<String>) {
+        let _ = self.cmd_tx.send(AudioCommand::SetPreferredDevice(name));
+    }
+
+    /// List available CPAL output device names for the default host.
+    pub fn get_output_devices() -> Vec<String> {
+        use cpal::traits::HostTrait;
+        let host = cpal::default_host();
+        host.output_devices()
+            .map(|devs| devs.filter_map(|d| d.name().ok()).collect())
+            .unwrap_or_default()
     }
 
     /// Update the maximum audio cache size. Pass 0 for unlimited.

@@ -7,11 +7,15 @@ import { TailwindIndicator } from "./components/tailwind-indicator"
 import { Player } from "./components/Player"
 import { CreatePlaylist } from "./components/Pages/CreatePlaylist"
 import { QueuePanel } from "./components/QueuePanel"
+import LyricsPanel from "./components/LyricsPanel"
 import { useConnectionStore, useLibraryStore, useUIStore } from "./stores"
+import "./stores/accentStore"  // import so the module runs applyAccent() on load
+import "./stores/themeStore"   // import so the module runs applyTheme() on load
+import "./stores/fontStore"    // import so the module runs applyFont() on load
 
 function App() {
   const { isConnected, musicSectionId, isLoading, loadAndConnect } = useConnectionStore()
-  const { fetchPlaylists, fetchRecentlyAdded, fetchHubs, prefetchAllPlaylists } = useLibraryStore()
+  const { fetchPlaylists, fetchRecentlyAdded, fetchHubs, fetchTags, prefetchAllPlaylists, prefetchMixTracks } = useLibraryStore()
   const { showCreatePlaylist, setShowCreatePlaylist } = useUIStore()
   const [location, navigate] = useLocation()
 
@@ -29,7 +33,11 @@ function App() {
         fetchPlaylists(id),
         fetchRecentlyAdded(id, 50),
         fetchHubs(id),
-      ]).then(() => void prefetchAllPlaylists())
+        fetchTags(id),    // 24h TTL — rarely hits network after first load
+      ]).then(() => {
+        void prefetchAllPlaylists()
+        void prefetchMixTracks()
+      })
     }
   }, [isConnected, musicSectionId])
 
@@ -60,6 +68,8 @@ function App() {
           {/* QueuePanel lives here so pinned mode becomes a natural flex column.
               In overlay mode it uses fixed positioning and escapes this layout. */}
           <QueuePanel />
+          {/* LyricsPanel: pinned sidebar sits here; overlay mode uses fixed positioning */}
+          <LyricsPanel />
         </div>
 
         {/* Player sits at the bottom as a natural flex item — no overlap */}

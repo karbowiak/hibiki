@@ -75,7 +75,7 @@ export function RichText({ html, className = "" }: Props) {
 
   return (
     <div
-      className={`select-text [&_a]:text-white [&_a]:underline [&_a:hover]:text-[#1db954] [&_a]:transition-colors ${className}`}
+      className={`select-text [&_a]:text-white [&_a]:underline [&_a:hover]:text-accent [&_a]:transition-colors ${className}`}
       dangerouslySetInnerHTML={{ __html: clean }}
       onClick={handleClick}
     />

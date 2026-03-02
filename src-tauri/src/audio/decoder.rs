@@ -104,6 +104,12 @@ pub struct DecoderShared {
     /// When false (default), crossfade is suppressed for consecutive same-album tracks
     /// so gapless classical/live recordings are not interrupted by a fade.
     pub same_album_crossfade: AtomicBool,
+    /// Gates the PCM IPC bridge — only emit audio://vis-frame when true.
+    pub vis_enabled: AtomicBool,
+    /// Channel sender for PCM data to the visualizer relay thread. None when disabled.
+    pub vis_sender: Mutex<Option<crossbeam_channel::Sender<Vec<f32>>>>,
+    /// Preferred CPAL output device name. Applied on next stream open (next Play command).
+    pub preferred_device_name: Mutex<Option<String>>,
 }
 
 impl DecoderShared {
@@ -132,6 +138,9 @@ impl DecoderShared {
             eq_sample_rate: AtomicI64::new(44100),
             preamp_gain_millths: AtomicI64::new(1_000), // 1.0 linear = 0 dB
             same_album_crossfade: AtomicBool::new(false), // suppress same-album crossfade by default
+            vis_enabled: AtomicBool::new(false),
+            vis_sender: Mutex::new(None),
+            preferred_device_name: Mutex::new(None),
         }
     }
 
@@ -1280,6 +1289,16 @@ fn handle_command(
         AudioCommand::SetSameAlbumCrossfade(enabled) => {
             shared.same_album_crossfade.store(enabled, Ordering::Relaxed);
             info!(enabled = enabled, "Same-album crossfade toggled");
+        }
+
+        AudioCommand::SetVisualizerEnabled(enabled) => {
+            shared.vis_enabled.store(enabled, Ordering::Relaxed);
+            debug!(enabled = enabled, "Visualizer PCM bridge toggled");
+        }
+
+        AudioCommand::SetPreferredDevice(name) => {
+            *shared.preferred_device_name.lock().unwrap() = name.clone();
+            debug!(?name, "Preferred output device updated (takes effect on next play)");
         }
 
         AudioCommand::Shutdown => {

@@ -10,6 +10,9 @@ import { LikedArtists } from "./Pages/LikedArtists"
 import { LikedAlbums } from "./Pages/LikedAlbums"
 import { SettingsPage } from "./Pages/Settings"
 import { RadioPage } from "./Pages/Radio"
+import { MixPage } from "./Pages/Mix"
+import { StationsPage } from "./Pages/Stations"
+// MixPage uses module-level selectMix() state — no URL param needed
 import clsx from "clsx"
 import { TopBar } from "./TopBar"
 import { Search } from "./Pages/Search"
@@ -27,26 +30,23 @@ export const useScrollContainer = () => useContext(ScrollContainerContext)
 
 
 const bg = {
-  home: "bg-gradient-to-b from-[#222222] from-10% via-[#121212] via-40% to-[#121212] to-90%",
-  search:
-    "bg-gradient-to-b from-[#121212] from-10% via-[#121212] via-40% to-[#121212] to-90%",
-  library:
-    "bg-gradient-to-b from-[#121212] from-10% via-[#121212] via-40% to-[#121212] to-90%",
-  collection:
-    "bg-gradient-to-b from-indigo-900 from-10% via-[#121212] via-40% to-[#121212] to-90%",
-  playlist: "bg-gradient-to-b from-[#121212] from-10% via-[#121212] via-40% to-[#121212] to-90%",
-  artist: "bg-gradient-to-b from-[#121212] from-10% via-[#121212] via-40% to-[#121212] to-90%",
-  album: "bg-gradient-to-b from-[#121212] from-10% via-[#121212] via-40% to-[#121212] to-90%",
-  stations: "bg-gradient-to-b from-[#121212] from-10% via-[#121212] via-40% to-[#121212] to-90%",
-  radio: "bg-gradient-to-b from-[#121212] from-10% via-[#121212] via-40% to-[#121212] to-90%",
-  settings: "bg-gradient-to-b from-[#121212] from-10% via-[#121212] via-40% to-[#121212] to-90%",
+  home:       "bg-gradient-to-b from-[var(--bg-elevated)] from-10% via-[var(--bg-base)] via-40% to-[var(--bg-base)] to-90%",
+  search:     "bg-gradient-to-b from-[var(--bg-base)] from-10% via-[var(--bg-base)] via-40% to-[var(--bg-base)] to-90%",
+  library:    "bg-gradient-to-b from-[var(--bg-base)] from-10% via-[var(--bg-base)] via-40% to-[var(--bg-base)] to-90%",
+  collection: "bg-gradient-to-b from-[var(--bg-elevated)] from-10% via-[var(--bg-base)] via-40% to-[var(--bg-base)] to-90%",
+  playlist:   "bg-gradient-to-b from-[var(--bg-base)] from-10% via-[var(--bg-base)] via-40% to-[var(--bg-base)] to-90%",
+  artist:     "bg-gradient-to-b from-[var(--bg-base)] from-10% via-[var(--bg-base)] via-40% to-[var(--bg-base)] to-90%",
+  album:      "bg-gradient-to-b from-[var(--bg-base)] from-10% via-[var(--bg-base)] via-40% to-[var(--bg-base)] to-90%",
+  stations:   "bg-gradient-to-b from-[var(--bg-base)] from-10% via-[var(--bg-base)] via-40% to-[var(--bg-base)] to-90%",
+  radio:      "bg-gradient-to-b from-[var(--bg-base)] from-10% via-[var(--bg-base)] via-40% to-[var(--bg-base)] to-90%",
+  settings:   "bg-[var(--bg-base)]",
 }
 
-const NO_PADDING_ROUTES = new Set(["playlist", "artist", "album", "collection", "settings"])
+const NO_PADDING_ROUTES = new Set(["playlist", "mix", "artist", "album", "collection", "settings"])
 
 export function Page() {
   const [location] = useLocation()
-  const baseLoc = location.split("/")[1]
+  const baseLoc = location.split("/")[1]?.split("?")[0]
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const bgClass = bg[baseLoc as keyof typeof bg] || bg["home"]
@@ -98,6 +98,10 @@ export function Page() {
           }}
         </Route>
 
+        <Route path="/mix" key="mix">
+          <MixPage />
+        </Route>
+
         <Route path="/artist/:id" key="artist">
           {(params: { id?: string }) => {
             const id = parseInt(params.id ?? "0", 10)
@@ -118,10 +122,7 @@ export function Page() {
         </Route>
 
         <Route path="/stations" key="stations">
-          <div>
-            <h1 className="mb-4 text-2xl font-bold">Stations</h1>
-            <p className="text-sm text-gray-400">Stations coming soon — artist mixes, album mixes, and radio will appear here.</p>
-          </div>
+          <StationsPage />
         </Route>
 
         <Route path="/album/:id" key="album">

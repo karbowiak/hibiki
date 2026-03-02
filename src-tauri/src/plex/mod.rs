@@ -29,6 +29,7 @@
 pub mod audio;
 pub mod auth;
 pub mod client;
+pub mod lyrics;
 pub mod collection;
 pub mod discovery;
 pub mod history;

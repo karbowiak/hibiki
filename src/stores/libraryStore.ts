@@ -6,20 +6,37 @@ import {
   getLikedTracks,
   getLikedArtists,
   getLikedAlbums,
+  getMixTracks,
   getPlaylistItems,
   getPlaylists,
   getRecentlyAdded,
+  getSectionTags,
 } from "../lib/plex"
-import type { Album, Artist, Hub, Playlist, PlexMedia, Track } from "../types/plex"
+import type { Album, Artist, Hub, LibraryTag, Playlist, PlexMedia, Track } from "../types/plex"
+
+export interface SeedItem {
+  rating_key: number
+  title: string
+  thumb: string | null  // already-resolved pleximg:// URL
+  subtitle: string
+}
+
+export interface RecentMix {
+  id: string
+  createdAt: number
+  tabType: "artist" | "album" | "track"
+  seeds: SeedItem[]
+}
 import { idbJSONStorage } from "./idbStorage"
 
 const TTL_MS = {
-  playlists: 5 * 60_000,       //  5 minutes
-  recentlyAdded: 10 * 60_000,  // 10 minutes
-  hubs: 15 * 60_000,           // 15 minutes
-  likedTracks: 10 * 60_000,    // 10 minutes
-  likedArtists: 10 * 60_000,   // 10 minutes
-  likedAlbums: 10 * 60_000,    // 10 minutes
+  playlists: 5 * 60_000,           //  5 minutes
+  recentlyAdded: 10 * 60_000,      // 10 minutes
+  hubs: 15 * 60_000,               // 15 minutes
+  likedTracks: 10 * 60_000,        // 10 minutes
+  likedArtists: 10 * 60_000,       // 10 minutes
+  likedAlbums: 10 * 60_000,        // 10 minutes
+  tags: 24 * 60 * 60_000,          // 24 hours
 }
 
 /**
@@ -85,8 +102,18 @@ interface LibraryState {
   playlistItemsCache: Record<number, Track[]>
   /** True once all pages for a playlist have been fetched. */
   playlistIsFullyLoaded: Record<number, boolean>
+  /** Per-mix track cache. Key = mix item.key (the API path). */
+  mixTracksCache: Record<string, Track[]>
   /** Shown in TopBar during startup pre-fetch. Null when idle. */
   prefetchStatus: { done: number; total: number } | null
+
+  // Tag data (genre/mood/style) — pre-loaded with 24h TTL
+  tagsGenre: LibraryTag[]
+  tagsMood: LibraryTag[]
+  tagsStyle: LibraryTag[]
+
+  /** Last 5 custom mixes built by the user in the Mix Builder. Persisted. */
+  recentMixes: RecentMix[]
 
   // TTL timestamps (null = never fetched)
   _playlistsFetchedAt: number | null
@@ -95,6 +122,7 @@ interface LibraryState {
   _likedTracksFetchedAt: number | null
   _likedArtistsFetchedAt: number | null
   _likedAlbumsFetchedAt: number | null
+  _tagsFetchedAt: number | null
 
   fetchPlaylists: (sectionId: number, opts?: FetchOpts) => Promise<void>
   fetchRecentlyAdded: (sectionId: number, limit?: number, opts?: FetchOpts) => Promise<void>
@@ -102,9 +130,12 @@ interface LibraryState {
   fetchLikedTracks: (sectionId: number, limit?: number, opts?: FetchOpts) => Promise<void>
   fetchLikedArtists: (sectionId: number, opts?: FetchOpts) => Promise<void>
   fetchLikedAlbums: (sectionId: number, opts?: FetchOpts) => Promise<void>
+  fetchTags: (sectionId: number, opts?: FetchOpts) => Promise<void>
+  addRecentMix: (seeds: SeedItem[], tabType: "artist" | "album" | "track") => void
   fetchPlaylistItems: (playlistId: number) => Promise<void>
   fetchMorePlaylistItems: (playlistId: number) => Promise<void>
   prefetchAllPlaylists: () => Promise<void>
+  prefetchMixTracks: () => Promise<void>
   createPlaylist: (title: string, sectionId: number) => Promise<Playlist>
   refreshAll: (sectionId: number) => Promise<void>
   /** Null out all TTL timestamps and playlist caches so the next fetch hits the network. */
@@ -126,6 +157,11 @@ export const useLibraryStore = create<LibraryState>()(persist((set, get) => ({
   error: null,
   playlistItemsCache: {},
   playlistIsFullyLoaded: {},
+  mixTracksCache: {},
+  tagsGenre: [],
+  tagsMood: [],
+  tagsStyle: [],
+  recentMixes: [],
   prefetchStatus: null,
   _playlistsFetchedAt: null,
   _recentlyAddedFetchedAt: null,
@@ -133,6 +169,7 @@ export const useLibraryStore = create<LibraryState>()(persist((set, get) => ({
   _likedTracksFetchedAt: null,
   _likedArtistsFetchedAt: null,
   _likedAlbumsFetchedAt: null,
+  _tagsFetchedAt: null,
 
   fetchPlaylists: async (sectionId: number, opts: FetchOpts = {}) => {
     const { _playlistsFetchedAt } = get()
@@ -198,6 +235,38 @@ export const useLibraryStore = create<LibraryState>()(persist((set, get) => ({
     } catch (err) {
       set({ error: String(err) })
     }
+  },
+
+  fetchTags: async (sectionId: number, opts: FetchOpts = {}) => {
+    const { _tagsFetchedAt, tagsGenre, tagsMood, tagsStyle } = get()
+    const isEmpty = tagsGenre.length === 0 && tagsMood.length === 0 && tagsStyle.length === 0
+    if (!opts.force && !isEmpty && _tagsFetchedAt !== null && Date.now() - _tagsFetchedAt < TTL_MS.tags) return
+    try {
+      const [g, m, s] = await Promise.allSettled([
+        getSectionTags(sectionId, "genre"),
+        getSectionTags(sectionId, "mood"),
+        getSectionTags(sectionId, "style"),
+      ])
+      set({
+        tagsGenre: g.status === "fulfilled" ? g.value.sort((a, b) => a.tag.localeCompare(b.tag)) : get().tagsGenre,
+        tagsMood:  m.status === "fulfilled" ? m.value.sort((a, b) => a.tag.localeCompare(b.tag)) : get().tagsMood,
+        tagsStyle: s.status === "fulfilled" ? s.value.sort((a, b) => a.tag.localeCompare(b.tag)) : get().tagsStyle,
+        _tagsFetchedAt: Date.now(),
+      })
+    } catch (err) {
+      set({ error: String(err) })
+    }
+  },
+
+  addRecentMix: (seeds, tabType) => {
+    const seedSig = seeds.map(s => s.rating_key).sort().join(",")
+    const entry: RecentMix = { id: String(Date.now()), createdAt: Date.now(), tabType, seeds }
+    set(state => {
+      const filtered = state.recentMixes.filter(
+        m => m.seeds.map(s => s.rating_key).sort().join(",") !== seedSig
+      )
+      return { recentMixes: [entry, ...filtered].slice(0, 5) }
+    })
   },
 
   fetchPlaylistItems: async (playlistId: number) => {
@@ -302,6 +371,37 @@ export const useLibraryStore = create<LibraryState>()(persist((set, get) => ({
     set({ prefetchStatus: null })
   },
 
+  /**
+   * Background-prefetch track lists for all mix hub items.
+   * Runs sequentially with a short delay. Already-cached mixes are skipped.
+   */
+  prefetchMixTracks: async () => {
+    const { hubs, mixTracksCache } = get()
+    const mixItems = hubs
+      .filter(h => h.hub_identifier.startsWith("music.mixes"))
+      .flatMap(h => h.metadata)
+      .filter(item => item.type === "playlist" && item.key && !mixTracksCache[item.key])
+
+    for (let i = 0; i < mixItems.length; i++) {
+      const item = mixItems[i]
+      if (item.type !== "playlist" || !item.key) continue
+      if (get().mixTracksCache[item.key]) continue  // already fetched by concurrent path
+
+      try {
+        const tracks = await getMixTracks(item.key)
+        set(state => ({
+          mixTracksCache: { ...state.mixTracksCache, [item.key]: tracks },
+        }))
+      } catch {
+        // Don't abort remaining mixes on failure
+      }
+
+      if (i < mixItems.length - 1) {
+        await new Promise<void>(resolve => setTimeout(resolve, PREFETCH_DELAY_MS))
+      }
+    }
+  },
+
   createPlaylist: async (title: string, sectionId: number) => {
     const playlist = await createPlaylistApi(title, sectionId, [])
     set(state => ({ playlists: [...state.playlists, playlist] }))
@@ -324,8 +424,10 @@ export const useLibraryStore = create<LibraryState>()(persist((set, get) => ({
     _likedTracksFetchedAt: null,
     _likedArtistsFetchedAt: null,
     _likedAlbumsFetchedAt: null,
+    _tagsFetchedAt: null,
     playlistItemsCache: {},
     playlistIsFullyLoaded: {},
+    mixTracksCache: {},
   }),
 }), {
   name: "plex-library-v1",
@@ -339,11 +441,16 @@ export const useLibraryStore = create<LibraryState>()(persist((set, get) => ({
     likedTracks: state.likedTracks,
     likedArtists: state.likedArtists,
     likedAlbums: state.likedAlbums,
+    tagsGenre: state.tagsGenre,
+    tagsMood: state.tagsMood,
+    tagsStyle: state.tagsStyle,
+    recentMixes: state.recentMixes,
     _playlistsFetchedAt: state._playlistsFetchedAt,
     _recentlyAddedFetchedAt: state._recentlyAddedFetchedAt,
     _hubsFetchedAt: state._hubsFetchedAt,
     _likedTracksFetchedAt: state._likedTracksFetchedAt,
     _likedArtistsFetchedAt: state._likedArtistsFetchedAt,
     _likedAlbumsFetchedAt: state._likedAlbumsFetchedAt,
+    _tagsFetchedAt: state._tagsFetchedAt,
   }),
 }))

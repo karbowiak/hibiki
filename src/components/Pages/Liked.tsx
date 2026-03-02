@@ -48,7 +48,7 @@ function SortTh({
     >
       {label}
       {isActive && (
-        <span className="ml-1 text-[#1db954]">{dir === "asc" ? "↑" : "↓"}</span>
+        <span className="ml-1 text-accent">{dir === "asc" ? "↑" : "↓"}</span>
       )}
     </th>
   )
@@ -71,7 +71,7 @@ function StarRating({ ratingKey, userRating }: { ratingKey: number; userRating: 
         <button
           key={star}
           title={`Rate ${star} star${star > 1 ? "s" : ""}`}
-          className={`transition-colors ${filled >= star ? "text-yellow-400" : "text-gray-600 hover:text-yellow-300"}`}
+          className={`transition-colors ${filled >= star ? "text-accent" : "text-gray-600 hover:text-accent/70"}`}
           onClick={e => {
             e.stopPropagation()
             rate(filled === star ? null : star * 2)
@@ -158,7 +158,7 @@ export function Liked() {
     <div className="pb-12">
       {/* Header */}
       <div className="flex flex-row items-end p-8">
-        <div className="flex w-60 h-60 flex-shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-indigo-700 to-blue-400 shadow-2xl">
+        <div className="flex w-60 h-60 flex-shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-accent/70 to-accent/20 shadow-2xl">
           <svg viewBox="0 0 24 24" width="80" height="80" fill="white">
             <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
           </svg>
@@ -180,6 +180,18 @@ export function Liked() {
               {totalMs > 0 && <> · {formatTotalMs(totalMs)}</>}
             </p>
             <div className="flex items-center gap-3">
+              {/* Play */}
+              <button
+                onClick={() => count > 0 && void playTrack(tracks[0], tracks, "Liked Songs", "/collection/tracks")}
+                disabled={count === 0}
+                title="Play"
+                className="flex h-14 w-14 items-center justify-center rounded-full bg-black/30 backdrop-blur-sm border border-white/10 text-accent hover:bg-black/45 hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <svg viewBox="0 0 16 16" width="22" height="22" fill="currentColor">
+                  <polygon points="3,2 13,8 3,14" />
+                </svg>
+              </button>
+              {/* Shuffle */}
               <button
                 onClick={() => {
                   if (count === 0) return
@@ -188,21 +200,11 @@ export function Liked() {
                 }}
                 disabled={count === 0}
                 title="Shuffle"
-                className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex h-11 w-11 items-center justify-center rounded-full bg-black/30 backdrop-blur-sm border border-white/10 text-accent hover:bg-black/45 hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                <svg viewBox="0 0 16 16" width="18" height="18" fill="currentColor">
+                <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
                   <path d="M13.151.922a.75.75 0 1 0-1.06 1.06L13.109 3H11.16a3.75 3.75 0 0 0-2.873 1.34l-6.173 7.356A2.25 2.25 0 0 1 .39 12.5H0V14h.391a3.75 3.75 0 0 0 2.873-1.34l6.173-7.356a2.25 2.25 0 0 1 1.724-.804h1.947l-1.017 1.018a.75.75 0 0 0 1.06 1.06L15.98 3.75 13.15.922zM.391 3.5H0V2h.391c1.109 0 2.16.49 2.873 1.34L4.89 5.277l-.979 1.167-1.796-2.14A2.25 2.25 0 0 0 .39 3.5z" />
                   <path d="m7.5 10.723.98-1.167.957 1.14a2.25 2.25 0 0 0 1.724.804h1.947l-1.017-1.018a.75.75 0 1 1 1.06-1.06l2.829 2.828-2.829 2.828a.75.75 0 1 1-1.06-1.06L13.109 13H11.16a3.75 3.75 0 0 1-2.873-1.34l-.787-.938z" />
-                </svg>
-              </button>
-              <button
-                onClick={() => count > 0 && void playTrack(tracks[0], tracks, "Liked Songs", "/collection/tracks")}
-                disabled={count === 0}
-                title="Play"
-                className="flex h-14 w-14 items-center justify-center rounded-full bg-[#1db954] text-black shadow-lg hover:bg-[#1ed760] hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <svg viewBox="0 0 16 16" width="22" height="22" fill="currentColor">
-                  <polygon points="3,2 13,8 3,14" />
                 </svg>
               </button>
             </div>
@@ -246,12 +248,12 @@ export function Liked() {
                   <td className="p-2 text-center w-8">
                     {isActive ? (
                       <>
-                        <span className="group-hover:hidden flex items-center justify-center text-[#1db954]">
+                        <span className="group-hover:hidden flex items-center justify-center text-accent">
                           <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
                             <rect x="1" y="3" width="3" height="10" rx="1"/><rect x="6" y="1" width="3" height="12" rx="1"/><rect x="11" y="5" width="3" height="8" rx="1"/>
                           </svg>
                         </span>
-                        <span className="hidden group-hover:flex items-center justify-center text-[#1db954]">
+                        <span className="hidden group-hover:flex items-center justify-center text-accent">
                           <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><polygon points="3,2 13,8 3,14" /></svg>
                         </span>
                       </>
@@ -273,10 +275,10 @@ export function Liked() {
                       {trackThumb ? (
                         <img className="h-10 w-10 rounded-sm flex-shrink-0 object-cover" src={trackThumb} alt="" />
                       ) : (
-                        <div className="h-10 w-10 rounded-sm flex-shrink-0 bg-[#282828]" />
+                        <div className="h-10 w-10 rounded-sm flex-shrink-0 bg-app-surface" />
                       )}
                       <div className="min-w-0">
-                        <div className={`truncate ${isActive ? "text-[#1db954]" : "text-white"}`}>{track.title}</div>
+                        <div className={`truncate ${isActive ? "text-accent" : "text-white"}`}>{track.title}</div>
                         {/* Subtitle: artist + fade-in actions */}
                         <div className="flex items-center gap-2 min-w-0">
                           <div className="truncate shrink min-w-0">

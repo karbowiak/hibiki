@@ -120,7 +120,7 @@ export function TopBar() {
         <Link href="/">
           <button
             aria-label="Go back"
-            className="h-fit rounded-full bg-black/70 p-2 hover:bg-black/90 transition-colors"
+            className="h-fit rounded-full bg-app-surface p-2 hover:bg-app-surface-hover transition-colors"
           >
             <svg role="img" height="16" width="16" className="fill-white" viewBox="0 0 16 16">
               <path d="M11.03.47a.75.75 0 0 1 0 1.06L4.56 8l6.47 6.47a.75.75 0 1 1-1.06 1.06L2.44 8 9.97.47a.75.75 0 0 1 1.06 0z" />
@@ -132,7 +132,7 @@ export function TopBar() {
         <button
           aria-label="Go forward"
           disabled
-          className="h-fit rounded-full bg-black/70 p-2"
+          className="h-fit rounded-full bg-app-surface p-2"
         >
           <svg role="img" height="16" width="16" className="fill-white/30" viewBox="0 0 16 16">
             <path d="M4.97.47a.75.75 0 0 0 0 1.06L11.44 8l-6.47 6.47a.75.75 0 1 0 1.06 1.06L13.56 8 6.03.47a.75.75 0 0 0-1.06 0z" />
@@ -190,7 +190,7 @@ export function TopBar() {
           onClick={() => void handleRefresh()}
           disabled={isRefreshing || !isConnected}
           title="Refresh library (⌘R)"
-          className="flex h-8 w-8 items-center justify-center rounded-full bg-black/70 hover:bg-[#282828] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-app-surface hover:bg-app-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <svg
             height="15" width="15" viewBox="0 0 24 24" fill="currentColor"
@@ -203,14 +203,18 @@ export function TopBar() {
         {/* Settings toggle — click again to go back */}
         <button
           onClick={() => location === "/settings" ? window.history.back() : navigate("/settings")}
-          className="flex items-center gap-2 rounded-full bg-black/70 px-3 py-1.5 text-sm font-semibold hover:bg-[#282828] transition-colors"
+          className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+            location === "/settings"
+              ? "bg-accent/15 border border-accent/30 hover:bg-accent/25"
+              : "bg-app-surface hover:bg-app-surface-hover"
+          }`}
           title={location === "/settings" ? "Close Settings" : "Settings"}
         >
-          <span className={`h-2 w-2 rounded-full flex-shrink-0 ${isConnected ? "bg-[#1db954]" : "bg-red-500"}`} />
-          <svg height="16" width="16" viewBox="0 0 24 24" fill="currentColor" className="text-white/70">
+          <span className={`h-2 w-2 rounded-full flex-shrink-0 ${isConnected ? "bg-green-500" : "bg-red-500"}`} />
+          <svg height="16" width="16" viewBox="0 0 24 24" fill="currentColor" className={location === "/settings" ? "text-accent" : "text-white/70"}>
             <path d="M12 15.5A3.5 3.5 0 0 1 8.5 12 3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5 3.5 3.5 0 0 1-3.5 3.5m7.43-2.92c.04-.34.07-.68.07-1.08s-.03-.73-.07-1.08l2.32-1.8c.21-.16.27-.44.14-.67l-2.2-3.81c-.13-.24-.41-.31-.65-.24l-2.74 1.1c-.57-.44-1.18-.81-1.86-1.09l-.42-2.9c-.04-.26-.26-.44-.52-.44H9.5c-.26 0-.48.18-.52.44l-.42 2.9c-.68.28-1.29.65-1.86 1.09l-2.74-1.1c-.24-.07-.52 0-.65.24l-2.2 3.81c-.13.24-.07.52.14.67l2.32 1.8c-.04.35-.07.69-.07 1.08s.03.73.07 1.08L2.25 14.3c-.21.16-.27.44-.14.67l2.2 3.81c.13.24.41.31.65.24l2.74-1.1c.57.44 1.18.81 1.86 1.09l.42 2.9c.04.26.26.44.52.44h4.4c.26 0 .48-.18.52-.44l.42-2.9c.68-.28 1.29-.65 1.86-1.09l2.74 1.1c.24.07.52 0 .65-.24l2.2-3.81c.13-.24.07-.52-.14-.67l-2.32-1.8z" />
           </svg>
-          <span className="text-white">Settings</span>
+          <span className={location === "/settings" ? "text-accent" : "text-white"}>Settings</span>
         </button>
       </div>
     </div>
