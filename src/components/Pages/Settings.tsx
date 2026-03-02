@@ -995,8 +995,8 @@ function AboutSection() {
         <div>
           <h3 className="text-base font-semibold text-white mb-4">Links</h3>
           <div className="flex flex-col gap-2 text-sm">
-            <CreditLink href="https://github.com/karbowiak/Plexify">GitHub Repository</CreditLink>
-            <CreditLink href="https://github.com/karbowiak/Plexify/releases">Release Notes</CreditLink>
+            <CreditLink href="https://github.com/karbowiak/plexify">GitHub Repository</CreditLink>
+            <CreditLink href="https://github.com/karbowiak/plexify/releases">Release Notes</CreditLink>
           </div>
         </div>
       </div>

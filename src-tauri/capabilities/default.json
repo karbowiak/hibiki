@@ -81,6 +81,7 @@
     "core:window:allow-set-skip-taskbar",
     "shell:allow-open",
     "window-state:default",
-    "updater:default"
+    "updater:default",
+    "core:menu:default"
   ]
 }

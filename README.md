@@ -32,7 +32,7 @@ A Spotify-inspired desktop music client for [Plex](https://www.plex.tv/), built 
 
 ## Download & Install
 
-Grab the latest release for your platform from the [Releases page](https://github.com/karbowiak/Plexify/releases).
+Grab the latest release for your platform from the [Releases page](https://github.com/karbowiak/plexify/releases).
 
 | Platform | File | Notes |
 |---|---|---|
@@ -88,7 +88,7 @@ You'll need a running Plex Media Server with a music library. On first launch, o
 ## Building from Source
 
 ```bash
-git clone https://github.com/karbowiak/Plexify.git
+git clone https://github.com/karbowiak/plexify.git
 cd Plexify
 bun install
 ```

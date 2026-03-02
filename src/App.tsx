@@ -9,6 +9,7 @@ import { CreatePlaylist } from "./components/Pages/CreatePlaylist"
 import { QueuePanel } from "./components/QueuePanel"
 import LyricsPanel from "./components/LyricsPanel"
 import { UpdateDialog } from "./components/UpdateDialog"
+import { createAppMenu } from "./lib/appMenu"
 import { useConnectionStore, useLibraryStore, useUIStore } from "./stores"
 import "./stores/accentStore"  // import so the module runs applyAccent() on load
 import "./stores/themeStore"   // import so the module runs applyTheme() on load
@@ -22,6 +23,7 @@ function App() {
 
   useEffect(() => {
     void loadAndConnect()
+    void createAppMenu(() => navigate("/settings"))
   }, [])
 
   useEffect(() => {
