@@ -454,6 +454,30 @@ async function sendToAudioEngine(track: Track): Promise<void> {
   )
 }
 
+/**
+ * Fetch and set lyrics for a track, guarded against stale results from a previous track.
+ * Retries once after 2 s on transient error before giving up.
+ */
+function fetchLyricsForTrack(ratingKey: number, get: () => PlayerState, set: any): void {
+  void getLyrics(ratingKey)
+    .then(lines => {
+      if (get().currentTrack?.rating_key === ratingKey) set({ lyricsLines: lines })
+    })
+    .catch(err => {
+      console.warn(`Lyrics fetch failed for track ${ratingKey}, retrying once:`, err)
+      setTimeout(() => {
+        if (get().currentTrack?.rating_key !== ratingKey) return
+        void getLyrics(ratingKey)
+          .then(lines => {
+            if (get().currentTrack?.rating_key === ratingKey) set({ lyricsLines: lines })
+          })
+          .catch(() => {
+            if (get().currentTrack?.rating_key === ratingKey) set({ lyricsLines: [] })
+          })
+      }, 2000)
+    })
+}
+
 /** Pre-buffer the next track in queue for gapless playback. */
 async function preloadNextTrack(queue: Track[], queueIndex: number, repeat: 0 | 1 | 2): Promise<void> {
   let nextIndex = queueIndex + 1
@@ -507,9 +531,7 @@ async function playAtIndex(index: number, get: () => PlayerState, set: any): Pro
       .then(levels => { if (levels.length > 0) set({ waveformLevels: levels }) })
       .catch(() => {/* waveform unavailable */})
   })
-  void getLyrics(track.rating_key)
-    .then(lines => set({ lyricsLines: lines }))
-    .catch(() => set({ lyricsLines: [] }))
+  fetchLyricsForTrack(track.rating_key, get, set)
   _reportTimeline(track.rating_key, "playing", 0, track.duration)
   void updateNowPlaying(
     track.title,
@@ -602,9 +624,7 @@ export const usePlayerStore = create<PlayerState>()(
         .then(levels => { if (levels.length > 0) set({ waveformLevels: levels }) })
         .catch(() => {})
     })
-    void getLyrics(track.rating_key)
-      .then(lines => set({ lyricsLines: lines }))
-      .catch(() => set({ lyricsLines: [] }))
+    fetchLyricsForTrack(track.rating_key, get, set)
     _reportTimeline(track.rating_key, "playing", 0, track.duration)
     void updateNowPlaying(
       track.title,
@@ -671,9 +691,7 @@ export const usePlayerStore = create<PlayerState>()(
           .then(levels => { if (levels.length > 0) set({ waveformLevels: levels }) })
           .catch(() => {})
       })
-      void getLyrics(firstTrack.rating_key)
-        .then(lines => set({ lyricsLines: lines }))
-        .catch(() => set({ lyricsLines: [] }))
+      fetchLyricsForTrack(firstTrack.rating_key, get, set)
       _reportTimeline(firstTrack.rating_key, "playing", 0, firstTrack.duration)
       void updateNowPlaying(
         firstTrack.title,
@@ -721,9 +739,7 @@ export const usePlayerStore = create<PlayerState>()(
         .then(levels => { if (levels.length > 0) set({ waveformLevels: levels }) })
         .catch(() => {})
     })
-    void getLyrics(firstTrack.rating_key)
-      .then(lines => set({ lyricsLines: lines }))
-      .catch(() => set({ lyricsLines: [] }))
+    fetchLyricsForTrack(firstTrack.rating_key, get, set)
     _reportTimeline(firstTrack.rating_key, "playing", 0, firstTrack.duration)
     void updateNowPlaying(
       firstTrack.title,
@@ -799,9 +815,7 @@ export const usePlayerStore = create<PlayerState>()(
           .then(levels => { if (levels.length > 0) set({ waveformLevels: levels }) })
           .catch(() => {})
       })
-      void getLyrics(firstTrack.rating_key)
-        .then(lines => set({ lyricsLines: lines }))
-        .catch(() => set({ lyricsLines: [] }))
+      fetchLyricsForTrack(firstTrack.rating_key, get, set)
       _reportTimeline(firstTrack.rating_key, "playing", 0, firstTrack.duration)
       void updateNowPlaying(
         firstTrack.title,
@@ -1089,9 +1103,7 @@ export const usePlayerStore = create<PlayerState>()(
             .then(levels => { if (levels.length > 0) set({ waveformLevels: levels }) })
             .catch(() => {/* waveform unavailable */})
         })
-        void getLyrics(track.rating_key)
-          .then(lines => set({ lyricsLines: lines }))
-          .catch(() => set({ lyricsLines: [] }))
+        fetchLyricsForTrack(track.rating_key, get, set)
         void updateNowPlaying(
           track.title,
           track.grandparent_title ?? "",

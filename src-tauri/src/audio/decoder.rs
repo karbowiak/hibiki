@@ -101,6 +101,9 @@ pub struct DecoderShared {
     pub eq_sample_rate: AtomicI64,
     /// Pre-amp gain applied in the output callback before EQ (× 1000; 1000 = 1.0 = 0 dB).
     pub preamp_gain_millths: AtomicI64,
+    /// Automatic gain reduction to compensate for EQ boost (× 1000; 1000 = 1.0 = 0 dB).
+    /// Set to the inverse of the maximum EQ gain whenever EQ coefficients change.
+    pub eq_pregain_millths: AtomicI64,
     /// When false (default), crossfade is suppressed for consecutive same-album tracks
     /// so gapless classical/live recordings are not interrupted by a fade.
     pub same_album_crossfade: AtomicBool,
@@ -137,6 +140,7 @@ impl DecoderShared {
             eq_gains_millths: Mutex::new([0i32; 10]),
             eq_sample_rate: AtomicI64::new(44100),
             preamp_gain_millths: AtomicI64::new(1_000), // 1.0 linear = 0 dB
+            eq_pregain_millths: AtomicI64::new(1_000), // 1.0 linear = 0 dB (no compensation)
             same_album_crossfade: AtomicBool::new(false), // suppress same-album crossfade by default
             vis_enabled: AtomicBool::new(false),
             vis_sender: Mutex::new(None),
@@ -254,6 +258,159 @@ fn try_extract_replaygain(fmt: &mut Box<dyn FormatReader>) -> f32 {
     }
 
     1.0
+}
+
+/// Target RMS level in dBFS for fallback normalization. -18 dBFS RMS gives
+/// enough headroom for EQ boosts while keeping loudness roughly consistent
+/// with Plex-normalized tracks (~-14 LUFS after K-weighting offset).
+const FALLBACK_TARGET_DBFS: f32 = -18.0;
+
+/// Compute a fallback normalization gain by scanning the first ~15 seconds of
+/// a cached audio file. Returns a linear gain clamped to [0.1, 4.0].
+///
+/// Invoked ONLY when both Plex server-side gain and embedded ReplayGain tags
+/// are unavailable. Opens a second decoder instance from the on-disk cache
+/// (fast, no network), so latency is typically 5–30 ms.
+fn compute_fallback_loudness(url: &str, shared: &Arc<DecoderShared>) -> f32 {
+    let Some(ref cache_dir) = shared.cache_dir else {
+        warn!("Fallback loudness: no cache dir available");
+        return 1.0;
+    };
+    let cache_path = cache_dir.join(audio_cache_key(url));
+    if !cache_path.exists() {
+        warn!(url = %url, "Fallback loudness: cache file not found");
+        return 1.0;
+    }
+
+    let file = match File::open(&cache_path) {
+        Ok(f) => f,
+        Err(e) => {
+            warn!(error = %e, "Fallback loudness: failed to open cache file");
+            return 1.0;
+        }
+    };
+
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let (mut fmt, mut dec, tid, sr, _ch) = match probe_audio(mss, url) {
+        Ok(t) => t,
+        Err(e) => {
+            warn!(error = %e, "Fallback loudness: failed to probe audio");
+            return 1.0;
+        }
+    };
+
+    let max_samples = sr as usize * 15; // 15 seconds worth of frames
+    let mut sum_sq: f64 = 0.0;
+    let mut peak: f32 = 0.0;
+    let mut total_samples: usize = 0;
+    let mut sb: Option<SampleBuffer<f32>> = None;
+
+    loop {
+        let packet = match fmt.next_packet() {
+            Ok(p) if p.track_id() == tid => p,
+            Ok(_) => continue,
+            Err(_) => break,
+        };
+        match dec.decode(&packet) {
+            Ok(audio_buf) => {
+                let spec = *audio_buf.spec();
+                let frames = audio_buf.frames();
+                if sb.as_ref().map_or(true, |s| s.capacity() < frames) {
+                    sb = Some(SampleBuffer::new(frames as u64, spec));
+                }
+                let s = sb.as_mut().unwrap();
+                s.copy_interleaved_ref(audio_buf);
+                for &sample in s.samples() {
+                    let abs = sample.abs();
+                    sum_sq += (sample as f64) * (sample as f64);
+                    if abs > peak {
+                        peak = abs;
+                    }
+                    total_samples += 1;
+                }
+                if total_samples >= max_samples {
+                    break;
+                }
+            }
+            Err(symphonia::core::errors::Error::DecodeError(_)) => continue,
+            Err(_) => break,
+        }
+    }
+
+    if total_samples < 4410 {
+        warn!(
+            total_samples = total_samples,
+            "Fallback loudness: too few samples, using unity gain"
+        );
+        return 1.0;
+    }
+
+    let rms = (sum_sq / total_samples as f64).sqrt() as f32;
+    if rms < 1e-10 {
+        warn!("Fallback loudness: track is near-silent, using unity gain");
+        return 1.0;
+    }
+
+    let rms_dbfs = 20.0 * rms.log10();
+    let mut gain_db = FALLBACK_TARGET_DBFS - rms_dbfs;
+
+    // Peak safety: don't push peaks above -1 dBFS
+    if peak > 1e-10 {
+        let peak_after_db = 20.0 * peak.log10() + gain_db;
+        let headroom_db = -1.0;
+        if peak_after_db > headroom_db {
+            gain_db -= peak_after_db - headroom_db;
+        }
+    }
+
+    let linear = 10f32.powf(gain_db / 20.0).clamp(0.1, 4.0);
+    warn!(
+        rms_dbfs = format!("{:.1}", rms_dbfs),
+        gain_db = format!("{:.2}", gain_db),
+        linear_gain = format!("{:.3}", linear),
+        peak = format!("{:.4}", peak),
+        samples_scanned = total_samples,
+        "Fallback loudness normalization computed"
+    );
+
+    linear
+}
+
+/// Resolve the normalization gain for a track. Priority:
+/// 1. Plex API `gain_db` (server-side loudness analysis)
+/// 2. Embedded ReplayGain tags in file metadata
+/// 3. RMS-based loudness pre-scan of first 15 seconds
+fn resolve_normalization_gain(
+    meta: &TrackMeta,
+    fmt: &mut Box<dyn FormatReader>,
+    shared: &Arc<DecoderShared>,
+) -> f32 {
+    if let Some(db) = meta.gain_db {
+        let gain = 10f32.powf(db / 20.0).clamp(0.1, 4.0);
+        warn!(
+            rating_key = meta.rating_key,
+            gain_db = db,
+            linear = format!("{:.3}", gain),
+            "Normalization: using Plex API gain"
+        );
+        return gain;
+    }
+
+    let rg = try_extract_replaygain(fmt);
+    if (rg - 1.0).abs() > f32::EPSILON {
+        warn!(
+            rating_key = meta.rating_key,
+            linear = format!("{:.3}", rg),
+            "Normalization: using embedded ReplayGain tag"
+        );
+        return rg;
+    }
+
+    warn!(
+        rating_key = meta.rating_key,
+        "Normalization: no Plex gain or ReplayGain tag, running fallback RMS scan"
+    );
+    compute_fallback_loudness(&meta.url, shared)
 }
 
 /// Fetch audio bytes from a URL
@@ -656,6 +813,52 @@ pub fn decoder_thread(
             }
         }
 
+        // Early crossfade completion: if the fade window has fully elapsed, promote the next
+        // track now rather than waiting for the old HTTP stream to send EOF. Without this, the
+        // UI stays frozen on the old track when the server holds the connection open after the
+        // last audio packet, or when the actual audio is slightly longer than its metadata duration.
+        if crossfade.as_ref().map_or(false, |cf| cf.elapsed_frames >= cf.total_frames) {
+            if let Some(cf) = crossfade.take() {
+                info!(
+                    rating_key = cf.meta.rating_key,
+                    "Crossfade window elapsed — promoting next track without waiting for EOF"
+                );
+                if let Some(ref old) = current_track {
+                    let _ = event_tx.send(AudioEvent::TrackEnded {
+                        rating_key: old.rating_key,
+                    });
+                }
+                let ch = cf.channels as i64;
+                shared.position_samples.store(
+                    (cf.elapsed_frames as i64).saturating_mul(ch),
+                    Ordering::Relaxed,
+                );
+                let nb = shared.next_bpm.swap(0, Ordering::Relaxed);
+                shared.current_bpm.store(nb, Ordering::Relaxed);
+                shared.normalization_gain_millths.store(
+                    (cf.norm_gain * 1_000.0) as i64,
+                    Ordering::Relaxed,
+                );
+                shared.next_norm_gain_millths.store(1_000, Ordering::Relaxed);
+                format_reader    = Some(cf.format_reader);
+                decoder          = Some(cf.decoder);
+                current_track_id = cf.track_id;
+                sample_buf       = cf.sample_buf;
+                shared.sample_rate.store(cf.sample_rate as i64, Ordering::Relaxed);
+                shared.channels.store(cf.channels as i64, Ordering::Relaxed);
+                shared.finished.store(false, Ordering::Relaxed);
+                current_track = Some(cf.meta.clone());
+                let _ = event_tx.send(AudioEvent::TrackStarted {
+                    rating_key:  cf.meta.rating_key,
+                    duration_ms: cf.meta.duration_ms,
+                });
+                let _ = event_tx.send(AudioEvent::State {
+                    state: PlaybackState::Playing,
+                });
+            }
+            continue;
+        }
+
         // Decode next packet
         if let (Some(ref mut fmt), Some(ref mut dec)) = (&mut format_reader, &mut decoder) {
             match fmt.next_packet() {
@@ -756,15 +959,11 @@ pub fn decoder_thread(
                                             .and_then(|(mss, u)| probe_audio(mss, &u))
                                         {
                                             Ok((mut nfmt, ndec, ntid, nsr, nch)) => {
-                                                // Use Plex API gain if available, else file tags
                                                 let next_meta_ref =
                                                     next_meta.as_ref().unwrap();
-                                                let next_norm =
-                                                    if let Some(db) = next_meta_ref.gain_db {
-                                                        10f32.powf(db / 20.0).clamp(0.1, 4.0)
-                                                    } else {
-                                                        try_extract_replaygain(&mut nfmt)
-                                                    };
+                                                let next_norm = resolve_normalization_gain(
+                                                    next_meta_ref, &mut nfmt, &shared,
+                                                );
                                                 shared.next_norm_gain_millths.store(
                                                     (next_norm * 1_000.0) as i64,
                                                     Ordering::Relaxed,
@@ -982,18 +1181,15 @@ pub fn decoder_thread(
                             .and_then(|(mss, u)| probe_audio(mss, &u))
                         {
                             Ok((mut fmt, dec, tid, sr, ch)) => {
-                                // Prefer Plex API gain from the TrackMeta we stored,
-                                // then the pre-computed next_norm_gain (set at crossfade
-                                // trigger time), then extract from embedded file tags.
-                                let norm_gain = if let Some(db) = nmeta.gain_db {
-                                    10f32.powf(db / 20.0).clamp(0.1, 4.0)
-                                } else {
+                                // Use pre-computed gain from crossfade setup if
+                                // available, otherwise resolve from scratch.
+                                let norm_gain = {
                                     let next_g =
                                         shared.next_norm_gain_millths.load(Ordering::Relaxed);
                                     if next_g != 1_000 {
                                         next_g as f32 / 1_000.0
                                     } else {
-                                        try_extract_replaygain(&mut fmt)
+                                        resolve_normalization_gain(&nmeta, &mut fmt, &shared)
                                     }
                                 };
                                 if let Some(ref old) = current_track {
@@ -1106,13 +1302,7 @@ fn handle_command(
             match open_for_decode(&meta.url, shared) {
                 Ok((mss, url)) => match probe_audio(mss, &url) {
                     Ok((mut fmt, dec, tid, sr, ch)) => {
-                        // Prefer Plex API gain (already analysed server-side);
-                        // fall back to embedded ReplayGain tag for unanalysed tracks.
-                        let norm_gain = if let Some(db) = meta.gain_db {
-                            10f32.powf(db / 20.0).clamp(0.1, 4.0)
-                        } else {
-                            try_extract_replaygain(&mut fmt)
-                        };
+                        let norm_gain = resolve_normalization_gain(&meta, &mut fmt, shared);
                         *format_reader = Some(fmt);
                         *decoder = Some(dec);
                         *current_track_id = tid;
@@ -1275,7 +1465,16 @@ fn handle_command(
                 }
             }
             shared.eq_sample_rate.store(sr as i64, Ordering::Relaxed);
-            debug!("EQ coefficients recomputed at {}Hz", sr as i32);
+
+            // Auto-gain: reduce output by the max EQ boost to prevent clipping.
+            let max_boost_db = gains_db.iter().cloned().fold(0.0f32, f32::max);
+            let pregain = if max_boost_db > 0.01 {
+                10f32.powf(-max_boost_db / 20.0)
+            } else {
+                1.0
+            };
+            shared.eq_pregain_millths.store((pregain * 1_000.0) as i64, Ordering::Relaxed);
+            debug!("EQ coefficients recomputed at {}Hz, pregain={:.3}", sr as i32, pregain);
         }
 
         AudioCommand::SetPreampGain(db) => {

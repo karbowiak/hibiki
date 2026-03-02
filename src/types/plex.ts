@@ -12,6 +12,18 @@ export interface PlexStream {
   album_gain: number | null
   peak: number | null
   loudness: number | null
+  /** Audio codec (e.g. "flac", "mp3", "aac") */
+  codec: string | null
+  /** Number of audio channels */
+  channels: number | null
+  /** Bitrate in kbps */
+  bitrate: number | null
+  /** Bit depth (e.g. 16, 24) */
+  bit_depth: number | null
+  /** Sampling rate in Hz (e.g. 44100, 96000) */
+  sampling_rate: number | null
+  /** Human-readable description (e.g. "FLAC (Stereo)") */
+  display_title: string | null
 }
 
 export interface MediaPart {

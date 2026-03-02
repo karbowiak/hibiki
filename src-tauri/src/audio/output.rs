@@ -162,8 +162,14 @@ fn build_f32_stream(
 
                 // Normalization gain is applied in the decoder before samples reach the
                 // ring buffer, so the output callback only needs to scale by volume × pre-amp.
+                // eq_pregain compensates for EQ boost to prevent clipping.
                 let volume = shared.volume();
                 let preamp = shared.preamp_gain_millths.load(Ordering::Relaxed) as f32 / 1_000.0;
+                let eq_pregain = if eq_enabled {
+                    shared.eq_pregain_millths.load(Ordering::Relaxed) as f32 / 1_000.0
+                } else {
+                    1.0
+                };
                 let source_channels = shared.channels.load(Ordering::Relaxed) as usize;
 
                 if source_channels == 0 {
@@ -183,11 +189,11 @@ fn build_f32_stream(
                             data[pos..].fill(0.0);
                             break;
                         }
-                        // Apply volume × pre-amp, then EQ, then soft limiter — single pass.
+                        // Apply volume × pre-amp × eq-pregain, then EQ, then soft limiter — single pass.
                         // Channel index is (absolute output position) % output_channels.
                         for (i, sample) in data[pos..pos + available].iter_mut().enumerate() {
                             let ch = (pos + i) % output_channels;
-                            *sample *= volume * preamp;
+                            *sample *= volume * preamp * eq_pregain;
                             if let Some(ref c) = coeffs {
                                 for band in 0..10 {
                                     if !c[band].is_identity() {
@@ -231,7 +237,7 @@ fn build_f32_stream(
                                 source_channels - 1
                             };
                             if pos < data.len() {
-                                data[pos] = soft_limit(frame[src_ch] * volume * preamp);
+                                data[pos] = soft_limit(frame[src_ch] * volume * preamp * eq_pregain);
                                 pos += 1;
                             }
                         }

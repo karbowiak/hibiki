@@ -10,6 +10,7 @@ import { useVisualizerStore } from "../stores/visualizerStore"
 import { reportTimeline, audioSetCacheMaxBytes, audioSetVisualizerEnabled } from "../lib/plex"
 import EqPanel from "./EqPanel"
 import SleepTimerPanel from "./SleepTimerPanel"
+import TrackInfoPanel from "./TrackInfoPanel"
 import VisualizerCanvas from "./VisualizerCanvas"
 import VisualizerFullscreen from "./VisualizerFullscreen"
 import { useSleepTimerStore } from "../stores/sleepTimerStore"
@@ -28,6 +29,7 @@ export function Player() {
   const djButtonRef = useRef<HTMLButtonElement>(null)
   const [djMenuPos, setDjMenuPos] = useState<{ bottom: number; right: number } | null>(null)
   const [seekHoverPct, setSeekHoverPct] = useState<number | null>(null)
+  const [trackInfoOpen, setTrackInfoOpen] = useState(false)
 
   const {
     currentTrack,
@@ -247,6 +249,7 @@ export function Player() {
       {/* Panels — float above the player bar; rendered here so they escape overflow-clip */}
       {isEqOpen && <EqPanel />}
       {sleepTimerOpen && <SleepTimerPanel />}
+      {trackInfoOpen && currentTrack && <TrackInfoPanel onClose={() => setTrackInfoOpen(false)} />}
       {fullscreenOpen && <VisualizerFullscreen />}
       <div className="flex h-fit w-screen min-w-[620px] flex-col overflow-clip rounded-b-lg bg-app-card">
         <div className="h-24">
@@ -422,6 +425,19 @@ export function Player() {
                   {djMode ? (DJ_MODES.find(d => d.key === djMode)?.name.replace('DJ ', '') ?? 'DJ') : 'Radio'}
                 </button>
               )}
+
+              {/* Track info */}
+              <button
+                onClick={() => currentTrack && setTrackInfoOpen(v => !v)}
+                title="Track info"
+                className={`flex-shrink-0 flex h-8 w-8 items-center justify-center transition-colors ${trackInfoOpen ? "text-accent" : "text-white/40 hover:text-white/70"}`}
+                aria-label="Track info"
+              >
+                <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+                  <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
+                  <path d="m8.93 6.588-2.29.287-.082.38.45.083c.294.07.352.176.288.469l-.738 3.468c-.194.897.105 1.319.808 1.319.545 0 1.178-.252 1.465-.598l.088-.416c-.2.176-.492.246-.686.246-.275 0-.375-.193-.304-.533L8.93 6.588zM9 4.5a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/>
+                </svg>
+              </button>
 
               {/* Guest DJ menu — click headphones to open DJ personality picker */}
               <div className="relative flex flex-col items-center flex-shrink-0">

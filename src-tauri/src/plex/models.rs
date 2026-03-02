@@ -538,6 +538,30 @@ pub struct PlexStream {
     /// Integrated loudness in LUFS
     #[serde(default, deserialize_with = "serde_string_or_f64_opt::deserialize")]
     pub loudness: Option<f64>,
+
+    /// Audio codec (e.g. "flac", "mp3", "aac")
+    #[serde(default)]
+    pub codec: Option<String>,
+
+    /// Number of audio channels
+    #[serde(default, deserialize_with = "serde_string_or_i64_opt::deserialize")]
+    pub channels: Option<i64>,
+
+    /// Bitrate in kbps
+    #[serde(default, deserialize_with = "serde_string_or_i64_opt::deserialize")]
+    pub bitrate: Option<i64>,
+
+    /// Bit depth (e.g. 16, 24, 32)
+    #[serde(rename(deserialize = "bitDepth"), default, deserialize_with = "serde_string_or_i64_opt::deserialize")]
+    pub bit_depth: Option<i64>,
+
+    /// Sampling rate in Hz (e.g. 44100, 48000, 96000)
+    #[serde(rename(deserialize = "samplingRate"), default, deserialize_with = "serde_string_or_i64_opt::deserialize")]
+    pub sampling_rate: Option<i64>,
+
+    /// Human-readable stream description (e.g. "FLAC (Stereo)")
+    #[serde(rename(deserialize = "displayTitle"), default)]
+    pub display_title: Option<String>,
 }
 
 /// A lyrics stream embedded in a track (returned when `includeLyrics=1` is passed).
