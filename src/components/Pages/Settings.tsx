@@ -5,13 +5,15 @@ import clsx from "clsx"
 import { useConnectionStore, useLibraryStore } from "../../stores"
 import { plexAuthPoll, plexGetResources, testServerConnection, audioCacheInfo, audioClearCache, audioSetCacheMaxBytes, audioGetOutputDevices } from "../../lib/plex"
 import type { PlexResource } from "../../types/plex"
+import { getVersion } from "@tauri-apps/api/app"
 import { useAudioSettingsStore } from "../../stores/audioSettingsStore"
+import { useUpdateStore } from "../../stores/updateStore"
 import { useAccentStore, ACCENT_PRESETS } from "../../stores/accentStore"
 import { getTheme, setTheme, subscribeTheme } from "../../stores/themeStore"
 import { getFont, setFont, subscribeFont, FONT_PRESETS } from "../../stores/fontStore"
 import type { FontPreset } from "../../stores/fontStore"
 
-type Section = "account" | "playback" | "downloads" | "ai" | "experience"
+type Section = "account" | "playback" | "downloads" | "ai" | "experience" | "about"
 type AuthState = "idle" | "polling" | "picking"
 
 const NAV: { id: Section; label: string; icon: React.ReactNode }[] = [
@@ -57,6 +59,15 @@ const NAV: { id: Section; label: string; icon: React.ReactNode }[] = [
     icon: (
       <svg height="18" width="18" viewBox="0 0 24 24" fill="currentColor">
         <path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5S18.33 12 17.5 12z" />
+      </svg>
+    ),
+  },
+  {
+    id: "about",
+    label: "About",
+    icon: (
+      <svg height="18" width="18" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z" />
       </svg>
     ),
   },
@@ -896,6 +907,174 @@ function AccountSection() {
 }
 
 // ---------------------------------------------------------------------------
+// About section — version info + update check
+// ---------------------------------------------------------------------------
+
+function CreditLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <button onClick={() => void open(href)} className="text-accent hover:underline text-left">
+      {children}
+    </button>
+  )
+}
+
+function AboutSection() {
+  const [version, setVersion] = useState("")
+  const { update, checking, error, lastChecked, checkForUpdate, setShowDialog } = useUpdateStore()
+
+  useEffect(() => {
+    void getVersion().then(setVersion)
+  }, [])
+
+  const pillBase = "rounded-full px-4 py-1.5 text-sm transition-colors"
+
+  return (
+    <div className="flex gap-12">
+      {/* Left column — version, updates, links */}
+      <div className="flex flex-col gap-8 min-w-[320px] max-w-md">
+        {/* Version */}
+        <div>
+          <h3 className="text-base font-semibold text-white mb-4">Version</h3>
+          <p className="text-sm text-white/70">
+            Plexify <span className="font-semibold text-white">{version || "\u2026"}</span>
+          </p>
+        </div>
+
+        {/* Updates */}
+        <div>
+          <h3 className="text-base font-semibold text-white mb-4">Updates</h3>
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => void checkForUpdate()}
+                disabled={checking}
+                className={`${pillBase} bg-white/10 text-white hover:bg-white/20 disabled:opacity-40 disabled:cursor-not-allowed`}
+              >
+                {checking ? "Checking\u2026" : "Check for Updates"}
+              </button>
+              {checking && (
+                <svg className="animate-spin text-accent" height="16" width="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
+                  <path d="M12 2a10 10 0 0 1 10 10" />
+                </svg>
+              )}
+            </div>
+
+            {!checking && update && (
+              <div className="rounded-xl bg-accent/10 border border-accent/20 px-4 py-3 flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-accent">
+                    Version {update.version} available
+                  </p>
+                  {update.body && (
+                    <p className="text-xs text-white/40 mt-0.5 line-clamp-1">{update.body}</p>
+                  )}
+                </div>
+                <button
+                  onClick={() => setShowDialog(true)}
+                  className={`${pillBase} bg-accent text-black font-semibold flex-shrink-0`}
+                >
+                  Install
+                </button>
+              </div>
+            )}
+
+            {!checking && !update && !error && lastChecked && (
+              <p className="text-xs text-white/40">You're on the latest version.</p>
+            )}
+
+            {!checking && error && (
+              <div className="rounded-xl bg-red-500/10 border border-red-500/20 px-4 py-3 text-sm text-red-400">
+                {error}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Links */}
+        <div>
+          <h3 className="text-base font-semibold text-white mb-4">Links</h3>
+          <div className="flex flex-col gap-2 text-sm">
+            <CreditLink href="https://github.com/karbowiak/Plexify">GitHub Repository</CreditLink>
+            <CreditLink href="https://github.com/karbowiak/Plexify/releases">Release Notes</CreditLink>
+          </div>
+        </div>
+      </div>
+
+      {/* Right column — thank you / credits */}
+      <div className="flex-1 min-w-[260px]">
+        <h3 className="text-base font-semibold text-white mb-5">Thank You</h3>
+        <p className="text-sm text-white/50 mb-6">
+          Plexify wouldn't exist without these incredible projects and people.
+        </p>
+
+        <div className="flex flex-col gap-5">
+          {/* Special thanks */}
+          <div className="rounded-xl bg-white/5 border border-white/5 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-white/30 mb-3">Special Thanks</p>
+            <ul className="space-y-2 text-sm">
+              <li className="text-white/70">
+                <CreditLink href="https://www.plex.tv">Plex</CreditLink>
+                <span className="text-white/30"> &mdash; the media server that makes it all possible</span>
+              </li>
+              <li className="text-white/70">
+                <CreditLink href="https://github.com/agmmnn/tauri-spotify-clone">@agmmnn</CreditLink>
+                <span className="text-white/30"> &mdash; original Spotify-clone UI design inspiration</span>
+              </li>
+            </ul>
+          </div>
+
+          {/* Core framework */}
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-white/30 mb-3">Core</p>
+            <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
+              <CreditLink href="https://v2.tauri.app">Tauri</CreditLink>
+              <CreditLink href="https://react.dev">React</CreditLink>
+              <CreditLink href="https://www.typescriptlang.org">TypeScript</CreditLink>
+              <CreditLink href="https://www.rust-lang.org">Rust</CreditLink>
+              <CreditLink href="https://vitejs.dev">Vite</CreditLink>
+            </div>
+          </div>
+
+          {/* Audio */}
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-white/30 mb-3">Audio Engine</p>
+            <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
+              <CreditLink href="https://github.com/pdeljanov/Symphonia">Symphonia</CreditLink>
+              <CreditLink href="https://github.com/RustAudio/cpal">cpal</CreditLink>
+              <CreditLink href="https://github.com/jprjr/butterchurn">Butterchurn</CreditLink>
+              <CreditLink href="https://github.com/Amanieu/ringbuf">ringbuf</CreditLink>
+            </div>
+          </div>
+
+          {/* Frontend */}
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-white/30 mb-3">Frontend</p>
+            <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
+              <CreditLink href="https://tailwindcss.com">Tailwind CSS</CreditLink>
+              <CreditLink href="https://zustand.docs.pmnd.rs">Zustand</CreditLink>
+              <CreditLink href="https://github.com/molefrog/wouter">Wouter</CreditLink>
+              <CreditLink href="https://dndkit.com">dnd kit</CreditLink>
+            </div>
+          </div>
+
+          {/* Backend */}
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-white/30 mb-3">Backend</p>
+            <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
+              <CreditLink href="https://tokio.rs">Tokio</CreditLink>
+              <CreditLink href="https://github.com/seanmonstar/reqwest">reqwest</CreditLink>
+              <CreditLink href="https://serde.rs">Serde</CreditLink>
+              <CreditLink href="https://github.com/Sinono3/souvlaki">Souvlaki</CreditLink>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Main settings page
 // ---------------------------------------------------------------------------
 
@@ -946,6 +1125,7 @@ export function SettingsPage() {
           <ComingSoon title="AI" description="Sonic recommendations, radio tuning and smart mix settings will appear here." />
         )}
         {section === "experience" && <ExperienceSection />}
+        {section === "about" && <AboutSection />}
       </main>
     </div>
   )

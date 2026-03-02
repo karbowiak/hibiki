@@ -8,6 +8,7 @@ import { Player } from "./components/Player"
 import { CreatePlaylist } from "./components/Pages/CreatePlaylist"
 import { QueuePanel } from "./components/QueuePanel"
 import LyricsPanel from "./components/LyricsPanel"
+import { UpdateDialog } from "./components/UpdateDialog"
 import { useConnectionStore, useLibraryStore, useUIStore } from "./stores"
 import "./stores/accentStore"  // import so the module runs applyAccent() on load
 import "./stores/themeStore"   // import so the module runs applyTheme() on load
@@ -81,6 +82,8 @@ function App() {
       {showCreatePlaylist && (
         <CreatePlaylist onClose={() => setShowCreatePlaylist(false)} />
       )}
+
+      <UpdateDialog />
     </div>
   )
 }
