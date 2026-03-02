@@ -12,6 +12,7 @@ import EqPanel from "./EqPanel"
 import SleepTimerPanel from "./SleepTimerPanel"
 import TrackInfoPanel from "./TrackInfoPanel"
 import DjPanel from "./DjPanel"
+import RadioPanel from "./RadioPanel"
 import PlayerPopover from "./PlayerPopover"
 import VisualizerCanvas from "./VisualizerCanvas"
 import VisualizerFullscreen from "./VisualizerFullscreen"
@@ -318,15 +319,20 @@ export function Player() {
             <div className="flex w-[40%] max-w-[45.125rem] flex-col items-center px-4 pt-2">
               <div className="flex items-center gap-x-1.5">
 
-                {/* Radio mode indicator — left of DJ, click to stop */}
+                {/* Radio mode indicator — left of DJ, opens settings panel */}
                 {isRadioMode && (
-                  <button
-                    onClick={stopRadio}
-                    title="Radio is on — click to stop"
-                    className="flex-shrink-0 rounded-full bg-accent/15 border border-accent/40 px-2 py-0.5 text-[0.625rem] font-bold uppercase tracking-wider text-accent hover:bg-accent/30 transition-colors"
+                  <PlayerPopover
+                    icon={
+                      <span className="text-[0.625rem] font-bold uppercase tracking-wider">RADIO</span>
+                    }
+                    wide
+                    active
+                    label="Radio settings"
+                    width={360}
+                    align="left"
                   >
-                    RADIO
-                  </button>
+                    {(close) => <RadioPanel onClose={close} />}
+                  </PlayerPopover>
                 )}
 
                 {/* Guest DJ — icon only when inactive, icon+name pill when active */}

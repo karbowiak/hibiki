@@ -66,8 +66,19 @@ interface PlayerState {
   radioSeedKey: number | null
   /** Type of seed item used to start radio. */
   radioType: RadioType | null
+  /** Artist name for the seed item (track/album radio only). Shown in the Radio panel. */
+  radioSeedArtist: string | null
   /** Active DJ personality, or null when DJ is off. Persisted as a preference. */
   djMode: DjMode | null
+  /**
+   * Variety of radio suggestions: 0 = focused (very similar), 1-4 = increasing diversity,
+   * -1 = unlimited (anything goes). Maps to Plex `degreesOfSeparation`.
+   */
+  radioDegreesOfSeparation: number
+  /** Minimum number of tracks to keep queued ahead before triggering a refill. */
+  radioMinQueue: number
+  setRadioDegreesOfSeparation: (v: number) => void
+  setRadioMinQueue: (v: number) => void
 
   /** Waveform level data fetched on track-start. Null when unavailable. Not persisted. */
   waveformLevels: Level[] | null
@@ -182,13 +193,13 @@ async function appendRadioTracks(
   get: () => PlayerState,
   set: (updater: (s: PlayerState) => Partial<PlayerState>) => void,
 ) {
-  const { isRadioMode, radioSeedKey, radioType, queue, queueIndex } = get()
+  const { isRadioMode, radioSeedKey, radioType, queue, queueIndex, radioDegreesOfSeparation, radioMinQueue } = get()
   if (!isRadioMode || radioSeedKey === null || radioType === null || _radioRefillInProgress) return
-  if (queue.length - queueIndex > 5) return  // plenty of tracks ahead
+  if (queue.length - queueIndex > radioMinQueue) return  // plenty of tracks ahead
 
   _radioRefillInProgress = true
   try {
-    const pq = await createRadioQueue(radioSeedKey, radioType)
+    const pq = await createRadioQueue(radioSeedKey, radioType, radioDegreesOfSeparation)
     const newTracks = filterPlayable(pq.items)
 
     // Append only tracks not already in the queue to avoid duplicates
@@ -616,6 +627,9 @@ export const usePlayerStore = create<PlayerState>()(
   isRadioMode: false,
   radioSeedKey: null,
   radioType: null,
+  radioSeedArtist: null,
+  radioDegreesOfSeparation: 2,
+  radioMinQueue: 5,
   djMode: null,
   waveformLevels: null,
   lyricsLines: null,
@@ -697,44 +711,74 @@ export const usePlayerStore = create<PlayerState>()(
   playRadio: async (ratingKey: number, radioType: RadioType, seedName?: string) => {
     _djGeneratedKeys.clear()
     _radioGeneratedKeys.clear()
-    _radioRefillInProgress = false
+    // Block the position-listener refill from firing during our own async init.
+    _radioRefillInProgress = true
 
     try {
-      const playQueue = await createRadioQueue(ratingKey, radioType)
+      const { radioDegreesOfSeparation, radioMinQueue } = get()
+      const playQueue = await createRadioQueue(ratingKey, radioType, radioDegreesOfSeparation)
 
       // Filter to playable tracks then deduplicate by rating_key.
-      const playable = filterPlayable(playQueue.items)
       const seenKeys = new Set<number>()
-      const tracks = playable.filter(t => seenKeys.has(t.rating_key) ? false : (seenKeys.add(t.rating_key), true))
+      let tracks = filterPlayable(playQueue.items).filter(
+        t => seenKeys.has(t.rating_key) ? false : (seenKeys.add(t.rating_key), true)
+      )
 
       if (tracks.length === 0) {
         set({ playerError: "Radio returned no playable tracks — the server may not support sonic analysis for this item." })
         setTimeout(() => set({ playerError: null }), 5000)
+        _radioRefillInProgress = false
         return
+      }
+
+      // Pre-fill to radioMinQueue *before* setting queue state so the user never
+      // sees the queue grow after opening the panel.
+      if (tracks.length - 1 <= radioMinQueue) {
+        try {
+          const pq2 = await createRadioQueue(ratingKey, radioType, radioDegreesOfSeparation)
+          filterPlayable(pq2.items).forEach(t => {
+            if (!seenKeys.has(t.rating_key)) {
+              seenKeys.add(t.rating_key)
+              tracks = [...tracks, t]
+            }
+          })
+        } catch { /* non-critical — start with fewer tracks if this fails */ }
       }
 
       // Mark all tracks except the seed (index 0) as radio-generated.
       tracks.slice(1).forEach(t => _radioGeneratedKeys.add(t.rating_key))
 
-      // Only update context label when a seedName was explicitly supplied.
+      // Derive context name from queue results when not explicitly supplied.
+      const derivedSeedName = seedName
+        ?? (radioType === 'artist' ? tracks[0]?.grandparent_title
+           : radioType === 'album'  ? tracks[0]?.parent_title
+           : tracks[0]?.title)
+        ?? null
+
       const radioHref = radioType === 'artist' ? `/artist/${ratingKey}`
         : radioType === 'album' ? `/album/${ratingKey}`
         : radioType === 'playlist' ? `/playlist/${ratingKey}`
         : null
-      const contextUpdate = seedName !== undefined
-        ? { contextName: `${seedName} Radio`, contextHref: radioHref }
-        : {}
+
+      const seedArtist = (radioType === 'track' || radioType === 'album')
+        ? (tracks[0]?.grandparent_title ?? null)
+        : null
 
       set({
         queue: tracks, queueId: playQueue.id,
         isRadioMode: true, radioSeedKey: ratingKey, radioType,
+        radioSeedArtist: seedArtist,
         playlistKey: null, playlistTotalCount: 0, playlistLoadedCount: 0,
         playerError: null,
-        ...contextUpdate,
+        ...(derivedSeedName ? { contextName: `${derivedSeedName} Radio`, contextHref: radioHref } : {}),
       })
+
+      // Unlock position-listener refills now that the queue is fully populated.
+      _radioRefillInProgress = false
 
       await _startPlayback(tracks[0], 0, get, set)
     } catch (err) {
+      _radioRefillInProgress = false
       console.error("playRadio failed:", err)
       const msg = err instanceof Error ? err.message : String(err)
       set({ playerError: `Radio failed: ${msg}` })
@@ -747,8 +791,11 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   stopRadio: () => {
-    set({ isRadioMode: false, radioSeedKey: null, radioType: null })
+    set({ isRadioMode: false, radioSeedKey: null, radioType: null, radioSeedArtist: null })
   },
+
+  setRadioDegreesOfSeparation: (v) => set({ radioDegreesOfSeparation: v }),
+  setRadioMinQueue: (v) => set({ radioMinQueue: v }),
 
   setDjMode: (mode: DjMode | null) => {
     // Remove future DJ-generated bonus tracks from the queue
@@ -894,7 +941,7 @@ export const usePlayerStore = create<PlayerState>()(
     // Position updates from the Rust audio engine (~4x/sec)
     unlisteners.push(
       await listen<{ position_ms: number; duration_ms: number }>("audio://position", (e) => {
-        const { currentTrack, queue, queueIndex, repeat, isRadioMode, isPlaying } = get()
+        const { currentTrack, queue, queueIndex, repeat, isRadioMode, isPlaying, radioMinQueue } = get()
         set({ positionMs: e.payload.position_ms })
 
         // Trigger pre-load when approaching end of track (30s before end)
@@ -905,8 +952,8 @@ export const usePlayerStore = create<PlayerState>()(
           }
         }
 
-        // Proactively refill the queue when ≤ 5 tracks remain in radio mode
-        if (isRadioMode && queue.length - queueIndex <= 5) {
+        // Proactively refill the queue when tracks ahead fall below the configured minimum
+        if (isRadioMode && queue.length - queueIndex <= radioMinQueue) {
           void appendRadioTracks(get, set as never)
         }
 
@@ -975,7 +1022,7 @@ export const usePlayerStore = create<PlayerState>()(
           _gaplessTimeoutId = null
         }
 
-        const { currentTrack, queue, queueIndex, repeat, isRadioMode, djMode,
+        const { currentTrack, queue, queueIndex, repeat, isRadioMode, radioMinQueue, djMode,
                 playlistKey, playlistLoadedCount, playlistTotalCount } = get()
 
         // User-initiated play: playAtIndex() already updated state — nothing to do here,
@@ -1009,7 +1056,7 @@ export const usePlayerStore = create<PlayerState>()(
         }
 
         // Radio: refill queue if running low
-        if (isRadioMode && queue.length - nextIndex <= 5) {
+        if (isRadioMode && queue.length - nextIndex <= radioMinQueue) {
           void appendRadioTracks(get, set as never)
         }
       }),
