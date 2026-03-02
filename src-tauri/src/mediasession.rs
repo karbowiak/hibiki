@@ -57,7 +57,7 @@ impl MediaSessionState {
         #[cfg(target_os = "windows")]
         let hwnd_isize: isize = app
             .get_webview_window("main")
-            .and_then(|w: tauri::WebviewWindow| w.hwnd().ok())
+            .and_then(|w| w.hwnd().ok())
             .map(|h| h.0)
             .unwrap_or(0);
         #[cfg(not(target_os = "windows"))]

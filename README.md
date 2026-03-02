@@ -30,11 +30,62 @@ A Spotify-inspired desktop music client for [Plex](https://www.plex.tv/), built 
 | Audio output | cpal 0.15 (CoreAudio) |
 | Package manager | Bun |
 
-## Getting Started
+## Download & Install
+
+Grab the latest release for your platform from the [Releases page](https://github.com/karbowiak/Plexify/releases).
+
+| Platform | File | Notes |
+|---|---|---|
+| **Windows** | `.exe` (NSIS installer) | Run the installer and follow the prompts |
+| **macOS (Apple Silicon)** | `.dmg` (aarch64) | Drag Plexify into Applications |
+| **macOS (Intel)** | `.dmg` (x86_64) | Drag Plexify into Applications |
+| **Linux** | `.AppImage` / `.deb` | See below |
+
+### macOS — Security Warning
+
+Plexify is not currently code-signed or notarized with Apple, so macOS Gatekeeper will block it on first launch. To open it:
+
+1. **Right-click** (or Control-click) the app in Applications
+2. Click **Open** from the context menu
+3. Click **Open** again in the dialog that appears
+
+You only need to do this once — macOS remembers your choice. Alternatively, run this in Terminal after installing:
 
 ```bash
-git clone <repo>
-cd plexmusicclient
+xattr -cr /Applications/Plexify.app
+```
+
+### Windows — SmartScreen Warning
+
+Plexify is not currently code-signed, so Windows SmartScreen may show a warning when you run the installer:
+
+1. Click **More info**
+2. Click **Run anyway**
+
+### Linux
+
+No special steps needed. For `.AppImage` files, make them executable first:
+
+```bash
+chmod +x Plexify_*.AppImage
+./Plexify_*.AppImage
+```
+
+For `.deb` packages:
+
+```bash
+sudo dpkg -i plexify_*.deb
+```
+
+### First Launch
+
+You'll need a running Plex Media Server with a music library. On first launch, open Settings and enter your server URL (e.g. `https://192.168.1.100:32400`) and your [Plex token](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/).
+
+## Building from Source
+
+```bash
+git clone https://github.com/karbowiak/Plexify.git
+cd Plexify
 bun install
 ```
 
@@ -42,8 +93,6 @@ bun install
 bun run tauri dev   # development
 bun run tauri build # production bundle
 ```
-
-You'll need a running Plex Media Server with a music library. On first launch, open Settings and enter your server URL (e.g. `https://192.168.1.100:32400`) and your [Plex token](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/).
 
 ## Project Structure
 
