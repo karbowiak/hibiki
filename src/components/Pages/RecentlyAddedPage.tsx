@@ -48,7 +48,7 @@ export function RecentlyAddedPage() {
       {recentlyAdded.length === 0 ? (
         <div className="text-sm text-gray-400">Nothing recently added.</div>
       ) : (
-        <div className="grid grid-cols-4 gap-4 2xl:grid-cols-5">
+        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(var(--card-size, 160px), 1fr))" }}>
           {recentlyAdded.map((item, idx) => {
             const info = getMediaInfo(item, baseUrl, token)
             if (!info) return null

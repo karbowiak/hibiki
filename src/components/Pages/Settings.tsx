@@ -18,8 +18,10 @@ import { getTheme, setTheme, subscribeTheme } from "../../stores/themeStore"
 import { getFont, setFont, subscribeFont, FONT_PRESETS } from "../../stores/fontStore"
 import type { FontPreset } from "../../stores/fontStore"
 import { useMetadataSourceStore, type MetadataSource, SOURCE_LABELS, SOURCE_DESCRIPTIONS } from "../../stores/metadataSourceStore"
+import { useCardSizeStore, CARD_SIZE_MIN, CARD_SIZE_MAX } from "../../stores/cardSizeStore"
+import { useNotificationStore } from "../../stores/notificationStore"
 
-type Section = "account" | "playback" | "lastfm" | "metadata" | "downloads" | "ai" | "experience" | "about"
+type Section = "account" | "playback" | "lastfm" | "metadata" | "downloads" | "ai" | "experience" | "notifications" | "about"
 type AuthState = "idle" | "polling" | "picking"
 
 const NAV: { id: Section; label: string; icon: React.ReactNode }[] = [
@@ -84,6 +86,15 @@ const NAV: { id: Section; label: string; icon: React.ReactNode }[] = [
     icon: (
       <svg height="18" width="18" viewBox="0 0 24 24" fill="currentColor">
         <path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5S18.33 12 17.5 12z" />
+      </svg>
+    ),
+  },
+  {
+    id: "notifications",
+    label: "Notifications",
+    icon: (
+      <svg height="18" width="18" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z" />
       </svg>
     ),
   },
@@ -370,6 +381,7 @@ function ExperienceSection() {
   const [custom, setCustom] = useState(accent)
   const [theme, setThemeState] = useState(getTheme)
   const [font, setFontState] = useState<FontPreset>(getFont)
+  const { cardSize, setCardSize } = useCardSizeStore()
 
   useEffect(() => subscribeTheme(t => setThemeState(t)), [])
   useEffect(() => subscribeFont(f => setFontState(f)), [])
@@ -506,6 +518,30 @@ function ExperienceSection() {
             <span className="text-sm font-semibold" style={{ color: accent }}>Now Playing</span>
             <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold text-black" style={{ backgroundColor: accent }}>Active</span>
           </div>
+        </div>
+      </div>
+
+      {/* ── Card Size ── */}
+      <div>
+        <h3 className="text-base font-semibold text-white mb-1">Card Size</h3>
+        <p className="text-xs text-white/35 mb-4">
+          Adjust the width of album and artist cards across all views.
+        </p>
+        <div className="flex items-center gap-4">
+          <input
+            type="range"
+            min={CARD_SIZE_MIN}
+            max={CARD_SIZE_MAX}
+            step={10}
+            value={cardSize}
+            onChange={e => setCardSize(parseInt(e.target.value, 10))}
+            className="flex-1 accent-[var(--accent)] cursor-pointer"
+          />
+          <span className="text-sm font-mono text-white/60 w-14 text-right">{cardSize}px</span>
+        </div>
+        <div className="flex justify-between mt-1">
+          <span className="text-xs text-white/25">Small</span>
+          <span className="text-xs text-white/25">Large</span>
         </div>
       </div>
     </div>
@@ -940,6 +976,43 @@ function CreditLink({ href, children }: { href: string; children: React.ReactNod
     <button onClick={() => void open(href)} className="text-accent hover:underline text-left">
       {children}
     </button>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Notifications section
+// ---------------------------------------------------------------------------
+
+function NotificationsSection() {
+  const { notificationsEnabled, setNotificationsEnabled } = useNotificationStore()
+
+  const pillBase = "rounded-full px-4 py-1.5 text-sm transition-colors"
+  const pillActive = "bg-accent text-black font-semibold"
+  const pillInactive = "bg-white/10 text-white hover:bg-white/20"
+
+  return (
+    <div className="flex flex-col gap-10 max-w-xl">
+      <div>
+        <h3 className="text-base font-semibold text-white mb-1">Track Notifications</h3>
+        <p className="text-xs text-white/35 mb-4">
+          Show an OS notification when a new track starts playing.
+        </p>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setNotificationsEnabled(true)}
+            className={`${pillBase} ${notificationsEnabled ? pillActive : pillInactive}`}
+          >
+            On
+          </button>
+          <button
+            onClick={() => setNotificationsEnabled(false)}
+            className={`${pillBase} ${!notificationsEnabled ? pillActive : pillInactive}`}
+          >
+            Off
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -1686,6 +1759,7 @@ export function SettingsPage() {
           <ComingSoon title="AI" description="Sonic recommendations, radio tuning and smart mix settings will appear here." />
         )}
         {section === "experience" && <ExperienceSection />}
+        {section === "notifications" && <NotificationsSection />}
         {section === "about" && <AboutSection />}
       </main>
     </div>

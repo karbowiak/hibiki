@@ -82,6 +82,7 @@
     "shell:allow-open",
     "window-state:default",
     "updater:default",
-    "core:menu:default"
+    "core:menu:default",
+    "notification:default"
   ]
 }

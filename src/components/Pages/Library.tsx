@@ -11,7 +11,7 @@ export function Library() {
       {playlists.length === 0 ? (
         <div className="text-sm text-gray-400">No playlists found.</div>
       ) : (
-        <div className="grid grid-cols-4 gap-4 2xl:grid-cols-5">
+        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(var(--card-size, 160px), 1fr))" }}>
           {playlists.map(pl => {
             const artPath = pl.thumb ?? pl.composite
             const thumbUrl = artPath ? buildPlexImageUrl(baseUrl, token, artPath) : null

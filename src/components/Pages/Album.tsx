@@ -117,6 +117,13 @@ export function AlbumPage({ albumId }: { albumId: number }) {
       .finally(() => setIsLoading(false))
   }, [albumId, pageRefreshKey])
 
+  // Build set of all Plex-known tags so external tags can be filtered to only
+  // those that link to something in the library (genre/mood/style stations).
+  const plexTagSet = useMemo(
+    () => new Set([...tagsGenre, ...tagsMood, ...tagsStyle].map(t => t.tag.toLowerCase())),
+    [tagsGenre, tagsMood, tagsStyle]
+  )
+
   // Fetch LastFM + Deezer + iTunes metadata once we know the album / artist names
   useEffect(() => {
     if (!album?.title || !album?.parent_title) return
@@ -171,13 +178,6 @@ export function AlbumPage({ albumId }: { albumId: number }) {
     if (src === "lastfm" && lastfmData?.wiki) { displayWiki = lastfmData.wiki; break }
     if (src === "plex"   && album.summary)    { displayWiki = album.summary;   break }
   }
-
-  // Build set of all Plex-known tags so external tags can be filtered to only
-  // those that link to something in the library (genre/mood/style stations).
-  const plexTagSet = useMemo(
-    () => new Set([...tagsGenre, ...tagsMood, ...tagsStyle].map(t => t.tag.toLowerCase())),
-    [tagsGenre, tagsMood, tagsStyle]
-  )
 
   // Merge tags in priority order; Plex tags always valid; external tags filtered.
   const toPlexTag = (tag: string): PlexTag => ({ tag, id: null, filter: null })

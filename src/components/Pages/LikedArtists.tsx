@@ -73,7 +73,7 @@ export function LikedArtists() {
             No rated artists yet. Rate an artist in Plex to see them here.
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+          <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(var(--card-size, 160px), 1fr))" }}>
             {likedArtists.map(artist => {
               const thumbUrl = artist.thumb
                 ? buildPlexImageUrl(baseUrl, token, artist.thumb)

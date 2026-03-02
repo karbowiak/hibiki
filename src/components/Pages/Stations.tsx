@@ -386,7 +386,7 @@ function TagGridMixBuilder({ tags, tabType, sectionUuid, sectionId, colorPalette
       {filtered.length === 0 && (
         <div className="text-sm text-white/40">No {tabType}s match "{filterQuery}"</div>
       )}
-      <div className="grid grid-cols-5 gap-3 2xl:grid-cols-6">
+      <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(var(--card-size, 160px), 1fr))" }}>
         {filtered.map((tag, idx) => (
           <div
             key={tag.tag}
@@ -574,7 +574,7 @@ export function StationsPage() {
           <div className="text-sm text-white/40">No stations available on this server.</div>
         )}
         {stations.length > 0 && (
-          <div className="grid grid-cols-5 gap-3 2xl:grid-cols-6">
+          <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(var(--card-size, 160px), 1fr))" }}>
             {stations.map((item, idx) => (
               <div
                 key={item.key}
@@ -595,7 +595,7 @@ export function StationsPage() {
       {recentMixes.length > 0 && (
         <div>
           <div className="mb-4 text-2xl font-bold">Recent Mixes</div>
-          <div className="grid grid-cols-5 gap-3 2xl:grid-cols-6">
+          <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(var(--card-size, 160px), 1fr))" }}>
             {recentMixes.map(mix => (
               <RecentMixCard
                 key={mix.id}

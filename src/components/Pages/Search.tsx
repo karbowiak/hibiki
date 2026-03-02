@@ -113,7 +113,7 @@ export function Search() {
             return (
               <div key={type}>
                 <div className="mb-3 text-xl font-bold">{GROUP_LABELS[type]}</div>
-                <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))" }}>
+                <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(var(--card-size, 160px), 1fr))" }}>
                   {items.slice(0, 10).map((item, idx) => {
                     const info = getInfo(item, baseUrl, token)
                     if (!info) return null

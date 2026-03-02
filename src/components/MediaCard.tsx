@@ -22,12 +22,16 @@ interface MediaCardProps {
 
 export function MediaCard({ title, desc, thumb, thumbFallback, isArtist, scrollItem, large, href, onClick, prefetch, onPlay }: MediaCardProps) {
   const displayThumb = thumb || thumbFallback || null
+  const scrollStyle = scrollItem
+    ? { width: large ? "calc(var(--card-size, 160px) * 1.33)" : "var(--card-size, 160px)" }
+    : undefined
   const inner = (
     <div
       onMouseEnter={prefetch}
+      style={scrollStyle}
       className={clsx(
         "group cursor-pointer rounded-md bg-app-card p-3 transition-colors hover:bg-app-surface-hover",
-        scrollItem && (large ? "w-[213px] flex-shrink-0" : "w-40 flex-shrink-0")
+        scrollItem && "flex-shrink-0"
       )}
     >
       <div className="relative mb-3">
@@ -73,14 +77,14 @@ export function MediaCard({ title, desc, thumb, thumbFallback, isArtist, scrollI
 
   if (href) {
     return (
-      <Link href={href} className={clsx("no-underline hover:no-underline", scrollItem && (large ? "w-[213px] flex-shrink-0" : "flex-shrink-0"))}>
+      <Link href={href} style={scrollStyle} className={clsx("no-underline hover:no-underline", scrollItem && "flex-shrink-0")}>
         {inner}
       </Link>
     )
   }
 
   if (onClick) {
-    return <div onClick={onClick} className={clsx(scrollItem && (large ? "w-[213px] flex-shrink-0" : "flex-shrink-0"))}>{inner}</div>
+    return <div onClick={onClick} style={scrollStyle} className={clsx(scrollItem && "flex-shrink-0")}>{inner}</div>
   }
 
   return inner

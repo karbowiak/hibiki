@@ -12,9 +12,10 @@ import { UpdateDialog } from "./components/UpdateDialog"
 import { createAppMenu } from "./lib/appMenu"
 import { useConnectionStore, useLibraryStore, useUIStore } from "./stores"
 import { useLastfmStore } from "./stores/lastfmStore"
-import "./stores/accentStore"  // import so the module runs applyAccent() on load
-import "./stores/themeStore"   // import so the module runs applyTheme() on load
-import "./stores/fontStore"    // import so the module runs applyFont() on load
+import "./stores/accentStore"    // import so the module runs applyAccent() on load
+import "./stores/themeStore"    // import so the module runs applyTheme() on load
+import "./stores/fontStore"     // import so the module runs applyFont() on load
+import "./stores/cardSizeStore" // import so the module sets --card-size CSS var on load
 
 function App() {
   const { isConnected, musicSectionId, isLoading, loadAndConnect } = useConnectionStore()

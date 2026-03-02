@@ -29,6 +29,8 @@ import {
 import type { Track, Level, LyricLine } from "../types/plex"
 import { useConnectionStore } from "./connectionStore"
 import { useAudioSettingsStore } from "./audioSettingsStore"
+import { useNotificationStore } from "./notificationStore"
+import { sendNotification } from "@tauri-apps/plugin-notification"
 
 type RadioType = 'track' | 'artist' | 'album' | 'playlist'
 
@@ -557,6 +559,13 @@ function _onTrackBecomesActive(track: Track, index: number, get: () => PlayerSta
   set({ currentTrack: track, queueIndex: index, isPlaying: true, positionMs: 0,
         waveformLevels: null, lyricsLines: null })
   _lastTimelineReportMs = 0
+
+  if (useNotificationStore.getState().notificationsEnabled) {
+    void sendNotification({
+      title: track.title,
+      body: `${track.grandparent_title ?? "Unknown Artist"} • ${track.parent_title ?? "Unknown Album"}`,
+    })
+  }
 
   void fetchAudioStreamId(track).then(streamId => {
     if (!streamId) return
