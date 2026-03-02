@@ -51,12 +51,15 @@ function App() {
         - Bottom: Player — always visible, never overlaps content
       */}
       <div className="flex h-screen flex-col overflow-hidden text-white">
-        {/* Sidebar + main content */}
+        {/* Sidebar + main content + optional pinned queue */}
         <div className="flex min-h-0 flex-1 flex-row overflow-hidden">
           <SideBar onCreatePlaylist={() => setShowCreatePlaylist(true)} />
           <div className="min-w-0 flex-1">
             <Page />
           </div>
+          {/* QueuePanel lives here so pinned mode becomes a natural flex column.
+              In overlay mode it uses fixed positioning and escapes this layout. */}
+          <QueuePanel />
         </div>
 
         {/* Player sits at the bottom as a natural flex item — no overlap */}
@@ -64,8 +67,6 @@ function App() {
       </div>
 
       <TailwindIndicator />
-
-      <QueuePanel />
 
       {showCreatePlaylist && (
         <CreatePlaylist onClose={() => setShowCreatePlaylist(false)} />

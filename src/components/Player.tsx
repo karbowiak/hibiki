@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Link } from "wouter"
 import { useShallow } from "zustand/react/shallow"
 import { usePlayerStore, useConnectionStore, buildPlexImageUrl } from "../stores"
@@ -31,9 +31,12 @@ function sliderToGain(slider: number): number {
   return Math.pow(slider / 100, 3)
 }
 
-const WAVEFORM_BARS = 128
+const WAVEFORM_BARS = 200   // more control points → smoother spline
+const WAVEFORM_W    = 800   // logical SVG width (scaled by preserveAspectRatio="none")
+const WAVEFORM_H    = 28
+const MIN_AMP       = 1.5   // minimum half-height in px (keeps silent sections visible)
 
-/** Linear interpolation resize — matches PlexAmp's `interpolate(data, 128)`. */
+/** Linear interpolation to exactly `targetLen` samples. */
 function interpolateBars(src: number[], targetLen: number): number[] {
   if (src.length === 0) return []
   if (src.length === targetLen) return src
@@ -49,88 +52,98 @@ function interpolateBars(src: number[], targetLen: number): number[] {
   return out
 }
 
-/**
- * Mirrors PlexAmp's `ProcessLoudnessData` exactly:
- *   1. Clamp at −35 dBFS floor, map linearly to 0–100
- *   2. Quadratic boost (×1.5) for visual contrast
- *   3. Normalise, then power-1.2 curve
- *   4. Normalise to [0, 1]
- */
+/** Mirrors PlexAmp's `ProcessLoudnessData`: dBFS floor → quadratic boost → power curve → normalise. */
 function processLoudness(raw: number[]): number[] {
-  // Step 1+2: dBFS (floor −35) → quadratic-boosted range
   let vals = raw.map(e => {
     const t = (Math.max(e, -35) + 35) * (100 / 35)
     const boosted = t * t / 100 * 1.5
     return isFinite(boosted) ? boosted : 3
   })
-
-  // Step 3: normalize to ~0–41 range (90/2.2)
   const max1 = Math.max(...vals)
   if (max1 > 0) vals = vals.map(v => v * (90 / 2.2) / max1)
-
-  // Step 4: power-1.2 curve (emphasises louder sections)
   const curved = vals.map(v => Math.pow(Math.max(0, v), 1.2) / 2.4)
   const max2 = Math.max(...curved)
-
-  // Return normalized 0–1
   return curved.map(v => (max2 > 0 ? v / max2 : 0))
 }
 
-const BAR_W = 3
-const GAP = 1
-const STRIDE = BAR_W + GAP
-const WAVEFORM_H = 28
-const MIN_BAR_H = 2
-
-// Three fill states
-const C_PLAYED  = "#1db954"            // green  — left of playhead
-const C_HOVER   = "rgba(29,185,84,.4)" // muted green — left of hover cursor
-const C_UNPLAYED = "#404040"           // gray   — right of hover/playhead
+/**
+ * Convert an array of {x, y} points to a Catmull-Rom cubic bezier path string.
+ * Produces a smooth curve through every point.
+ */
+function catmullRomPath(pts: Array<{ x: number; y: number }>): string {
+  if (pts.length < 2) return ""
+  const n = pts.length
+  let d = `M${pts[0].x.toFixed(2)},${pts[0].y.toFixed(2)}`
+  for (let i = 0; i < n - 1; i++) {
+    const p0 = pts[Math.max(0, i - 1)]
+    const p1 = pts[i]
+    const p2 = pts[i + 1]
+    const p3 = pts[Math.min(n - 1, i + 2)]
+    const cp1x = p1.x + (p2.x - p0.x) / 6
+    const cp1y = p1.y + (p2.y - p0.y) / 6
+    const cp2x = p2.x - (p3.x - p1.x) / 6
+    const cp2y = p2.y - (p3.y - p1.y) / 6
+    d += ` C${cp1x.toFixed(2)},${cp1y.toFixed(2)} ${cp2x.toFixed(2)},${cp2y.toFixed(2)} ${p2.x.toFixed(2)},${p2.y.toFixed(2)}`
+  }
+  return d
+}
 
 /**
- * Waveform bar chart used as the seek bar.
+ * Build a closed symmetric waveform path from normalised bar heights (0–1).
+ * Top and bottom halves are mirror images, connected into a single filled shape.
+ */
+function buildWaveformPath(bars: number[], W: number, H: number): string {
+  if (bars.length < 2) return ""
+  const mid = H / 2
+  const n   = bars.length
+  const pts = bars.map((v, i) => ({ x: (i / (n - 1)) * W, amp: Math.max(MIN_AMP, v * mid) }))
+  const top = catmullRomPath(pts.map(p => ({ x: p.x, y: mid - p.amp })))
+  const bot = catmullRomPath([...pts].reverse().map(p => ({ x: p.x, y: mid + p.amp })))
+  return `${top} ${bot} Z`
+}
+
+/**
+ * Smooth waveform used as the seek bar.
  *
- * - No hover: bars left of `progress` = green, rest = gray
- * - Hovering:  bars left of `hoverPct` = muted green, rest = gray
- *   (hover preview replaces the green so the destination is unambiguous)
+ * Colour states (via a single linearGradient with a hard stop):
+ *   - Not hovering: left of `progress` = green, right = gray
+ *   - Hovering:     left of `hoverPct` = muted green (40 % opacity), right = gray
+ *     (hover preview replaces green so the jump destination is unambiguous)
+ *
+ * The opacity transition on the first gradient stop produces a smooth
+ * green ↔ muted-green crossfade when the pointer enters/leaves.
  */
 function WaveformSVG({ levels, progress, hoverPct }: {
   levels: Level[]
-  progress: number       // 0-100
-  hoverPct: number | null // 0-100 or null
+  progress: number        // 0–100
+  hoverPct: number | null // 0–100 or null
 }) {
-  if (levels.length === 0) return null
+  const bars     = useMemo(() => interpolateBars(processLoudness(levels.map(l => l.loudness)), WAVEFORM_BARS), [levels])
+  const pathData = useMemo(() => buildWaveformPath(bars, WAVEFORM_W, WAVEFORM_H), [bars])
+  if (!pathData) return null
 
-  const bars = interpolateBars(processLoudness(levels.map(l => l.loudness)), WAVEFORM_BARS)
+  const activePct  = hoverPct ?? progress
+  const isHovering = hoverPct !== null
 
   return (
     <svg
-      viewBox={`0 0 ${WAVEFORM_BARS * STRIDE} ${WAVEFORM_H}`}
+      viewBox={`0 0 ${WAVEFORM_W} ${WAVEFORM_H}`}
       preserveAspectRatio="none"
       className="pointer-events-none absolute inset-0 h-full w-full"
       aria-hidden
     >
-      {bars.map((h, i) => {
-        const pct = (i / WAVEFORM_BARS) * 100
-        let fill: string
-        if (hoverPct !== null) {
-          fill = pct < hoverPct ? C_HOVER : C_UNPLAYED
-        } else {
-          fill = pct < progress ? C_PLAYED : C_UNPLAYED
-        }
-        const barH = Math.max(MIN_BAR_H, h * WAVEFORM_H)
-        return (
-          <rect
-            key={i}
-            x={i * STRIDE}
-            y={(WAVEFORM_H - barH) / 2}
-            width={BAR_W}
-            height={barH}
-            rx={1}
-            fill={fill}
+      <defs>
+        {/* Hard colour stop at activePct — left=active colour, right=gray */}
+        <linearGradient id="wf-grad" x1="0" y1="0" x2={WAVEFORM_W} y2="0" gradientUnits="userSpaceOnUse">
+          <stop
+            offset={`${activePct}%`}
+            stopColor="#1db954"
+            style={{ stopOpacity: isHovering ? 0.4 : 1, transition: "stop-opacity 0.18s ease" }}
           />
-        )
-      })}
+          <stop offset={`${activePct}%`} stopColor="#404040" stopOpacity={1} />
+        </linearGradient>
+      </defs>
+      <path d={pathData} fill="url(#wf-grad)" />
     </svg>
   )
 }
@@ -170,6 +183,7 @@ export function Player() {
 
   const [djMenuOpen, setDjMenuOpen] = useState(false)
   const [sleepTimerOpen, setSleepTimerOpen] = useState(false)
+  const [sleepRemaining, setSleepRemaining] = useState<string | null>(null)
   const { endsAt: sleepEndsAt, hydrate: hydrateSleepTimer } = useSleepTimerStore(useShallow(s => ({ endsAt: s.endsAt, hydrate: s.hydrate })))
 
   const { baseUrl, token } = useConnectionStore()
@@ -260,6 +274,25 @@ export function Player() {
     return () => document.removeEventListener("sleep-timer-outside-click", handler)
   }, [])
 
+  // Live countdown for sleep timer
+  useEffect(() => {
+    if (!sleepEndsAt) {
+      setSleepRemaining(null)
+      return
+    }
+    const tick = () => {
+      const diff = sleepEndsAt - Date.now()
+      if (diff <= 0) { setSleepRemaining(null); return }
+      const totalSec = Math.ceil(diff / 1000)
+      const m = Math.floor(totalSec / 60)
+      const s = totalSec % 60
+      setSleepRemaining(`${m}:${s.toString().padStart(2, '0')}`)
+    }
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [sleepEndsAt])
+
   // Scroll wheel on volume area — must be non-passive to call preventDefault()
   useEffect(() => {
     const el = volumeAreaRef.current
@@ -297,8 +330,9 @@ export function Player() {
           {playerError}
         </div>
       )}
-      {/* EQ panel — floats above the player bar */}
+      {/* Panels — float above the player bar; rendered here so they escape overflow-clip */}
       {isEqOpen && <EqPanel />}
+      {sleepTimerOpen && <SleepTimerPanel />}
       <div className="flex h-fit w-screen min-w-[620px] flex-col overflow-clip rounded-b-lg bg-[#181818]">
         <div className="h-24">
           <div className="flex h-full items-center justify-between px-4">
@@ -487,7 +521,7 @@ export function Player() {
               )}
 
               {/* Guest DJ menu — click headphones to open DJ personality picker */}
-              <div className="flex-shrink-0">
+              <div className="relative flex flex-col items-center flex-shrink-0">
                 <button
                   ref={djButtonRef}
                   onClick={() => {
@@ -499,10 +533,15 @@ export function Player() {
                   className={`flex h-8 w-8 items-center justify-center transition-colors ${djMode ? "text-[#1db954]" : "text-white/40 hover:text-white/70"}`}
                   aria-label="Guest DJ"
                 >
-                  <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor">
+                  <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
                     <path d="M8 1a6 6 0 0 0-6 6v2.5a2.5 2.5 0 0 0 2.5 2.5H5a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1H3.05A5 5 0 0 1 13 7H11a1 1 0 0 0-1 1v3a1 1 0 0 0 1 1h.5A2.5 2.5 0 0 0 14 9.5V7a6 6 0 0 0-6-6z" />
                   </svg>
                 </button>
+                {djMode && (
+                  <span className="absolute top-full mt-0.5 text-[0.5625rem] leading-none font-medium text-[#1db954] whitespace-nowrap pointer-events-none">
+                    {DJ_MODES.find(d => d.key === djMode)?.name.replace('DJ ', '')}
+                  </span>
+                )}
 
                 {djMenuOpen && djMenuPos && (
                   <>
@@ -547,8 +586,7 @@ export function Player() {
               </div>
 
               {/* Sleep timer toggle */}
-              <div className="relative flex-shrink-0">
-                {sleepTimerOpen && <SleepTimerPanel />}
+              <div className="relative flex flex-col items-center flex-shrink-0">
                 <button
                   onClick={() => setSleepTimerOpen(v => !v)}
                   title="Sleep Timer"
@@ -556,10 +594,15 @@ export function Player() {
                   aria-label="Sleep Timer"
                 >
                   {/* Moon icon */}
-                  <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor">
+                  <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
                     <path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z"/>
                   </svg>
                 </button>
+                {sleepRemaining && (
+                  <span className="absolute top-full mt-0.5 text-[0.5625rem] leading-none font-medium text-[#1db954] whitespace-nowrap pointer-events-none">
+                    {sleepRemaining}
+                  </span>
+                )}
               </div>
 
               {/* EQ toggle */}
@@ -582,7 +625,7 @@ export function Player() {
               {/* Queue toggle */}
               <button
                 onClick={() => setQueueOpen(!isQueueOpen)}
-                className={`flex-shrink-0 mr-1 flex h-8 w-8 items-center justify-center transition-colors ${isQueueOpen ? "text-[#1db954]" : "text-white/70 hover:text-white"}`}
+                className={`flex-shrink-0 mr-1 flex h-8 w-8 items-center justify-center transition-colors ${isQueueOpen ? "text-[#1db954]" : "text-white/40 hover:text-white/70"}`}
                 aria-label="Queue"
               >
                 <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">

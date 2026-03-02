@@ -701,10 +701,7 @@ export const usePlayerStore = create<PlayerState>()(
     _radioRefillInProgress = false
 
     try {
-      const { djMode } = get()
-      const playQueue = (djMode !== null && djMode !== 'freeze')
-        ? await createSmartShuffleQueue(ratingKey, radioType, djMode)
-        : await createRadioQueue(ratingKey, radioType)
+      const playQueue = await createRadioQueue(ratingKey, radioType)
 
       // Filter to playable tracks (skip artist/album metadata that Plex may include
       // as the first item in a station play queue).
@@ -771,57 +768,21 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   setDjMode: (mode: DjMode | null) => {
-    const { isRadioMode } = get()
-
-    if (mode !== null && isRadioMode) {
-      // Switching/enabling DJ in radio mode: clear ALL future tracks.
-      // Matches PlexAmp behaviour of creating a brand-new queue per mode switch.
-      set(s => ({ queue: s.queue.slice(0, s.queueIndex + 1) }))
-    } else if (mode === null) {
-      // Turning off DJ: only remove DJ-generated bonus tracks, keep radio/seed tracks.
-      set(s => ({
-        queue: s.queue.filter((t, i) =>
-          i <= s.queueIndex || !_djGeneratedKeys.has(t.rating_key)
-        ),
-      }))
-    }
-
+    // Remove future DJ-generated bonus tracks from the queue
+    set(s => ({
+      queue: s.queue.filter((t, i) =>
+        i <= s.queueIndex || !_djGeneratedKeys.has(t.rating_key)
+      ),
+    }))
     _djGeneratedKeys.clear()
-    _radioGeneratedKeys.clear()
-    _radioRefillInProgress = false
+    _djInsertInProgress = false
 
     set({ djMode: mode })
 
     if (mode === null) return  // DJ off: cleaned up, nothing more to do
 
-    const { currentTrack, queue, queueIndex } = get()
-
-    // Twofer: immediately insert a same-artist bonus track after the current position
-    if (mode === 'twofer' && currentTrack) {
-      const { musicSectionId } = useConnectionStore.getState()
-      const artistId = parseInt(currentTrack.grandparent_key?.split('/').pop() ?? '0', 10)
-      const nextTrack = queue[queueIndex + 1]
-      if (musicSectionId && artistId > 0 && nextTrack?.grandparent_key !== currentTrack.grandparent_key) {
-        getArtistPopularTracksInSection(musicSectionId, artistId, 10)
-          .then(tracks => {
-            const { queue: q2, queueIndex: qi2, currentTrack: ct2 } = get()
-            const available = tracks.filter(t =>
-              t.rating_key !== ct2?.rating_key &&
-              !q2.some(x => x.rating_key === t.rating_key)
-            )
-            if (!available.length) return
-            const pick = available[Math.floor(Math.random() * available.length)]
-            _djGeneratedKeys.add(pick.rating_key)
-            set(s => { const nq = [...s.queue]; nq.splice(qi2 + 1, 0, pick); return { queue: nq } })
-          })
-          .catch(() => {/* non-critical */})
-      }
-    }
-
-    // ALL DJ modes in radio mode: force-append new tracks immediately (no exclusions).
-    if (isRadioMode) {
-      void appendRadioTracks(get, set as never, true)
-    }
+    // Immediately insert DJ tracks for the current track (works in any context)
+    void insertDjTracks(get, set as never)
   },
 
   pause: () => {
@@ -1083,27 +1044,9 @@ export const usePlayerStore = create<PlayerState>()(
           void appendRadioTracks(get, set as never)
         }
 
-        // Twofer: insert a same-artist bonus track after the current track
-        if (djMode === 'twofer' && track) {
-          const { musicSectionId } = useConnectionStore.getState()
-          const artistId = parseInt(track.grandparent_key?.split('/').pop() ?? '0', 10)
-          const nextTrack = get().queue[nextIndex + 1]
-          // Skip if the very next slot is already the same artist (avoid back-to-back doubles)
-          if (musicSectionId && artistId > 0 && nextTrack?.grandparent_key !== track.grandparent_key) {
-            getArtistPopularTracksInSection(musicSectionId, artistId, 10)
-              .then(tracks => {
-                const { queue: q2, queueIndex: qi2, currentTrack: ct2 } = get()
-                const available = tracks.filter(t =>
-                  t.rating_key !== ct2?.rating_key &&
-                  !q2.some(x => x.rating_key === t.rating_key)
-                )
-                if (!available.length) return
-                const pick = available[Math.floor(Math.random() * available.length)]
-                _djGeneratedKeys.add(pick.rating_key)
-                set(s => { const nq = [...s.queue]; nq.splice(qi2 + 1, 0, pick); return { queue: nq } })
-              })
-              .catch(() => {/* non-critical */})
-          }
+        // DJ: insert curated tracks based on active DJ mode
+        if (djMode) {
+          void insertDjTracks(get, set as never)
         }
       }),
     )

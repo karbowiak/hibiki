@@ -143,9 +143,11 @@ export function QueuePanel() {
     removeFromQueue: s.removeFromQueue,
     jumpToQueueItem: s.jumpToQueueItem,
   })))
-  const { isQueueOpen, setQueueOpen } = useUIStore(useShallow(s => ({
+  const { isQueueOpen, setQueueOpen, isQueuePinned, setQueuePinned } = useUIStore(useShallow(s => ({
     isQueueOpen: s.isQueueOpen,
     setQueueOpen: s.setQueueOpen,
+    isQueuePinned: s.isQueuePinned,
+    setQueuePinned: s.setQueuePinned,
   })))
   const { baseUrl, token } = useConnectionStore(useShallow(s => ({ baseUrl: s.baseUrl, token: s.token })))
 
@@ -166,79 +168,123 @@ export function QueuePanel() {
   // Items shown: current + upcoming
   const displayItems = queue.slice(queueIndex)
 
+  const header = (
+    <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 flex-shrink-0">
+      <h2 className="text-sm font-semibold text-white">Queue</h2>
+      <div className="flex items-center gap-0.5">
+        {/* Pin button — toggles sticky sidebar mode */}
+        <button
+          onClick={() => setQueuePinned(!isQueuePinned)}
+          title={isQueuePinned ? "Unpin queue" : "Pin queue to sidebar"}
+          className={`flex h-7 w-7 items-center justify-center rounded transition-colors ${
+            isQueuePinned ? "text-[#1db954] hover:text-[#1db954]/70" : "text-gray-400 hover:text-white"
+          }`}
+          aria-label={isQueuePinned ? "Unpin queue" : "Pin queue"}
+        >
+          {/* Thumbtack / pin icon */}
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+            <path d="M4.146.146A.5.5 0 0 1 4.5 0h7a.5.5 0 0 1 .5.5c0 .68-.342 1.174-.646 1.479-.126.125-.25.224-.354.298v4.431l.078.048c.203.127.476.314.751.555C12.36 7.775 13 8.527 13 9.5a.5.5 0 0 1-.5.5h-4v4.5c0 .276-.224 1.5-.5 1.5s-.5-1.224-.5-1.5V10h-4a.5.5 0 0 1-.5-.5c0-.973.64-1.725 1.17-2.189A5.921 5.921 0 0 1 5 6.708V2.277a2.77 2.77 0 0 1-.354-.298C4.342 1.674 4 1.179 4 .5a.5.5 0 0 1 .146-.354z"/>
+          </svg>
+        </button>
+
+        {/* Close button — closes the queue (and unpins if pinned) */}
+        <button
+          onClick={() => {
+            if (isQueuePinned) setQueuePinned(false)
+            else setQueueOpen(false)
+          }}
+          className="flex h-7 w-7 items-center justify-center rounded text-gray-400 hover:text-white transition-colors"
+          aria-label="Close queue"
+        >
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+            <path d="M2.47 2.47a.75.75 0 0 1 1.06 0L8 6.94l4.47-4.47a.75.75 0 1 1 1.06 1.06L9.06 8l4.47 4.47a.75.75 0 1 1-1.06 1.06L8 9.06l-4.47 4.47a.75.75 0 0 1-1.06-1.06L6.94 8 2.47 3.53a.75.75 0 0 1 0-1.06z" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  )
+
+  const list = displayItems.length === 0 ? (
+    <div className="flex flex-1 items-center justify-center text-sm text-gray-500">
+      Queue is empty
+    </div>
+  ) : (
+    <div className="flex-1 overflow-y-auto py-2">
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+      >
+        <SortableContext
+          items={displayItems.map((_, i) => String(queueIndex + i))}
+          strategy={verticalListSortingStrategy}
+        >
+          {displayItems.map((track, relIdx) => {
+            const absoluteIndex = queueIndex + relIdx
+            const isCurrent = absoluteIndex === queueIndex
+            const thumbPath = track.thumb ?? track.parent_thumb
+            const thumb = thumbPath ? buildPlexImageUrl(baseUrl, token, thumbPath) : null
+            return (
+              <SortableItem
+                key={absoluteIndex}
+                id={String(absoluteIndex)}
+                index={relIdx}
+                absoluteIndex={absoluteIndex}
+                isCurrent={isCurrent}
+                isGuestDj={isDjGenerated(track.rating_key)}
+                isRadio={isRadioGenerated(track.rating_key)}
+                thumb={thumb}
+                title={track.title}
+                artist={track.grandparent_title}
+                durationMs={track.duration}
+                onJump={() => jumpToQueueItem(absoluteIndex)}
+                onRemove={() => removeFromQueue(absoluteIndex)}
+              />
+            )
+          })}
+        </SortableContext>
+      </DndContext>
+    </div>
+  )
+
+  // Pinned mode — renders as a sidebar column inside the layout flex row.
+  // isQueueOpen controls visibility; the player queue button collapses/expands it.
+  // Animation: outer wrapper collapses width while inner panel slides out to the right.
+  if (isQueuePinned) {
+    return (
+      <div
+        className={`flex-shrink-0 overflow-hidden transition-[width] duration-300 ease-in-out ${
+          isQueueOpen ? "w-80" : "w-0"
+        }`}
+      >
+        <div
+          className={`flex h-full w-80 flex-col bg-[#121212] border-l border-white/10 transition-transform duration-300 ease-in-out ${
+            isQueueOpen ? "translate-x-0" : "translate-x-full"
+          }`}
+        >
+          {header}
+          {list}
+        </div>
+      </div>
+    )
+  }
+
+  // Overlay mode — fixed slide-in panel with backdrop
   return (
     <>
-      {/* Backdrop */}
       {isQueueOpen && (
         <div
           className="fixed inset-0 z-40 bg-black/40"
           onClick={() => setQueueOpen(false)}
         />
       )}
-
-      {/* Slide-in panel */}
       <div
         className={`fixed right-0 top-0 bottom-24 z-50 w-80 flex flex-col bg-[#121212] border-l border-white/10 shadow-2xl transition-transform duration-300 ease-in-out ${
           isQueueOpen ? "translate-x-0" : "translate-x-full"
         }`}
       >
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 flex-shrink-0">
-          <h2 className="text-sm font-semibold text-white">Queue</h2>
-          <button
-            onClick={() => setQueueOpen(false)}
-            className="text-gray-400 hover:text-white transition-colors"
-            aria-label="Close queue"
-          >
-            <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-              <path d="M2.47 2.47a.75.75 0 0 1 1.06 0L8 6.94l4.47-4.47a.75.75 0 1 1 1.06 1.06L9.06 8l4.47 4.47a.75.75 0 1 1-1.06 1.06L8 9.06l-4.47 4.47a.75.75 0 0 1-1.06-1.06L6.94 8 2.47 3.53a.75.75 0 0 1 0-1.06z" />
-            </svg>
-          </button>
-        </div>
-
-        {/* Queue list */}
-        {displayItems.length === 0 ? (
-          <div className="flex flex-1 items-center justify-center text-sm text-gray-500">
-            Queue is empty
-          </div>
-        ) : (
-          <div className="flex-1 overflow-y-auto py-2">
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              onDragEnd={handleDragEnd}
-            >
-              <SortableContext
-                items={displayItems.map((_, i) => String(queueIndex + i))}
-                strategy={verticalListSortingStrategy}
-              >
-                {displayItems.map((track, relIdx) => {
-                  const absoluteIndex = queueIndex + relIdx
-                  const isCurrent = absoluteIndex === queueIndex
-                  const thumbPath = track.thumb ?? track.parent_thumb
-                  const thumb = thumbPath ? buildPlexImageUrl(baseUrl, token, thumbPath) : null
-                  return (
-                    <SortableItem
-                      key={absoluteIndex}
-                      id={String(absoluteIndex)}
-                      index={relIdx}
-                      absoluteIndex={absoluteIndex}
-                      isCurrent={isCurrent}
-                      isGuestDj={isDjGenerated(track.rating_key)}
-                      isRadio={isRadioGenerated(track.rating_key)}
-                      thumb={thumb}
-                      title={track.title}
-                      artist={track.grandparent_title}
-                      durationMs={track.duration}
-                      onJump={() => jumpToQueueItem(absoluteIndex)}
-                      onRemove={() => removeFromQueue(absoluteIndex)}
-                    />
-                  )
-                })}
-              </SortableContext>
-            </DndContext>
-          </div>
-        )}
+        {header}
+        {list}
       </div>
     </>
   )
