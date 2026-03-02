@@ -4,6 +4,7 @@ import { useLocation } from "wouter"
 import { useLibraryStore, useConnectionStore, usePlayerStore, buildPlexImageUrl } from "../../stores"
 import { prefetchArtist, prefetchAlbum } from "../../stores/metadataCache"
 import type { PlexMedia, Playlist } from "../../types/plex"
+import { useContextMenuStore } from "../../stores/contextMenuStore"
 import { searchLibrary, buildItemUri, getMixTracks } from "../../lib/plex"
 import { ScrollRow } from "../ScrollRow"
 import { MediaCard } from "../MediaCard"
@@ -103,6 +104,14 @@ export function Home() {
     playPlaylist: s.playPlaylist,
   })))
   const [, navigate] = useLocation()
+  const showContextMenu = useContextMenuStore(s => s.show)
+
+  function makeOnContextMenu(item: PlexMedia) {
+    if (item.type === "album") return (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); showContextMenu(e.clientX, e.clientY, "album", item) }
+    if (item.type === "artist") return (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); showContextMenu(e.clientX, e.clientY, "artist", item) }
+    if (item.type === "track") return (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); showContextMenu(e.clientX, e.clientY, "track", item) }
+    return undefined
+  }
 
   // Seed from module-level cache so images are available immediately on remount.
   const [mixThumbs, setMixThumbs] = useState<Record<string, string>>(
@@ -247,6 +256,7 @@ export function Home() {
                 href={info.href ?? undefined}
                 prefetch={makePrefetch(info)}
                 onPlay={makeOnPlay(item)}
+                onContextMenu={makeOnContextMenu(item)}
                 artistName={"artistName" in info ? info.artistName : undefined}
                 albumName={"albumName" in info ? info.albumName : undefined}
                 scrollItem
@@ -293,6 +303,7 @@ export function Home() {
                   href={info.href ?? undefined}
                   prefetch={makePrefetch(info)}
                   onPlay={makeOnPlay(item)}
+                  onContextMenu={makeOnContextMenu(item)}
                   artistName={"artistName" in info ? info.artistName : undefined}
                   albumName={"albumName" in info ? info.albumName : undefined}
                   scrollItem

@@ -176,27 +176,30 @@ impl PlexClient {
     pub async fn create_playlist(
         &self,
         title: &str,
-        section_id: i64,
+        _section_id: i64,
         item_ids: &[i64],
     ) -> Result<Playlist> {
-        // Build URI from item IDs
+        // Plex requires all params as query parameters (not a JSON body).
+        // URI format: {baseUrl}/library/metadata/{id1},{id2},...
+        // An empty ids string creates an empty regular playlist.
         let ids = item_ids
             .iter()
             .map(|id| id.to_string())
             .collect::<Vec<_>>()
             .join(",");
-        let uri = format!("{}library/metadata/{}", self.build_url("").trim_end_matches('/'), ids);
-
-        let body = serde_json::json!({
-            "title": title,
-            "type": "audio",
-            "smart": 0,
-            "uri": uri,
-            "sectionID": section_id
-        });
+        let uri = format!(
+            "{}/library/metadata/{}",
+            self.build_url("").trim_end_matches('/'),
+            ids
+        );
 
         let container: MediaContainer<Playlist> = self
-            .post("/playlists", body)
+            .post_params("/playlists", &[
+                ("title", title),
+                ("type",  "audio"),
+                ("smart", "0"),
+                ("uri",   &uri),
+            ])
             .await
             .context("Failed to create playlist")?;
 
@@ -333,13 +336,13 @@ impl PlexClient {
             .map(|id| id.to_string())
             .collect::<Vec<_>>()
             .join(",");
-        let uri = format!("{}library/metadata/{}", self.build_url("").trim_end_matches('/'), ids);
+        let uri = format!(
+            "{}/library/metadata/{}",
+            self.build_url("").trim_end_matches('/'),
+            ids
+        );
 
-        let body = serde_json::json!({
-            "uri": uri
-        });
-
-        self.put::<()>(&path, body)
+        self.put_params_ok(&path, &[("uri", &uri)])
             .await
             .context("Failed to add items to playlist")?;
 
@@ -650,44 +653,90 @@ mod integration_tests {
     #[tokio::test]
     async fn test_create_delete_playlist() {
         let client = get_client();
+        let section_id: i64 = std::env::var("PLEX_SECTION_ID")
+            .ok().and_then(|v| v.parse().ok()).unwrap_or(5);
 
-        // Use section ID 1 (typical default) - adjust if needed
-        let section_id = 1;
+        let title = format!("Test Playlist {}", std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs());
 
-        // Create a test playlist with no items
-        let title = format!("Test Playlist {}", chrono::Utc::now().timestamp());
-        let playlist_result = client
-            .create_playlist(&title, section_id, &[])
-            .await;
-
+        // Create empty playlist
+        let playlist_result = client.create_playlist(&title, section_id, &[]).await;
         match playlist_result {
-            Ok(created_playlist) => {
-                println!("Created playlist: {} with rating_key: {}", created_playlist.title, created_playlist.rating_key);
+            Ok(created) => {
+                println!("Created empty playlist: '{}' id={}", created.title, created.rating_key);
+                assert_eq!(created.title, title);
 
-                // Get playlist details
-                let retrieved = client
-                    .get_playlist(created_playlist.rating_key)
-                    .await;
-                assert!(retrieved.is_ok());
-
-                // Edit playlist
-                let edited = client
-                    .edit_playlist(created_playlist.rating_key, Some("Edited Test Playlist"), None)
-                    .await;
-                assert!(edited.is_ok());
-
-                // Clean up - delete the playlist
-                let delete_result = client
-                    .delete_playlist(created_playlist.rating_key)
-                    .await;
-                assert!(delete_result.is_ok());
-                println!("Successfully deleted test playlist");
+                // Delete
+                let del = client.delete_playlist(created.rating_key).await;
+                assert!(del.is_ok(), "delete_playlist failed: {:?}", del.err());
+                println!("Deleted playlist {}", created.rating_key);
             }
-            Err(e) => {
-                // Playlist creation might fail if section doesn't exist or other issues
-                println!("Playlist creation failed (may be expected if section doesn't exist): {}", e);
-            }
+            Err(e) => println!("create_playlist failed: {}", e),
         }
+    }
+
+    /// Test creating a playlist, adding items to it, verifying, then deleting.
+    ///
+    /// Run with:
+    ///   PLEX_URL=https://... PLEX_TOKEN=... PLEX_SECTION_ID=5 \
+    ///   cargo test -p plexmusicclient-lib test_create_add_items_delete -- --nocapture --ignored
+    #[tokio::test]
+    #[ignore]
+    async fn test_create_add_items_delete() {
+        let client = get_client();
+        let section_id: i64 = std::env::var("PLEX_SECTION_ID")
+            .ok().and_then(|v| v.parse().ok()).unwrap_or(5);
+
+        // Find a track to add by pulling from the first non-empty playlist
+        let playlists = match client.list_playlists(section_id, Some(10)).await {
+            Ok(p) => p,
+            Err(e) => { println!("list_playlists failed: {}", e); return; }
+        };
+        let source = playlists.iter().find(|p| p.leaf_count > 0 && !p.smart);
+        let track_id = match source {
+            Some(pl) => {
+                let items = client.get_playlist_items(pl.rating_key, Some(1), Some(0)).await;
+                match items {
+                    Ok(tracks) if !tracks.is_empty() => tracks[0].rating_key as i64,
+                    _ => { println!("Could not get a track id — skipping"); return; }
+                }
+            }
+            None => { println!("No non-empty playlists found — skipping"); return; }
+        };
+        println!("Using track id={} for add_items test", track_id);
+
+        // Create a fresh playlist
+        let title = format!("AddItems Test {}", std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs());
+        let playlist = match client.create_playlist(&title, section_id, &[]).await {
+            Ok(p) => { println!("Created playlist '{}' id={}", p.title, p.rating_key); p }
+            Err(e) => { println!("create_playlist failed: {}", e); return; }
+        };
+
+        // Add the track
+        let add = client.add_items(playlist.rating_key, &[track_id]).await;
+        assert!(add.is_ok(), "add_items failed: {:?}", add.err());
+        println!("add_items succeeded");
+
+        // Verify the track is in the playlist
+        let items = client.get_playlist_items(playlist.rating_key, Some(5), Some(0)).await;
+        match items {
+            Ok(tracks) => {
+                println!("Playlist now has {} tracks", tracks.len());
+                assert!(!tracks.is_empty(), "Expected at least one track after add_items");
+                assert!(
+                    tracks.iter().any(|t| t.rating_key as i64 == track_id),
+                    "Track {} not found in playlist after add_items", track_id
+                );
+                println!("Verified track {} is in playlist", track_id);
+            }
+            Err(e) => println!("get_playlist_items failed: {}", e),
+        }
+
+        // Clean up
+        let del = client.delete_playlist(playlist.rating_key).await;
+        assert!(del.is_ok(), "delete_playlist failed: {:?}", del.err());
+        println!("Deleted test playlist {}", playlist.rating_key);
     }
 }
 

@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use crossbeam_channel::{Receiver, Sender};
 use once_cell::sync::Lazy;
+use symphonia::core::codecs::CodecRegistry;
 use ringbuf::traits::Producer;
 use ringbuf::HeapProd;
 use symphonia::core::audio::SampleBuffer;
@@ -39,6 +40,16 @@ static AUDIO_HTTP: Lazy<reqwest::Client> = Lazy::new(|| {
 /// Limit concurrent audio prefetch downloads to avoid overwhelming the Plex server.
 /// `try_acquire` is used so excess hover events are silently skipped rather than queued.
 static PREFETCH_SEMAPHORE: Lazy<tokio::sync::Semaphore> = Lazy::new(|| tokio::sync::Semaphore::new(2));
+
+/// Extended codec registry that adds Opus on top of symphonia's built-in defaults.
+/// The main `symphonia` crate does not include Opus as a built-in feature, so we
+/// register it separately here and fall back to this registry when the default one
+/// returns an "unsupported codec" error.
+static OPUS_REGISTRY: Lazy<CodecRegistry> = Lazy::new(|| {
+    let mut r = CodecRegistry::new();
+    r.register_all::<symphonia_adapter_libopus::OpusDecoder>();
+    r
+});
 
 /// Dedicated tokio runtime for async HTTP I/O in the decoder thread
 static DECODER_RT: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
@@ -242,16 +253,26 @@ fn parse_rg_gain(s: &str) -> Option<f32> {
     Some(10f32.powf(db / 20.0).clamp(0.1, 4.0))
 }
 
-/// Extract REPLAYGAIN_TRACK_GAIN from the format reader's embedded metadata.
-/// Returns a linear gain factor (1.0 = no change) if the tag is absent or unparseable.
+/// Extract a normalization gain from the format reader's embedded metadata.
+///
+/// Checks in priority order:
+///   1. `REPLAYGAIN_TRACK_GAIN` (string like "-3.14 dB") — MP3, FLAC, OGG Vorbis
+///   2. `R128_TRACK_GAIN` (Q7.8 integer string like "-1052") — Opus / EBU R128
+///
+/// R128 targets -23 LUFS; a +5 dB offset is applied to align it with the
+/// ReplayGain 2.0 reference of -18 LUFS so cross-format loudness stays consistent.
+///
+/// Returns 1.0 (unity gain) when no usable tag is found.
 fn try_extract_replaygain(fmt: &mut Box<dyn FormatReader>) -> f32 {
     let meta = fmt.metadata();
     let Some(rev) = meta.current() else { return 1.0 };
 
+    let mut r128_gain: Option<f32> = None;
+
     for tag in rev.tags() {
+        // Standard ReplayGain tag (string value with "dB" suffix)
         let is_rg = matches!(tag.std_key, Some(StandardTagKey::ReplayGainTrackGain))
             || tag.key.eq_ignore_ascii_case("REPLAYGAIN_TRACK_GAIN");
-
         if is_rg {
             if let Value::String(ref s) = tag.value {
                 if let Some(g) = parse_rg_gain(s) {
@@ -259,9 +280,22 @@ fn try_extract_replaygain(fmt: &mut Box<dyn FormatReader>) -> f32 {
                 }
             }
         }
+
+        // Opus / EBU R128 tag: Q7.8 fixed-point integer (divide by 256 → dB)
+        if tag.key.eq_ignore_ascii_case("R128_TRACK_GAIN") {
+            let db_opt = match &tag.value {
+                Value::String(s) => s.trim().parse::<i16>().ok().map(|n| n as f32 / 256.0),
+                Value::SignedInt(n) => Some(*n as f32 / 256.0),
+                _ => None,
+            };
+            if let Some(db) = db_opt {
+                // +5 dB offset converts R128 reference (-23 LUFS) → ReplayGain reference (-18 LUFS)
+                r128_gain = Some(10f32.powf((db + 5.0) / 20.0).clamp(0.1, 4.0));
+            }
+        }
     }
 
-    1.0
+    r128_gain.unwrap_or(1.0)
 }
 
 /// Target RMS level in dBFS for fallback normalization. -18 dBFS RMS gives
@@ -303,10 +337,11 @@ fn compute_fallback_loudness(url: &str, shared: &Arc<DecoderShared>) -> f32 {
         }
     };
 
-    let max_samples = sr as usize * 15; // 15 seconds worth of frames
+    let max_frames = sr as usize * 15; // 15 seconds of audio frames
     let mut sum_sq: f64 = 0.0;
     let mut peak: f32 = 0.0;
-    let mut total_samples: usize = 0;
+    let mut total_samples: usize = 0; // interleaved sample count for RMS denominator
+    let mut total_frames: usize = 0;  // frame count for duration limit (channel-independent)
     let mut sb: Option<SampleBuffer<f32>> = None;
 
     loop {
@@ -319,7 +354,8 @@ fn compute_fallback_loudness(url: &str, shared: &Arc<DecoderShared>) -> f32 {
             Ok(audio_buf) => {
                 let spec = *audio_buf.spec();
                 let frames = audio_buf.frames();
-                if sb.as_ref().map_or(true, |s| s.capacity() < frames) {
+                let num_samples = frames * spec.channels.count();
+                if sb.as_ref().map_or(true, |s| s.capacity() < num_samples) {
                     sb = Some(SampleBuffer::new(frames as u64, spec));
                 }
                 let s = sb.as_mut().unwrap();
@@ -332,7 +368,8 @@ fn compute_fallback_loudness(url: &str, shared: &Arc<DecoderShared>) -> f32 {
                     }
                     total_samples += 1;
                 }
-                if total_samples >= max_samples {
+                total_frames += frames;
+                if total_frames >= max_frames {
                     break;
                 }
             }
@@ -373,7 +410,7 @@ fn compute_fallback_loudness(url: &str, shared: &Arc<DecoderShared>) -> f32 {
         gain_db = format!("{:.2}", gain_db),
         linear_gain = format!("{:.3}", linear),
         peak = format!("{:.4}", peak),
-        samples_scanned = total_samples,
+        frames_scanned = total_frames,
         "Fallback loudness normalization computed"
     );
 
@@ -656,6 +693,7 @@ fn probe_audio(
     let decoder_opts = DecoderOptions::default();
     let decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &decoder_opts)
+        .or_else(|_| OPUS_REGISTRY.make(&track.codec_params, &decoder_opts))
         .map_err(|e| format!("Failed to create decoder: {e}"))?;
 
     info!(
@@ -686,10 +724,11 @@ fn refill_crossfade_pending(cf: &mut CrossfadeState, needed: usize, dev_rate: u3
             Ok(audio_buf) => {
                 let spec = *audio_buf.spec();
                 let num_frames = audio_buf.frames();
+                let num_samples = num_frames * spec.channels.count();
                 if cf
                     .sample_buf
                     .as_ref()
-                    .map_or(true, |sb| sb.capacity() < num_frames)
+                    .map_or(true, |sb| sb.capacity() < num_samples)
                 {
                     cf.sample_buf = Some(SampleBuffer::new(num_frames as u64, spec));
                 }
@@ -752,7 +791,8 @@ fn detect_bpm_bg(url: &str, shared: &Arc<DecoderShared>) {
             Ok(audio_buf) => {
                 let spec = *audio_buf.spec();
                 let frames = audio_buf.frames();
-                if sb.as_ref().map_or(true, |s| s.capacity() < frames) {
+                let num_samples = frames * spec.channels.count();
+                if sb.as_ref().map_or(true, |s| s.capacity() < num_samples) {
                     sb = Some(SampleBuffer::new(frames as u64, spec));
                 }
                 let s = sb.as_mut().unwrap();
@@ -912,10 +952,11 @@ pub fn decoder_thread(
                         Ok(audio_buf) => {
                             let spec = *audio_buf.spec();
                             let num_frames = audio_buf.frames();
+                            let num_samples = num_frames * spec.channels.count();
 
                             if sample_buf
                                 .as_ref()
-                                .map_or(true, |sb| sb.capacity() < num_frames)
+                                .map_or(true, |sb| sb.capacity() < num_samples)
                             {
                                 sample_buf = Some(SampleBuffer::new(num_frames as u64, spec));
                             }

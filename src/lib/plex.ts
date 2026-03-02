@@ -244,6 +244,11 @@ export function createPlaylist(
   return invoke("create_playlist", { title, sectionId, itemIds })
 }
 
+/** Add items to an existing playlist by rating key. */
+export function addItemsToPlaylist(playlistId: number, itemIds: number[]): Promise<void> {
+  return invoke("add_items_to_playlist", { playlistId, itemIds })
+}
+
 // ---------------------------------------------------------------------------
 // Play queue
 // ---------------------------------------------------------------------------

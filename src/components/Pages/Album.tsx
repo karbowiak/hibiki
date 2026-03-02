@@ -4,6 +4,7 @@ import { useShallow } from "zustand/react/shallow"
 import { useConnectionStore, usePlayerStore, buildPlexImageUrl, useUIStore, useLibraryStore } from "../../stores"
 import { getAlbum, getAlbumTracks, getRelatedHubs } from "../../lib/plex"
 import { prefetchTrackAudio } from "../../stores/playerStore"
+import { useContextMenuStore } from "../../stores/contextMenuStore"
 import type { Album, Artist, Track, Hub, PlexTag } from "../../types/plex"
 import { MediaCard } from "../MediaCard"
 import { ScrollRow } from "../ScrollRow"
@@ -17,6 +18,7 @@ import { useItunesMetadataStore } from "../../stores/itunesMetadataStore"
 import type { ItunesAlbumInfo } from "../../lib/itunes"
 import { buildMetaImageUrl } from "../../lib/metadataImage"
 import { useMetadataSourceStore } from "../../stores/metadataSourceStore"
+import { HeroRating } from "../HeroRating"
 
 function formatMs(ms: number): string {
   const s = Math.floor(ms / 1000)
@@ -45,6 +47,7 @@ function TagChip({ tag }: { tag: PlexTag }) {
 export function AlbumPage({ albumId }: { albumId: number }) {
   const { baseUrl, token, musicSectionId } = useConnectionStore()
   const { playTrack, playRadio, addToQueue, currentTrack } = usePlayerStore(useShallow(s => ({ playTrack: s.playTrack, playRadio: s.playRadio, addToQueue: s.addToQueue, currentTrack: s.currentTrack })))
+  const showContextMenu = useContextMenuStore(s => s.show)
   const { pageRefreshKey } = useUIStore()
 
   // Seed from eager-load cache for an instant first render.
@@ -300,7 +303,7 @@ export function AlbumPage({ albumId }: { albumId: number }) {
           {/* Info column — no fixed height so hero grows with expanded description */}
           <div className="flex min-w-0 flex-1 flex-col gap-2 pr-72 pb-2">
             <div className="text-xs font-semibold uppercase tracking-widest text-gray-300">{formatLabel}</div>
-            <h1 className="text-4xl font-black text-white leading-tight truncate">{album.title}</h1>
+            <h1 className="text-4xl font-black text-white leading-tight select-text">{album.title}</h1>
 
             <div className="flex flex-wrap items-center gap-2 text-sm text-gray-300">
               {parentThumbUrl && (
@@ -338,6 +341,9 @@ export function AlbumPage({ albumId }: { albumId: number }) {
               )}
             </div>
 
+            {/* Rating */}
+            <HeroRating ratingKey={albumId} userRating={album.user_rating} />
+
             {allTags.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
                 {allTags.map(t => <TagChip key={t.tag} tag={t} />)}
@@ -347,7 +353,7 @@ export function AlbumPage({ albumId }: { albumId: number }) {
             {/* Expandable description */}
             {displayWiki && (
               <div
-                className="cursor-pointer select-none max-w-xl"
+                className="cursor-pointer select-text max-w-xl"
                 onClick={() => setDescExpanded(v => !v)}
               >
                 <div
@@ -381,6 +387,7 @@ export function AlbumPage({ albumId }: { albumId: number }) {
             <tr>
               <th className="p-2 text-center w-8">#</th>
               <th className="p-2 text-left">Title</th>
+              <th className="p-2 text-center w-36">Rating</th>
               <th className="p-2 text-right">Duration</th>
             </tr>
           </thead>
@@ -393,6 +400,7 @@ export function AlbumPage({ albumId }: { albumId: number }) {
                 className={`group cursor-pointer rounded ${isActive ? "bg-white/5" : "hover:bg-white/5"}`}
                 onClick={() => void playTrack(track, tracks, album.title, `/album/${albumId}`)}
                 onMouseEnter={() => prefetchTrackAudio(track)}
+                onContextMenu={e => { e.preventDefault(); e.stopPropagation(); showContextMenu(e.clientX, e.clientY, "track", track) }}
               >
                 <td className="p-2 text-center w-8">
                   {isActive ? (
@@ -419,9 +427,12 @@ export function AlbumPage({ albumId }: { albumId: number }) {
                 </td>
                 <td className="p-2">
                   <div className={isActive ? "text-accent" : "text-white"}>{track.title}</div>
-                  {track.original_title && (
+                  {track.original_title && track.original_title !== album.parent_title && (
                     <div className="text-xs text-gray-500">{track.original_title}</div>
                   )}
+                </td>
+                <td className="p-2 text-center" onClick={e => e.stopPropagation()}>
+                  <HeroRating ratingKey={track.rating_key} userRating={track.user_rating} />
                 </td>
                 <td className="p-2 text-right tabular-nums">
                   <span className="group-hover:hidden">{formatMs(track.duration)}</span>

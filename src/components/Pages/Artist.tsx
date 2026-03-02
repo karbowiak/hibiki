@@ -13,6 +13,7 @@ import {
   buildItemUri,
 } from "../../lib/plex"
 import { prefetchTrackAudio } from "../../stores/playerStore"
+import { useContextMenuStore } from "../../stores/contextMenuStore"
 import { useFocalPoint } from "../../lib/focalPoint"
 import type { Artist, Album, Track, Hub, Playlist } from "../../types/plex"
 import { MediaCard } from "../MediaCard"
@@ -27,33 +28,13 @@ import { useItunesMetadataStore } from "../../stores/itunesMetadataStore"
 import type { ItunesArtistInfo } from "../../lib/itunes"
 import { buildMetaImageUrl } from "../../lib/metadataImage"
 import { useMetadataSourceStore } from "../../stores/metadataSourceStore"
+import { HeroRating } from "../HeroRating"
 
 function fmtDuration(ms: number) {
   const s = Math.floor(ms / 1000)
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`
 }
 
-function Stars({ rating }: { rating?: number | null }) {
-  const filled = Math.round((rating ?? 0) / 2)
-  return (
-    <span className="flex gap-0.5">
-      {Array.from({ length: 5 }, (_, i) => (
-        <svg
-          key={i}
-          viewBox="0 0 24 24"
-          width="13"
-          height="13"
-          fill={i < filled ? "currentColor" : "none"}
-          stroke="currentColor"
-          strokeWidth="1.5"
-          className={i < filled ? "text-accent" : "text-gray-600"}
-        >
-          <polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26" />
-        </svg>
-      ))}
-    </span>
-  )
-}
 
 function dedupe<T extends { rating_key: number }>(items: T[]): T[] {
   const seen = new Set<number>()
@@ -97,6 +78,7 @@ function DeezerArtistAvatar({ name }: { name: string }) {
 export function ArtistPage({ artistId }: { artistId: number }) {
   const { baseUrl, token, musicSectionId, sectionUuid } = useConnectionStore()
   const { playTrack, playFromUri, playRadio, addToQueue, currentTrack } = usePlayerStore(useShallow(s => ({ playTrack: s.playTrack, playFromUri: s.playFromUri, playRadio: s.playRadio, addToQueue: s.addToQueue, currentTrack: s.currentTrack })))
+  const showContextMenu = useContextMenuStore(s => s.show)
   const { pageRefreshKey } = useUIStore()
 
   const cached = getCachedArtist(artistId)
@@ -425,7 +407,7 @@ export function ArtistPage({ artistId }: { artistId: number }) {
           {/* Info column — no fixed height, flows naturally */}
           <div className="flex min-w-0 flex-1 flex-col gap-2 pr-72">
             <div className="text-xs font-semibold uppercase tracking-widest text-gray-300">Artist</div>
-            <h1 className="text-5xl font-black leading-none text-white">{artist.title}</h1>
+            <h1 className="text-5xl font-black leading-none text-white select-text">{artist.title}</h1>
 
             {heroTags.length > 0 && (
               <div className="flex flex-wrap gap-1.5 pt-1">
@@ -440,7 +422,7 @@ export function ArtistPage({ artistId }: { artistId: number }) {
             {/* Expandable bio */}
             {displayBio && (
               <div
-                className="cursor-pointer select-none"
+                className="cursor-pointer select-text"
                 onClick={() => setBioExpanded(v => !v)}
                 title={bioExpanded ? "Collapse" : "Expand"}
               >
@@ -464,6 +446,9 @@ export function ArtistPage({ artistId }: { artistId: number }) {
                 </span>
               </div>
             )}
+
+            {/* Rating */}
+            <HeroRating ratingKey={artistId} userRating={artist.user_rating} />
 
             {/* Metadata stats row */}
             {(lastfmData || deezerData) && (
@@ -529,6 +514,7 @@ export function ArtistPage({ artistId }: { artistId: number }) {
                     key={track.rating_key}
                     onClick={() => playTrack(track, popularTracks, artist.title, `/artist/${artistId}`)}
                     onMouseEnter={() => prefetchTrackAudio(track)}
+                    onContextMenu={e => { e.preventDefault(); e.stopPropagation(); showContextMenu(e.clientX, e.clientY, "track", track) }}
                     className={`group flex cursor-pointer items-center gap-3 rounded-md px-3 py-1.5 ${isActive ? "bg-white/10" : "hover:bg-white/10"}`}
                   >
                     {isActive ? (
@@ -554,24 +540,31 @@ export function ArtistPage({ artistId }: { artistId: number }) {
                         </span>
                       </>
                     )}
-                    <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                      <span className={`min-w-0 truncate text-sm font-medium ${isActive ? "text-accent" : "text-white"}`}>
-                        {track.title}
-                      </span>
-                      {albumId && (
-                        <span className="flex flex-shrink-0 items-center gap-1.5">
-                          <span className="text-xs text-gray-600">·</span>
-                          <Link
-                            href={`/album/${albumId}`}
-                            className="whitespace-nowrap text-xs text-gray-500 hover:text-white hover:underline transition-colors"
-                            onClick={e => e.stopPropagation()}
-                          >
-                            {track.parent_title}
-                          </Link>
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`min-w-0 truncate text-sm font-medium ${isActive ? "text-accent" : "text-white"}`}>
+                          {track.title}
                         </span>
+                        {albumId && (
+                          <span className="flex flex-shrink-0 items-center gap-1.5">
+                            <span className="text-xs text-gray-600">·</span>
+                            <Link
+                              href={`/album/${albumId}`}
+                              className="whitespace-nowrap text-xs text-gray-500 hover:text-white hover:underline transition-colors"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              {track.parent_title}
+                            </Link>
+                          </span>
+                        )}
+                      </div>
+                      {track.original_title && track.original_title !== artist.title && (
+                        <span className="text-xs text-gray-500">{track.original_title}</span>
                       )}
                     </div>
-                    <Stars rating={track.user_rating} />
+                    <span onClick={e => e.stopPropagation()}>
+                      <HeroRating ratingKey={track.rating_key} userRating={track.user_rating} />
+                    </span>
                     <span className="w-32 flex-shrink-0 flex items-center justify-end gap-2">
                       <button
                         className="hidden group-hover:flex items-center gap-0.5 text-xs text-gray-400 hover:text-white transition-colors"
@@ -618,6 +611,7 @@ export function ArtistPage({ artistId }: { artistId: number }) {
                   buildItemUri(sectionUuid, `/library/metadata/${album.rating_key}`),
                   false, album.title, `/album/${album.rating_key}`
                 )}
+                onContextMenu={e => { e.preventDefault(); e.stopPropagation(); showContextMenu(e.clientX, e.clientY, "album", album) }}
                 scrollItem
               />
             ))}
@@ -638,6 +632,7 @@ export function ArtistPage({ artistId }: { artistId: number }) {
                   buildItemUri(sectionUuid, `/library/metadata/${album.rating_key}`),
                   false, album.title, `/album/${album.rating_key}`
                 )}
+                onContextMenu={e => { e.preventDefault(); e.stopPropagation(); showContextMenu(e.clientX, e.clientY, "album", album) }}
                 scrollItem
               />
             ))}
@@ -667,6 +662,7 @@ export function ArtistPage({ artistId }: { artistId: number }) {
                     buildItemUri(sectionUuid, `/library/metadata/${a.rating_key}`),
                     false, a.title, `/album/${a.rating_key}`
                   )}
+                  onContextMenu={e => { e.preventDefault(); e.stopPropagation(); showContextMenu(e.clientX, e.clientY, "album", a) }}
                   scrollItem
                 />
               ))}
@@ -688,6 +684,7 @@ export function ArtistPage({ artistId }: { artistId: number }) {
                   buildItemUri(sectionUuid, `/library/metadata/${a.rating_key}`),
                   false, a.title, `/artist/${a.rating_key}`
                 )}
+                onContextMenu={e => { e.preventDefault(); e.stopPropagation(); showContextMenu(e.clientX, e.clientY, "artist", a) }}
                 isArtist
                 scrollItem
               />
@@ -712,6 +709,7 @@ export function ArtistPage({ artistId }: { artistId: number }) {
                     buildItemUri(sectionUuid, `/library/metadata/${a.rating_key}`),
                     false, a.title, `/artist/${a.rating_key}`
                   )}
+                  onContextMenu={e => { e.preventDefault(); e.stopPropagation(); showContextMenu(e.clientX, e.clientY, "artist", a) }}
                   isArtist
                   scrollItem
                 />

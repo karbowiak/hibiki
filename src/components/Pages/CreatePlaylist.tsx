@@ -1,7 +1,8 @@
 import { useState } from "react"
 import { useLibraryStore, useConnectionStore } from "../../stores"
+import type { Playlist } from "../../types/plex"
 
-export function CreatePlaylist({ onClose }: { onClose: () => void }) {
+export function CreatePlaylist({ onClose, onCreated }: { onClose: () => void; onCreated?: (playlist: Playlist) => void }) {
   const [playlistName, setPlaylistName] = useState("")
   const [created, setCreated] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
@@ -15,7 +16,8 @@ export function CreatePlaylist({ onClose }: { onClose: () => void }) {
     setIsCreating(true)
     setError(null)
     try {
-      await createPlaylist(playlistName.trim(), musicSectionId)
+      const playlist = await createPlaylist(playlistName.trim(), musicSectionId)
+      onCreated?.(playlist)
       setCreated(true)
       setTimeout(onClose, 1200)
     } catch (err) {

@@ -3,6 +3,7 @@ import { Link } from "wouter"
 import { useLibraryStore, useConnectionStore, buildPlexImageUrl, useUIStore } from "../../stores"
 import { prefetchArtist } from "../../stores/metadataCache"
 import { useArtistImage } from "../../hooks/useMediaImage"
+import { useContextMenuStore } from "../../stores/contextMenuStore"
 
 function starsFromRating(rating: number | null): number {
   if (!rating) return 0
@@ -33,6 +34,7 @@ export function LikedArtists() {
   const { likedArtists, fetchLikedArtists } = useLibraryStore()
   const { baseUrl, token, musicSectionId } = useConnectionStore()
   const { pageRefreshKey } = useUIStore()
+  const showContextMenu = useContextMenuStore(s => s.show)
 
   useEffect(() => {
     if (musicSectionId !== null) void fetchLikedArtists(musicSectionId)
@@ -84,6 +86,7 @@ export function LikedArtists() {
                   key={artist.rating_key}
                   href={`/artist/${artist.rating_key}`}
                   onMouseEnter={() => prefetchArtist(artist.rating_key, sectionId)}
+                  onContextMenu={e => { e.preventDefault(); e.stopPropagation(); showContextMenu(e.clientX, e.clientY, "artist", artist) }}
                   className="group flex flex-col items-center gap-2 rounded-md p-3 no-underline transition-colors hover:bg-white/10"
                 >
                   <div className="relative w-full aspect-square overflow-hidden rounded-full bg-app-surface shadow-lg">

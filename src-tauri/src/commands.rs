@@ -439,6 +439,19 @@ pub async fn create_playlist(
         .map_err(|e| format!("{:#}", e))
 }
 
+/// Add items to an existing playlist.
+#[tauri::command]
+pub async fn add_items_to_playlist(
+    playlist_id: i64,
+    item_ids: Vec<i64>,
+    state: State<'_, PlexState>,
+) -> Result<(), String> {
+    let c = client!(state);
+    c.add_items(playlist_id, &item_ids)
+        .await
+        .map_err(|e| format!("{:#}", e))
+}
+
 // ---------------------------------------------------------------------------
 // Play queue
 // ---------------------------------------------------------------------------

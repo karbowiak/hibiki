@@ -6,6 +6,7 @@ import { rateItem } from "../../lib/plex"
 import { lastfmLoveTrack } from "../../lib/lastfm"
 import { useLastfmStore } from "../../stores/lastfmStore"
 import { prefetchTrackAudio } from "../../stores/playerStore"
+import { useContextMenuStore } from "../../stores/contextMenuStore"
 
 function formatMs(ms: number): string {
   const s = Math.floor(ms / 1000)
@@ -109,6 +110,7 @@ export function Liked() {
     addToQueue: s.addToQueue,
     currentTrack: s.currentTrack,
   })))
+  const showContextMenu = useContextMenuStore(s => s.show)
   const { baseUrl, token, musicSectionId } = useConnectionStore(useShallow(s => ({
     baseUrl: s.baseUrl,
     token: s.token,
@@ -255,6 +257,7 @@ export function Liked() {
                   className={`group cursor-pointer rounded ${isActive ? "bg-white/5" : "hover:bg-white/5"}`}
                   onClick={() => void playTrack(track, tracks, "Liked Songs", "/collection/tracks")}
                   onMouseEnter={() => prefetchTrackAudio(track)}
+                  onContextMenu={e => { e.preventDefault(); e.stopPropagation(); showContextMenu(e.clientX, e.clientY, "track", track) }}
                 >
                   {/* Index */}
                   <td className="p-2 text-center w-8">

@@ -6,6 +6,7 @@ import { MediaCard } from "../MediaCard"
 import { PriorityMediaCard } from "../PriorityMediaCard"
 import { prefetchArtist, prefetchAlbum } from "../../stores/metadataCache"
 import { usePlayerStore } from "../../stores/playerStore"
+import { useContextMenuStore } from "../../stores/contextMenuStore"
 
 type MediaType = "artist" | "album" | "track" | "playlist"
 
@@ -92,6 +93,7 @@ export function Search() {
     }))
   )
   const playTrack = usePlayerStore(s => s.playTrack)
+  const showContextMenu = useContextMenuStore(s => s.show)
 
   const showResults = query.trim().length > 0
   const groups = groupByType(results)
@@ -125,6 +127,9 @@ export function Search() {
                     const onClick = info.itemType === "track"
                       ? () => void playTrack(tracks[idx], tracks)
                       : undefined
+                    const onContextMenu = (item.type === "artist" || item.type === "album")
+                      ? (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); showContextMenu(e.clientX, e.clientY, item.type, item) }
+                      : undefined
                     const usePriority = info.itemType === "artist" || info.itemType === "album"
                     const Card = usePriority ? PriorityMediaCard : MediaCard
                     return (
@@ -137,6 +142,7 @@ export function Search() {
                         href={info.href ?? undefined}
                         onClick={onClick}
                         prefetch={prefetch}
+                        onContextMenu={onContextMenu}
                         artistName={"artistName" in info ? info.artistName : undefined}
                         albumName={"albumName" in info ? info.albumName : undefined}
                       />

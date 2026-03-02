@@ -9,7 +9,10 @@ import { CreatePlaylist } from "./components/Pages/CreatePlaylist"
 import { QueuePanel } from "./components/QueuePanel"
 import LyricsPanel from "./components/LyricsPanel"
 import { UpdateDialog } from "./components/UpdateDialog"
+import { ContextMenu } from "./components/ContextMenu"
 import { createAppMenu } from "./lib/appMenu"
+import { addItemsToPlaylist } from "./lib/plex"
+import { recordRecentPlaylist } from "./lib/recentPlaylists"
 import { useConnectionStore, useLibraryStore, useUIStore } from "./stores"
 import { useLastfmStore } from "./stores/lastfmStore"
 import "./stores/accentStore"    // import so the module runs applyAccent() on load
@@ -20,7 +23,7 @@ import "./stores/cardSizeStore" // import so the module sets --card-size CSS var
 function App() {
   const { isConnected, musicSectionId, isLoading, loadAndConnect } = useConnectionStore()
   const { fetchPlaylists, fetchRecentlyAdded, fetchHubs, fetchTags, prefetchAllPlaylists, prefetchMixTracks } = useLibraryStore()
-  const { showCreatePlaylist, setShowCreatePlaylist } = useUIStore()
+  const { showCreatePlaylist, setShowCreatePlaylist, pendingPlaylistItemIds, setPendingPlaylistItemIds } = useUIStore()
   const initLastfm = useLastfmStore(s => s.initialize)
   const [location, navigate] = useLocation()
 
@@ -86,10 +89,18 @@ function App() {
       <TailwindIndicator />
 
       {showCreatePlaylist && (
-        <CreatePlaylist onClose={() => setShowCreatePlaylist(false)} />
+        <CreatePlaylist
+          onClose={() => { setShowCreatePlaylist(false); setPendingPlaylistItemIds(null) }}
+          onCreated={pendingPlaylistItemIds ? (playlist) => {
+            void addItemsToPlaylist(playlist.rating_key, pendingPlaylistItemIds).catch(() => {})
+            recordRecentPlaylist(playlist.rating_key)
+            setPendingPlaylistItemIds(null)
+          } : undefined}
+        />
       )}
 
       <UpdateDialog />
+      <ContextMenu />
     </div>
   )
 }

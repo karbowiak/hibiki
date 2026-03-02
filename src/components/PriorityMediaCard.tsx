@@ -23,6 +23,7 @@ interface PriorityMediaCardProps {
   onClick?: () => void
   prefetch?: () => void
   onPlay?: (e: React.MouseEvent) => void
+  onContextMenu?: (e: React.MouseEvent) => void
   /** Artist name used to look up external metadata. */
   artistName?: string | null
   /** Album name used to look up external metadata (only relevant when isArtist=false). */

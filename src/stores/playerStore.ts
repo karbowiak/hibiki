@@ -108,6 +108,8 @@ interface PlayerState {
    * Pass `seedName` to set a human-readable context label ("Ado Radio").
    */
   playRadio: (ratingKey: number, radioType: RadioType, seedName?: string) => Promise<void>
+  /** Insert tracks immediately after the current track (play next). */
+  addNext: (tracks: Track[]) => void
   /** Append tracks to the end of the queue without touching radio/playlist state. */
   addToQueue: (tracks: Track[]) => void
   /** Stop radio auto-refill without clearing the existing queue. */
@@ -826,6 +828,14 @@ export const usePlayerStore = create<PlayerState>()(
       set({ playerError: `Radio failed: ${msg}` })
       setTimeout(() => set({ playerError: null }), 6000)
     }
+  },
+
+  addNext: (tracks: Track[]) => {
+    set(s => {
+      const next = [...s.queue]
+      next.splice(s.queueIndex + 1, 0, ...tracks)
+      return { queue: next }
+    })
   },
 
   addToQueue: (tracks: Track[]) => {

@@ -278,6 +278,75 @@ impl PlexClient {
         Ok(json)
     }
 
+    /// Perform a POST request with query parameters and no body.
+    ///
+    /// Automatically unwraps the Plex `{"MediaContainer": <T>}` envelope.
+    #[instrument(skip(self))]
+    pub async fn post_params<T>(&self, path: &str, params: &[(&str, &str)]) -> Result<T>
+    where
+        T: DeserializeOwned,
+    {
+        let url = self.build_url(path);
+        debug!("POST (params) request to {}", url);
+
+        let response = self
+            .client
+            .post(&url)
+            .header("X-Plex-Token", &self.token)
+            .header("Accept", "application/json")
+            .query(params)
+            .send()
+            .await
+            .context("POST request failed")?;
+
+        debug!("Response status: {}", response.status());
+
+        if !response.status().is_success() {
+            return Err(anyhow::anyhow!(
+                "HTTP error: {} for URL: {}",
+                response.status(),
+                url
+            ));
+        }
+
+        let wrapper = response
+            .json::<PlexApiResponse<T>>()
+            .await
+            .context("Failed to parse JSON response")?;
+
+        Ok(wrapper.container)
+    }
+
+    /// Perform a PUT request with query parameters and no body, ignoring the response body.
+    #[instrument(skip(self))]
+    pub async fn put_params_ok(&self, path: &str, params: &[(&str, &str)]) -> Result<()>
+    {
+        let url = self.build_url(path);
+        debug!("PUT (params) request to {}", url);
+
+        let response = self
+            .client
+            .put(&url)
+            .header("X-Plex-Token", &self.token)
+            .header("Accept", "application/json")
+            .query(params)
+            .send()
+            .await
+            .context("PUT request failed")?;
+
+        debug!("Response status: {}", response.status());
+
+        if !response.status().is_success() {
+            return Err(anyhow::anyhow!(
+                "HTTP error: {} for URL: {}",
+                response.status(),
+                url
+            ));
+        }
+
+        Ok(())
+    }
+
     /// Perform a DELETE request
     ///
     /// # Arguments

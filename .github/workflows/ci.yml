@@ -35,7 +35,8 @@ jobs:
             libasound2-dev \
             libdbus-1-dev \
             libssl-dev \
-            pkg-config
+            pkg-config \
+            cmake
 
       - uses: dtolnay/rust-toolchain@stable
 

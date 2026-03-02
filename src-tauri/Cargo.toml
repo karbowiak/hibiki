@@ -57,6 +57,7 @@ roxmltree = "0.19"
 symphonia = { version = "0.5", features = [
     "mp3", "aac", "alac", "flac", "ogg", "wav", "pcm", "isomp4",
 ] }
+symphonia-adapter-libopus = "0.2"
 cpal = "0.15"
 ringbuf = "0.4"
 crossbeam-channel = "0.5"

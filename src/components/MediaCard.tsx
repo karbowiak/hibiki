@@ -18,9 +18,10 @@ interface MediaCardProps {
   prefetch?: () => void
   /** When provided, shows a play button overlay on hover. Called on click. */
   onPlay?: (e: React.MouseEvent) => void
+  onContextMenu?: (e: React.MouseEvent) => void
 }
 
-export function MediaCard({ title, desc, thumb, thumbFallback, isArtist, scrollItem, large, href, onClick, prefetch, onPlay }: MediaCardProps) {
+export function MediaCard({ title, desc, thumb, thumbFallback, isArtist, scrollItem, large, href, onClick, prefetch, onPlay, onContextMenu }: MediaCardProps) {
   const displayThumb = thumb || thumbFallback || null
   const scrollStyle = scrollItem
     ? { width: large ? "calc(var(--card-size, 160px) * 1.33)" : "var(--card-size, 160px)" }
@@ -28,6 +29,7 @@ export function MediaCard({ title, desc, thumb, thumbFallback, isArtist, scrollI
   const inner = (
     <div
       onMouseEnter={prefetch}
+      onContextMenu={onContextMenu}
       style={scrollStyle}
       className={clsx(
         "group cursor-pointer rounded-md bg-app-card p-3 transition-colors hover:bg-app-surface-hover",
@@ -77,14 +79,14 @@ export function MediaCard({ title, desc, thumb, thumbFallback, isArtist, scrollI
 
   if (href) {
     return (
-      <Link href={href} style={scrollStyle} className={clsx("no-underline hover:no-underline", scrollItem && "flex-shrink-0")}>
+      <Link href={href} style={scrollStyle} onContextMenu={onContextMenu} className={clsx("no-underline hover:no-underline", scrollItem && "flex-shrink-0")}>
         {inner}
       </Link>
     )
   }
 
   if (onClick) {
-    return <div onClick={onClick} style={scrollStyle} className={clsx(scrollItem && "flex-shrink-0")}>{inner}</div>
+    return <div onClick={onClick} onContextMenu={onContextMenu} style={scrollStyle} className={clsx(scrollItem && "flex-shrink-0")}>{inner}</div>
   }
 
   return inner

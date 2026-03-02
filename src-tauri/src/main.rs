@@ -280,6 +280,7 @@ pub fn run() {
             commands::get_liked_artists,
             commands::get_liked_albums,
             commands::create_playlist,
+            commands::add_items_to_playlist,
             // Play queue
             commands::create_play_queue,
             commands::get_play_queue,
