@@ -412,9 +412,13 @@ export function ArtistPage({ artistId }: { artistId: number }) {
             {heroTags.length > 0 && (
               <div className="flex flex-wrap gap-1.5 pt-1">
                 {heroTags.map(g => (
-                  <span key={g} className="rounded-full bg-white/10 px-3 py-0.5 text-xs text-gray-300">
+                  <Link
+                    key={g}
+                    href={`/genre/genre/${encodeURIComponent(g)}`}
+                    className="rounded-full bg-white/10 px-3 py-0.5 text-xs text-gray-300 hover:bg-white/20 hover:text-white transition-colors"
+                  >
                     {g}
-                  </span>
+                  </Link>
                 ))}
               </div>
             )}

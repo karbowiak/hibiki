@@ -280,6 +280,15 @@ fn try_extract_replaygain(fmt: &mut Box<dyn FormatReader>) -> f32 {
 /// with Plex-normalized tracks (~-14 LUFS after K-weighting offset).
 const FALLBACK_TARGET_DBFS: f32 = -18.0;
 
+/// Fade-in duration in milliseconds applied at every Play command to prevent
+/// audible pops from the silence → audio waveform discontinuity after a flush.
+const FADE_IN_MS: u32 = 5;
+
+/// Calculate the number of interleaved samples for the fade-in ramp.
+fn fade_in_sample_count(device_rate: u32, channels: u32) -> usize {
+    (FADE_IN_MS as usize * device_rate as usize * channels.max(1) as usize) / 1000
+}
+
 /// Compute a fallback normalization gain by scanning the first ~15 seconds of
 /// a cached audio file. Returns a linear gain clamped to [0.1, 4.0].
 ///
@@ -832,6 +841,10 @@ pub fn decoder_thread(
     let mut next_meta: Option<TrackMeta> = None;
     let mut crossfade: Option<CrossfadeState> = None;
 
+    // Micro fade-in to prevent silence→audio pop after flush
+    let mut fade_in_remaining: usize = 0;
+    let mut fade_in_total: usize = 0;
+
     loop {
         // If paused or no track, block on command channel
         if shared.paused.load(Ordering::Relaxed) || format_reader.is_none() {
@@ -850,6 +863,8 @@ pub fn decoder_thread(
                         &mut sample_buf,
                         &mut next_meta,
                         &mut crossfade,
+                        &mut fade_in_remaining,
+                        &mut fade_in_total,
                     ) {
                         return;
                     }
@@ -877,6 +892,8 @@ pub fn decoder_thread(
                 &mut sample_buf,
                 &mut next_meta,
                 &mut crossfade,
+                &mut fade_in_remaining,
+                &mut fade_in_total,
             ) {
                 return;
             }
@@ -892,6 +909,10 @@ pub fn decoder_thread(
                     rating_key = cf.meta.rating_key,
                     "Crossfade window elapsed — promoting next track without waiting for EOF"
                 );
+                // Extract pending samples before moving other fields
+                let pending_samples = cf.pending;
+                let cf_meta = cf.meta;
+
                 if let Some(ref old) = current_track {
                     let _ = event_tx.send(AudioEvent::TrackEnded {
                         rating_key: old.rating_key,
@@ -916,10 +937,24 @@ pub fn decoder_thread(
                 shared.sample_rate.store(cf.sample_rate as i64, Ordering::Relaxed);
                 shared.channels.store(cf.channels as i64, Ordering::Relaxed);
                 shared.finished.store(false, Ordering::Relaxed);
-                current_track = Some(cf.meta.clone());
+                current_track = Some(cf_meta.clone());
+
+                // Push any remaining decoded+resampled samples that were buffered
+                // during crossfade mixing but not yet consumed.
+                if !pending_samples.is_empty() {
+                    let mut written = 0;
+                    while written < pending_samples.len() {
+                        let n = producer.push_slice(&pending_samples[written..]);
+                        written += n;
+                        if n == 0 {
+                            std::thread::sleep(std::time::Duration::from_millis(2));
+                        }
+                    }
+                }
+
                 let _ = event_tx.send(AudioEvent::TrackStarted {
-                    rating_key:  cf.meta.rating_key,
-                    duration_ms: cf.meta.duration_ms,
+                    rating_key:  cf_meta.rating_key,
+                    duration_ms: cf_meta.duration_ms,
                 });
                 let _ = event_tx.send(AudioEvent::State {
                     state: PlaybackState::Playing,
@@ -1078,7 +1113,7 @@ pub fn decoder_thread(
                             let norm_enabled =
                                 shared.normalization_enabled.load(Ordering::Relaxed);
 
-                            let samples_to_push = if let Some(ref mut cf) = crossfade {
+                            let mut samples_to_push = if let Some(ref mut cf) = crossfade {
                                 let needed = resampled.len();
 
                                 // Fill pending with enough decoded+resampled samples
@@ -1133,6 +1168,19 @@ pub fn decoder_thread(
                                 s
                             };
 
+                            // Apply micro fade-in ramp to prevent silence→audio pop
+                            if fade_in_remaining > 0 && fade_in_total > 0 {
+                                let apply = fade_in_remaining.min(samples_to_push.len());
+                                for i in 0..apply {
+                                    let progress = 1.0
+                                        - (fade_in_remaining - i) as f32
+                                            / fade_in_total as f32;
+                                    samples_to_push[i] *= progress;
+                                }
+                                fade_in_remaining =
+                                    fade_in_remaining.saturating_sub(apply);
+                            }
+
                             // ===============================================
                             // PUSH TO RING BUFFER
                             // ===============================================
@@ -1153,14 +1201,19 @@ pub fn decoder_thread(
                                         &mut sample_buf,
                                         &mut next_meta,
                                         &mut crossfade,
+                                        &mut fade_in_remaining,
+                                        &mut fade_in_total,
                                     ) {
                                         return;
                                     }
                                     // If Play/Stop was called, abandon remaining
-                                    // samples from this packet.
-                                    if format_reader.is_none()
-                                        || shared.flush_pending.load(Ordering::Relaxed)
-                                    {
+                                    // samples from this packet — they're from the
+                                    // OLD track and must not leak into the ring buffer.
+                                    // We check sample_buf (set to None by Play) rather
+                                    // than flush_pending, because the output callback
+                                    // may have already cleared flush_pending during
+                                    // the HTTP fetch inside handle_command.
+                                    if format_reader.is_none() || sample_buf.is_none() {
                                         break;
                                     }
                                 }
@@ -1202,8 +1255,11 @@ pub fn decoder_thread(
 
                     if let Some(cf) = crossfade.take() {
                         // Crossfade was active — promote the next-track decoder.
+                        // Extract pending samples before moving other fields
+                        let pending_samples = cf.pending;
+                        let cf_meta = cf.meta;
                         info!(
-                            rating_key = cf.meta.rating_key,
+                            rating_key = cf_meta.rating_key,
                             "Crossfade complete — swapping to next track"
                         );
                         if let Some(ref old) = current_track {
@@ -1234,10 +1290,24 @@ pub fn decoder_thread(
                         shared.sample_rate.store(cf.sample_rate as i64, Ordering::Relaxed);
                         shared.channels.store(cf.channels as i64, Ordering::Relaxed);
                         shared.finished.store(false, Ordering::Relaxed);
-                        current_track = Some(cf.meta.clone());
+                        current_track = Some(cf_meta.clone());
+
+                        // Push any remaining decoded+resampled samples that were buffered
+                        // during crossfade mixing but not yet consumed.
+                        if !pending_samples.is_empty() {
+                            let mut written = 0;
+                            while written < pending_samples.len() {
+                                let n = producer.push_slice(&pending_samples[written..]);
+                                written += n;
+                                if n == 0 {
+                                    std::thread::sleep(std::time::Duration::from_millis(2));
+                                }
+                            }
+                        }
+
                         let _ = event_tx.send(AudioEvent::TrackStarted {
-                            rating_key: cf.meta.rating_key,
-                            duration_ms: cf.meta.duration_ms,
+                            rating_key: cf_meta.rating_key,
+                            duration_ms: cf_meta.duration_ms,
                         });
                         let _ = event_tx.send(AudioEvent::State {
                             state: PlaybackState::Playing,
@@ -1353,6 +1423,8 @@ fn handle_command(
     sample_buf: &mut Option<SampleBuffer<f32>>,
     next_meta: &mut Option<TrackMeta>,
     crossfade: &mut Option<CrossfadeState>,
+    fade_in_remaining: &mut usize,
+    fade_in_total: &mut usize,
 ) -> bool {
     match cmd {
         AudioCommand::Play(meta) => {
@@ -1390,6 +1462,11 @@ fn handle_command(
                         shared.next_norm_gain_millths.store(1_000, Ordering::Relaxed);
 
                         *current_track = Some(meta.clone());
+
+                        // Arm micro fade-in to prevent silence→audio pop
+                        let dev_rate = shared.device_sample_rate.load(Ordering::Relaxed) as u32;
+                        *fade_in_total = fade_in_sample_count(dev_rate, ch);
+                        *fade_in_remaining = *fade_in_total;
 
                         let _ = event_tx.send(AudioEvent::TrackStarted {
                             rating_key: meta.rating_key,

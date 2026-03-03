@@ -14,6 +14,7 @@ import { MixPage } from "./Pages/Mix"
 import { StationsPage } from "./Pages/Stations"
 import { HubPage } from "./Pages/HubPage"
 import { RecentlyAddedPage } from "./Pages/RecentlyAddedPage"
+import { TagPage } from "./Pages/TagPage"
 // MixPage uses module-level selectMix() state — no URL param needed
 import clsx from "clsx"
 import { TopBar } from "./TopBar"
@@ -152,6 +153,14 @@ export function Page() {
 
         <Route path="/recently-added" key="recently-added">
           <RecentlyAddedPage />
+        </Route>
+
+        <Route path="/genre/:tagType/:tagName" key="genre">
+          {(params: { tagType?: string; tagName?: string }) => {
+            const t = params.tagType as "genre" | "mood" | "style" | undefined
+            const n = decodeURIComponent(params.tagName ?? "")
+            return t && n ? <TagPage tagType={t} tagName={n} /> : null
+          }}
         </Route>
       </div>
     </div>

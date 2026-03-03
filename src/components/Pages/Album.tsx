@@ -36,11 +36,14 @@ function formatTotalDuration(tracks: Track[]): string {
   return `${s}s`
 }
 
-function TagChip({ tag }: { tag: PlexTag }) {
+function TagChip({ tag, tagType }: { tag: PlexTag; tagType: "genre" | "mood" | "style" }) {
   return (
-    <span className="rounded-full border border-white/20 px-2.5 py-0.5 text-xs text-gray-300">
+    <Link
+      href={`/genre/${tagType}/${encodeURIComponent(tag.tag)}`}
+      className="rounded-full border border-white/20 px-2.5 py-0.5 text-xs text-gray-300 hover:border-white/40 hover:text-white transition-colors"
+    >
       {tag.tag}
-    </span>
+    </Link>
   )
 }
 
@@ -173,6 +176,19 @@ export function AlbumPage({ albumId }: { albumId: number }) {
     ...album.style,
     ...album.mood,
   ]
+
+  // Map each tag name (lowercase) to its tagType for building correct genre links.
+  const tagTypeMap = useMemo(() => {
+    const m = new Map<string, "genre" | "mood" | "style">()
+    for (const t of tagsGenre) m.set(t.tag.toLowerCase(), "genre")
+    for (const t of tagsMood)  m.set(t.tag.toLowerCase(), "mood")
+    for (const t of tagsStyle) m.set(t.tag.toLowerCase(), "style")
+    // Album-specific tags override (they are authoritative)
+    for (const t of album.genre) m.set(t.tag.toLowerCase(), "genre")
+    for (const t of album.style) m.set(t.tag.toLowerCase(), "style")
+    for (const t of album.mood)  m.set(t.tag.toLowerCase(), "mood")
+    return m
+  }, [album.genre, album.style, album.mood, tagsGenre, tagsMood, tagsStyle])
 
   // Bio: pick from the highest-priority source that has text.
   // Only Plex and Last.fm have album bios/wiki; Deezer and Apple are skipped.
@@ -346,7 +362,7 @@ export function AlbumPage({ albumId }: { albumId: number }) {
 
             {allTags.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
-                {allTags.map(t => <TagChip key={t.tag} tag={t} />)}
+                {allTags.map(t => <TagChip key={t.tag} tag={t} tagType={tagTypeMap.get(t.tag.toLowerCase()) ?? "genre"} />)}
               </div>
             )}
 

@@ -266,6 +266,7 @@ pub fn run() {
             commands::get_album_tracks,
             commands::get_artist_popular_tracks,
             commands::get_artist_popular_leaves,
+            commands::get_items_by_tag,
             commands::get_artist_similar,
             commands::get_artist_sonically_similar,
             commands::get_artist_albums_in_section,

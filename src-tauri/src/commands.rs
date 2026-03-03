@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 use crate::mediasession::{MediaSessionState, MediaUpdate};
 use crate::plex::{
     Hub, IdentityResponse, Level, LibrarySection, PlayQueue, Playlist, PlexClient,
-    PlexClientConfig, PlexSettings, ServerInfo, Tag, Track,
+    PlexClientConfig, PlexMedia, PlexSettings, ServerInfo, Tag, Track,
 };
 use crate::plex::lyrics::LyricLine;
 use crate::plex::models::{Album, Artist};
@@ -247,6 +247,21 @@ pub async fn get_artist_popular_leaves(
 ) -> Result<Vec<Track>, String> {
     let c = client!(state);
     c.artist_popular_leaves(rating_key, limit)
+        .await
+        .map_err(|e| format!("{:#}", e))
+}
+
+/// Get albums (or artists/tracks) filtered by a tag (genre/mood/style).
+#[tauri::command]
+pub async fn get_items_by_tag(
+    section_id: i64,
+    tag_type: String,
+    tag_name: String,
+    libtype: Option<String>,
+    state: State<'_, PlexState>,
+) -> Result<Vec<PlexMedia>, String> {
+    let c = client!(state);
+    c.get_by_tag(section_id, &tag_type, &tag_name, libtype.as_deref(), None)
         .await
         .map_err(|e| format!("{:#}", e))
 }

@@ -89,6 +89,16 @@ export function getSectionTags(sectionId: number, tagType: string): Promise<Libr
   return invoke("get_section_tags", { sectionId, tagType })
 }
 
+/** Get albums (or artists/tracks) filtered by a tag (genre/mood/style). libtype: "8"=artist, "9"=album, "10"=track. */
+export function getItemsByTag(
+  sectionId: number,
+  tagType: "genre" | "mood" | "style",
+  tagName: string,
+  libtype?: string,
+): Promise<PlexMedia[]> {
+  return invoke("get_items_by_tag", { sectionId, tagType, tagName, libtype })
+}
+
 // ---------------------------------------------------------------------------
 // Metadata fetch
 // ---------------------------------------------------------------------------
