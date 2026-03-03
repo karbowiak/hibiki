@@ -21,10 +21,13 @@ import type { ProviderCapabilities } from "../../providers/types"
 import type { MetadataCapabilities, MetadataBackendDefinition, BackendDefinition } from "../../backends/types"
 import { useMetadataSourceStore, type MetadataSource, SOURCE_LABELS, SOURCE_DESCRIPTIONS } from "../../stores/metadataSourceStore"
 
+// ---------------------------------------------------------------------------
+// Section types & sidebar nav
+// ---------------------------------------------------------------------------
+
 type Section =
   | "backends" | `backends/${string}`
-  | "playback" | "downloads" | "ai" | "experience"
-  | "notifications" | "debug" | "about"
+  | "playback" | "appearance" | "general" | "about"
 
 const NAV: { id: Section; label: string; icon: React.ReactNode }[] = [
   {
@@ -46,26 +49,8 @@ const NAV: { id: Section; label: string; icon: React.ReactNode }[] = [
     ),
   },
   {
-    id: "downloads",
-    label: "Downloads",
-    icon: (
-      <svg height="18" width="18" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M19 9h-4V3H9v6H5l7 7 7-7zm-8 2V5h2v6h1.17L12 13.17 9.83 11H11zm-6 7h14v2H5v-2z" />
-      </svg>
-    ),
-  },
-  {
-    id: "ai",
-    label: "AI",
-    icon: (
-      <svg height="18" width="18" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 2L9.5 8.5 3 11l6.5 2.5L12 20l2.5-6.5L21 11l-6.5-2.5L12 2zm0 4.24l1.5 3.88 3.88 1.5-3.88 1.5L12 17l-1.5-3.88L6.62 11.5l3.88-1.5L12 6.24z" />
-      </svg>
-    ),
-  },
-  {
-    id: "experience",
-    label: "Experience",
+    id: "appearance",
+    label: "Appearance",
     icon: (
       <svg height="18" width="18" viewBox="0 0 24 24" fill="currentColor">
         <path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5S18.33 12 17.5 12z" />
@@ -73,20 +58,11 @@ const NAV: { id: Section; label: string; icon: React.ReactNode }[] = [
     ),
   },
   {
-    id: "notifications",
-    label: "Notifications",
+    id: "general",
+    label: "General",
     icon: (
       <svg height="18" width="18" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z" />
-      </svg>
-    ),
-  },
-  {
-    id: "debug",
-    label: "Debug",
-    icon: (
-      <svg height="18" width="18" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M20 8h-2.81a5.985 5.985 0 0 0-1.82-1.96L17 4.41 15.59 3l-2.17 2.17a5.947 5.947 0 0 0-2.84 0L8.41 3 7 4.41l1.62 1.63C7.88 6.55 7.26 7.22 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81A6.008 6.008 0 0 0 12 22a6.008 6.008 0 0 0 5.19-3H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/>
+        <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z" />
       </svg>
     ),
   },
@@ -102,7 +78,128 @@ const NAV: { id: Section; label: string; icon: React.ReactNode }[] = [
 ]
 
 // ---------------------------------------------------------------------------
-// Playback section — audio cache controls
+// Shared components
+// ---------------------------------------------------------------------------
+
+function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      role="switch"
+      aria-checked={value}
+      onClick={() => onChange(!value)}
+      className={clsx(
+        "relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out focus:outline-none",
+        value ? "bg-accent" : "bg-white/20"
+      )}
+    >
+      <span
+        className={clsx(
+          "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-sm transform transition-transform duration-200 ease-in-out mt-0.5",
+          value ? "translate-x-[22px]" : "translate-x-0.5"
+        )}
+      />
+    </button>
+  )
+}
+
+function PillGroup<T>({
+  options,
+  value,
+  onChange,
+  getLabel,
+}: {
+  options: readonly T[]
+  value: T
+  onChange: (v: T) => void
+  getLabel: (v: T) => string
+}) {
+  return (
+    <div className="flex gap-2 flex-wrap">
+      {options.map((opt, i) => (
+        <button
+          key={i}
+          onClick={() => onChange(opt)}
+          className={clsx(
+            "rounded-full px-4 py-1.5 text-sm transition-colors",
+            value === opt
+              ? "bg-accent text-black font-semibold"
+              : "bg-white/10 text-white hover:bg-white/20"
+          )}
+        >
+          {getLabel(opt)}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function SettingRow({
+  label,
+  description,
+  inline,
+  children,
+}: {
+  label: string
+  description?: string
+  inline?: boolean
+  children: React.ReactNode
+}) {
+  if (inline) {
+    return (
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-white/80">{label}</p>
+          {description && <p className="text-xs text-white/35 mt-0.5">{description}</p>}
+        </div>
+        <div className="flex-shrink-0">{children}</div>
+      </div>
+    )
+  }
+  return (
+    <div>
+      <p className="text-sm font-medium text-white/80 mb-1.5">{label}</p>
+      {description && <p className="text-xs text-white/35 mb-2.5">{description}</p>}
+      {children}
+    </div>
+  )
+}
+
+function SettingCard({
+  title,
+  description,
+  disabled,
+  badge,
+  children,
+}: {
+  title: string
+  description?: string
+  disabled?: boolean
+  badge?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div
+      className={clsx(
+        "rounded-xl border border-white/[0.06] bg-white/[0.03] p-5",
+        disabled && "opacity-40 pointer-events-none select-none"
+      )}
+    >
+      <div className="flex items-center gap-3 mb-4">
+        <h3 className="text-sm font-semibold text-white">{title}</h3>
+        {badge && (
+          <span className="rounded-full bg-white/8 px-2 py-0.5 text-[10px] font-medium text-white/40">
+            {badge}
+          </span>
+        )}
+      </div>
+      {description && <p className="text-xs text-white/35 -mt-2.5 mb-4">{description}</p>}
+      {children}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Playback section
 // ---------------------------------------------------------------------------
 
 const CACHE_SIZE_KEY = "plexify-audio-cache-max-bytes"
@@ -155,7 +252,6 @@ function PlaybackSection() {
   } = useAudioSettingsStore()
 
   useEffect(() => {
-    // Restore and apply saved cache limit.
     const saved = localStorage.getItem(CACHE_SIZE_KEY)
     const savedBytes = saved !== null ? parseInt(saved, 10) : 1_073_741_824
     if (!isNaN(savedBytes)) {
@@ -183,237 +279,163 @@ function PlaybackSection() {
     }
   }
 
-  const pillBase = "rounded-full px-4 py-1.5 text-sm transition-colors"
-  const pillActive = "bg-accent text-black font-semibold"
-  const pillInactive = "bg-white/10 text-white hover:bg-white/20"
-
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-5 max-w-2xl">
 
-      {/* ── Audio Processing ── */}
-      <div>
-        <h3 className="text-base font-semibold text-white mb-4">Audio Processing</h3>
+      {/* Audio Processing */}
+      <SettingCard title="Audio Processing">
         <div className="flex flex-col gap-5">
+          <SettingRow label="Normalization" description="Volume-levels tracks using ReplayGain data so loud and quiet tracks play at a consistent loudness." inline>
+            <Toggle value={normalizationEnabled} onChange={setNormalizationEnabled} />
+          </SettingRow>
 
-          {/* Normalization */}
-          <div>
-            <p className="text-sm font-medium text-white/70 mb-2">Normalization</p>
-            <p className="text-xs text-white/35 mb-2">
-              Volume-levels tracks using ReplayGain data from the Plex server so loud and quiet tracks play at a consistent loudness.
-            </p>
-            <div className="flex gap-2">
-              <button onClick={() => setNormalizationEnabled(true)} className={`${pillBase} ${normalizationEnabled ? pillActive : pillInactive}`}>On</button>
-              <button onClick={() => setNormalizationEnabled(false)} className={`${pillBase} ${!normalizationEnabled ? pillActive : pillInactive}`}>Off</button>
-            </div>
-          </div>
+          <SettingRow label="ReplayGain Mode" description="Track mode normalises each track independently. Album mode preserves intended loudness differences between tracks on the same album.">
+            <PillGroup
+              options={[false, true] as const}
+              value={albumGainMode}
+              onChange={setAlbumGainMode}
+              getLabel={v => v ? "Album" : "Track"}
+            />
+          </SettingRow>
 
-          {/* Pre-amp */}
-          <div>
-            <p className="text-sm font-medium text-white/70 mb-2">Pre-amp</p>
-            <p className="text-xs text-white/35 mb-2">
-              Adjust the output level before the EQ. Lower this if heavy EQ boosts cause clipping.
-            </p>
-            <div className="flex gap-2 flex-wrap">
-              {PREAMP_OPTIONS.map(db => (
-                <button
-                  key={db}
-                  onClick={() => setPreampDb(db)}
-                  className={`${pillBase} ${preampDb === db ? pillActive : pillInactive}`}
-                >
-                  {db > 0 ? `+${db}` : db} dB
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Album Gain Mode */}
-          <div>
-            <p className="text-sm font-medium text-white/70 mb-2">ReplayGain Mode</p>
-            <p className="text-xs text-white/35 mb-2">
-              Track mode normalises each track independently. Album mode preserves intended loudness differences between tracks on the same album.
-            </p>
-            <div className="flex gap-2">
-              <button onClick={() => setAlbumGainMode(false)} className={`${pillBase} ${!albumGainMode ? pillActive : pillInactive}`}>Track</button>
-              <button onClick={() => setAlbumGainMode(true)} className={`${pillBase} ${albumGainMode ? pillActive : pillInactive}`}>Album</button>
-            </div>
-          </div>
+          <SettingRow label="Pre-amp" description="Adjust the output level before the EQ. Lower this if heavy EQ boosts cause clipping.">
+            <PillGroup
+              options={PREAMP_OPTIONS}
+              value={preampDb}
+              onChange={setPreampDb}
+              getLabel={db => `${db > 0 ? `+${db}` : db} dB`}
+            />
+          </SettingRow>
         </div>
-      </div>
+      </SettingCard>
 
-      {/* ── Crossfade ── */}
-      <div>
-        <h3 className="text-base font-semibold text-white mb-4">Crossfade</h3>
+      {/* Crossfade */}
+      <SettingCard title="Crossfade">
         <div className="flex flex-col gap-5">
+          <SettingRow label={smartCrossfade && crossfadeWindowMs > 0 ? "Maximum duration (min 2s)" : "Duration"}>
+            <PillGroup
+              options={CROSSFADE_OPTIONS}
+              value={CROSSFADE_OPTIONS.find(o => o.ms === crossfadeWindowMs) ?? CROSSFADE_OPTIONS[0]}
+              onChange={opt => setCrossfadeWindowMs(opt.ms)}
+              getLabel={opt => opt.label}
+            />
+          </SettingRow>
 
-          {/* Duration */}
-          <div>
-            <p className="text-sm font-medium text-white/70 mb-2">{smartCrossfade && crossfadeWindowMs > 0 ? "Maximum duration (min 2s)" : "Duration"}</p>
-            <div className="flex gap-2 flex-wrap">
-              {CROSSFADE_OPTIONS.map(opt => (
-                <button
-                  key={opt.ms}
-                  onClick={() => setCrossfadeWindowMs(opt.ms)}
-                  className={`${pillBase} ${crossfadeWindowMs === opt.ms ? pillActive : pillInactive}`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Crossfade style */}
           {crossfadeWindowMs > 0 && (
-            <div>
-              <p className="text-sm font-medium text-white/70 mb-2">Style</p>
-              <p className="text-xs text-white/35 mb-2">
-                Controls how the two tracks are blended during a crossfade transition.
-              </p>
-              <div className="flex gap-2 flex-wrap">
-                {([
+            <SettingRow label="Style" description="Controls how the two tracks are blended during a crossfade transition.">
+              <PillGroup
+                options={[
                   { value: 0, label: "Smooth" },
                   { value: 1, label: "DJ Filter" },
                   { value: 2, label: "Echo Out" },
                   { value: 3, label: "Hard Cut" },
-                ] as const).map(opt => (
-                  <button
-                    key={opt.value}
-                    onClick={() => setCrossfadeStyle(opt.value)}
-                    className={`${pillBase} ${crossfadeStyle === opt.value ? pillActive : pillInactive}`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+                ] as const}
+                value={([
+                  { value: 0, label: "Smooth" },
+                  { value: 1, label: "DJ Filter" },
+                  { value: 2, label: "Echo Out" },
+                  { value: 3, label: "Hard Cut" },
+                ] as const).find(o => o.value === crossfadeStyle) ?? { value: 0, label: "Smooth" }}
+                onChange={opt => setCrossfadeStyle(opt.value)}
+                getLabel={opt => opt.label}
+              />
+            </SettingRow>
           )}
 
-          {/* Smart crossfade */}
           {crossfadeWindowMs > 0 && (
-            <div>
-              <p className="text-sm font-medium text-white/70 mb-2">Smart crossfade</p>
-              <p className="text-xs text-white/35 mb-2">
-                Analyses tracks to skip trailing silence, align crossfades to natural fade-outs, and adapt duration to each transition.
-              </p>
-              <div className="flex gap-2">
-                <button onClick={() => setSmartCrossfade(true)} className={`${pillBase} ${smartCrossfade ? pillActive : pillInactive}`}>On</button>
-                <button onClick={() => setSmartCrossfade(false)} className={`${pillBase} ${!smartCrossfade ? pillActive : pillInactive}`}>Off</button>
-              </div>
-            </div>
+            <SettingRow label="Smart crossfade" description="Analyses tracks to skip trailing silence, align crossfades to natural fade-outs, and adapt duration to each transition." inline>
+              <Toggle value={smartCrossfade} onChange={setSmartCrossfade} />
+            </SettingRow>
           )}
 
-          {/* Same-album */}
-          <div>
-            <p className="text-sm font-medium text-white/70 mb-2">Same-album tracks</p>
-            <p className="text-xs text-white/35 mb-2">
-              Suppressing crossfade preserves gapless playback for live albums and classical works.
-            </p>
-            <div className="flex gap-2">
-              <button onClick={() => setSameAlbumCrossfade(false)} className={`${pillBase} ${!sameAlbumCrossfade ? pillActive : pillInactive}`}>Suppress</button>
-              <button onClick={() => setSameAlbumCrossfade(true)} className={`${pillBase} ${sameAlbumCrossfade ? pillActive : pillInactive}`}>Allow</button>
-            </div>
-          </div>
+          <SettingRow label="Same-album tracks" description="Suppressing crossfade preserves gapless playback for live albums and classical works.">
+            <PillGroup
+              options={[false, true] as const}
+              value={sameAlbumCrossfade}
+              onChange={setSameAlbumCrossfade}
+              getLabel={v => v ? "Allow" : "Suppress"}
+            />
+          </SettingRow>
         </div>
-      </div>
+      </SettingCard>
 
-      {/* ── Output Device ── */}
-      <div>
-        <h3 className="text-base font-semibold text-white mb-4">Output Device</h3>
-        <div className="flex flex-col gap-5">
-          <div>
-            <p className="text-sm font-medium text-white/70 mb-2">Audio Output</p>
-            <p className="text-xs text-white/35 mb-3">
-              Select which audio device to use for playback. Takes effect on the next track.
-            </p>
-            {outputDevices.length === 0 ? (
-              <p className="text-xs text-white/30">No output devices found.</p>
-            ) : (
-              <div className="flex gap-2 flex-wrap">
-                <button
-                  onClick={() => setPreferredDevice(null)}
-                  className={`${pillBase} ${preferredDevice === null ? pillActive : pillInactive}`}
-                >
-                  System Default
-                </button>
-                {outputDevices.map(dev => (
-                  <button
-                    key={dev}
-                    onClick={() => setPreferredDevice(dev)}
-                    className={`${pillBase} ${preferredDevice === dev ? pillActive : pillInactive}`}
-                  >
-                    {dev}
-                  </button>
-                ))}
-              </div>
-            )}
+      {/* Output Device */}
+      <SettingCard title="Output Device" description="Select which audio device to use for playback. Takes effect on the next track.">
+        {outputDevices.length === 0 ? (
+          <p className="text-xs text-white/30">No output devices found.</p>
+        ) : (
+          <div className="flex gap-2 flex-wrap">
+            <button
+              onClick={() => setPreferredDevice(null)}
+              className={clsx(
+                "rounded-full px-4 py-1.5 text-sm transition-colors",
+                preferredDevice === null
+                  ? "bg-accent text-black font-semibold"
+                  : "bg-white/10 text-white hover:bg-white/20"
+              )}
+            >
+              System Default
+            </button>
+            {outputDevices.map(dev => (
+              <button
+                key={dev}
+                onClick={() => setPreferredDevice(dev)}
+                className={clsx(
+                  "rounded-full px-4 py-1.5 text-sm transition-colors",
+                  preferredDevice === dev
+                    ? "bg-accent text-black font-semibold"
+                    : "bg-white/10 text-white hover:bg-white/20"
+                )}
+              >
+                {dev}
+              </button>
+            ))}
           </div>
-        </div>
-      </div>
+        )}
+      </SettingCard>
 
-      {/* ── Audio Cache ── */}
-      <div>
-        <h3 className="text-base font-semibold text-white mb-4">Audio Cache</h3>
+      {/* Audio Cache */}
+      <SettingCard title="Audio Cache">
         <div className="flex flex-col gap-5">
+          <SettingRow label="Cache Size Limit" description="Tracks are cached to disk for instant replay. Older files are removed automatically when the limit is reached.">
+            <PillGroup
+              options={CACHE_OPTIONS}
+              value={CACHE_OPTIONS.find(o => o.bytes === maxBytes) ?? CACHE_OPTIONS[2]}
+              onChange={opt => void handleMaxChange(opt.bytes)}
+              getLabel={opt => opt.label}
+            />
+          </SettingRow>
 
-          {/* Cache size limit */}
-          <div>
-            <p className="text-sm font-medium text-white/70 mb-2">Cache Size Limit</p>
-            <p className="text-xs text-white/35 mb-2">
-              Tracks are cached to disk for instant replay. Older files are removed automatically when the limit is reached.
-            </p>
-            <div className="flex gap-2 flex-wrap">
-              {CACHE_OPTIONS.map(opt => (
-                <button
-                  key={opt.bytes}
-                  onClick={() => void handleMaxChange(opt.bytes)}
-                  className={`${pillBase} ${maxBytes === opt.bytes ? pillActive : pillInactive}`}
-                >
-                  {opt.label}
-                </button>
-              ))}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-white/80">Cache Usage</p>
+              {cacheInfo ? (
+                <p className="text-xs text-white/40 mt-0.5">
+                  {formatBytes(cacheInfo.size_bytes)} used · {cacheInfo.file_count} {cacheInfo.file_count === 1 ? "file" : "files"}
+                </p>
+              ) : (
+                <p className="text-xs text-white/30 mt-0.5">Loading…</p>
+              )}
             </div>
-          </div>
-
-          {/* Cache usage + clear */}
-          <div>
-            <p className="text-sm font-medium text-white/70 mb-2">Cache Usage</p>
-            {cacheInfo ? (
-              <p className="text-xs text-white/40 mb-3">
-                {formatBytes(cacheInfo.size_bytes)} used · {cacheInfo.file_count} {cacheInfo.file_count === 1 ? "file" : "files"}
-              </p>
-            ) : (
-              <p className="text-xs text-white/30 mb-3">Loading…</p>
-            )}
             <button
               onClick={() => void handleClear()}
               disabled={isClearing || cacheInfo?.file_count === 0}
-              className="rounded-md bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 hover:border-white/20 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
             >
-              {isClearing ? "Clearing…" : "Clear Audio Cache"}
+              {isClearing ? "Clearing…" : "Clear Cache"}
             </button>
           </div>
         </div>
-      </div>
+      </SettingCard>
     </div>
   )
 }
 
 // ---------------------------------------------------------------------------
-// Placeholder for unimplemented sections
+// Appearance section (was Experience)
 // ---------------------------------------------------------------------------
 
-function ComingSoon({ description }: { title: string; description: string }) {
-  return (
-    <div className="flex flex-col gap-3">
-      <p className="text-sm text-white/40">{description}</p>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Experience section — theme, font, accent
-// ---------------------------------------------------------------------------
-
-function ExperienceSection() {
+function AppearanceSection() {
   const { accent, setAccent } = useAccentStore()
   const [custom, setCustom] = useState(accent)
   const [theme, setThemeState] = useState(getTheme)
@@ -429,59 +451,43 @@ function ExperienceSection() {
   }
 
   const isCustom = !ACCENT_PRESETS.some(p => p.hex.toLowerCase() === accent.toLowerCase())
-  const pillBase = "rounded-full px-4 py-1.5 text-sm transition-colors"
-  const pillActive = "bg-accent text-black font-semibold"
-  const pillInactive = "bg-white/10 text-white hover:bg-white/20"
 
   return (
-    <div className="flex flex-col gap-10 max-w-xl">
+    <div className="flex flex-col gap-5 max-w-2xl">
 
-      {/* ── Theme ── */}
-      <div>
-        <h3 className="text-base font-semibold text-white mb-1">Theme</h3>
-        <p className="text-xs text-white/35 mb-4">
-          Choose between dark, light, or follow your system preference.
-        </p>
-        <div className="flex gap-2">
-          {(["dark", "light", "system"] as const).map(t => (
-            <button
-              key={t}
-              onClick={() => setTheme(t)}
-              className={`${pillBase} ${theme === t ? pillActive : pillInactive} capitalize`}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-      </div>
+      {/* Theme */}
+      <SettingCard title="Theme" description="Choose between dark, light, or follow your system preference.">
+        <PillGroup
+          options={["dark", "light", "system"] as const}
+          value={theme}
+          onChange={setTheme}
+          getLabel={t => t.charAt(0).toUpperCase() + t.slice(1)}
+        />
+      </SettingCard>
 
-      {/* ── Font ── */}
-      <div>
-        <h3 className="text-base font-semibold text-white mb-1">Font</h3>
-        <p className="text-xs text-white/35 mb-4">
-          Pick a typeface for the entire interface.
-        </p>
+      {/* Font */}
+      <SettingCard title="Font" description="Pick a typeface for the entire interface.">
         <div className="flex flex-wrap gap-2">
           {FONT_PRESETS.map(preset => (
             <button
               key={preset.name}
               onClick={() => setFont(preset.name)}
               style={{ fontFamily: preset.stack }}
-              className={`${pillBase} ${font.name === preset.name ? pillActive : pillInactive}`}
+              className={clsx(
+                "rounded-full px-4 py-1.5 text-sm transition-colors",
+                font.name === preset.name
+                  ? "bg-accent text-black font-semibold"
+                  : "bg-white/10 text-white hover:bg-white/20"
+              )}
             >
               {preset.label}
             </button>
           ))}
         </div>
-      </div>
+      </SettingCard>
 
-      {/* ── Accent Colour ── */}
-      <div>
-        <h3 className="text-base font-semibold text-white mb-1">Accent Colour</h3>
-        <p className="text-xs text-white/35 mb-5">
-          Highlights, active states, and progress bars all follow this colour.
-        </p>
-
+      {/* Accent Colour */}
+      <SettingCard title="Accent Colour" description="Highlights, active states, and progress bars all follow this colour.">
         {/* Preset swatches */}
         <div className="flex flex-wrap gap-3 mb-6">
           {ACCENT_PRESETS.map(preset => {
@@ -556,14 +562,10 @@ function ExperienceSection() {
             <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold text-black" style={{ backgroundColor: accent }}>Active</span>
           </div>
         </div>
-      </div>
+      </SettingCard>
 
-      {/* ── Card Size ── */}
-      <div>
-        <h3 className="text-base font-semibold text-white mb-1">Card Size</h3>
-        <p className="text-xs text-white/35 mb-4">
-          Adjust the width of album and artist cards across all views.
-        </p>
+      {/* Card Size */}
+      <SettingCard title="Card Size" description="Adjust the width of album and artist cards across all views.">
         <div className="flex items-center gap-4">
           <input
             type="range"
@@ -580,16 +582,16 @@ function ExperienceSection() {
           <span className="text-xs text-white/25">Small</span>
           <span className="text-xs text-white/25">Large</span>
         </div>
-      </div>
+      </SettingCard>
 
-      {/* ── Highlight Intensity ── */}
-      <HighlightSection />
+      {/* Highlight Intensity */}
+      <HighlightCard />
     </div>
   )
 }
 
 // ---------------------------------------------------------------------------
-// Highlight Intensity
+// Highlight Intensity (card variant)
 // ---------------------------------------------------------------------------
 
 const HL_CATEGORIES: { key: HighlightCategory; label: string; desc: string }[] = [
@@ -599,7 +601,7 @@ const HL_CATEGORIES: { key: HighlightCategory; label: string; desc: string }[] =
   { key: "queue", label: "Queue",       desc: "Queue panel items" },
 ]
 
-function HighlightSection() {
+function HighlightCard() {
   const { intensity, setIntensity, setCategory, reset, ...cats } = useHighlightStore()
   const [showAdvanced, setShowAdvanced] = useState(false)
 
@@ -611,12 +613,7 @@ function HighlightSection() {
     && cats.queue === HIGHLIGHT_DEFAULTS.queue
 
   return (
-    <div>
-      <h3 className="text-base font-semibold text-white mb-1">Highlight Intensity</h3>
-      <p className="text-xs text-white/35 mb-4">
-        Scale how visible the accent-coloured highlights are across the entire UI.
-      </p>
-
+    <SettingCard title="Highlight Intensity" description="Scale how visible the accent-coloured highlights are across the entire UI.">
       {/* Global intensity slider */}
       <div className="flex items-center gap-4">
         <input
@@ -723,12 +720,55 @@ function HighlightSection() {
           Reset all to defaults
         </button>
       )}
+    </SettingCard>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// General section (Notifications + Debug + Coming Soon placeholders)
+// ---------------------------------------------------------------------------
+
+function GeneralSection() {
+  const { notificationsEnabled, setNotificationsEnabled } = useNotificationStore()
+  const { debugEnabled, setDebugEnabled } = useDebugStore()
+
+  return (
+    <div className="flex flex-col gap-5 max-w-2xl">
+      <SettingCard title="Preferences">
+        <div className="flex flex-col gap-5">
+          <SettingRow
+            label="Track Notifications"
+            description="Show an OS notification when a new track starts playing."
+            inline
+          >
+            <Toggle value={notificationsEnabled} onChange={setNotificationsEnabled} />
+          </SettingRow>
+
+          <div className="border-t border-white/[0.06]" />
+
+          <SettingRow
+            label="Debug Mode"
+            description="Shows raw Plex IDs, file paths, and stream data in track info and right-click menus."
+            inline
+          >
+            <Toggle value={debugEnabled} onChange={setDebugEnabled} />
+          </SettingRow>
+        </div>
+      </SettingCard>
+
+      <SettingCard title="Downloads" disabled badge="Coming soon">
+        <p className="text-sm text-white/40">Offline caching and download quality settings will appear here.</p>
+      </SettingCard>
+
+      <SettingCard title="AI" disabled badge="Coming soon">
+        <p className="text-sm text-white/40">Sonic recommendations, radio tuning and smart mix settings will appear here.</p>
+      </SettingCard>
     </div>
   )
 }
 
 // ---------------------------------------------------------------------------
-// Backends section — backend cards, capabilities, inline settings
+// Backends section
 // ---------------------------------------------------------------------------
 
 const CAPABILITY_LABELS: Record<keyof ProviderCapabilities, string> = {
@@ -884,15 +924,10 @@ function BackendsListView({ setSection }: { setSection: (s: Section) => void }) 
   }
 
   return (
-    <div className="max-w-2xl space-y-10">
+    <div className="max-w-2xl space-y-6">
 
       {/* Metadata Source Priority */}
-      <div>
-        <h3 className="text-base font-semibold text-white mb-1">Metadata Source Priority</h3>
-        <p className="text-xs text-white/40 mb-5">
-          Drag to reorder. Higher sources take precedence for bios, images, genres, and tags.
-          Artist, album, and track names always come from Plex.
-        </p>
+      <SettingCard title="Metadata Source Priority" description="Drag to reorder. Higher sources take precedence for bios, images, genres, and tags. Artist, album, and track names always come from Plex.">
         <div
           ref={sortListRef}
           className="flex flex-col gap-2 touch-none"
@@ -932,7 +967,7 @@ function BackendsListView({ setSection }: { setSection: (s: Section) => void }) 
             </div>
           ))}
         </div>
-      </div>
+      </SettingCard>
 
       {/* Music Backends */}
       <div>
@@ -1001,12 +1036,8 @@ function BackendsListView({ setSection }: { setSection: (s: Section) => void }) 
       </div>
 
       {/* Image Cache */}
-      <div>
-        <h3 className="text-base font-semibold text-white mb-1">Image Cache</h3>
-        <p className="text-xs text-white/40 mb-4">
-          Artwork fetched from Plex and external metadata sources is saved to disk.
-        </p>
-        <div className="rounded-xl border border-white/10 bg-white/3 px-5 py-4 flex items-center gap-4">
+      <SettingCard title="Image Cache" description="Artwork fetched from Plex and external metadata sources is saved to disk.">
+        <div className="flex items-center gap-4">
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-white">Cached Images</p>
             <p className="text-xs text-white/40 mt-0.5">
@@ -1023,13 +1054,12 @@ function BackendsListView({ setSection }: { setSection: (s: Section) => void }) 
             {imgClearing ? "Clearing..." : "Clear"}
           </button>
         </div>
-      </div>
+      </SettingCard>
     </div>
   )
 }
 
 function BackendSubPage({ backendId, goBack }: { backendId: string; goBack: () => void }) {
-  // Try music backend first, then metadata backend
   const musicBackend = getBackend(backendId)
   const metaBackend = getMetadataBackend(backendId)
 
@@ -1083,7 +1113,7 @@ function BackendSubPage({ backendId, goBack }: { backendId: string; goBack: () =
 }
 
 // ---------------------------------------------------------------------------
-// About section — version info + update check
+// About section
 // ---------------------------------------------------------------------------
 
 function CreditLink({ href, children }: { href: string; children: React.ReactNode }) {
@@ -1091,81 +1121,6 @@ function CreditLink({ href, children }: { href: string; children: React.ReactNod
     <button onClick={() => void open(href)} className="text-accent hover:underline text-left">
       {children}
     </button>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Notifications section
-// ---------------------------------------------------------------------------
-
-function NotificationsSection() {
-  const { notificationsEnabled, setNotificationsEnabled } = useNotificationStore()
-
-  const pillBase = "rounded-full px-4 py-1.5 text-sm transition-colors"
-  const pillActive = "bg-accent text-black font-semibold"
-  const pillInactive = "bg-white/10 text-white hover:bg-white/20"
-
-  return (
-    <div className="flex flex-col gap-10 max-w-xl">
-      <div>
-        <h3 className="text-base font-semibold text-white mb-1">Track Notifications</h3>
-        <p className="text-xs text-white/35 mb-4">
-          Show an OS notification when a new track starts playing.
-        </p>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setNotificationsEnabled(true)}
-            className={`${pillBase} ${notificationsEnabled ? pillActive : pillInactive}`}
-          >
-            On
-          </button>
-          <button
-            onClick={() => setNotificationsEnabled(false)}
-            className={`${pillBase} ${!notificationsEnabled ? pillActive : pillInactive}`}
-          >
-            Off
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Debug section
-// ---------------------------------------------------------------------------
-
-function DebugSection() {
-  const { debugEnabled, setDebugEnabled } = useDebugStore()
-
-  const pillBase = "rounded-full px-4 py-1.5 text-sm transition-colors"
-  const pillActive = "bg-accent text-black font-semibold"
-  const pillInactive = "bg-white/10 text-white hover:bg-white/20"
-
-  return (
-    <div className="flex flex-col gap-10 max-w-xl">
-      <div>
-        <h3 className="text-base font-semibold text-white mb-1">Debug Mode</h3>
-        <p className="text-xs text-white/35 mb-4">
-          Shows raw Plex IDs, file paths, and stream data in track info and right-click menus.
-          Intended for diagnosing playback or metadata issues.
-        </p>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setDebugEnabled(true)}
-            className={`${pillBase} ${debugEnabled ? pillActive : pillInactive}`}
-          >
-            On
-          </button>
-          <button
-            onClick={() => setDebugEnabled(false)}
-            className={`${pillBase} ${!debugEnabled ? pillActive : pillInactive}`}
-          >
-            Off
-          </button>
-        </div>
-      </div>
-    </div>
   )
 }
 
@@ -1177,29 +1132,25 @@ function AboutSection() {
     void getVersion().then(setVersion)
   }, [])
 
-  const pillBase = "rounded-full px-4 py-1.5 text-sm transition-colors"
-
   return (
-    <div className="flex gap-12">
+    <div className="flex gap-12 max-w-4xl">
       {/* Left column — version, updates, links */}
-      <div className="flex flex-col gap-8 min-w-[320px] max-w-md">
+      <div className="flex flex-col gap-6 min-w-[320px] max-w-md">
         {/* Version */}
-        <div>
-          <h3 className="text-base font-semibold text-white mb-4">Version</h3>
+        <SettingCard title="Version">
           <p className="text-sm text-white/70">
             Plexify <span className="font-semibold text-white">{version || "\u2026"}</span>
           </p>
-        </div>
+        </SettingCard>
 
         {/* Updates */}
-        <div>
-          <h3 className="text-base font-semibold text-white mb-4">Updates</h3>
+        <SettingCard title="Updates">
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-3">
               <button
                 onClick={() => void checkForUpdate()}
                 disabled={checking}
-                className={`${pillBase} bg-white/10 text-white hover:bg-white/20 disabled:opacity-40 disabled:cursor-not-allowed`}
+                className="rounded-full px-4 py-1.5 text-sm bg-white/10 text-white hover:bg-white/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {checking ? "Checking\u2026" : "Check for Updates"}
               </button>
@@ -1223,7 +1174,7 @@ function AboutSection() {
                 </div>
                 <button
                   onClick={() => setShowDialog(true)}
-                  className={`${pillBase} bg-accent text-black font-semibold flex-shrink-0`}
+                  className="rounded-full px-4 py-1.5 text-sm bg-accent text-black font-semibold flex-shrink-0"
                 >
                   Install
                 </button>
@@ -1240,92 +1191,90 @@ function AboutSection() {
               </div>
             )}
           </div>
-        </div>
+        </SettingCard>
 
         {/* Links */}
-        <div>
-          <h3 className="text-base font-semibold text-white mb-4">Links</h3>
+        <SettingCard title="Links">
           <div className="flex flex-col gap-2 text-sm">
             <CreditLink href="https://github.com/karbowiak/plexify">GitHub Repository</CreditLink>
             <CreditLink href="https://github.com/karbowiak/plexify/releases">Release Notes</CreditLink>
           </div>
-        </div>
+        </SettingCard>
       </div>
 
       {/* Right column — thank you / credits */}
       <div className="flex-1 min-w-[260px]">
-        <h3 className="text-base font-semibold text-white mb-5">Thank You</h3>
-        <p className="text-sm text-white/50 mb-6">
-          Plexify wouldn't exist without these incredible projects and people.
-        </p>
+        <SettingCard title="Thank You">
+          <p className="text-sm text-white/50 mb-5">
+            Plexify wouldn't exist without these incredible projects and people.
+          </p>
 
-        <div className="flex flex-col gap-5">
-          {/* Special thanks */}
-          <div className="rounded-xl bg-white/5 border border-white/5 p-4">
-            <p className="text-xs font-semibold uppercase tracking-wider text-white/30 mb-3">Special Thanks</p>
-            <ul className="space-y-2 text-sm">
-              <li className="text-white/70">
-                <CreditLink href="https://www.plex.tv">Plex</CreditLink>
-                <span className="text-white/30"> &mdash; the media server that makes it all possible</span>
-              </li>
-              <li className="text-white/70">
-                <CreditLink href="https://github.com/agmmnn/tauri-spotify-clone">@agmmnn</CreditLink>
-                <span className="text-white/30"> &mdash; original Spotify-clone UI design inspiration</span>
-              </li>
-            </ul>
-          </div>
+          <div className="flex flex-col gap-5">
+            {/* Special thanks */}
+            <div className="rounded-xl bg-white/5 border border-white/5 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wider text-white/30 mb-3">Special Thanks</p>
+              <ul className="space-y-2 text-sm">
+                <li className="text-white/70">
+                  <CreditLink href="https://www.plex.tv">Plex</CreditLink>
+                  <span className="text-white/30"> &mdash; the media server that makes it all possible</span>
+                </li>
+                <li className="text-white/70">
+                  <CreditLink href="https://github.com/agmmnn/tauri-spotify-clone">@agmmnn</CreditLink>
+                  <span className="text-white/30"> &mdash; original Spotify-clone UI design inspiration</span>
+                </li>
+              </ul>
+            </div>
 
-          {/* Core framework */}
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-white/30 mb-3">Core</p>
-            <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
-              <CreditLink href="https://v2.tauri.app">Tauri</CreditLink>
-              <CreditLink href="https://react.dev">React</CreditLink>
-              <CreditLink href="https://www.typescriptlang.org">TypeScript</CreditLink>
-              <CreditLink href="https://www.rust-lang.org">Rust</CreditLink>
-              <CreditLink href="https://vitejs.dev">Vite</CreditLink>
+            {/* Core framework */}
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-white/30 mb-3">Core</p>
+              <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
+                <CreditLink href="https://v2.tauri.app">Tauri</CreditLink>
+                <CreditLink href="https://react.dev">React</CreditLink>
+                <CreditLink href="https://www.typescriptlang.org">TypeScript</CreditLink>
+                <CreditLink href="https://www.rust-lang.org">Rust</CreditLink>
+                <CreditLink href="https://vitejs.dev">Vite</CreditLink>
+              </div>
+            </div>
+
+            {/* Audio */}
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-white/30 mb-3">Audio Engine</p>
+              <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
+                <CreditLink href="https://github.com/pdeljanov/Symphonia">Symphonia</CreditLink>
+                <CreditLink href="https://github.com/RustAudio/cpal">cpal</CreditLink>
+                <CreditLink href="https://github.com/jprjr/butterchurn">Butterchurn</CreditLink>
+                <CreditLink href="https://github.com/Amanieu/ringbuf">ringbuf</CreditLink>
+              </div>
+            </div>
+
+            {/* Frontend */}
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-white/30 mb-3">Frontend</p>
+              <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
+                <CreditLink href="https://tailwindcss.com">Tailwind CSS</CreditLink>
+                <CreditLink href="https://zustand.docs.pmnd.rs">Zustand</CreditLink>
+                <CreditLink href="https://github.com/molefrog/wouter">Wouter</CreditLink>
+                <CreditLink href="https://dndkit.com">dnd kit</CreditLink>
+              </div>
+            </div>
+
+            {/* Backend */}
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-white/30 mb-3">Backend</p>
+              <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
+                <CreditLink href="https://tokio.rs">Tokio</CreditLink>
+                <CreditLink href="https://github.com/seanmonstar/reqwest">reqwest</CreditLink>
+                <CreditLink href="https://serde.rs">Serde</CreditLink>
+                <CreditLink href="https://github.com/Sinono3/souvlaki">Souvlaki</CreditLink>
+              </div>
             </div>
           </div>
-
-          {/* Audio */}
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-white/30 mb-3">Audio Engine</p>
-            <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
-              <CreditLink href="https://github.com/pdeljanov/Symphonia">Symphonia</CreditLink>
-              <CreditLink href="https://github.com/RustAudio/cpal">cpal</CreditLink>
-              <CreditLink href="https://github.com/jprjr/butterchurn">Butterchurn</CreditLink>
-              <CreditLink href="https://github.com/Amanieu/ringbuf">ringbuf</CreditLink>
-            </div>
-          </div>
-
-          {/* Frontend */}
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-white/30 mb-3">Frontend</p>
-            <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
-              <CreditLink href="https://tailwindcss.com">Tailwind CSS</CreditLink>
-              <CreditLink href="https://zustand.docs.pmnd.rs">Zustand</CreditLink>
-              <CreditLink href="https://github.com/molefrog/wouter">Wouter</CreditLink>
-              <CreditLink href="https://dndkit.com">dnd kit</CreditLink>
-            </div>
-          </div>
-
-          {/* Backend */}
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-white/30 mb-3">Backend</p>
-            <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
-              <CreditLink href="https://tokio.rs">Tokio</CreditLink>
-              <CreditLink href="https://github.com/seanmonstar/reqwest">reqwest</CreditLink>
-              <CreditLink href="https://serde.rs">Serde</CreditLink>
-              <CreditLink href="https://github.com/Sinono3/souvlaki">Souvlaki</CreditLink>
-            </div>
-          </div>
-        </div>
+        </SettingCard>
       </div>
     </div>
   )
 }
-
-
 
 // ---------------------------------------------------------------------------
 // Main settings page
@@ -1333,7 +1282,16 @@ function AboutSection() {
 
 export function SettingsPage({ section: sectionProp }: { section?: string }) {
   const [, navigate] = useLocation()
-  const section: Section = (sectionProp || "backends") as Section
+
+  // Map old routes to new ones
+  const mappedSection = (() => {
+    const raw = sectionProp || "backends"
+    if (raw === "experience") return "appearance"
+    if (raw === "notifications" || raw === "debug") return "general"
+    if (raw === "downloads" || raw === "ai") return "general"
+    return raw
+  })()
+  const section: Section = mappedSection as Section
 
   const setSection = (s: Section) => {
     navigate(s === "backends" ? "/settings" : `/settings/${s}`)
@@ -1353,13 +1311,17 @@ export function SettingsPage({ section: sectionProp }: { section?: string }) {
                   <button
                     onClick={() => setSection(item.id)}
                     className={clsx(
-                      "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                      "relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
                       active
                         ? "bg-white/10 text-white"
                         : "text-white/50 hover:bg-white/5 hover:text-white"
                     )}
                   >
-                    <span className={clsx("flex-shrink-0", active ? "text-white" : "text-white/40")}>
+                    {/* Accent left bar for active item */}
+                    {active && (
+                      <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-r-full bg-accent" />
+                    )}
+                    <span className={clsx("flex-shrink-0 transition-colors", active ? "text-accent" : "text-white/40")}>
                       {item.icon}
                     </span>
                     {item.label}
@@ -1384,15 +1346,8 @@ export function SettingsPage({ section: sectionProp }: { section?: string }) {
           <BackendSubPage backendId={section.slice(9)} goBack={() => navigate("/settings")} />
         )}
         {section === "playback" && <PlaybackSection />}
-        {section === "downloads" && (
-          <ComingSoon title="Downloads" description="Offline caching and download quality settings will appear here." />
-        )}
-        {section === "ai" && (
-          <ComingSoon title="AI" description="Sonic recommendations, radio tuning and smart mix settings will appear here." />
-        )}
-        {section === "experience" && <ExperienceSection />}
-        {section === "notifications" && <NotificationsSection />}
-        {section === "debug" && <DebugSection />}
+        {section === "appearance" && <AppearanceSection />}
+        {section === "general" && <GeneralSection />}
         {section === "about" && <AboutSection />}
       </main>
     </div>
