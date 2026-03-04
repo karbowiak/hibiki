@@ -107,6 +107,10 @@ export default function VisualizerFullscreen() {
   const starsRef = useRef<Star[] | null>(null)
   const starSpeedRef = useRef(0)
 
+  // Cached accent colour — avoid getComputedStyle every frame (expensive when CSS vars are dirty)
+  const cachedAccentRef = useRef("#d946ef")
+  const accentTickRef = useRef(0)
+
   // Butterchurn state
   const audioCtxRef = useRef<AudioContext | null>(null)
   const processorRef = useRef<ScriptProcessorNode | null>(null)
@@ -299,6 +303,14 @@ export default function VisualizerFullscreen() {
     // Starfield uses its own fade-to-black for motion trails — don't hard-clear it
     if (fullscreenMode !== "starfield") ctx.clearRect(0, 0, W, H)
 
+    // Refresh cached accent every ~30 frames (~500ms at 60fps) instead of
+    // calling getComputedStyle every frame (expensive when rainbow dirties CSS vars)
+    if (++accentTickRef.current >= 30) {
+      accentTickRef.current = 0
+      cachedAccentRef.current = getComputedStyle(canvas).getPropertyValue("--accent").trim() || "#d946ef"
+    }
+    const accent = cachedAccentRef.current
+
     if (fullscreenMode === "spectrum") {
       const pcm = getRecentSamples(1024)
       const BINS = 128
@@ -322,7 +334,6 @@ export default function VisualizerFullscreen() {
         ctx.fillRect(x + 1, H - barH, barW - 2, barH)
       }
     } else if (fullscreenMode === "oscilloscope") {
-      const accent = getComputedStyle(canvas).getPropertyValue("--accent").trim() || "#d946ef"
       const pcm = getRecentSamples(1024)
       ctx.strokeStyle = accent
       ctx.lineWidth = 2
@@ -351,12 +362,11 @@ export default function VisualizerFullscreen() {
       vu.R += (rmsR > vu.R ? 0.55 : 0.15) * (rmsR - vu.R)
       // Range: -40 dBFS to 0 dBFS — spreads the musically relevant range across the bar
       const DB_FLOOR = -40
-      const vuAccent = getComputedStyle(canvas).getPropertyValue("--accent").trim() || "#d946ef"
       const drawVU = (rms: number, y: number, h: number, label: string) => {
         const db = rms > 0 ? 20 * Math.log10(rms) : DB_FLOOR
         const fill = Math.max(0, Math.min(1, (db - DB_FLOOR) / (-DB_FLOOR))) * W
         const grad = ctx.createLinearGradient(0, 0, W, 0)
-        grad.addColorStop(0, vuAccent); grad.addColorStop(0.7, vuAccent)
+        grad.addColorStop(0, accent); grad.addColorStop(0.7, accent)
         grad.addColorStop(0.85, "#f0c040"); grad.addColorStop(1, "#e04040")
         ctx.fillStyle = "#222"; ctx.fillRect(0, y, W, h)
         ctx.fillStyle = grad; ctx.fillRect(0, y, fill, h)
@@ -486,6 +496,9 @@ export default function VisualizerFullscreen() {
 
   return (
     <div className="fixed inset-0 z-50 bg-black flex flex-col hero-overlay">
+      {/* Drag region — invisible strip at the top so the window can be moved */}
+      <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-10 z-10" />
+
       {/* Close button — top right corner */}
       <button
         onClick={closeFullscreen}
@@ -513,7 +526,7 @@ export default function VisualizerFullscreen() {
       </div>
 
       {/* Bottom bar — track info + playback + mode pills + preset controls */}
-      <div className="flex items-center gap-4 px-5 py-3 bg-black/60 backdrop-blur-sm z-10">
+      <div className="flex items-center gap-4 px-5 py-3 bg-black/80 z-10">
         {/* Track info */}
         <div className="flex items-center gap-3 min-w-0 shrink-0">
           {thumbUrl && (

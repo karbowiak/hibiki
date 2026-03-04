@@ -162,6 +162,11 @@ export default function VisualizerCanvas({
     [levels],
   )
 
+  // Cache accent colour — only read from DOM when not in rainbow mode, and
+  // throttle reads to avoid forcing synchronous style recalculation every frame.
+  const cachedAccentRef = useRef<string>("#d946ef")
+  const accentTickRef = useRef(0)
+
   const draw = useCallback(() => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -172,12 +177,23 @@ export default function VisualizerCanvas({
 
     ctx.clearRect(0, 0, W, H)
 
-    const accent = readAccent(canvas)
+    const rainbow = useEasterEggStore.getState().rainbow
+    const rainbowPhase = (performance.now() / 50) % 360
+
+    // In rainbow mode the canvas draws its own gradient — skip getComputedStyle.
+    // Otherwise refresh the cached accent every ~30 frames (~500ms at 60fps).
+    let accent = cachedAccentRef.current
+    if (!rainbow) {
+      if (++accentTickRef.current >= 30) {
+        accentTickRef.current = 0
+        accent = readAccent(canvas)
+        cachedAccentRef.current = accent
+      }
+    }
+
     const activePct = hoverPct ?? progressPct
     const splitX = (activePct / 100) * W
     const isHovering = hoverPct !== null
-    const rainbow = useEasterEggStore.getState().rainbow
-    const rainbowPhase = (performance.now() / 50) % 360
 
     if (mode === "waveform") {
       // ── Catmull-Rom waveform ──
