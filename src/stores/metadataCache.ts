@@ -17,6 +17,7 @@ import { persist } from "zustand/middleware"
 import { idbJSONStorage } from "./idbStorage"
 import { useProviderStore } from "./providerStore"
 import type { MusicArtist, MusicAlbum, MusicTrack, MusicHub, MusicPlaylist } from "../types/music"
+import { processArtistAlbums } from "../lib/dedup"
 
 // ---------------------------------------------------------------------------
 // Cache entry types
@@ -174,15 +175,12 @@ export function prefetchArtist(id: string): void {
     provider.getArtistStations ? provider.getArtistStations(id).catch(() => [] as MusicPlaylist[]) : Promise.resolve([] as MusicPlaylist[]),
   ])
     .then(([artist, allAlbums, singleList, tracks, sim, sonic, hubs, stations]) => {
-      const dedupedSingles = dedupeBy(singleList, (a: MusicAlbum) => a.id)
-      const singleKeys = new Set(dedupedSingles.map((s: MusicAlbum) => s.id))
-      const albums = dedupeBy(allAlbums, (a: MusicAlbum) => a.id)
-        .filter((a: MusicAlbum) => !singleKeys.has(a.id))
+      const { albums, singles } = processArtistAlbums(allAlbums, singleList, true)
 
       useMetadataCacheStore.getState().setArtistCache(id, {
         artist,
         albums,
-        singles: dedupedSingles,
+        singles,
         popularTracks: dedupeBy(tracks, (t: MusicTrack) => t.id),
         similarArtists: sim,
         sonicallySimilar: sonic,

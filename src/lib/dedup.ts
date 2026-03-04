@@ -25,6 +25,32 @@ function normalizeTitle(title: string): string {
 type AlbumGroup = { key: string; albums: MusicAlbum[] }
 
 /**
+ * Split albums into sub-groups where track counts are close enough to be
+ * the same release (e.g. a 10-track and 11-track version are likely the same
+ * album, but a 10-track album and a 1-track single are not).
+ *
+ * Two albums merge if |countA - countB| <= max(2, 0.3 * min(countA, countB)).
+ * This allows small differences (bonus tracks, regional variants) while
+ * keeping genuinely different releases apart (album vs single).
+ *
+ */
+function splitByTrackCount(albums: MusicAlbum[]): MusicAlbum[][] {
+  const sorted = [...albums].sort((a, b) => a.trackCount - b.trackCount)
+  const subGroups: MusicAlbum[][] = [[sorted[0]]]
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1].trackCount
+    const curr = sorted[i].trackCount
+    const threshold = Math.max(2, Math.floor(0.3 * Math.min(prev, curr)))
+    if (curr - prev <= threshold) {
+      subGroups[subGroups.length - 1].push(sorted[i])
+    } else {
+      subGroups.push([sorted[i]])
+    }
+  }
+  return subGroups
+}
+
+/**
  * Multi-tier album deduplication.
  *
  * Tier 1 — GUID:  group albums sharing the same non-null `guid`.
@@ -81,18 +107,25 @@ export function deduplicateAlbums(albums: MusicAlbum[]): MusicAlbum[] {
     assigned.add(album.id)
   }
 
-  // Merge each group → single album with _alternateIds
+  // Merge each group → single album with _alternateIds.
+  // Within a group, split into sub-groups by track-count similarity so that
+  // e.g. a 10-track album and a 1-track single with the same title stay separate.
   const result: MusicAlbum[] = []
   for (const group of groups) {
     if (group.albums.length === 1) {
       result.push(group.albums[0])
       continue
     }
-    // Pick the entry with the highest trackCount as the primary
-    const sorted = [...group.albums].sort((a, b) => b.trackCount - a.trackCount)
-    const primary = sorted[0]
-    const alternateIds = sorted.slice(1).map(a => a.id)
-    result.push({ ...primary, _alternateIds: alternateIds })
+    for (const sub of splitByTrackCount(group.albums)) {
+      if (sub.length === 1) {
+        result.push(sub[0])
+        continue
+      }
+      const sorted = [...sub].sort((a, b) => b.trackCount - a.trackCount)
+      const primary = sorted[0]
+      const alternateIds = sorted.slice(1).map(a => a.id)
+      result.push({ ...primary, _alternateIds: alternateIds })
+    }
   }
 
   return result
@@ -132,6 +165,52 @@ export function collectAllIds(albums: MusicAlbum[]): Set<string> {
     }
   }
   return ids
+}
+
+// ---------------------------------------------------------------------------
+// Shared artist-album processing
+// ---------------------------------------------------------------------------
+
+/**
+ * Single source of truth for splitting raw API responses into albums vs singles.
+ *
+ * Takes the two raw API lists (all albums + singles-filtered) and returns
+ * cleanly separated, optionally deduplicated arrays. Both Artist.tsx and
+ * the prefetch cache must use this to stay consistent.
+ *
+ * Flow:
+ *   1. Use the singles list to determine which IDs are singles.
+ *   2. Remove those IDs from the all-albums list → pure albums.
+ *   3. Optionally deduplicate each partition independently.
+ */
+export function processArtistAlbums(
+  allAlbums: MusicAlbum[],
+  singleList: MusicAlbum[],
+  deduplicate: boolean,
+): { albums: MusicAlbum[]; singles: MusicAlbum[] } {
+  // IDs that came from the singles/EP-filtered endpoint
+  const singleIds = new Set(singleList.map(s => s.id))
+
+  // Separate: remove singles from all-albums to get pure albums
+  const albumsOnly = allAlbums.filter(a => !singleIds.has(a.id))
+
+  if (!deduplicate) {
+    // Simple ID-dedup only
+    const idDedup = <T extends { id: string }>(items: T[]): T[] => {
+      const seen = new Set<string>()
+      return items.filter(item => {
+        if (seen.has(item.id)) return false
+        seen.add(item.id)
+        return true
+      })
+    }
+    return { albums: idDedup(albumsOnly), singles: idDedup(singleList) }
+  }
+
+  return {
+    albums: deduplicateAlbums(albumsOnly),
+    singles: deduplicateAlbums(singleList),
+  }
 }
 
 // ---------------------------------------------------------------------------

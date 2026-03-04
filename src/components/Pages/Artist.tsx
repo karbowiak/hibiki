@@ -18,7 +18,7 @@ import { useArtistEnrichment } from "../../hooks/useMetadataEnrichment"
 import { buildImageUrl, buildExternalImageUrl } from "../../lib/imageUrl"
 import { formatMs } from "../../lib/formatters"
 import { ImageModal } from "../shared/ImageModal"
-import { deduplicateAlbums, deduplicateHubAlbums, collectAllIds } from "../../lib/dedup"
+import { processArtistAlbums, deduplicateHubAlbums } from "../../lib/dedup"
 import { useMetadataSourceStore } from "../../stores/metadataSourceStore"
 import { HeroRating } from "../HeroRating"
 import { StarRating } from "../shared/StarRating"
@@ -38,6 +38,12 @@ function dedupe<T extends { id: string }>(items: T[]): T[] {
 
 const SKIP_HUB_IDS = new Set([
   "artist.albums",
+  "artist.albums.singles",
+  "artist.albums.live",
+  "artist.albums.soundtrack",
+  "artist.albums.compilation",
+  "artist.albums.demo",
+  "artist.albums.remix",
   "artist.mostpopulartracks",
   "artist.mostplayedtracks",
 ])
@@ -152,12 +158,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
       provider.getArtistStations ? provider.getArtistStations(artistId).catch(() => [] as MusicPlaylist[]) : Promise.resolve([] as MusicPlaylist[]),
     ])
       .then(([a, allAlbums, singleList, tracks, sim, sonic, hubs, stationList]) => {
-        const maybeDedup = shouldDedup ? deduplicateAlbums : dedupe
-        const dedupedSingles = maybeDedup(singleList)
-        const singleKeys = collectAllIds(dedupedSingles)
-        const albums = maybeDedup(allAlbums).filter(a =>
-          !singleKeys.has(a.id) && !(a._alternateIds ?? []).some(id => singleKeys.has(id))
-        )
+        const { albums, singles: dedupedSingles } = processArtistAlbums(allAlbums, singleList, shouldDedup)
         const popularTracks = dedupe(tracks)
 
         setArtist(a)
