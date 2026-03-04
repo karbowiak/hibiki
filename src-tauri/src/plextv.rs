@@ -135,7 +135,7 @@ pub async fn get_resources(client_id: &str, token: &str) -> Result<Vec<PlexResou
         .header("Accept", "application/json")
         .query(&[
             ("includeHttps", "1"),
-            ("includeRelay", "0"),
+            ("includeRelay", "1"),
             ("includeIPv6", "0"),
         ])
         .send()

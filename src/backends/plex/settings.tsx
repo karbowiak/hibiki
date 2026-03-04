@@ -79,6 +79,8 @@ export function PlexSettings() {
       void fetchRecentlyAdded(50)
       void fetchHubs()
       navigate("/")
+    } else if (ok) {
+      setAuthError("Connected, but no music library was found. Make sure a Music library has been shared with your account.")
     }
   }
 
@@ -134,6 +136,8 @@ export function PlexSettings() {
     setConnectingServer(resource.name)
     setAuthError(null)
 
+    console.log("[connectToServer] Picked server:", resource.name, "connections:", resource.connections)
+
     interface Candidate { url: string; isLocal: boolean; isHttps: boolean; isRelay: boolean }
     const seen = new Set<string>()
     const candidates: Candidate[] = []
@@ -152,6 +156,8 @@ export function PlexSettings() {
       }
     }
 
+    console.log("[connectToServer] Candidates:", candidates.map(c => `${c.url} (local=${c.isLocal}, relay=${c.isRelay})`))
+
     if (candidates.length === 0) {
       setConnectingServer(null)
       setAuthError(`No connection URLs found for ${resource.name}.`)
@@ -159,7 +165,16 @@ export function PlexSettings() {
     }
 
     const results = await Promise.allSettled(
-      candidates.map(async c => ({ ...c, latency: await testServerConnection(c.url, authToken) }))
+      candidates.map(async c => {
+        try {
+          const latency = await testServerConnection(c.url, authToken)
+          console.log("[connectToServer] OK:", c.url, `${latency}ms`)
+          return { ...c, latency }
+        } catch (err) {
+          console.log("[connectToServer] FAIL:", c.url, String(err))
+          throw err
+        }
+      })
     )
     const successful = results
       .filter((r): r is PromiseFulfilledResult<Candidate & { latency: number }> => r.status === "fulfilled")
@@ -171,6 +186,8 @@ export function PlexSettings() {
         return a.latency - b.latency
       })
 
+    console.log("[connectToServer] Successful:", successful.map(c => `${c.url} (${c.latency}ms)`))
+
     if (successful.length === 0) {
       setConnectingServer(null)
       setAuthError(`Could not reach ${resource.name}. All ${candidates.length} connection URL${candidates.length === 1 ? "" : "s"} failed.`)
@@ -178,9 +195,13 @@ export function PlexSettings() {
     }
 
     try {
+      console.log("[connectToServer] Connecting to:", successful[0].url)
       await connect(successful[0].url, authToken, successful.map(c => c.url))
+      const { isConnected: ok, musicSectionId: secId } = useConnectionStore.getState()
+      console.log("[connectToServer] After connect: isConnected=%s, musicSectionId=%s", ok, secId)
       afterConnect()
     } catch (err) {
+      console.error("[connectToServer] connect() failed:", err)
       setAuthError(String(err))
     } finally {
       setConnectingServer(null)
