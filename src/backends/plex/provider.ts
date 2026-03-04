@@ -29,6 +29,7 @@ import {
 import * as plex from "./api"
 import { lastfmScrobble, lastfmUpdateNowPlaying } from "../lastfm/api"
 import { buildPlexImageUrl } from "./imageUrl"
+import { pickBestMediaIndex } from "../../lib/dedup"
 
 export class PlexProvider implements MusicProvider {
   readonly name = "Plex"
@@ -251,19 +252,22 @@ export class PlexProvider implements MusicProvider {
 
   async getStreamUrl(track: MusicTrack): Promise<string> {
     const plexTrack = track._providerData as Track
-    const partKey = plexTrack.media?.[0]?.parts?.[0]?.key
+    const idx = pickBestMediaIndex(plexTrack.media ?? [])
+    const partKey = plexTrack.media?.[idx]?.parts?.[0]?.key
     if (!partKey) throw new Error("Track has no media part")
     return plex.getStreamUrl(partKey)
   }
 
   async getPlaybackInfo(track: MusicTrack): Promise<TrackPlaybackInfo> {
     const plexTrack = track._providerData as Track
-    const partKey = plexTrack.media?.[0]?.parts?.[0]?.key
+    const idx = pickBestMediaIndex(plexTrack.media ?? [])
+    const media = plexTrack.media?.[idx]
+    const partKey = media?.parts?.[0]?.key
     if (!partKey) throw new Error("Track has no media part")
     return {
       url: `${this._baseUrl}${partKey}?X-Plex-Token=${this._token}`,
       trackKey: Number(track.id),
-      partId: plexTrack.media?.[0]?.parts?.[0]?.id ?? 0,
+      partId: media?.parts?.[0]?.id ?? 0,
       parentKey: plexTrack.parent_key ?? "",
     }
   }

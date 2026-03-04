@@ -18,6 +18,7 @@ import { useArtistEnrichment } from "../../hooks/useMetadataEnrichment"
 import { buildImageUrl, buildExternalImageUrl } from "../../lib/imageUrl"
 import { formatMs } from "../../lib/formatters"
 import { ImageModal } from "../shared/ImageModal"
+import { deduplicateAlbums, deduplicateHubAlbums, collectAllIds } from "../../lib/dedup"
 import { useMetadataSourceStore } from "../../stores/metadataSourceStore"
 import { HeroRating } from "../HeroRating"
 import { StarRating } from "../shared/StarRating"
@@ -150,9 +151,11 @@ export function ArtistPage({ artistId }: { artistId: string }) {
       provider.getArtistStations ? provider.getArtistStations(artistId).catch(() => [] as MusicPlaylist[]) : Promise.resolve([] as MusicPlaylist[]),
     ])
       .then(([a, allAlbums, singleList, tracks, sim, sonic, hubs, stationList]) => {
-        const dedupedSingles = dedupe(singleList)
-        const singleKeys = new Set(dedupedSingles.map(s => s.id))
-        const albums = dedupe(allAlbums).filter(a => !singleKeys.has(a.id))
+        const dedupedSingles = deduplicateAlbums(singleList)
+        const singleKeys = collectAllIds(dedupedSingles)
+        const albums = deduplicateAlbums(allAlbums).filter(a =>
+          !singleKeys.has(a.id) && !(a._alternateIds ?? []).some(id => singleKeys.has(id))
+        )
         const popularTracks = dedupe(tracks)
 
         setArtist(a)
@@ -210,15 +213,18 @@ export function ArtistPage({ artistId }: { artistId: string }) {
 
   // Memoize album/hub filtering — depends on relatedHubs, fullAlbums, singles
   const { albumHubs, displayAlbums, displaySingles, genres } = useMemo(() => {
-    const albumHubs = relatedHubs.filter(h =>
-      h.identifier && !SKIP_HUB_IDS.has(h.identifier) &&
-      h.items.some(m => m.type === "album")
-    )
+    const albumHubs = relatedHubs
+      .filter(h =>
+        h.identifier && !SKIP_HUB_IDS.has(h.identifier) &&
+        h.items.some(m => m.type === "album")
+      )
+      .map(deduplicateHubAlbums)
     const hubAlbumKeys = new Set(
       albumHubs.flatMap(h => h.items.filter(m => m.type === "album").map(m => m.id))
     )
-    const da = fullAlbums.filter(a => !hubAlbumKeys.has(a.id))
-    const ds = singles.filter(a => !hubAlbumKeys.has(a.id))
+    const hasId = (id: string) => hubAlbumKeys.has(id)
+    const da = fullAlbums.filter(a => !hasId(a.id) && !(a._alternateIds ?? []).some(hasId))
+    const ds = singles.filter(a => !hasId(a.id) && !(a._alternateIds ?? []).some(hasId))
 
     const g: string[] = []
     const seenGenres = new Set<string>()
@@ -229,6 +235,22 @@ export function ArtistPage({ artistId }: { artistId: string }) {
     }
     return { albumHubs, displayAlbums: da, displaySingles: ds, genres: g }
   }, [relatedHubs, fullAlbums, singles])
+
+  // Count how many duplicate albums were merged (for the hero badge)
+  const dedupStats = useMemo(() => {
+    const countAlts = (list: MusicAlbum[]) => list.reduce((n, a) => n + (a._alternateIds?.length ?? 0), 0)
+    const albumDupes = countAlts(fullAlbums)
+    const singleDupes = countAlts(singles)
+    const hubDupes = relatedHubs.reduce((n, h) =>
+      n + h.items.filter(i => i.type === "album").reduce((m, a) => m + ((a as MusicAlbum)._alternateIds?.length ?? 0), 0), 0)
+    const total = albumDupes + singleDupes + hubDupes
+    if (total === 0) return null
+    const parts: string[] = []
+    if (albumDupes > 0) parts.push(`${albumDupes} album${albumDupes > 1 ? "s" : ""}`)
+    if (singleDupes > 0) parts.push(`${singleDupes} single${singleDupes > 1 ? "s" : ""}`)
+    if (hubDupes > 0) parts.push(`${hubDupes} other`)
+    return `deduplicated: ${parts.join(", ")}`
+  }, [fullAlbums, singles, relatedHubs])
 
   if (isLoading) return <div className="p-8 text-sm text-gray-400">Loading artist…</div>
   if (error) return <div className="p-8 text-sm text-red-400">{error}</div>
@@ -479,7 +501,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
             <HeroRating itemId={artistId} userRating={artist.userRating} itemType="artist" />
 
             {/* Metadata stats row */}
-            {(lastfmData || deezerData) && (
+            {(lastfmData || deezerData || dedupStats) && (
               <div className="mt-0.5 flex items-center gap-3 text-xs text-gray-500">
                 {lastfmData && lastfmData.listeners > 0 && (
                   <span>{lastfmData.listeners.toLocaleString()} listeners</span>
@@ -495,6 +517,12 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                     {lastfmData && <span className="text-gray-700">·</span>}
                     <span>{deezerData.fans.toLocaleString()} fans</span>
                     <span className="text-gray-600">· Deezer</span>
+                  </>
+                )}
+                {dedupStats && (
+                  <>
+                    {(lastfmData || deezerData) && <span className="text-gray-700">·</span>}
+                    <span className="italic text-gray-600">{dedupStats}</span>
                   </>
                 )}
               </div>

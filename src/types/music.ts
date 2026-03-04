@@ -85,6 +85,8 @@ export interface MusicAlbum {
   format: string | null // "Single", "EP", etc.
   providerKey?: string | null
   reviews?: AlbumReview[]
+  /** IDs of duplicate albums merged into this one (for deduplication). */
+  _alternateIds?: string[]
   /** Opaque provider-specific data. */
   _providerData?: unknown
 }
