@@ -1,5 +1,0 @@
-{
-  "app": {
-    "windows": [{ "transparent": false, "titleBarStyle": "Visible" }]
-  }
-}
