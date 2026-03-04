@@ -35,7 +35,9 @@ export function useResizable({ key, defaultWidth, minWidth, maxWidth, direction 
       const dx = direction === "right"
         ? e.clientX - startX.current
         : startX.current - e.clientX
-      setWidth(Math.max(minWidth, Math.min(maxWidth, startW.current + dx)))
+      const w = Math.max(minWidth, Math.min(maxWidth, startW.current + dx))
+      setWidth(w)
+      window.dispatchEvent(new CustomEvent("resizable-change", { detail: { key, width: w } }))
     }
 
     const onUp = (e: MouseEvent) => {

@@ -18,6 +18,7 @@ import {
 import { CSS } from "@dnd-kit/utilities"
 import { useLibraryStore } from "../stores"
 import { usePlayerStore } from "../stores/playerStore"
+import { useUIStore } from "../stores/uiStore"
 import { useResizable } from "../hooks/useResizable"
 import { useContextMenu } from "../hooks/useContextMenu"
 import { useCapability } from "../hooks/useCapability"
@@ -111,6 +112,7 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
   const hasStations = useCapability("stations")
   const playlists = useLibraryStore(s => s.playlists)
   const playPlaylist = usePlayerStore(useShallow(s => s.playPlaylist))
+  const isArtExpanded = useUIStore(s => s.isArtExpanded)
   const { handler: ctxMenu } = useContextMenu()
   const { width, onMouseDown } = useResizable({
     key: "plex-sidebar-width",
@@ -238,6 +240,11 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
           </SortableContext>
         </DndContext>
       </div>
+      {/* Spacer to push sidebar content up when expanded art covers the bottom-left corner.
+          The expanded art is (sidebarWidth × sidebarWidth), overlapping the player bar (h-24 = 96px). */}
+      {isArtExpanded && (
+        <div className="flex-shrink-0 transition-all duration-300" style={{ height: width - 120 }} />
+      )}
     </div>
   )
 }

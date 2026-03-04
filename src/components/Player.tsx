@@ -26,6 +26,8 @@ import { useSleepTimerStore } from "../stores/sleepTimerStore"
 import { useRadioStreamStore } from "../stores/radioStreamStore"
 import { useEasterEggs } from "../hooks/useEasterEggs"
 import { useEasterEggStore } from "../stores/easterEggStore"
+import { ImageModal } from "./shared/ImageModal"
+import { IconChevronUp, IconChevronDown } from "@tabler/icons-react"
 
 const CACHE_SIZE_KEY = "plexify-audio-cache-max-bytes"
 
@@ -328,6 +330,7 @@ export function Player() {
     isQueueOpen, setQueueOpen,
     isQueuePinned, queueActiveTab, setQueueActiveTab,
     isLyricsOpen, setLyricsOpen,
+    isArtExpanded, toggleArtExpanded,
   } = useUIStore(useShallow(s => ({
     isQueueOpen: s.isQueueOpen,
     setQueueOpen: s.setQueueOpen,
@@ -336,6 +339,8 @@ export function Player() {
     setQueueActiveTab: s.setQueueActiveTab,
     isLyricsOpen: s.isLyricsOpen,
     setLyricsOpen: s.setLyricsOpen,
+    isArtExpanded: s.isArtExpanded,
+    toggleArtExpanded: s.toggleArtExpanded,
   })))
   const { enabled: eqEnabled, syncToEngine } = useEqStore(useShallow(s => ({ enabled: s.enabled, syncToEngine: s.syncToEngine })))
   const { crossfadeStyle, crossfadeWindowMs: cfWindowMs, setCrossfadeStyle } = useAudioSettingsStore(
@@ -345,6 +350,22 @@ export function Player() {
   const hasRadio = useCapability("radio")
   const hasDjModes = useCapability("djModes")
   const hasLyrics = useCapability("lyrics")
+
+  const [showImageModal, setShowImageModal] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const saved = localStorage.getItem("plex-sidebar-width")
+    return saved ? parseInt(saved, 10) || 240 : 240
+  })
+
+  // Track sidebar width changes via custom event from useResizable
+  useEffect(() => {
+    const onResize = (e: Event) => {
+      const { key, width: w } = (e as CustomEvent).detail
+      if (key === "plex-sidebar-width") setSidebarWidth(w)
+    }
+    window.addEventListener("resizable-change", onResize)
+    return () => window.removeEventListener("resizable-change", onResize)
+  }, [])
 
   const playPauseLongPress = useLongPress({
     onPress: () => { isPlaying ? pause() : resume() },
@@ -514,6 +535,52 @@ export function Player() {
 
   return (
     <div className="relative border-t border-[var(--border)] bg-app-card">
+      {/* Expanded album art — fixed to bottom-left corner, overlaps sidebar area */}
+      {isArtExpanded && thumbUrl && (
+        <div
+          className="group/expanded fixed bottom-0 left-0 z-30"
+          style={{ width: sidebarWidth, height: sidebarWidth }}
+        >
+          <Link
+            href={albumId ? `/album/${albumId}` : "#"}
+            className={`block h-full w-full overflow-hidden ${albumId ? "cursor-pointer" : "cursor-default"} ${vinylSpin ? "rounded-full" : ""}`}
+            style={vinylSpin ? {
+              animation: "vinyl-spin 3s linear infinite",
+              animationPlayState: isPlaying ? "running" : "paused",
+            } : undefined}
+            onClick={e => { if (!albumId) e.preventDefault() }}
+          >
+            <img src={thumbUrl} alt={currentTrack?.albumName ?? ""} className="h-full w-full object-cover" />
+          </Link>
+          {/* Hover overlay buttons — bottom-right */}
+          <div className="pointer-events-none absolute inset-0 flex items-end justify-end gap-1 opacity-0 transition-opacity group-hover/expanded:opacity-100 p-1.5">
+            <button
+              onClick={e => { e.stopPropagation(); e.preventDefault(); toggleArtExpanded() }}
+              className="pointer-events-auto flex h-6 w-6 items-center justify-center rounded-sm bg-black/70 text-white/80 hover:text-white hover:bg-black/90 transition-colors"
+              title="Collapse art"
+            >
+              <IconChevronDown size={16} stroke={2} />
+            </button>
+            <button
+              onClick={e => { e.stopPropagation(); e.preventDefault(); setShowImageModal(true) }}
+              className="pointer-events-auto flex h-6 w-6 items-center justify-center rounded-sm bg-black/70 text-white/80 hover:text-white hover:bg-black/90 transition-colors"
+              title="View full size"
+            >
+              <IconMaximize size={14} stroke={2} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Fullscreen image modal */}
+      {showImageModal && thumbUrl && (
+        <ImageModal
+          src={thumbUrl}
+          alt={currentTrack?.albumName ?? "Album art"}
+          onClose={() => setShowImageModal(false)}
+        />
+      )}
+
       {/* Error toast — shown briefly when playRadio or other player actions fail */}
       {playerError && (
         <div className="absolute bottom-28 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-red-900/90 px-4 py-2 text-sm text-white shadow-xl backdrop-blur-sm max-w-md text-center">
@@ -526,20 +593,50 @@ export function Player() {
           <div className="flex h-full items-center justify-between px-4">
 
             {/* Left: current track info */}
-            <div className="w-[30%] min-w-[11.25rem]">
+            <div
+              className="min-w-[11.25rem] transition-all duration-300"
+              style={isArtExpanded && thumbUrl
+                ? { width: `calc(30% + ${sidebarWidth - 80}px)`, paddingLeft: sidebarWidth }
+                : { width: "30%" }
+              }
+            >
               <div className="flex items-center">
                 <div className="mr-3 flex items-center">
-                  <div
-                    className={`mr-3 h-14 w-14 flex-shrink-0 overflow-hidden ${vinylSpin ? "rounded-full" : ""}`}
-                    style={vinylSpin ? {
-                      animation: "vinyl-spin 3s linear infinite",
-                      animationPlayState: isPlaying ? "running" : "paused",
-                    } : undefined}
-                  >
-                    {thumbUrl ? (
-                      <img src={thumbUrl} alt="" className="h-full w-full object-cover" />
-                    ) : (
-                      <div className="h-full w-full bg-app-surface" />
+                  <div className={`group/art relative mr-3 h-14 w-14 flex-shrink-0 ${isArtExpanded && thumbUrl ? "hidden" : ""}`}>
+                    {/* Album art — click navigates to album */}
+                    <Link
+                      href={albumId ? `/album/${albumId}` : "#"}
+                      className={`block h-full w-full overflow-hidden ${albumId ? "cursor-pointer" : "cursor-default"} ${vinylSpin ? "rounded-full" : ""}`}
+                      style={vinylSpin ? {
+                        animation: "vinyl-spin 3s linear infinite",
+                        animationPlayState: isPlaying ? "running" : "paused",
+                      } : undefined}
+                      onClick={e => { if (!albumId) e.preventDefault() }}
+                    >
+                      {thumbUrl ? (
+                        <img src={thumbUrl} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <div className="h-full w-full bg-app-surface" />
+                      )}
+                    </Link>
+                    {/* Hover overlay buttons — bottom-right */}
+                    {thumbUrl && (
+                      <div className="pointer-events-none absolute inset-0 flex items-end justify-end gap-0.5 opacity-0 transition-opacity group-hover/art:opacity-100 p-0.5">
+                        <button
+                          onClick={e => { e.stopPropagation(); e.preventDefault(); toggleArtExpanded() }}
+                          className="pointer-events-auto flex h-5 w-5 items-center justify-center rounded-sm bg-black/70 text-white/80 hover:text-white hover:bg-black/90 transition-colors"
+                          title={isArtExpanded ? "Collapse art" : "Expand art"}
+                        >
+                          {isArtExpanded ? <IconChevronDown size={14} stroke={2} /> : <IconChevronUp size={14} stroke={2} />}
+                        </button>
+                        <button
+                          onClick={e => { e.stopPropagation(); e.preventDefault(); setShowImageModal(true) }}
+                          className="pointer-events-auto flex h-5 w-5 items-center justify-center rounded-sm bg-black/70 text-white/80 hover:text-white hover:bg-black/90 transition-colors"
+                          title="View full size"
+                        >
+                          <IconMaximize size={12} stroke={2} />
+                        </button>
+                      </div>
                     )}
                   </div>
                   <div className="min-w-0">

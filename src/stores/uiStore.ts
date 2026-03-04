@@ -19,6 +19,8 @@ interface UIState {
   queueActiveTab: "queue" | "lyrics"
   /** When true, duplicate albums on artist pages are merged into a single entry. */
   deduplicateAlbums: boolean
+  /** When true, album art is expanded in the bottom-left corner above the player bar. */
+  isArtExpanded: boolean
 
   setShowCreatePlaylist: (v: boolean) => void
   setPendingPlaylistItemIds: (ids: string[] | null) => void
@@ -30,6 +32,7 @@ interface UIState {
   setLyricsPinned: (v: boolean) => void
   setQueueActiveTab: (tab: "queue" | "lyrics") => void
   setDeduplicateAlbums: (v: boolean) => void
+  toggleArtExpanded: () => void
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -43,6 +46,7 @@ export const useUIStore = create<UIState>((set) => ({
   isLyricsPinned: localStorage.getItem("plex-lyrics-pinned") === "1",
   queueActiveTab: "queue",
   deduplicateAlbums: localStorage.getItem("plex-dedup-albums") !== "0",
+  isArtExpanded: localStorage.getItem("plex-art-expanded") === "1",
 
   setShowCreatePlaylist: (v: boolean) => set({ showCreatePlaylist: v }),
   setPendingPlaylistItemIds: (ids: string[] | null) => set({ pendingPlaylistItemIds: ids }),
@@ -63,4 +67,9 @@ export const useUIStore = create<UIState>((set) => ({
     localStorage.setItem("plex-dedup-albums", v ? "1" : "0")
     set({ deduplicateAlbums: v })
   },
+  toggleArtExpanded: () => set(s => {
+    const next = !s.isArtExpanded
+    localStorage.setItem("plex-art-expanded", next ? "1" : "0")
+    return { isArtExpanded: next }
+  }),
 }))
