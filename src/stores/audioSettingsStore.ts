@@ -96,7 +96,12 @@ export const useAudioSettingsStore = create<AudioSettingsState>()(
         fireAndForget(audioSetSameAlbumCrossfade(sameAlbumCrossfade))
         fireAndForget(audioSetSmartCrossfade(smartCrossfade))
         fireAndForget(audioSetPreampGain(preampDb))
-        fireAndForget(audioSetOutputDevice(preferredDevice))
+        // Only switch device if user has a specific preference — the engine already
+        // starts with the system default, so rebuilding the stream for null is
+        // unnecessary and can fail on Windows (WASAPI not fully ready at boot).
+        if (preferredDevice !== null) {
+          fireAndForget(audioSetOutputDevice(preferredDevice))
+        }
       },
     }),
     {

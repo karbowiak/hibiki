@@ -11,7 +11,7 @@ use crossbeam_channel::{bounded, Receiver, Sender};
 use ringbuf::traits::Split;
 use ringbuf::HeapRb;
 use tauri::{AppHandle, Emitter};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use super::decoder::decoder_thread;
 use super::state::DecoderShared;
@@ -35,7 +35,9 @@ pub struct AudioEngine {
     shared: Arc<DecoderShared>,
     app_handle: AppHandle,
     /// The cpal output stream — stored so it can be dropped and recreated on device switch.
-    _stream: Mutex<Option<StreamHandle>>,
+    /// Arc-shared with the device monitor thread so it can rebuild the stream when
+    /// the OS default device changes.
+    _stream: Arc<Mutex<Option<StreamHandle>>>,
 }
 
 impl AudioEngine {
@@ -66,12 +68,24 @@ impl AudioEngine {
             "Audio output started"
         );
 
-        // Spawn decoder thread
+        // Spawn decoder thread — wrapped in catch_unwind so a panic doesn't silently
+        // kill the thread and leave cmd_tx disconnected ("sending on a disconnected channel").
         let shared_for_decoder = Arc::clone(&shared);
         thread::Builder::new()
             .name("audio-decode".into())
             .spawn(move || {
-                decoder_thread(cmd_rx, event_tx, producer, shared_for_decoder);
+                if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    decoder_thread(cmd_rx, event_tx, producer, shared_for_decoder);
+                })) {
+                    let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                        s.to_string()
+                    } else if let Some(s) = e.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "unknown panic".to_string()
+                    };
+                    error!(error = %msg, "Decoder thread panicked!");
+                }
             })
             .map_err(|e| format!("Failed to spawn decoder thread: {e}"))?;
 
@@ -79,10 +93,15 @@ impl AudioEngine {
         let shared_for_events = Arc::clone(&shared);
         Self::spawn_event_emitter(app_handle.clone(), event_rx, shared_for_events);
 
+        let stream_handle = Arc::new(Mutex::new(Some(StreamHandle(_stream))));
+
         // Spawn device monitor thread — polls for OS default device changes every 2s
+        // and rebuilds the output stream so audio follows the new default device.
         {
             let shared_mon = Arc::clone(&shared);
             let app_mon = app_handle.clone();
+            let cmd_tx_mon = cmd_tx.clone();
+            let stream_mon = Arc::clone(&stream_handle);
             thread::Builder::new()
                 .name("device-monitor".into())
                 .spawn(move || {
@@ -109,8 +128,27 @@ impl AudioEngine {
                                 .unwrap_or(false);
 
                             if is_system_default {
-                                *shared_mon.current_device_name.lock().unwrap() = current.clone();
-                                let _ = app_mon.emit("audio-device-changed", serde_json::json!({ "name": current }));
+                                // Rebuild the output stream so audio actually moves to the new device
+                                let rb = HeapRb::<f32>::new(RING_BUFFER_SIZE);
+                                let (new_producer, new_consumer) = rb.split();
+                                let shared_out = Arc::clone(&shared_mon);
+                                match start_output(new_consumer, shared_out) {
+                                    Ok((new_stream, new_sr, new_name)) => {
+                                        shared_mon.device_sample_rate.store(new_sr as i64, Ordering::Relaxed);
+                                        *shared_mon.current_device_name.lock().unwrap() = new_name.clone();
+                                        let _ = cmd_tx_mon.send(AudioCommand::SwapProducer(new_producer));
+                                        if let Ok(mut guard) = stream_mon.lock() {
+                                            *guard = Some(StreamHandle(new_stream));
+                                        }
+                                        let _ = app_mon.emit("audio-device-changed", serde_json::json!({ "name": new_name }));
+                                        info!(device = %new_name, sample_rate = new_sr, "Device monitor rebuilt stream for new default");
+                                    }
+                                    Err(e) => {
+                                        warn!(error = %e, "Device monitor failed to rebuild stream — keeping current");
+                                        *shared_mon.current_device_name.lock().unwrap() = current.clone();
+                                        let _ = app_mon.emit("audio-device-changed", serde_json::json!({ "name": current }));
+                                    }
+                                }
                             }
                         }
                     }
@@ -122,7 +160,7 @@ impl AudioEngine {
             cmd_tx,
             shared,
             app_handle,
-            _stream: Mutex::new(Some(StreamHandle(_stream))),
+            _stream: stream_handle,
         })
     }
 
