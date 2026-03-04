@@ -280,8 +280,8 @@ export function QueuePanel() {
   )
 
   // Pinned mode — renders as a sidebar column inside the layout flex row.
-  // isQueueOpen controls visibility; the player queue button collapses/expands it.
-  // Animation: outer wrapper collapses width while inner panel slides out to the right.
+  // Single animation: outer wrapper transitions width with overflow-hidden.
+  // The clip effect naturally creates a slide-in/out visual.
   if (isQueuePinned) {
     return (
       <div
@@ -289,10 +289,8 @@ export function QueuePanel() {
         style={{ width: isQueueOpen ? queueWidth : 0 }}
       >
         <div
-          className={`relative flex h-full flex-col bg-app-bg border-l border-[var(--border)] transition-transform duration-300 ease-in-out ${
-            isQueueOpen ? "translate-x-0" : "translate-x-full"
-          }`}
-          style={{ width: queueWidth }}
+          className="relative flex h-full flex-col bg-app-bg border-l border-[var(--border)]"
+          style={{ width: queueWidth, minWidth: queueWidth }}
         >
           {/* Resize handle on left edge */}
           <div

@@ -42,13 +42,16 @@ export function useEasterEggs() {
       if (!vaporwave) applyAccent(useAccentStore.getState().accent)
       return
     }
-    const id = setInterval(() => {
+    let raf: number
+    const loop = () => {
       const hue = (performance.now() / 50) % 360
       const [r, g, b] = hslToRgb(hue, 80, 60)
       document.documentElement.style.setProperty("--accent", `hsl(${hue}, 80%, 60%)`)
       document.documentElement.style.setProperty("--accent-rgb", `${r} ${g} ${b}`)
-    }, 100)
-    return () => clearInterval(id)
+      raf = requestAnimationFrame(loop)
+    }
+    raf = requestAnimationFrame(loop)
+    return () => cancelAnimationFrame(raf)
   }, [rainbow, vaporwave])
 
   // Vaporwave mode: add class + override CSS variables
@@ -83,29 +86,36 @@ export function useEasterEggs() {
     let fastEma = 0
     let slowEma = 0
     let cooldown = 0 // frames to wait after a beat before allowing the next
-    const id = setInterval(() => {
-      const samples = useVisualizerStore.getState().getRecentSamples(2048)
-      let sum = 0
-      for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i]
-      const rms = Math.sqrt(sum / samples.length)
+    let raf: number
+    let lastTick = 0
+    const loop = (now: number) => {
+      if (now - lastTick >= 50) { // ~20fps throttle
+        lastTick = now
+        const samples = useVisualizerStore.getState().getRecentSamples(2048)
+        let sum = 0
+        for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i]
+        const rms = Math.sqrt(sum / samples.length)
 
-      // Fast EMA reacts quickly to transients, slow EMA tracks baseline
-      fastEma = fastEma * 0.6 + rms * 0.4
-      slowEma = slowEma * 0.97 + rms * 0.03
+        // Fast EMA reacts quickly to transients, slow EMA tracks baseline
+        fastEma = fastEma * 0.6 + rms * 0.4
+        slowEma = slowEma * 0.97 + rms * 0.03
 
-      if (cooldown > 0) cooldown--
+        if (cooldown > 0) cooldown--
 
-      // Beat fires when fast energy spikes above the slow baseline
-      const isBeat = cooldown === 0 && fastEma > Math.max(slowEma * 1.3, 0.008)
-      if (isBeat) cooldown = 4 // ~200ms minimum gap between beats at 20fps
+        // Beat fires when fast energy spikes above the slow baseline
+        const isBeat = cooldown === 0 && fastEma > Math.max(slowEma * 1.3, 0.008)
+        if (isBeat) cooldown = 4 // ~200ms minimum gap between beats at 20fps
 
-      const current = parseFloat(document.documentElement.style.getPropertyValue("--party-pulse") || "0")
-      const next = isBeat ? 1 : current * 0.7
-      document.documentElement.style.setProperty("--party-pulse", String(next < 0.01 ? 0 : next))
-    }, 50) // ~20fps
+        const current = parseFloat(document.documentElement.style.getPropertyValue("--party-pulse") || "0")
+        const next = isBeat ? 1 : current * 0.7
+        document.documentElement.style.setProperty("--party-pulse", String(next < 0.01 ? 0 : next))
+      }
+      raf = requestAnimationFrame(loop)
+    }
+    raf = requestAnimationFrame(loop)
 
     return () => {
-      clearInterval(id)
+      cancelAnimationFrame(raf)
       document.documentElement.classList.remove("party-mode")
       document.documentElement.style.setProperty("--party-pulse", "0")
     }
