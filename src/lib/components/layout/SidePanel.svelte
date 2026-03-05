@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { X, GripVertical, Podcast, Radio, Trash2 } from 'lucide-svelte';
+	import { X, GripVertical, Podcast, Radio, Trash2, ChevronUp, ChevronDown } from 'lucide-svelte';
 	import { fly } from 'svelte/transition';
-	import { getSidePanel, setSidePanel, closeSidePanel } from '$lib/stores/uiStore.svelte';
+	import { getSidePanel, setSidePanel, closeSidePanel, getQueueExpanded, setQueueExpanded } from '$lib/stores/uiStore.svelte';
 	import IconButton from '$lib/components/ui/IconButton.svelte';
 	import CachedImage from '$lib/components/ui/CachedImage.svelte';
 	import Slider from '$lib/components/ui/Slider.svelte';
@@ -26,6 +26,7 @@
 	let compact = $derived(getAppearance().compactMode);
 
 	let activePanel = $derived(getSidePanel());
+	let queueExpanded = $derived(getQueueExpanded());
 
 	// Unified queue
 	let currentItem = $derived(getCurrentItem());
@@ -186,10 +187,19 @@
 		if (type === 'radio') return Radio;
 		return null;
 	}
+
+	function handleClose() {
+		setQueueExpanded(false);
+		closeSidePanel();
+	}
 </script>
 
+<!-- Mobile: fullscreen overlay -->
 <aside
-	class="flex w-[350px] shrink-0 flex-col border-l border-border bg-bg-surface shadow-[inset_2px_0_8px_rgba(0,0,0,0.3)]"
+	class="
+		max-md:fixed max-md:inset-0 max-md:z-50 max-md:flex max-md:flex-col max-md:bg-bg-surface
+		md:flex md:w-[350px] md:shrink-0 md:flex-col md:border-l md:border-border md:bg-bg-surface md:shadow-[inset_2px_0_8px_rgba(0,0,0,0.3)]
+	"
 	transition:fly={{ x: 350, duration: 200 }}
 >
 	<!-- Tab header -->
@@ -207,7 +217,16 @@
 				</button>
 			{/each}
 		</div>
-		<IconButton icon={X} size={16} label="Close panel" onclick={closeSidePanel} />
+		<!-- Mobile: expand/collapse toggle -->
+		<span class="md:hidden">
+			<IconButton
+				icon={queueExpanded ? ChevronDown : ChevronUp}
+				size={16}
+				label={queueExpanded ? 'Collapse' : 'Expand'}
+				onclick={() => setQueueExpanded(!queueExpanded)}
+			/>
+		</span>
+		<IconButton icon={X} size={16} label="Close panel" onclick={handleClose} />
 	</div>
 
 	<!-- Queue content -->
@@ -228,16 +247,16 @@
 					tabindex={playState === 'stopped' ? 0 : undefined}
 				>
 					{#if currentDisplay.artwork}
-						<CachedImage src={currentDisplay.artwork} alt="" class="{compact ? 'h-8 w-8' : 'h-10 w-10'} shrink-0 rounded object-cover" />
+						<CachedImage src={currentDisplay.artwork} alt="" class="{compact ? 'h-8 w-8' : 'h-10 w-10'} max-md:h-12 max-md:w-12 shrink-0 rounded object-cover" />
 					{:else}
 						{@const Icon = typeIcon(mediaType ?? '') ?? Podcast}
-						<div class="{compact ? 'h-8 w-8' : 'h-10 w-10'} flex shrink-0 items-center justify-center rounded bg-bg-highlight">
+						<div class="{compact ? 'h-8 w-8' : 'h-10 w-10'} max-md:h-12 max-md:w-12 flex shrink-0 items-center justify-center rounded bg-bg-highlight">
 							<Icon size={16} class="text-text-muted" />
 						</div>
 					{/if}
 					<div class="min-w-0 flex-1">
-						<p class="truncate text-sm font-medium text-accent">{currentDisplay.title}</p>
-						<p class="truncate text-xs text-text-secondary">{currentDisplay.subtitle}</p>
+						<p class="truncate text-sm font-medium text-accent max-md:text-base">{currentDisplay.title}</p>
+						<p class="truncate text-xs text-text-secondary max-md:text-sm">{currentDisplay.subtitle}</p>
 					</div>
 					{#if currentDisplay.durationMs > 0}
 						<span class="text-xs tabular-nums text-text-muted">{formatDuration(currentDisplay.durationMs)}</span>
@@ -268,7 +287,7 @@
 				</button>
 			{/if}
 		</div>
-		<div class="flex-1 overflow-y-auto px-4 pb-3" bind:this={scrollContainerEl}>
+		<div class="flex-1 overflow-y-auto px-4 pb-3 max-md:pb-20" bind:this={scrollContainerEl}>
 			<div class="flex flex-col gap-0.5" bind:this={listEl}>
 				{#each upNext as queueItem, i (toDisplay(queueItem).id + '-' + i)}
 					{@const d = toDisplay(queueItem)}
@@ -277,7 +296,7 @@
 					{@const absIndex = curIndex + 1 + i}
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<div
-						class="group relative flex cursor-grab items-center gap-3 rounded-lg border px-2 {compact ? 'py-1' : 'py-1.5'} transition-all select-none active:cursor-grabbing
+						class="group relative flex cursor-grab items-center gap-3 rounded-lg border px-2 {compact ? 'py-1' : 'py-1.5'} max-md:py-2 transition-all select-none active:cursor-grabbing
 							{isDragging
 							? 'border-accent/20 bg-accent/5 opacity-30'
 							: 'border-transparent hover:border-border hover:bg-accent-tint-hover'}"
@@ -298,10 +317,10 @@
 							<GripVertical size={14} />
 						</div>
 						{#if d.artwork}
-							<CachedImage src={d.artwork} alt="" class="{compact ? 'h-8 w-8' : 'h-10 w-10'} shrink-0 rounded object-cover" />
+							<CachedImage src={d.artwork} alt="" class="{compact ? 'h-8 w-8' : 'h-10 w-10'} max-md:h-10 max-md:w-10 shrink-0 rounded object-cover" />
 						{:else}
 							{@const TypeIcon = typeIcon(queueItem.type)}
-							<div class="{compact ? 'h-8 w-8' : 'h-10 w-10'} flex shrink-0 items-center justify-center rounded bg-gradient-to-br from-bg-highlight via-bg-elevated to-bg-highlight">
+							<div class="{compact ? 'h-8 w-8' : 'h-10 w-10'} max-md:h-10 max-md:w-10 flex shrink-0 items-center justify-center rounded bg-gradient-to-br from-bg-highlight via-bg-elevated to-bg-highlight">
 								{#if TypeIcon}
 									<TypeIcon size={14} class="text-text-muted" />
 								{/if}
@@ -355,11 +374,11 @@
 	<!-- Lyrics content -->
 	{#if activePanel === 'lyrics'}
 		<div class="mx-4 mt-3 rounded-lg border border-accent/10 p-3" style="background: var(--color-accent-tint-subtle)">
-			<p class="truncate text-sm font-bold text-text-primary">{lyricsData.title}</p>
-			<p class="truncate text-xs text-text-secondary">{lyricsData.artist}</p>
+			<p class="truncate text-sm font-bold text-text-primary max-md:text-base">{lyricsData.title}</p>
+			<p class="truncate text-xs text-text-secondary max-md:text-sm">{lyricsData.artist}</p>
 		</div>
 
-		<div class="flex-1 overflow-y-auto px-6 py-4">
+		<div class="flex-1 overflow-y-auto px-6 py-4 max-md:pb-20">
 			<div class="flex flex-col gap-2">
 				{#each lyricsData.lines as line, i}
 					{#if line === ''}
@@ -382,7 +401,7 @@
 
 		<!-- Timing offset bar -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="flex items-center gap-3 border-t border-border bg-bg-surface px-4 py-3" onwheel={onTimingWheel}>
+		<div class="flex items-center gap-3 border-t border-border bg-bg-surface px-4 py-3 max-md:pb-20" onwheel={onTimingWheel}>
 			<span class="shrink-0 text-[10px] font-medium uppercase tracking-wider text-text-muted">
 				Timing
 			</span>

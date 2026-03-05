@@ -112,3 +112,16 @@ input[type='range']::-moz-range-thumb {
 input[type='range']:hover::-moz-range-thumb {
 	opacity: 1;
 }
+
+/* Mobile responsive overrides */
+@media (max-width: 768px) {
+	:root {
+		--spacing-topbar: 52px;
+		--spacing-player: 64px;
+	}
+
+	/* Thinner scrollbar on mobile */
+	::-webkit-scrollbar {
+		width: 4px;
+	}
+}

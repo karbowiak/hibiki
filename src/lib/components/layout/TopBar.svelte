@@ -1,11 +1,12 @@
 <script lang="ts">
-	import { ChevronLeft, ChevronRight, Search, RefreshCw, Settings } from 'lucide-svelte';
+	import { ChevronLeft, ChevronRight, Search, RefreshCw, Settings, Menu } from 'lucide-svelte';
 	import IconButton from '$lib/components/ui/IconButton.svelte';
 	import ActivityDropdown from '$lib/components/features/ActivityDropdown.svelte';
 	import SearchDropdown from '$lib/components/ui/SearchDropdown.svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { getAppearance } from '$lib/stores/configStore.svelte';
+	import { toggleSidebar } from '$lib/stores/uiStore.svelte';
 
 	let compact = $derived(getAppearance().compactMode);
 	let isSettings = $derived(page.url.pathname.startsWith('/settings'));
@@ -50,12 +51,19 @@
 <svelte:window onkeydown={onGlobalKeydown} />
 
 <header
-	class="relative z-30 flex h-(--spacing-topbar) items-center gap-4 bg-transparent px-4"
+	class="relative z-30 flex h-(--spacing-topbar) items-center gap-2 bg-transparent px-4 md:gap-4"
 >
-	<!-- Left: Navigation -->
+	<!-- Left: Hamburger (mobile) + Navigation -->
 	<div class="flex items-center gap-1">
-		<IconButton icon={ChevronLeft} label="Go back" onclick={() => history.back()} />
-		<IconButton icon={ChevronRight} label="Go forward" onclick={() => history.forward()} />
+		<span class="md:hidden">
+			<IconButton icon={Menu} label="Menu" onclick={toggleSidebar} />
+		</span>
+		<span class="max-md:hidden">
+			<IconButton icon={ChevronLeft} label="Go back" onclick={() => history.back()} />
+		</span>
+		<span class="max-md:hidden">
+			<IconButton icon={ChevronRight} label="Go forward" onclick={() => history.forward()} />
+		</span>
 	</div>
 
 	<!-- Center: Search -->
@@ -69,7 +77,7 @@
 			onfocus={() => focused = true}
 			onblur={() => setTimeout(() => focused = false, 200)}
 			onkeydown={onSearchKeydown}
-			class="{compact ? 'h-8' : 'h-9'} w-full rounded-full border border-border bg-bg-highlight pl-9 pr-4 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent/40 focus:border-accent/30"
+			class="{compact ? 'h-8' : 'h-9'} max-md:h-8 w-full rounded-full border border-border bg-bg-highlight pl-9 pr-4 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent/40 focus:border-accent/30"
 		/>
 		{#if showDropdown}
 			<SearchDropdown {query} />
@@ -78,8 +86,12 @@
 
 	<!-- Right: Actions -->
 	<div class="flex items-center gap-1">
-		<ActivityDropdown />
-		<IconButton icon={RefreshCw} label="Refresh" />
+		<span class="max-md:hidden">
+			<ActivityDropdown />
+		</span>
+		<span class="max-md:hidden">
+			<IconButton icon={RefreshCw} label="Refresh" />
+		</span>
 		<IconButton icon={Settings} label="Settings" active={isSettings} onclick={onSettingsClick} />
 	</div>
 </header>

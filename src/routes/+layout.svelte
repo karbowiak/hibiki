@@ -37,6 +37,7 @@
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
+	<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 </svelte:head>
 
 <div class="flex h-screen flex-col bg-bg-base">
@@ -46,7 +47,7 @@
 			<div class="absolute inset-x-0 top-0 z-30">
 				<TopBar />
 			</div>
-			<main use:scrollMemory={'main'} class="relative flex min-h-0 flex-1 flex-col bg-bg-surface pt-(--spacing-topbar) {isSettings ? '' : compact ? 'overflow-y-auto pr-4 pb-4 pl-4' : 'overflow-y-auto pr-6 pb-6 pl-6'}">
+			<main use:scrollMemory={'main'} class="relative flex min-h-0 flex-1 flex-col bg-bg-surface pt-(--spacing-topbar) {isSettings ? '' : compact ? 'overflow-y-auto pr-4 pb-4 pl-4' : 'overflow-y-auto max-md:px-3 max-md:pb-3 pr-6 pb-6 pl-6'}">
 				<div class="{isSettings ? 'flex min-h-0 flex-1' : 'relative'}">
 					{@render children()}
 				</div>

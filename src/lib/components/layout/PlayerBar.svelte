@@ -217,8 +217,10 @@
 />
 
 <div class="h-px bg-gradient-to-r from-transparent via-overlay-medium to-transparent"></div>
+
+<!-- Desktop player bar -->
 <footer
-	class="grid h-(--spacing-player) items-center bg-bg-elevated pr-4 pl-4"
+	class="hidden h-(--spacing-player) items-center bg-bg-elevated pr-4 pl-4 md:grid"
 	style="grid-template-columns: 1fr minmax(400px, 2fr) 1fr;"
 >
 	<!-- Left: Track info + album art -->
@@ -433,9 +435,97 @@
 	</div>
 </footer>
 
-<!-- Expanded album art — fixed bottom-left corner -->
+<!-- Mobile player bar -->
+<footer class="flex flex-col bg-bg-elevated md:hidden">
+	<!-- Progress bar (thin, full-width at top) -->
+	<div class="relative h-1 w-full bg-white/10">
+		{#if !display?.isStream && dur > 0}
+			<div class="absolute inset-y-0 left-0 bg-accent" style="width: {progress}%"></div>
+			<input
+				type="range"
+				min={0}
+				max={100}
+				step={0.1}
+				value={progress}
+				oninput={onProgressInput}
+				class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+				aria-label="Seek"
+			/>
+		{/if}
+	</div>
+	<!-- Main mobile controls row -->
+	<div class="flex items-center gap-2 px-3 py-2">
+		<!-- Artwork -->
+		<div class="h-10 w-10 shrink-0 overflow-hidden rounded bg-gradient-to-br from-bg-highlight via-bg-elevated to-bg-highlight">
+			<CachedImage
+				src={display?.artwork}
+				alt=""
+				class="h-full w-full object-cover"
+				lazy={false}
+			/>
+		</div>
+
+		<!-- Track info -->
+		<div class="min-w-0 flex-1">
+			{#if mediaType === 'radio' && display}
+				{#if radioNowPlaying?.title}
+					<div class="flex items-center gap-1.5">
+						<p class="truncate text-sm font-medium text-text-primary">{radioNowPlaying.title}</p>
+						<span class="shrink-0 rounded bg-red-500/20 px-1 py-0.5 text-[8px] font-bold uppercase leading-none text-red-400">LIVE</span>
+					</div>
+					<p class="truncate text-xs text-text-secondary">{display.title}</p>
+				{:else}
+					<div class="flex items-center gap-1.5">
+						<p class="truncate text-sm font-medium text-text-primary">{display.title}</p>
+						<span class="shrink-0 rounded bg-red-500/20 px-1 py-0.5 text-[8px] font-bold uppercase leading-none text-red-400">LIVE</span>
+					</div>
+					<p class="truncate text-xs text-text-secondary">{display.subtitle}</p>
+				{/if}
+			{:else if display}
+				<p class="truncate text-sm font-medium text-text-primary">{display.title}</p>
+				<p class="truncate text-xs text-text-secondary">{display.subtitle}</p>
+			{:else}
+				<p class="truncate text-sm text-text-muted">No track playing</p>
+			{/if}
+		</div>
+
+		<!-- Mobile playback controls -->
+		<div class="flex shrink-0 items-center gap-1">
+			{#if mediaType !== 'radio'}
+				<IconButton icon={SkipBack} size={18} label="Previous" onclick={skipPrevious} />
+			{/if}
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<span
+				onpointerdown={onPlayPointerDown}
+				onpointerup={onPlayPointerUp}
+				onpointercancel={onPlayPointerUp}
+			>
+				<IconButton icon={PlayPauseIcon} size={22} label={playState === 'playing' ? 'Pause' : 'Play'} variant="play" />
+			</span>
+			{#if mediaType !== 'radio'}
+				<IconButton icon={SkipForward} size={18} label="Next" onclick={skipNext} />
+			{/if}
+			<div class="relative">
+				<IconButton
+					icon={ListMusic}
+					size={18}
+					label="Queue"
+					active={activePanel === 'queue'}
+					onclick={toggleQueue}
+				/>
+				{#if queueCount > 0}
+					<span class="pointer-events-none absolute -top-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-0.5 text-[8px] font-bold leading-none text-bg-base">
+						{queueCount}
+					</span>
+				{/if}
+			</div>
+		</div>
+	</div>
+</footer>
+
+<!-- Expanded album art — fixed bottom-left corner (desktop only) -->
 {#if artExpanded}
-	<div class="fixed bottom-0 left-0 z-50 w-(--spacing-sidebar)">
+	<div class="fixed bottom-0 left-0 z-50 w-(--spacing-sidebar) max-md:hidden">
 		<a href="/album/1" class="group relative block overflow-hidden">
 			{#if display?.artwork}
 				<CachedImage

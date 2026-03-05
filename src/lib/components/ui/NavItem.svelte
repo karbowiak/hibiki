@@ -14,7 +14,7 @@
 
 	function handleClick(e: MouseEvent) {
 		if (onclick) {
-			e.preventDefault();
+			if (!href || href === '#') e.preventDefault();
 			onclick(e);
 		}
 	}

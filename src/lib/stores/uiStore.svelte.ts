@@ -41,6 +41,10 @@ let visualizerMode = $state<CompactVisMode>(initial.visualizerMode);
 let fullscreenVisualizer = $state(false); // never persisted
 let fullscreenVisMode = $state<FullscreenVisMode>(initial.fullscreenVisMode);
 
+// Mobile state (never persisted)
+let sidebarOpen = $state(false);
+let queueExpanded = $state(false);
+
 function save() {
 	localStorage.setItem(STORAGE_KEY, JSON.stringify({ sidePanel, artExpanded, visualizerMode, fullscreenVisMode }));
 }
@@ -142,6 +146,32 @@ export function getFullscreenVisMode(): FullscreenVisMode {
 export function setFullscreenVisMode(mode: FullscreenVisMode) {
 	fullscreenVisMode = mode;
 	save();
+}
+
+// Mobile sidebar
+export function getSidebarOpen(): boolean {
+	return sidebarOpen;
+}
+
+export function setSidebarOpen(value: boolean) {
+	sidebarOpen = value;
+}
+
+export function toggleSidebar() {
+	sidebarOpen = !sidebarOpen;
+}
+
+// Mobile queue expanded (fullscreen)
+export function getQueueExpanded(): boolean {
+	return queueExpanded;
+}
+
+export function setQueueExpanded(value: boolean) {
+	queueExpanded = value;
+}
+
+export function toggleQueueExpanded() {
+	queueExpanded = !queueExpanded;
 }
 
 // Playlist version — bumped when playlists are created/deleted to trigger re-fetches

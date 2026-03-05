@@ -83,7 +83,7 @@
 		<div
 			class="pointer-events-none absolute -top-6 -left-6 h-32 w-96 rounded-full bg-accent/[0.04] blur-3xl"
 		></div>
-		<h1 class="relative text-3xl font-bold">{greeting()}</h1>
+		<h1 class="relative text-2xl font-bold md:text-3xl">{greeting()}</h1>
 	</div>
 
 	{#if !hasCapability(Capability.Hubs)}
@@ -165,7 +165,7 @@
 			{:else if hub.layout === 'hero'}
 				<div class="mb-8">
 					<h2 class="mb-3 text-lg font-semibold text-text-primary">{hub.title}</h2>
-					<div class="grid grid-cols-3 gap-4">
+					<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 md:gap-4">
 						{#each hub.items.slice(0, 3) as item}
 							{@const href = isArtist(item) ? `/artist/${item.id}` : isAlbum(item) ? `/album/${item.id}` : isTrack(item) && item.albumId ? `/album/${item.albumId}` : '#'}
 							{@const subtitle = isTrack(item) ? item.artistName : isAlbum(item) ? item.artistName : isArtist(item) ? (item.genres[0] ?? '') : ''}
