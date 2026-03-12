@@ -121,6 +121,8 @@ interface PlayerState {
   removeFromQueue: (index: number) => void
   /** Jump to the queue item at `index` without resetting the surrounding queue context. */
   jumpToQueueItem: (index: number) => void
+  /** Remove all tracks after the current one. */
+  clearUpcoming: () => void
 
   /** Initialize Tauri event listeners for the Rust audio engine. Call once on app mount. */
   initAudioEvents: () => Promise<() => void>
@@ -1242,6 +1244,10 @@ export const usePlayerStore = create<PlayerState>()(
     fireAndForget(playAtIndex(index, get, set))
     // Radio: trigger refill immediately on jump rather than waiting for the next position event
     if (get().isRadioMode) fireAndForget(appendRadioTracks(get, set as never))
+  },
+
+  clearUpcoming: () => {
+    set(s => ({ queue: s.queue.slice(0, s.queueIndex + 1) }))
   },
 
   initAudioEvents: async () => {
