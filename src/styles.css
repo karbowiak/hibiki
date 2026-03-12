@@ -571,44 +571,11 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
-   EQ Panel — vertical range slider
-   The slider is a standard horizontal <input type="range"> rotated -90deg.
-   We reset the default browser appearance and add a custom track + thumb.
+   Lyrics scroll — gradient mask for smooth fade at top and bottom
    --------------------------------------------------------------------------- */
-.eq-slider {
-  -webkit-appearance: none;
-  appearance: none;
-  background: transparent;
-  outline: none;
-  border: none;
-  padding: 0;
-  margin: 0;
-}
-
-.eq-slider::-webkit-slider-runnable-track {
-  height: 3px;
-  border-radius: 2px;
-  background: var(--range-track);
-}
-
-.eq-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--text-primary);
-  cursor: pointer;
-  margin-top: -4.5px;
-  transition: background 0.15s;
-}
-
-.eq-slider:hover::-webkit-slider-thumb {
-  background: var(--accent);
-}
-
-.eq-slider::-webkit-slider-container {
-  overflow: visible;
+.lyrics-scroll {
+  mask-image: linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%);
 }
 
 /* ---------------------------------------------------------------------------

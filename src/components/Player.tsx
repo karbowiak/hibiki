@@ -909,7 +909,7 @@ export function Player() {
                 }
                 label="Equalizer"
                 active={eqEnabled}
-                width={460}
+                width={480}
               >
                 {(close) => <EqPanel onClose={close} />}
               </PlayerPopover>

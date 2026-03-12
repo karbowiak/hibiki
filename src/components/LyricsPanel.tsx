@@ -19,8 +19,10 @@ function formatOffset(ms: number): string {
 function LyricsOffsetBar() {
   const { offsetMs, setOffset, resetOffset } = useLyricsOffsetStore()
   return (
-    <div className="flex items-center gap-2 px-4 py-2 border-t border-[var(--border)] shrink-0">
-      <span className="text-[10px] text-[color:var(--text-muted)] flex-shrink-0">-5s</span>
+    <div className="flex items-center gap-3 border-t border-[var(--border)] bg-[var(--bg-surface)] px-4 py-3 shrink-0">
+      <span className="shrink-0 text-[10px] font-medium uppercase tracking-wider text-[color:var(--text-muted)]">
+        Timing
+      </span>
       <input
         type="range"
         min={-5000}
@@ -30,13 +32,13 @@ function LyricsOffsetBar() {
         onChange={e => setOffset(parseInt(e.target.value, 10))}
         className="flex-1 range-styled accent-[var(--accent)] cursor-pointer"
       />
-      <span className="text-[10px] text-[color:var(--text-muted)] flex-shrink-0">+5s</span>
       <button
         onClick={resetOffset}
-        title="Reset offset"
-        className={`flex-shrink-0 px-1.5 h-5 flex items-center justify-center rounded text-[10px] font-mono transition-colors ${
+        onDoubleClick={resetOffset}
+        title="Reset offset (double-click)"
+        className={`shrink-0 text-xs tabular-nums transition-colors ${
           offsetMs !== 0
-            ? "text-accent hover:text-accent/70 cursor-pointer"
+            ? "text-[color:var(--text-secondary)] hover:text-[color:var(--text-primary)] cursor-pointer"
             : "text-[color:var(--text-muted)]"
         }`}
       >
@@ -52,7 +54,7 @@ export function LyricsContent() {
     useShallow(s => ({ lyricsLines: s.lyricsLines, positionMs: s.positionMs }))
   )
   const offsetMs = useLyricsOffsetStore(s => s.offsetMs)
-  const activeRef = useRef<HTMLParagraphElement>(null)
+  const activeRef = useRef<HTMLButtonElement>(null)
   const lastIndexRef = useRef(0)
 
   // Reset scan position when the lyrics data changes (new track)
@@ -96,7 +98,7 @@ export function LyricsContent() {
 
   return (
     <>
-      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3 scrollbar scrollbar-w-1 scrollbar-track-transparent scrollbar-thumb-[var(--bg-surface)] hover:scrollbar-thumb-[var(--bg-surface-hover)]">
+      <div className="flex-1 overflow-y-auto px-6 py-4 lyrics-scroll scrollbar scrollbar-w-1 scrollbar-track-transparent scrollbar-thumb-[var(--bg-surface)] hover:scrollbar-thumb-[var(--bg-surface-hover)]">
         {!lyricsLines ? (
           <div className="flex items-center justify-center h-full">
             <p className="text-[color:var(--text-muted)] text-sm text-center">Loading lyrics…</p>
@@ -106,23 +108,28 @@ export function LyricsContent() {
             <p className="text-[color:var(--text-muted)] text-sm text-center">No lyrics available</p>
           </div>
         ) : (
-          lyricsLines.map((line, i) => {
-            const isActive = i === activeIndex
-            return (
-              <p
-                key={i}
-                ref={isActive ? activeRef : undefined}
-                className={`transition-all duration-300 leading-relaxed cursor-pointer select-text ${
-                  isActive
-                    ? "text-[color:var(--text-primary)] text-base font-semibold"
-                    : "text-[color:var(--text-muted)] text-sm hover:text-[color:var(--text-secondary)]"
-                }`}
-                onClick={() => usePlayerStore.getState().seekTo(line.startMs)}
-              >
-                {line.text}
-              </p>
-            )
-          })
+          <div className="flex flex-col gap-2">
+            {lyricsLines.map((line, i) => {
+              const isActive = i === activeIndex
+              if (!line.text) return <div key={i} className="h-4" />
+              return (
+                <button
+                  key={i}
+                  ref={isActive ? activeRef : undefined}
+                  type="button"
+                  className={`-mx-2 rounded-lg px-2 text-left text-2xl font-bold transition-all duration-300 cursor-pointer select-text ${
+                    isActive
+                      ? "text-accent"
+                      : "text-[color:var(--text-muted)]/40 hover:text-[color:var(--text-muted)]/60 hover:bg-[var(--accent-tint-hover)]"
+                  }`}
+                  style={isActive ? { filter: "drop-shadow(0 0 8px rgb(var(--accent-rgb) / 0.15))" } : undefined}
+                  onClick={() => usePlayerStore.getState().seekTo(line.startMs)}
+                >
+                  {line.text}
+                </button>
+              )
+            })}
+          </div>
         )}
       </div>
       <LyricsOffsetBar />
@@ -177,38 +184,44 @@ export default function LyricsPanel() {
   if (isQueuePinned) return null
 
   const header = (
-    <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)] shrink-0">
-      <span className="text-xs font-semibold text-[color:var(--text-muted)] uppercase tracking-wider">
-        Lyrics
-      </span>
-      {currentTrack && (
-        <span className="mx-2 min-w-0 flex-1 truncate text-xs text-[color:var(--text-muted)]">
-          {currentTrack.title}
+    <div className="shrink-0">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)]">
+        <span className="text-xs font-semibold text-[color:var(--text-muted)] uppercase tracking-wider">
+          Lyrics
         </span>
-      )}
-      <div className="flex items-center gap-0.5 flex-shrink-0">
-        {/* Pin button */}
-        <button
-          onClick={() => setLyricsPinned(!isLyricsPinned)}
-          title={isLyricsPinned ? "Unpin lyrics" : "Pin lyrics to sidebar"}
-          className={`flex h-7 w-7 items-center justify-center rounded transition-colors ${
-            isLyricsPinned
-              ? "text-accent hover:text-accent/70"
-              : "text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)]"
-          }`}
-          aria-label={isLyricsPinned ? "Unpin lyrics" : "Pin lyrics"}
-        >
-          <PinIcon />
-        </button>
-        {/* Close button */}
-        <button
-          onClick={() => setLyricsOpen(false)}
-          className="flex h-7 w-7 items-center justify-center rounded text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)] transition-colors"
-          aria-label="Close lyrics"
-        >
-          <CloseIcon />
-        </button>
+        <div className="flex items-center gap-0.5 flex-shrink-0">
+          <button
+            onClick={() => setLyricsPinned(!isLyricsPinned)}
+            title={isLyricsPinned ? "Unpin lyrics" : "Pin lyrics to sidebar"}
+            className={`flex h-7 w-7 items-center justify-center rounded transition-colors ${
+              isLyricsPinned
+                ? "text-accent hover:text-accent/70"
+                : "text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)]"
+            }`}
+            aria-label={isLyricsPinned ? "Unpin lyrics" : "Pin lyrics"}
+          >
+            <PinIcon />
+          </button>
+          <button
+            onClick={() => setLyricsOpen(false)}
+            className="flex h-7 w-7 items-center justify-center rounded text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)] transition-colors"
+            aria-label="Close lyrics"
+          >
+            <CloseIcon />
+          </button>
+        </div>
       </div>
+      {currentTrack && (
+        <div
+          className="mx-4 mt-3 rounded-lg border border-accent/10 p-3"
+          style={{ background: "var(--accent-tint-subtle)" }}
+        >
+          <p className="truncate text-sm font-bold text-[color:var(--text-primary)]">{currentTrack.title}</p>
+          {currentTrack.artistName && (
+            <p className="truncate text-xs text-[color:var(--text-secondary)]">{currentTrack.artistName}</p>
+          )}
+        </div>
+      )}
     </div>
   )
 

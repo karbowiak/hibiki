@@ -55,7 +55,7 @@ export default function RadioPanel({ onClose }: Props) {
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2 mb-1.5">
-              <span className="text-[0.625rem] font-bold uppercase tracking-widest text-white/40">
+              <span className="text-[0.625rem] font-bold uppercase tracking-widest text-[color:var(--text-muted)]">
                 Radio
               </span>
               {typeLabel && (
@@ -64,13 +64,13 @@ export default function RadioPanel({ onClose }: Props) {
                 </span>
               )}
             </div>
-            <p className="text-sm font-semibold text-white truncate">
+            <p className="text-sm font-semibold text-[color:var(--text-primary)] truncate">
               {radioSeedArtist ? `${radioSeedArtist} — ${seedName}` : seedName}
             </p>
           </div>
           <button
             onClick={() => { stopRadio(); onClose() }}
-            className="flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full bg-white/10 text-white/60 hover:bg-red-500/20 hover:text-red-400 transition-colors"
+            className="flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full bg-[var(--bg-surface)] text-[color:var(--text-muted)] hover:bg-red-500/20 hover:text-red-400 transition-colors"
           >
             Stop
           </button>
@@ -79,56 +79,63 @@ export default function RadioPanel({ onClose }: Props) {
 
       {/* Variety */}
       <div className="px-5 py-4 border-b border-[var(--border)]">
-        <p className="text-[0.625rem] font-semibold uppercase tracking-widest text-white/40 mb-3">
+        <p className="text-[0.625rem] font-semibold uppercase tracking-widest text-[color:var(--text-muted)] mb-3">
           Variety
         </p>
-        <div className="grid grid-cols-3 gap-2 mb-3">
-          {VARIETY_OPTIONS.map(opt => (
-            <button
-              key={opt.value}
-              onClick={() => setRadioDegreesOfSeparation(opt.value)}
-              title={opt.desc}
-              className={`rounded-lg py-2 text-xs font-semibold transition-colors ${
-                radioDegreesOfSeparation === opt.value
-                  ? "bg-accent text-black"
-                  : "bg-white/10 text-white/60 hover:bg-white/20"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
+        <div className="grid grid-cols-3 gap-1.5 mb-3">
+          {VARIETY_OPTIONS.map(opt => {
+            const selected = radioDegreesOfSeparation === opt.value
+            return (
+              <button
+                key={opt.value}
+                onClick={() => setRadioDegreesOfSeparation(opt.value)}
+                title={opt.desc}
+                className={`rounded-lg border py-2 text-xs font-semibold transition-all ${
+                  selected
+                    ? "border-accent/50 text-accent"
+                    : "border-[var(--border)] text-[color:var(--text-muted)] hover:text-[color:var(--text-secondary)]"
+                }`}
+                style={{
+                  background: selected ? "var(--accent-tint-strong)" : "var(--accent-tint-subtle)",
+                  ...(selected ? { boxShadow: "0 0 8px rgb(var(--accent-rgb) / 0.15)" } : {}),
+                }}
+              >
+                {opt.label}
+              </button>
+            )
+          })}
         </div>
         {activeVariety && (
-          <p className="text-[0.6875rem] text-white/50 leading-snug">{activeVariety.desc}</p>
+          <p className="text-[0.6875rem] text-[color:var(--text-muted)] leading-snug">{activeVariety.desc}</p>
         )}
       </div>
 
       {/* Queue buffer */}
       <div className="px-5 py-4">
-        <p className="text-[0.625rem] font-semibold uppercase tracking-widest text-white/40 mb-3">
+        <p className="text-[0.625rem] font-semibold uppercase tracking-widest text-[color:var(--text-muted)] mb-3">
           Queue Buffer
         </p>
         <div className="flex items-center justify-between">
-          <span className="text-[0.6875rem] text-white/60">Always keep ahead</span>
+          <span className="text-[0.6875rem] text-[color:var(--text-secondary)]">Always keep ahead</span>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setRadioMinQueue(Math.max(MIN_QUEUE, radioMinQueue - 1))}
               disabled={radioMinQueue <= MIN_QUEUE}
-              className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white/70 hover:bg-white/20 hover:text-white transition-colors disabled:opacity-30 disabled:cursor-default font-bold text-base leading-none"
+              className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--bg-surface)] text-[color:var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[color:var(--text-primary)] transition-colors disabled:opacity-30 disabled:cursor-default font-bold text-base leading-none"
             >
               −
             </button>
-            <span className="w-8 text-center text-sm font-semibold text-white tabular-nums">
+            <span className="w-8 text-center text-sm font-semibold text-[color:var(--text-primary)] tabular-nums">
               {radioMinQueue}
             </span>
             <button
               onClick={() => setRadioMinQueue(Math.min(MAX_QUEUE, radioMinQueue + 1))}
               disabled={radioMinQueue >= MAX_QUEUE}
-              className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white/70 hover:bg-white/20 hover:text-white transition-colors disabled:opacity-30 disabled:cursor-default font-bold text-base leading-none"
+              className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--bg-surface)] text-[color:var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[color:var(--text-primary)] transition-colors disabled:opacity-30 disabled:cursor-default font-bold text-base leading-none"
             >
               +
             </button>
-            <span className="text-[0.6875rem] text-white/60">tracks</span>
+            <span className="text-[0.6875rem] text-[color:var(--text-secondary)]">tracks</span>
           </div>
         </div>
       </div>

@@ -13,37 +13,40 @@ export default function DjPanel({ onClose }: Props) {
 
   return (
     <div className="py-2">
-      <div className="px-3 pb-1.5 text-[0.625rem] font-semibold uppercase tracking-widest text-gray-500">
+      <div className="px-4 pb-2 text-[0.625rem] font-semibold uppercase tracking-widest text-[color:var(--text-muted)]">
         Guest DJ
       </div>
-      {DJ_MODES.map(dj => (
-        <button
-          key={dj.key}
-          onClick={() => {
-            setDjMode(djMode === dj.key ? null : (dj.key as DjMode))
-            onClose()
-          }}
-          className={`w-full text-left px-3 py-2 hover:bg-app-surface-hover transition-colors ${
-            djMode === dj.key ? "bg-app-surface" : ""
-          }`}
-        >
-          <div
-            className={`flex items-center gap-2 text-sm font-medium ${
-              djMode === dj.key ? "text-accent" : "text-white"
+      {DJ_MODES.map(dj => {
+        const active = djMode === dj.key
+        return (
+          <button
+            key={dj.key}
+            onClick={() => {
+              setDjMode(active ? null : (dj.key as DjMode))
+              onClose()
+            }}
+            className={`w-full text-left px-4 py-2.5 transition-colors ${
+              active ? "bg-[var(--accent-tint)]" : "hover:bg-[var(--accent-tint-hover)]"
             }`}
           >
-            {djMode === dj.key ? (
-              <svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor" className="flex-shrink-0">
-                <path d="M13.78 3.22a.75.75 0 0 1 0 1.06l-8 8a.75.75 0 0 1-1.06 0l-3.5-3.5a.75.75 0 1 1 1.06-1.06L5.25 10.69l7.47-7.47a.75.75 0 0 1 1.06 0z" />
-              </svg>
-            ) : (
-              <span className="w-[10px] flex-shrink-0" />
-            )}
-            {dj.name}
-          </div>
-          <div className="text-xs text-gray-500 pl-[18px] mt-0.5">{dj.desc}</div>
-        </button>
-      ))}
+            <div
+              className={`flex items-center gap-2 text-sm font-medium ${
+                active ? "text-accent" : "text-[color:var(--text-primary)]"
+              }`}
+            >
+              {active ? (
+                <svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor" className="flex-shrink-0">
+                  <path d="M13.78 3.22a.75.75 0 0 1 0 1.06l-8 8a.75.75 0 0 1-1.06 0l-3.5-3.5a.75.75 0 1 1 1.06-1.06L5.25 10.69l7.47-7.47a.75.75 0 0 1 1.06 0z" />
+                </svg>
+              ) : (
+                <span className="w-[10px] flex-shrink-0" />
+              )}
+              {dj.name}
+            </div>
+            <div className="text-xs text-[color:var(--text-muted)] pl-[18px] mt-0.5">{dj.desc}</div>
+          </button>
+        )
+      })}
       {djMode && (
         <div className="border-t border-[var(--border)] mt-1 pt-1">
           <button
@@ -51,7 +54,7 @@ export default function DjPanel({ onClose }: Props) {
               setDjMode(null)
               onClose()
             }}
-            className="w-full text-left px-3 py-1.5 text-xs text-gray-500 hover:text-white transition-colors"
+            className="w-full text-left px-4 py-1.5 text-xs text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)] transition-colors"
           >
             Turn off Guest DJ
           </button>

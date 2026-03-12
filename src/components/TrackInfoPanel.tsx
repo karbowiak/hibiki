@@ -181,9 +181,9 @@ export default function TrackInfoPanel({ onClose }: Props) {
     <table className="w-full text-xs">
       <tbody>
         {r.map(([label, value]) => (
-          <tr key={label} className="border-b border-white/5 last:border-0">
-            <td className={`py-1.5 pr-3 whitespace-nowrap ${mono ? "text-white/30 font-mono text-[11px]" : "text-white/40"}`}>{label}</td>
-            <td className={`py-1.5 text-right ${mono ? "text-white/55 font-mono text-[11px] break-all" : "text-white/80"}`}>{value}</td>
+          <tr key={label} className="border-b border-[var(--border-subtle)] last:border-0">
+            <td className={`py-1.5 pr-3 whitespace-nowrap ${mono ? "text-[color:var(--text-muted)] font-mono text-[11px]" : "text-[color:var(--text-muted)]"}`}>{label}</td>
+            <td className={`py-1.5 text-right ${mono ? "text-[color:var(--text-secondary)] font-mono text-[11px] break-all" : "text-[color:var(--text-secondary)]"}`}>{value}</td>
           </tr>
         ))}
       </tbody>
@@ -199,19 +199,19 @@ export default function TrackInfoPanel({ onClose }: Props) {
       {/* Header */}
       <div className="px-4 pt-3 pb-1 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <h3 className="text-xs font-semibold uppercase tracking-widest text-white/50">Track Info</h3>
-          <p className="text-sm font-medium text-white truncate">{track.title}</p>
+          <h3 className="text-xs font-semibold uppercase tracking-widest text-[color:var(--text-muted)]">Track Info</h3>
+          <p className="text-sm font-medium text-[color:var(--text-primary)] truncate">{track.title}</p>
         </div>
         <div className="flex items-center gap-2">
           {debugEnabled && (
             <button
               onClick={handleCopy}
-              className="px-2 py-0.5 rounded text-[10px] bg-white/8 hover:bg-white/14 text-white/50 hover:text-white/80 transition-colors"
+              className="px-2 py-0.5 rounded text-[10px] bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] text-[color:var(--text-muted)] hover:text-[color:var(--text-secondary)] transition-colors"
             >
               {copied ? "Copied!" : "Copy JSON"}
             </button>
           )}
-          <button onClick={onClose} className="text-white/30 hover:text-white/60 transition-colors">
+          <button onClick={onClose} className="text-[color:var(--text-muted)] hover:text-[color:var(--text-secondary)] transition-colors">
             <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
               <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/>
             </svg>
@@ -228,8 +228,8 @@ export default function TrackInfoPanel({ onClose }: Props) {
 
         {/* Panel 2: Smart Crossfade */}
         {hasAnalysis && (
-          <div className="min-w-[240px] flex-1 border-l border-white/5 px-3">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-white/25 mb-1">
+          <div className="min-w-[240px] flex-1 border-l border-[var(--border-subtle)] px-3">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-[color:var(--text-muted)] mb-1">
               Smart Crossfade {smartCrossfade ? "" : "(off)"}
             </p>
             <SectionTable rows={analysisRows} mono />
@@ -238,8 +238,8 @@ export default function TrackInfoPanel({ onClose }: Props) {
 
         {/* Panel 3: Debug */}
         {hasDebug && (
-          <div className="min-w-[220px] flex-1 border-l border-white/5 px-3">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-white/25 mb-1">Debug</p>
+          <div className="min-w-[220px] flex-1 border-l border-[var(--border-subtle)] px-3">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-[color:var(--text-muted)] mb-1">Debug</p>
             <SectionTable rows={debugRows} mono />
           </div>
         )}

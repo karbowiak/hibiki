@@ -80,7 +80,7 @@ export default function PlayerPopover({
       {isOpen && pos && (
         <div
           ref={panelRef}
-          className="fixed z-[300] rounded-xl bg-app-card border border-[var(--border)] shadow-2xl select-none"
+          className="fixed z-[300] rounded-xl bg-app-card border border-[var(--border)] shadow-2xl shadow-black/40 backdrop-blur-lg select-none"
           style={{
             bottom: pos.bottom,
             ...(pos.centerX !== undefined
