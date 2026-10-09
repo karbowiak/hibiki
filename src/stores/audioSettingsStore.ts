@@ -31,7 +31,7 @@ export const useAudioSettingsStore = create<AudioSettingsState>()(
         engine.setCrossfadeWindow(4000)
         engine.setSameAlbumCrossfade(false) // gapless for albums
         engine.setSmartCrossfade(true) // always use MixRamp when available
-        engine.setSmartCrossfadeMax(20000)
+        engine.setSmartCrossfadeMax(15000)
         engine.setMixrampDb(-17)
         engine.setCacheMaxBytes(cacheMaxBytes)
       },

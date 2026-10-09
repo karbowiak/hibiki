@@ -33,6 +33,9 @@ pub struct TransitionPlan {
 #[derive(Debug, Clone)]
 pub struct CrossfadeParams {
     pub out_duration_sec: f32,
+    pub in_duration_sec: f32,
+    pub out_gain_db: f32,
+    pub in_gain_db: f32,
     pub out_parent_key: String,
     pub in_parent_key: String,
     pub out_end_ramp: Option<Vec<RampPoint>>,
@@ -58,6 +61,9 @@ pub fn parse_ramp(raw: Option<&str>) -> Vec<RampPoint> {
             let mut parts = pair.trim().split_whitespace();
             let db: f32 = parts.next()?.parse().ok()?;
             let time: f32 = parts.next()?.parse().ok()?;
+            if !db.is_finite() || !time.is_finite() || time < 0.0 || parts.next().is_some() {
+                return None;
+            }
             Some(RampPoint { db, time_sec: time })
         })
         .collect()
@@ -80,7 +86,7 @@ impl Default for CrossfadeSettings {
             crossfade_window_ms: 4000,
             same_album_crossfade: false,
             smart_crossfade: true,
-            smart_crossfade_max_ms: 20000,
+            smart_crossfade_max_ms: 15000,
             mixramp_db: -17.0,
         }
     }
@@ -117,4 +123,38 @@ mod tests {
         let ramp = parse_ramp(Some("-10 0.5;garbage;-5 1.0"));
         assert_eq!(ramp.len(), 2);
     }
+
+    #[test]
+    fn parse_ramp_discards_nonfinite_negative_and_extra_values() {
+        assert_eq!(
+            parse_ramp(Some("NaN 1;-10 inf;-20 -1;-5 1 junk;-8 0.5")),
+            vec![RampPoint {
+                db: -8.0,
+                time_sec: 0.5
+            }]
+        );
+    }
+}
+
+/// Overlaps must fit both tracks and remain bounded even for malformed settings.
+pub fn overlap_limit(params: &CrossfadeParams) -> Option<f32> {
+    if !params.out_duration_sec.is_finite()
+        || params.out_duration_sec <= 0.0
+        || !params.in_duration_sec.is_finite()
+        || params.in_duration_sec <= 0.0
+    {
+        return None;
+    }
+    let configured = if params.smart_crossfade_enabled {
+        params.smart_crossfade_max_ms
+    } else {
+        params.crossfade_window_ms
+    };
+    let limit = (configured as f32 / 1000.0)
+        .min(60.0)
+        // Keep short tracks from being consumed entirely by their overlaps,
+        // and leave the incoming deck time to prepare its following track.
+        .min(params.out_duration_sec * 0.5)
+        .min(params.in_duration_sec * 0.5);
+    (limit > 0.0).then_some(limit)
 }

@@ -154,11 +154,15 @@ impl DeckState {
                 return meta.duration_ms as f32 / 1000.0;
             }
         }
-        // Fallback to buffer-based duration (only for tracks without metadata)
+        if !self.fully_decoded {
+            return 0.0;
+        }
+        // Fallback to the complete decoded duration, including any seek offset.
         if self.channels == 0 || self.sample_rate == 0 {
             return 0.0;
         }
-        self.samples.len() as f32 / (self.sample_rate as f32 * self.channels as f32)
+        (self.sample_offset + self.samples.len()) as f32
+            / (self.sample_rate as f32 * self.channels as f32)
     }
 
     /// Whether the deck has reached the end of the track.
@@ -267,6 +271,7 @@ mod tests {
         deck.sample_rate = 44100;
         deck.channels = 2;
         deck.samples = vec![0.0; 44100 * 2]; // 1 second stereo
+        deck.fully_decoded = true;
         deck.loaded = true;
 
         assert!((deck.duration_secs() - 1.0).abs() < 0.01);

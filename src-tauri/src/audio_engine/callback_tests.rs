@@ -276,6 +276,40 @@ fn skipping_during_a_paused_overlap_does_not_wait_forever_for_the_outgoing_deck(
 }
 
 #[test]
+fn an_unknown_duration_does_not_turn_the_initial_stream_buffer_into_an_early_end() {
+    let (mut cb, _) = callback();
+    let mut unknown = meta(1);
+    unknown.duration_ms = 0;
+    cb.handle_load_deck(DeckId::A, unknown, 48000, 2, 1.0, 0);
+    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 96000];
+    cb.handle_load_deck(DeckId::B, meta(2), 48000, 2, 1.0, 0);
+    cb.deck_mgr.pending_deck_mut().samples = vec![0.1; 96000];
+    cb.set_state(EngineState::Playing);
+    cb.compute_and_set_schedule();
+    cb.deck_mgr.active_deck_mut().position = 95000;
+    cb.tick_scheduler();
+    assert_eq!(cb.deck_mgr.active_deck().rating_key(), 1);
+    assert_eq!(cb.deck_mgr.active_deck().duration_secs(), 0.0);
+}
+
+#[test]
+fn manual_skips_between_album_tracks_fade_after_the_new_buffer_is_ready() {
+    let (mut cb, _) = callback();
+    let mut outgoing = meta(1);
+    outgoing.parent_key = "album".into();
+    let mut incoming = meta(2);
+    incoming.parent_key = "album".into();
+    cb.handle_load_deck(DeckId::A, outgoing, 48000, 2, 1.0, 0);
+    cb.handle_load_deck(DeckId::B, incoming, 48000, 2, 1.0, 0);
+    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 96000];
+    cb.deck_mgr.active_deck_mut().has_started_playing = true;
+    cb.deck_mgr.pending_deck_mut().samples = vec![0.1; 96000];
+    cb.set_state(EngineState::Playing);
+    cb.handle_transition_to_active(true);
+    assert!(cb.is_crossfading);
+}
+
+#[test]
 fn eq_duck_lasts_milliseconds_instead_of_callback_count() {
     let (mut cb, _) = callback();
     cb.handle_command(AudioCommand::SetVolume(0.7));

@@ -10,7 +10,15 @@ use super::types::{CrossfadeParams, RampPoint, TransitionPlan};
 /// Linear interpolation: find the time (seconds) where the ramp crosses `threshold_db`.
 /// Returns `None` if the threshold is never reached.
 pub fn mixramp_interpolate(ramp: &[RampPoint], threshold_db: f32) -> Option<f32> {
-    if ramp.is_empty() {
+    if ramp.is_empty()
+        || !threshold_db.is_finite()
+        || ramp.iter().any(|point| {
+            !point.db.is_finite() || !point.time_sec.is_finite() || point.time_sec < 0.0
+        })
+        || ramp
+            .windows(2)
+            .any(|points| points[1].db < points[0].db || points[1].time_sec < points[0].time_sec)
+    {
         return None;
     }
 
@@ -18,8 +26,8 @@ pub fn mixramp_interpolate(ramp: &[RampPoint], threshold_db: f32) -> Option<f32>
     if threshold_db <= ramp[0].db {
         return Some(ramp[0].time_sec);
     }
-    // Threshold at or above the last point — never crossed
-    if threshold_db >= ramp[ramp.len() - 1].db {
+    // Above the last point — never crossed. An exact match is valid.
+    if threshold_db > ramp[ramp.len() - 1].db {
         return None;
     }
 
@@ -42,6 +50,7 @@ pub fn mixramp_interpolate(ramp: &[RampPoint], threshold_db: f32) -> Option<f32>
 /// Compute a MixRamp transition plan.
 /// Falls back to timed crossfade if ramps are unavailable or interpolation fails.
 pub fn compute_mixramp_transition(params: &CrossfadeParams) -> Option<TransitionPlan> {
+    let limit = super::types::overlap_limit(params)?;
     let out_end_ramp = params.out_end_ramp.as_deref();
     let in_start_ramp = params.in_start_ramp.as_deref();
 
@@ -55,22 +64,24 @@ pub fn compute_mixramp_transition(params: &CrossfadeParams) -> Option<Transition
         _ => return compute_timed_fallback(params),
     };
 
-    let end_overlap = match mixramp_interpolate(out_ramp, params.mixramp_db) {
+    let end_overlap = match mixramp_interpolate(out_ramp, params.mixramp_db - params.out_gain_db) {
         Some(t) => t,
         None => return compute_timed_fallback(params),
     };
-    let start_overlap = match mixramp_interpolate(in_ramp, params.mixramp_db) {
+    let start_overlap = match mixramp_interpolate(in_ramp, params.mixramp_db - params.in_gain_db) {
         Some(t) => t,
         None => return compute_timed_fallback(params),
     };
 
-    let overlap_duration = end_overlap + start_overlap;
-    if overlap_duration < 0.2 {
-        return compute_timed_fallback(params);
+    let overlap_duration = (end_overlap + start_overlap).min(limit);
+    if overlap_duration <= 0.0 {
+        return None;
     }
 
     Some(TransitionPlan {
-        start_time_sec: params.out_duration_sec - end_overlap,
+        // Start the intro early enough that both loudness crossings meet.
+        // The outgoing deck then plays its complete tail until the overlap ends.
+        start_time_sec: params.out_duration_sec - overlap_duration,
         duration_sec: overlap_duration,
         fade_out_curve: None, // MixRamp: both at full volume
         fade_in_curve: None,
@@ -87,7 +98,10 @@ mod tests {
     use super::*;
 
     fn make_ramp(pairs: &[(f32, f32)]) -> Vec<RampPoint> {
-        pairs.iter().map(|&(db, t)| RampPoint { db, time_sec: t }).collect()
+        pairs
+            .iter()
+            .map(|&(db, t)| RampPoint { db, time_sec: t })
+            .collect()
     }
 
     #[test]
@@ -120,6 +134,9 @@ mod tests {
     #[test]
     fn mixramp_transition_with_valid_ramps() {
         let params = CrossfadeParams {
+            in_duration_sec: 300.0,
+            out_gain_db: 0.0,
+            in_gain_db: 0.0,
             out_duration_sec: 300.0,
             out_parent_key: "a".into(),
             in_parent_key: "b".into(),
@@ -137,13 +154,16 @@ mod tests {
         assert!(plan.fade_in_curve.is_none());
         // Overlap = end_overlap(1.5) + start_overlap(0.8) = 2.3s
         assert!((plan.duration_sec - 2.3).abs() < 0.1);
-        // Start = 300 - 1.5 = 298.5
-        assert!((plan.start_time_sec - 298.5).abs() < 0.1);
+        // Start = 300 - (1.5 + 0.8) = 297.7
+        assert!((plan.start_time_sec - 297.7).abs() < 0.1);
     }
 
     #[test]
     fn mixramp_falls_back_without_ramps() {
         let params = CrossfadeParams {
+            in_duration_sec: 300.0,
+            out_gain_db: 0.0,
+            in_gain_db: 0.0,
             out_duration_sec: 300.0,
             out_parent_key: "a".into(),
             in_parent_key: "b".into(),
@@ -159,5 +179,113 @@ mod tests {
         // Should fall back to timed crossfade with gain curves
         assert!(plan.fade_out_curve.is_some());
         assert!(plan.fade_in_curve.is_some());
+    }
+
+    #[test]
+    fn overlap_aligns_both_loudness_crossings_and_keeps_the_outgoing_tail() {
+        let params = CrossfadeParams {
+            in_duration_sec: 300.0,
+            out_gain_db: 0.0,
+            in_gain_db: 0.0,
+            out_duration_sec: 300.0,
+            out_parent_key: "a".into(),
+            in_parent_key: "b".into(),
+            out_end_ramp: Some(make_ramp(&[(-30.0, 0.0), (-17.0, 1.5), (-5.0, 3.0)])),
+            in_start_ramp: Some(make_ramp(&[(-30.0, 0.0), (-17.0, 0.8), (-5.0, 2.0)])),
+            crossfade_window_ms: 4000,
+            smart_crossfade_max_ms: 15000,
+            mixramp_db: -17.0,
+            smart_crossfade_enabled: true,
+            same_album_crossfade: false,
+        };
+        let plan = compute_mixramp_transition(&params).unwrap();
+        assert!(
+            (plan.start_time_sec + 0.8 - (300.0 - 1.5)).abs() < 0.001,
+            "incoming and outgoing loudness thresholds should meet at the same time"
+        );
+        assert!(
+            (plan.start_time_sec + plan.duration_sec - 300.0).abs() < 0.001,
+            "overlap completion must coincide with the outgoing song's natural end"
+        );
+    }
+
+    #[test]
+    fn a_long_ramp_cannot_trigger_a_transition_minutes_before_the_track_ends() {
+        let params = CrossfadeParams {
+            in_duration_sec: 300.0,
+            out_gain_db: 0.0,
+            in_gain_db: 0.0,
+            out_duration_sec: 180.0,
+            out_parent_key: "a".into(),
+            in_parent_key: "b".into(),
+            out_end_ramp: Some(make_ramp(&[(-51.0, 0.0), (-17.0, 150.0), (0.0, 170.0)])),
+            in_start_ramp: Some(make_ramp(&[(-51.0, 0.0), (-17.0, 20.0), (0.0, 25.0)])),
+            crossfade_window_ms: 4000,
+            smart_crossfade_max_ms: 15000,
+            mixramp_db: -17.0,
+            smart_crossfade_enabled: true,
+            same_album_crossfade: false,
+        };
+        let plan = compute_mixramp_transition(&params).unwrap();
+        assert!(plan.duration_sec <= 15.0);
+        assert!(plan.start_time_sec >= 165.0);
+    }
+
+    #[test]
+    fn crossing_points_account_for_the_gain_actually_applied_to_each_track() {
+        let params = CrossfadeParams {
+            out_duration_sec: 300.0,
+            in_duration_sec: 300.0,
+            out_gain_db: -3.0,
+            in_gain_db: 0.0,
+            out_parent_key: "a".into(),
+            in_parent_key: "b".into(),
+            out_end_ramp: Some(make_ramp(&[(-30.0, 0.0), (-17.0, 1.5), (-5.0, 3.0)])),
+            in_start_ramp: Some(make_ramp(&[(-30.0, 0.0), (-17.0, 0.8), (-5.0, 2.0)])),
+            crossfade_window_ms: 4000,
+            smart_crossfade_max_ms: 15000,
+            mixramp_db: -17.0,
+            smart_crossfade_enabled: true,
+            same_album_crossfade: false,
+        };
+        let plan = compute_mixramp_transition(&params).unwrap();
+        assert!((plan.duration_sec - 2.675).abs() < 0.001);
+        assert!((plan.start_time_sec + plan.duration_sec - 300.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn malformed_ramps_cannot_create_invalid_transition_points() {
+        for ramp in [
+            make_ramp(&[(-30.0, -1.0), (-5.0, 2.0)]),
+            make_ramp(&[(-30.0, 1.0), (-5.0, 0.0)]),
+            make_ramp(&[(-5.0, 0.0), (-30.0, 2.0)]),
+            make_ramp(&[(f32::NAN, 0.0), (-5.0, f32::INFINITY)]),
+        ] {
+            assert!(mixramp_interpolate(&ramp, -17.0).is_none());
+        }
+        assert!(mixramp_interpolate(&make_ramp(&[(-30.0, 0.0), (-5.0, 2.0)]), f32::NAN).is_none());
+    }
+
+    #[test]
+    fn valid_short_overlaps_stay_short_instead_of_becoming_long_timed_fades() {
+        let params = CrossfadeParams {
+            out_duration_sec: 140.0,
+            in_duration_sec: 190.0,
+            out_gain_db: 0.0,
+            in_gain_db: 0.0,
+            out_parent_key: "a".into(),
+            in_parent_key: "b".into(),
+            out_end_ramp: Some(make_ramp(&[(-5.61, 0.12), (0.96, 0.22), (6.4, 0.42)])),
+            in_start_ramp: Some(make_ramp(&[(2.1, 0.0), (5.45, 0.1), (6.75, 0.2)])),
+            crossfade_window_ms: 4000,
+            smart_crossfade_max_ms: 15000,
+            mixramp_db: -17.0,
+            smart_crossfade_enabled: true,
+            same_album_crossfade: false,
+        };
+        let plan = compute_mixramp_transition(&params).unwrap();
+        assert!((plan.duration_sec - 0.12).abs() < 0.001);
+        assert!(plan.fade_in_curve.is_none());
+        assert!(plan.fade_out_curve.is_none());
     }
 }

@@ -601,6 +601,7 @@ impl AudioCallbackState {
                         };
                     }
                 }
+                self.compute_and_set_schedule();
             }
             AudioCommand::UpdateCrossfadeSettings(settings) => {
                 self.crossfade_settings = settings;
@@ -684,11 +685,12 @@ impl AudioCallbackState {
                 .as_ref()
                 .map_or(true, |m| m.skip_crossfade)
             && self.effective_window() > 0
-            && !super::crossfade::album_aware::should_suppress_crossfade(
-                self.deck_mgr.active_deck().parent_key(),
-                self.deck_mgr.pending_deck().parent_key(),
-                self.crossfade_settings.same_album_crossfade,
-            );
+            && (user_skip
+                || !super::crossfade::album_aware::should_suppress_crossfade(
+                    self.deck_mgr.active_deck().parent_key(),
+                    self.deck_mgr.pending_deck().parent_key(),
+                    self.crossfade_settings.same_album_crossfade,
+                ));
 
         if should_xfade && user_skip {
             // Short duck crossfade for user skip
@@ -1055,6 +1057,9 @@ impl AudioCallbackState {
 
     fn compute_and_set_schedule(&mut self) {
         self.scheduler.reset();
+        if self.waiting_for_play || self.is_crossfading {
+            return;
+        }
 
         let active = self.deck_mgr.active_deck();
         let pending = self.deck_mgr.pending_deck();
@@ -1099,6 +1104,17 @@ impl AudioCallbackState {
 
         CrossfadeParams {
             out_duration_sec: active.duration_secs(),
+            in_duration_sec: pending.duration_secs(),
+            out_gain_db: if active.norm_gain.is_finite() && active.norm_gain > 0.0 {
+                20.0 * active.norm_gain.log10()
+            } else {
+                0.0
+            },
+            in_gain_db: if pending.norm_gain.is_finite() && pending.norm_gain > 0.0 {
+                20.0 * pending.norm_gain.log10()
+            } else {
+                0.0
+            },
             out_parent_key: active.parent_key().to_string(),
             in_parent_key: pending.parent_key().to_string(),
             out_end_ramp: out_ramps.map(|r| r.end_ramp.clone()),
