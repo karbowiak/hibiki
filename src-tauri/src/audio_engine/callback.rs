@@ -23,6 +23,10 @@ use super::event::EngineEvent;
 use super::output::mixer;
 use super::types::{DeckId, EngineState};
 
+#[cfg(test)]
+#[path = "callback_tests.rs"]
+mod tests;
+
 /// Atomics shared between the audio callback and other threads.
 /// The audio callback WRITES, other threads READ.
 pub struct SharedAtomics {
@@ -85,6 +89,7 @@ pub struct AudioCallbackState {
     /// Rating key of the track being faded OUT during crossfade.
     /// Used by check_crossfade_complete to avoid resetting a newly preloaded deck.
     crossfade_out_rk: i64,
+    crossfade_remaining_frames: u64,
     pub normalization_enabled: bool,
     paused: bool,
 
@@ -131,6 +136,7 @@ impl AudioCallbackState {
             ramp_cache: HashMap::new(),
             is_crossfading: false,
             crossfade_out_rk: 0,
+            crossfade_remaining_frames: 0,
             normalization_enabled: true,
             paused: false,
 
@@ -159,6 +165,7 @@ impl AudioCallbackState {
     // -----------------------------------------------------------------------
 
     pub fn process_callback(&mut self, data: &mut [f32]) {
+        let frames = data.len() / self.device_channels.max(1) as usize;
         // 1. Process commands first (lock-free)
         //    LoadDeck must be processed before draining samples so the deck
         //    knows its rating_key and generation — otherwise initial batches
@@ -175,6 +182,7 @@ impl AudioCallbackState {
         data.fill(0.0);
 
         // 5. Mix decks (direct access, no lock)
+        let advancing_fade = self.is_crossfading && !self.paused && self.state() == EngineState::Playing;
         if !self.paused && self.state() == EngineState::Playing {
             let (active, pending) = self.deck_mgr.both_decks_mut();
             mixer::mix_decks(active, pending, data, self.device_channels, self.is_crossfading);
@@ -190,10 +198,10 @@ impl AudioCallbackState {
         self.tick_scheduler();
 
         // 9. Check crossfade completion (replaces sleep+lock pattern)
-        self.check_crossfade_complete();
+        self.check_crossfade_complete(if advancing_fade { frames } else { 0 });
 
         // 10. Handle duck-and-apply countdown
-        self.tick_duck();
+        self.tick_duck(frames as u32);
 
         // 11. Send visualizer data (~60fps)
         self.maybe_send_vis_frame(data);
@@ -331,7 +339,11 @@ impl AudioCallbackState {
                 self.compute_and_set_schedule();
             }
             AudioCommand::SetVolume(gain) => {
-                self.dsp_chain.set_volume(gain);
+                if let Some(saved) = self.duck_saved_volume.as_mut() {
+                    *saved = gain;
+                } else {
+                    self.dsp_chain.set_volume(gain);
+                }
             }
             AudioCommand::SetPreampGain(db) => {
                 self.dsp_chain.set_preamp_db(db);
@@ -350,14 +362,13 @@ impl AudioCallbackState {
             }
             AudioCommand::SetNormalization(enabled) => {
                 self.normalization_enabled = enabled;
-                // Update active deck's norm_gain
-                let active = self.deck_mgr.active_deck_mut();
-                if let Some(ref meta) = active.meta {
-                    active.norm_gain = if enabled {
-                        meta.gain_db.map_or(1.0, |db| 10.0_f32.powf(db / 20.0))
-                    } else {
-                        1.0
-                    };
+                for id in [DeckId::A, DeckId::B] {
+                    let deck = self.deck_mgr.deck_mut(id);
+                    if let Some(ref meta) = deck.meta {
+                        deck.norm_gain = if enabled {
+                            meta.gain_db.map_or(1.0, |db| 10.0_f32.powf(db / 20.0))
+                        } else { 1.0 };
+                    }
                 }
             }
             AudioCommand::UpdateCrossfadeSettings(settings) => {
@@ -379,7 +390,7 @@ impl AudioCallbackState {
             }
             AudioCommand::DuckAndApply { duck_ms } => {
                 // Save current volume, set to 0, schedule restore
-                let current = self.dsp_chain.volume.gain();
+                let current = self.duck_saved_volume.unwrap_or_else(|| self.dsp_chain.volume.gain());
                 self.duck_saved_volume = Some(current);
                 self.dsp_chain.set_volume(0.0);
                 let frames = (duck_ms as f32 / 1000.0 * self.device_sample_rate as f32) as u32;
@@ -408,7 +419,7 @@ impl AudioCallbackState {
         d.channels = channels;
         d.meta = Some(meta);
         d.loaded = true;
-        d.norm_gain = norm_gain;
+        d.norm_gain = if self.normalization_enabled { norm_gain } else { 1.0 };
         // Inherit the current generation from atomics for new batches
         d.generation = match deck {
             DeckId::A => self.atomics.deck_a_generation.load(Ordering::Relaxed),
@@ -453,6 +464,7 @@ impl AudioCallbackState {
             self.crossfade_out_rk = self.deck_mgr.active_deck().rating_key();
             self.swap_decks();
             self.is_crossfading = true;
+            self.crossfade_remaining_frames = (plan.duration_sec * self.device_sample_rate as f32).ceil() as u64;
 
             let (active, old) = self.deck_mgr.both_decks_mut();
             apply_fade_start(active, old, &plan);
@@ -567,6 +579,7 @@ impl AudioCallbackState {
             self.crossfade_out_rk = self.deck_mgr.active_deck().rating_key();
             self.swap_decks();
             self.is_crossfading = true;
+            self.crossfade_remaining_frames = (plan.duration_sec * self.device_sample_rate as f32).ceil() as u64;
 
             let (active, old) = self.deck_mgr.both_decks_mut();
             apply_fade_start(active, old, &plan);
@@ -608,26 +621,14 @@ impl AudioCallbackState {
     // Crossfade completion (frame-accurate, replaces sleep+lock)
     // -----------------------------------------------------------------------
 
-    fn check_crossfade_complete(&mut self) {
+    fn check_crossfade_complete(&mut self, frames: usize) {
         if !self.is_crossfading {
             return;
         }
 
-        // Check if both fade curves are done (or None for MixRamp)
-        let active_done = self
-            .deck_mgr
-            .active_deck()
-            .fade_curve
-            .as_ref()
-            .map_or(true, |c| c.is_finished());
-        let pending_done = self
-            .deck_mgr
-            .pending_deck()
-            .fade_curve
-            .as_ref()
-            .map_or(true, |c| c.is_finished());
-
-        if active_done && pending_done {
+        // MixRamp has no gain curves. Its overlap still has a real duration.
+        self.crossfade_remaining_frames = self.crossfade_remaining_frames.saturating_sub(frames as u64);
+        if self.crossfade_remaining_frames == 0 {
             self.is_crossfading = false;
 
             let pending_rk = self.deck_mgr.pending_deck().rating_key();
@@ -687,10 +688,9 @@ impl AudioCallbackState {
     // Duck-and-apply
     // -----------------------------------------------------------------------
 
-    fn tick_duck(&mut self) {
+    fn tick_duck(&mut self, frames: u32) {
         if self.duck_remaining_frames > 0 {
-            let frames_in_buffer = (self.device_channels as u32).max(1);
-            self.duck_remaining_frames = self.duck_remaining_frames.saturating_sub(frames_in_buffer);
+            self.duck_remaining_frames = self.duck_remaining_frames.saturating_sub(frames);
             if self.duck_remaining_frames == 0 {
                 if let Some(vol) = self.duck_saved_volume.take() {
                     self.dsp_chain.set_volume(vol);

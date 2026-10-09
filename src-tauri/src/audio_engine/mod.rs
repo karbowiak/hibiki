@@ -519,6 +519,8 @@ fn handle_play(
 
             // Resolve gain: Plex metadata → cached analysis → fresh EBU R128 analysis
             let gain_db = resolve_gain_db(meta, url, cache);
+            let mut resolved_meta = meta.clone();
+            resolved_meta.gain_db = gain_db;
             let norm_gain = if norm_enabled {
                 gain_db.map_or(1.0, |db| 10.0_f32.powf(db / 20.0))
             } else {
@@ -535,7 +537,7 @@ fn handle_play(
             // Tell audio callback to prepare the deck
             let _ = audio_cmd_tx.send(AudioCommand::LoadDeck {
                 deck,
-                meta: meta.clone(),
+                meta: resolved_meta,
                 sample_rate: result.sample_rate,
                 channels: result.channels,
                 norm_gain,
@@ -620,6 +622,8 @@ fn handle_preload(
             let has_more = result.has_more;
 
             let gain_db = resolve_gain_db(meta, url, cache);
+            let mut resolved_meta = meta.clone();
+            resolved_meta.gain_db = gain_db;
             let norm_gain = if norm_enabled {
                 gain_db.map_or(1.0, |db| 10.0_f32.powf(db / 20.0))
             } else {
@@ -634,7 +638,7 @@ fn handle_preload(
 
             let _ = audio_cmd_tx.send(AudioCommand::LoadDeck {
                 deck,
-                meta: meta.clone(),
+                meta: resolved_meta,
                 sample_rate: result.sample_rate,
                 channels: result.channels,
                 norm_gain,
