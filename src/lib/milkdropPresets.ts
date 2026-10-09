@@ -1,4 +1,4 @@
-// Singleton module for loading and managing all 555 Milkdrop presets.
+// Singleton module for loading and managing Milkdrop presets.
 // Not React, not Zustand — plain module state.
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -9,7 +9,7 @@ const allPresets: Record<string, PresetData> = {}
 let packsLoaded = 0
 const TOTAL_PACKS = 6
 
-/** Import the meta pack (~30KB) to extract all 555 preset names without loading full data. */
+/** Import the meta pack (~30KB) to extract preset names without loading full data. */
 export async function initPresetMeta(): Promise<string[]> {
   if (allNames.length > 0) return allNames
 

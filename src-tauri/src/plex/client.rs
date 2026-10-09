@@ -572,6 +572,73 @@ impl PlexClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn mock_http(responses: Vec<String>) -> (PlexClient, tokio::task::JoinHandle<Vec<String>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = PlexClient::new(PlexClientConfig {
+            base_url: format!("http://{}", listener.local_addr().unwrap()),
+            token: "test-token".to_string(),
+            client_id: "test-client".to_string(),
+            ..Default::default()
+        }).unwrap();
+        let server = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for response in responses {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0u8; 4096];
+                while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                    let size = socket.read(&mut buffer).await.unwrap();
+                    assert!(size > 0, "client disconnected before sending headers");
+                    request.extend_from_slice(&buffer[..size]);
+                    assert!(request.len() < 65536, "request headers too large");
+                }
+                requests.push(String::from_utf8(request).unwrap());
+                socket.write_all(response.as_bytes()).await.unwrap();
+                socket.shutdown().await.unwrap();
+            }
+            requests
+        });
+        (client, server)
+    }
+
+    #[tokio::test]
+    async fn test_http_retry_and_plex_headers() {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let body = r#"{"MediaContainer":{"size":1}}"#;
+            let (client, server) = mock_http(vec![
+                "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+                format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body),
+            ]).await;
+            let result: serde_json::Value = client.get("/library/sections").await.unwrap();
+            assert_eq!(result["size"], 1);
+            let requests = server.await.unwrap();
+            assert_eq!(requests.len(), 2);
+            for request in requests {
+                assert!(request.starts_with("GET /library/sections?includeLoudnessRamps=1 HTTP/1.1\r\n"));
+                let headers = request.to_ascii_lowercase();
+                assert!(headers.contains("x-plex-token: test-token\r\n"));
+                assert!(headers.contains("x-plex-client-identifier: test-client\r\n"));
+                assert!(headers.contains("x-plex-product: hibiki\r\n"));
+                assert!(headers.contains("accept: application/json\r\n"));
+            }
+        }).await.expect("mock HTTP request timed out");
+    }
+
+    #[tokio::test]
+    async fn test_media_fetch_rejects_truncated_body() {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let (client, server) = mock_http(vec![
+                "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\ndata".to_string(),
+            ]).await;
+            let url = client.build_url("/library/parts/1/file.flac");
+            assert!(client.fetch_bytes(&url).await.is_err(), "incomplete audio must not be accepted");
+            let requests = server.await.unwrap();
+            assert_eq!(requests.len(), 1);
+            assert!(requests[0].to_ascii_lowercase().contains("x-plex-token: test-token\r\n"));
+        }).await.expect("mock media request timed out");
+    }
 
     #[test]
     fn test_build_url() {

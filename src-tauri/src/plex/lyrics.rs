@@ -448,103 +448,107 @@ mod tests {
     // Integration tests
     // -----------------------------------------------------------------------
 
-    /// Diagnostic: fetch the raw Plex JSON for a recently-added track with
-    /// `includeLyrics=1` and print what Plex returns in the `Lyrics` field.
-    /// This lets us confirm whether Plex is returning lyrics at all.
-    #[tokio::test]
-    async fn test_raw_plex_response_for_lyrics() {
-        let client = get_client();
-        let section_id = get_music_section_id(&client).await;
+    mod integration_tests {
+        use super::*;
 
-        let items = match client.recently_added(section_id, Some("track"), Some(5)).await {
-            Ok(v) => v,
-            Err(e) => { println!("recently_added failed: {}", e); return; }
-        };
+        /// Diagnostic: fetch the raw Plex JSON for a recently-added track with
+        /// `includeLyrics=1` and print what Plex returns in the `Lyrics` field.
+        /// This lets us confirm whether Plex is returning lyrics at all.
+        #[tokio::test]
+        async fn test_raw_plex_response_for_lyrics() {
+            let client = get_client();
+            let section_id = get_music_section_id(&client).await;
 
-        let Some(track_key) = items.into_iter().find_map(|m| {
-            if let PlexMedia::Track(t) = m { Some(t.rating_key) } else { None }
-        }) else {
-            println!("No tracks found — skipping");
-            return;
-        };
+            let items = match client.recently_added(section_id, Some("track"), Some(5)).await {
+                Ok(v) => v,
+                Err(e) => { println!("recently_added failed: {}", e); return; }
+            };
 
-        let path = format!("/library/metadata/{}?includeLyrics=1", track_key);
-        let raw = match client.get_raw(&path).await {
-            Ok(r) => r,
-            Err(e) => { println!("get_raw failed: {}", e); return; }
-        };
+            let Some(track_key) = items.into_iter().find_map(|m| {
+                if let PlexMedia::Track(t) = m { Some(t.rating_key) } else { None }
+            }) else {
+                println!("No tracks found — skipping");
+                return;
+            };
 
-        // Parse just enough to find the Lyrics section
-        let v: serde_json::Value = match serde_json::from_str(&raw) {
-            Ok(v) => v,
-            Err(e) => { println!("JSON parse error: {}", e); return; }
-        };
+            let path = format!("/library/metadata/{}?includeLyrics=1", track_key);
+            let raw = match client.get_raw(&path).await {
+                Ok(r) => r,
+                Err(e) => { println!("get_raw failed: {}", e); return; }
+            };
 
-        let lyrics_val = &v["MediaContainer"]["Metadata"][0]["Lyrics"];
-        println!("--- raw Lyrics field for track {} ---", track_key);
-        println!("{}", serde_json::to_string_pretty(lyrics_val).unwrap_or_default());
+            // Parse just enough to find the Lyrics section
+            let v: serde_json::Value = match serde_json::from_str(&raw) {
+                Ok(v) => v,
+                Err(e) => { println!("JSON parse error: {}", e); return; }
+            };
 
-        let media_val = &v["MediaContainer"]["Metadata"][0]["Media"];
-        println!("--- Media (first part streams) ---");
-        println!("{}", serde_json::to_string_pretty(&media_val[0]["Part"][0]["Stream"]).unwrap_or_default());
-    }
+            let lyrics_val = &v["MediaContainer"]["Metadata"][0]["Lyrics"];
+            println!("--- raw Lyrics field for track {} ---", track_key);
+            println!("{}", serde_json::to_string_pretty(lyrics_val).unwrap_or_default());
 
-    /// End-to-end: find a track with lyrics and confirm we can parse them.
-    #[tokio::test]
-    async fn test_get_lyrics_for_track_with_lyrics() {
-        let client = get_client();
-        let section_id = get_music_section_id(&client).await;
-
-        let Some(key) = find_track_with_lyrics(&client, section_id).await else {
-            println!("No tracks with lyrics found in recently_added — skipping");
-            return;
-        };
-
-        match get_lyrics(&client, key).await {
-            Ok(lines) if lines.is_empty() => println!("get_lyrics returned 0 lines for track {}", key),
-            Ok(lines) => {
-                println!("get_lyrics returned {} lines for track {}", lines.len(), key);
-                println!("  First: {:?}", lines.first());
-                println!("  Last:  {:?}", lines.last());
-            }
-            Err(e) => println!("get_lyrics error: {}", e),
+            let media_val = &v["MediaContainer"]["Metadata"][0]["Media"];
+            println!("--- Media (first part streams) ---");
+            println!("{}", serde_json::to_string_pretty(&media_val[0]["Part"][0]["Stream"]).unwrap_or_default());
         }
-    }
 
-    /// Search recently added tracks and report lyrics status for each.
-    #[tokio::test]
-    async fn test_lyrics_coverage_report() {
-        let client = get_client();
-        let section_id = get_music_section_id(&client).await;
+        /// End-to-end: find a track with lyrics and confirm we can parse them.
+        #[tokio::test]
+        async fn test_get_lyrics_for_track_with_lyrics() {
+            let client = get_client();
+            let section_id = get_music_section_id(&client).await;
 
-        let items = match client.recently_added(section_id, Some("track"), Some(20)).await {
-            Ok(v) => v,
-            Err(e) => { println!("recently_added failed: {}", e); return; }
-        };
+            let Some(key) = find_track_with_lyrics(&client, section_id).await else {
+                println!("No tracks with lyrics found in recently_added — skipping");
+                return;
+            };
 
-        let mut has_lyrics = 0usize;
-        let mut no_lyrics  = 0usize;
+            match get_lyrics(&client, key).await {
+                Ok(lines) if lines.is_empty() => println!("get_lyrics returned 0 lines for track {}", key),
+                Ok(lines) => {
+                    println!("get_lyrics returned {} lines for track {}", lines.len(), key);
+                    println!("  First: {:?}", lines.first());
+                    println!("  Last:  {:?}", lines.last());
+                }
+                Err(e) => println!("get_lyrics error: {}", e),
+            }
+        }
 
-        for item in items {
-            let PlexMedia::Track(t) = item else { continue };
-            let path = format!("/library/metadata/{}?includeLyrics=1", t.rating_key);
-            let container: crate::plex::models::MediaContainer<crate::plex::models::Track> =
-                match client.get(&path).await {
-                    Ok(v) => v,
-                    Err(e) => { println!("  track {} fetch error: {}", t.rating_key, e); continue; }
-                };
-            if let Some(track) = container.metadata.into_iter().next() {
-                if track.lyrics.is_empty() {
-                    println!("  NO LYRICS  — {:?} (id={})", track.title, t.rating_key);
-                    no_lyrics += 1;
-                } else {
-                    let fmts: Vec<_> = track.lyrics.iter().map(|s| s.format.as_str()).collect();
-                    println!("  HAS LYRICS — {:?} (id={}) formats={:?}", track.title, t.rating_key, fmts);
-                    has_lyrics += 1;
+        /// Search recently added tracks and report lyrics status for each.
+        #[tokio::test]
+        async fn test_lyrics_coverage_report() {
+            let client = get_client();
+            let section_id = get_music_section_id(&client).await;
+
+            let items = match client.recently_added(section_id, Some("track"), Some(20)).await {
+                Ok(v) => v,
+                Err(e) => { println!("recently_added failed: {}", e); return; }
+            };
+
+            let mut has_lyrics = 0usize;
+            let mut no_lyrics  = 0usize;
+
+            for item in items {
+                let PlexMedia::Track(t) = item else { continue };
+                let path = format!("/library/metadata/{}?includeLyrics=1", t.rating_key);
+                let container: crate::plex::models::MediaContainer<crate::plex::models::Track> =
+                    match client.get(&path).await {
+                        Ok(v) => v,
+                        Err(e) => { println!("  track {} fetch error: {}", t.rating_key, e); continue; }
+                    };
+                if let Some(track) = container.metadata.into_iter().next() {
+                    if track.lyrics.is_empty() {
+                        println!("  NO LYRICS  — {:?} (id={})", track.title, t.rating_key);
+                        no_lyrics += 1;
+                    } else {
+                        let fmts: Vec<_> = track.lyrics.iter().map(|s| s.format.as_str()).collect();
+                        println!("  HAS LYRICS — {:?} (id={}) formats={:?}", track.title, t.rating_key, fmts);
+                        has_lyrics += 1;
+                    }
                 }
             }
-        }
 
-        println!("\n--- Summary: {} with lyrics, {} without ---", has_lyrics, no_lyrics);
+            println!("\n--- Summary: {} with lyrics, {} without ---", has_lyrics, no_lyrics);
+        }
     }
 }

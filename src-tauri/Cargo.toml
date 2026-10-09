@@ -10,14 +10,14 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2.7.1", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["macos-private-api", "devtools"] }
-tauri-plugin-shell = "2"
-tauri-plugin-window-state = "2"
-tauri-plugin-updater = "2.10"
-tauri-plugin-notification = "2"
+tauri = { version = "2.12.2", features = ["macos-private-api", "devtools"] }
+tauri-plugin-shell = "2.4.1"
+tauri-plugin-window-state = "2.5.0"
+tauri-plugin-updater = "2.13.2"
+tauri-plugin-notification = "2.5.1"
 souvlaki = "0.7"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -27,13 +27,14 @@ tokio = { version = "1.35", features = ["full"] }
 futures = "0.3"
 
 # HTTP client with retry logic
-reqwest = { version = "0.11", features = ["json", "stream"] }
-reqwest-middleware = "0.2"
-reqwest-retry = "0.3"
+# Preserve the native TLS, text decoding, HTTP/2, and system proxy behavior of 0.11.
+reqwest = { version = "0.13.5", default-features = false, features = ["native-tls", "charset", "http2", "system-proxy", "json", "stream", "query", "form"] }
+reqwest-middleware = { version = "0.5.2", features = ["json", "query"] }
+reqwest-retry = "0.9.1"
 
 # Error handling
 anyhow = "1.0"
-thiserror = "1.0"
+thiserror = "2.0"
 
 # Tracing
 tracing = "0.1"
@@ -52,12 +53,12 @@ sha1 = "0.10"
 # Utilities
 once_cell = "1.19"
 uuid = { version = "1", features = ["v4"] }
-roxmltree = "0.19"
-scraper = "0.18"
+roxmltree = "0.21"
+scraper = "0.27"
 crossbeam-channel = "0.5"
 
 # SQLite database
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 # Cross-platform audio device enumeration & playback
 cpal = "0.15"
@@ -72,9 +73,6 @@ symphonia-adapter-fdk-aac = "0.1"
 
 # EBU R128 loudness analysis (for Opus tracks where Plex lacks proper loudness data)
 ebur128 = "0.1"
-
-# Lock-free SPSC ring buffer (decode thread → audio thread)
-ringbuf = "0.4"
 
 # FFT for visualizer frequency analysis
 realfft = "3.5"

@@ -5,6 +5,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build (for example v0.5.2)
+        required: true
+        type: string
 
 jobs:
   create-release:
@@ -14,25 +19,35 @@ jobs:
     outputs:
       release_id: ${{ steps.create-release.outputs.result }}
       version: ${{ steps.get-version.outputs.version }}
+      tag: ${{ steps.get-version.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Get version from tag
         id: get-version
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          VERSION="${{ github.ref_name }}"
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Expected a release tag such as v0.5.2, got: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          VERSION="$RELEASE_TAG"
           VERSION="${VERSION#v}"
-          VERSION="${VERSION#.}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
 
       - name: Create release
         id: create-release
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           VERSION: ${{ steps.get-version.outputs.version }}
+          RELEASE_TAG: ${{ steps.get-version.outputs.tag }}
         with:
           script: |
-            const tag = context.ref.replace('refs/tags/', '')
+            const tag = process.env.RELEASE_TAG
             const { data } = await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -66,7 +81,9 @@ jobs:
             args: ""
             rust_target: x86_64-pc-windows-msvc
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.create-release.outputs.tag }}
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -82,7 +99,8 @@ jobs:
             libdbus-1-dev \
             libssl-dev \
             pkg-config \
-            cmake
+            cmake \
+            desktop-file-utils
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -96,7 +114,7 @@ jobs:
         with:
           bun-version: latest
 
-      - run: bun install
+      - run: bun install --frozen-lockfile
 
       - name: Patch version in config files
         shell: bash
@@ -123,7 +141,7 @@ jobs:
           "
 
       - name: Build and upload
-        uses: tauri-apps/tauri-action@v0.5
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -132,8 +150,14 @@ jobs:
           PI_SECRET: ${{ secrets.PI_SECRET }}
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
-          includeUpdaterJson: true
+          tagName: ${{ needs.create-release.outputs.tag }}
+          releaseDraft: true
+          uploadUpdaterJson: true
           args: ${{ matrix.args }}
+
+      - name: Validate relocated AppImage metadata
+        if: runner.os == 'Linux'
+        run: python3 scripts/check-appimage.py src-tauri/target/release/bundle/appimage/*.AppImage
 
   publish-release:
     runs-on: ubuntu-latest
@@ -142,12 +166,12 @@ jobs:
       contents: write
     steps:
       - name: Publish release
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           release_id: ${{ needs.create-release.outputs.release_id }}
         with:
           script: |
-            github.rest.repos.updateRelease({
+            await github.rest.repos.updateRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
               release_id: process.env.release_id,

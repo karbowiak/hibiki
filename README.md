@@ -8,7 +8,7 @@
 
 <p align="center">
   A Spotify-inspired desktop music client for <a href="https://www.plex.tv/">Plex</a>, built with Tauri 2 and React 19.<br />
-  Browse your library, play tracks with a Web Audio engine, manage playlists, explore radio & DJ modes, discover podcasts, enjoy visualizers, and more — all from a fast, frameless desktop app.
+  Browse your library, play tracks with a native Rust audio engine, manage playlists, explore radio & DJ modes, discover podcasts, enjoy visualizers, and more — all from a fast, frameless desktop app.
 </p>
 
 <p align="center">
@@ -33,7 +33,7 @@
 ## Features
 
 ### Playback
-- Web Audio engine with modular DSP chain — FLAC, MP3, AAC, ALAC, Ogg Vorbis, WAV
+- Native Rust audio engine with modular DSP chain — FLAC, MP3, AAC (including HE-AAC), ALAC, Opus, Ogg Vorbis, WAV
 - Gapless playback + crossfade with album-aware, time-based, and MixRamp modes
 - Dual-deck architecture with seamless track transitions
 - 10-band parametric EQ with built-in presets
@@ -53,7 +53,7 @@
 ### Visualizer
 - **Compact** — waveform, spectrum, oscilloscope, VU meter
 - **Fullscreen** — spectrum, oscilloscope, VU, starfield, Milkdrop (butterchurn)
-- 555 Milkdrop presets with browser, favorites, and auto-cycle
+- 395 unique Milkdrop presets with browser, favorites, and auto-cycle
 
 ### Library
 - Home hubs & recommendations
@@ -107,7 +107,7 @@
 | State | Zustand v5 |
 | Desktop shell | Tauri v2 |
 | Backend | Rust (Tauri commands) |
-| Audio engine | Web Audio API (custom modular DSP) |
+| Audio engine | CPAL + Symphonia, native Opus/AAC decoders, Rust DSP |
 | Media keys | souvlaki |
 | Database | rusqlite (SQLite, WAL mode) |
 | Visualizer | butterchurn (Milkdrop) |
@@ -174,8 +174,8 @@ You'll need a running Plex Media Server with a music library. On first launch, o
 
 ```bash
 git clone https://github.com/karbowiak/hibiki.git
-cd Hibiki
-bun install
+cd hibiki
+bun install --frozen-lockfile
 ```
 
 ```bash
@@ -196,15 +196,7 @@ bun run tauri build # production bundle
 │   │   ├── HotkeyHelpModal.tsx    # Keyboard shortcut reference
 │   │   └── LiveAnnouncer.tsx      # Accessibility live region
 │   ├── audio/
-│   │   ├── WebAudioEngine.ts      # Main audio engine orchestrator
-│   │   └── engine/                # Modular Web Audio DSP
-│   │       ├── deck.ts            #   Audio deck (source + gain + scheduling)
-│   │       ├── deckManager.ts     #   Dual-deck crossfade manager
-│   │       ├── signalChain.ts     #   DSP node routing
-│   │       ├── scheduler.ts       #   Gapless scheduling & preload
-│   │       ├── analyserBridge.ts  #   Analyser node for visualizers
-│   │       ├── crossfade/         #   Crossfade strategies (album-aware, time-based, MixRamp)
-│   │       └── dsp/               #   DSP nodes (EQ, preamp, postgain, limiter)
+│   │   └── RustAudioEngine.ts     # Tauri bridge to the native audio engine
 │   ├── stores/                    # Zustand stores
 │   │   ├── playerStore.ts         #   Playback state machine, crossfade, queue
 │   │   ├── libraryStore.ts        #   Playlists, hubs, recentlyAdded, prefetch
@@ -230,6 +222,7 @@ bun run tauri build # production bundle
 └── src-tauri/src/                 # Rust backend
     ├── main.rs                    # App setup, state, command registrations
     ├── commands.rs                # #[tauri::command] handlers
+    ├── audio_engine/              # Native decode, playback, crossfade, DSP, loudness, FFT
     │
     ├── plex/                      # Plex API client
     │   ├── client.rs              #   HTTP client with retry/backoff
@@ -266,10 +259,24 @@ bun run tauri build # production bundle
 ## Running Tests
 
 ```bash
-bun run test
-# or directly:
-cd src-tauri && cargo test
+bun run build      # TypeScript checks and production frontend build
+bun run test:unit  # Rust unit tests; no Plex server required
 ```
+
+Builds require Bun, a stable Rust toolchain, and the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/). Set `PI_KEY` and `PI_SECRET` for Podcast Index, or use empty values when testing without that integration. `bun run test` also runs the live Plex integration tests, which require `PLEX_URL` and `PLEX_TOKEN` and can modify the server's playlists and playback history.
+
+On Linux, CI builds an unsigned debug AppImage and validates its extracted metadata. Release builds run the same check before publishing:
+
+```bash
+# Requires python3 and desktop-file-utils; extraction does not need FUSE.
+python3 scripts/check-appimage.py src-tauri/target/release/bundle/appimage/*.AppImage
+```
+
+Tauri CLI 2.12.1 includes the upstream fix for the absolute `.DirIcon` and desktop-file symlinks reported by the [AppImage catalog](https://github.com/AppImage/appimage.github.io/pull/7937#issuecomment-5898500737). The check extracts each image into a new temporary directory and rejects missing icons or links to the build machine. After a fixed release is available, the catalog PR needs a `/retest` comment.
+
+The dependency refresh keeps Tailwind 3 and the current native audio APIs. `bun audit` still reports [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) in Tailwind's build-time `braces` dependency; no patched version is available. The selector-parser override uses the patched 7.1.6 release, and Vite 8 removes the affected esbuild dependency.
+
+The unused `ringbuf` dependency was removed to clear [RUSTSEC-2026-0293](https://rustsec.org/advisories/RUSTSEC-2026-0293.html). `cargo audit` still warns about [glib's VariantStrIter](https://rustsec.org/advisories/RUSTSEC-2024-0429.html) and [unmaintained proc-macro-error](https://rustsec.org/advisories/RUSTSEC-2024-0370.html), both pulled in by Tauri's GTK 3 stack. The current Tauri release still uses glib 0.18; replacing it with glib 0.20 requires a compatible upstream GTK/Tauri update.
 
 ## Recommended IDE Setup
 

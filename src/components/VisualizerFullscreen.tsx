@@ -304,7 +304,9 @@ export default function VisualizerFullscreen() {
     let cancelled = false
     ;(async () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const butterchurn = ((await import("butterchurn")) as any).default
+      const mod = (await import("butterchurn")) as any
+      // Vite 8 preserves the UMD bundle's nested CommonJS default export.
+      const butterchurn = mod.default?.default ?? mod.default
       const names = await initPresetMeta()
       if (cancelled) return
 

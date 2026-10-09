@@ -12,6 +12,8 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+*.tsbuildinfo
+__pycache__/
 *.local
 
 # Editor directories and files
