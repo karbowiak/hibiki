@@ -38,7 +38,7 @@ pub struct SharedBuffer {
 
 impl SharedBuffer {
     pub fn new(content_length: Option<u64>) -> Arc<Self> {
-        let capacity = content_length.unwrap_or(10 * 1024 * 1024) as usize;
+        let capacity = content_length.unwrap_or(64 * 1024).min(1024 * 1024) as usize;
         Arc::new(Self {
             inner: Mutex::new(Inner {
                 data: Vec::with_capacity(capacity),
@@ -63,7 +63,6 @@ impl SharedBuffer {
         self.condvar.notify_all();
     }
 
-
     /// Signal that the download is complete.
     pub fn finish(&self) {
         let mut inner = self.inner.lock().unwrap();
@@ -84,9 +83,9 @@ impl SharedBuffer {
     pub fn set_content_length(&self, len: u64) {
         let mut inner = self.inner.lock().unwrap();
         inner.content_length = Some(len);
-        inner.data.reserve(len as usize);
+        // Content-Length is untrusted and can describe multi-hour recordings.
+        // Grow as data actually arrives instead of reserving the whole response.
     }
-
 }
 
 /// Sync reader that blocks until data is available in the shared buffer.
@@ -136,9 +135,7 @@ impl Read for StreamingReader {
             let _inner = self
                 .buffer
                 .condvar
-                .wait_while(inner, |i| {
-                    (i.data.len() as u64) <= self.pos && !i.done
-                })
+                .wait_while(inner, |i| (i.data.len() as u64) <= self.pos && !i.done)
                 .unwrap();
         }
     }
@@ -194,6 +191,28 @@ impl MediaSource for StreamingReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hostile_content_length_does_not_reserve_the_entire_response() {
+        let buf = SharedBuffer::new(Some(u64::MAX));
+        assert!(buf.inner.lock().unwrap().data.capacity() <= 1024 * 1024);
+        buf.set_content_length(u64::MAX);
+        assert!(buf.inner.lock().unwrap().data.capacity() <= 1024 * 1024);
+    }
+
+    #[test]
+    fn cancelling_a_download_wakes_a_blocked_decoder() {
+        let buf = SharedBuffer::new(None);
+        let source = buf.clone();
+        let reader = std::thread::spawn(move || {
+            StreamingReader::new(source)
+                .read(&mut [0; 1])
+                .unwrap_err()
+                .kind()
+        });
+        buf.abort();
+        assert_eq!(reader.join().unwrap(), io::ErrorKind::ConnectionAborted);
+    }
 
     #[test]
     fn basic_write_read() {

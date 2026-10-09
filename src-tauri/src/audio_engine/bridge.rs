@@ -25,7 +25,7 @@ pub async fn audio_play(
     start_ramp: Option<String>,
     end_ramp: Option<String>,
     state: State<'_, AudioEngineState>,
-) -> Result<(), String> {
+) -> Result<u64, String> {
     state.0.send(Command::Play {
         url,
         meta: TrackMeta {
@@ -37,8 +37,7 @@ pub async fn audio_play(
             start_ramp,
             end_ramp,
         },
-    });
-    Ok(())
+    })
 }
 
 #[tauri::command]
@@ -53,37 +52,41 @@ pub async fn audio_preload_next(
     end_ramp: Option<String>,
     state: State<'_, AudioEngineState>,
 ) -> Result<(), String> {
-    state.0.send(Command::PreloadNext {
-        url,
-        meta: TrackMeta {
-            rating_key,
-            duration_ms,
-            parent_key,
-            gain_db,
-            skip_crossfade: skip_crossfade.unwrap_or(false),
-            start_ramp,
-            end_ramp,
-        },
-    });
-    Ok(())
+    state
+        .0
+        .send(Command::PreloadNext {
+            url,
+            meta: TrackMeta {
+                rating_key,
+                duration_ms,
+                parent_key,
+                gain_db,
+                skip_crossfade: skip_crossfade.unwrap_or(false),
+                start_ramp,
+                end_ramp,
+            },
+        })
+        .map(|_| ())
+}
+
+#[tauri::command]
+pub async fn audio_clear_preload(state: State<'_, AudioEngineState>) -> Result<(), String> {
+    state.0.send(Command::ClearPreload).map(|_| ())
 }
 
 #[tauri::command]
 pub async fn audio_pause(state: State<'_, AudioEngineState>) -> Result<(), String> {
-    state.0.send(Command::Pause);
-    Ok(())
+    state.0.send(Command::Pause).map(|_| ())
 }
 
 #[tauri::command]
 pub async fn audio_resume(state: State<'_, AudioEngineState>) -> Result<(), String> {
-    state.0.send(Command::Resume);
-    Ok(())
+    state.0.send(Command::Resume).map(|_| ())
 }
 
 #[tauri::command]
 pub async fn audio_stop(state: State<'_, AudioEngineState>) -> Result<(), String> {
-    state.0.send(Command::Stop);
-    Ok(())
+    state.0.send(Command::Stop).map(|_| ())
 }
 
 #[tauri::command]
@@ -91,8 +94,12 @@ pub async fn audio_seek(
     position_ms: f64,
     state: State<'_, AudioEngineState>,
 ) -> Result<(), String> {
-    state.0.send(Command::Seek { position_ms: position_ms as u64 });
-    Ok(())
+    state
+        .0
+        .send(Command::Seek {
+            position_ms: position_ms as u64,
+        })
+        .map(|_| ())
 }
 
 // ---------------------------------------------------------------------------
@@ -100,12 +107,8 @@ pub async fn audio_seek(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub async fn audio_set_volume(
-    gain: f32,
-    state: State<'_, AudioEngineState>,
-) -> Result<(), String> {
-    state.0.send(Command::SetVolume { gain });
-    Ok(())
+pub async fn audio_set_volume(gain: f32, state: State<'_, AudioEngineState>) -> Result<(), String> {
+    state.0.send(Command::SetVolume { gain }).map(|_| ())
 }
 
 #[tauri::command]
@@ -113,8 +116,10 @@ pub async fn audio_set_normalization(
     enabled: bool,
     state: State<'_, AudioEngineState>,
 ) -> Result<(), String> {
-    state.0.send(Command::SetNormalization { enabled });
-    Ok(())
+    state
+        .0
+        .send(Command::SetNormalization { enabled })
+        .map(|_| ())
 }
 
 // ---------------------------------------------------------------------------
@@ -126,8 +131,7 @@ pub async fn audio_set_preamp_gain(
     db: f32,
     state: State<'_, AudioEngineState>,
 ) -> Result<(), String> {
-    state.0.send(Command::SetPreampGain { db });
-    Ok(())
+    state.0.send(Command::SetPreampGain { db }).map(|_| ())
 }
 
 #[tauri::command]
@@ -135,8 +139,7 @@ pub async fn audio_set_eq(
     gains_db: [f32; 10],
     state: State<'_, AudioEngineState>,
 ) -> Result<(), String> {
-    state.0.send(Command::SetEq { gains_db });
-    Ok(())
+    state.0.send(Command::SetEq { gains_db }).map(|_| ())
 }
 
 #[tauri::command]
@@ -144,8 +147,7 @@ pub async fn audio_set_eq_enabled(
     enabled: bool,
     state: State<'_, AudioEngineState>,
 ) -> Result<(), String> {
-    state.0.send(Command::SetEqEnabled { enabled });
-    Ok(())
+    state.0.send(Command::SetEqEnabled { enabled }).map(|_| ())
 }
 
 #[tauri::command]
@@ -153,8 +155,7 @@ pub async fn audio_set_eq_postgain(
     db: f32,
     state: State<'_, AudioEngineState>,
 ) -> Result<(), String> {
-    state.0.send(Command::SetEqPostgain { db });
-    Ok(())
+    state.0.send(Command::SetEqPostgain { db }).map(|_| ())
 }
 
 #[tauri::command]
@@ -162,8 +163,12 @@ pub async fn audio_duck_and_apply(
     duck_ms: Option<u32>,
     state: State<'_, AudioEngineState>,
 ) -> Result<(), String> {
-    state.0.send(Command::DuckAndApply { duck_ms: duck_ms.unwrap_or(30) });
-    Ok(())
+    state
+        .0
+        .send(Command::DuckAndApply {
+            duck_ms: duck_ms.unwrap_or(30),
+        })
+        .map(|_| ())
 }
 
 // ---------------------------------------------------------------------------
@@ -175,8 +180,7 @@ pub async fn audio_set_crossfade_window(
     ms: u32,
     state: State<'_, AudioEngineState>,
 ) -> Result<(), String> {
-    state.0.send(Command::SetCrossfadeWindow { ms });
-    Ok(())
+    state.0.send(Command::SetCrossfadeWindow { ms }).map(|_| ())
 }
 
 #[tauri::command]
@@ -184,8 +188,10 @@ pub async fn audio_set_same_album_crossfade(
     enabled: bool,
     state: State<'_, AudioEngineState>,
 ) -> Result<(), String> {
-    state.0.send(Command::SetSameAlbumCrossfade { enabled });
-    Ok(())
+    state
+        .0
+        .send(Command::SetSameAlbumCrossfade { enabled })
+        .map(|_| ())
 }
 
 #[tauri::command]
@@ -193,8 +199,10 @@ pub async fn audio_set_smart_crossfade(
     enabled: bool,
     state: State<'_, AudioEngineState>,
 ) -> Result<(), String> {
-    state.0.send(Command::SetSmartCrossfade { enabled });
-    Ok(())
+    state
+        .0
+        .send(Command::SetSmartCrossfade { enabled })
+        .map(|_| ())
 }
 
 #[tauri::command]
@@ -202,8 +210,10 @@ pub async fn audio_set_smart_crossfade_max(
     ms: u32,
     state: State<'_, AudioEngineState>,
 ) -> Result<(), String> {
-    state.0.send(Command::SetSmartCrossfadeMax { ms });
-    Ok(())
+    state
+        .0
+        .send(Command::SetSmartCrossfadeMax { ms })
+        .map(|_| ())
 }
 
 #[tauri::command]
@@ -211,8 +221,7 @@ pub async fn audio_set_mixramp_db(
     db: f32,
     state: State<'_, AudioEngineState>,
 ) -> Result<(), String> {
-    state.0.send(Command::SetMixrampDb { db });
-    Ok(())
+    state.0.send(Command::SetMixrampDb { db }).map(|_| ())
 }
 
 // ---------------------------------------------------------------------------
@@ -224,14 +233,14 @@ pub async fn audio_set_visualizer_enabled(
     enabled: bool,
     state: State<'_, AudioEngineState>,
 ) -> Result<(), String> {
-    state.0.send(Command::SetVisualizerEnabled { enabled });
-    Ok(())
+    state
+        .0
+        .send(Command::SetVisualizerEnabled { enabled })
+        .map(|_| ())
 }
 
 #[tauri::command]
-pub async fn audio_get_sample_rate(
-    state: State<'_, AudioEngineState>,
-) -> Result<u32, String> {
+pub async fn audio_get_sample_rate(state: State<'_, AudioEngineState>) -> Result<u32, String> {
     let sr = state
         .0
         .atomics()
@@ -249,16 +258,15 @@ pub async fn audio_set_cache_max_bytes(
     bytes: u64,
     state: State<'_, AudioEngineState>,
 ) -> Result<(), String> {
-    state.0.send(Command::SetCacheMaxBytes { bytes });
-    Ok(())
+    state
+        .0
+        .send(Command::SetCacheMaxBytes { bytes })
+        .map(|_| ())
 }
 
 #[tauri::command]
-pub async fn audio_clear_cache(
-    state: State<'_, AudioEngineState>,
-) -> Result<(), String> {
-    state.0.send(Command::ClearCache);
-    Ok(())
+pub async fn audio_clear_cache(state: State<'_, AudioEngineState>) -> Result<(), String> {
+    state.0.send(Command::ClearCache).map(|_| ())
 }
 
 #[tauri::command]

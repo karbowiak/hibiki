@@ -8,6 +8,7 @@
  * Module-level singleton: `import { engine } from "../audio/RustAudioEngine"`
  */
 
+import { PlaybackEventGate } from "./playbackEventGate"
 import { invoke } from "@tauri-apps/api/core"
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 
@@ -59,11 +60,11 @@ export function parseRamp(raw: string | null | undefined): RampPoint[] {
 
 // Payload field names are snake_case from Rust serde (rename_all only affects
 // the enum tag, not struct fields in internally-tagged enums).
-interface PositionPayload { position_ms: number; duration_ms: number }
-interface StatePayload { state: string }
-interface TrackStartedPayload { rating_key: number; duration_ms: number }
-interface TrackEndedPayload { rating_key: number }
-interface ErrorPayload { message: string }
+interface PositionPayload { request_id: number; position_ms: number; duration_ms: number }
+interface StatePayload { request_id: number; state: string }
+interface TrackStartedPayload { request_id: number; rating_key: number; duration_ms: number }
+interface TrackEndedPayload { request_id: number; rating_key: number }
+interface ErrorPayload { request_id: number; message: string }
 interface VisFramePayload { samples: number[]; frequency_bins: number[] }
 
 // ---------------------------------------------------------------------------
@@ -72,6 +73,8 @@ interface VisFramePayload { samples: number[]; frequency_bins: number[] }
 
 class RustAudioEngine {
   private cb: AudioEngineCallbacks | null = null
+  private eventGate = new PlaybackEventGate()
+  private listenerGeneration = 0
   private unlisteners: UnlistenFn[] = []
 
   // Ramp cache
@@ -85,40 +88,63 @@ class RustAudioEngine {
   // Init
   // ---------------------------------------------------------------------------
 
-  init(callbacks: AudioEngineCallbacks): void {
+  async init(callbacks: AudioEngineCallbacks): Promise<void> {
     this.cb = callbacks
-    this.setupEventListeners()
+    await this.setupEventListeners()
+    this.cachedSampleRate = await invoke<number>("audio_get_sample_rate").catch(() => 44100)
+  }
+
+  beginSelection(): void {
+    this.eventGate.begin()
   }
 
   private async setupEventListeners(): Promise<void> {
+    const generation = ++this.listenerGeneration
     // Clean up any existing listeners
     for (const unlisten of this.unlisteners) {
       unlisten()
     }
     this.unlisteners = []
 
-    this.unlisteners.push(
-      await listen<PositionPayload>("audio://position", (e) => {
-        this.cb?.onPosition(e.payload.position_ms, e.payload.duration_ms)
+    const registrations: (() => Promise<UnlistenFn>)[] = [
+      () => listen<PositionPayload>("audio://position", e => {
+        this.eventGate.accept(e.payload.request_id, () => this.cb?.onPosition(e.payload.position_ms, e.payload.duration_ms))
       }),
-      await listen<StatePayload>("audio://state", (e) => {
-        this.cb?.onState(e.payload.state as "playing" | "paused" | "buffering" | "stopped")
+      () => listen<StatePayload>("audio://state", e => {
+        this.eventGate.accept(e.payload.request_id, () => this.cb?.onState(e.payload.state as "playing" | "paused" | "buffering" | "stopped"))
       }),
-      await listen<TrackStartedPayload>("audio://track-started", (e) => {
-        this.cb?.onTrackStarted(e.payload.rating_key, e.payload.duration_ms)
+      () => listen<TrackStartedPayload>("audio://track-started", e => {
+        this.eventGate.accept(e.payload.request_id, () => this.cb?.onTrackStarted(e.payload.rating_key, e.payload.duration_ms))
       }),
-      await listen<TrackEndedPayload>("audio://track-ended", (e) => {
-        this.cb?.onTrackEnded(e.payload.rating_key)
+      () => listen<TrackEndedPayload>("audio://track-ended", e => {
+        this.eventGate.accept(e.payload.request_id, () => this.cb?.onTrackEnded(e.payload.rating_key))
       }),
-      await listen<ErrorPayload>("audio://error", (e) => {
-        this.cb?.onError(e.payload.message)
+      () => listen<ErrorPayload>("audio://error", e => {
+        this.eventGate.accept(e.payload.request_id, () => this.cb?.onError(e.payload.message))
       }),
-      await listen<VisFramePayload>("audio://vis-frame", (e) => {
+      () => listen<VisFramePayload>("audio://vis-frame", e => {
         const samples = new Float32Array(e.payload.samples)
         this.lastFrequencyBins = new Float32Array(e.payload.frequency_bins)
         this.cb?.onVisFrame?.(samples)
       }),
-    )
+    ]
+    try {
+      for (const register of registrations) {
+        const unlisten = await register()
+        if (generation !== this.listenerGeneration) { unlisten(); return }
+        this.unlisteners.push(unlisten)
+      }
+    } catch (error) {
+      if (generation === this.listenerGeneration) {
+        for (const unlisten of this.unlisteners) unlisten()
+        this.unlisteners = []
+      }
+      throw error
+    }
+  }
+
+  private sendControl(command: string, args?: Record<string, unknown>): void {
+    void invoke(command, args).catch(error => this.cb?.onError(String(error)))
   }
 
   // ---------------------------------------------------------------------------
@@ -140,7 +166,8 @@ class RustAudioEngine {
       this.parseAndCacheRamps(ratingKey, startRamp ?? null, endRamp ?? null)
     }
 
-    await invoke("audio_play", {
+    const ticket = this.eventGate.begin()
+    const requestId = await invoke<number>("audio_play", {
       url,
       ratingKey,
       durationMs,
@@ -150,6 +177,7 @@ class RustAudioEngine {
       startRamp: startRamp ?? null,
       endRamp: endRamp ?? null,
     })
+    this.eventGate.confirm(ticket, requestId)
   }
 
   async preloadNext(
@@ -178,20 +206,25 @@ class RustAudioEngine {
     })
   }
 
+  clearPreload(): void {
+    this.sendControl("audio_clear_preload")
+  }
+
   pause(): void {
-    invoke("audio_pause")
+    this.sendControl("audio_pause")
   }
 
   resume(): void {
-    invoke("audio_resume")
+    this.sendControl("audio_resume")
   }
 
   stop(): void {
-    invoke("audio_stop")
+    this.eventGate.disable()
+    this.sendControl("audio_stop")
   }
 
   seek(positionMs: number): void {
-    invoke("audio_seek", { positionMs })
+    this.sendControl("audio_seek", { positionMs })
   }
 
   // Alias for seekTo (playerStore uses this name)
@@ -200,7 +233,7 @@ class RustAudioEngine {
   }
 
   setVolume(gain: number): void {
-    invoke("audio_set_volume", { gain })
+    this.sendControl("audio_set_volume", { gain })
   }
 
   // ---------------------------------------------------------------------------
@@ -208,19 +241,19 @@ class RustAudioEngine {
   // ---------------------------------------------------------------------------
 
   setEq(gainsDb: number[]): void {
-    invoke("audio_set_eq", { gainsDb })
+    this.sendControl("audio_set_eq", { gainsDb })
   }
 
   setEqEnabled(enabled: boolean): void {
-    invoke("audio_set_eq_enabled", { enabled })
+    this.sendControl("audio_set_eq_enabled", { enabled })
   }
 
   setPreampGain(db: number): void {
-    invoke("audio_set_preamp_gain", { db })
+    this.sendControl("audio_set_preamp_gain", { db })
   }
 
   setEqPostgain(db: number): void {
-    invoke("audio_set_eq_postgain", { db })
+    this.sendControl("audio_set_eq_postgain", { db })
   }
 
   /**
@@ -228,9 +261,7 @@ class RustAudioEngine {
    * The Rust engine ramps volume to 0, waits duckMs, then ramps back.
    */
   duckAndApply(fn_: () => void, duckMs = 30): void {
-    invoke("audio_duck_and_apply", { duckMs }).then(() => {
-      fn_()
-    })
+    void invoke("audio_duck_and_apply", { duckMs }).then(fn_).catch(error => this.cb?.onError(String(error)))
   }
 
   // ---------------------------------------------------------------------------
@@ -238,27 +269,27 @@ class RustAudioEngine {
   // ---------------------------------------------------------------------------
 
   setCrossfadeWindow(ms: number): void {
-    invoke("audio_set_crossfade_window", { ms })
+    this.sendControl("audio_set_crossfade_window", { ms })
   }
 
   setSameAlbumCrossfade(enabled: boolean): void {
-    invoke("audio_set_same_album_crossfade", { enabled })
+    this.sendControl("audio_set_same_album_crossfade", { enabled })
   }
 
   setSmartCrossfade(enabled: boolean): void {
-    invoke("audio_set_smart_crossfade", { enabled })
+    this.sendControl("audio_set_smart_crossfade", { enabled })
   }
 
   setSmartCrossfadeMax(ms: number): void {
-    invoke("audio_set_smart_crossfade_max", { ms })
+    this.sendControl("audio_set_smart_crossfade_max", { ms })
   }
 
   setMixrampDb(db: number): void {
-    invoke("audio_set_mixramp_db", { db })
+    this.sendControl("audio_set_mixramp_db", { db })
   }
 
   setNormalizationEnabled(enabled: boolean): void {
-    invoke("audio_set_normalization", { enabled })
+    this.sendControl("audio_set_normalization", { enabled })
   }
 
   // ---------------------------------------------------------------------------
@@ -266,7 +297,7 @@ class RustAudioEngine {
   // ---------------------------------------------------------------------------
 
   setVisualizerEnabled(enabled: boolean): void {
-    invoke("audio_set_visualizer_enabled", { enabled })
+    this.sendControl("audio_set_visualizer_enabled", { enabled })
   }
 
   /** Return cached FFT frequency data (pushed from Rust via vis-frame events). */
@@ -284,11 +315,11 @@ class RustAudioEngine {
   // ---------------------------------------------------------------------------
 
   setCacheMaxBytes(bytes: number): void {
-    invoke("audio_set_cache_max_bytes", { bytes })
+    this.sendControl("audio_set_cache_max_bytes", { bytes })
   }
 
   clearCache(): void {
-    invoke("audio_clear_cache")
+    this.sendControl("audio_clear_cache")
   }
 
   async getCacheStats(): Promise<{ total_bytes: number; file_count: number; max_bytes: number }> {
@@ -339,6 +370,7 @@ class RustAudioEngine {
   // ---------------------------------------------------------------------------
 
   destroy(): void {
+    ++this.listenerGeneration
     this.stop()
     for (const unlisten of this.unlisteners) {
       unlisten()

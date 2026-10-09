@@ -489,6 +489,7 @@ pub fn run() {
             // Rust audio engine
             audio_engine::bridge::audio_play,
             audio_engine::bridge::audio_preload_next,
+            audio_engine::bridge::audio_clear_preload,
             audio_engine::bridge::audio_pause,
             audio_engine::bridge::audio_resume,
             audio_engine::bridge::audio_stop,

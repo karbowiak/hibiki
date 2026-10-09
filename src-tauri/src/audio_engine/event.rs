@@ -7,20 +7,25 @@ use serde::Serialize;
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum EngineEvent {
     Position {
+        request_id: u64,
         position_ms: u64,
         duration_ms: u64,
     },
     State {
+        request_id: u64,
         state: String,
     },
     TrackStarted {
+        request_id: u64,
         rating_key: i64,
         duration_ms: u64,
     },
     TrackEnded {
+        request_id: u64,
         rating_key: i64,
     },
     Error {
+        request_id: u64,
         message: String,
     },
     VisFrame {

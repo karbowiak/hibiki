@@ -22,7 +22,11 @@ const REFERENCE_LUFS: f64 = -18.0;
 ///
 /// Decodes the entire file, measures integrated loudness (EBU R128), and returns
 /// the gain needed to bring the track to the reference level (-18 LUFS).
-pub fn analyze_loudness(path: &Path, ext: &str) -> Result<f32, String> {
+pub fn analyze_loudness(
+    path: &Path,
+    ext: &str,
+    is_current: impl Fn() -> bool,
+) -> Result<f32, String> {
     let file = std::fs::File::open(path).map_err(|e| format!("open: {}", e))?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
 
@@ -65,6 +69,9 @@ pub fn analyze_loudness(path: &Path, ext: &str) -> Result<f32, String> {
     let mut total_frames = 0u64;
 
     loop {
+        if !is_current() {
+            return Err("analysis cancelled".into());
+        }
         let packet = match format.next_packet() {
             Ok(p) => p,
             Err(symphonia::core::errors::Error::IoError(ref e))

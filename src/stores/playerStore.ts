@@ -2,6 +2,7 @@ import { create } from "zustand"
 import { persist } from "zustand/middleware"
 import { listen } from "@tauri-apps/api/event"
 import { fireAndForget } from "../lib/async"
+import { dispatchPlaybackWhenReady } from "../audio/playbackRequests"
 import { engine } from "../audio/RustAudioEngine"
 import type { MusicTrack } from "../types/music"
 import type { LevelData, LyricLineData } from "../providers/types"
@@ -536,28 +537,25 @@ function _isPodcastTrack(track: MusicTrack): boolean {
 }
 
 /** Send a track to the Web Audio engine for playback. */
-async function sendToAudioEngine(track: MusicTrack): Promise<void> {
+async function sendToAudioEngine(track: MusicTrack, generation: number): Promise<void> {
   // Direct URL tracks (podcasts, external audio) bypass provider.getPlaybackInfo()
-  if (track.streamUrl?.startsWith("http")) {
+  if (track.streamUrl && /^https?:\/\//i.test(track.streamUrl)) {
     const syntheticKey = Math.abs(hashCode(track.id))
     _ratingKeyToTrackId.set(syntheticKey, track.id)
+    if (generation !== _playGeneration) return
     await engine.play(track.streamUrl, syntheticKey, track.duration, "", null, true)
     return
   }
   const provider = getProvider()
   if (!provider) return
-  const info = await provider.getPlaybackInfo(track)
-  _ratingKeyToTrackId.set(info.trackKey, track.id)
-  const gainDb = await fetchGainDb(track)
-  await engine.play(
-    info.url,
-    info.trackKey,
-    track.duration,
-    info.parentKey,
-    gainDb,
-    undefined,
-    track.startRamp ?? info.startRamp,
-    track.endRamp ?? info.endRamp,
+  await dispatchPlaybackWhenReady(
+    async () => ({ info: await provider.getPlaybackInfo(track), gainDb: await fetchGainDb(track) }),
+    () => generation === _playGeneration && getProvider() === provider,
+    async ({ info, gainDb }) => {
+      _ratingKeyToTrackId.set(info.trackKey, track.id)
+      await engine.play(info.url, info.trackKey, track.duration, info.parentKey, gainDb,
+        undefined, track.startRamp ?? info.startRamp, track.endRamp ?? info.endRamp)
+    },
   )
 }
 
@@ -575,6 +573,15 @@ function fetchLyricsForTrack(track: MusicTrack): void {
 
 /** Pre-buffer the next track in queue for gapless playback. */
 async function preloadNextTrack(queue: MusicTrack[], queueIndex: number, repeat: 0 | 1 | 2): Promise<void> {
+  if (repeat === 1) return
+  const generation = _playGeneration
+  const sourceTrackId = queue[queueIndex]?.id
+  const isCurrent = () => {
+    const state = usePlayerStore.getState()
+    return generation === _playGeneration && state.currentTrack?.id === sourceTrackId
+      && state.repeat !== 1
+      && state.queue[(state.queueIndex + 1) % state.queue.length]?.id === nextTrack.id
+  }
   let nextIndex = queueIndex + 1
   if (nextIndex >= queue.length) {
     if (repeat === 2) nextIndex = 0
@@ -589,6 +596,7 @@ async function preloadNextTrack(queue: MusicTrack[], queueIndex: number, repeat:
     try {
       const syntheticKey = Math.abs(hashCode(nextTrack.id))
       _ratingKeyToTrackId.set(syntheticKey, nextTrack.id)
+      if (!isCurrent()) return
       await engine.preloadNext(nextTrack.streamUrl, syntheticKey, nextTrack.duration, "", null, true)
     } catch { /* non-critical */ }
     return
@@ -598,18 +606,14 @@ async function preloadNextTrack(queue: MusicTrack[], queueIndex: number, repeat:
   if (!provider) return
 
   try {
-    const info = await provider.getPlaybackInfo(nextTrack)
-    _ratingKeyToTrackId.set(info.trackKey, nextTrack.id)
-    const gainDb = await fetchGainDb(nextTrack)
-    await engine.preloadNext(
-      info.url,
-      info.trackKey,
-      nextTrack.duration,
-      info.parentKey,
-      gainDb,
-      undefined,
-      nextTrack.startRamp ?? info.startRamp,
-      nextTrack.endRamp ?? info.endRamp,
+    await dispatchPlaybackWhenReady(
+      async () => ({ info: await provider.getPlaybackInfo(nextTrack), gainDb: await fetchGainDb(nextTrack) }),
+      () => isCurrent() && getProvider() === provider,
+      async ({ info, gainDb }) => {
+        _ratingKeyToTrackId.set(info.trackKey, nextTrack.id)
+        await engine.preloadNext(info.url, info.trackKey, nextTrack.duration, info.parentKey,
+          gainDb, undefined, nextTrack.startRamp ?? info.startRamp, nextTrack.endRamp ?? info.endRamp)
+      },
     )
   } catch {
     // Pre-load failure is non-critical
@@ -791,9 +795,10 @@ async function _startPlayback(track: MusicTrack, index: number, get: () => Playe
     set({ isInternetRadioActive: false })
   }
   const gen = ++_playGeneration
+  engine.beginSelection()
   _onTrackBecomesActive(track, index, get, set)
   try {
-    await sendToAudioEngine(track)
+    await sendToAudioEngine(track, gen)
   } catch (err) {
     // Only roll back state if this play attempt is still the active one
     if (_playGeneration === gen) {
@@ -1061,6 +1066,8 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   stop: () => {
+    ++_playGeneration
+    if (_gaplessTimeoutId !== null) { clearTimeout(_gaplessTimeoutId); _gaplessTimeoutId = null }
     engine.stop()
     const { currentTrack, positionMs, isInternetRadioActive } = get()
     // Stop internet radio if active
@@ -1201,7 +1208,12 @@ export const usePlayerStore = create<PlayerState>()(
     }
   },
 
-  cycleRepeat: () => set(s => ({ repeat: ((s.repeat + 1) % 3) as 0 | 1 | 2 })),
+  cycleRepeat: () => {
+    const repeat = ((get().repeat + 1) % 3) as 0 | 1 | 2
+    set({ repeat })
+    engine.clearPreload()
+    if (repeat !== 1) fireAndForget(preloadNextTrack(get().queue, get().queueIndex, repeat))
+  },
 
   updatePosition: (ms: number) => set({ positionMs: ms }),
 
@@ -1247,6 +1259,7 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   clearUpcoming: () => {
+    engine.clearPreload()
     set(s => ({ queue: s.queue.slice(0, s.queueIndex + 1) }))
   },
 
@@ -1255,7 +1268,7 @@ export const usePlayerStore = create<PlayerState>()(
     get().setVolume(get().volume)
 
     // Initialize the Web Audio engine with callbacks that replace the Tauri listen("audio://...") calls
-    engine.init({
+    await engine.init({
       onPosition(positionMs, durationMs) {
         const { currentTrack, queue, queueIndex, repeat, isRadioMode, isPlaying, radioMinQueue } = get()
         set({ positionMs })
@@ -1364,9 +1377,7 @@ export const usePlayerStore = create<PlayerState>()(
 
         // Verify the next track matches — fall back to searching the queue
         if (!queue[nextIndex] || queue[nextIndex].id !== startedId) {
-          const found = queue.findIndex(t => t.id === startedId)
-          if (found < 0) return
-          nextIndex = found
+          return
         }
 
         const track = queue[nextIndex]
@@ -1400,6 +1411,8 @@ export const usePlayerStore = create<PlayerState>()(
       },
 
       async onError(message) {
+        const generation = _playGeneration
+        const providerAtError = getProvider()
         console.error("Audio engine error:", message)
         const { currentTrack } = get()
 
@@ -1413,6 +1426,7 @@ export const usePlayerStore = create<PlayerState>()(
             if (partKey) {
               console.log("[Transcode fallback] Retrying with transcoded audio for:", currentTrack.title)
               const transcodeUrl = await getAudioTranscodeUrl(partKey, 320, "mp3")
+              if (generation !== _playGeneration || getProvider() !== providerAtError) return
               const ratingKey = Number(currentTrack.id)
               _ratingKeyToTrackId.set(ratingKey, currentTrack.id)
               await engine.play(transcodeUrl, ratingKey, currentTrack.duration, "", null, true)
@@ -1424,6 +1438,7 @@ export const usePlayerStore = create<PlayerState>()(
           }
         }
 
+        if (generation !== _playGeneration) return
         set({ playerError: message })
         useAnnouncerStore.getState().announce(`Playback error: ${message}`, "assertive")
         setTimeout(() => set({ playerError: null }), 6000)
@@ -1458,13 +1473,7 @@ export const usePlayerStore = create<PlayerState>()(
 
       // Stop command from the OS (e.g. closing Now Playing widget)
       listen("media://stop", () => {
-        const { currentTrack, positionMs } = get()
-        if (currentTrack) {
-          _reportProgress(currentTrack.id, "stopped", positionMs, currentTrack.duration)
-        }
-        const provider = getProvider()
-        if (provider?.setNowPlayingState) fireAndForget(provider.setNowPlayingState("stopped"))
-        set({ isPlaying: false, positionMs: 0 })
+        get().stop()
       }),
     ])
 

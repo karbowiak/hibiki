@@ -12,13 +12,14 @@
 pub mod bridge;
 pub mod cache;
 pub mod callback;
-pub mod loudness;
 pub mod command;
 pub mod crossfade;
 pub mod deck;
 pub mod dsp;
 pub mod event;
+pub mod loudness;
 pub mod output;
+mod request;
 pub mod state;
 pub mod types;
 pub mod visualizer;
@@ -29,16 +30,17 @@ use std::time::Duration;
 
 use crossbeam_channel::{bounded, Sender};
 use tauri::Emitter;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use self::cache::AudioCache;
 use self::callback::{AudioCallbackState, SharedAtomics};
-use self::command::{AudioCommand, Command, SampleBatch};
+use self::command::{AudioCommand, Command, ControlCommand, SampleBatch};
 use self::crossfade::types::{parse_ramp, CrossfadeSettings, TrackRamps};
 use self::deck::decode;
 use self::event::EngineEvent;
 use self::output::resample::resample_buffer;
 use self::output::CpalOutput;
+use self::request::PlaybackRequest;
 use self::types::{DeckId, EngineState, TrackMeta};
 use self::visualizer::VisualizerProcessor;
 
@@ -49,7 +51,8 @@ use crate::commands::PlexState;
 /// Only holds the command channel and shared atomics — both are Send+Sync.
 /// The cpal output stream lives on a dedicated holder thread.
 pub struct AudioEngine {
-    cmd_tx: Sender<Command>,
+    cmd_tx: Sender<ControlCommand>,
+    audio_cmd_tx: Sender<AudioCommand>,
     atomics: Arc<SharedAtomics>,
     cache: Arc<AudioCache>,
 }
@@ -60,7 +63,7 @@ unsafe impl Sync for AudioEngine {}
 
 impl Drop for AudioEngine {
     fn drop(&mut self) {
-        let _ = self.cmd_tx.send(Command::Shutdown);
+        let _ = self.send(Command::Shutdown);
     }
 }
 
@@ -84,7 +87,7 @@ impl AudioEngine {
         let audio_cache = Arc::new(AudioCache::new(cache_dir, None));
 
         // Bridge → control task
-        let (cmd_tx, cmd_rx) = bounded::<Command>(64);
+        let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<ControlCommand>();
 
         // Control task → audio callback (commands)
         let (audio_cmd_tx, audio_cmd_rx) = crossbeam_channel::bounded::<AudioCommand>(256);
@@ -110,8 +113,8 @@ impl AudioEngine {
         );
 
         // Open audio output — cb_state is consumed here (moved into cpal closure)
-        let cpal_output =
-            CpalOutput::open(cb_state).map_err(|e| format!("failed to open audio output: {}", e))?;
+        let cpal_output = CpalOutput::open(cb_state)
+            .map_err(|e| format!("failed to open audio output: {}", e))?;
 
         let device_sample_rate = cpal_output.sample_rate;
         let device_channels = cpal_output.channels;
@@ -171,9 +174,9 @@ impl AudioEngine {
                 if sr == 0 || ch == 0 {
                     continue;
                 }
-                let pos_ms =
-                    (pos_samples as f64 / (sr as f64 * ch as f64) * 1000.0) as u64;
+                let pos_ms = (pos_samples as f64 / (sr as f64 * ch as f64) * 1000.0) as u64;
                 let _ = event_tx_pos.send(EngineEvent::Position {
+                    request_id: atomics_pos.active_request_id.load(Ordering::SeqCst),
                     position_ms: pos_ms.min(dur_ms),
                     duration_ms: dur_ms,
                 });
@@ -207,6 +210,7 @@ impl AudioEngine {
         });
 
         // Control task — receives Commands, spawns decode work, sends AudioCommands
+        let audio_cmd_for_control = audio_cmd_tx.clone();
         let app_for_control = app_handle.clone();
         let atomics_control = atomics.clone();
         let cache_control = audio_cache.clone();
@@ -215,7 +219,7 @@ impl AudioEngine {
             .spawn(move || {
                 control_thread_main(
                     cmd_rx,
-                    audio_cmd_tx,
+                    audio_cmd_for_control,
                     deck_a_tx,
                     deck_b_tx,
                     event_tx,
@@ -230,16 +234,75 @@ impl AudioEngine {
 
         Ok(Self {
             cmd_tx,
+            audio_cmd_tx,
             atomics,
             cache: audio_cache,
         })
     }
 
-    /// Send a command to the control task.
-    pub fn send(&self, cmd: Command) {
-        if let Err(e) = self.cmd_tx.send(cmd) {
-            error!("failed to send command to engine: {}", e);
+    /// Playback intent is invalidated here, before queued I/O can observe it.
+    /// Interactive controls bypass the I/O worker so a slow server cannot block pause/seek.
+    pub fn send(&self, cmd: Command) -> Result<u64, String> {
+        let epoch = if matches!(
+            &cmd,
+            Command::Play { .. } | Command::Stop | Command::Shutdown
+        ) {
+            self.atomics.request_epoch.fetch_add(1, Ordering::SeqCst) + 1
+        } else {
+            self.atomics.request_epoch.load(Ordering::SeqCst)
+        };
+        if matches!(&cmd, Command::ClearPreload) {
+            self.atomics.preload_revision.fetch_add(1, Ordering::SeqCst);
         }
+        let preload_revision = self.atomics.preload_revision.load(Ordering::SeqCst);
+        let audio = match cmd {
+            Command::Play { .. } => {
+                self.audio_cmd_tx
+                    .try_send(AudioCommand::BeginPlay { request_id: epoch })
+                    .map_err(|_| "audio callback is unavailable".to_string())?;
+                return self
+                    .cmd_tx
+                    .send(ControlCommand {
+                        epoch,
+                        preload_revision,
+                        command: cmd,
+                    })
+                    .map(|_| epoch)
+                    .map_err(|_| "audio engine is unavailable".into());
+            }
+            Command::ClearPreload => AudioCommand::ClearPreload,
+            Command::Pause => AudioCommand::Pause,
+            Command::Resume => AudioCommand::Resume,
+            Command::Stop => AudioCommand::Stop,
+            Command::Seek { position_ms } => AudioCommand::SeekInBuffer {
+                position: position_ms as usize,
+            },
+            Command::SetVolume { gain } => AudioCommand::SetVolume(gain),
+            Command::SetNormalization { enabled } => AudioCommand::SetNormalization(enabled),
+            Command::SetPreampGain { db } => AudioCommand::SetPreampGain(db),
+            Command::SetEq { gains_db } => AudioCommand::SetEq(gains_db),
+            Command::SetEqEnabled { enabled } => AudioCommand::SetEqEnabled(enabled),
+            Command::SetEqPostgain { db } => AudioCommand::SetEqPostgain(db),
+            Command::SetVisualizerEnabled { enabled } => {
+                AudioCommand::SetVisualizerEnabled(enabled)
+            }
+            Command::DuckAndApply { duck_ms } => AudioCommand::DuckAndApply { duck_ms },
+            _ => {
+                return self
+                    .cmd_tx
+                    .send(ControlCommand {
+                        epoch,
+                        preload_revision,
+                        command: cmd,
+                    })
+                    .map(|_| epoch)
+                    .map_err(|_| "audio engine is unavailable".into())
+            }
+        };
+        self.audio_cmd_tx
+            .try_send(audio)
+            .map(|_| epoch)
+            .map_err(|_| "audio callback is unavailable".into())
     }
 
     /// Access the audio file cache.
@@ -259,7 +322,7 @@ impl AudioEngine {
 
 #[allow(clippy::too_many_arguments)]
 fn control_thread_main(
-    cmd_rx: crossbeam_channel::Receiver<Command>,
+    cmd_rx: crossbeam_channel::Receiver<ControlCommand>,
     audio_cmd_tx: Sender<AudioCommand>,
     deck_a_tx: Sender<SampleBatch>,
     deck_b_tx: Sender<SampleBatch>,
@@ -273,190 +336,186 @@ fn control_thread_main(
     let rt = tauri::async_runtime::handle().inner().clone();
     let mut crossfade_settings = CrossfadeSettings::default();
     // Track what's preloaded on the pending deck so we can skip re-fetching
-    let mut pending_rating_key: i64 = 0;
+    let mut pending_url = String::new();
+    let mut pending_owner: Option<(DeckId, u64)> = None;
 
     /// Read which deck is currently active from the shared atomic.
     /// The pending deck (for preloads/next play) is always the other one.
     fn pending_deck(atomics: &SharedAtomics) -> DeckId {
         let active = atomics.active_deck_id.load(Ordering::Relaxed);
-        if active == 0 { DeckId::B } else { DeckId::A }
-    }
-
-    /// Eagerly update active_deck_id after sending TransitionToActive, so
-    /// subsequent commands see the correct pending deck without waiting for
-    /// the audio callback to process the swap.
-    fn set_active_eagerly(atomics: &SharedAtomics, deck: DeckId) {
-        let id = match deck { DeckId::A => 0u8, DeckId::B => 1u8 };
-        atomics.active_deck_id.store(id, Ordering::Relaxed);
+        if active == 0 {
+            DeckId::B
+        } else {
+            DeckId::A
+        }
     }
 
     loop {
-        match cmd_rx.recv() {
-            Ok(cmd) => match cmd {
-                Command::Play { url, meta } => {
-                    let active_rk = atomics.active_rating_key.load(Ordering::Relaxed);
-                    let active_id = atomics.active_deck_id.load(Ordering::Relaxed);
-                    let pending = pending_deck(&atomics);
-                    info!(
-                        rating_key = meta.rating_key,
-                        active_rk,
-                        pending_rk = pending_rating_key,
-                        active_deck = active_id,
-                        ?pending,
-                        "PLAY command received"
-                    );
-
-                    // Check if this track is already playing (scheduler beat us to it)
-                    let already_active = active_rk == meta.rating_key;
-                    // Check if the preload was truncated (stream error during download)
-                    let preload_broken = atomics.preload_error_rk.load(Ordering::Relaxed) == meta.rating_key;
-                    if already_active {
-                        info!(rating_key = meta.rating_key, "track already active, skipping play");
-                        pending_rating_key = 0;
-                    // If the pending deck already has this track preloaded, just transition
-                    } else if pending_rating_key == meta.rating_key && pending_rating_key != 0 && !preload_broken {
-                        info!(rating_key = meta.rating_key, "using preloaded deck");
-                        cache_ramps(&meta, &audio_cmd_tx);
-                        let _ = audio_cmd_tx.send(AudioCommand::TransitionToActive { user_skip: true });
-                        set_active_eagerly(&atomics, pending);
-                        pending_rating_key = 0;
-                    } else {
-                        if preload_broken {
-                            warn!(rating_key = meta.rating_key, "preload was truncated, re-fetching");
-                            atomics.preload_error_rk.store(0, Ordering::Relaxed);
-                        }
-                        let deck = pending;
-                        handle_play(
-                            &url,
-                            &meta,
-                            deck,
-                            &audio_cmd_tx,
-                            &deck_tx(deck, &deck_a_tx, &deck_b_tx),
-                            &event_tx,
-                            &app_handle,
-                            &rt,
-                            &atomics,
-                            &cache,
-                            &crossfade_settings,
-                            device_sample_rate,
-                            device_channels,
-                        );
-                        // Eagerly reflect the upcoming deck swap
-                        set_active_eagerly(&atomics, deck);
-                        pending_rating_key = 0;
-                    }
-                }
-                Command::PreloadNext { url, meta } => {
-                    let deck = pending_deck(&atomics);
-                    info!(
-                        rating_key = meta.rating_key,
-                        ?deck,
-                        active_deck = atomics.active_deck_id.load(Ordering::Relaxed),
-                        "PRELOAD command"
-                    );
-                    pending_rating_key = meta.rating_key;
-                    handle_preload(
-                        &url,
-                        &meta,
-                        deck,
-                        &audio_cmd_tx,
-                        &deck_tx(deck, &deck_a_tx, &deck_b_tx),
-                        &event_tx,
-                        &app_handle,
-                        &rt,
-                        &atomics,
-                        &cache,
-                        &crossfade_settings,
-                        device_sample_rate,
-                        device_channels,
-                    );
-                }
-                Command::Pause => {
-                    let _ = audio_cmd_tx.send(AudioCommand::Pause);
-                }
-                Command::Resume => {
-                    let _ = audio_cmd_tx.send(AudioCommand::Resume);
-                }
-                Command::Stop => {
-                    let _ = audio_cmd_tx.send(AudioCommand::Stop);
-                }
-                Command::Seek { position_ms } => {
-                    handle_seek(
-                        position_ms,
-                        &audio_cmd_tx,
-                        &atomics,
-                    );
-                }
-                Command::SetVolume { gain } => {
-                    let _ = audio_cmd_tx.send(AudioCommand::SetVolume(gain));
-                }
-                Command::SetNormalization { enabled } => {
-                    let _ = audio_cmd_tx.send(AudioCommand::SetNormalization(enabled));
-                }
-                Command::SetPreampGain { db } => {
-                    let _ = audio_cmd_tx.send(AudioCommand::SetPreampGain(db));
-                }
-                Command::SetEq { gains_db } => {
-                    let _ = audio_cmd_tx.send(AudioCommand::SetEq(gains_db));
-                }
-                Command::SetEqEnabled { enabled } => {
-                    let _ = audio_cmd_tx.send(AudioCommand::SetEqEnabled(enabled));
-                }
-                Command::SetEqPostgain { db } => {
-                    let _ = audio_cmd_tx.send(AudioCommand::SetEqPostgain(db));
-                }
-                Command::SetCrossfadeWindow { ms } => {
-                    crossfade_settings.crossfade_window_ms = ms;
-                    let _ = audio_cmd_tx.send(AudioCommand::UpdateCrossfadeSettings(
-                        crossfade_settings.clone(),
-                    ));
-                }
-                Command::SetSameAlbumCrossfade { enabled } => {
-                    crossfade_settings.same_album_crossfade = enabled;
-                    let _ = audio_cmd_tx.send(AudioCommand::UpdateCrossfadeSettings(
-                        crossfade_settings.clone(),
-                    ));
-                }
-                Command::SetSmartCrossfade { enabled } => {
-                    crossfade_settings.smart_crossfade = enabled;
-                    let _ = audio_cmd_tx.send(AudioCommand::UpdateCrossfadeSettings(
-                        crossfade_settings.clone(),
-                    ));
-                }
-                Command::SetSmartCrossfadeMax { ms } => {
-                    crossfade_settings.smart_crossfade_max_ms = ms;
-                    let _ = audio_cmd_tx.send(AudioCommand::UpdateCrossfadeSettings(
-                        crossfade_settings.clone(),
-                    ));
-                }
-                Command::SetMixrampDb { db } => {
-                    crossfade_settings.mixramp_db = db;
-                    let _ = audio_cmd_tx.send(AudioCommand::UpdateCrossfadeSettings(
-                        crossfade_settings.clone(),
-                    ));
-                }
-                Command::SetVisualizerEnabled { enabled } => {
-                    let _ = audio_cmd_tx.send(AudioCommand::SetVisualizerEnabled(enabled));
-                }
-                Command::SetCacheMaxBytes { bytes } => {
-                    cache.set_max_bytes(bytes);
-                }
-                Command::ClearCache => {
-                    cache.clear();
-                }
-                Command::DuckAndApply { duck_ms } => {
-                    let _ = audio_cmd_tx.send(AudioCommand::DuckAndApply { duck_ms });
-                }
-                Command::Shutdown => {
-                    info!("audio engine control thread shutting down");
-                    break;
-                }
-            },
-            Err(_) => {
-                info!("command channel disconnected, control thread exiting");
-                break;
-            }
+        let Ok(ControlCommand {
+            epoch,
+            preload_revision,
+            command,
+        }) = cmd_rx.recv()
+        else {
+            break;
+        };
+        if epoch != atomics.request_epoch.load(Ordering::SeqCst) {
+            continue;
         }
+        match command {
+            Command::Play { url, meta } => {
+                pending_url.clear();
+                let deck = pending_deck(&atomics);
+                let request = make_request(epoch, deck, &atomics);
+                handle_play(
+                    &url,
+                    &meta,
+                    deck,
+                    &audio_cmd_tx,
+                    deck_tx(deck, &deck_a_tx, &deck_b_tx),
+                    &event_tx,
+                    &app_handle,
+                    &rt,
+                    &atomics,
+                    &cache,
+                    &crossfade_settings,
+                    device_sample_rate,
+                    device_channels,
+                    &request,
+                );
+                // Only the callback owns deck swaps. Wait for acknowledgement before
+                // choosing a deck for the next preload, with cancellation and a bound.
+                let deadline = std::time::Instant::now() + Duration::from_secs(1);
+                while request.is_current()
+                    && atomics.active_request_id.load(Ordering::SeqCst) != epoch
+                    && std::time::Instant::now() < deadline
+                {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+            Command::PreloadNext { url, meta } => {
+                if preload_revision != atomics.preload_revision.load(Ordering::SeqCst) {
+                    continue;
+                }
+                let pending = pending_deck(&atomics);
+                let owner = match pending {
+                    DeckId::A => &atomics.deck_a_load_id,
+                    DeckId::B => &atomics.deck_b_load_id,
+                };
+                if url == pending_url
+                    && pending_owner == Some((pending, owner.load(Ordering::SeqCst)))
+                    && atomics.preload_error_rk.load(Ordering::SeqCst) != meta.rating_key
+                {
+                    continue;
+                }
+                // The pending physical deck still holds audible outgoing samples
+                // during an overlap. Do not replace it until the fade has finished.
+                while atomics.crossfading.load(Ordering::SeqCst)
+                    && epoch == atomics.request_epoch.load(Ordering::SeqCst)
+                    && preload_revision == atomics.preload_revision.load(Ordering::SeqCst)
+                {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                if epoch != atomics.request_epoch.load(Ordering::SeqCst) {
+                    continue;
+                }
+                let deck = pending_deck(&atomics);
+                let request = make_request(epoch, deck, &atomics).for_preload(
+                    atomics.preload_revision.clone(),
+                    preload_revision,
+                    atomics.active_deck_id.clone(),
+                    if deck == DeckId::A { 0 } else { 1 },
+                );
+                handle_preload(
+                    &url,
+                    &meta,
+                    deck,
+                    &audio_cmd_tx,
+                    deck_tx(deck, &deck_a_tx, &deck_b_tx),
+                    &event_tx,
+                    &app_handle,
+                    &rt,
+                    &atomics,
+                    &cache,
+                    &crossfade_settings,
+                    device_sample_rate,
+                    device_channels,
+                    &request,
+                );
+                let loaded = match deck {
+                    DeckId::A => &atomics.deck_a_loaded_id,
+                    DeckId::B => &atomics.deck_b_loaded_id,
+                };
+                if request.is_current() && loaded.load(Ordering::SeqCst) == request.load_id {
+                    pending_url = url;
+                    pending_owner = Some((deck, request.load_id));
+                }
+            }
+            Command::SetCrossfadeWindow { ms } => {
+                crossfade_settings.crossfade_window_ms = ms;
+                let _ = audio_cmd_tx.send(AudioCommand::UpdateCrossfadeSettings(
+                    crossfade_settings.clone(),
+                ));
+            }
+            Command::SetSameAlbumCrossfade { enabled } => {
+                crossfade_settings.same_album_crossfade = enabled;
+                let _ = audio_cmd_tx.send(AudioCommand::UpdateCrossfadeSettings(
+                    crossfade_settings.clone(),
+                ));
+            }
+            Command::SetSmartCrossfade { enabled } => {
+                crossfade_settings.smart_crossfade = enabled;
+                let _ = audio_cmd_tx.send(AudioCommand::UpdateCrossfadeSettings(
+                    crossfade_settings.clone(),
+                ));
+            }
+            Command::SetSmartCrossfadeMax { ms } => {
+                crossfade_settings.smart_crossfade_max_ms = ms;
+                let _ = audio_cmd_tx.send(AudioCommand::UpdateCrossfadeSettings(
+                    crossfade_settings.clone(),
+                ));
+            }
+            Command::SetMixrampDb { db } => {
+                crossfade_settings.mixramp_db = db;
+                let _ = audio_cmd_tx.send(AudioCommand::UpdateCrossfadeSettings(
+                    crossfade_settings.clone(),
+                ));
+            }
+            Command::SetCacheMaxBytes { bytes } => {
+                cache.set_max_bytes(bytes);
+            }
+            Command::ClearCache => {
+                cache.clear();
+            }
+            Command::Shutdown => break,
+            _ => unreachable!("interactive commands are dispatched directly to the callback"),
+        }
+    }
+}
+
+fn make_request(epoch: u64, deck: DeckId, atomics: &SharedAtomics) -> PlaybackRequest {
+    match deck {
+        DeckId::A => atomics.deck_a_seek_ms.store(-1, Ordering::SeqCst),
+        DeckId::B => atomics.deck_b_seek_ms.store(-1, Ordering::SeqCst),
+    }
+    let owner = match deck {
+        DeckId::A => atomics.deck_a_load_id.clone(),
+        DeckId::B => atomics.deck_b_load_id.clone(),
+    };
+    PlaybackRequest::new(epoch, atomics.request_epoch.clone(), owner)
+}
+
+fn wait_for_load(deck: DeckId, request: &PlaybackRequest, atomics: &SharedAtomics) {
+    let loaded = match deck {
+        DeckId::A => &atomics.deck_a_loaded_id,
+        DeckId::B => &atomics.deck_b_loaded_id,
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while request.is_current()
+        && loaded.load(Ordering::SeqCst) != request.load_id
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(5));
     }
 }
 
@@ -483,7 +542,7 @@ fn handle_play(
     deck: DeckId,
     audio_cmd_tx: &Sender<AudioCommand>,
     sample_tx: &Sender<SampleBatch>,
-    event_tx: &Sender<EngineEvent>,
+    _event_tx: &Sender<EngineEvent>,
     app_handle: &tauri::AppHandle,
     rt: &tokio::runtime::Handle,
     atomics: &Arc<SharedAtomics>,
@@ -491,19 +550,19 @@ fn handle_play(
     _xfade: &CrossfadeSettings,
     device_rate: u32,
     device_channels: u16,
+    request: &PlaybackRequest,
 ) {
+    if !request.is_current() {
+        return;
+    }
     debug!(rating_key = meta.rating_key, ?deck, "play command");
 
     // Cache ramps
     cache_ramps(meta, audio_cmd_tx);
 
-    // Set buffering state
-    atomics.set_state(EngineState::Buffering);
-    let _ = event_tx.send(EngineEvent::State {
-        state: "buffering".into(),
-    });
+    // The callback owns playback state, including pause during loading.
 
-    let norm_enabled = true; // TODO: read from atomics if needed
+    let norm_enabled = true; // Callback applies the current normalization preference.
 
     // Increment generation to invalidate any old bg decode threads writing to this deck
     let generation = match deck {
@@ -511,14 +570,29 @@ fn handle_play(
         DeckId::B => atomics.deck_b_generation.fetch_add(1, Ordering::Relaxed) + 1,
     };
 
-    match fetch_and_decode_incremental(url, meta.rating_key, cache, app_handle, rt, device_rate, device_channels) {
+    match fetch_and_decode_incremental(
+        url,
+        meta.rating_key,
+        cache,
+        app_handle,
+        rt,
+        device_rate,
+        device_channels,
+        request,
+    ) {
         Ok(result) => {
+            if !request.is_current() {
+                return;
+            }
             let source_rate = result.source_rate;
             let source_channels = result.source_channels;
             let has_more = result.has_more;
 
             // Resolve gain: Plex metadata → cached analysis → fresh EBU R128 analysis
-            let gain_db = resolve_gain_db(meta, url, cache);
+            let gain_db = resolve_gain_db(meta, url, cache, request);
+            if !request.is_current() {
+                return;
+            }
             let mut resolved_meta = meta.clone();
             resolved_meta.gain_db = gain_db;
             let norm_gain = if norm_enabled {
@@ -528,11 +602,14 @@ fn handle_play(
             };
 
             // Pre-compute expected samples for pre-allocation
-            let expected_total = if meta.duration_ms > 0 && result.sample_rate > 0 && result.channels > 0 {
-                (meta.duration_ms as f64 / 1000.0 * result.sample_rate as f64 * result.channels as f64) as usize
-            } else {
-                result.initial_samples.len()
-            };
+            let expected_total =
+                if meta.duration_ms > 0 && result.sample_rate > 0 && result.channels > 0 {
+                    (meta.duration_ms as f64 / 1000.0
+                        * result.sample_rate as f64
+                        * result.channels as f64) as usize
+                } else {
+                    result.initial_samples.len()
+                };
 
             // Tell audio callback to prepare the deck
             let _ = audio_cmd_tx.send(AudioCommand::LoadDeck {
@@ -542,24 +619,26 @@ fn handle_play(
                 channels: result.channels,
                 norm_gain,
                 expected_samples: expected_total,
-            });
-
-            // Don't mark as fully decoded if the stream was truncated
-            let fully_decoded = !has_more && !result.aborted;
-
-            // Send initial samples
-            let _ = sample_tx.send(SampleBatch {
-                rating_key: meta.rating_key,
+                request_id: request.epoch,
+                preload_revision: request.preload_revision(),
+                load_id: request.load_id,
                 generation,
-                samples: result.initial_samples,
-                fully_decoded,
+                initial_samples: result.initial_samples,
+                fully_decoded: !has_more && !result.aborted,
             });
 
             // Tell audio callback to swap pending → active
-            let _ = audio_cmd_tx.send(AudioCommand::TransitionToActive { user_skip: true });
+            let _ = audio_cmd_tx.send(AudioCommand::TransitionToActive {
+                user_skip: true,
+                request_id: request.epoch,
+            });
 
+            wait_for_load(deck, request, atomics);
             // Continue decoding in background
             if let Some(decoder) = result.decoder {
+                if !request.is_current() {
+                    return;
+                }
                 spawn_background_decode(
                     decoder,
                     meta.rating_key,
@@ -571,16 +650,24 @@ fn handle_play(
                     atomics.clone(),
                     device_rate,
                     device_channels,
+                    request.clone(),
                 );
             }
 
             if result.aborted {
-                warn!(rating_key = meta.rating_key, "stream was truncated during play");
+                warn!(
+                    rating_key = meta.rating_key,
+                    "stream was truncated during play"
+                );
             }
         }
         Err(e) => {
+            if !request.is_current() {
+                return;
+            }
             warn!(rating_key = meta.rating_key, error = %e, "play failed");
-            let _ = event_tx.send(EngineEvent::Error {
+            let _ = audio_cmd_tx.send(AudioCommand::FailPlay {
+                request_id: request.epoch,
                 message: format!("load failed: {}", e),
             });
         }
@@ -594,7 +681,7 @@ fn handle_preload(
     deck: DeckId,
     audio_cmd_tx: &Sender<AudioCommand>,
     sample_tx: &Sender<SampleBatch>,
-    event_tx: &Sender<EngineEvent>,
+    _event_tx: &Sender<EngineEvent>,
     app_handle: &tauri::AppHandle,
     rt: &tokio::runtime::Handle,
     atomics: &Arc<SharedAtomics>,
@@ -602,9 +689,17 @@ fn handle_preload(
     _xfade: &CrossfadeSettings,
     device_rate: u32,
     device_channels: u16,
+    request: &PlaybackRequest,
 ) {
+    if !request.is_current() {
+        return;
+    }
     debug!(rating_key = meta.rating_key, ?deck, "preload command");
 
+    let _ = audio_cmd_tx.send(AudioCommand::PreparePreload {
+        request_id: request.epoch,
+        deck,
+    });
     cache_ramps(meta, audio_cmd_tx);
 
     let norm_enabled = true;
@@ -615,13 +710,28 @@ fn handle_preload(
         DeckId::B => atomics.deck_b_generation.fetch_add(1, Ordering::Relaxed) + 1,
     };
 
-    match fetch_and_decode_incremental(url, meta.rating_key, cache, app_handle, rt, device_rate, device_channels) {
+    match fetch_and_decode_incremental(
+        url,
+        meta.rating_key,
+        cache,
+        app_handle,
+        rt,
+        device_rate,
+        device_channels,
+        request,
+    ) {
         Ok(result) => {
+            if !request.is_current() {
+                return;
+            }
             let source_rate = result.source_rate;
             let source_channels = result.source_channels;
             let has_more = result.has_more;
 
-            let gain_db = resolve_gain_db(meta, url, cache);
+            let gain_db = resolve_gain_db(meta, url, cache, request);
+            if !request.is_current() {
+                return;
+            }
             let mut resolved_meta = meta.clone();
             resolved_meta.gain_db = gain_db;
             let norm_gain = if norm_enabled {
@@ -630,11 +740,14 @@ fn handle_preload(
                 1.0
             };
 
-            let expected_total = if meta.duration_ms > 0 && result.sample_rate > 0 && result.channels > 0 {
-                (meta.duration_ms as f64 / 1000.0 * result.sample_rate as f64 * result.channels as f64) as usize
-            } else {
-                result.initial_samples.len()
-            };
+            let expected_total =
+                if meta.duration_ms > 0 && result.sample_rate > 0 && result.channels > 0 {
+                    (meta.duration_ms as f64 / 1000.0
+                        * result.sample_rate as f64
+                        * result.channels as f64) as usize
+                } else {
+                    result.initial_samples.len()
+                };
 
             let _ = audio_cmd_tx.send(AudioCommand::LoadDeck {
                 deck,
@@ -643,26 +756,29 @@ fn handle_preload(
                 channels: result.channels,
                 norm_gain,
                 expected_samples: expected_total,
-            });
-
-            let fully_decoded = !has_more && !result.aborted;
-
-            let _ = sample_tx.send(SampleBatch {
-                rating_key: meta.rating_key,
+                request_id: request.epoch,
+                preload_revision: request.preload_revision(),
+                load_id: request.load_id,
                 generation,
-                samples: result.initial_samples,
-                fully_decoded,
+                initial_samples: result.initial_samples,
+                fully_decoded: !has_more && !result.aborted,
             });
 
             if result.aborted {
                 warn!(rating_key = meta.rating_key, "preload stream was truncated");
-                atomics.preload_error_rk.store(meta.rating_key, Ordering::Relaxed);
+                atomics
+                    .preload_error_rk
+                    .store(meta.rating_key, Ordering::Relaxed);
             }
 
             debug!(rating_key = meta.rating_key, "preload initial batch ready");
-            // NOTE: No TransitionToActive here — the audio callback's scheduler handles it
+            // The callback schedules the preloaded track after installation.
+            wait_for_load(deck, request, atomics);
 
             if let Some(decoder) = result.decoder {
+                if !request.is_current() {
+                    return;
+                }
                 spawn_background_decode(
                     decoder,
                     meta.rating_key,
@@ -674,61 +790,17 @@ fn handle_preload(
                     atomics.clone(),
                     device_rate,
                     device_channels,
+                    request.clone(),
                 );
             }
         }
         Err(e) => {
+            if !request.is_current() {
+                return;
+            }
             warn!(rating_key = meta.rating_key, error = %e, "preload failed");
-            let _ = event_tx.send(EngineEvent::Error {
-                message: format!("preload failed: {}", e),
-            });
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// Seek handler
-// ---------------------------------------------------------------------------
-
-fn handle_seek(
-    position_ms: u64,
-    audio_cmd_tx: &Sender<AudioCommand>,
-    atomics: &Arc<SharedAtomics>,
-) {
-    // We need to determine whether the seek target is within the decoded buffer
-    // or beyond it. Read the current state from atomics to make a best-effort
-    // decision. The audio callback will handle the actual seek.
-    let sr = atomics.device_sample_rate.load(Ordering::Relaxed);
-    let dur = atomics.duration_ms.load(Ordering::Relaxed);
-    if sr == 0 || dur == 0 {
-        return;
-    }
-
-    // For now, always send SeekInBuffer — the audio callback will handle
-    // the case where position is beyond buffer by checking internally.
-    // If the deck is not fully decoded and position is beyond buffer,
-    // we need SeekClearAndWait. We don't know buffer size from here,
-    // so we send SeekInBuffer and let the callback decide.
-    //
-    // Actually, we need to compute target_sample for the callback.
-    // The callback knows its own deck state so we send the raw position_ms
-    // and let it figure out the rest. Let's add a Seek variant.
-    //
-    // Simpler: send position as a sample offset. The callback reads its own
-    // deck state to determine in-buffer vs out-of-buffer.
-
-    // For out-of-buffer seeks, we need to signal the bg decode thread.
-    // The audio callback can do this by writing to the seek atomics.
-    // But the callback doesn't know the deck-to-atomic mapping...
-    // Actually it does — it knows which deck is active.
-
-    // Send a general seek command. The callback will determine the right action.
-    let _ = audio_cmd_tx.send(AudioCommand::SeekInBuffer {
-        position: position_ms as usize, // Encode as ms, callback converts
-    });
-
-    // Also reset DSP on seek
-    let _ = audio_cmd_tx.send(AudioCommand::ResetDsp);
 }
 
 // ---------------------------------------------------------------------------
@@ -747,6 +819,7 @@ fn spawn_background_decode(
     atomics: Arc<SharedAtomics>,
     device_sample_rate: u32,
     device_channels: u16,
+    request: PlaybackRequest,
 ) {
     let seek_signal = match deck {
         DeckId::A => atomics.deck_a_seek_ms.clone(),
@@ -764,12 +837,19 @@ fn spawn_background_decode(
             let mut current_gen = generation;
 
             loop {
+                if !request.is_current() {
+                    return;
+                }
                 // Check for seek request
                 let seek_ms = seek_signal.load(Ordering::Relaxed);
                 if seek_ms >= 0 {
                     seek_signal.store(-1, Ordering::Relaxed);
                     let seek_secs = seek_ms as f64 / 1000.0;
-                    debug!(rating_key, seek_secs = format!("{:.2}", seek_secs), "bg decode: seeking");
+                    debug!(
+                        rating_key,
+                        seek_secs = format!("{:.2}", seek_secs),
+                        "bg decode: seeking"
+                    );
 
                     use symphonia::core::formats::{SeekMode, SeekTo};
                     use symphonia::core::units::Time;
@@ -788,7 +868,12 @@ fn spawn_background_decode(
                             decoder.finished = false;
                             // Update generation — new batches get the new generation
                             current_gen = gen_signal.load(Ordering::Relaxed);
-                            debug!(rating_key, seeked_ts = seeked.actual_ts, gen = current_gen, "bg decode: seek done");
+                            debug!(
+                                rating_key,
+                                seeked_ts = seeked.actual_ts,
+                                gen = current_gen,
+                                "bg decode: seek done"
+                            );
                         }
                         Err(e) => warn!(rating_key, error = %e, "bg decode: seek failed"),
                     }
@@ -796,6 +881,9 @@ fn spawn_background_decode(
 
                 match decode::decode_batch(&mut decoder, batch_size) {
                     Ok(batch) if !batch.is_empty() => {
+                        if !request.is_current() {
+                            return;
+                        }
                         let mut samples = batch;
 
                         if source_rate != device_sample_rate {
@@ -831,12 +919,17 @@ fn spawn_background_decode(
                         }
                     }
                     Ok(_) => {
+                        if !request.is_current() {
+                            return;
+                        }
                         if decoder.aborted {
                             // Stream was truncated (download error) — don't mark
                             // as fully decoded so is_finished() won't fire and
                             // cause premature auto-advance.
                             warn!(rating_key, "bg decode: incomplete (stream truncated)");
-                            atomics.preload_error_rk.store(rating_key, Ordering::Relaxed);
+                            atomics
+                                .preload_error_rk
+                                .store(rating_key, Ordering::Relaxed);
                         } else {
                             debug!(rating_key, "bg decode: complete");
                             let _ = sample_tx.send(SampleBatch {
@@ -849,8 +942,13 @@ fn spawn_background_decode(
                         return;
                     }
                     Err(e) => {
+                        if !request.is_current() {
+                            return;
+                        }
                         warn!(rating_key, error = %e, "bg decode: error");
-                        atomics.preload_error_rk.store(rating_key, Ordering::Relaxed);
+                        atomics
+                            .preload_error_rk
+                            .store(rating_key, Ordering::Relaxed);
                         return;
                     }
                 }
@@ -882,7 +980,7 @@ struct IncrementalDecodeResult {
 
 /// Fetch and decode audio — checks disk cache first, falls back to HTTP streaming.
 /// On cache miss, tees the HTTP body to disk while streaming to the decoder.
-/// The download task runs to completion even if the track is skipped (caches it).
+/// Obsolete downloads are cancelled so they cannot hold up the next track.
 fn fetch_and_decode_incremental(
     url: &str,
     rating_key: i64,
@@ -891,6 +989,7 @@ fn fetch_and_decode_incremental(
     rt: &tokio::runtime::Handle,
     device_rate: u32,
     device_channels: u16,
+    request: &PlaybackRequest,
 ) -> Result<IncrementalDecodeResult, String> {
     use symphonia::core::io::MediaSourceStream;
 
@@ -900,8 +999,7 @@ fn fetch_and_decode_incremental(
     // ---- Cache HIT: decode from local file ----
     if let Some(cached_path) = cache.lookup(&cache_key) {
         debug!(rating_key, path = %cached_path.display(), "cache hit — decoding from file");
-        let file = std::fs::File::open(&cached_path)
-            .map_err(|e| format!("cache read: {}", e))?;
+        let file = std::fs::File::open(&cached_path).map_err(|e| format!("cache read: {}", e))?;
         let mss = MediaSourceStream::new(Box::new(file), Default::default());
         let mut setup = decode::probe_from_source(mss, Some(&ext)).map_err(|e| format!("{}", e))?;
         let mut result = decode_initial_batch(&mut setup, device_rate, device_channels)?;
@@ -920,6 +1018,7 @@ fn fetch_and_decode_incremental(
     let ext = cache::extract_extension(url);
     let cache_writer = cache.begin_write(&cache_key, &ext).ok();
     let cache_for_task = cache.clone();
+    let request = request.clone();
 
     let shared_buf = rt.block_on(async {
         let client = {
@@ -933,8 +1032,10 @@ fn fetch_and_decode_incremental(
 
         let shared = SharedBuffer::new(None);
         let shared_w = shared.clone();
+        let shared_return = shared.clone();
 
         tauri::async_runtime::spawn(async move {
+            let download = async {
             let _guard = fetch_lock.lock().await;
             let request = client.as_ref().map(|client| client.media_request(&url_owned))
                 .unwrap_or_else(|| crate::plex::client::public_media_request(&url_owned));
@@ -944,7 +1045,7 @@ fn fetch_and_decode_incremental(
             {
                 Ok(r) => r,
                 Err(e) => {
-                    tracing::warn!("stream fetch failed: {}", e);
+                    tracing::warn!("stream fetch failed: {}", e.without_url());
                     shared_w.abort();
                     if let Some(w) = cache_writer { w.abort(); }
                     return;
@@ -977,7 +1078,7 @@ fn fetch_and_decode_incremental(
                         }
                     }
                     Err(e) => {
-                        tracing::warn!("stream chunk error: {}", e);
+                        tracing::warn!("stream chunk error: {}", e.without_url());
                         shared_w.abort();
                         if let Some(w) = writer.take() { w.abort(); }
                         return;
@@ -991,9 +1092,15 @@ fn fetch_and_decode_incremental(
                     tracing::warn!(%error, "audio cache finalization failed");
                 }
             }
+            };
+            tokio::select! {
+                biased;
+                _ = request.cancelled() => { shared.abort(); }
+                _ = download => {}
+            }
         });
 
-        Ok::<_, String>(shared)
+        Ok::<_, String>(shared_return)
     })?;
 
     let reader = StreamingReader::new(shared_buf);
@@ -1084,6 +1191,7 @@ fn resolve_gain_db(
     meta: &TrackMeta,
     url: &str,
     cache: &Arc<AudioCache>,
+    request: &PlaybackRequest,
 ) -> Option<f32> {
     // 1. Plex-provided gain
     if let Some(db) = meta.gain_db {
@@ -1092,15 +1200,22 @@ fn resolve_gain_db(
 
     // 2. Previously computed gain from cache
     if let Some(db) = cache.get_computed_gain(&cache::cache_key(url)) {
-        debug!(rating_key = meta.rating_key, gain_db = format!("{:.1}", db), "using cached computed gain");
+        debug!(
+            rating_key = meta.rating_key,
+            gain_db = format!("{:.1}", db),
+            "using cached computed gain"
+        );
         return Some(db);
     }
 
     // 3. Compute gain for cached files that lack Plex loudness data
     let ext = cache::extract_extension(url);
     if let Some(cached_path) = cache.lookup(&cache::cache_key(url)) {
-        debug!(rating_key = meta.rating_key, "running loudness analysis (no Plex gain data)");
-        match loudness::analyze_loudness(&cached_path, &ext) {
+        debug!(
+            rating_key = meta.rating_key,
+            "running loudness analysis (no Plex gain data)"
+        );
+        match loudness::analyze_loudness(&cached_path, &ext, || request.is_current()) {
             Ok(gain_db) => {
                 cache.set_computed_gain(&cache::cache_key(url), gain_db);
                 return Some(gain_db);
@@ -1112,4 +1227,62 @@ fn resolve_gain_db(
     }
 
     None
+}
+
+#[cfg(test)]
+mod control_tests {
+    use super::*;
+
+    #[test]
+    fn interactive_controls_bypass_a_busy_io_worker_and_stop_invalidates_queued_play() {
+        let dir = tempfile::tempdir().unwrap();
+        let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
+        let (audio_cmd_tx, audio_rx) = crossbeam_channel::bounded(32);
+        let engine = AudioEngine {
+            cmd_tx,
+            audio_cmd_tx,
+            atomics: Arc::new(SharedAtomics::new()),
+            cache: Arc::new(AudioCache::new(dir.path().to_path_buf(), None)),
+        };
+        let key = 42;
+        let meta = TrackMeta {
+            rating_key: key,
+            duration_ms: 1000,
+            parent_key: String::new(),
+            gain_db: None,
+            skip_crossfade: true,
+            start_ramp: None,
+            end_ramp: None,
+        };
+        let play_epoch = engine
+            .send(Command::Play {
+                url: "https://example.com/audio".into(),
+                meta,
+            })
+            .unwrap();
+        // Intentionally leave the play queued, simulating a worker doing I/O.
+        engine.send(Command::Pause).unwrap();
+        engine.send(Command::Seek { position_ms: 500 }).unwrap();
+        let stop_epoch = engine.send(Command::Stop).unwrap();
+        assert!(stop_epoch > play_epoch);
+        assert!(matches!(
+            audio_rx.recv().unwrap(),
+            AudioCommand::BeginPlay { .. }
+        ));
+        assert!(matches!(audio_rx.recv().unwrap(), AudioCommand::Pause));
+        assert!(matches!(
+            audio_rx.recv().unwrap(),
+            AudioCommand::SeekInBuffer { position: 500 }
+        ));
+        assert!(matches!(audio_rx.recv().unwrap(), AudioCommand::Stop));
+        assert_eq!(cmd_rx.recv().unwrap().epoch, play_epoch);
+        assert!(
+            cmd_rx.try_recv().is_err(),
+            "interactive controls must not queue behind network I/O"
+        );
+        assert_eq!(
+            engine.atomics.request_epoch.load(Ordering::SeqCst),
+            stop_epoch
+        );
+    }
 }
