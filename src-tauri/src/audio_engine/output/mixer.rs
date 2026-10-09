@@ -150,6 +150,7 @@ mod tests {
             norm_gain: 1.0,
             fade_curve: None,
             fully_decoded: true,
+            decode_error: None,
             sample_offset: 0,
             generation: 0,
         }

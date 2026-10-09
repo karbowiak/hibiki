@@ -49,6 +49,7 @@ pub struct DecoderSetup {
     /// When true, the decoded audio is truncated — callers should NOT treat
     /// it as a complete track.
     pub aborted: bool,
+    stream_buffer: Option<std::sync::Arc<super::streaming::SharedBuffer>>,
 }
 
 /// Probe and set up a decoder from in-memory bytes (full file).
@@ -62,8 +63,11 @@ pub fn probe_audio(data: Vec<u8>) -> Result<DecoderSetup> {
 /// Probe and set up a decoder from a streaming source.
 /// The reader may block waiting for HTTP data — that's fine, we're on the decode thread.
 pub fn probe_stream(reader: StreamingReader, ext: Option<&str>) -> Result<DecoderSetup> {
+    let buffer = reader.buffer();
     let mss = MediaSourceStream::new(Box::new(reader), Default::default());
-    probe_from_source(mss, ext)
+    let mut setup = probe_from_source(mss, ext)?;
+    setup.stream_buffer = Some(buffer);
+    Ok(setup)
 }
 
 /// Probe and set up a decoder. Pass a file extension hint (e.g. "opus", "ogg",
@@ -124,6 +128,7 @@ pub fn probe_from_source(mss: MediaSourceStream, ext: Option<&str>) -> Result<De
         sample_buf: None,
         finished: false,
         aborted: false,
+        stream_buffer: None,
     })
 }
 
@@ -149,6 +154,10 @@ pub fn decode_batch(setup: &mut DecoderSetup, max_samples: usize) -> Result<Vec<
                 if e.kind() == std::io::ErrorKind::UnexpectedEof =>
             {
                 setup.finished = true;
+                setup.aborted = setup
+                    .stream_buffer
+                    .as_ref()
+                    .is_some_and(|buffer| buffer.is_aborted());
                 break;
             }
             Err(e) => {

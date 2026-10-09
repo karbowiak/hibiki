@@ -192,6 +192,8 @@ impl AudioCallbackState {
         // Initial samples travel in LoadDeck, so loading is atomic with metadata.
         self.process_commands();
 
+        self.check_decode_failure();
+
         // 3. Check buffering → playing resume
         self.check_buffering_resume();
 
@@ -255,6 +257,9 @@ impl AudioCallbackState {
             }
 
             deck.samples.extend_from_slice(&batch.samples);
+            if let Some(error) = batch.error {
+                deck.decode_error = Some(error);
+            }
             if batch.fully_decoded {
                 deck.fully_decoded = true;
             }
@@ -527,9 +532,6 @@ impl AudioCallbackState {
             }
             AudioCommand::SetEqPostgain(db) => {
                 self.dsp_chain.set_postgain_db(db);
-            }
-            AudioCommand::ResetDsp => {
-                self.dsp_chain.reset();
             }
             AudioCommand::SetNormalization(enabled) => {
                 self.normalization_enabled = enabled;
@@ -873,6 +875,23 @@ impl AudioCallbackState {
     // -----------------------------------------------------------------------
     // Buffering resume
     // -----------------------------------------------------------------------
+
+    fn check_decode_failure(&mut self) {
+        let active = self.deck_mgr.active_deck();
+        if active.loaded && active.position >= active.samples.len() {
+            if let Some(message) = active.decode_error.clone() {
+                self.handle_command(AudioCommand::FailPlay {
+                    request_id: self.event_request_id,
+                    message,
+                });
+                return;
+            }
+        }
+        if !self.is_crossfading && self.deck_mgr.pending_deck().decode_error.is_some() {
+            self.deck_mgr.pending_deck_mut().reset();
+            self.scheduler.reset();
+        }
+    }
 
     fn check_buffering_resume(&mut self) {
         if self.waiting_for_play || self.paused || self.state() != EngineState::Buffering {

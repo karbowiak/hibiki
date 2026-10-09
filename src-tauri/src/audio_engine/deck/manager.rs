@@ -82,6 +82,7 @@ pub struct DeckState {
     pub fade_curve: Option<FadeCurve>,
     /// True once the entire track has been decoded into `samples`.
     pub fully_decoded: bool,
+    pub decode_error: Option<String>,
     /// Sample offset — after a seek, the buffer is cleared and this is set to
     /// the sample index where the new buffer starts. `position_secs()` adds
     /// this offset to compute the real track position.
@@ -106,6 +107,7 @@ impl DeckState {
             norm_gain: 1.0,
             fade_curve: None,
             fully_decoded: false,
+            decode_error: None,
             sample_offset: 0,
             generation: 0,
         }
@@ -123,6 +125,7 @@ impl DeckState {
         self.norm_gain = 1.0;
         self.fade_curve = None;
         self.fully_decoded = false;
+        self.decode_error = None;
         // generation is NOT reset — it's managed externally by seek logic
     }
 

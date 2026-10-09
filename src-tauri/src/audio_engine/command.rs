@@ -106,7 +106,6 @@ pub enum AudioCommand {
     SetEq([f32; 10]),
     SetEqEnabled(bool),
     SetEqPostgain(f32),
-    ResetDsp,
     SetNormalization(bool),
 
     // -- Crossfade settings (for scheduler) --
@@ -131,4 +130,5 @@ pub struct SampleBatch {
     pub generation: u64,
     pub samples: Vec<f32>,
     pub fully_decoded: bool,
+    pub error: Option<String>,
 }

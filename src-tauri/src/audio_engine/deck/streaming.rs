@@ -79,6 +79,10 @@ impl SharedBuffer {
         self.condvar.notify_all();
     }
 
+    pub fn is_aborted(&self) -> bool {
+        self.inner.lock().unwrap().aborted
+    }
+
     /// Set the content length once known (from HTTP Content-Length header).
     pub fn set_content_length(&self, len: u64) {
         let mut inner = self.inner.lock().unwrap();
@@ -96,6 +100,10 @@ pub struct StreamingReader {
 }
 
 impl StreamingReader {
+    pub fn buffer(&self) -> Arc<SharedBuffer> {
+        self.buffer.clone()
+    }
+
     pub fn new(buffer: Arc<SharedBuffer>) -> Self {
         Self { buffer, pos: 0 }
     }

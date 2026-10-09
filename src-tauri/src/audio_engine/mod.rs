@@ -15,6 +15,7 @@ pub mod callback;
 pub mod command;
 pub mod crossfade;
 pub mod deck;
+mod download;
 pub mod dsp;
 pub mod event;
 pub mod loudness;
@@ -584,6 +585,13 @@ fn handle_play(
             if !request.is_current() {
                 return;
             }
+            if result.aborted {
+                let _ = audio_cmd_tx.send(AudioCommand::FailPlay {
+                    request_id: request.epoch,
+                    message: "The media stream was interrupted before playback could start".into(),
+                });
+                return;
+            }
             let source_rate = result.source_rate;
             let source_channels = result.source_channels;
             let has_more = result.has_more;
@@ -722,6 +730,12 @@ fn handle_preload(
     ) {
         Ok(result) => {
             if !request.is_current() {
+                return;
+            }
+            if result.aborted {
+                atomics
+                    .preload_error_rk
+                    .store(meta.rating_key, Ordering::SeqCst);
                 return;
             }
             let source_rate = result.source_rate;
@@ -912,6 +926,7 @@ fn spawn_background_decode(
                                 generation: current_gen,
                                 samples,
                                 fully_decoded: false,
+                                error: None,
                             })
                             .is_err()
                         {
@@ -930,6 +945,16 @@ fn spawn_background_decode(
                             atomics
                                 .preload_error_rk
                                 .store(rating_key, Ordering::Relaxed);
+                            let _ = sample_tx.send(SampleBatch {
+                                rating_key,
+                                generation: current_gen,
+                                samples: Vec::new(),
+                                fully_decoded: false,
+                                error: Some(
+                                    "The media stream was interrupted and could not be resumed"
+                                        .into(),
+                                ),
+                            });
                         } else {
                             debug!(rating_key, "bg decode: complete");
                             let _ = sample_tx.send(SampleBatch {
@@ -937,6 +962,7 @@ fn spawn_background_decode(
                                 generation: current_gen,
                                 samples: Vec::new(),
                                 fully_decoded: true,
+                                error: None,
                             });
                         }
                         return;
@@ -949,6 +975,13 @@ fn spawn_background_decode(
                         atomics
                             .preload_error_rk
                             .store(rating_key, Ordering::Relaxed);
+                        let _ = sample_tx.send(SampleBatch {
+                            rating_key,
+                            generation: current_gen,
+                            samples: Vec::new(),
+                            fully_decoded: false,
+                            error: Some(format!("Audio decoding failed: {e}")),
+                        });
                         return;
                     }
                 }
@@ -1036,62 +1069,33 @@ fn fetch_and_decode_incremental(
 
         tauri::async_runtime::spawn(async move {
             let download = async {
-            let _guard = fetch_lock.lock().await;
-            let request = client.as_ref().map(|client| client.media_request(&url_owned))
-                .unwrap_or_else(|| crate::plex::client::public_media_request(&url_owned));
-            let response = match request
-                .send()
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::warn!("stream fetch failed: {}", e.without_url());
-                    shared_w.abort();
-                    if let Some(w) = cache_writer { w.abort(); }
-                    return;
-                }
-            };
-            if !response.status().is_success() {
-                tracing::warn!("stream fetch HTTP {}", response.status());
-                shared_w.abort();
-                if let Some(w) = cache_writer { w.abort(); }
-                return;
-            }
-            if let Some(len) = response.content_length() {
-                shared_w.set_content_length(len);
-            }
-
-            use futures::StreamExt;
-            let mut stream = response.bytes_stream();
-            let mut writer = cache_writer;
-            while let Some(chunk_result) = stream.next().await {
-                match chunk_result {
-                    Ok(chunk) => {
-                        // Feed decoder (skips memory accumulation if reader dropped)
-                        shared_w.push(&chunk);
-                        // Tee to disk cache
-                        if let Some(ref mut w) = writer {
-                            if let Err(error) = w.write_chunk(&chunk) {
+                let _guard = fetch_lock.lock().await;
+                let mut writer = cache_writer;
+                let result = download::download(
+                    || client.as_ref().map(|client| client.media_request(&url_owned))
+                        .unwrap_or_else(|| crate::plex::client::public_media_request(&url_owned)),
+                    |length| shared_w.set_content_length(length),
+                    |chunk| {
+                        shared_w.push(chunk);
+                        if let Some(ref mut cache_writer) = writer {
+                            if let Err(error) = cache_writer.write_chunk(chunk) {
                                 tracing::warn!(%error, "audio cache write failed; continuing playback");
-                                if let Some(w) = writer.take() { w.abort(); }
+                                if let Some(writer) = writer.take() { writer.abort(); }
                             }
                         }
-                    }
-                    Err(e) => {
-                        tracing::warn!("stream chunk error: {}", e.without_url());
-                        shared_w.abort();
-                        if let Some(w) = writer.take() { w.abort(); }
-                        return;
+                    },
+                ).await;
+                if let Err(error) = result {
+                    tracing::warn!(%error, "media transfer failed");
+                    shared_w.abort();
+                    return; // Dropping the writer removes its incomplete file.
+                }
+                shared_w.finish();
+                if let Some(writer) = writer {
+                    if let Err(error) = writer.finish(&cache_for_task) {
+                        tracing::warn!(%error, "audio cache finalization failed");
                     }
                 }
-            }
-            shared_w.finish();
-            // Finalize cache file (rename .part → final, update index, evict LRU)
-            if let Some(w) = writer {
-                if let Err(error) = w.finish(&cache_for_task) {
-                    tracing::warn!(%error, "audio cache finalization failed");
-                }
-            }
             };
             tokio::select! {
                 biased;
