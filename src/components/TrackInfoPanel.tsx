@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { usePlayerStore } from "../stores"
 import { useProviderStore } from "../stores/providerStore"
 import { formatMs, formatSize, formatSampleRate } from "../lib/formatters"
@@ -14,6 +14,10 @@ interface Props {
 
 export default function TrackInfoPanel({ onClose }: Props) {
   const currentTrack = usePlayerStore(s => s.currentTrack)
+  const provider = useProviderStore(s => s.provider)
+  const repeat = usePlayerStore(s => s.repeat)
+  const [copied, setCopied] = useState(false)
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const queue = usePlayerStore(s => s.queue)
   const queueIndex = usePlayerStore(s => s.queueIndex)
   const [fullTrack, setFullTrack] = useState<MusicTrack | null>(null)
@@ -26,36 +30,44 @@ export default function TrackInfoPanel({ onClose }: Props) {
   const smartCrossfade = true
   const crossfadeWindowMs = 4000
   const mixrampDb = -17
-  const nextTrackShallow = queue[queueIndex + 1] ?? null
+  const nextTrackShallow = repeat === 1 ? null : queue[queueIndex + 1] ?? (repeat === 2 ? queue[0] : null)
 
   // Fetch full metadata to get stream details (bit depth, sample rate, etc.)
   useEffect(() => {
+    setFullTrack(null)
     if (!currentTrack) return
-    const provider = useProviderStore.getState().provider
     if (!provider) return
     let cancelled = false
     provider.getTrack(currentTrack.id).then(t => {
       if (!cancelled) setFullTrack(t)
     }).catch(() => {})
     return () => { cancelled = true }
-  }, [currentTrack?.id])
+  }, [currentTrack?.id, provider])
 
   // Fetch full metadata for next track to get ramp data from stream details
   useEffect(() => {
     setFullNextTrack(null)
     if (!nextTrackShallow) return
-    const provider = useProviderStore.getState().provider
     if (!provider) return
     let cancelled = false
     provider.getTrack(nextTrackShallow.id).then(t => {
       if (!cancelled) setFullNextTrack(t)
     }).catch(() => {})
     return () => { cancelled = true }
-  }, [nextTrackShallow?.id])
+  }, [nextTrackShallow?.id, provider])
 
   const debugEnabled = useDebugStore(s => s.debugEnabled)
 
-  const track = fullTrack ?? currentTrack
+  const track = fullTrack?.id === currentTrack?.id ? fullTrack : currentTrack
+  const handleCopy = useCallback(() => {
+    if (!track) return
+    void navigator.clipboard.writeText(JSON.stringify(track._providerData ?? track, null, 2)).then(() => {
+      setCopied(true)
+      if (copyTimer.current !== null) clearTimeout(copyTimer.current)
+      copyTimer.current = setTimeout(() => setCopied(false), 1500)
+    }).catch(() => setCopied(false))
+  }, [track])
+  useEffect(() => () => { if (copyTimer.current !== null) clearTimeout(copyTimer.current) }, [])
   if (!track) return null
 
   const codec = track.codec
@@ -103,13 +115,6 @@ export default function TrackInfoPanel({ onClose }: Props) {
   if (deezerArtistData?.fans && deezerArtistData.fans > 0) {
     rows.push(["Fans (Deezer)", deezerArtistData.fans.toLocaleString()])
   }
-
-  const [copied, setCopied] = useState(false)
-  const handleCopy = useCallback(() => {
-    void navigator.clipboard.writeText(JSON.stringify(track._providerData ?? track, null, 2))
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
-  }, [track])
 
   // Smart crossfade ramp rows — parse directly from MusicTrack to avoid engine cache race
   const nextTrack = fullNextTrack ?? nextTrackShallow
@@ -195,7 +200,7 @@ export default function TrackInfoPanel({ onClose }: Props) {
   const extraPanels = (hasAnalysis ? 1 : 0) + (hasDebug ? 1 : 0)
 
   return (
-    <div style={{ width: extraPanels > 0 ? 280 + extraPanels * 260 : 300 }}>
+    <div style={{ width: extraPanels > 0 ? 280 + extraPanels * 260 : 300, maxWidth: "calc(100vw - 24px)" }}>
       {/* Header */}
       <div className="px-4 pt-3 pb-1 flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -211,7 +216,7 @@ export default function TrackInfoPanel({ onClose }: Props) {
               {copied ? "Copied!" : "Copy JSON"}
             </button>
           )}
-          <button onClick={onClose} className="text-[color:var(--text-muted)] hover:text-[color:var(--text-secondary)] transition-colors">
+          <button onClick={onClose} aria-label="Close track info" className="text-[color:var(--text-muted)] hover:text-[color:var(--text-secondary)] transition-colors">
             <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
               <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/>
             </svg>
@@ -220,7 +225,7 @@ export default function TrackInfoPanel({ onClose }: Props) {
       </div>
 
       {/* Panels side by side */}
-      <div className="flex gap-0 px-2 pb-3">
+      <div className="flex flex-wrap gap-0 px-2 pb-3">
         {/* Panel 1: Track Info — always visible */}
         <div className={`px-2 ${extraPanels > 0 ? "min-w-[260px]" : "flex-1"}`}>
           <SectionTable rows={rows} />

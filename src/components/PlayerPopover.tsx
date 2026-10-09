@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { createPortal } from "react-dom"
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 
 interface Props {
   icon: ReactNode
@@ -25,12 +26,14 @@ export default function PlayerPopover({
   children,
 }: Props) {
   const [isOpen, setIsOpen] = useState(false)
-  const [pos, setPos] = useState<{ bottom: number; left?: number; right?: number; centerX?: number } | null>(null)
+  const panelId = useId()
+  const [pos, setPos] = useState<{ bottom: number; left: number; maxHeight: number } | null>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
 
   function close() {
     setIsOpen(false)
+    buttonRef.current?.focus({ preventScroll: true })
   }
 
   function toggle() {
@@ -40,16 +43,41 @@ export default function PlayerPopover({
     }
     const rect = buttonRef.current?.getBoundingClientRect()
     if (!rect) return
-    const bottom = window.innerHeight - rect.top + 8
-    if (align === "center") {
-      setPos({ bottom, centerX: rect.left + rect.width / 2 })
-    } else if (align === "right") {
-      setPos({ bottom, right: window.innerWidth - rect.right })
-    } else {
-      setPos({ bottom, left: rect.left })
-    }
+    const estimatedWidth = typeof width === "number" ? width : 300
+    const left = align === "center" ? rect.left + rect.width / 2 - estimatedWidth / 2
+      : align === "right" ? rect.right - estimatedWidth : rect.left
+    setPos({ bottom: window.innerHeight - rect.top + 8, left: Math.max(8, left), maxHeight: Math.max(80, rect.top - 16) })
     setIsOpen(true)
   }
+
+  // Portalled cards use viewport coordinates and remain within the window as
+  // metadata arrives, the window resizes, or their trigger moves.
+  useLayoutEffect(() => {
+    if (!isOpen) return
+    function reposition() {
+      const button = buttonRef.current?.getBoundingClientRect()
+      const panel = panelRef.current?.getBoundingClientRect()
+      if (!button || !panel) return
+      const preferred = align === "center" ? button.left + button.width / 2 - panel.width / 2
+        : align === "right" ? button.right - panel.width : button.left
+      const next = { bottom: window.innerHeight - button.top + 8,
+        left: Math.max(8, Math.min(preferred, window.innerWidth - panel.width - 8)),
+        maxHeight: Math.max(80, button.top - 16) }
+      setPos(previous => previous?.bottom === next.bottom && previous.left === next.left
+        && previous.maxHeight === next.maxHeight ? previous : next)
+    }
+    reposition()
+    const observer = new ResizeObserver(reposition)
+    if (panelRef.current) observer.observe(panelRef.current)
+    window.addEventListener("resize", reposition)
+    window.addEventListener("scroll", reposition, true)
+    panelRef.current?.focus({ preventScroll: true })
+    return () => {
+      observer.disconnect()
+      window.removeEventListener("resize", reposition)
+      window.removeEventListener("scroll", reposition, true)
+    }
+  }, [isOpen, align, width])
 
   // Close on outside click (ignoring clicks on the toggle button itself)
   useEffect(() => {
@@ -68,7 +96,7 @@ export default function PlayerPopover({
   useEffect(() => {
     if (!isOpen) return
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setIsOpen(false)
+      if (e.key === "Escape") close()
     }
     document.addEventListener("keydown", onKeyDown)
     return () => document.removeEventListener("keydown", onKeyDown)
@@ -76,23 +104,27 @@ export default function PlayerPopover({
 
   return (
     <>
-      {/* Floating card — fixed positioning escapes any overflow:clip ancestor */}
-      {isOpen && pos && (
+      {/* The document overlay escapes the player's clipping and stacking context. */}
+      {isOpen && pos && createPortal(
         <div
           ref={panelRef}
-          className="fixed z-[300] rounded-xl bg-app-card border border-[var(--border)] shadow-2xl shadow-black/40 backdrop-blur-lg select-none"
+          id={panelId}
+          role="dialog"
+          aria-label={label}
+          tabIndex={-1}
+          className="fixed overflow-auto outline-none z-[300] rounded-xl bg-app-card border border-[var(--border)] shadow-2xl shadow-black/40 backdrop-blur-lg select-none"
           style={{
             bottom: pos.bottom,
-            ...(pos.centerX !== undefined
-              ? { left: pos.centerX, transform: "translateX(-50%)" }
-              : pos.left !== undefined ? { left: pos.left } : { right: pos.right }),
+            left: pos.left,
+            maxHeight: pos.maxHeight,
+            maxWidth: "calc(100vw - 16px)",
             width,
           }}
         >
           {typeof children === "function"
             ? (children as (close: () => void) => ReactNode)(close)
             : children}
-        </div>
+        </div>, document.body,
       )}
 
       {/* Toggle button */}
@@ -103,6 +135,9 @@ export default function PlayerPopover({
           disabled={disabled}
           title={label}
           aria-label={label}
+          aria-haspopup="dialog"
+          aria-expanded={isOpen}
+          aria-controls={isOpen ? panelId : undefined}
           className={[
             "flex items-center justify-center transition-colors",
             wide
