@@ -34,6 +34,91 @@ fn meta(key: i64) -> TrackMeta {
     }
 }
 
+#[test]
+fn reports_the_native_short_mixramp_plan_with_a_zero_second_intro_crossing() {
+    let (mut cb, events) = callback();
+    cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
+    cb.handle_load_deck(DeckId::B, meta(2), 48000, 2, 1.0, 0);
+    cb.ramp_cache.insert(
+        1,
+        TrackRamps {
+            start_ramp: vec![],
+            end_ramp: super::super::crossfade::types::parse_ramp(Some("-17 0.12;-3 4")),
+        },
+    );
+    cb.ramp_cache.insert(
+        2,
+        TrackRamps {
+            start_ramp: super::super::crossfade::types::parse_ramp(Some("-16 0;-3 1")),
+            end_ramp: vec![],
+        },
+    );
+    cb.compute_and_set_schedule();
+    let event = events.try_recv().unwrap();
+    match &event {
+        EngineEvent::TransitionScheduled {
+            transition: Some(plan),
+            ..
+        } => {
+            assert_eq!(plan.mode, "mixRamp");
+            assert_eq!(plan.reason, None);
+            assert_eq!(plan.outgoing_rating_key, 1);
+            assert_eq!(plan.incoming_rating_key, 2);
+            assert_eq!(plan.start_time_ms, 9880);
+            assert_eq!(plan.duration_ms, 120);
+        }
+        _ => panic!("expected a native transition plan"),
+    }
+    let json = serde_json::to_value(event).unwrap();
+    assert_eq!(json["transition"]["duration_ms"], 120);
+    cb.handle_command(AudioCommand::ClearPreload);
+    assert!(matches!(
+        events.try_recv().unwrap(),
+        EngineEvent::TransitionScheduled {
+            transition: None,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn reports_missing_ramps_as_a_timed_fade_and_album_tracks_as_gapless() {
+    use super::super::crossfade::types::TransitionReason;
+    let (mut cb, events) = callback();
+    cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
+    cb.handle_load_deck(DeckId::B, meta(2), 48000, 2, 1.0, 0);
+    cb.compute_and_set_schedule();
+    match events.try_recv().unwrap() {
+        EngineEvent::TransitionScheduled {
+            transition: Some(plan),
+            ..
+        } => {
+            assert_eq!(plan.mode, "timed");
+            assert_eq!(plan.reason, Some(TransitionReason::MissingRamps));
+            assert_eq!(plan.duration_ms, 4000);
+        }
+        _ => panic!("expected timed fallback"),
+    }
+    cb.deck_mgr
+        .pending_deck_mut()
+        .meta
+        .as_mut()
+        .unwrap()
+        .parent_key = "1".into();
+    cb.compute_and_set_schedule();
+    match events.try_recv().unwrap() {
+        EngineEvent::TransitionScheduled {
+            transition: Some(plan),
+            ..
+        } => {
+            assert_eq!(plan.mode, "gapless");
+            assert_eq!(plan.reason, Some(TransitionReason::SameAlbum));
+            assert_eq!(plan.duration_ms, 0);
+        }
+        _ => panic!("expected album gapless transition"),
+    }
+}
+
 fn load(deck: DeckId, key: i64, epoch: u64, load_id: u64, generation: u64) -> AudioCommand {
     AudioCommand::LoadDeck {
         deck,

@@ -286,6 +286,7 @@ impl AudioCallbackState {
                 if request_id != self.atomics.request_epoch.load(Ordering::SeqCst) {
                     return;
                 }
+                self.emit_transition_info(request_id, None);
                 self.scheduler.reset();
                 self.deck_mgr.stop_all();
                 self.atomics.deck_a_loaded_id.store(0, Ordering::SeqCst);
@@ -309,6 +310,7 @@ impl AudioCallbackState {
             }
             AudioCommand::ClearPreload => {
                 self.scheduler.reset();
+                self.emit_transition_info(self.event_request_id, None);
                 if !self.is_crossfading {
                     self.deck_mgr.pending_deck_mut().reset();
                 }
@@ -317,6 +319,7 @@ impl AudioCallbackState {
                 if request_id != self.atomics.request_epoch.load(Ordering::SeqCst) {
                     return;
                 }
+                self.emit_transition_info(request_id, None);
                 self.scheduler.reset();
                 if self.is_crossfading && self.paused {
                     self.crossfade_remaining_frames = 0;
@@ -349,6 +352,7 @@ impl AudioCallbackState {
                     return;
                 }
                 self.scheduler.reset();
+                self.emit_transition_info(request_id, None);
                 self.deck_mgr.deck_mut(deck).reset();
             }
             AudioCommand::LoadDeck {
@@ -445,6 +449,7 @@ impl AudioCallbackState {
             }
             AudioCommand::Stop => {
                 self.event_request_id = self.atomics.request_epoch.load(Ordering::SeqCst);
+                self.emit_transition_info(self.event_request_id, None);
                 self.scheduler.reset();
                 self.deck_mgr.stop_all();
                 self.atomics.deck_a_loaded_id.store(0, Ordering::SeqCst);
@@ -948,6 +953,7 @@ impl AudioCallbackState {
         if !self.is_crossfading && self.deck_mgr.pending_deck().decode_error.is_some() {
             self.deck_mgr.pending_deck_mut().reset();
             self.scheduler.reset();
+            self.emit_transition_info(self.event_request_id, None);
         }
     }
 
@@ -1056,8 +1062,10 @@ impl AudioCallbackState {
     }
 
     fn compute_and_set_schedule(&mut self) {
+        use super::crossfade::types::{TransitionInfo, TransitionReason};
         self.scheduler.reset();
         if self.waiting_for_play || self.is_crossfading {
+            self.emit_transition_info(self.event_request_id, None);
             return;
         }
 
@@ -1065,8 +1073,23 @@ impl AudioCallbackState {
         let pending = self.deck_mgr.pending_deck();
 
         if !active.loaded || !pending.loaded {
+            self.emit_transition_info(self.event_request_id, None);
             return;
         }
+
+        if active.duration_secs() <= 0.0 || pending.duration_secs() <= 0.0 {
+            self.emit_transition_info(self.event_request_id, None);
+            return;
+        }
+
+        let mut info = TransitionInfo {
+            outgoing_rating_key: active.rating_key(),
+            incoming_rating_key: pending.rating_key(),
+            mode: "gapless",
+            reason: None,
+            start_time_ms: (active.duration_secs() * 1000.0).round() as u64,
+            duration_ms: 0,
+        };
 
         let window = self.effective_window();
         let suppress = super::crossfade::album_aware::should_suppress_crossfade(
@@ -1076,11 +1099,26 @@ impl AudioCallbackState {
         );
 
         if window == 0 || suppress || pending.meta.as_ref().map_or(false, |m| m.skip_crossfade) {
+            info.reason = Some(if suppress {
+                TransitionReason::SameAlbum
+            } else if window == 0 {
+                TransitionReason::CrossfadeDisabled
+            } else {
+                TransitionReason::DirectAudio
+            });
             self.scheduler.set_mode(SchedulerMode::Gapless);
             self.scheduler.set_transition_point(active.duration_secs());
         } else {
             let params = self.build_crossfade_params();
             if let Some(plan) = compute_transition(&params) {
+                info.mode = if plan.fade_out_curve.is_none() {
+                    "mixRamp"
+                } else {
+                    "timed"
+                };
+                info.reason = plan.fallback_reason;
+                info.start_time_ms = (plan.start_time_sec * 1000.0).round() as u64;
+                info.duration_ms = (plan.duration_sec * 1000.0).round() as u64;
                 self.scheduler.set_mode(SchedulerMode::Crossfade);
                 self.scheduler.set_transition_point(plan.start_time_sec);
                 debug!(
@@ -1090,10 +1128,23 @@ impl AudioCallbackState {
                     "scheduled crossfade"
                 );
             } else {
+                info.reason = Some(TransitionReason::NoOverlap);
                 self.scheduler.set_mode(SchedulerMode::Gapless);
                 self.scheduler.set_transition_point(active.duration_secs());
             }
         }
+        self.emit_transition_info(self.event_request_id, Some(info));
+    }
+
+    fn emit_transition_info(
+        &self,
+        request_id: u64,
+        transition: Option<super::crossfade::types::TransitionInfo>,
+    ) {
+        let _ = self.event_tx.try_send(EngineEvent::TransitionScheduled {
+            request_id,
+            transition,
+        });
     }
 
     fn build_crossfade_params(&self) -> CrossfadeParams {

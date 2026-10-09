@@ -1,6 +1,27 @@
 //! Crossfade types — shared across all crossfade strategies.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TransitionReason {
+    MissingRamps,
+    NoUsableCrossing,
+    SameAlbum,
+    CrossfadeDisabled,
+    DirectAudio,
+    NoOverlap,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TransitionInfo {
+    pub outgoing_rating_key: i64,
+    pub incoming_rating_key: i64,
+    pub mode: &'static str,
+    pub reason: Option<TransitionReason>,
+    pub start_time_ms: u64,
+    pub duration_ms: u64,
+}
 
 /// A point on a loudness ramp (from Plex's prolog/epilog metadata).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -19,6 +40,7 @@ pub struct TrackRamps {
 /// A computed transition plan between two tracks.
 #[derive(Debug, Clone)]
 pub struct TransitionPlan {
+    pub fallback_reason: Option<TransitionReason>,
     /// Absolute time in the outgoing track (seconds) to start the transition.
     pub start_time_sec: f32,
     /// Duration of the overlap (seconds).

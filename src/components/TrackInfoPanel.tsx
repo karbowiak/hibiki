@@ -5,7 +5,7 @@ import { formatMs, formatSize, formatSampleRate } from "../lib/formatters"
 import type { MusicTrack } from "../types/music"
 import { useTrackEnrichment } from "../hooks/useMetadataEnrichment"
 import { useDebugStore } from "../stores/debugStore"
-import { parseRamp, engine } from "../audio/RustAudioEngine"
+import { transitionRows } from "../audio/transitionInfo"
 
 
 interface Props {
@@ -15,21 +15,17 @@ interface Props {
 export default function TrackInfoPanel({ onClose }: Props) {
   const currentTrack = usePlayerStore(s => s.currentTrack)
   const provider = useProviderStore(s => s.provider)
+  const transitionInfo = usePlayerStore(s => s.transitionInfo)
   const repeat = usePlayerStore(s => s.repeat)
   const [copied, setCopied] = useState(false)
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const queue = usePlayerStore(s => s.queue)
   const queueIndex = usePlayerStore(s => s.queueIndex)
   const [fullTrack, setFullTrack] = useState<MusicTrack | null>(null)
-  const [fullNextTrack, setFullNextTrack] = useState<MusicTrack | null>(null)
   const { lastfm: lastfmData, deezer: deezerArtistData } = useTrackEnrichment(
     currentTrack?.artistName ?? null,
     currentTrack?.title ?? null,
   )
-  // Crossfade is always on with smart defaults (MixRamp when available)
-  const smartCrossfade = true
-  const crossfadeWindowMs = 4000
-  const mixrampDb = -17
   const nextTrackShallow = repeat === 1 ? null : queue[queueIndex + 1] ?? (repeat === 2 ? queue[0] : null)
 
   // Fetch full metadata to get stream details (bit depth, sample rate, etc.)
@@ -43,18 +39,6 @@ export default function TrackInfoPanel({ onClose }: Props) {
     }).catch(() => {})
     return () => { cancelled = true }
   }, [currentTrack?.id, provider])
-
-  // Fetch full metadata for next track to get ramp data from stream details
-  useEffect(() => {
-    setFullNextTrack(null)
-    if (!nextTrackShallow) return
-    if (!provider) return
-    let cancelled = false
-    provider.getTrack(nextTrackShallow.id).then(t => {
-      if (!cancelled) setFullNextTrack(t)
-    }).catch(() => {})
-    return () => { cancelled = true }
-  }, [nextTrackShallow?.id, provider])
 
   const debugEnabled = useDebugStore(s => s.debugEnabled)
 
@@ -116,56 +100,7 @@ export default function TrackInfoPanel({ onClose }: Props) {
     rows.push(["Fans (Deezer)", deezerArtistData.fans.toLocaleString()])
   }
 
-  // Smart crossfade ramp rows — parse directly from MusicTrack to avoid engine cache race
-  const nextTrack = fullNextTrack ?? nextTrackShallow
-  const analysisRows: [string, string][] = []
-  if (crossfadeWindowMs > 0 || smartCrossfade) {
-    const endRamp = parseRamp(track.endRamp)
-    const startRamp = parseRamp(track.startRamp)
-    const nextStartRamp = nextTrack ? parseRamp(nextTrack.startRamp) : []
-
-    if (endRamp.length > 0 || startRamp.length > 0) {
-      analysisRows.push(["Ramps", "Yes"])
-      if (endRamp.length > 0) {
-        const rampWindowSec = endRamp[endRamp.length - 1].timeSec
-        analysisRows.push(["End Ramp Window", `${rampWindowSec.toFixed(1)}s`])
-      }
-      if (startRamp.length > 0) {
-        const rampWindowSec = startRamp[startRamp.length - 1].timeSec
-        analysisRows.push(["Start Ramp Window", `${rampWindowSec.toFixed(1)}s`])
-      }
-
-      // Show MixRamp overlap calculation
-      if (smartCrossfade && endRamp.length > 0 && nextStartRamp.length > 0) {
-        const overlap = engine.getMixrampOverlap(endRamp, nextStartRamp)
-        if (overlap) {
-          analysisRows.push(["MixRamp Threshold", `${mixrampDb} dB`])
-          analysisRows.push(["End crosses at", `${overlap.endOverlapSec.toFixed(1)}s before end`])
-          analysisRows.push(["Start crosses at", `${overlap.startOverlapSec.toFixed(1)}s into track`])
-          analysisRows.push(["Overlap", `${(overlap.endOverlapSec + overlap.startOverlapSec).toFixed(1)}s`])
-        } else {
-          analysisRows.push(["MixRamp", "Fallback (threshold not reached)"])
-        }
-      } else if (smartCrossfade && endRamp.length > 0) {
-        const rampWindowMs = endRamp[endRamp.length - 1].timeSec * 1000
-        const adaptiveMs = rampWindowMs > 500 ? rampWindowMs : 2000
-        const cfStartMs = track.duration - adaptiveMs
-        analysisRows.push(["Crossfade At", `${(cfStartMs / 1000).toFixed(1)}s (${(adaptiveMs / 1000).toFixed(1)}s)`])
-      }
-    } else {
-      analysisRows.push(["Ramps", "None"])
-    }
-
-    if (nextTrack) {
-      if (nextStartRamp.length > 0) {
-        analysisRows.push(["Next: Start Ramp", `${nextStartRamp.length} points`])
-      } else if (!fullNextTrack && nextTrackShallow) {
-        analysisRows.push(["Next Track", "Loading ramps..."])
-      } else {
-        analysisRows.push(["Next Track", "No ramps"])
-      }
-    }
-  }
+  const analysisRows = transitionRows(transitionInfo, !!nextTrackShallow, repeat === 1)
 
   // Debug rows — intentionally backend-aware (shows raw provider data)
   const debugRows: [string, string][] = []
@@ -235,7 +170,7 @@ export default function TrackInfoPanel({ onClose }: Props) {
         {hasAnalysis && (
           <div className="min-w-[240px] flex-1 border-l border-[var(--border-subtle)] px-3">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-[color:var(--text-muted)] mb-1">
-              Smart Crossfade {smartCrossfade ? "" : "(off)"}
+              Next transition
             </p>
             <SectionTable rows={analysisRows} mono />
           </div>

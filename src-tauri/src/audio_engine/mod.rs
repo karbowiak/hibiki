@@ -146,6 +146,7 @@ impl AudioEngine {
             .spawn(move || {
                 while let Ok(event) = event_rx.recv() {
                     let event_name = match &event {
+                        EngineEvent::TransitionScheduled { .. } => "audio://transition-scheduled",
                         EngineEvent::Position { .. } => "audio://position",
                         EngineEvent::State { .. } => "audio://state",
                         EngineEvent::TrackStarted { .. } => "audio://track-started",

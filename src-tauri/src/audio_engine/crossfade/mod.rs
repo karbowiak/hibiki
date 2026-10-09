@@ -40,6 +40,7 @@ pub fn compute_skip_duck(duck_ms: u32) -> TransitionPlan {
     let duration_sec = duck_ms as f32 / 1000.0;
     let steps = steps_for_duration(duration_sec);
     TransitionPlan {
+        fallback_reason: None,
         start_time_sec: 0.0, // immediate
         duration_sec,
         fade_out_curve: Some(generate_fade_out(steps, 1.0)),

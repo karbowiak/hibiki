@@ -5,7 +5,7 @@
 //! where each ramp crosses a configurable threshold (default -17 dB) and overlaps
 //! the tracks at those points with no gain curves (both tracks at full volume).
 
-use super::types::{CrossfadeParams, RampPoint, TransitionPlan};
+use super::types::{CrossfadeParams, RampPoint, TransitionPlan, TransitionReason};
 
 /// Linear interpolation: find the time (seconds) where the ramp crosses `threshold_db`.
 /// Returns `None` if the threshold is never reached.
@@ -57,20 +57,20 @@ pub fn compute_mixramp_transition(params: &CrossfadeParams) -> Option<Transition
     // Need both ramps
     let out_ramp = match out_end_ramp {
         Some(r) if !r.is_empty() => r,
-        _ => return compute_timed_fallback(params),
+        _ => return compute_timed_fallback(params, TransitionReason::MissingRamps),
     };
     let in_ramp = match in_start_ramp {
         Some(r) if !r.is_empty() => r,
-        _ => return compute_timed_fallback(params),
+        _ => return compute_timed_fallback(params, TransitionReason::MissingRamps),
     };
 
     let end_overlap = match mixramp_interpolate(out_ramp, params.mixramp_db - params.out_gain_db) {
         Some(t) => t,
-        None => return compute_timed_fallback(params),
+        None => return compute_timed_fallback(params, TransitionReason::NoUsableCrossing),
     };
     let start_overlap = match mixramp_interpolate(in_ramp, params.mixramp_db - params.in_gain_db) {
         Some(t) => t,
-        None => return compute_timed_fallback(params),
+        None => return compute_timed_fallback(params, TransitionReason::NoUsableCrossing),
     };
 
     let overlap_duration = (end_overlap + start_overlap).min(limit);
@@ -79,6 +79,7 @@ pub fn compute_mixramp_transition(params: &CrossfadeParams) -> Option<Transition
     }
 
     Some(TransitionPlan {
+        fallback_reason: None,
         // Start the intro early enough that both loudness crossings meet.
         // The outgoing deck then plays its complete tail until the overlap ends.
         start_time_sec: params.out_duration_sec - overlap_duration,
@@ -89,8 +90,13 @@ pub fn compute_mixramp_transition(params: &CrossfadeParams) -> Option<Transition
 }
 
 /// Fixed-duration equal-power crossfade fallback.
-fn compute_timed_fallback(params: &CrossfadeParams) -> Option<TransitionPlan> {
-    super::time_based::compute_timed_transition(params)
+fn compute_timed_fallback(
+    params: &CrossfadeParams,
+    reason: TransitionReason,
+) -> Option<TransitionPlan> {
+    let mut plan = super::time_based::compute_timed_transition(params)?;
+    plan.fallback_reason = Some(reason);
+    Some(plan)
 }
 
 #[cfg(test)]

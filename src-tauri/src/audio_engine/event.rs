@@ -1,11 +1,16 @@
 //! Events emitted from the engine back to the JS frontend via Tauri events.
 
+use super::crossfade::types::TransitionInfo;
 use serde::Serialize;
 
 /// Events the engine emits to the frontend.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum EngineEvent {
+    TransitionScheduled {
+        request_id: u64,
+        transition: Option<TransitionInfo>,
+    },
     Position {
         request_id: u64,
         position_ms: u64,

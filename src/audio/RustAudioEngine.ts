@@ -8,6 +8,7 @@
  * Module-level singleton: `import { engine } from "../audio/RustAudioEngine"`
  */
 
+import type { TransitionInfo } from "./transitionInfo"
 import { PlaybackEventGate } from "./playbackEventGate"
 import { invoke } from "@tauri-apps/api/core"
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
@@ -21,37 +22,9 @@ export interface AudioEngineCallbacks {
   onState(state: "playing" | "paused" | "buffering" | "stopped"): void
   onTrackStarted(ratingKey: number, durationMs?: number): void
   onTrackEnded(ratingKey: number): void
+  onTransitionScheduled?(transition: TransitionInfo | null): void
   onError(message: string): void
   onVisFrame?(samples: Float32Array): void
-}
-
-export interface RampPoint { db: number; timeSec: number }
-export interface TrackRamps { startRamp: RampPoint[]; endRamp: RampPoint[] }
-
-/** Interpolate a loudness ramp to find where it crosses a dB threshold. */
-function interpolateThreshold(ramp: RampPoint[], thresholdDb: number): number | null {
-  if (ramp.length < 2) return null
-  // If threshold is below the quietest point, return first time
-  if (thresholdDb <= ramp[0].db) return ramp[0].timeSec
-  // If threshold is above the loudest point, return last time
-  if (thresholdDb >= ramp[ramp.length - 1].db) return ramp[ramp.length - 1].timeSec
-  // Linear interpolation between surrounding points
-  for (let i = 0; i < ramp.length - 1; i++) {
-    const a = ramp[i], b = ramp[i + 1]
-    if ((a.db <= thresholdDb && b.db >= thresholdDb) || (a.db >= thresholdDb && b.db <= thresholdDb)) {
-      const ratio = (thresholdDb - a.db) / (b.db - a.db)
-      return a.timeSec + ratio * (b.timeSec - a.timeSec)
-    }
-  }
-  return null
-}
-
-export function parseRamp(raw: string | null | undefined): RampPoint[] {
-  if (!raw) return []
-  return raw.split(";").filter(Boolean).map(pair => {
-    const [db, time] = pair.trim().split(" ").map(Number)
-    return { db, timeSec: time }
-  })
 }
 
 // ---------------------------------------------------------------------------
@@ -64,6 +37,7 @@ interface PositionPayload { request_id: number; position_ms: number; duration_ms
 interface StatePayload { request_id: number; state: string }
 interface TrackStartedPayload { request_id: number; rating_key: number; duration_ms: number }
 interface TrackEndedPayload { request_id: number; rating_key: number }
+interface TransitionPayload { request_id: number; transition: TransitionInfo | null }
 interface ErrorPayload { request_id: number; message: string }
 interface VisFramePayload { samples: number[]; frequency_bins: number[] }
 
@@ -76,9 +50,6 @@ class RustAudioEngine {
   private eventGate = new PlaybackEventGate()
   private listenerGeneration = 0
   private unlisteners: UnlistenFn[] = []
-
-  // Ramp cache
-  private rampCache = new Map<number, TrackRamps>()
 
   // Cached visualizer data (pushed from Rust, read synchronously by components)
   private lastFrequencyBins: Float32Array | null = null
@@ -118,6 +89,9 @@ class RustAudioEngine {
       }),
       () => listen<TrackEndedPayload>("audio://track-ended", e => {
         this.eventGate.accept(e.payload.request_id, () => this.cb?.onTrackEnded(e.payload.rating_key))
+      }),
+      () => listen<TransitionPayload>("audio://transition-scheduled", e => {
+        this.eventGate.accept(e.payload.request_id, () => this.cb?.onTransitionScheduled?.(e.payload.transition))
       }),
       () => listen<ErrorPayload>("audio://error", e => {
         this.eventGate.accept(e.payload.request_id, () => this.cb?.onError(e.payload.message))
@@ -161,11 +135,6 @@ class RustAudioEngine {
     startRamp?: string | null,
     endRamp?: string | null,
   ): Promise<void> {
-    // Cache ramps
-    if (startRamp || endRamp) {
-      this.parseAndCacheRamps(ratingKey, startRamp ?? null, endRamp ?? null)
-    }
-
     const ticket = this.eventGate.begin()
     const requestId = await invoke<number>("audio_play", {
       url,
@@ -190,10 +159,6 @@ class RustAudioEngine {
     startRamp?: string | null,
     endRamp?: string | null,
   ): Promise<void> {
-    if (startRamp || endRamp) {
-      this.parseAndCacheRamps(ratingKey, startRamp ?? null, endRamp ?? null)
-    }
-
     await invoke("audio_preload_next", {
       url,
       ratingKey,
@@ -324,45 +289,6 @@ class RustAudioEngine {
 
   async getCacheStats(): Promise<{ total_bytes: number; file_count: number; max_bytes: number }> {
     return invoke("audio_get_cache_stats")
-  }
-
-  // ---------------------------------------------------------------------------
-  // Ramp cache
-  // ---------------------------------------------------------------------------
-
-  private parseAndCacheRamps(ratingKey: number, startRamp: string | null, endRamp: string | null): TrackRamps | null {
-    if (!startRamp && !endRamp) return null
-    const cached = this.rampCache.get(ratingKey)
-    if (cached) return cached
-    const ramps: TrackRamps = {
-      startRamp: parseRamp(startRamp),
-      endRamp: parseRamp(endRamp),
-    }
-    this.rampCache.set(ratingKey, ramps)
-    if (this.rampCache.size > 500) {
-      const firstKey = this.rampCache.keys().next().value
-      if (firstKey !== undefined) this.rampCache.delete(firstKey)
-    }
-    return ramps
-  }
-
-  getTrackRamps(ratingKey: number): TrackRamps | null {
-    return this.rampCache.get(ratingKey) ?? null
-  }
-
-  getMixrampOverlap(endRamp: RampPoint[], startRamp: RampPoint[]): { endOverlapSec: number; startOverlapSec: number } | null {
-    // MixRamp interpolation for display only (actual crossfade computed in Rust)
-    const threshold = -17
-    const endCross = interpolateThreshold(endRamp, threshold)
-    const startCross = interpolateThreshold(startRamp, threshold)
-    if (endCross == null || startCross == null) return null
-    // endCross is time from start of ramp (= time before track end)
-    // startCross is time from start of next track
-    const endOverlapSec = endRamp.length > 0
-      ? endRamp[endRamp.length - 1].timeSec - endCross
-      : 0
-    if (endOverlapSec < 0.2 || startCross < 0.2) return null
-    return { endOverlapSec, startOverlapSec: startCross }
   }
 
   // ---------------------------------------------------------------------------

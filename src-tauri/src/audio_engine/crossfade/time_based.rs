@@ -19,6 +19,7 @@ pub fn compute_timed_transition(params: &CrossfadeParams) -> Option<TransitionPl
     let steps = steps_for_duration(duration_sec);
 
     Some(TransitionPlan {
+        fallback_reason: None,
         start_time_sec: start_time,
         duration_sec,
         fade_out_curve: Some(generate_fade_out(steps, 1.0)),

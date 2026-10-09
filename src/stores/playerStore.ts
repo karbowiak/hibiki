@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware"
 import { listen } from "@tauri-apps/api/event"
 import { fireAndForget } from "../lib/async"
 import { dispatchPlaybackWhenReady } from "../audio/playbackRequests"
+import type { TransitionInfo } from "../audio/transitionInfo"
 import { engine } from "../audio/RustAudioEngine"
 import type { MusicTrack } from "../types/music"
 import type { LevelData, LyricLineData } from "../providers/types"
@@ -33,6 +34,7 @@ export const DJ_MODES: { key: DjMode; name: string; desc: string }[] = [
 
 interface PlayerState {
   currentTrack: MusicTrack | null
+  transitionInfo: TransitionInfo | null
   queue: MusicTrack[]
   queueIndex: number
   queueId: number | null
@@ -704,7 +706,7 @@ async function enrichCurrentTrack(track: MusicTrack, index: number, get: () => P
 function _onTrackBecomesActive(track: MusicTrack, index: number, get: () => PlayerState, set: any): void {
   const provider = getProvider()
   const isPodcast = _isPodcastTrack(track)
-  set({ currentTrack: track, queueIndex: index, isPlaying: _playbackDesired, positionMs: 0,
+  set({ currentTrack: track, transitionInfo: null, queueIndex: index, isPlaying: _playbackDesired, positionMs: 0,
         waveformLevels: null, lyricsLines: null })
   _lastTimelineReportMs = 0
   _transcodeRetriedTrackId = null
@@ -840,6 +842,7 @@ export const usePlayerStore = create<PlayerState>()(
   persist(
     (set, get) => ({
   currentTrack: null,
+  transitionInfo: null,
   queue: [],
   queueIndex: 0,
   queueId: null,
@@ -1091,6 +1094,7 @@ export const usePlayerStore = create<PlayerState>()(
     // Reset all playback state
     set({
       currentTrack: null,
+  transitionInfo: null,
       queue: [],
       queueIndex: 0,
       queueId: null,
@@ -1272,7 +1276,7 @@ export const usePlayerStore = create<PlayerState>()(
 
   clearUpcoming: () => {
     engine.clearPreload()
-    set(s => ({ queue: s.queue.slice(0, s.queueIndex + 1) }))
+    set(s => ({ queue: s.queue.slice(0, s.queueIndex + 1), transitionInfo: null }))
   },
 
   initAudioEvents: async () => {
@@ -1281,6 +1285,14 @@ export const usePlayerStore = create<PlayerState>()(
 
     // Initialize the Web Audio engine with callbacks that replace the Tauri listen("audio://...") calls
     await engine.init({
+      onTransitionScheduled(transition) {
+        const state = get()
+        const next = state.queue[state.queueIndex + 1] ?? (state.repeat === 2 ? state.queue[0] : null)
+        if (!transition || (resolveTrackId(transition.outgoing_rating_key) === state.currentTrack?.id
+          && resolveTrackId(transition.incoming_rating_key) === next?.id)) {
+          set({ transitionInfo: transition })
+        }
+      },
       onPosition(positionMs, durationMs) {
         const { currentTrack, queue, queueIndex, repeat, isRadioMode, isPlaying, radioMinQueue } = get()
         set({ positionMs })
