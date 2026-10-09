@@ -1,8 +1,8 @@
 //! Audio file cache — stores raw audio files (FLAC/MP3/AAC) on disk for
 //! instant replay without re-fetching from Plex.
 //!
-//! Cache key: `{rating_key}.{ext}` (e.g. `12345.flac`)
-//! Temp files: `{rating_key}.{ext}.part` (renamed atomically on completion)
+//! Cache key: a digest of the full source URL (server, account and media variant).
+//! Temp files: a unique `.part` file per writer (renamed atomically on completion)
 //! Index: `index.json` — loaded at startup, flushed on mutations.
 //! Eviction: LRU by `last_accessed`, triggered after each write completion.
 
@@ -44,9 +44,10 @@ pub struct AudioCache {
 pub struct CacheWriter {
     temp_path: PathBuf,
     final_path: PathBuf,
-    writer: BufWriter<fs::File>,
+    writer: Option<BufWriter<fs::File>>,
+    failed: bool,
     bytes_written: u64,
-    rating_key: i64,
+    key: String,
     filename: String,
 }
 
@@ -67,7 +68,7 @@ struct CacheEntry {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct CacheIndex {
-    entries: HashMap<i64, CacheEntry>,
+    entries: HashMap<String, CacheEntry>,
     total_bytes: u64,
 }
 
@@ -81,7 +82,13 @@ impl CacheIndex {
 
     fn save(&self, path: &Path) {
         if let Ok(json) = serde_json::to_string_pretty(self) {
-            let _ = fs::write(path, json);
+            let temp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+            if fs::write(&temp, json).is_ok() {
+                if let Err(error) = fs::rename(&temp, path) {
+                    warn!(%error, "failed to persist audio cache index");
+                }
+            }
+            let _ = fs::remove_file(temp);
         }
     }
 }
@@ -100,11 +107,13 @@ impl AudioCache {
         // Verify entries still exist on disk — remove orphans
         let before = index.entries.len();
         index.entries.retain(|_key, entry| {
-            cache_dir.join(&entry.filename).exists()
+            fs::metadata(cache_dir.join(&entry.filename))
+                .map(|metadata| metadata.is_file() && metadata.len() == entry.size_bytes)
+                .unwrap_or(false)
         });
-        if index.entries.len() != before {
-            // Recompute total
-            index.total_bytes = index.entries.values().map(|e| e.size_bytes).sum();
+        let total = index.entries.values().map(|e| e.size_bytes).sum();
+        if index.entries.len() != before || index.total_bytes != total {
+            index.total_bytes = total;
             index.save(&index_path);
         }
 
@@ -126,14 +135,14 @@ impl AudioCache {
 
     /// Look up a cached file by rating key. Returns the file path if cached.
     /// Updates `last_accessed` on hit.
-    pub fn lookup(&self, rating_key: i64) -> Option<PathBuf> {
+    pub fn lookup(&self, key: &str) -> Option<PathBuf> {
         let mut idx = self.index.lock().ok()?;
-        let entry = idx.entries.get_mut(&rating_key)?;
+        let entry = idx.entries.get_mut(key)?;
         let path = self.cache_dir.join(&entry.filename);
         if !path.exists() {
             // File disappeared — remove from index
             let size = entry.size_bytes;
-            idx.entries.remove(&rating_key);
+            idx.entries.remove(key);
             idx.total_bytes = idx.total_bytes.saturating_sub(size);
             idx.save(&self.index_path());
             return None;
@@ -145,15 +154,15 @@ impl AudioCache {
     }
 
     /// Get the computed loudness gain for a cached track (if analyzed).
-    pub fn get_computed_gain(&self, rating_key: i64) -> Option<f32> {
+    pub fn get_computed_gain(&self, key: &str) -> Option<f32> {
         let idx = self.index.lock().ok()?;
-        idx.entries.get(&rating_key)?.computed_gain_db
+        idx.entries.get(key)?.computed_gain_db
     }
 
     /// Store a computed loudness gain for a cached track.
-    pub fn set_computed_gain(&self, rating_key: i64, gain_db: f32) {
+    pub fn set_computed_gain(&self, key: &str, gain_db: f32) {
         if let Ok(mut idx) = self.index.lock() {
-            if let Some(entry) = idx.entries.get_mut(&rating_key) {
+            if let Some(entry) = idx.entries.get_mut(key) {
                 entry.computed_gain_db = Some(gain_db);
                 idx.save(&self.index_path());
             }
@@ -162,28 +171,30 @@ impl AudioCache {
 
     /// Begin writing a new cache file. Returns a `CacheWriter` that receives
     /// chunks and must be finished (or aborted) when done.
-    pub fn begin_write(&self, rating_key: i64, ext: &str) -> Result<CacheWriter, String> {
-        let filename = format!("{}.{}", rating_key, ext);
+    pub fn begin_write(&self, key: &str, ext: &str) -> Result<CacheWriter, String> {
+        if key.is_empty() || !key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+            return Err("invalid cache key".into());
+        }
+        let ext = if ext.bytes().all(|b| b.is_ascii_alphanumeric()) && ext.len() <= 16 && !ext.is_empty() { ext } else { "dat" };
+        let filename = format!("{}.{}", key, ext);
         let final_path = self.cache_dir.join(&filename);
-        let temp_path = self.cache_dir.join(format!("{}.part", filename));
+        let temp_path = self.cache_dir.join(format!("{}.{}.part", filename, uuid::Uuid::new_v4()));
 
         // If already cached, skip
         if final_path.exists() {
             return Err("already cached".into());
         }
 
-        // Clean up stale .part file from a previous interrupted write
-        let _ = fs::remove_file(&temp_path);
-
-        let file = fs::File::create(&temp_path)
+        let file = fs::OpenOptions::new().write(true).create_new(true).open(&temp_path)
             .map_err(|e| format!("cache create: {}", e))?;
 
         Ok(CacheWriter {
             temp_path,
             final_path,
-            writer: BufWriter::with_capacity(256 * 1024, file),
+            writer: Some(BufWriter::with_capacity(256 * 1024, file)),
+            failed: false,
             bytes_written: 0,
-            rating_key,
+            key: key.to_string(),
             filename,
         })
     }
@@ -225,24 +236,6 @@ impl AudioCache {
         }
     }
 
-    /// Register a completed write in the index and evict if over limit.
-    fn register_and_evict(&self, rating_key: i64, filename: String, size_bytes: u64) {
-        if let Ok(mut idx) = self.index.lock() {
-            idx.entries.insert(
-                rating_key,
-                CacheEntry {
-                    filename,
-                    size_bytes,
-                    last_accessed: now_secs(),
-                    computed_gain_db: None,
-                },
-            );
-            idx.total_bytes += size_bytes;
-            self.evict_with_index(&mut idx);
-            idx.save(&self.index_path());
-        }
-    }
-
     /// Evict least-recently-accessed entries until under the max size.
     fn evict(&self) {
         if let Ok(mut idx) = self.index.lock() {
@@ -258,10 +251,10 @@ impl AudioCache {
         }
 
         // Sort by last_accessed ascending (oldest first)
-        let mut entries: Vec<(i64, u64, u64)> = idx
+        let mut entries: Vec<(String, u64, u64)> = idx
             .entries
             .iter()
-            .map(|(&key, e)| (key, e.last_accessed, e.size_bytes))
+            .map(|(key, e)| (key.clone(), e.last_accessed, e.size_bytes))
             .collect();
         entries.sort_by_key(|&(_, ts, _)| ts);
 
@@ -273,7 +266,7 @@ impl AudioCache {
                 let path = self.cache_dir.join(&entry.filename);
                 let _ = fs::remove_file(&path);
                 idx.total_bytes = idx.total_bytes.saturating_sub(size);
-                debug!(rating_key = key, size, "evicted cached audio file");
+                debug!(cache_key = key, size, "evicted cached audio file");
             }
         }
     }
@@ -288,39 +281,45 @@ impl AudioCache {
 // ---------------------------------------------------------------------------
 
 impl CacheWriter {
-    /// Write a chunk of bytes to the temp file.
-    pub fn write_chunk(&mut self, data: &[u8]) {
-        if self.writer.write_all(data).is_ok() {
-            self.bytes_written += data.len() as u64;
-        }
+    /// A failed write must never be published as complete audio.
+    pub fn write_chunk(&mut self, data: &[u8]) -> Result<(), String> {
+        let result = self.writer.as_mut().ok_or("cache writer closed".to_string())
+            .and_then(|w| w.write_all(data).map_err(|e| format!("cache write: {e}")));
+        if result.is_err() { self.failed = true; }
+        result?;
+        self.bytes_written += data.len() as u64;
+        Ok(())
     }
 
-    /// Finish the write: flush, rename temp → final, register in cache index.
-    pub fn finish(mut self, cache: &AudioCache) {
-        if self.writer.flush().is_err() {
-            self.abort();
-            return;
+    pub fn finish(mut self, cache: &AudioCache) -> Result<(), String> {
+        if self.failed { return Err("cache write failed".into()); }
+        self.writer.as_mut().ok_or("cache writer closed")?
+            .flush().map_err(|e| format!("cache flush: {e}"))?;
+        self.writer.take(); // Close before rename (also works on Windows).
+        // Serialize rename and indexing with lookup/eviction. Each writer has
+        // its own temp file, so it cannot publish another download's bytes.
+        let mut idx = cache.index.lock().map_err(|_| "cache index poisoned")?;
+        fs::rename(&self.temp_path, &self.final_path)
+            .map_err(|e| format!("cache rename: {e}"))?;
+        if let Some(old) = idx.entries.remove(&self.key) {
+            idx.total_bytes = idx.total_bytes.saturating_sub(old.size_bytes);
         }
-        drop(self.writer);
-
-        if fs::rename(&self.temp_path, &self.final_path).is_err() {
-            let _ = fs::remove_file(&self.temp_path);
-            warn!(rating_key = self.rating_key, "cache rename failed");
-            return;
-        }
-
-        debug!(
-            rating_key = self.rating_key,
-            size_mb = self.bytes_written / (1024 * 1024),
-            "cached audio file"
-        );
-
-        cache.register_and_evict(self.rating_key, self.filename, self.bytes_written);
+        idx.entries.insert(self.key.clone(), CacheEntry {
+            filename: self.filename.clone(), size_bytes: self.bytes_written,
+            last_accessed: now_secs(), computed_gain_db: None,
+        });
+        idx.total_bytes += self.bytes_written;
+        cache.evict_with_index(&mut idx);
+        idx.save(&cache.index_path());
+        Ok(())
     }
 
-    /// Abort the write — delete the temp file.
-    pub fn abort(self) {
-        drop(self.writer);
+    pub fn abort(self) { drop(self); }
+}
+
+impl Drop for CacheWriter {
+    fn drop(&mut self) {
+        self.writer.take();
         let _ = fs::remove_file(&self.temp_path);
     }
 }
@@ -328,6 +327,12 @@ impl CacheWriter {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Keep server/account/media variants separate without storing the URL or token.
+pub fn cache_key(url: &str) -> String {
+    use md5::{Digest, Md5};
+    format!("{:x}", Md5::digest(url.as_bytes()))
+}
 
 fn now_secs() -> u64 {
     SystemTime::now()
@@ -373,15 +378,15 @@ mod tests {
         let cache = AudioCache::new(dir.path().to_path_buf(), Some(100 * 1024 * 1024));
 
         // Miss
-        assert!(cache.lookup(42).is_none());
+        assert!(cache.lookup("42").is_none());
 
         // Write
-        let mut writer = cache.begin_write(42, "flac").unwrap();
-        writer.write_chunk(&[1, 2, 3, 4, 5]);
-        writer.finish(&cache);
+        let mut writer = cache.begin_write("42", "flac").unwrap();
+        writer.write_chunk(&[1, 2, 3, 4, 5]).unwrap();
+        writer.finish(&cache).unwrap();
 
         // Hit
-        let path = cache.lookup(42).unwrap();
+        let path = cache.lookup("42").unwrap();
         assert!(path.exists());
         assert_eq!(fs::read(&path).unwrap(), vec![1, 2, 3, 4, 5]);
 
@@ -392,7 +397,7 @@ mod tests {
 
         // Clear
         cache.clear();
-        assert!(cache.lookup(42).is_none());
+        assert!(cache.lookup("42").is_none());
         assert_eq!(cache.stats().file_count, 0);
     }
 
@@ -403,13 +408,13 @@ mod tests {
 
         // Write 3 files: 5 bytes each = 15 total, exceeds 10
         // Manually set last_accessed to ensure deterministic ordering
-        for (i, key) in [1i64, 2, 3].iter().enumerate() {
+        for (i, key) in ["1", "2", "3"].iter().enumerate() {
             let mut w = cache.begin_write(*key, "dat").unwrap();
-            w.write_chunk(&[0; 5]);
-            w.finish(&cache);
+            w.write_chunk(&[0; 5]).unwrap();
+            w.finish(&cache).unwrap();
             // Set increasing timestamps manually for deterministic LRU order
             if let Ok(mut idx) = cache.index.lock() {
-                if let Some(entry) = idx.entries.get_mut(key) {
+                if let Some(entry) = idx.entries.get_mut(*key) {
                     entry.last_accessed = 1000 + i as u64;
                 }
             }
@@ -419,6 +424,69 @@ mod tests {
         // Should have evicted oldest entries to stay under 10 bytes
         assert!(stats.total_bytes <= 10, "total {} > 10", stats.total_bytes);
         // Key 3 (most recent) should still be cached
-        assert!(cache.lookup(3).is_some());
+        assert!(cache.lookup("3").is_some());
+    }
+
+    #[test]
+    fn same_track_id_on_different_servers_accounts_or_variants_has_distinct_cache_keys() {
+        let urls = [
+            "https://server-a/library/parts/42/file.flac?X-Plex-Token=account-a",
+            "https://server-b/library/parts/42/file.flac?X-Plex-Token=account-a",
+            "https://server-a/library/parts/42/file.flac?X-Plex-Token=account-b",
+            "https://server-a/library/parts/42/file.mp3?X-Plex-Token=account-a",
+        ];
+        let keys: std::collections::HashSet<_> = urls.iter().map(|url| cache_key(url)).collect();
+        assert_eq!(keys.len(), urls.len());
+        let dir = tempfile::tempdir().unwrap();
+        let cache = AudioCache::new(dir.path().into(), None);
+        let mut writer = cache.begin_write(&cache_key(urls[0]), "flac").unwrap();
+        writer.write_chunk(b"server-a audio").unwrap();
+        writer.finish(&cache).unwrap();
+        assert!(cache.lookup(&cache_key(urls[0])).is_some());
+        for url in &urls[1..] { assert!(cache.lookup(&cache_key(url)).is_none()); }
+    }
+
+    #[test]
+    fn overlapping_writers_never_publish_another_downloads_partial_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = AudioCache::new(dir.path().into(), None);
+        let mut first = cache.begin_write("42", "flac").unwrap();
+        first.write_chunk(b"first complete audio").unwrap();
+        let mut second = cache.begin_write("42", "flac").unwrap();
+        second.write_chunk(b"second").unwrap();
+        first.finish(&cache).unwrap();
+        assert_eq!(fs::read(cache.lookup("42").unwrap()).unwrap(), b"first complete audio");
+        second.write_chunk(b" complete audio").unwrap();
+        second.finish(&cache).unwrap();
+        assert_eq!(fs::read(cache.lookup("42").unwrap()).unwrap(), b"second complete audio");
+        assert_eq!(cache.stats().total_bytes, b"second complete audio".len() as u64);
+        assert_eq!(cache.stats().file_count, 1);
+    }
+
+    #[test]
+    fn failed_or_abandoned_writes_are_not_cached() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = AudioCache::new(dir.path().into(), None);
+        let mut writer = cache.begin_write("42", "flac").unwrap();
+        let temp = writer.temp_path.clone();
+        writer.writer.take();
+        assert!(writer.write_chunk(b"bytes").is_err());
+        assert!(writer.finish(&cache).is_err());
+        assert!(!temp.exists());
+        assert!(cache.lookup("42").is_none());
+        assert_eq!(cache.stats().total_bytes, 0);
+    }
+
+    #[test]
+    fn incomplete_cached_files_are_rejected_after_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = AudioCache::new(dir.path().into(), None);
+        let mut writer = cache.begin_write("42", "flac").unwrap();
+        writer.write_chunk(b"complete audio").unwrap();
+        writer.finish(&cache).unwrap();
+        fs::write(cache.lookup("42").unwrap(), b"bad").unwrap();
+        let reopened = AudioCache::new(dir.path().into(), None);
+        assert!(reopened.lookup("42").is_none());
+        assert_eq!(reopened.stats().total_bytes, 0);
     }
 }

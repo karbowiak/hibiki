@@ -895,9 +895,10 @@ fn fetch_and_decode_incremental(
     use symphonia::core::io::MediaSourceStream;
 
     let ext = cache::extract_extension(url);
+    let cache_key = cache::cache_key(url);
 
     // ---- Cache HIT: decode from local file ----
-    if let Some(cached_path) = cache.lookup(rating_key) {
+    if let Some(cached_path) = cache.lookup(&cache_key) {
         debug!(rating_key, path = %cached_path.display(), "cache hit — decoding from file");
         let file = std::fs::File::open(&cached_path)
             .map_err(|e| format!("cache read: {}", e))?;
@@ -917,7 +918,7 @@ fn fetch_and_decode_incremental(
     let app = app_handle.clone();
     let url_owned = url.to_string();
     let ext = cache::extract_extension(url);
-    let cache_writer = cache.begin_write(rating_key, &ext).ok();
+    let cache_writer = cache.begin_write(&cache_key, &ext).ok();
     let cache_for_task = cache.clone();
 
     let shared_buf = rt.block_on(async {
@@ -971,7 +972,10 @@ fn fetch_and_decode_incremental(
                         shared_w.push(&chunk);
                         // Tee to disk cache
                         if let Some(ref mut w) = writer {
-                            w.write_chunk(&chunk);
+                            if let Err(error) = w.write_chunk(&chunk) {
+                                tracing::warn!(%error, "audio cache write failed; continuing playback");
+                                if let Some(w) = writer.take() { w.abort(); }
+                            }
                         }
                     }
                     Err(e) => {
@@ -985,7 +989,9 @@ fn fetch_and_decode_incremental(
             shared_w.finish();
             // Finalize cache file (rename .part → final, update index, evict LRU)
             if let Some(w) = writer {
-                w.finish(&cache_for_task);
+                if let Err(error) = w.finish(&cache_for_task) {
+                    tracing::warn!(%error, "audio cache finalization failed");
+                }
             }
         });
 
@@ -1087,18 +1093,18 @@ fn resolve_gain_db(
     }
 
     // 2. Previously computed gain from cache
-    if let Some(db) = cache.get_computed_gain(meta.rating_key) {
+    if let Some(db) = cache.get_computed_gain(&cache::cache_key(url)) {
         debug!(rating_key = meta.rating_key, gain_db = format!("{:.1}", db), "using cached computed gain");
         return Some(db);
     }
 
     // 3. Compute gain for cached files that lack Plex loudness data
     let ext = cache::extract_extension(url);
-    if let Some(cached_path) = cache.lookup(meta.rating_key) {
+    if let Some(cached_path) = cache.lookup(&cache::cache_key(url)) {
         debug!(rating_key = meta.rating_key, "running loudness analysis (no Plex gain data)");
         match loudness::analyze_loudness(&cached_path, &ext) {
             Ok(gain_db) => {
-                cache.set_computed_gain(meta.rating_key, gain_db);
+                cache.set_computed_gain(&cache::cache_key(url), gain_db);
                 return Some(gain_db);
             }
             Err(e) => {
