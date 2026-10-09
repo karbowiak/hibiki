@@ -63,7 +63,7 @@ export const useLastfmStore = create<LastfmState>((set) => ({
     try {
       const settings = await loadAppSettings()
       set({
-        isAuthenticated: !!settings.lastfm_session_key,
+        isAuthenticated: settings.has_lastfm_session,
         isEnabled: settings.lastfm_enabled,
         hasApiKey: !!settings.lastfm_api_key,
         username: settings.lastfm_username || null,

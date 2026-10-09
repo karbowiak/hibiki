@@ -200,6 +200,7 @@ pub struct LastfmAuthToken {
 #[derive(Debug, Serialize, Clone)]
 pub struct LastfmSession {
     pub username: String,
+    #[serde(skip_serializing)]
     pub session_key: String,
 }
 
@@ -751,4 +752,16 @@ pub async fn love_track(
         .with_context(|| format!("Failed to read Last.fm {method} response"))?;
 
     check_lastfm_error(&resp)
+}
+
+#[cfg(test)]
+mod credential_tests {
+    #[test]
+    fn auth_result_does_not_expose_the_session_key() {
+        let session = super::LastfmSession { username: "listener".into(), session_key: "private-session".into() };
+        let json = serde_json::to_value(&session).unwrap();
+        assert_eq!(json["username"], "listener");
+        assert!(json.get("session_key").is_none());
+        assert_eq!(session.session_key, "private-session");
+    }
 }

@@ -925,22 +925,20 @@ fn fetch_and_decode_incremental(
         let client = {
             let plex_state = app.state::<PlexState>();
             let guard = plex_state.0.lock().await;
-            guard
-                .as_ref()
-                .ok_or_else(|| "not connected to Plex".to_string())?
-                .clone()
+            guard.as_ref().cloned()
         };
 
-        let (fetch_lock, media_client, token) = client.media_fetch_parts();
+        let fetch_lock = client.as_ref().map(|client| client.media_fetch_lock())
+            .unwrap_or_else(|| Arc::new(tokio::sync::Mutex::new(())));
 
         let shared = SharedBuffer::new(None);
         let shared_w = shared.clone();
 
         tauri::async_runtime::spawn(async move {
             let _guard = fetch_lock.lock().await;
-            let response = match media_client
-                .get(&url_owned)
-                .header("X-Plex-Token", &token)
+            let request = client.as_ref().map(|client| client.media_request(&url_owned))
+                .unwrap_or_else(|| crate::plex::client::public_media_request(&url_owned));
+            let response = match request
                 .send()
                 .await
             {

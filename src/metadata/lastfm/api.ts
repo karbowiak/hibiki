@@ -125,7 +125,6 @@ export interface LastfmAuthToken {
 
 export interface LastfmSession {
   username: string
-  session_key: string
 }
 
 export interface LastfmSimilarArtist {

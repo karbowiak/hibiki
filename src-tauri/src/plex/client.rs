@@ -11,6 +11,31 @@ use tracing::{debug, instrument};
 
 use crate::plex::models::PlexApiResponse;
 
+/// Never forward Plex headers (or token-bearing URLs) across an origin redirect.
+fn plex_redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 10 {
+            return attempt.error("too many Plex redirects");
+        }
+        if attempt.previous().first().map(|first| first.origin() == attempt.url().origin()).unwrap_or(true) {
+            attempt.follow()
+        } else {
+            attempt.error("refusing cross-origin Plex redirect")
+        }
+    })
+}
+
+/// Public audio (including podcasts) does not require a Plex connection/token.
+pub fn public_media_request(url: &str) -> reqwest::RequestBuilder {
+    static CLIENT: once_cell::sync::Lazy<reqwest::Client> = once_cell::sync::Lazy::new(|| {
+        reqwest::Client::builder().http1_only().pool_max_idle_per_host(0)
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .read_timeout(std::time::Duration::from_secs(15))
+            .build().expect("public media HTTP client")
+    });
+    CLIENT.get(url)
+}
+
 const PRODUCT_NAME: &str = "Hibiki";
 const PRODUCT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -133,6 +158,7 @@ impl PlexClient {
         // avoid stale entries while still allowing back-to-back API calls to
         // reuse a connection.
         let client = reqwest::Client::builder()
+            .redirect(plex_redirect_policy())
             .pool_max_idle_per_host(config.max_connections)
             .pool_idle_timeout(std::time::Duration::from_secs(3))
             // 120s: smart playlists with 100k+ tracks can take a long time to
@@ -148,7 +174,10 @@ impl PlexClient {
         // `media_client` field doc for the rationale.
         let media_client = reqwest::Client::builder()
             .pool_max_idle_per_host(0)
-            .timeout(std::time::Duration::from_secs(120))
+            .http1_only()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .read_timeout(std::time::Duration::from_secs(15))
+            .redirect(plex_redirect_policy())
             .danger_accept_invalid_certs(config.accept_invalid_certs)
             .default_headers(default_headers)
             .build()
@@ -462,21 +491,25 @@ impl PlexClient {
 
     /// Get cloneable handles for streaming audio fetches.
     ///
-    /// Returns the fetch serialization lock, the no-pool HTTP client, and the
-    /// Plex token. The caller can move these into an async task to hold the lock
-    /// for the duration of a streaming download.
-    pub fn media_fetch_parts(
-        &self,
-    ) -> (
-        std::sync::Arc<tokio::sync::Mutex<()>>,
-        reqwest::Client,
-        String,
-    ) {
-        (
-            self.fetch_lock.clone(),
-            self.media_client.clone(),
-            self.token.clone(),
-        )
+    /// The lock serializes Plex media downloads; public streams never inherit
+    /// the Plex token or this server's TLS configuration.
+    pub fn media_fetch_lock(&self) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+        self.fetch_lock.clone()
+    }
+
+    pub fn is_plex_url(&self, value: &str) -> bool {
+        match (url::Url::parse(&self.base_url), url::Url::parse(value)) {
+            (Ok(base), Ok(target)) => base.origin() == target.origin(),
+            _ => false,
+        }
+    }
+
+    pub fn media_request(&self, url: &str) -> reqwest::RequestBuilder {
+        if self.is_plex_url(url) {
+            self.media_client.get(url).header("X-Plex-Token", &self.token)
+        } else {
+            public_media_request(url)
+        }
     }
 
     /// Fetch the raw response body bytes for a pre-built full URL.
@@ -486,15 +519,12 @@ impl PlexClient {
     /// against any other in-flight `fetch_bytes` call via `fetch_lock`. See the
     /// field docs for the rationale on both — TL;DR Plex's media endpoint hates
     /// reused pooled connections AND hates concurrent large-body downloads.
-    #[instrument(skip(self))]
+    #[instrument(skip(self, url))]
     pub async fn fetch_bytes(&self, url: &str) -> Result<Vec<u8>> {
-        debug!("fetch_bytes: {}", url);
+        debug!("fetching audio bytes");
         let _guard = self.fetch_lock.lock().await;
 
-        let response = self
-            .media_client
-            .get(url)
-            .header("X-Plex-Token", &self.token)
+        let response = self.media_request(url)
             .send()
             .await
             .context("fetch_bytes request failed")?;
@@ -573,6 +603,35 @@ impl PlexClient {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn media_credentials_are_scoped_to_the_plex_server_origin() {
+        let client = PlexClient::new(PlexClientConfig {
+            base_url: "https://plex.example:32400".into(), token: "test-token".into(),
+            ..Default::default()
+        }).unwrap();
+        for url in ["https://podcast.example/episode.mp3", "https://plex.example:443/file.mp3",
+            "http://plex.example:32400/file.mp3", "https://plex.example.attacker.test/file.mp3"] {
+            let request = client.media_request(url).build().unwrap();
+            assert!(!request.headers().contains_key("X-Plex-Token"));
+            assert!(!request.headers().contains_key("X-Plex-Client-Identifier"));
+        }
+        let request = client.media_request("https://plex.example:32400/library/parts/42/file.mp3").build().unwrap();
+        assert_eq!(request.headers()["X-Plex-Token"], "test-token");
+    }
+
+    #[tokio::test]
+    async fn token_bearing_media_requests_do_not_follow_cross_origin_redirects() {
+        let destination = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (client, server) = mock_http(vec![format!(
+            "HTTP/1.1 302 Found\r\nLocation: http://{}/episode.mp3\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            destination.local_addr().unwrap()
+        )]).await;
+        assert!(client.fetch_bytes(&client.build_url("/file.mp3")).await.is_err());
+        assert_eq!(server.await.unwrap().len(), 1);
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(100), destination.accept()).await.is_err(),
+            "the foreign origin must never receive the Plex request");
+    }
 
     async fn mock_http(responses: Vec<String>) -> (PlexClient, tokio::task::JoinHandle<Vec<String>>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

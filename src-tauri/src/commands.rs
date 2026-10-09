@@ -896,10 +896,10 @@ pub async fn get_server_info(
 ///
 /// Returns empty strings if no settings have been saved yet.
 #[tauri::command]
-pub async fn load_settings(app: tauri::AppHandle) -> Result<PlexSettings, String> {
+pub async fn load_settings(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     use tauri::Manager;
     let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
-    crate::plex::load_settings(&config_dir).map_err(|e| format!("{:#}", e))
+    crate::plex::load_settings(&config_dir).map(|settings| settings.public_view()).map_err(|e| format!("{:#}", e))
 }
 
 /// Persist connection settings to disk.

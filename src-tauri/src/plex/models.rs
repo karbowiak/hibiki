@@ -1303,6 +1303,27 @@ fn default_lastfm_love_threshold() -> u8 {
     6
 }
 
+impl PlexSettings {
+    /// Explicit public fields: private service credentials stay in Rust.
+    pub fn public_view(&self) -> serde_json::Value {
+        serde_json::json!({
+            "base_url": self.base_url, "token": self.token,
+            "client_id": self.client_id, "all_urls": self.all_urls,
+            "section_id": self.section_id, "section_uuid": self.section_uuid,
+            "lastfm_api_key": self.lastfm_api_key,
+            "has_lastfm_session": !self.lastfm_session_key.is_empty(),
+            "lastfm_username": self.lastfm_username, "lastfm_enabled": self.lastfm_enabled,
+            "lastfm_replace_metadata": self.lastfm_replace_metadata,
+            "lastfm_love_threshold": self.lastfm_love_threshold,
+            "genius_client_id": self.genius_client_id, "genius_enabled": self.genius_enabled,
+            "genius_always_fetch": self.genius_always_fetch,
+            "has_listenbrainz_token": !self.listenbrainz_token.is_empty(),
+            "listenbrainz_username": self.listenbrainz_username,
+            "listenbrainz_enabled": self.listenbrainz_enabled,
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Misc query helpers (not returned to TypeScript)
 // ---------------------------------------------------------------------------
@@ -1373,6 +1394,25 @@ pub struct SonicParams {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn settings_public_view_never_returns_private_service_credentials() {
+        let settings = super::PlexSettings {
+            token: "public-plex-token".into(), lastfm_api_secret: "private-lastfm-secret".into(),
+            lastfm_session_key: "private-lastfm-session".into(), genius_client_secret: "private-genius-secret".into(),
+            listenbrainz_token: "private-listenbrainz-token".into(), ..Default::default()
+        };
+        let public = settings.public_view();
+        assert_eq!(public["token"], "public-plex-token");
+        assert_eq!(public["has_lastfm_session"], true);
+        assert_eq!(public["has_listenbrainz_token"], true);
+        assert!(!public.to_string().contains("private-"));
+        for field in ["lastfm_api_secret", "lastfm_session_key", "genius_client_secret", "listenbrainz_token"] {
+            assert!(public.get(field).is_none());
+        }
+        // The internal settings still retain credentials for request signing.
+        assert_eq!(settings.lastfm_api_secret, "private-lastfm-secret");
+    }
+
     use super::*;
 
     /// Hub items for dynamically-generated mixes ("Mixes for You") do NOT

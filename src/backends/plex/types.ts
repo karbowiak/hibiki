@@ -328,8 +328,8 @@ export interface PlexSettings {
   section_uuid: string
   /** Last.fm API key (user-registered). Empty if not configured. */
   lastfm_api_key: string
-  /** Last.fm session key obtained after OAuth. Empty if not authenticated. */
-  lastfm_session_key: string
+  /** Whether Rust holds an authenticated Last.fm session. */
+  has_lastfm_session: boolean
   /** Last.fm username, cached for display. Empty if not authenticated. */
   lastfm_username: string
   /** Whether Last.fm scrobbling/now-playing is enabled. */
@@ -344,8 +344,8 @@ export interface PlexSettings {
   genius_enabled: boolean
   /** When true, always fetch Genius lyrics even when Plex provides them. */
   genius_always_fetch: boolean
-  /** ListenBrainz user token. Empty if not configured. */
-  listenbrainz_token: string
+  /** Whether Rust holds a configured ListenBrainz token. */
+  has_listenbrainz_token: boolean
   /** ListenBrainz username, cached for display. Empty if not authenticated. */
   listenbrainz_username: string
   /** Whether ListenBrainz scrobbling is enabled. */

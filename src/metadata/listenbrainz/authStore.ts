@@ -41,7 +41,7 @@ export const useListenBrainzStore = create<ListenBrainzState>((set) => ({
     try {
       const settings = await loadAppSettings()
       set({
-        isAuthenticated: !!settings.listenbrainz_token,
+        isAuthenticated: settings.has_listenbrainz_token,
         isEnabled: settings.listenbrainz_enabled,
         username: settings.listenbrainz_username || null,
       })
