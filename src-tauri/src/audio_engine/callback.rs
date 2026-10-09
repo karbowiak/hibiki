@@ -39,7 +39,7 @@ pub struct SharedAtomics {
     pub deck_b_loaded_id: Arc<AtomicU64>,
     pub crossfading: Arc<AtomicBool>,
     pub engine_state: Arc<AtomicU8>,
-    pub position_samples: Arc<AtomicU64>,
+    pub position_ms: Arc<AtomicU64>,
     pub duration_ms: Arc<AtomicU64>,
     pub active_rating_key: Arc<AtomicI64>,
     pub device_sample_rate: Arc<AtomicU32>,
@@ -68,7 +68,7 @@ impl SharedAtomics {
             deck_b_loaded_id: Arc::new(AtomicU64::new(0)),
             crossfading: Arc::new(AtomicBool::new(false)),
             engine_state: Arc::new(AtomicU8::new(EngineState::Stopped.to_u8())),
-            position_samples: Arc::new(AtomicU64::new(0)),
+            position_ms: Arc::new(AtomicU64::new(0)),
             duration_ms: Arc::new(AtomicU64::new(0)),
             active_rating_key: Arc::new(AtomicI64::new(0)),
             device_sample_rate: Arc::new(AtomicU32::new(44100)),
@@ -201,19 +201,9 @@ impl AudioCallbackState {
         // 4. Zero output buffer
         data.fill(0.0);
 
-        // 5. Mix decks (direct access, no lock)
-        let advancing_fade =
-            self.is_crossfading && !self.paused && self.state() == EngineState::Playing;
-        if !self.paused && self.state() == EngineState::Playing {
-            let (active, pending) = self.deck_mgr.both_decks_mut();
-            mixer::mix_decks(
-                active,
-                pending,
-                data,
-                self.device_channels,
-                self.is_crossfading,
-            );
-        }
+        // 5. Split at transition/end boundaries so the callback neither drops
+        // a tail nor inserts silence when the next deck is already buffered.
+        self.mix_with_transitions(data);
 
         // 6. Process DSP chain (direct access, no lock)
         self.dsp_chain
@@ -221,12 +211,6 @@ impl AudioCallbackState {
 
         // 7. Update position atomics
         self.update_position_atomics();
-
-        // 8. Tick scheduler (sample-accurate)
-        self.tick_scheduler();
-
-        // 9. Check crossfade completion (replaces sleep+lock pattern)
-        self.check_crossfade_complete(if advancing_fade { frames } else { 0 });
 
         self.atomics
             .crossfading
@@ -237,6 +221,53 @@ impl AudioCallbackState {
 
         // 11. Send visualizer data (~60fps)
         self.maybe_send_vis_frame(data);
+    }
+
+    fn mix_with_transitions(&mut self, data: &mut [f32]) {
+        let out_ch = self.device_channels.max(1) as usize;
+        let mut offset = 0;
+        while offset + out_ch <= data.len() {
+            self.tick_scheduler();
+            if self.paused || self.state() != EngineState::Playing {
+                break;
+            }
+            let active = self.deck_mgr.active_deck();
+            let available = active.samples.len().saturating_sub(active.position)
+                / active.channels.max(1) as usize;
+            if available == 0 {
+                break;
+            }
+            let mut frames = ((data.len() - offset) / out_ch).min(available);
+            if self.is_crossfading {
+                frames = frames.min(self.crossfade_remaining_frames as usize);
+            } else if !self.waiting_for_play {
+                let position_frames = ((active.sample_offset + active.position)
+                    / active.channels.max(1) as usize) as u64;
+                if let Some(until) = self
+                    .scheduler
+                    .frames_until_crossfade(position_frames, active.sample_rate)
+                {
+                    frames = frames.min(until);
+                }
+            }
+            if frames == 0 {
+                break;
+            }
+            let end = offset + frames * out_ch;
+            let (active, pending) = self.deck_mgr.both_decks_mut();
+            mixer::mix_decks(
+                active,
+                pending,
+                &mut data[offset..end],
+                self.device_channels,
+                self.is_crossfading,
+            );
+            self.check_crossfade_complete(frames);
+            offset = end;
+        }
+        // Deliver a boundary reached on the last frame without waiting for
+        // the following device callback.
+        self.tick_scheduler();
     }
 
     // -----------------------------------------------------------------------
@@ -496,6 +527,10 @@ impl AudioCallbackState {
                 if self.waiting_for_play {
                     self.pending_seek_ms = Some(position as u64);
                     return;
+                }
+                if self.is_crossfading {
+                    self.crossfade_remaining_frames = 0;
+                    self.check_crossfade_complete(0);
                 }
                 let duration = self
                     .deck_mgr
@@ -774,15 +809,28 @@ impl AudioCallbackState {
             return;
         }
 
+        if self.is_crossfading && self.deck_mgr.active_deck().is_finished() {
+            self.crossfade_remaining_frames = 0;
+            self.check_crossfade_complete(0);
+        }
+
         let active = self.deck_mgr.active_deck();
         if !active.loaded {
             return;
         }
 
-        let pos = active.position_secs();
-        let dur = active.duration_secs();
-
-        if let Some(action) = self.scheduler.check(pos, dur) {
+        let position_frames =
+            ((active.sample_offset + active.position) / active.channels.max(1) as usize) as u64;
+        let action = if active.is_finished()
+            && !self.is_crossfading
+            && self.deck_mgr.pending_deck().loaded
+        {
+            Some(SchedulerAction::GaplessPoint)
+        } else {
+            self.scheduler
+                .check_crossfade_frame(position_frames, active.sample_rate)
+        };
+        if let Some(action) = action {
             match action {
                 SchedulerAction::TransitionPoint => {
                     self.handle_crossfade_transition();
@@ -807,7 +855,6 @@ impl AudioCallbackState {
             && !active.fully_decoded
             && !active.samples.is_empty()
             && active.position >= active.samples.len()
-            && !self.is_crossfading
         {
             // Active deck ran out of samples but the track isn't fully decoded.
             // This happens when a streaming download was truncated (HTTP error).
@@ -962,7 +1009,7 @@ impl AudioCallbackState {
             return;
         }
         let active = self.deck_mgr.active_deck();
-        if active.loaded && !active.samples.is_empty() && active.position < active.samples.len() {
+        if active.loaded && (active.position < active.samples.len() || active.is_finished()) {
             self.set_state(EngineState::Playing);
             let _ = self.event_tx.try_send(EngineEvent::State {
                 request_id: self.event_request_id,
@@ -978,8 +1025,9 @@ impl AudioCallbackState {
     fn update_position_atomics(&self) {
         let active = self.deck_mgr.active_deck();
         if active.loaded {
-            let pos = (active.sample_offset + active.position) as u64;
-            self.atomics.position_samples.store(pos, Ordering::Relaxed);
+            self.atomics
+                .position_ms
+                .store(active.position_ms(), Ordering::Relaxed);
             let dur = active.meta.as_ref().map_or(0, |m| m.duration_ms);
             self.atomics.duration_ms.store(dur, Ordering::Relaxed);
             self.atomics
@@ -1042,8 +1090,9 @@ impl AudioCallbackState {
             .active_rating_key
             .store(new_rk, Ordering::Relaxed);
         if active.loaded {
-            let pos = (active.sample_offset + active.position) as u64;
-            self.atomics.position_samples.store(pos, Ordering::Relaxed);
+            self.atomics
+                .position_ms
+                .store(active.position_ms(), Ordering::Relaxed);
             let dur = active.meta.as_ref().map_or(0, |m| m.duration_ms);
             self.atomics.duration_ms.store(dur, Ordering::Relaxed);
         }

@@ -169,17 +169,15 @@ impl AudioEngine {
                 if atomics_pos.get_state() != EngineState::Playing {
                     continue;
                 }
-                let pos_samples = atomics_pos.position_samples.load(Ordering::Relaxed);
+                let pos_ms = atomics_pos.position_ms.load(Ordering::Relaxed);
                 let dur_ms = atomics_pos.duration_ms.load(Ordering::Relaxed);
-                let sr = device_sample_rate;
-                let ch = device_channels;
-                if sr == 0 || ch == 0 {
-                    continue;
-                }
-                let pos_ms = (pos_samples as f64 / (sr as f64 * ch as f64) * 1000.0) as u64;
                 let _ = event_tx_pos.send(EngineEvent::Position {
                     request_id: atomics_pos.active_request_id.load(Ordering::SeqCst),
-                    position_ms: pos_ms.min(dur_ms),
+                    position_ms: if dur_ms > 0 {
+                        pos_ms.min(dur_ms)
+                    } else {
+                        pos_ms
+                    },
                     duration_ms: dur_ms,
                 });
             }

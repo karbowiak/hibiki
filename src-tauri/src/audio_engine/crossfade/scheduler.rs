@@ -22,7 +22,6 @@ pub enum SchedulerAction {
 pub struct Scheduler {
     mode: SchedulerMode,
     transition_time_sec: f32,
-    gapless_lead_time_sec: f32,
     fired: bool,
 }
 
@@ -31,7 +30,6 @@ impl Scheduler {
         Self {
             mode: SchedulerMode::Gapless,
             transition_time_sec: -1.0,
-            gapless_lead_time_sec: 0.1, // 100ms lead time
             fired: false,
         }
     }
@@ -49,6 +47,33 @@ impl Scheduler {
     pub fn reset(&mut self) {
         self.transition_time_sec = -1.0;
         self.fired = false;
+    }
+
+    /// Distance to the crossfade boundary, in output frames. A callback may
+    /// straddle this point, so its mixer must split the buffer here.
+    pub fn frames_until_crossfade(&self, position_frames: u64, sample_rate: u32) -> Option<usize> {
+        if self.mode != SchedulerMode::Crossfade || self.fired || self.transition_time_sec < 0.0 {
+            return None;
+        }
+        let target = (self.transition_time_sec as f64 * sample_rate as f64).round() as u64;
+        Some(
+            target
+                .saturating_sub(position_frames)
+                .min(usize::MAX as u64) as usize,
+        )
+    }
+
+    pub fn check_crossfade_frame(
+        &mut self,
+        position_frames: u64,
+        sample_rate: u32,
+    ) -> Option<SchedulerAction> {
+        if self.frames_until_crossfade(position_frames, sample_rate) == Some(0) {
+            self.fired = true;
+            Some(SchedulerAction::TransitionPoint)
+        } else {
+            None
+        }
     }
 
     #[cfg(test)]
@@ -73,7 +98,7 @@ impl Scheduler {
                 }
             }
             SchedulerMode::Gapless => {
-                let trigger = duration_sec - self.gapless_lead_time_sec;
+                let trigger = duration_sec;
                 if trigger > 0.0 && current_time_sec >= trigger {
                     self.fired = true;
                     Some(SchedulerAction::GaplessPoint)
@@ -97,21 +122,24 @@ mod tests {
 
         assert!(s.check(100.0, 300.0).is_none());
         assert!(s.check(289.9, 300.0).is_none());
-        assert_eq!(s.check(290.0, 300.0), Some(SchedulerAction::TransitionPoint));
+        assert_eq!(
+            s.check(290.0, 300.0),
+            Some(SchedulerAction::TransitionPoint)
+        );
         // Should not fire again
         assert!(s.check(295.0, 300.0).is_none());
         assert!(s.has_fired());
     }
 
     #[test]
-    fn gapless_fires_near_end() {
+    fn gapless_never_cuts_the_tail() {
         let mut s = Scheduler::new();
         s.set_mode(SchedulerMode::Gapless);
         s.set_transition_point(300.0); // duration
 
         assert!(s.check(298.0, 300.0).is_none());
-        // 300 - 0.1 = 299.9
-        assert_eq!(s.check(299.95, 300.0), Some(SchedulerAction::GaplessPoint));
+        assert!(s.check(299.95, 300.0).is_none());
+        assert_eq!(s.check(300.0, 300.0), Some(SchedulerAction::GaplessPoint));
     }
 
     #[test]

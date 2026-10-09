@@ -119,6 +119,114 @@ fn reports_missing_ramps_as_a_timed_fade_and_album_tracks_as_gapless() {
     }
 }
 
+#[test]
+fn gapless_preserves_every_tail_sample_and_starts_the_next_deck_inside_the_callback() {
+    let (mut cb, events) = callback();
+    for (deck_id, key, value) in [(DeckId::A, 1, 0.2), (DeckId::B, 2, 0.4)] {
+        let mut metadata = meta(key);
+        metadata.duration_ms = 900; // Real PCM is one second; metadata is approximate.
+        metadata.parent_key = "album".into();
+        cb.handle_load_deck(deck_id, metadata, 48000, 2, 1.0, 0);
+        let deck = cb.deck_mgr.deck_mut(deck_id);
+        deck.samples = vec![value; 96000];
+        deck.fully_decoded = true;
+        deck.has_started_playing = deck_id == DeckId::A;
+    }
+    cb.set_state(EngineState::Playing);
+    cb.compute_and_set_schedule();
+    let mut output = vec![0.0; 96000 + 960];
+    cb.process_callback(&mut output);
+    assert!(output[..96000]
+        .iter()
+        .all(|sample| (*sample - 0.2).abs() < 1e-6));
+    assert!(output[96000..]
+        .iter()
+        .all(|sample| (*sample - 0.4).abs() < 1e-6));
+    assert_eq!(cb.deck_mgr.active_deck().rating_key(), 2);
+    assert_eq!(cb.atomics.position_ms.load(Ordering::Relaxed), 10);
+    assert_eq!(
+        events
+            .try_iter()
+            .filter(|event| matches!(event, EngineEvent::TrackEnded { rating_key: 1, .. }))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn a_mixramp_boundary_inside_the_output_buffer_aligns_the_first_incoming_sample() {
+    let (mut cb, _) = callback();
+    cb.device_sample_rate = 1000;
+    cb.dsp_chain.set_sample_rate(1000);
+    for (deck_id, key, value) in [(DeckId::A, 1, 0.2), (DeckId::B, 2, 0.4)] {
+        cb.handle_load_deck(deck_id, meta(key), 1000, 2, 1.0, 0);
+        let deck = cb.deck_mgr.deck_mut(deck_id);
+        deck.samples = vec![value; 20000];
+        deck.fully_decoded = true;
+        deck.has_started_playing = deck_id == DeckId::A;
+    }
+    cb.ramp_cache.insert(
+        1,
+        TrackRamps {
+            start_ramp: vec![],
+            end_ramp: super::super::crossfade::types::parse_ramp(Some("-17 0.12;-3 4")),
+        },
+    );
+    cb.ramp_cache.insert(
+        2,
+        TrackRamps {
+            start_ramp: super::super::crossfade::types::parse_ramp(Some("-16 0;-3 1")),
+            end_ramp: vec![],
+        },
+    );
+    cb.deck_mgr.active_deck_mut().position = 9875 * 2;
+    cb.set_state(EngineState::Playing);
+    cb.compute_and_set_schedule();
+    let mut output = [0.0; 40];
+    cb.process_callback(&mut output);
+    assert!(output[..10]
+        .iter()
+        .all(|sample| (*sample - 0.2).abs() < 1e-6));
+    assert!(output[10..]
+        .iter()
+        .all(|sample| (*sample - 0.6).abs() < 1e-6));
+    assert_eq!(cb.atomics.position_ms.load(Ordering::Relaxed), 15);
+}
+
+#[test]
+fn incoming_buffer_starvation_freezes_fade_time_until_more_pcm_arrives() {
+    let (mut cb, _) = callback();
+    cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
+    cb.handle_load_deck(DeckId::B, meta(2), 48000, 2, 1.0, 0);
+    cb.deck_mgr.active_deck_mut().samples = vec![0.2; 100];
+    cb.deck_mgr.active_deck_mut().has_started_playing = true;
+    cb.deck_mgr.pending_deck_mut().samples = vec![0.1; 96000];
+    cb.deck_mgr.pending_deck_mut().has_started_playing = true;
+    cb.is_crossfading = true;
+    cb.crossfade_remaining_frames = 100;
+    cb.set_state(EngineState::Playing);
+    cb.process_callback(&mut [0.0; 400]);
+    assert_eq!(cb.crossfade_remaining_frames, 50);
+    assert_eq!(cb.state(), EngineState::Buffering);
+    cb.deck_mgr
+        .active_deck_mut()
+        .samples
+        .extend_from_slice(&[0.2; 100]);
+    cb.process_callback(&mut [0.0; 100]);
+    assert!(!cb.is_crossfading);
+    assert_eq!(cb.deck_mgr.active_deck().position, 200);
+}
+
+#[test]
+fn reported_position_uses_the_deck_channel_count_instead_of_the_device_layout() {
+    let (mut cb, _) = callback();
+    cb.device_channels = 6;
+    cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
+    cb.deck_mgr.active_deck_mut().position = 96000;
+    cb.update_position_atomics();
+    assert_eq!(cb.atomics.position_ms.load(Ordering::Relaxed), 1000);
+}
+
 fn load(deck: DeckId, key: i64, epoch: u64, load_id: u64, generation: u64) -> AudioCommand {
     AudioCommand::LoadDeck {
         deck,
@@ -228,6 +336,13 @@ fn preloaded_samples_arm_the_gapless_scheduler() {
     cb.handle_command(load(DeckId::B, 2, 1, 1, 1));
     cb.deck_mgr.active_deck_mut().position = 960000;
     cb.tick_scheduler();
+    assert_eq!(
+        cb.deck_mgr.active_deck().rating_key(),
+        1,
+        "wait for decoder EOF before treating a growing buffer as a track end"
+    );
+    cb.deck_mgr.active_deck_mut().fully_decoded = true;
+    cb.process_callback(&mut [0.0; 2]);
     assert_eq!(cb.deck_mgr.active_deck().rating_key(), 2);
 }
 

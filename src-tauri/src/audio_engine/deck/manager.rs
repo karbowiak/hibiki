@@ -133,6 +133,15 @@ impl DeckState {
     }
 
     /// Current playback position in seconds (accounts for sample_offset after seek).
+    pub fn position_ms(&self) -> u64 {
+        if self.channels == 0 || self.sample_rate == 0 {
+            return 0;
+        }
+        (((self.sample_offset as u128 + self.position as u128) * 1000)
+            / (self.sample_rate as u128 * self.channels as u128))
+            .min(u64::MAX as u128) as u64
+    }
+
     pub fn position_secs(&self) -> f32 {
         if self.channels == 0 || self.sample_rate == 0 {
             return 0.0;
