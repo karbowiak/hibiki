@@ -35,7 +35,7 @@ use tracing::{debug, info, warn};
 
 use self::cache::AudioCache;
 use self::callback::{AudioCallbackState, SharedAtomics};
-use self::command::{AudioCommand, Command, ControlCommand, SampleBatch};
+use self::command::{AudioCommand, Command, ControlCommand, SampleBatch, SeekRequest};
 use self::crossfade::types::{parse_ramp, CrossfadeSettings, TrackRamps};
 use self::deck::decode;
 use self::event::EngineEvent;
@@ -366,6 +366,16 @@ fn control_thread_main(
         match command {
             Command::Play { url, meta } => {
                 pending_url.clear();
+                // Keep an existing overlap audible before reusing its outgoing
+                // physical deck. A newer selection can cancel this wait.
+                while atomics.crossfading.load(Ordering::SeqCst)
+                    && epoch == atomics.request_epoch.load(Ordering::SeqCst)
+                {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                if epoch != atomics.request_epoch.load(Ordering::SeqCst) {
+                    continue;
+                }
                 let deck = pending_deck(&atomics);
                 let request = make_request(epoch, deck, &atomics);
                 handle_play(
@@ -421,12 +431,8 @@ fn control_thread_main(
                     continue;
                 }
                 let deck = pending_deck(&atomics);
-                let request = make_request(epoch, deck, &atomics).for_preload(
-                    atomics.preload_revision.clone(),
-                    preload_revision,
-                    atomics.active_deck_id.clone(),
-                    if deck == DeckId::A { 0 } else { 1 },
-                );
+                let request = make_request(epoch, deck, &atomics)
+                    .for_preload(atomics.preload_revision.clone(), preload_revision);
                 handle_preload(
                     &url,
                     &meta,
@@ -495,15 +501,20 @@ fn control_thread_main(
 }
 
 fn make_request(epoch: u64, deck: DeckId, atomics: &SharedAtomics) -> PlaybackRequest {
-    match deck {
-        DeckId::A => atomics.deck_a_seek_ms.store(-1, Ordering::SeqCst),
-        DeckId::B => atomics.deck_b_seek_ms.store(-1, Ordering::SeqCst),
-    }
     let owner = match deck {
         DeckId::A => atomics.deck_a_load_id.clone(),
         DeckId::B => atomics.deck_b_load_id.clone(),
     };
-    PlaybackRequest::new(epoch, atomics.request_epoch.clone(), owner)
+    let loaded = match deck {
+        DeckId::A => atomics.deck_a_loaded_id.clone(),
+        DeckId::B => atomics.deck_b_loaded_id.clone(),
+    };
+    PlaybackRequest::new(epoch, atomics.request_epoch.clone(), owner).with_audible_deck(
+        atomics.active_deck_id.clone(),
+        if deck == DeckId::A { 0 } else { 1 },
+        atomics.crossfading.clone(),
+        loaded,
+    )
 }
 
 fn wait_for_load(deck: DeckId, request: &PlaybackRequest, atomics: &SharedAtomics) {
@@ -619,6 +630,8 @@ fn handle_play(
                     result.initial_samples.len()
                 };
 
+            let (seek_tx, seek_rx) = crossbeam_channel::unbounded();
+            let can_seek = result.decoder.is_some();
             // Tell audio callback to prepare the deck
             let _ = audio_cmd_tx.send(AudioCommand::LoadDeck {
                 deck,
@@ -633,6 +646,7 @@ fn handle_play(
                 generation,
                 initial_samples: result.initial_samples,
                 fully_decoded: !has_more && !result.aborted,
+                seek_tx: if can_seek { Some(seek_tx) } else { None },
             });
 
             // Tell audio callback to swap pending → active
@@ -647,7 +661,7 @@ fn handle_play(
                 if !request.is_current() {
                     return;
                 }
-                spawn_background_decode(
+                if let Err(error) = spawn_background_decode(
                     decoder,
                     meta.rating_key,
                     source_rate,
@@ -659,7 +673,16 @@ fn handle_play(
                     device_rate,
                     device_channels,
                     request.clone(),
-                );
+                    seek_rx,
+                ) {
+                    let _ = sample_tx.send(SampleBatch {
+                        rating_key: meta.rating_key,
+                        generation,
+                        samples: Vec::new(),
+                        fully_decoded: false,
+                        error: Some(format!("Cannot start audio decoder: {error}")),
+                    });
+                }
             }
 
             if result.aborted {
@@ -763,6 +786,8 @@ fn handle_preload(
                     result.initial_samples.len()
                 };
 
+            let (seek_tx, seek_rx) = crossbeam_channel::unbounded();
+            let can_seek = result.decoder.is_some();
             let _ = audio_cmd_tx.send(AudioCommand::LoadDeck {
                 deck,
                 meta: resolved_meta,
@@ -776,6 +801,7 @@ fn handle_preload(
                 generation,
                 initial_samples: result.initial_samples,
                 fully_decoded: !has_more && !result.aborted,
+                seek_tx: if can_seek { Some(seek_tx) } else { None },
             });
 
             if result.aborted {
@@ -793,7 +819,7 @@ fn handle_preload(
                 if !request.is_current() {
                     return;
                 }
-                spawn_background_decode(
+                if let Err(error) = spawn_background_decode(
                     decoder,
                     meta.rating_key,
                     source_rate,
@@ -805,7 +831,16 @@ fn handle_preload(
                     device_rate,
                     device_channels,
                     request.clone(),
-                );
+                    seek_rx,
+                ) {
+                    let _ = sample_tx.send(SampleBatch {
+                        rating_key: meta.rating_key,
+                        generation,
+                        samples: Vec::new(),
+                        fully_decoded: false,
+                        error: Some(format!("Cannot start audio decoder: {error}")),
+                    });
+                }
             }
         }
         Err(e) => {
@@ -827,70 +862,70 @@ fn spawn_background_decode(
     rating_key: i64,
     source_rate: u32,
     source_channels: u16,
-    deck: DeckId,
+    _deck: DeckId,
     generation: u64,
     sample_tx: Sender<SampleBatch>,
     atomics: Arc<SharedAtomics>,
     device_sample_rate: u32,
     device_channels: u16,
     request: PlaybackRequest,
-) {
-    let seek_signal = match deck {
-        DeckId::A => atomics.deck_a_seek_ms.clone(),
-        DeckId::B => atomics.deck_b_seek_ms.clone(),
-    };
-    let gen_signal = match deck {
-        DeckId::A => atomics.deck_a_generation.clone(),
-        DeckId::B => atomics.deck_b_generation.clone(),
-    };
-
+    seek_rx: crossbeam_channel::Receiver<SeekRequest>,
+) -> std::io::Result<std::thread::JoinHandle<()>> {
     std::thread::Builder::new()
         .name(format!("audio-bgdec-{}", rating_key))
         .spawn(move || {
             let batch_size = (source_rate as usize * source_channels as usize) / 2;
             let mut current_gen = generation;
+            let mut finished_reported = false;
+            let mut failure_message = None;
 
             loop {
                 if !request.is_current() {
                     return;
                 }
-                // Check for seek request
-                let seek_ms = seek_signal.load(Ordering::Relaxed);
-                if seek_ms >= 0 {
-                    seek_signal.store(-1, Ordering::Relaxed);
-                    let seek_secs = seek_ms as f64 / 1000.0;
-                    debug!(
-                        rating_key,
-                        seek_secs = format!("{:.2}", seek_secs),
-                        "bg decode: seeking"
-                    );
-
-                    use symphonia::core::formats::{SeekMode, SeekTo};
-                    use symphonia::core::units::Time;
-                    match decoder.format.seek(
-                        SeekMode::Coarse,
-                        SeekTo::Time {
-                            time: Time {
-                                seconds: seek_secs as u64,
-                                frac: seek_secs.fract(),
-                            },
-                            track_id: None,
-                        },
-                    ) {
-                        Ok(seeked) => {
-                            decoder.decoder.reset();
-                            decoder.finished = false;
-                            // Update generation — new batches get the new generation
-                            current_gen = gen_signal.load(Ordering::Relaxed);
-                            debug!(
-                                rating_key,
-                                seeked_ts = seeked.actual_ts,
-                                gen = current_gen,
-                                "bg decode: seek done"
-                            );
-                        }
-                        Err(e) => warn!(rating_key, error = %e, "bg decode: seek failed"),
+                let mut latest_seek = None;
+                loop {
+                    match seek_rx.try_recv() {
+                        Ok(seek) => latest_seek = Some(seek),
+                        Err(crossbeam_channel::TryRecvError::Empty) => break,
+                        Err(crossbeam_channel::TryRecvError::Disconnected) => return,
                     }
+                }
+                if let Some(seek) = latest_seek {
+                    current_gen = seek.generation;
+                    if let Err(error) = decode::seek_to_ms(&mut decoder, seek.position_ms) {
+                        decoder.finished = true;
+                        decoder.aborted = true;
+                        failure_message = Some(format!("Audio seek failed: {error}"));
+                    }
+                    finished_reported = false;
+                }
+                if decoder.finished {
+                    if !finished_reported {
+                        let error = if decoder.aborted {
+                            atomics.preload_error_rk.store(rating_key, Ordering::SeqCst);
+                            Some(failure_message.take().unwrap_or_else(|| {
+                                "The media stream was interrupted and could not be resumed".into()
+                            }))
+                        } else {
+                            None
+                        };
+                        let _ = sample_tx.send(SampleBatch {
+                            rating_key,
+                            generation: current_gen,
+                            samples: Vec::new(),
+                            fully_decoded: !decoder.aborted,
+                            error,
+                        });
+                        finished_reported = true;
+                        if decoder.aborted {
+                            return;
+                        }
+                    }
+                    // Keep the decoder available for backward seeks outside a
+                    // buffer cleared by an earlier seek. Ownership cancels it.
+                    std::thread::sleep(Duration::from_millis(10));
+                    continue;
                 }
 
                 match decode::decode_batch(&mut decoder, batch_size) {
@@ -933,40 +968,7 @@ fn spawn_background_decode(
                             return; // Channel closed
                         }
                     }
-                    Ok(_) => {
-                        if !request.is_current() {
-                            return;
-                        }
-                        if decoder.aborted {
-                            // Stream was truncated (download error) — don't mark
-                            // as fully decoded so is_finished() won't fire and
-                            // cause premature auto-advance.
-                            warn!(rating_key, "bg decode: incomplete (stream truncated)");
-                            atomics
-                                .preload_error_rk
-                                .store(rating_key, Ordering::Relaxed);
-                            let _ = sample_tx.send(SampleBatch {
-                                rating_key,
-                                generation: current_gen,
-                                samples: Vec::new(),
-                                fully_decoded: false,
-                                error: Some(
-                                    "The media stream was interrupted and could not be resumed"
-                                        .into(),
-                                ),
-                            });
-                        } else {
-                            debug!(rating_key, "bg decode: complete");
-                            let _ = sample_tx.send(SampleBatch {
-                                rating_key,
-                                generation: current_gen,
-                                samples: Vec::new(),
-                                fully_decoded: true,
-                                error: None,
-                            });
-                        }
-                        return;
-                    }
+                    Ok(_) => {}
                     Err(e) => {
                         if !request.is_current() {
                             return;
@@ -987,7 +989,6 @@ fn spawn_background_decode(
                 }
             }
         })
-        .ok();
 }
 
 // ---------------------------------------------------------------------------
@@ -1060,16 +1061,12 @@ fn fetch_and_decode_incremental(
             guard.as_ref().cloned()
         };
 
-        let fetch_lock = client.as_ref().map(|client| client.media_fetch_lock())
-            .unwrap_or_else(|| Arc::new(tokio::sync::Mutex::new(())));
-
         let shared = SharedBuffer::new(None);
         let shared_w = shared.clone();
         let shared_return = shared.clone();
 
         tauri::async_runtime::spawn(async move {
             let download = async {
-                let _guard = fetch_lock.lock().await;
                 let mut writer = cache_writer;
                 let result = download::download(
                     || client.as_ref().map(|client| client.media_request(&url_owned))
@@ -1236,6 +1233,63 @@ fn resolve_gain_db(
 #[cfg(test)]
 mod control_tests {
     use super::*;
+
+    #[test]
+    fn a_completed_background_decoder_remains_seekable_and_preserves_the_seek_generation() {
+        let source = decode::tests::generate_test_wav(44100, 2, 2.0);
+        let decoder = decode::probe_audio(source).unwrap();
+        let atomics = Arc::new(SharedAtomics::new());
+        let epoch = Arc::new(std::sync::atomic::AtomicU64::new(1));
+        let request = PlaybackRequest::new(
+            1,
+            epoch.clone(),
+            Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        );
+        let (sample_tx, samples) = crossbeam_channel::unbounded();
+        let (seek_tx, seek_rx) = crossbeam_channel::unbounded();
+        let worker = spawn_background_decode(
+            decoder,
+            42,
+            44100,
+            2,
+            DeckId::A,
+            1,
+            sample_tx,
+            atomics.clone(),
+            44100,
+            2,
+            request,
+            seek_rx,
+        )
+        .unwrap();
+        while !samples
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .fully_decoded
+        {}
+        // Deliberately set the shared counter to an unrelated later value.
+        // Batches must use the generation paired with the actual seek target.
+        atomics.deck_a_generation.store(9999, Ordering::SeqCst);
+        seek_tx
+            .send(SeekRequest {
+                position_ms: 333,
+                generation: 2,
+            })
+            .unwrap();
+        let mut after_seek = Vec::new();
+        loop {
+            let batch = samples.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(batch.generation, 2);
+            assert!(batch.error.is_none());
+            after_seek.extend_from_slice(&batch.samples);
+            if batch.fully_decoded {
+                break;
+            }
+        }
+        assert_eq!(after_seek.len(), (88200 - 333 * 44100 / 1000) * 2);
+        epoch.store(2, Ordering::SeqCst);
+        worker.join().unwrap();
+    }
 
     #[test]
     fn interactive_controls_bypass_a_busy_io_worker_and_stop_invalidates_queued_play() {

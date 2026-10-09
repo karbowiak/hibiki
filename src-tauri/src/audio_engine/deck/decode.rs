@@ -49,6 +49,8 @@ pub struct DecoderSetup {
     /// When true, the decoded audio is truncated — callers should NOT treat
     /// it as a complete track.
     pub aborted: bool,
+    time_base: Option<symphonia::core::units::TimeBase>,
+    seek_skip_samples: usize,
     stream_buffer: Option<std::sync::Arc<super::streaming::SharedBuffer>>,
 }
 
@@ -105,6 +107,7 @@ pub fn probe_from_source(mss: MediaSourceStream, ext: Option<&str>) -> Result<De
         .unwrap_or(2);
     let duration_samples = track.codec_params.n_frames;
     let track_id = track.id;
+    let time_base = track.codec_params.time_base;
 
     let decoder = CODEC_REGISTRY
         .make(&track.codec_params, &DecoderOptions::default())
@@ -128,8 +131,36 @@ pub fn probe_from_source(mss: MediaSourceStream, ext: Option<&str>) -> Result<De
         sample_buf: None,
         finished: false,
         aborted: false,
+        time_base,
+        seek_skip_samples: 0,
         stream_buffer: None,
     })
+}
+
+/// Accurate seeking returns a packet before the target. Decode and discard the
+/// preroll so the first samples really correspond to the requested position.
+pub fn seek_to_ms(setup: &mut DecoderSetup, position_ms: u64) -> Result<()> {
+    use symphonia::core::formats::{SeekMode, SeekTo};
+    use symphonia::core::units::Time;
+    let seeked = setup.format.seek(
+        SeekMode::Accurate,
+        SeekTo::Time {
+            time: Time::new(position_ms / 1000, (position_ms % 1000) as f64 / 1000.0),
+            track_id: Some(setup.track_id),
+        },
+    )?;
+    setup.decoder.reset();
+    setup.finished = false;
+    setup.aborted = false;
+    let delta = seeked.required_ts.saturating_sub(seeked.actual_ts);
+    let frames = if let Some(base) = setup.time_base {
+        let time = base.calc_time(delta);
+        ((time.seconds as f64 + time.frac) * setup.sample_rate as f64).round() as usize
+    } else {
+        delta as usize
+    };
+    setup.seek_skip_samples = frames.saturating_mul(setup.channels as usize);
+    Ok(())
 }
 
 /// Decode the next batch of packets, returning up to `max_samples` interleaved f32 samples.
@@ -197,7 +228,9 @@ pub fn decode_batch(setup: &mut DecoderSetup, max_samples: usize) -> Result<Vec<
         }
         buf.copy_interleaved_ref(decoded);
 
-        batch.extend_from_slice(buf.samples());
+        let skip = setup.seek_skip_samples.min(buf.samples().len());
+        setup.seek_skip_samples -= skip;
+        batch.extend_from_slice(&buf.samples()[skip..]);
     }
 
     Ok(batch)
@@ -241,10 +274,14 @@ fn codec_type_name(ct: codecs::CodecType) -> &'static str {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn generate_test_wav(sample_rate: u32, channels: u16, duration_secs: f32) -> Vec<u8> {
+    pub(crate) fn generate_test_wav(
+        sample_rate: u32,
+        channels: u16,
+        duration_secs: f32,
+    ) -> Vec<u8> {
         let num_samples = (sample_rate as f32 * duration_secs) as u32;
         let bits_per_sample: u16 = 16;
         let byte_rate = sample_rate * channels as u32 * (bits_per_sample / 8) as u32;
@@ -328,6 +365,43 @@ mod tests {
             expected,
             all.len()
         );
+    }
+
+    #[test]
+    fn accurate_seek_after_eof_discards_preroll_and_matches_the_original_pcm() {
+        let wav = generate_test_wav(44100, 2, 2.0);
+        let mut setup = probe_audio(wav).unwrap();
+        let original = decode_all(&mut setup).unwrap();
+        assert!(setup.finished);
+        seek_to_ms(&mut setup, 333).unwrap();
+        let after_seek = decode_all(&mut setup).unwrap();
+        let offset = (333 * 44100 / 1000) * 2;
+        assert_eq!(after_seek, original[offset..]);
+        seek_to_ms(&mut setup, 100).unwrap();
+        let backwards = decode_all(&mut setup).unwrap();
+        assert_eq!(backwards, original[4410 * 2..]);
+    }
+
+    #[test]
+    fn initial_playback_buffer_is_ready_before_the_full_track_has_arrived() {
+        use super::super::streaming::{SharedBuffer, StreamingReader};
+        let wav = generate_test_wav(44100, 2, 3.0);
+        let shared = SharedBuffer::new(Some(wav.len() as u64));
+        // Only half the three-second file has arrived; the body is still open.
+        shared.push(&wav[..44 + 44100 * 2 * 2 * 3 / 2]);
+        let source = shared.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let mut decoder = probe_stream(StreamingReader::new(source), Some("wav")).unwrap();
+            let initial = decode_batch(&mut decoder, 44100 * 2).unwrap();
+            tx.send((initial.len(), decoder.finished)).unwrap();
+        });
+        let first = rx.recv_timeout(std::time::Duration::from_secs(2));
+        shared.abort(); // Also releases the worker if probing unexpectedly blocked.
+        worker.join().unwrap();
+        let (samples, finished) = first.expect("playback should not wait for the complete file");
+        assert!(samples >= 44100 * 2);
+        assert!(!finished);
     }
 
     #[test]

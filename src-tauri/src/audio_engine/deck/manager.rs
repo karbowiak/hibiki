@@ -91,6 +91,7 @@ pub struct DeckState {
     /// threads stamp their `SampleBatch` with the generation at the time of
     /// decode. The audio callback rejects batches with a stale generation.
     pub generation: u64,
+    pub seek_tx: Option<crossbeam_channel::Sender<super::super::command::SeekRequest>>,
 }
 
 impl DeckState {
@@ -110,6 +111,7 @@ impl DeckState {
             decode_error: None,
             sample_offset: 0,
             generation: 0,
+            seek_tx: None,
         }
     }
 
@@ -126,6 +128,7 @@ impl DeckState {
         self.fade_curve = None;
         self.fully_decoded = false;
         self.decode_error = None;
+        self.seek_tx = None;
         // generation is NOT reset — it's managed externally by seek logic
     }
 

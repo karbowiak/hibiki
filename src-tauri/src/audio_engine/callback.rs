@@ -47,9 +47,7 @@ pub struct SharedAtomics {
     /// Written by the audio callback on every swap, read by the control thread
     /// to determine which deck is pending for preloads.
     pub active_deck_id: Arc<AtomicU8>,
-    // Seek coordination — control task writes, bg decode reads
-    pub deck_a_seek_ms: Arc<AtomicI64>,
-    pub deck_b_seek_ms: Arc<AtomicI64>,
+    // Decode generations are assigned per load and per seek.
     pub deck_a_generation: Arc<AtomicU64>,
     pub deck_b_generation: Arc<AtomicU64>,
     /// Rating key of the last preload that failed (stream error / truncated).
@@ -75,8 +73,7 @@ impl SharedAtomics {
             active_rating_key: Arc::new(AtomicI64::new(0)),
             device_sample_rate: Arc::new(AtomicU32::new(44100)),
             active_deck_id: Arc::new(AtomicU8::new(0)), // A = 0
-            deck_a_seek_ms: Arc::new(AtomicI64::new(-1)),
-            deck_b_seek_ms: Arc::new(AtomicI64::new(-1)),
+
             deck_a_generation: Arc::new(AtomicU64::new(0)),
             deck_b_generation: Arc::new(AtomicU64::new(0)),
             preload_error_rk: Arc::new(AtomicI64::new(0)),
@@ -110,6 +107,8 @@ pub struct AudioCallbackState {
     paused: bool,
     waiting_for_play: bool,
     event_request_id: u64,
+    pending_seek_ms: Option<u64>,
+    pending_play_paused: bool,
 
     // ---- Lock-free inputs ----
     cmd_rx: Receiver<AudioCommand>,
@@ -159,6 +158,8 @@ impl AudioCallbackState {
             paused: false,
             waiting_for_play: false,
             event_request_id: 0,
+            pending_seek_ms: None,
+            pending_play_paused: false,
 
             cmd_rx,
             deck_a_rx,
@@ -203,7 +204,7 @@ impl AudioCallbackState {
         // 5. Mix decks (direct access, no lock)
         let advancing_fade =
             self.is_crossfading && !self.paused && self.state() == EngineState::Playing;
-        if !self.waiting_for_play && !self.paused && self.state() == EngineState::Playing {
+        if !self.paused && self.state() == EngineState::Playing {
             let (active, pending) = self.deck_mgr.both_decks_mut();
             mixer::mix_decks(
                 active,
@@ -287,6 +288,10 @@ impl AudioCallbackState {
                 }
                 self.scheduler.reset();
                 self.deck_mgr.stop_all();
+                self.atomics.deck_a_loaded_id.store(0, Ordering::SeqCst);
+                self.atomics.deck_b_loaded_id.store(0, Ordering::SeqCst);
+                self.atomics.deck_a_load_id.fetch_add(1, Ordering::SeqCst);
+                self.atomics.deck_b_load_id.fetch_add(1, Ordering::SeqCst);
                 self.is_crossfading = false;
                 self.waiting_for_play = false;
                 self.atomics
@@ -312,13 +317,25 @@ impl AudioCallbackState {
                 if request_id != self.atomics.request_epoch.load(Ordering::SeqCst) {
                     return;
                 }
-                self.event_request_id = request_id;
                 self.scheduler.reset();
-                self.deck_mgr.pending_deck_mut().reset();
-                self.is_crossfading = false;
+                if self.is_crossfading && self.paused {
+                    self.crossfade_remaining_frames = 0;
+                    self.check_crossfade_complete(0);
+                }
+                if !self.is_crossfading {
+                    self.deck_mgr.pending_deck_mut().reset();
+                    match self.deck_mgr.active_id().other() {
+                        DeckId::A => self.atomics.deck_a_loaded_id.store(0, Ordering::SeqCst),
+                        DeckId::B => self.atomics.deck_b_loaded_id.store(0, Ordering::SeqCst),
+                    }
+                }
                 self.waiting_for_play = true;
-                self.paused = false;
-                self.set_state(EngineState::Buffering);
+                self.pending_seek_ms = None;
+                self.pending_play_paused = false;
+                // Continue mixing the audible deck while the next load runs.
+                if !self.deck_mgr.active_deck().loaded {
+                    self.set_state(EngineState::Buffering);
+                }
                 let _ = self.event_tx.try_send(EngineEvent::State {
                     request_id,
                     state: "buffering".into(),
@@ -347,6 +364,7 @@ impl AudioCallbackState {
                 generation,
                 initial_samples,
                 fully_decoded,
+                seek_tx,
             } => {
                 let owner = match deck {
                     DeckId::A => &self.atomics.deck_a_load_id,
@@ -374,6 +392,7 @@ impl AudioCallbackState {
                 d.generation = generation;
                 d.samples = initial_samples;
                 d.fully_decoded = fully_decoded;
+                d.seek_tx = seek_tx;
                 match deck {
                     DeckId::A => self
                         .atomics
@@ -390,6 +409,13 @@ impl AudioCallbackState {
             }
             AudioCommand::Pause => {
                 self.paused = true;
+                if self.waiting_for_play {
+                    self.pending_play_paused = true;
+                    if self.is_crossfading {
+                        self.crossfade_remaining_frames = 0;
+                        self.check_crossfade_complete(0);
+                    }
+                }
                 self.set_state(EngineState::Paused);
                 let _ = self.event_tx.try_send(EngineEvent::State {
                     request_id: self.event_request_id,
@@ -398,6 +424,9 @@ impl AudioCallbackState {
             }
             AudioCommand::Resume => {
                 self.paused = false;
+                if self.waiting_for_play {
+                    self.pending_play_paused = false;
+                }
                 let state = if self.waiting_for_play {
                     EngineState::Buffering
                 } else {
@@ -418,6 +447,8 @@ impl AudioCallbackState {
                 self.event_request_id = self.atomics.request_epoch.load(Ordering::SeqCst);
                 self.scheduler.reset();
                 self.deck_mgr.stop_all();
+                self.atomics.deck_a_loaded_id.store(0, Ordering::SeqCst);
+                self.atomics.deck_b_loaded_id.store(0, Ordering::SeqCst);
                 self.is_crossfading = false;
                 self.paused = false;
                 self.waiting_for_play = false;
@@ -437,6 +468,8 @@ impl AudioCallbackState {
                     return;
                 }
                 self.waiting_for_play = false;
+                self.event_request_id = request_id;
+                self.paused = self.pending_play_paused;
                 self.handle_transition_to_active(user_skip);
                 if self.paused {
                     self.set_state(EngineState::Paused);
@@ -447,15 +480,34 @@ impl AudioCallbackState {
                 self.atomics
                     .active_request_id
                     .store(request_id, Ordering::SeqCst);
+                if let Some(position_ms) = self.pending_seek_ms.take() {
+                    self.handle_command(AudioCommand::SeekInBuffer {
+                        position: position_ms as usize,
+                    });
+                }
             }
             AudioCommand::SeekInBuffer { position } => {
                 // `position` is encoded as milliseconds from the control thread
-                let position_ms = position;
+                if self.waiting_for_play {
+                    self.pending_seek_ms = Some(position as u64);
+                    return;
+                }
+                let duration = self
+                    .deck_mgr
+                    .active_deck()
+                    .meta
+                    .as_ref()
+                    .map_or(0, |m| m.duration_ms);
+                let position_ms = if duration > 0 {
+                    position.min(duration as usize)
+                } else {
+                    position
+                };
                 let active = self.deck_mgr.active_deck_mut();
                 if active.loaded && active.channels > 0 && active.sample_rate > 0 {
-                    let target_sample = (position_ms as f32 / 1000.0
-                        * active.sample_rate as f32
-                        * active.channels as f32) as usize;
+                    let target_sample = ((position_ms as u128 * active.sample_rate as u128 / 1000)
+                        * active.channels as u128)
+                        .min(usize::MAX as u128) as usize;
 
                     let buffer_end = active.sample_offset + active.samples.len();
                     let in_buffer =
@@ -463,7 +515,7 @@ impl AudioCallbackState {
 
                     if in_buffer {
                         active.position = target_sample - active.sample_offset;
-                    } else if !active.fully_decoded {
+                    } else if active.seek_tx.is_some() {
                         // Beyond buffer — need bg decode to seek
                         let out_ch = active.channels as usize;
                         let new_offset = (position_ms as f64 / 1000.0
@@ -476,31 +528,35 @@ impl AudioCallbackState {
                         active.fully_decoded = false;
                         active.generation = new_gen;
 
-                        // Signal bg decode thread via atomics
-                        let active_id = self.deck_mgr.active_id();
-                        match active_id {
-                            DeckId::A => {
-                                self.atomics
-                                    .deck_a_generation
-                                    .store(new_gen, Ordering::Relaxed);
-                                self.atomics
-                                    .deck_a_seek_ms
-                                    .store(position_ms as i64, Ordering::Relaxed);
-                            }
-                            DeckId::B => {
-                                self.atomics
-                                    .deck_b_generation
-                                    .store(new_gen, Ordering::Relaxed);
-                                self.atomics
-                                    .deck_b_seek_ms
-                                    .store(position_ms as i64, Ordering::Relaxed);
-                            }
+                        // Each decoder has its own mailbox. Reusing a physical
+                        // deck cannot let an obsolete worker consume a new seek.
+                        let seek = super::command::SeekRequest {
+                            position_ms: position_ms as u64,
+                            generation: new_gen,
+                        };
+                        if active.seek_tx.as_ref().unwrap().try_send(seek).is_err() {
+                            active.decode_error =
+                                Some("The audio decoder is unavailable for seeking".into());
+                        }
+                        match self.deck_mgr.active_id() {
+                            DeckId::A => self
+                                .atomics
+                                .deck_a_generation
+                                .store(new_gen, Ordering::SeqCst),
+                            DeckId::B => self
+                                .atomics
+                                .deck_b_generation
+                                .store(new_gen, Ordering::SeqCst),
                         }
 
-                        self.set_state(EngineState::Buffering);
+                        self.set_state(if self.paused {
+                            EngineState::Paused
+                        } else {
+                            EngineState::Buffering
+                        });
                         let _ = self.event_tx.try_send(EngineEvent::State {
                             request_id: self.event_request_id,
-                            state: "buffering".into(),
+                            state: if self.paused { "paused" } else { "buffering" }.into(),
                         });
                     } else {
                         // Fully decoded — clamp to buffer bounds
@@ -894,7 +950,7 @@ impl AudioCallbackState {
     }
 
     fn check_buffering_resume(&mut self) {
-        if self.waiting_for_play || self.paused || self.state() != EngineState::Buffering {
+        if self.paused || self.state() != EngineState::Buffering {
             return;
         }
         let active = self.deck_mgr.active_deck();

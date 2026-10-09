@@ -1,6 +1,6 @@
 //! Ownership of asynchronous work. A new play/stop invalidates the session;
 //! reusing a physical deck also invalidates its previous download and decoder.
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -10,7 +10,7 @@ pub struct PlaybackRequest {
     pub load_id: u64,
     owner: Arc<AtomicU64>,
     preload_revision: Option<(Arc<AtomicU64>, u64)>,
-    active_deck: Option<(Arc<AtomicU8>, u8)>,
+    audible_deck: Option<(Arc<AtomicU8>, u8, Arc<AtomicBool>, Arc<AtomicU64>)>,
 }
 
 impl PlaybackRequest {
@@ -22,19 +22,23 @@ impl PlaybackRequest {
             load_id,
             owner,
             preload_revision: None,
-            active_deck: None,
+            audible_deck: None,
         }
     }
 
-    pub fn for_preload(
-        mut self,
-        revision: Arc<AtomicU64>,
-        value: u64,
-        active_deck: Arc<AtomicU8>,
-        deck: u8,
-    ) -> Self {
+    pub fn for_preload(mut self, revision: Arc<AtomicU64>, value: u64) -> Self {
         self.preload_revision = Some((revision, value));
-        self.active_deck = Some((active_deck, deck));
+        self
+    }
+
+    pub fn with_audible_deck(
+        mut self,
+        active: Arc<AtomicU8>,
+        deck: u8,
+        crossfading: Arc<AtomicBool>,
+        loaded: Arc<AtomicU64>,
+    ) -> Self {
+        self.audible_deck = Some((active, deck, crossfading, loaded));
         self
     }
 
@@ -43,18 +47,20 @@ impl PlaybackRequest {
     }
 
     pub fn is_current(&self) -> bool {
-        self.current_epoch.load(Ordering::SeqCst) == self.epoch
-            && self.owner.load(Ordering::SeqCst) == self.load_id
-            && self
-                .preload_revision
-                .as_ref()
-                .is_none_or(|(revision, value)| {
-                    revision.load(Ordering::SeqCst) == *value
-                        || self
-                            .active_deck
-                            .as_ref()
-                            .is_some_and(|(active, deck)| active.load(Ordering::SeqCst) == *deck)
-                })
+        let audible = self
+            .audible_deck
+            .as_ref()
+            .is_some_and(|(active, deck, fading, loaded)| {
+                loaded.load(Ordering::SeqCst) == self.load_id
+                    && (active.load(Ordering::SeqCst) == *deck || fading.load(Ordering::SeqCst))
+            });
+        self.owner.load(Ordering::SeqCst) == self.load_id
+            && (audible
+                || (self.current_epoch.load(Ordering::SeqCst) == self.epoch
+                    && self
+                        .preload_revision
+                        .as_ref()
+                        .is_none_or(|(revision, value)| revision.load(Ordering::SeqCst) == *value)))
     }
 
     pub async fn cancelled(&self) {
@@ -73,14 +79,25 @@ mod tests {
         let epoch = Arc::new(AtomicU64::new(1));
         let revision = Arc::new(AtomicU64::new(0));
         let active = Arc::new(AtomicU8::new(0));
+        let fading = Arc::new(AtomicBool::new(false));
         let pending = PlaybackRequest::new(1, epoch.clone(), Arc::new(AtomicU64::new(0)))
-            .for_preload(revision.clone(), 0, active.clone(), 1);
+            .with_audible_deck(
+                active.clone(),
+                1,
+                fading.clone(),
+                Arc::new(AtomicU64::new(1)),
+            )
+            .for_preload(revision.clone(), 0);
         let promoted = PlaybackRequest::new(1, epoch.clone(), Arc::new(AtomicU64::new(0)))
-            .for_preload(revision.clone(), 0, active.clone(), 0);
+            .with_audible_deck(active.clone(), 0, fading, Arc::new(AtomicU64::new(1)))
+            .for_preload(revision.clone(), 0);
         revision.store(1, Ordering::SeqCst);
         assert!(!pending.is_current());
         assert!(promoted.is_current());
+        // Loading a new selection must leave the audible download running.
         epoch.store(2, Ordering::SeqCst);
+        assert!(promoted.is_current());
+        active.store(1, Ordering::SeqCst);
         assert!(!promoted.is_current());
     }
 

@@ -153,6 +153,7 @@ mod tests {
             decode_error: None,
             sample_offset: 0,
             generation: 0,
+            seek_tx: None,
         }
     }
 

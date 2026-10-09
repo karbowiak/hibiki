@@ -169,6 +169,8 @@ let _gaplessTimeoutId: ReturnType<typeof setTimeout> | null = null
 // and captures its value. After async work, if the counter changed, a newer play
 // superseded this one and the current call bails out.
 let _playGeneration = 0
+// Keep play/pause intent through buffering and asynchronous URL resolution.
+let _playbackDesired = false
 
 // Transcode fallback state — tracks whether we've already retried with transcoding
 // for the current track, to avoid infinite retry loops.
@@ -702,7 +704,7 @@ async function enrichCurrentTrack(track: MusicTrack, index: number, get: () => P
 function _onTrackBecomesActive(track: MusicTrack, index: number, get: () => PlayerState, set: any): void {
   const provider = getProvider()
   const isPodcast = _isPodcastTrack(track)
-  set({ currentTrack: track, queueIndex: index, isPlaying: true, positionMs: 0,
+  set({ currentTrack: track, queueIndex: index, isPlaying: _playbackDesired, positionMs: 0,
         waveformLevels: null, lyricsLines: null })
   _lastTimelineReportMs = 0
   _transcodeRetriedTrackId = null
@@ -795,6 +797,8 @@ async function _startPlayback(track: MusicTrack, index: number, get: () => Playe
     set({ isInternetRadioActive: false })
   }
   const gen = ++_playGeneration
+  _playbackDesired = true
+  if (_gaplessTimeoutId !== null) { clearTimeout(_gaplessTimeoutId); _gaplessTimeoutId = null }
   engine.beginSelection()
   _onTrackBecomesActive(track, index, get, set)
   try {
@@ -808,6 +812,7 @@ async function _startPlayback(track: MusicTrack, index: number, get: () => Playe
   }
   // A newer play superseded this one — bail out
   if (_playGeneration !== gen) return
+  if (!_playbackDesired) engine.pause()
   // Immediately preload the next track (triggers analysis + gapless prep)
   // and cache-warm a few more tracks ahead for instant skipping
   const { queue, repeat } = get()
@@ -1066,6 +1071,7 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   stop: () => {
+    _playbackDesired = false
     ++_playGeneration
     if (_gaplessTimeoutId !== null) { clearTimeout(_gaplessTimeoutId); _gaplessTimeoutId = null }
     engine.stop()
@@ -1108,6 +1114,7 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   pause: () => {
+    _playbackDesired = false
     engine.pause()
     set({ isPlaying: false })
     const { currentTrack, positionMs } = get()
@@ -1119,6 +1126,8 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   resume: () => {
+    if (!get().currentTrack) return
+    _playbackDesired = true
     engine.resume()
     set({ isPlaying: true })
     const { currentTrack, positionMs } = get()
@@ -1148,6 +1157,9 @@ export const usePlayerStore = create<PlayerState>()(
         fireAndForget(get().playRadio(radioSeedKey, radioType))
         return
       } else {
+        _playbackDesired = false
+        ++_playGeneration
+        engine.stop()
         const provider = getProvider()
         if (provider?.setNowPlayingState) fireAndForget(provider.setNowPlayingState("stopped"))
         set({ isPlaying: false, currentTrack: null, positionMs: 0, waveformLevels: null, lyricsLines: null })
@@ -1298,7 +1310,7 @@ export const usePlayerStore = create<PlayerState>()(
 
       onState(state) {
         set({
-          isPlaying: state === "playing",
+          isPlaying: (state === "playing" || state === "buffering") && _playbackDesired,
           isBuffering: state === "buffering",
         })
       },
@@ -1414,7 +1426,7 @@ export const usePlayerStore = create<PlayerState>()(
         const generation = _playGeneration
         const providerAtError = getProvider()
         console.error("Audio engine error:", message)
-        const { currentTrack } = get()
+        const { currentTrack, positionMs } = get()
 
         // Attempt transcode fallback once per track on playback errors
         if (currentTrack && _transcodeRetriedTrackId !== currentTrack.id) {
@@ -1430,6 +1442,9 @@ export const usePlayerStore = create<PlayerState>()(
               const ratingKey = Number(currentTrack.id)
               _ratingKeyToTrackId.set(ratingKey, currentTrack.id)
               await engine.play(transcodeUrl, ratingKey, currentTrack.duration, "", null, true)
+              if (generation !== _playGeneration) return
+              if (positionMs > 0) engine.seekTo(positionMs)
+              if (!_playbackDesired) engine.pause()
               set({ playerError: null })
               return
             }

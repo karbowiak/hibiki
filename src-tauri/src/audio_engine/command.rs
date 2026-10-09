@@ -84,6 +84,7 @@ pub enum AudioCommand {
         generation: u64,
         initial_samples: Vec<f32>,
         fully_decoded: bool,
+        seek_tx: Option<crossbeam_channel::Sender<SeekRequest>>,
     },
     // -- Playback --
     Pause,
@@ -131,4 +132,11 @@ pub struct SampleBatch {
     pub samples: Vec<f32>,
     pub fully_decoded: bool,
     pub error: Option<String>,
+}
+
+/// A seek is a single message: its target and generation cannot be torn apart.
+#[derive(Debug, Clone, Copy)]
+pub struct SeekRequest {
+    pub position_ms: u64,
+    pub generation: u64,
 }

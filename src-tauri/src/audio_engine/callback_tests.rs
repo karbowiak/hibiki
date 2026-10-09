@@ -48,6 +48,7 @@ fn load(deck: DeckId, key: i64, epoch: u64, load_id: u64, generation: u64) -> Au
         generation,
         initial_samples: vec![0.1; 96000],
         fully_decoded: true,
+        seek_tx: None,
     }
 }
 
@@ -99,16 +100,33 @@ fn paused_load_keeps_pause_and_acknowledges_the_actual_deck_swap() {
 }
 
 #[test]
-fn new_selection_waits_for_its_own_samples_instead_of_resuming_the_old_track() {
+fn skip_keeps_the_current_track_audible_until_the_incoming_buffer_is_ready() {
     let (mut cb, _) = callback();
     cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
     cb.deck_mgr.active_deck_mut().samples = vec![0.2; 96000];
+    cb.deck_mgr.active_deck_mut().has_started_playing = true;
+    cb.set_state(EngineState::Playing);
     cb.atomics.request_epoch.store(1, Ordering::SeqCst);
+    cb.atomics.deck_b_load_id.store(1, Ordering::SeqCst);
     cb.handle_command(AudioCommand::BeginPlay { request_id: 1 });
-    let mut out = [1.0; 960];
+    let mut out = [0.0; 960];
     cb.process_callback(&mut out);
-    assert_eq!(cb.state(), EngineState::Buffering);
-    assert!(out.iter().all(|v| *v == 0.0));
+    assert_eq!(cb.deck_mgr.active_deck().rating_key(), 1);
+    assert!(
+        out.iter().any(|v| v.abs() > 0.01),
+        "the outgoing song must remain audible during loading"
+    );
+    assert!(
+        !cb.is_crossfading,
+        "the fade starts only after incoming PCM is installed"
+    );
+    cb.handle_command(load(DeckId::B, 2, 1, 1, 1));
+    cb.handle_command(AudioCommand::TransitionToActive {
+        user_skip: true,
+        request_id: 1,
+    });
+    assert_eq!(cb.deck_mgr.active_deck().rating_key(), 2);
+    assert!(cb.is_crossfading);
 }
 
 #[test]
@@ -192,6 +210,69 @@ fn failed_preload_does_not_stop_or_retry_the_active_song() {
     assert!(!events
         .try_iter()
         .any(|e| matches!(e, EngineEvent::Error { .. })));
+}
+
+#[test]
+fn a_paused_backward_seek_can_reload_pcm_before_a_previous_seek_offset() {
+    let (mut cb, _) = callback();
+    let (seek_tx, seek_rx) = crossbeam_channel::unbounded();
+    cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
+    let active = cb.deck_mgr.active_deck_mut();
+    active.sample_offset = 48000 * 2 * 5;
+    active.samples = vec![0.1; 96000];
+    active.fully_decoded = true;
+    active.seek_tx = Some(seek_tx);
+    cb.handle_command(AudioCommand::Pause);
+    cb.handle_command(AudioCommand::SeekInBuffer { position: 2000 });
+    let seek = seek_rx.recv().unwrap();
+    assert_eq!(seek.position_ms, 2000);
+    assert_eq!(seek.generation, cb.deck_mgr.active_deck().generation);
+    assert_eq!(cb.state(), EngineState::Paused);
+    assert_eq!(cb.deck_mgr.active_deck().sample_offset, 48000 * 2 * 2);
+    assert!(!cb.deck_mgr.active_deck().fully_decoded);
+}
+
+#[test]
+fn a_seek_requested_during_loading_applies_to_the_new_track() {
+    let (mut cb, _) = callback();
+    cb.atomics.request_epoch.store(1, Ordering::SeqCst);
+    cb.atomics.deck_b_load_id.store(1, Ordering::SeqCst);
+    cb.handle_command(AudioCommand::BeginPlay { request_id: 1 });
+    cb.handle_command(AudioCommand::SeekInBuffer { position: 2500 });
+    let (seek_tx, seek_rx) = crossbeam_channel::unbounded();
+    let mut incoming = load(DeckId::B, 2, 1, 1, 1);
+    if let AudioCommand::LoadDeck {
+        seek_tx: sender, ..
+    } = &mut incoming
+    {
+        *sender = Some(seek_tx);
+    }
+    cb.handle_command(incoming);
+    cb.handle_command(AudioCommand::TransitionToActive {
+        user_skip: true,
+        request_id: 1,
+    });
+    let seek = seek_rx.recv().unwrap();
+    assert_eq!(seek.position_ms, 2500);
+    assert_eq!(cb.deck_mgr.active_deck().rating_key(), 2);
+    assert_eq!(cb.deck_mgr.active_deck().sample_offset, 48000 * 2 * 5 / 2);
+}
+
+#[test]
+fn skipping_during_a_paused_overlap_does_not_wait_forever_for_the_outgoing_deck() {
+    let (mut cb, _) = callback();
+    cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
+    cb.handle_load_deck(DeckId::B, meta(2), 48000, 2, 1.0, 0);
+    cb.is_crossfading = true;
+    cb.crossfade_out_rk = 2;
+    cb.crossfade_remaining_frames = 48000;
+    cb.paused = true;
+    cb.set_state(EngineState::Paused);
+    cb.atomics.request_epoch.store(1, Ordering::SeqCst);
+    cb.handle_command(AudioCommand::BeginPlay { request_id: 1 });
+    assert!(!cb.is_crossfading);
+    assert!(!cb.deck_mgr.pending_deck().loaded);
+    assert!(cb.waiting_for_play);
 }
 
 #[test]
