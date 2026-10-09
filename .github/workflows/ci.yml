@@ -54,6 +54,9 @@ jobs:
       - name: Type-check and build frontend
         run: bun run build
 
+      - name: Run frontend regression tests
+        run: bun run test:frontend
+
       - name: Check Rust compilation
         working-directory: src-tauri
         env:
