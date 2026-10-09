@@ -60,6 +60,7 @@ pub struct CrossfadeParams {
     pub in_gain_db: f32,
     pub out_parent_key: String,
     pub in_parent_key: String,
+    pub album_playback: bool,
     pub out_end_ramp: Option<Vec<RampPoint>>,
     pub in_start_ramp: Option<Vec<RampPoint>>,
     pub crossfade_window_ms: u32,

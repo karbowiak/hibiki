@@ -246,7 +246,7 @@ export function ContextMenu() {
     if (track) void playTrack(track)
     else if (album && provider?.buildItemUri) {
       const uri = provider.buildItemUri(album.providerKey ?? `/library/metadata/${album.id}`)
-      void playFromUri(uri, false, album.title, `/album/${album.id}`)
+      void playFromUri(uri, false, album.title, `/album/${album.id}`, album.id)
     } else if (artist && provider?.buildItemUri) {
       const uri = provider.buildItemUri(artist.providerKey ?? `/library/metadata/${artist.id}`)
       void playFromUri(uri, false, artist.title, `/artist/${artist.id}`)

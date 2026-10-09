@@ -56,6 +56,9 @@ pub struct TrackMeta {
     pub rating_key: i64,
     pub duration_ms: u64,
     pub parent_key: String,
+    /// True only when the UI deliberately started this track's album.
+    #[serde(default)]
+    pub album_playback: bool,
     pub gain_db: Option<f32>,
     pub skip_crossfade: bool,
     pub start_ramp: Option<String>,

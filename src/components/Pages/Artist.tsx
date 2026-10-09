@@ -674,7 +674,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                 prefetch={() => prefetchAlbum(album.id)}
                 onPlay={() => {
                   const uri = provider?.buildItemUri?.(`/library/metadata/${album.id}`)
-                  if (uri) void playFromUri(uri, false, album.title, `/album/${album.id}`)
+                  if (uri) void playFromUri(uri, false, album.title, `/album/${album.id}`, album.id)
                 }}
                 onContextMenu={ctxMenu("album", album)}
                 dragPayload={{ type: "album", ids: [album.id], label: album.title }}
@@ -696,7 +696,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                 prefetch={() => prefetchAlbum(album.id)}
                 onPlay={() => {
                   const uri = provider?.buildItemUri?.(`/library/metadata/${album.id}`)
-                  if (uri) void playFromUri(uri, false, album.title, `/album/${album.id}`)
+                  if (uri) void playFromUri(uri, false, album.title, `/album/${album.id}`, album.id)
                 }}
                 onContextMenu={ctxMenu("album", album)}
                 dragPayload={{ type: "album", ids: [album.id], label: album.title }}
@@ -725,7 +725,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                   prefetch={() => prefetchAlbum(a.id)}
                   onPlay={() => {
                     const uri = provider?.buildItemUri?.(`/library/metadata/${a.id}`)
-                    if (uri) void playFromUri(uri, false, a.title, `/album/${a.id}`)
+                    if (uri) void playFromUri(uri, false, a.title, `/album/${a.id}`, a.id)
                   }}
                   onContextMenu={ctxMenu("album", a)}
                   dragPayload={{ type: "album", ids: [a.id], label: a.title }}

@@ -2,8 +2,8 @@ import type { MusicItem, MusicTrack } from "../types/music"
 import type { MusicProvider } from "../providers/types"
 
 interface PlayStore {
-  playTrack: (track: MusicTrack, queue?: MusicTrack[], title?: string, sourceUri?: string | null) => Promise<void>
-  playFromUri: (uri: string, forceShuffle?: boolean, title?: string, sourceUri?: string | null) => Promise<void>
+  playTrack: (track: MusicTrack, queue?: MusicTrack[], title?: string, sourceUri?: string | null, albumPlaybackId?: string | null) => Promise<void>
+  playFromUri: (uri: string, forceShuffle?: boolean, title?: string, sourceUri?: string | null, albumPlaybackId?: string | null) => Promise<void>
   playPlaylist: (playlistId: string, totalCount: number, title: string, sourceUri: string | null) => Promise<void>
   provider: MusicProvider | null
 }
@@ -21,10 +21,10 @@ export function makeOnPlay(item: MusicItem, store: PlayStore): (() => void) | un
   if (item.type === "album") {
     if (provider.buildItemUri) {
       const uri = provider.buildItemUri(`/library/metadata/${item.id}`)
-      if (uri) return () => void playFromUri(uri, false, item.title, `/album/${item.id}`)
+      if (uri) return () => void playFromUri(uri, false, item.title, `/album/${item.id}`, item.id)
     }
     return () => void provider.getAlbumTracks(item.id).then(tracks => {
-      if (tracks.length > 0) playTrack(tracks[0], tracks, item.title, `/album/${item.id}`)
+      if (tracks.length > 0) playTrack(tracks[0], tracks, item.title, `/album/${item.id}`, item.id)
     })
   }
   if (item.type === "artist") {

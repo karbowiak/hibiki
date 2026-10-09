@@ -24,6 +24,7 @@ pub async fn audio_play(
     skip_crossfade: Option<bool>,
     start_ramp: Option<String>,
     end_ramp: Option<String>,
+    album_playback: Option<bool>,
     state: State<'_, AudioEngineState>,
 ) -> Result<u64, String> {
     state.0.send(Command::Play {
@@ -32,6 +33,7 @@ pub async fn audio_play(
             rating_key,
             duration_ms,
             parent_key,
+            album_playback: album_playback.unwrap_or(false),
             gain_db,
             skip_crossfade: skip_crossfade.unwrap_or(false),
             start_ramp,
@@ -50,6 +52,7 @@ pub async fn audio_preload_next(
     skip_crossfade: Option<bool>,
     start_ramp: Option<String>,
     end_ramp: Option<String>,
+    album_playback: Option<bool>,
     state: State<'_, AudioEngineState>,
 ) -> Result<(), String> {
     state
@@ -60,6 +63,7 @@ pub async fn audio_preload_next(
                 rating_key,
                 duration_ms,
                 parent_key,
+                album_playback: album_playback.unwrap_or(false),
                 gain_db,
                 skip_crossfade: skip_crossfade.unwrap_or(false),
                 start_ramp,

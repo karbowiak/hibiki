@@ -206,7 +206,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
         <div className="absolute bottom-8 right-8 z-20 flex items-center gap-3">
           {/* Play */}
           <button
-            onClick={() => tracks.length > 0 && void playTrack(tracks[0], tracks, album.title, `/album/${albumId}`)}
+            onClick={() => tracks.length > 0 && void playTrack(tracks[0], tracks, album.title, `/album/${albumId}`, albumId)}
             disabled={tracks.length === 0}
             title="Play"
             className="flex h-14 w-14 items-center justify-center rounded-full bg-black/30 backdrop-blur-sm border border-white/10 text-accent hover:bg-black/45 hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
@@ -217,7 +217,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
           </button>
           {/* Shuffle */}
           <button
-            onClick={() => { if (tracks.length === 0) return; const s = [...tracks].sort(() => Math.random() - 0.5); void playTrack(s[0], s, album.title, `/album/${albumId}`) }}
+            onClick={() => { if (tracks.length === 0) return; const s = [...tracks].sort(() => Math.random() - 0.5); void playTrack(s[0], s, album.title, `/album/${albumId}`, albumId) }}
             disabled={tracks.length === 0}
             title="Shuffle"
             className="flex h-11 w-11 items-center justify-center rounded-full bg-black/30 backdrop-blur-sm border border-white/10 text-accent hover:bg-black/45 hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
@@ -458,7 +458,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
               <tr
                 key={track.id}
                 className={`group cursor-pointer rounded ${isActive || isContextTarget ? "bg-hl-row" : "hover:bg-hl-row"}`}
-                onClick={() => void playTrack(track, tracks, album.title, `/album/${albumId}`)}
+                onClick={() => void playTrack(track, tracks, album.title, `/album/${albumId}`, albumId)}
                 onMouseEnter={() => prefetchTrackAudio(track)}
                 onContextMenu={ctxMenu("track", track)}
                 onPointerDown={e => trackDrag.onPointerDown(e, { type: "track", ids: [track.id], label: track.title, tracks: [track] })}

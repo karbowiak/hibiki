@@ -729,6 +729,7 @@ impl AudioCallbackState {
                 || !super::crossfade::album_aware::should_suppress_crossfade(
                     self.deck_mgr.active_deck().parent_key(),
                     self.deck_mgr.pending_deck().parent_key(),
+                    self.is_album_playback(),
                     self.crossfade_settings.same_album_crossfade,
                 ));
 
@@ -1144,6 +1145,7 @@ impl AudioCallbackState {
         let suppress = super::crossfade::album_aware::should_suppress_crossfade(
             active.parent_key(),
             pending.parent_key(),
+            self.is_album_playback(),
             self.crossfade_settings.same_album_crossfade,
         );
 
@@ -1217,6 +1219,7 @@ impl AudioCallbackState {
             },
             out_parent_key: active.parent_key().to_string(),
             in_parent_key: pending.parent_key().to_string(),
+            album_playback: self.is_album_playback(),
             out_end_ramp: out_ramps.map(|r| r.end_ramp.clone()),
             in_start_ramp: in_ramps.map(|r| r.start_ramp.clone()),
             crossfade_window_ms: self.crossfade_settings.crossfade_window_ms,
@@ -1225,6 +1228,20 @@ impl AudioCallbackState {
             smart_crossfade_enabled: self.crossfade_settings.smart_crossfade,
             same_album_crossfade: self.crossfade_settings.same_album_crossfade,
         }
+    }
+
+    fn is_album_playback(&self) -> bool {
+        self.deck_mgr
+            .active_deck()
+            .meta
+            .as_ref()
+            .is_some_and(|meta| meta.album_playback)
+            && self
+                .deck_mgr
+                .pending_deck()
+                .meta
+                .as_ref()
+                .is_some_and(|meta| meta.album_playback)
     }
 
     // -----------------------------------------------------------------------

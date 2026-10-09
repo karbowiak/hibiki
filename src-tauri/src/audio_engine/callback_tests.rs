@@ -27,6 +27,7 @@ fn meta(key: i64) -> TrackMeta {
         rating_key: key,
         duration_ms: 10000,
         parent_key: key.to_string(),
+        album_playback: false,
         gain_db: Some(-6.0206),
         skip_crossfade: false,
         start_ramp: None,
@@ -105,6 +106,18 @@ fn reports_missing_ramps_as_a_timed_fade_and_album_tracks_as_gapless() {
         .as_mut()
         .unwrap()
         .parent_key = "1".into();
+    cb.deck_mgr
+        .active_deck_mut()
+        .meta
+        .as_mut()
+        .unwrap()
+        .album_playback = true;
+    cb.deck_mgr
+        .pending_deck_mut()
+        .meta
+        .as_mut()
+        .unwrap()
+        .album_playback = true;
     cb.compute_and_set_schedule();
     match events.try_recv().unwrap() {
         EngineEvent::TransitionScheduled {
@@ -120,12 +133,56 @@ fn reports_missing_ramps_as_a_timed_fade_and_album_tracks_as_gapless() {
 }
 
 #[test]
+fn same_album_tracks_in_a_mix_use_mixramp_unless_both_decks_have_explicit_album_intent() {
+    let (mut cb, events) = callback();
+    for (deck_id, key) in [(DeckId::A, 1), (DeckId::B, 2)] {
+        let mut metadata = meta(key);
+        metadata.parent_key = "album".into();
+        cb.handle_load_deck(deck_id, metadata, 48000, 2, 1.0, 0);
+        cb.ramp_cache.insert(
+            key,
+            TrackRamps {
+                start_ramp: super::super::crossfade::types::parse_ramp(Some("-17 0;-3 1")),
+                end_ramp: super::super::crossfade::types::parse_ramp(Some("-17 1;-3 2")),
+            },
+        );
+    }
+    for (out_intent, in_intent, expected_mode) in [
+        (false, false, "mixRamp"),
+        (true, false, "mixRamp"),
+        (true, true, "gapless"),
+    ] {
+        cb.deck_mgr
+            .active_deck_mut()
+            .meta
+            .as_mut()
+            .unwrap()
+            .album_playback = out_intent;
+        cb.deck_mgr
+            .pending_deck_mut()
+            .meta
+            .as_mut()
+            .unwrap()
+            .album_playback = in_intent;
+        cb.compute_and_set_schedule();
+        match events.try_recv().unwrap() {
+            EngineEvent::TransitionScheduled {
+                transition: Some(plan),
+                ..
+            } => assert_eq!(plan.mode, expected_mode),
+            _ => panic!("expected a native transition plan"),
+        }
+    }
+}
+
+#[test]
 fn gapless_preserves_every_tail_sample_and_starts_the_next_deck_inside_the_callback() {
     let (mut cb, events) = callback();
     for (deck_id, key, value) in [(DeckId::A, 1, 0.2), (DeckId::B, 2, 0.4)] {
         let mut metadata = meta(key);
         metadata.duration_ms = 900; // Real PCM is one second; metadata is approximate.
         metadata.parent_key = "album".into();
+        metadata.album_playback = true;
         cb.handle_load_deck(deck_id, metadata, 48000, 2, 1.0, 0);
         let deck = cb.deck_mgr.deck_mut(deck_id);
         deck.samples = vec![value; 96000];
@@ -497,8 +554,10 @@ fn manual_skips_between_album_tracks_fade_after_the_new_buffer_is_ready() {
     let (mut cb, _) = callback();
     let mut outgoing = meta(1);
     outgoing.parent_key = "album".into();
+    outgoing.album_playback = true;
     let mut incoming = meta(2);
     incoming.parent_key = "album".into();
+    incoming.album_playback = true;
     cb.handle_load_deck(DeckId::A, outgoing, 48000, 2, 1.0, 0);
     cb.handle_load_deck(DeckId::B, incoming, 48000, 2, 1.0, 0);
     cb.deck_mgr.active_deck_mut().samples = vec![0.1; 96000];

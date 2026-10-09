@@ -23,6 +23,7 @@ pub fn compute_transition(params: &CrossfadeParams) -> Option<TransitionPlan> {
     if should_suppress_crossfade(
         &params.out_parent_key,
         &params.in_parent_key,
+        params.album_playback,
         params.same_album_crossfade,
     ) {
         return None;

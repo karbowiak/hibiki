@@ -134,6 +134,7 @@ class RustAudioEngine {
     skipCrossfade?: boolean,
     startRamp?: string | null,
     endRamp?: string | null,
+    albumPlayback = false,
   ): Promise<void> {
     const ticket = this.eventGate.begin()
     const requestId = await invoke<number>("audio_play", {
@@ -145,6 +146,7 @@ class RustAudioEngine {
       skipCrossfade: skipCrossfade ?? false,
       startRamp: startRamp ?? null,
       endRamp: endRamp ?? null,
+      albumPlayback,
     })
     this.eventGate.confirm(ticket, requestId)
   }
@@ -158,6 +160,7 @@ class RustAudioEngine {
     skipCrossfade?: boolean,
     startRamp?: string | null,
     endRamp?: string | null,
+    albumPlayback = false,
   ): Promise<void> {
     await invoke("audio_preload_next", {
       url,
@@ -168,6 +171,7 @@ class RustAudioEngine {
       skipCrossfade: skipCrossfade ?? false,
       startRamp: startRamp ?? null,
       endRamp: endRamp ?? null,
+      albumPlayback,
     })
   }
 

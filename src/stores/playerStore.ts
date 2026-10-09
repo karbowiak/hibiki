@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware"
 import { listen } from "@tauri-apps/api/event"
 import { fireAndForget } from "../lib/async"
 import { dispatchPlaybackWhenReady } from "../audio/playbackRequests"
+import { isAlbumPlayback, selectReplayGain } from "../audio/playbackContext"
 import type { TransitionInfo } from "../audio/transitionInfo"
 import { engine } from "../audio/RustAudioEngine"
 import type { MusicTrack } from "../types/music"
@@ -87,10 +88,12 @@ interface PlayerState {
   contextName: string | null
   /** Optional deep-link for the context label (e.g. "/playlist/123"). */
   contextHref: string | null
+  /** Album explicitly started in the UI, independent of adjacent track metadata. */
+  albumPlaybackId: string | null
 
-  playTrack: (track: MusicTrack, context?: MusicTrack[], contextName?: string | null, contextHref?: string | null) => Promise<void>
+  playTrack: (track: MusicTrack, context?: MusicTrack[], contextName?: string | null, contextHref?: string | null, albumPlaybackId?: string | null) => Promise<void>
   /** Play a URI via a server-side play queue. Handles full playlists with shuffle. */
-  playFromUri: (uri: string, forceShuffle?: boolean, contextName?: string | null, contextHref?: string | null) => Promise<void>
+  playFromUri: (uri: string, forceShuffle?: boolean, contextName?: string | null, contextHref?: string | null, albumPlaybackId?: string | null) => Promise<void>
   /** Start playing a playlist with progressive queue loading (100 tracks at a time). */
   playPlaylist: (playlistId: string, totalCount: number, title: string, href: string) => Promise<void>
   /**
@@ -439,22 +442,6 @@ export function prefetchTrackAudio(track: MusicTrack): void {
 const _gainCache = new Map<string, { trackGain: number | null; albumGain: number | null }>()
 
 /**
- * Detect whether we're playing in an album context: the track's neighbors
- * in the queue share the same albumId. When true, album gain is preferred
- * to preserve intended loudness relationships within the album.
- */
-function isPlayingAlbumContext(track: MusicTrack): boolean {
-  if (!track.albumId) return false
-  const state = usePlayerStore.getState()
-  const idx = state.queue.findIndex(t => t.id === track.id)
-  if (idx < 0) return false
-  // Check if the previous or next track is from the same album
-  const prev = idx > 0 ? state.queue[idx - 1] : null
-  const next = idx < state.queue.length - 1 ? state.queue[idx + 1] : null
-  return (prev?.albumId === track.albumId) || (next?.albumId === track.albumId)
-}
-
-/**
  * Session-level waveform stream-ID cache: track id → audio stream id (null = "no audio stream").
  * Same fallback pattern as _gainCache — list endpoints don't include Stream sub-elements.
  */
@@ -493,11 +480,9 @@ async function fetchAudioStreamId(track: MusicTrack): Promise<number | null> {
  * share the same albumId), track gain otherwise.
  */
 async function fetchGainDb(track: MusicTrack): Promise<number | null> {
-  // Detect album context: if the queue has consecutive same-album tracks,
-  // use album gain to preserve intended relative loudness within the album.
-  const useAlbumGain = isPlayingAlbumContext(track)
+  const albumPlaybackId = usePlayerStore.getState().albumPlaybackId
   const pickGain = (trackGain: number | null, albumGain: number | null) =>
-    useAlbumGain ? (albumGain ?? trackGain) : trackGain
+    selectReplayGain({ albumId: track.albumId, gain: trackGain, albumGain }, albumPlaybackId)
 
   // Fast path: gain already on the MusicTrack (mapped from stream data)
   if (track.gain !== null || track.albumGain !== null) {
@@ -558,7 +543,8 @@ async function sendToAudioEngine(track: MusicTrack, generation: number): Promise
     async ({ info, gainDb }) => {
       _ratingKeyToTrackId.set(info.trackKey, track.id)
       await engine.play(info.url, info.trackKey, track.duration, info.parentKey, gainDb,
-        undefined, track.startRamp ?? info.startRamp, track.endRamp ?? info.endRamp)
+        undefined, track.startRamp ?? info.startRamp, track.endRamp ?? info.endRamp,
+        isAlbumPlayback(track, usePlayerStore.getState().albumPlaybackId))
     },
   )
 }
@@ -616,7 +602,8 @@ async function preloadNextTrack(queue: MusicTrack[], queueIndex: number, repeat:
       async ({ info, gainDb }) => {
         _ratingKeyToTrackId.set(info.trackKey, nextTrack.id)
         await engine.preloadNext(info.url, info.trackKey, nextTrack.duration, info.parentKey,
-          gainDb, undefined, nextTrack.startRamp ?? info.startRamp, nextTrack.endRamp ?? info.endRamp)
+          gainDb, undefined, nextTrack.startRamp ?? info.startRamp, nextTrack.endRamp ?? info.endRamp,
+          isAlbumPlayback(nextTrack, usePlayerStore.getState().albumPlaybackId))
       },
     )
   } catch {
@@ -869,8 +856,9 @@ export const usePlayerStore = create<PlayerState>()(
   isInternetRadioActive: false,
   contextName: null,
   contextHref: null,
+  albumPlaybackId: null,
 
-  playTrack: async (track: MusicTrack, context?: MusicTrack[], contextName?: string | null, contextHref?: string | null) => {
+  playTrack: async (track: MusicTrack, context?: MusicTrack[], contextName?: string | null, contextHref?: string | null, albumPlaybackId?: string | null) => {
     const provider = getProvider()
     const itemKey = `/library/metadata/${track.id}`
     const uri = provider?.buildItemUri ? provider.buildItemUri(itemKey) : itemKey
@@ -882,7 +870,7 @@ export const usePlayerStore = create<PlayerState>()(
     set({ queue, shuffle: false,
       playlistKey: null, playlistTotalCount: 0, playlistLoadedCount: 0,
       isRadioMode: false, radioSeedKey: null, radioType: null,
-      contextName: contextName ?? null, contextHref: contextHref ?? null })
+      contextName: contextName ?? null, contextHref: contextHref ?? null, albumPlaybackId: albumPlaybackId ?? null })
 
     try {
       // Start audio + register server-side queue in parallel
@@ -896,7 +884,7 @@ export const usePlayerStore = create<PlayerState>()(
     }
   },
 
-  playFromUri: async (uri: string, forceShuffle?: boolean, contextName?: string | null, contextHref?: string | null) => {
+  playFromUri: async (uri: string, forceShuffle?: boolean, contextName?: string | null, contextHref?: string | null, albumPlaybackId?: string | null) => {
     const provider = getProvider()
     if (!provider?.createPlayQueue) return
     const { repeat } = get()
@@ -916,7 +904,7 @@ export const usePlayerStore = create<PlayerState>()(
         queue: result.tracks, queueId: result.queueId, shuffle: shouldShuffle,
         playlistKey: null, playlistTotalCount: 0, playlistLoadedCount: 0,
         isRadioMode: false, radioSeedKey: null, radioType: null,
-        contextName: contextName ?? null, contextHref: contextHref ?? null,
+        contextName: contextName ?? null, contextHref: contextHref ?? null, albumPlaybackId: albumPlaybackId ?? null,
       })
 
       await _startPlayback(result.tracks[0], 0, get, set)
@@ -941,7 +929,7 @@ export const usePlayerStore = create<PlayerState>()(
         playlistKey: playlistId, playlistTotalCount: totalCount,
         playlistLoadedCount: tracks.length, isLoadingMoreTracks: false,
         isRadioMode: false, radioSeedKey: null, radioType: null,
-        contextName: title, contextHref: href,
+        contextName: title, contextHref: href, albumPlaybackId: null,
       })
 
       await _startPlayback(tracks[0], 0, get, set)
@@ -1016,7 +1004,7 @@ export const usePlayerStore = create<PlayerState>()(
 
       set({
         queue: tracks, queueId: result.queueId,
-        isRadioMode: true, radioSeedKey: seedId, radioType,
+        isRadioMode: true, radioSeedKey: seedId, radioType, albumPlaybackId: null,
         radioSeedArtist: seedArtist,
         playlistKey: null, playlistTotalCount: 0, playlistLoadedCount: 0,
         playerError: null,
@@ -1094,7 +1082,8 @@ export const usePlayerStore = create<PlayerState>()(
     // Reset all playback state
     set({
       currentTrack: null,
-  transitionInfo: null,
+      transitionInfo: null,
+      albumPlaybackId: null,
       queue: [],
       queueIndex: 0,
       queueId: null,

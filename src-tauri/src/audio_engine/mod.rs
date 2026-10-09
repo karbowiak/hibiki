@@ -1305,6 +1305,7 @@ mod control_tests {
         let meta = TrackMeta {
             rating_key: key,
             duration_ms: 1000,
+            album_playback: false,
             parent_key: String::new(),
             gain_db: None,
             skip_crossfade: true,
