@@ -38,8 +38,12 @@ impl Limiter {
         self.update_coefficients(rate);
     }
 
+    pub fn reset(&mut self) {
+        self.envelope_db = -96.0;
+    }
+
     fn update_coefficients(&mut self, sample_rate: u32) {
-        let sr = sample_rate as f32;
+        let sr = sample_rate.max(1) as f32;
         // attack = 10ms, release = 100ms
         self.attack_coeff = (-1.0 / (0.010 * sr)).exp();
         self.release_coeff = (-1.0 / (0.100 * sr)).exp();
@@ -68,11 +72,20 @@ impl Limiter {
 }
 
 impl DspBlock for Limiter {
-    fn set_enabled(&mut self, enabled: bool) { self.enabled = enabled; }
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
 
     fn process(&mut self, samples: &mut [f32], _sample_rate: u32, channels: u16) {
         if !self.enabled {
             return;
+        }
+        if channels == 0 {
+            samples.fill(0.0);
+            return;
+        }
+        if !self.envelope_db.is_finite() {
+            self.reset();
         }
         let ch = channels as usize;
 
@@ -82,6 +95,9 @@ impl DspBlock for Limiter {
             for c in 0..ch {
                 let idx = frame_start + c;
                 if idx < samples.len() {
+                    if !samples[idx].is_finite() {
+                        samples[idx] = 0.0;
+                    }
                     peak = peak.max(samples[idx].abs());
                 }
             }
@@ -129,7 +145,10 @@ mod tests {
         let orig = samples.clone();
         l.process(&mut samples, 44100, 2);
         for (a, b) in samples.iter().zip(orig.iter()) {
-            assert!((a - b).abs() < 0.01, "quiet signal should pass mostly unmodified");
+            assert!(
+                (a - b).abs() < 0.01,
+                "quiet signal should pass mostly unmodified"
+            );
         }
     }
 
@@ -142,7 +161,11 @@ mod tests {
         l.process(&mut samples, 44100, 1);
         // After envelope settles, last samples should be attenuated
         let last = samples[n - 1];
-        assert!(last < 0.9, "0dBFS signal should be attenuated, got {}", last);
+        assert!(
+            last < 0.9,
+            "0dBFS signal should be attenuated, got {}",
+            last
+        );
     }
 
     #[test]
@@ -162,6 +185,10 @@ mod tests {
         assert_eq!(l.compute_gain_reduction(-10.0), 0.0);
         // Well above threshold: significant reduction
         let red = l.compute_gain_reduction(10.0);
-        assert!(red > 5.0, "10dB above threshold should have significant reduction, got {}", red);
+        assert!(
+            red > 5.0,
+            "10dB above threshold should have significant reduction, got {}",
+            red
+        );
     }
 }

@@ -316,6 +316,25 @@ fn device_format_conversion_keeps_fade_boundaries_and_track_positions() {
 }
 
 #[test]
+fn invalid_normalization_metadata_cannot_silence_a_track_or_break_its_crossfade_schedule() {
+    let mut cb = audible_callback();
+    cb.deck_mgr.active_deck_mut().meta.as_mut().unwrap().gain_db = Some(f32::NAN);
+    let mut incoming = meta(2);
+    incoming.gain_db = Some(f32::INFINITY);
+    cb.handle_load_deck(DeckId::B, incoming, 48000, 2, f32::NAN, 0);
+    cb.deck_mgr.pending_deck_mut().samples = vec![0.1; 960000];
+    cb.handle_command(AudioCommand::SetNormalization(true));
+    assert_eq!(cb.deck_mgr.deck(DeckId::A).norm_gain, 1.0);
+    assert_eq!(cb.deck_mgr.deck(DeckId::B).norm_gain, 1.0);
+    cb.handle_transition_to_active(true, true);
+    let mut audio = [0.0; 9600];
+    cb.process_callback(&mut audio);
+    assert!(audio.iter().all(|sample| sample.is_finite()));
+    assert!(audio.iter().any(|sample| sample.abs() > 0.05));
+    assert_eq!(cb.deck_mgr.active_deck().rating_key(), 2);
+}
+
+#[test]
 fn paused_seeks_and_starved_pause_tails_do_not_play_delayed_audio() {
     let mut cb = audible_callback();
     cb.handle_command(AudioCommand::Pause);

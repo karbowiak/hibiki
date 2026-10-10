@@ -665,7 +665,7 @@ fn handle_play(
             let mut resolved_meta = meta.clone();
             resolved_meta.gain_db = gain_db;
             let norm_gain = if norm_enabled {
-                gain_db.map_or(1.0, |db| 10.0_f32.powf(db / 20.0))
+                loudness::replay_gain(gain_db)
             } else {
                 1.0
             };
@@ -822,7 +822,7 @@ fn handle_preload(
             let mut resolved_meta = meta.clone();
             resolved_meta.gain_db = gain_db;
             let norm_gain = if norm_enabled {
-                gain_db.map_or(1.0, |db| 10.0_f32.powf(db / 20.0))
+                loudness::replay_gain(gain_db)
             } else {
                 1.0
             };
@@ -1337,12 +1337,15 @@ fn resolve_gain_db(
     request: &PlaybackRequest,
 ) -> Option<f32> {
     // 1. Plex-provided gain
-    if let Some(db) = meta.gain_db {
+    if let Some(db) = meta.gain_db.filter(|value| value.is_finite()) {
         return Some(db);
     }
 
     // 2. Previously computed gain from cache
-    if let Some(db) = cache.get_computed_gain(&cache::cache_key(url)) {
+    if let Some(db) = cache
+        .get_computed_gain(&cache::cache_key(url))
+        .filter(|value| value.is_finite())
+    {
         debug!(
             rating_key = meta.rating_key,
             gain_db = format!("{:.1}", db),

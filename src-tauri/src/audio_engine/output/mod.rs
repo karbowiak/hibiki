@@ -37,7 +37,10 @@ impl CpalOutput {
         let sample_rate = config.sample_rate().0;
         let channels = config.channels();
         let sample_format = config.sample_format();
-        if sample_rate == 0 || channels == 0 || usize::from(channels) > format::SCRATCH_SAMPLES {
+        if !(8000..=768000).contains(&sample_rate)
+            || channels == 0
+            || usize::from(channels) > super::dsp::biquad::MAX_CHANNELS
+        {
             return Err("invalid audio output rate or channel count".into());
         }
 

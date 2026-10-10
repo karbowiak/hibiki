@@ -559,6 +559,7 @@ impl AudioCallbackState {
                 });
             }
             AudioCommand::Stop => {
+                self.dsp_chain.reset();
                 self.event_request_id = self.atomics.request_epoch.load(Ordering::SeqCst);
                 self.report_track_ended(DeckId::A, TrackEndReason::Stopped);
                 self.report_track_ended(DeckId::B, TrackEndReason::Stopped);
@@ -730,7 +731,7 @@ impl AudioCallbackState {
                     let deck = self.deck_mgr.deck_mut(id);
                     if let Some(ref meta) = deck.meta {
                         deck.norm_gain = if enabled {
-                            meta.gain_db.map_or(1.0, |db| 10.0_f32.powf(db / 20.0))
+                            super::loudness::replay_gain(meta.gain_db)
                         } else {
                             1.0
                         };
@@ -792,7 +793,11 @@ impl AudioCallbackState {
         d.meta = Some(meta);
         d.loaded = true;
         d.norm_gain = if self.normalization_enabled {
-            norm_gain
+            if norm_gain.is_finite() && norm_gain >= 0.0 {
+                norm_gain.min(1000.0)
+            } else {
+                1.0
+            }
         } else {
             1.0
         };

@@ -18,6 +18,12 @@ use tracing::{debug, warn};
 /// ReplayGain 2.0 reference loudness in LUFS.
 const REFERENCE_LUFS: f64 = -18.0;
 
+/// Keep metadata-derived gain finite; the wide range permits quiet recordings.
+pub fn replay_gain(db: Option<f32>) -> f32 {
+    db.filter(|value| value.is_finite())
+        .map_or(1.0, |value| 10.0_f32.powf(value.clamp(-96.0, 60.0) / 20.0))
+}
+
 /// Analyze a cached audio file and return the ReplayGain-compatible gain in dB.
 ///
 /// Decodes the entire file, measures integrated loudness (EBU R128), and returns

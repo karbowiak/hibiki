@@ -10,13 +10,13 @@ use super::traits::DspBlock;
 pub const NUM_BANDS: usize = 10;
 
 const EQ_FREQS: [f64; NUM_BANDS] = [
-    32.0, 64.0, 125.0, 250.0, 500.0,
-    1000.0, 2000.0, 4000.0, 8000.0, 16000.0,
+    32.0, 64.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0,
 ];
 
 pub struct Equalizer {
     enabled: bool,
     filters: [BiquadFilter; NUM_BANDS],
+    gains_db: [f32; NUM_BANDS],
 }
 
 impl Equalizer {
@@ -32,12 +32,24 @@ impl Equalizer {
         Self {
             enabled: false,
             filters,
+            gains_db: [0.0; NUM_BANDS],
         }
     }
 
     /// Set all 10 band gains at once (in dB).
     pub fn set_gains(&mut self, gains_db: &[f32; NUM_BANDS]) {
-        for (filter, &db) in self.filters.iter_mut().zip(gains_db.iter()) {
+        self.gains_db = gains_db.map(|db| {
+            if db.is_finite() {
+                db.clamp(-12.0, 12.0)
+            } else {
+                0.0
+            }
+        });
+        self.apply_gains();
+    }
+
+    fn apply_gains(&mut self) {
+        for (filter, &db) in self.filters.iter_mut().zip(self.gains_db.iter()) {
             filter.set_gain_db(if self.enabled { db as f64 } else { 0.0 });
         }
     }
@@ -58,7 +70,14 @@ impl Equalizer {
 }
 
 impl DspBlock for Equalizer {
-    fn set_enabled(&mut self, enabled: bool) { self.enabled = enabled; }
+    fn set_enabled(&mut self, enabled: bool) {
+        if self.enabled == enabled {
+            return;
+        }
+        self.enabled = enabled;
+        self.reset();
+        self.apply_gains();
+    }
 
     fn process(&mut self, samples: &mut [f32], _sample_rate: u32, channels: u16) {
         if !self.enabled {
@@ -82,15 +101,23 @@ mod tests {
 
         // Generate 1 second of white-ish noise
         let n = 44100;
-        let mut samples: Vec<f32> = (0..n).map(|i| ((i * 7919) % 1000) as f32 / 500.0 - 1.0).collect();
+        let mut samples: Vec<f32> = (0..n)
+            .map(|i| ((i * 7919) % 1000) as f32 / 500.0 - 1.0)
+            .collect();
         let orig = samples.clone();
         eq.process(&mut samples, 44100, 1);
 
         // Allow small numerical difference from filter processing
-        let max_diff: f32 = samples.iter().zip(orig.iter())
+        let max_diff: f32 = samples
+            .iter()
+            .zip(orig.iter())
             .map(|(a, b)| (a - b).abs())
             .fold(0.0f32, f32::max);
-        assert!(max_diff < 0.01, "flat EQ should be near-passthrough, max_diff={}", max_diff);
+        assert!(
+            max_diff < 0.01,
+            "flat EQ should be near-passthrough, max_diff={}",
+            max_diff
+        );
     }
 
     #[test]
@@ -122,6 +149,62 @@ mod tests {
         let orig_energy: f32 = samples.iter().map(|s| s * s).sum();
         eq.process(&mut samples, 44100, 1);
         let boosted_energy: f32 = samples.iter().map(|s| s * s).sum();
-        assert!(boosted_energy > orig_energy * 2.0, "bass boost should increase 50Hz energy");
+        assert!(
+            boosted_energy > orig_energy * 2.0,
+            "bass boost should increase 50Hz energy"
+        );
+    }
+
+    #[test]
+    fn out_of_band_controls_are_bypassed_until_the_output_rate_can_represent_them() {
+        let mut eq = Equalizer::new(8000);
+        eq.set_enabled(true);
+        let mut gains = [0.0; NUM_BANDS];
+        gains[7] = 12.0;
+        gains[8] = -12.0;
+        gains[9] = 12.0;
+        eq.set_gains(&gains);
+        let mut noise: Vec<f32> = (0..16000)
+            .map(|i| ((i * 7919) % 1000) as f32 / 5000.0 - 0.1)
+            .collect();
+        let expected = noise.clone();
+        eq.process(&mut noise, 8000, 1);
+        assert_eq!(noise, expected);
+
+        gains[7] = 0.0;
+        gains[8] = 0.0;
+        eq.set_gains(&gains);
+        eq.set_sample_rate(48000);
+        let mut high: Vec<f32> = (0..4800)
+            .map(|i| (2.0 * std::f32::consts::PI * 20000.0 * i as f32 / 48000.0).sin() * 0.1)
+            .collect();
+        let energy: f32 = high.iter().map(|sample| sample * sample).sum();
+        eq.process(&mut high, 48000, 1);
+        assert!(high.iter().all(|sample| sample.is_finite()));
+        assert!(high.iter().map(|sample| sample * sample).sum::<f32>() > energy * 2.0);
+    }
+
+    #[test]
+    fn presets_set_while_disabled_survive_enable_and_repeated_toggles() {
+        let gains = [6.0; NUM_BANDS];
+        let mut eq = Equalizer::new(48000);
+        eq.set_gains(&gains);
+        eq.set_enabled(true);
+        let mut reference = Equalizer::new(48000);
+        reference.set_enabled(true);
+        reference.set_gains(&gains);
+        let input: Vec<f32> = (0..1000).map(|i| (i % 101) as f32 / 1000.0).collect();
+        let mut expected = input.clone();
+        reference.process(&mut expected, 48000, 1);
+        for _ in 0..3 {
+            let mut actual = input.clone();
+            eq.process(&mut actual, 48000, 1);
+            assert_eq!(actual, expected);
+            eq.set_enabled(false);
+            let mut bypass = input.clone();
+            eq.process(&mut bypass, 48000, 1);
+            assert_eq!(bypass, input);
+            eq.set_enabled(true);
+        }
     }
 }
