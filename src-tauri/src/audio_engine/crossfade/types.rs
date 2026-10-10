@@ -110,7 +110,7 @@ impl Default for CrossfadeSettings {
             same_album_crossfade: false,
             smart_crossfade: true,
             smart_crossfade_max_ms: 15000,
-            mixramp_db: -17.0,
+            mixramp_db: -16.0,
         }
     }
 }

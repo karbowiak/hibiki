@@ -615,7 +615,7 @@ fn reports_the_native_short_mixramp_plan_with_a_zero_second_intro_crossing() {
         1,
         TrackRamps {
             start_ramp: vec![],
-            end_ramp: super::super::crossfade::types::parse_ramp(Some("-17 0.12;-3 4")),
+            end_ramp: super::super::crossfade::types::parse_ramp(Some("-16 0.12;-3 4")),
         },
     );
     cb.ramp_cache.insert(
@@ -797,7 +797,7 @@ fn a_mixramp_boundary_inside_the_output_buffer_aligns_the_first_incoming_sample(
         1,
         TrackRamps {
             start_ramp: vec![],
-            end_ramp: super::super::crossfade::types::parse_ramp(Some("-17 0.12;-3 4")),
+            end_ramp: super::super::crossfade::types::parse_ramp(Some("-16 0.12;-3 4")),
         },
     );
     cb.ramp_cache.insert(
@@ -1252,7 +1252,8 @@ fn mixramp_keeps_both_decks_for_the_entire_overlap() {
         cb.is_crossfading,
         "MixRamp must not discard the outgoing deck immediately"
     );
-    for _ in 0..120 {
+    // At the default -16 dB crossing, each ramp contributes 0.8 seconds.
+    for _ in 0..160 {
         cb.process_callback(&mut buffer);
     }
     assert!(!cb.is_crossfading);

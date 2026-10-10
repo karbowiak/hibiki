@@ -2,13 +2,13 @@
 //!
 //! Plex provides per-track prolog/epilog ramps: sequences of (dB, timeSec) pairs
 //! describing the loudness envelope at the track's start and end. MixRamp finds
-//! where each ramp crosses a configurable threshold (default -17 dB) and overlaps
+//! where each ramp crosses a configurable threshold (default -16 dB) and overlaps
 //! the tracks at those points with no gain curves (both tracks at full volume).
 
 use super::types::{CrossfadeParams, RampPoint, TransitionPlan, TransitionReason};
 
 /// Linear interpolation: find the time (seconds) where the ramp crosses `threshold_db`.
-/// Returns `None` if the threshold is never reached.
+/// An unreached threshold contributes zero overlap; `None` means invalid data.
 pub fn mixramp_interpolate(ramp: &[RampPoint], threshold_db: f32) -> Option<f32> {
     if ramp.is_empty()
         || !threshold_db.is_finite()
@@ -26,9 +26,10 @@ pub fn mixramp_interpolate(ramp: &[RampPoint], threshold_db: f32) -> Option<f32>
     if threshold_db <= ramp[0].db {
         return Some(ramp[0].time_sec);
     }
-    // Above the last point — never crossed. An exact match is valid.
+    // A valid ramp need not reach the threshold. It contributes no overlap,
+    // while the other track's ramp can still determine the transition.
     if threshold_db > ramp[ramp.len() - 1].db {
-        return None;
+        return Some(0.0);
     }
 
     for i in 0..ramp.len() - 1 {
@@ -129,7 +130,7 @@ mod tests {
     #[test]
     fn interpolate_threshold_above_last() {
         let ramp = make_ramp(&[(-30.0, 0.0), (-20.0, 1.0)]);
-        assert!(mixramp_interpolate(&ramp, -10.0).is_none());
+        assert_eq!(mixramp_interpolate(&ramp, -10.0), Some(0.0));
     }
 
     #[test]
@@ -299,5 +300,71 @@ mod tests {
         assert!((plan.duration_sec - 0.12).abs() < 0.001);
         assert!(plan.fade_in_curve.is_none());
         assert!(plan.fade_out_curve.is_none());
+    }
+
+    fn params_for_ramps(out: &[(f32, f32)], incoming: &[(f32, f32)]) -> CrossfadeParams {
+        let settings = super::super::types::CrossfadeSettings::default();
+        CrossfadeParams {
+            out_duration_sec: 180.0,
+            in_duration_sec: 180.0,
+            out_gain_db: 0.0,
+            in_gain_db: 0.0,
+            out_parent_key: "a".into(),
+            in_parent_key: "b".into(),
+            album_playback: false,
+            out_end_ramp: Some(make_ramp(out)),
+            in_start_ramp: Some(make_ramp(incoming)),
+            crossfade_window_ms: settings.crossfade_window_ms,
+            smart_crossfade_max_ms: settings.smart_crossfade_max_ms,
+            mixramp_db: settings.mixramp_db,
+            smart_crossfade_enabled: settings.smart_crossfade,
+            same_album_crossfade: settings.same_album_crossfade,
+        }
+    }
+
+    #[test]
+    fn one_unreached_threshold_preserves_the_other_tracks_natural_ramp() {
+        let quiet = [(-50.0, 0.0), (-30.0, 4.0)];
+        let crossing = [(-32.0, 0.0), (-16.0, 1.0), (0.0, 2.0)];
+        for (out, incoming) in [(&quiet[..], &crossing[..]), (&crossing[..], &quiet[..])] {
+            let plan = compute_mixramp_transition(&params_for_ramps(out, incoming)).unwrap();
+            assert_eq!(plan.duration_sec, 1.0);
+            assert_eq!(plan.start_time_sec, 179.0);
+            assert!(plan.fade_in_curve.is_none());
+            assert!(plan.fade_out_curve.is_none());
+            assert!(plan.fallback_reason.is_none());
+        }
+    }
+
+    #[test]
+    fn two_unreached_thresholds_play_gaplessly_instead_of_inventing_a_timed_fade() {
+        let quiet = [(-50.0, 0.0), (-30.0, 4.0)];
+        assert!(compute_mixramp_transition(&params_for_ramps(&quiet, &quiet)).is_none());
+    }
+
+    #[test]
+    fn default_crossover_interpolates_at_minus_sixteen_after_track_gain() {
+        let ramp = [(-30.0, 0.0), (-10.0, 2.0)];
+        let mut params = params_for_ramps(&ramp, &ramp);
+        params.out_gain_db = -4.0;
+        params.in_gain_db = -2.0;
+        let plan = compute_mixramp_transition(&params).unwrap();
+        // Crossings at -12 dB / 1.8 s and -14 dB / 1.6 s.
+        assert!((plan.duration_sec - 3.4).abs() < 0.001);
+        assert!((plan.start_time_sec + plan.duration_sec - 180.0).abs() < 0.001);
+        assert!(plan.fade_in_curve.is_none());
+    }
+
+    #[test]
+    fn malformed_ramps_still_use_a_bounded_timed_fallback() {
+        let params = params_for_ramps(&[(-30.0, 2.0), (-10.0, 1.0)], &[(-30.0, 0.0), (-10.0, 2.0)]);
+        let plan = compute_mixramp_transition(&params).unwrap();
+        assert_eq!(
+            plan.fallback_reason,
+            Some(TransitionReason::NoUsableCrossing)
+        );
+        assert!(plan.fade_in_curve.is_some());
+        assert!(plan.fade_out_curve.is_some());
+        assert!(plan.duration_sec <= 4.0);
     }
 }
