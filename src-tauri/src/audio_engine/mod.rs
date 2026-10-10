@@ -94,8 +94,8 @@ impl AudioEngine {
         let (audio_cmd_tx, audio_cmd_rx) = crossbeam_channel::bounded::<AudioCommand>(256);
 
         // Bg decode → audio callback (per-deck sample channels)
-        let (deck_a_tx, deck_a_rx) = crossbeam_channel::unbounded::<SampleBatch>();
-        let (deck_b_tx, deck_b_rx) = crossbeam_channel::unbounded::<SampleBatch>();
+        let (deck_a_tx, deck_a_rx) = crossbeam_channel::bounded::<SampleBatch>(4);
+        let (deck_b_tx, deck_b_rx) = crossbeam_channel::bounded::<SampleBatch>(4);
 
         // Audio callback → event relay (events to JS)
         let (event_tx, event_rx) = bounded::<EngineEvent>(256);
@@ -855,13 +855,30 @@ fn handle_preload(
 // Background decode
 // ---------------------------------------------------------------------------
 
+fn send_sample_batch(
+    sample_tx: &Sender<SampleBatch>,
+    request: &PlaybackRequest,
+    mut batch: SampleBatch,
+) -> Result<(), ()> {
+    loop {
+        if !request.is_current() {
+            return Err(());
+        }
+        match sample_tx.send_timeout(batch, Duration::from_millis(10)) {
+            Ok(()) => return Ok(()),
+            Err(crossbeam_channel::SendTimeoutError::Timeout(returned)) => batch = returned,
+            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => return Err(()),
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn spawn_background_decode(
     mut decoder: decode::DecoderSetup,
     rating_key: i64,
     source_rate: u32,
     source_channels: u16,
-    _deck: DeckId,
+    deck: DeckId,
     generation: u64,
     sample_tx: Sender<SampleBatch>,
     atomics: Arc<SharedAtomics>,
@@ -873,7 +890,19 @@ fn spawn_background_decode(
     std::thread::Builder::new()
         .name(format!("audio-bgdec-{}", rating_key))
         .spawn(move || {
-            let batch_size = (source_rate as usize * source_channels as usize) / 2;
+            let batch_size = ((source_rate as usize * source_channels as usize) / 2).min(262144);
+            let out_channels = if source_channels == 1 && device_channels >= 2 {
+                2
+            } else {
+                source_channels
+            };
+            let ahead_limit = (device_sample_rate as u64 * 20)
+                .min(32 * 1024 * 1024 / (4 * out_channels.max(1) as u64));
+            let playhead = match deck {
+                DeckId::A => &atomics.deck_a_playhead_frames,
+                DeckId::B => &atomics.deck_b_playhead_frames,
+            };
+            let mut produced_frames = decoder.output_frames_decoded;
             let mut current_gen = generation;
             let mut finished_reported = false;
             let mut failure_message = None;
@@ -892,6 +921,8 @@ fn spawn_background_decode(
                 }
                 if let Some(seek) = latest_seek {
                     current_gen = seek.generation;
+                    produced_frames =
+                        seek.position_ms.saturating_mul(device_sample_rate as u64) / 1000;
                     if let Err(error) = decode::seek_to_ms(&mut decoder, seek.position_ms) {
                         decoder.finished = true;
                         decoder.aborted = true;
@@ -909,13 +940,17 @@ fn spawn_background_decode(
                         } else {
                             None
                         };
-                        let _ = sample_tx.send(SampleBatch {
-                            rating_key,
-                            generation: current_gen,
-                            samples: Vec::new(),
-                            fully_decoded: !decoder.aborted,
-                            error,
-                        });
+                        let _ = send_sample_batch(
+                            &sample_tx,
+                            &request,
+                            SampleBatch {
+                                rating_key,
+                                generation: current_gen,
+                                samples: Vec::new(),
+                                fully_decoded: !decoder.aborted,
+                                error,
+                            },
+                        );
                         finished_reported = true;
                         if decoder.aborted {
                             return;
@@ -923,6 +958,13 @@ fn spawn_background_decode(
                     }
                     // Keep the decoder available for backward seeks outside a
                     // buffer cleared by an earlier seek. Ownership cancels it.
+                    std::thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
+
+                if produced_frames > playhead.load(Ordering::Acquire).saturating_add(ahead_limit) {
+                    // Re-check ownership and the seek mailbox on every pass.
+                    // A paused deck never needs minutes of decoded PCM ahead.
                     std::thread::sleep(Duration::from_millis(10));
                     continue;
                 }
@@ -943,13 +985,17 @@ fn spawn_background_decode(
                                 ) {
                                     Ok(resampler) => decoder.resampler = Some(resampler),
                                     Err(error) => {
-                                        let _ = sample_tx.send(SampleBatch {
-                                            rating_key,
-                                            generation: current_gen,
-                                            samples: Vec::new(),
-                                            fully_decoded: false,
-                                            error: Some(error),
-                                        });
+                                        let _ = send_sample_batch(
+                                            &sample_tx,
+                                            &request,
+                                            SampleBatch {
+                                                rating_key,
+                                                generation: current_gen,
+                                                samples: Vec::new(),
+                                                fully_decoded: false,
+                                                error: Some(error),
+                                            },
+                                        );
                                         return;
                                     }
                                 }
@@ -962,13 +1008,17 @@ fn spawn_background_decode(
                             {
                                 Ok(resampled) => samples = resampled,
                                 Err(error) => {
-                                    let _ = sample_tx.send(SampleBatch {
-                                        rating_key,
-                                        generation: current_gen,
-                                        samples: Vec::new(),
-                                        fully_decoded: false,
-                                        error: Some(error),
-                                    });
+                                    let _ = send_sample_batch(
+                                        &sample_tx,
+                                        &request,
+                                        SampleBatch {
+                                            rating_key,
+                                            generation: current_gen,
+                                            samples: Vec::new(),
+                                            fully_decoded: false,
+                                            error: Some(error),
+                                        },
+                                    );
                                     return;
                                 }
                             }
@@ -986,15 +1036,20 @@ fn spawn_background_decode(
                             samples = stereo;
                         }
 
-                        if sample_tx
-                            .send(SampleBatch {
+                        produced_frames += (samples.len() / out_channels.max(1) as usize) as u64;
+
+                        if send_sample_batch(
+                            &sample_tx,
+                            &request,
+                            SampleBatch {
                                 rating_key,
                                 generation: current_gen,
                                 samples,
                                 fully_decoded: false,
                                 error: None,
-                            })
-                            .is_err()
+                            },
+                        )
+                        .is_err()
                         {
                             return; // Channel closed
                         }
@@ -1007,13 +1062,17 @@ fn spawn_background_decode(
                         atomics
                             .preload_error_rk
                             .store(rating_key, Ordering::Relaxed);
-                        let _ = sample_tx.send(SampleBatch {
-                            rating_key,
-                            generation: current_gen,
-                            samples: Vec::new(),
-                            fully_decoded: false,
-                            error: Some(format!("Audio decoding failed: {e}")),
-                        });
+                        let _ = send_sample_batch(
+                            &sample_tx,
+                            &request,
+                            SampleBatch {
+                                rating_key,
+                                generation: current_gen,
+                                samples: Vec::new(),
+                                fully_decoded: false,
+                                error: Some(format!("Audio decoding failed: {e}")),
+                            },
+                        );
                         return;
                     }
                 }
@@ -1148,7 +1207,7 @@ fn decode_initial_batch(
     device_rate: u32,
     device_channels: u16,
 ) -> Result<IncrementalDecodeResult, String> {
-    let initial_batch_size = setup.sample_rate as usize * setup.channels as usize;
+    let initial_batch_size = (setup.sample_rate as usize * setup.channels as usize).min(262144);
     let mut samples =
         decode::decode_batch(setup, initial_batch_size).map_err(|e| format!("{e}"))?;
     let source_rate = setup.sample_rate;
@@ -1180,6 +1239,7 @@ fn decode_initial_batch(
         source_channels
     };
 
+    setup.output_frames_decoded = (samples.len() / out_channels.max(1) as usize) as u64;
     Ok(IncrementalDecodeResult {
         initial_samples: samples,
         sample_rate: device_rate,
@@ -1260,6 +1320,74 @@ fn resolve_gain_db(
 #[cfg(test)]
 mod control_tests {
     use super::*;
+
+    #[test]
+    fn paused_decoding_stays_bounded_and_seeks_and_cancellation_bypass_backpressure() {
+        let decoder =
+            decode::probe_audio(decode::tests::generate_test_wav(44100, 2, 60.0)).unwrap();
+        let atomics = Arc::new(SharedAtomics::new());
+        let epoch = Arc::new(std::sync::atomic::AtomicU64::new(1));
+        let request = PlaybackRequest::new(
+            1,
+            epoch.clone(),
+            Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        );
+        let (sample_tx, samples) = crossbeam_channel::bounded(4);
+        let (seek_tx, seek_rx) = crossbeam_channel::unbounded();
+        let worker = spawn_background_decode(
+            decoder,
+            42,
+            44100,
+            2,
+            DeckId::A,
+            1,
+            sample_tx,
+            atomics.clone(),
+            44100,
+            2,
+            request,
+            seek_rx,
+        )
+        .unwrap();
+        let mut decoded_frames = 0;
+        loop {
+            match samples.recv_timeout(Duration::from_millis(200)) {
+                Ok(batch) => {
+                    assert!(!batch.fully_decoded);
+                    decoded_frames += batch.samples.len() / 2;
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => break,
+                Err(error) => panic!("decoder disconnected: {error}"),
+            }
+        }
+        assert!(decoded_frames >= 44100 * 20 && decoded_frames < 44100 * 21);
+        // A decoder stopped by the ahead limit must still service a seek.
+        seek_tx
+            .send(SeekRequest {
+                position_ms: 40000,
+                generation: 2,
+            })
+            .unwrap();
+        atomics
+            .deck_a_playhead_frames
+            .store(44100 * 40, Ordering::Release);
+        let batch = samples.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(batch.generation, 2);
+        assert!(batch.error.is_none());
+        // Now leave its bounded channel full. Cancellation must wake its send.
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while samples.len() < 4 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "decoder did not fill its bounded channel"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let started = std::time::Instant::now();
+        epoch.store(2, Ordering::SeqCst);
+        worker.join().unwrap();
+        assert!(started.elapsed() < Duration::from_millis(500));
+    }
 
     #[test]
     fn initial_and_background_resampling_share_history_and_flush_the_tail_after_seeking() {

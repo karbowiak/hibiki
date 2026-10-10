@@ -37,6 +37,7 @@ use super::streaming::StreamingReader;
 /// Active decoder state — kept alive between batch decode calls.
 pub struct DecoderSetup {
     pub resampler: Option<super::super::output::resample::StreamingResampler>,
+    pub output_frames_decoded: u64,
     pub format: Box<dyn symphonia::core::formats::FormatReader>,
     pub decoder: Box<dyn symphonia::core::codecs::Decoder>,
     pub track_id: u32,
@@ -129,6 +130,7 @@ pub fn probe_from_source(mss: MediaSourceStream, ext: Option<&str>) -> Result<De
 
     Ok(DecoderSetup {
         resampler: None,
+        output_frames_decoded: 0,
         format,
         decoder,
         track_id,

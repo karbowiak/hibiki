@@ -50,6 +50,8 @@ pub struct SharedAtomics {
     // Decode generations are assigned per load and per seek.
     pub deck_a_generation: Arc<AtomicU64>,
     pub deck_b_generation: Arc<AtomicU64>,
+    pub deck_a_playhead_frames: Arc<AtomicU64>,
+    pub deck_b_playhead_frames: Arc<AtomicU64>,
     /// Rating key of the last preload that failed (stream error / truncated).
     /// Written by bg decode or control thread on error, read by PLAY handler
     /// to avoid using a broken preload.
@@ -76,6 +78,8 @@ impl SharedAtomics {
 
             deck_a_generation: Arc::new(AtomicU64::new(0)),
             deck_b_generation: Arc::new(AtomicU64::new(0)),
+            deck_a_playhead_frames: Arc::new(AtomicU64::new(0)),
+            deck_b_playhead_frames: Arc::new(AtomicU64::new(0)),
             preload_error_rk: Arc::new(AtomicI64::new(0)),
         }
     }
@@ -204,6 +208,10 @@ impl AudioCallbackState {
         // 5. Split at transition/end boundaries so the callback neither drops
         // a tail nor inserts silence when the next deck is already buffered.
         self.mix_with_transitions(data);
+        self.deck_mgr.active_deck_mut().trim_played_samples();
+        if self.is_crossfading {
+            self.deck_mgr.pending_deck_mut().trim_played_samples();
+        }
 
         // 6. Process DSP chain (direct access, no lock)
         self.dsp_chain
@@ -280,7 +288,12 @@ impl AudioCallbackState {
     }
 
     fn drain_deck_channel(&mut self, rx: &Receiver<SampleBatch>, deck_id: DeckId) {
-        while let Ok(batch) = rx.try_recv() {
+        // Bound the amount of PCM copying per device callback, even if a
+        // stalled callback left both decoder channels full.
+        for _ in 0..4 {
+            let Ok(batch) = rx.try_recv() else {
+                break;
+            };
             let deck = self.deck_mgr.deck_mut(deck_id);
 
             // Reject stale batches (wrong track or old seek generation)
@@ -428,6 +441,7 @@ impl AudioCallbackState {
                 d.samples = initial_samples;
                 d.fully_decoded = fully_decoded;
                 d.seek_tx = seek_tx;
+                self.update_position_atomics();
                 match deck {
                     DeckId::A => self
                         .atomics
@@ -1024,6 +1038,16 @@ impl AudioCallbackState {
     // -----------------------------------------------------------------------
 
     fn update_position_atomics(&self) {
+        for (deck_id, playhead) in [
+            (DeckId::A, &self.atomics.deck_a_playhead_frames),
+            (DeckId::B, &self.atomics.deck_b_playhead_frames),
+        ] {
+            let deck = self.deck_mgr.deck(deck_id);
+            playhead.store(
+                ((deck.sample_offset + deck.position) / deck.channels.max(1) as usize) as u64,
+                Ordering::Release,
+            );
+        }
         let active = self.deck_mgr.active_deck();
         if active.loaded {
             self.atomics

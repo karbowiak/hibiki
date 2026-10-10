@@ -284,6 +284,31 @@ fn reported_position_uses_the_deck_channel_count_instead_of_the_device_layout() 
     assert_eq!(cb.atomics.position_ms.load(Ordering::Relaxed), 1000);
 }
 
+#[test]
+fn trimming_played_pcm_preserves_the_timeline_and_backward_seeks_reach_the_decoder() {
+    let (mut cb, _) = callback();
+    cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
+    let (seek_tx, seeks) = crossbeam_channel::unbounded();
+    let deck = cb.deck_mgr.active_deck_mut();
+    deck.samples = vec![0.2; 48000 * 2 * 24];
+    deck.position = 48000 * 2 * 10;
+    deck.seek_tx = Some(seek_tx);
+    deck.has_started_playing = true;
+    cb.set_state(EngineState::Playing);
+    cb.process_callback(&mut [0.0; 960]);
+    let deck = cb.deck_mgr.active_deck();
+    assert_eq!(deck.sample_offset, 48000 * 2 * 8);
+    assert_eq!(deck.position_ms(), 10010);
+    assert_eq!(deck.samples.len(), 48000 * 2 * 16);
+    cb.handle_command(AudioCommand::SeekInBuffer { position: 0 });
+    let seek = seeks.try_recv().unwrap();
+    assert_eq!(seek.position_ms, 0);
+    assert_eq!(seek.generation, 1);
+    assert_eq!(cb.deck_mgr.active_deck().sample_offset, 0);
+    assert!(cb.deck_mgr.active_deck().samples.is_empty());
+    assert_eq!(cb.state(), EngineState::Buffering);
+}
+
 fn load(deck: DeckId, key: i64, epoch: u64, load_id: u64, generation: u64) -> AudioCommand {
     AudioCommand::LoadDeck {
         deck,

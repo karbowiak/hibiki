@@ -174,6 +174,22 @@ impl DeckState {
             / (self.sample_rate as f32 * self.channels as f32)
     }
 
+    pub fn trim_played_samples(&mut self) {
+        // Keep a small history for instant backward seeks. Older positions are
+        // still available through the retained decoder's seek mailbox.
+        if self.seek_tx.is_none() {
+            return;
+        }
+        let second = self.sample_rate as usize * self.channels as usize;
+        if second == 0 || self.position < second * 3 {
+            return;
+        }
+        let remove = ((self.position - second * 2) / second) * second;
+        self.samples.drain(..remove);
+        self.sample_offset += remove;
+        self.position -= remove;
+    }
+
     /// Whether the deck has reached the end of the track.
     /// Only true when playback position is past the end AND the full track
     /// has been decoded. During incremental/streaming decode, the mixer may
@@ -246,6 +262,13 @@ impl DeckManager {
         match id {
             DeckId::A => &mut self.deck_a,
             DeckId::B => &mut self.deck_b,
+        }
+    }
+
+    pub fn deck(&self, id: DeckId) -> &DeckState {
+        match id {
+            DeckId::A => &self.deck_a,
+            DeckId::B => &self.deck_b,
         }
     }
 
