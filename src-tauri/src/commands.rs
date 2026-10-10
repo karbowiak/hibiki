@@ -8,12 +8,12 @@ use tauri::State;
 use tokio::sync::Mutex;
 
 use crate::mediasession::{MediaSessionState, MediaUpdate};
+use crate::plex::lyrics::LyricLine;
+use crate::plex::models::{Album, Artist};
 use crate::plex::{
     Hub, IdentityResponse, Level, LibrarySection, PlayQueue, Playlist, PlexClient,
     PlexClientConfig, PlexMedia, PlexSettings, ServerInfo, Tag, Track,
 };
-use crate::plex::lyrics::LyricLine;
-use crate::plex::models::{Album, Artist};
 
 // ---------------------------------------------------------------------------
 // State
@@ -34,11 +34,7 @@ macro_rules! client {
         let guard = $state.0.lock().await;
         match guard.as_ref() {
             Some(c) => c.clone(),
-            None => {
-                return Err(
-                    "Plex client not connected. Call connect_plex first.".to_string(),
-                )
-            }
+            None => return Err("Plex client not connected. Call connect_plex first.".to_string()),
         }
     }};
 }
@@ -62,12 +58,8 @@ pub async fn connect_plex(
     // Load the stable per-installation client_id so Plex can track this
     // client's sessions (required as X-Plex-Client-Identifier header for /:/timeline).
     let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
-    let settings = crate::plex::load_settings(&config_dir).map_err(|e| format!("{:#}", e))?;
-    let client_id = if settings.client_id.is_empty() {
-        "hibiki-client".to_string()
-    } else {
-        settings.client_id.clone()
-    };
+    let client_id =
+        crate::plex::auth::ensure_client_id(&config_dir).map_err(|e| format!("{:#}", e))?;
     let config = PlexClientConfig {
         base_url,
         token,
@@ -133,10 +125,7 @@ pub async fn get_recently_added(
 
 /// Get discovery hubs for a section (home screen content).
 #[tauri::command]
-pub async fn get_hubs(
-    section_id: i64,
-    state: State<'_, PlexState>,
-) -> Result<Vec<Hub>, String> {
+pub async fn get_hubs(section_id: i64, state: State<'_, PlexState>) -> Result<Vec<Hub>, String> {
     let c = client!(state);
     c.get_section_hubs(section_id)
         .await
@@ -174,30 +163,21 @@ pub async fn get_section_tags(
 
 /// Get a specific track by rating key.
 #[tauri::command]
-pub async fn get_track(
-    rating_key: i64,
-    state: State<'_, PlexState>,
-) -> Result<Track, String> {
+pub async fn get_track(rating_key: i64, state: State<'_, PlexState>) -> Result<Track, String> {
     let c = client!(state);
     c.get_track(rating_key).await.map_err(|e| format!("{:#}", e))
 }
 
 /// Get an artist by rating key.
 #[tauri::command]
-pub async fn get_artist(
-    rating_key: i64,
-    state: State<'_, PlexState>,
-) -> Result<Artist, String> {
+pub async fn get_artist(rating_key: i64, state: State<'_, PlexState>) -> Result<Artist, String> {
     let c = client!(state);
     c.get_artist(rating_key).await.map_err(|e| format!("{:#}", e))
 }
 
 /// Get an album by rating key.
 #[tauri::command]
-pub async fn get_album(
-    rating_key: i64,
-    state: State<'_, PlexState>,
-) -> Result<Album, String> {
+pub async fn get_album(rating_key: i64, state: State<'_, PlexState>) -> Result<Album, String> {
     let c = client!(state);
     c.get_album(rating_key).await.map_err(|e| format!("{:#}", e))
 }
@@ -276,7 +256,14 @@ pub async fn get_items_by_tag(
 ) -> Result<PagedMediaItems, String> {
     let c = client!(state);
     let (items, total) = c
-        .get_by_tag(section_id, &tag_type, &tag_name, libtype.as_deref(), limit, offset)
+        .get_by_tag(
+            section_id,
+            &tag_type,
+            &tag_name,
+            libtype.as_deref(),
+            limit,
+            offset,
+        )
         .await
         .map_err(|e| format!("{:#}", e))?;
     Ok(PagedMediaItems { items, total })
@@ -512,10 +499,7 @@ pub async fn move_playlist_item(
 
 /// Delete a playlist.
 #[tauri::command]
-pub async fn delete_playlist(
-    playlist_id: i64,
-    state: State<'_, PlexState>,
-) -> Result<(), String> {
+pub async fn delete_playlist(playlist_id: i64, state: State<'_, PlexState>) -> Result<(), String> {
     let c = client!(state);
     c.delete_playlist(playlist_id)
         .await
@@ -599,9 +583,15 @@ pub async fn create_radio_queue(
     state: State<'_, PlexState>,
 ) -> Result<PlayQueue, String> {
     let c = client!(state);
-    c.create_radio_queue(rating_key, &item_type, degrees_of_separation, include_external, shuffle)
-        .await
-        .map_err(|e| format!("{:#}", e))
+    c.create_radio_queue(
+        rating_key,
+        &item_type,
+        degrees_of_separation,
+        include_external,
+        shuffle,
+    )
+    .await
+    .map_err(|e| format!("{:#}", e))
 }
 
 /// Create a smart-shuffle (Guest DJ) play queue.
@@ -616,20 +606,19 @@ pub async fn create_smart_shuffle_queue(
     degrees_of_separation: Option<i32>,
     include_external: bool,
     state: State<'_, PlexState>,
-    app: tauri::AppHandle,
 ) -> Result<PlayQueue, String> {
-    use tauri::Manager;
-    let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
-    let settings = crate::plex::load_settings(&config_dir).map_err(|e| format!("{:#}", e))?;
-    let client_id = if settings.client_id.is_empty() {
-        "hibiki-client".to_string()
-    } else {
-        settings.client_id
-    };
     let c = client!(state);
-    c.create_smart_shuffle_queue(rating_key, &item_type, dj_mode.as_deref(), degrees_of_separation, include_external, &client_id)
-        .await
-        .map_err(|e| format!("{:#}", e))
+    let client_id = c.client_id.clone();
+    c.create_smart_shuffle_queue(
+        rating_key,
+        &item_type,
+        dj_mode.as_deref(),
+        degrees_of_separation,
+        include_external,
+        &client_id,
+    )
+    .await
+    .map_err(|e| format!("{:#}", e))
 }
 
 // ---------------------------------------------------------------------------
@@ -638,20 +627,14 @@ pub async fn create_smart_shuffle_queue(
 
 /// Mark an item as played (scrobble).
 #[tauri::command]
-pub async fn mark_played(
-    rating_key: i64,
-    state: State<'_, PlexState>,
-) -> Result<(), String> {
+pub async fn mark_played(rating_key: i64, state: State<'_, PlexState>) -> Result<(), String> {
     let c = client!(state);
     c.mark_played(rating_key).await.map_err(|e| format!("{:#}", e))
 }
 
 /// Mark an item as unplayed.
 #[tauri::command]
-pub async fn mark_unplayed(
-    rating_key: i64,
-    state: State<'_, PlexState>,
-) -> Result<(), String> {
+pub async fn mark_unplayed(rating_key: i64, state: State<'_, PlexState>) -> Result<(), String> {
     let c = client!(state);
     c.mark_unplayed(rating_key)
         .await
@@ -679,9 +662,15 @@ pub async fn report_timeline(
     };
     let c = client!(plex_state);
     let client_id = c.client_id.clone();
-    c.report_timeline(rating_key, playback_state, time_ms, duration_ms, Some(&client_id))
-        .await
-        .map_err(|e| format!("{:#}", e))
+    c.report_timeline(
+        rating_key,
+        playback_state,
+        time_ms,
+        duration_ms,
+        Some(&client_id),
+    )
+    .await
+    .map_err(|e| format!("{:#}", e))
 }
 
 // ---------------------------------------------------------------------------
@@ -872,18 +861,14 @@ pub async fn fetch_audio_bytes(
 
 /// Get the server's identity (machine ID, version, claimed status).
 #[tauri::command]
-pub async fn get_identity(
-    state: State<'_, PlexState>,
-) -> Result<IdentityResponse, String> {
+pub async fn get_identity(state: State<'_, PlexState>) -> Result<IdentityResponse, String> {
     let c = client!(state);
     c.get_identity().await.map_err(|e| format!("{:#}", e))
 }
 
 /// Get full server capabilities and metadata.
 #[tauri::command]
-pub async fn get_server_info(
-    state: State<'_, PlexState>,
-) -> Result<ServerInfo, String> {
+pub async fn get_server_info(state: State<'_, PlexState>) -> Result<ServerInfo, String> {
     let c = client!(state);
     c.get_server_info().await.map_err(|e| format!("{:#}", e))
 }
@@ -918,19 +903,21 @@ pub async fn save_settings(
 ) -> Result<(), String> {
     use tauri::Manager;
     let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
-    let mut settings = crate::plex::load_settings(&config_dir).map_err(|e| format!("{:#}", e))?;
-    settings.base_url = base_url;
-    settings.token = token;
-    if let Some(urls) = all_urls {
-        settings.all_urls = urls;
-    }
-    if let Some(id) = section_id {
-        settings.section_id = id;
-    }
-    if let Some(uuid) = section_uuid {
-        settings.section_uuid = uuid;
-    }
-    crate::plex::save_settings(&config_dir, &settings).map_err(|e| format!("{:#}", e))
+    crate::plex::update_settings(&config_dir, |settings| {
+        settings.base_url = base_url;
+        settings.token = token;
+        if let Some(urls) = all_urls {
+            settings.all_urls = urls;
+        }
+        if let Some(id) = section_id {
+            settings.section_id = id;
+        }
+        if let Some(uuid) = section_uuid {
+            settings.section_uuid = uuid;
+        }
+        Ok(())
+    })
+    .map_err(|e| format!("{:#}", e))
 }
 
 /// Quickly probe a Plex server URL to check reachability and measure latency.
@@ -979,15 +966,9 @@ pub async fn test_server_connection(url: String, token: String) -> Result<u64, S
 pub async fn plex_auth_start(app: tauri::AppHandle) -> Result<crate::plextv::PinInfo, String> {
     use tauri::Manager;
     let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
-    let mut settings = crate::plex::load_settings(&config_dir).map_err(|e| format!("{:#}", e))?;
-
-    // Generate a stable per-installation client_id on first use.
-    if settings.client_id.is_empty() {
-        settings.client_id = uuid::Uuid::new_v4().to_string();
-        crate::plex::save_settings(&config_dir, &settings).map_err(|e| format!("{:#}", e))?;
-    }
-
-    crate::plextv::create_pin(&settings.client_id)
+    let client_id =
+        crate::plex::auth::ensure_client_id(&config_dir).map_err(|e| format!("{:#}", e))?;
+    crate::plextv::create_pin(&client_id)
         .await
         .map_err(|e| format!("{:#}", e))
 }
@@ -1067,7 +1048,13 @@ pub async fn update_now_playing(
 
     media_state
         .0
-        .send(MediaUpdate::Metadata { title, artist, album, cover_url, duration_ms })
+        .send(MediaUpdate::Metadata {
+            title,
+            artist,
+            album,
+            cover_url,
+            duration_ms,
+        })
         .map_err(|e| format!("Media session channel closed: {e}"))
 }
 
@@ -1081,8 +1068,12 @@ pub fn set_now_playing_state(
     state: State<'_, MediaSessionState>,
 ) -> Result<(), String> {
     let update = match playback_state.as_str() {
-        "playing" => MediaUpdate::Playing { position_ms: position_ms.unwrap_or(0) },
-        "paused" => MediaUpdate::Paused { position_ms: position_ms.unwrap_or(0) },
+        "playing" => MediaUpdate::Playing {
+            position_ms: position_ms.unwrap_or(0),
+        },
+        "paused" => MediaUpdate::Paused {
+            position_ms: position_ms.unwrap_or(0),
+        },
         _ => MediaUpdate::Stopped,
     };
     state
@@ -1123,9 +1114,7 @@ pub async fn clear_image_cache(app: tauri::AppHandle) -> Result<(), String> {
 
 /// Returns file count and total byte size for the unified image cache.
 #[tauri::command]
-pub async fn get_image_cache_info(
-    app: tauri::AppHandle,
-) -> Result<serde_json::Value, String> {
+pub async fn get_image_cache_info(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     use tauri::Manager;
     let cache_root = app
         .path()
@@ -1175,10 +1164,18 @@ pub async fn lastfm_save_credentials(
 ) -> Result<(), String> {
     use tauri::Manager;
     let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
-    let mut settings = crate::plex::load_settings(&config_dir).map_err(|e| format!("{:#}", e))?;
-    settings.lastfm_api_key = api_key;
-    settings.lastfm_api_secret = api_secret;
-    crate::plex::save_settings(&config_dir, &settings).map_err(|e| format!("{:#}", e))
+    crate::plex::update_settings(&config_dir, |settings| {
+        settings.lastfm_auth_revision = settings.lastfm_auth_revision.wrapping_add(1);
+        if settings.lastfm_api_key != api_key || settings.lastfm_api_secret != api_secret {
+            settings.lastfm_session_key.clear();
+            settings.lastfm_username.clear();
+            settings.lastfm_enabled = false;
+        }
+        settings.lastfm_api_key = api_key;
+        settings.lastfm_api_secret = api_secret;
+        Ok(())
+    })
+    .map_err(|e| format!("{:#}", e))
 }
 
 /// Step 1 of Last.fm auth: request a temporary token.
@@ -1210,20 +1207,31 @@ pub async fn lastfm_complete_auth(
 ) -> Result<crate::lastfm::LastfmSession, String> {
     use tauri::Manager;
     let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
-    let mut settings = crate::plex::load_settings(&config_dir).map_err(|e| format!("{:#}", e))?;
+    let settings = crate::plex::update_settings(&config_dir, |settings| {
+        settings.lastfm_auth_revision = settings.lastfm_auth_revision.wrapping_add(1);
+        Ok(settings.clone())
+    })
+    .map_err(|e| format!("{:#}", e))?;
 
     if settings.lastfm_api_key.is_empty() || settings.lastfm_api_secret.is_empty() {
         return Err("Last.fm credentials are not configured".to_string());
     }
 
-    let session =
-        crate::lastfm::get_session(&settings.lastfm_api_key, &settings.lastfm_api_secret, &token)
-            .await
-            .map_err(|e| format!("{:#}", e))?;
+    let session = crate::lastfm::get_session(
+        &settings.lastfm_api_key,
+        &settings.lastfm_api_secret,
+        &token,
+    )
+    .await
+    .map_err(|e| format!("{:#}", e))?;
 
-    settings.lastfm_session_key = session.session_key.clone();
-    settings.lastfm_username = session.username.clone();
-    crate::plex::save_settings(&config_dir, &settings).map_err(|e| format!("{:#}", e))?;
+    crate::plex::auth::finish_lastfm_auth(
+        &config_dir,
+        &settings,
+        &session.session_key,
+        &session.username,
+    )
+    .map_err(|e| format!("{:#}", e))?;
 
     Ok(session)
 }
@@ -1233,11 +1241,14 @@ pub async fn lastfm_complete_auth(
 pub async fn lastfm_disconnect(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
     let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
-    let mut settings = crate::plex::load_settings(&config_dir).map_err(|e| format!("{:#}", e))?;
-    settings.lastfm_session_key = String::new();
-    settings.lastfm_username = String::new();
-    settings.lastfm_enabled = false;
-    crate::plex::save_settings(&config_dir, &settings).map_err(|e| format!("{:#}", e))
+    crate::plex::update_settings(&config_dir, |settings| {
+        settings.lastfm_auth_revision = settings.lastfm_auth_revision.wrapping_add(1);
+        settings.lastfm_session_key = String::new();
+        settings.lastfm_username = String::new();
+        settings.lastfm_enabled = false;
+        Ok(())
+    })
+    .map_err(|e| format!("{:#}", e))
 }
 
 /// Enable or disable Last.fm scrobbling and now-playing updates.
@@ -1245,19 +1256,26 @@ pub async fn lastfm_disconnect(app: tauri::AppHandle) -> Result<(), String> {
 pub async fn lastfm_set_enabled(enabled: bool, app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
     let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
-    let mut settings = crate::plex::load_settings(&config_dir).map_err(|e| format!("{:#}", e))?;
-    settings.lastfm_enabled = enabled;
-    crate::plex::save_settings(&config_dir, &settings).map_err(|e| format!("{:#}", e))
+    crate::plex::update_settings(&config_dir, |settings| {
+        settings.lastfm_enabled = enabled;
+        Ok(())
+    })
+    .map_err(|e| format!("{:#}", e))
 }
 
 /// Set whether Last.fm metadata replaces (true) or augments (false) Plex data.
 #[tauri::command]
-pub async fn lastfm_set_replace_metadata(replace: bool, app: tauri::AppHandle) -> Result<(), String> {
+pub async fn lastfm_set_replace_metadata(
+    replace: bool,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
     use tauri::Manager;
     let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
-    let mut settings = crate::plex::load_settings(&config_dir).map_err(|e| format!("{:#}", e))?;
-    settings.lastfm_replace_metadata = replace;
-    crate::plex::save_settings(&config_dir, &settings).map_err(|e| format!("{:#}", e))
+    crate::plex::update_settings(&config_dir, |settings| {
+        settings.lastfm_replace_metadata = replace;
+        Ok(())
+    })
+    .map_err(|e| format!("{:#}", e))
 }
 
 /// Set the minimum Plex rating (0–10) that triggers a Last.fm "love".
@@ -1266,9 +1284,11 @@ pub async fn lastfm_set_replace_metadata(replace: bool, app: tauri::AppHandle) -
 pub async fn lastfm_set_love_threshold(threshold: u8, app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
     let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
-    let mut settings = crate::plex::load_settings(&config_dir).map_err(|e| format!("{:#}", e))?;
-    settings.lastfm_love_threshold = threshold;
-    crate::plex::save_settings(&config_dir, &settings).map_err(|e| format!("{:#}", e))
+    crate::plex::update_settings(&config_dir, |settings| {
+        settings.lastfm_love_threshold = threshold;
+        Ok(())
+    })
+    .map_err(|e| format!("{:#}", e))
 }
 
 /// Notify Last.fm that a track has started playing (now-playing update).
@@ -1537,16 +1557,18 @@ pub async fn listenbrainz_save_token(
     app: tauri::AppHandle,
 ) -> Result<crate::listenbrainz::ListenBrainzTokenResult, String> {
     use tauri::Manager;
+    let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
+    let revision = crate::plex::update_settings(&config_dir, |settings| {
+        settings.listenbrainz_auth_revision = settings.listenbrainz_auth_revision.wrapping_add(1);
+        Ok(settings.listenbrainz_auth_revision)
+    })
+    .map_err(|e| format!("{:#}", e))?;
     let result = crate::listenbrainz::validate_token(&token)
         .await
         .map_err(|e| format!("{:#}", e))?;
 
-    let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
-    let mut settings = crate::plex::load_settings(&config_dir).map_err(|e| format!("{:#}", e))?;
-    settings.listenbrainz_token = token;
-    settings.listenbrainz_username = result.username.clone();
-    settings.listenbrainz_enabled = true;
-    crate::plex::save_settings(&config_dir, &settings).map_err(|e| format!("{:#}", e))?;
+    crate::plex::auth::finish_listenbrainz_auth(&config_dir, revision, &token, &result.username)
+        .map_err(|e| format!("{:#}", e))?;
 
     Ok(result)
 }
@@ -1556,11 +1578,14 @@ pub async fn listenbrainz_save_token(
 pub async fn listenbrainz_disconnect(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
     let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
-    let mut settings = crate::plex::load_settings(&config_dir).map_err(|e| format!("{:#}", e))?;
-    settings.listenbrainz_token = String::new();
-    settings.listenbrainz_username = String::new();
-    settings.listenbrainz_enabled = false;
-    crate::plex::save_settings(&config_dir, &settings).map_err(|e| format!("{:#}", e))
+    crate::plex::update_settings(&config_dir, |settings| {
+        settings.listenbrainz_auth_revision = settings.listenbrainz_auth_revision.wrapping_add(1);
+        settings.listenbrainz_token = String::new();
+        settings.listenbrainz_username = String::new();
+        settings.listenbrainz_enabled = false;
+        Ok(())
+    })
+    .map_err(|e| format!("{:#}", e))
 }
 
 /// Enable or disable ListenBrainz scrobbling.
@@ -1568,9 +1593,11 @@ pub async fn listenbrainz_disconnect(app: tauri::AppHandle) -> Result<(), String
 pub async fn listenbrainz_set_enabled(enabled: bool, app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
     let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
-    let mut settings = crate::plex::load_settings(&config_dir).map_err(|e| format!("{:#}", e))?;
-    settings.listenbrainz_enabled = enabled;
-    crate::plex::save_settings(&config_dir, &settings).map_err(|e| format!("{:#}", e))
+    crate::plex::update_settings(&config_dir, |settings| {
+        settings.listenbrainz_enabled = enabled;
+        Ok(())
+    })
+    .map_err(|e| format!("{:#}", e))
 }
 
 /// Submit a "now playing" update to ListenBrainz.
@@ -1657,7 +1684,7 @@ pub async fn listenbrainz_submit_listen(
 // Local SQLite database
 // ---------------------------------------------------------------------------
 
-use crate::db::{self, DbState, DbInfo};
+use crate::db::{self, DbInfo, DbState};
 
 /// Convenience macro: lock the DbState mutex (sync — not async).
 macro_rules! db_conn {
@@ -1837,18 +1864,13 @@ pub fn db_get_track_count(db: State<'_, DbState>) -> Result<i64, String> {
 // ---- Playlists ----
 
 #[tauri::command]
-pub fn db_upsert_playlists(
-    db: State<'_, DbState>,
-    playlists: Vec<Playlist>,
-) -> Result<(), String> {
+pub fn db_upsert_playlists(db: State<'_, DbState>, playlists: Vec<Playlist>) -> Result<(), String> {
     let conn = db_conn!(db);
     db::playlists::upsert_bulk(&conn, &playlists)
 }
 
 #[tauri::command]
-pub fn db_get_playlists(
-    db: State<'_, DbState>,
-) -> Result<Vec<db::playlists::PlaylistRow>, String> {
+pub fn db_get_playlists(db: State<'_, DbState>) -> Result<Vec<db::playlists::PlaylistRow>, String> {
     let conn = db_conn!(db);
     db::playlists::get_all(&conn)
 }
@@ -1909,9 +1931,7 @@ pub async fn radiobrowser_countries() -> Result<Vec<crate::radiobrowser::RadioCo
 
 /// Get popular tags/genres with station counts.
 #[tauri::command]
-pub async fn radiobrowser_tags(
-    limit: u32,
-) -> Result<Vec<crate::radiobrowser::RadioTag>, String> {
+pub async fn radiobrowser_tags(limit: u32) -> Result<Vec<crate::radiobrowser::RadioTag>, String> {
     crate::radiobrowser::get_tags(limit)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -1950,9 +1970,7 @@ pub async fn podcast_get_top(
 }
 
 #[tauri::command]
-pub async fn podcast_get_feed(
-    feed_url: String,
-) -> Result<crate::podcast::PodcastDetail, String> {
+pub async fn podcast_get_feed(feed_url: String) -> Result<crate::podcast::PodcastDetail, String> {
     crate::podcast::get_podcast_feed(&feed_url)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -1987,10 +2005,12 @@ pub async fn genius_save_credentials(
 ) -> Result<(), String> {
     use tauri::Manager;
     let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
-    let mut settings = crate::plex::load_settings(&config_dir).map_err(|e| format!("{:#}", e))?;
-    settings.genius_client_id = client_id;
-    settings.genius_client_secret = client_secret;
-    crate::plex::save_settings(&config_dir, &settings).map_err(|e| format!("{:#}", e))
+    crate::plex::update_settings(&config_dir, |settings| {
+        settings.genius_client_id = client_id;
+        settings.genius_client_secret = client_secret;
+        Ok(())
+    })
+    .map_err(|e| format!("{:#}", e))
 }
 
 /// Disconnect Genius — clear credentials from settings.
@@ -1998,12 +2018,14 @@ pub async fn genius_save_credentials(
 pub async fn genius_disconnect(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
     let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
-    let mut settings = crate::plex::load_settings(&config_dir).map_err(|e| format!("{:#}", e))?;
-    settings.genius_client_id = String::new();
-    settings.genius_client_secret = String::new();
-    settings.genius_enabled = false;
-    settings.genius_always_fetch = false;
-    crate::plex::save_settings(&config_dir, &settings).map_err(|e| format!("{:#}", e))
+    crate::plex::update_settings(&config_dir, |settings| {
+        settings.genius_client_id = String::new();
+        settings.genius_client_secret = String::new();
+        settings.genius_enabled = false;
+        settings.genius_always_fetch = false;
+        Ok(())
+    })
+    .map_err(|e| format!("{:#}", e))
 }
 
 /// Enable or disable Genius lyrics fetching.
@@ -2011,19 +2033,26 @@ pub async fn genius_disconnect(app: tauri::AppHandle) -> Result<(), String> {
 pub async fn genius_set_enabled(enabled: bool, app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
     let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
-    let mut settings = crate::plex::load_settings(&config_dir).map_err(|e| format!("{:#}", e))?;
-    settings.genius_enabled = enabled;
-    crate::plex::save_settings(&config_dir, &settings).map_err(|e| format!("{:#}", e))
+    crate::plex::update_settings(&config_dir, |settings| {
+        settings.genius_enabled = enabled;
+        Ok(())
+    })
+    .map_err(|e| format!("{:#}", e))
 }
 
 /// Toggle whether Genius should always fetch lyrics (even when Plex has them).
 #[tauri::command]
-pub async fn genius_set_always_fetch(always_fetch: bool, app: tauri::AppHandle) -> Result<(), String> {
+pub async fn genius_set_always_fetch(
+    always_fetch: bool,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
     use tauri::Manager;
     let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
-    let mut settings = crate::plex::load_settings(&config_dir).map_err(|e| format!("{:#}", e))?;
-    settings.genius_always_fetch = always_fetch;
-    crate::plex::save_settings(&config_dir, &settings).map_err(|e| format!("{:#}", e))
+    crate::plex::update_settings(&config_dir, |settings| {
+        settings.genius_always_fetch = always_fetch;
+        Ok(())
+    })
+    .map_err(|e| format!("{:#}", e))
 }
 
 /// Search Genius for songs matching "{artist} {track}".

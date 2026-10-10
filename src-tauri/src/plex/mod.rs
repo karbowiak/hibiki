@@ -41,7 +41,7 @@ pub mod server;
 pub mod streaming;
 
 // Re-exports for convenience
-pub use auth::{load as load_settings, save as save_settings};
+pub use auth::{load as load_settings, update as update_settings};
 pub use client::{PlexClient, PlexClientConfig};
 pub use history::PlaybackState;
 pub use library::Tag;

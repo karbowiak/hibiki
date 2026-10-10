@@ -37,7 +37,10 @@ pub(crate) mod serde_null_or_string {
 /// Serde helper: deserialize a field that Plex may return as either a JSON
 /// integer or a JSON string (e.g. `"key": "5"` vs `"key": 5`).
 pub(crate) mod serde_string_or_i64 {
-    use serde::{Deserializer, de::{self, Visitor}};
+    use serde::{
+        de::{self, Visitor},
+        Deserializer,
+    };
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<i64, D::Error>
     where
@@ -63,7 +66,10 @@ pub(crate) mod serde_string_or_i64 {
 /// Serde helper: deserialize a field that Plex may return as either a JSON
 /// boolean (`true`/`false`) or as the string `"1"`/`"0"` / integer `1`/`0`.
 pub(crate) mod serde_string_or_bool {
-    use serde::{Deserializer, de::{self, Visitor}};
+    use serde::{
+        de::{self, Visitor},
+        Deserializer,
+    };
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<bool, D::Error>
     where
@@ -77,8 +83,14 @@ pub(crate) mod serde_string_or_bool {
             }
             fn visit_bool<E: de::Error>(self, v: bool) -> Result<bool, E> { Ok(v) }
             fn visit_str<E: de::Error>(self, v: &str) -> Result<bool, E> {
-                match v { "1" | "true" => Ok(true), "0" | "false" => Ok(false),
-                    _ => Err(de::Error::custom(format!("expected bool string, got {:?}", v))) }
+                match v {
+                    "1" | "true" => Ok(true),
+                    "0" | "false" => Ok(false),
+                    _ => Err(de::Error::custom(format!(
+                        "expected bool string, got {:?}",
+                        v
+                    ))),
+                }
             }
             fn visit_i64<E: de::Error>(self, v: i64) -> Result<bool, E> { Ok(v != 0) }
             fn visit_u64<E: de::Error>(self, v: u64) -> Result<bool, E> { Ok(v != 0) }
@@ -90,7 +102,10 @@ pub(crate) mod serde_string_or_bool {
 /// Serde helper for plain `f64` fields that Plex may return as JSON strings.
 /// Handles: JSON string (→ parsed f64), JSON number (→ f64). Returns 0.0 on empty string.
 pub(crate) mod serde_string_or_f64 {
-    use serde::{Deserializer, de::{self, Visitor}};
+    use serde::{
+        de::{self, Visitor},
+        Deserializer,
+    };
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<f64, D::Error>
     where
@@ -118,7 +133,10 @@ pub(crate) mod serde_string_or_f64 {
 /// Handles: absent field (→ None via `#[serde(default)]`), JSON null (→ None),
 /// JSON string (→ Some(parsed)), JSON float (→ Some(v)).
 pub(crate) mod serde_string_or_f64_opt {
-    use serde::{Deserializer, de::{self, Visitor}};
+    use serde::{
+        de::{self, Visitor},
+        Deserializer,
+    };
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
     where
@@ -151,7 +169,10 @@ pub(crate) mod serde_string_or_f64_opt {
 /// Handles: absent field (→ None via `#[serde(default)]`), JSON null (→ None),
 /// JSON string (→ Some(parsed)), JSON integer (→ Some(v)).
 pub(crate) mod serde_string_or_i64_opt {
-    use serde::{Deserializer, de::{self, Visitor}};
+    use serde::{
+        de::{self, Visitor},
+        Deserializer,
+    };
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
     where
@@ -1199,7 +1220,7 @@ pub struct ServerInfo {
 // ---------------------------------------------------------------------------
 
 /// User-stored connection settings (persisted to disk)
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct PlexSettings {
     /// Base URL of the Plex server (e.g. "http://192.168.1.1:32400")
     #[serde(default)]
@@ -1251,6 +1272,9 @@ pub struct PlexSettings {
     #[serde(default)]
     pub lastfm_enabled: bool,
 
+    #[serde(default)]
+    pub lastfm_auth_revision: u64,
+
     /// When true, use Last.fm metadata as the primary source for artist/album info,
     /// only using Plex for track title and audio file. When false (default), augment Plex data.
     #[serde(default)]
@@ -1297,6 +1321,33 @@ pub struct PlexSettings {
     /// Whether ListenBrainz scrobbling is enabled.
     #[serde(default)]
     pub listenbrainz_enabled: bool,
+
+    #[serde(default)]
+    pub listenbrainz_auth_revision: u64,
+
+    /// Preserve settings written by other versions of the application.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl Default for PlexSettings {
+    fn default() -> Self {
+        // Keep first-run and older-file defaults identical, including custom defaults.
+        serde_json::from_str("{}").expect("static settings defaults")
+    }
+}
+
+impl std::fmt::Debug for PlexSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PlexSettings")
+            .field("has_server", &!self.base_url.is_empty())
+            .field("has_plex_token", &!self.token.is_empty())
+            .field("section_id", &self.section_id)
+            .field("lastfm_enabled", &self.lastfm_enabled)
+            .field("genius_enabled", &self.genius_enabled)
+            .field("listenbrainz_enabled", &self.listenbrainz_enabled)
+            .finish_non_exhaustive()
+    }
 }
 
 fn default_lastfm_love_threshold() -> u8 {
@@ -1406,7 +1457,12 @@ mod tests {
         assert_eq!(public["has_lastfm_session"], true);
         assert_eq!(public["has_listenbrainz_token"], true);
         assert!(!public.to_string().contains("private-"));
-        for field in ["lastfm_api_secret", "lastfm_session_key", "genius_client_secret", "listenbrainz_token"] {
+        for field in [
+            "lastfm_api_secret",
+            "lastfm_session_key",
+            "genius_client_secret",
+            "listenbrainz_token",
+        ] {
             assert!(public.get(field).is_none());
         }
         // The internal settings still retain credentials for request signing.
