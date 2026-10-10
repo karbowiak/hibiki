@@ -1,4 +1,5 @@
 import { useEffect } from "react"
+import { isTauri } from "@tauri-apps/api/core"
 import { useLocation } from "wouter"
 import { SideBar } from "./components/SideBar"
 import { Page } from "./components/Page"
@@ -33,7 +34,7 @@ import { useGlobalHotkeys } from "./hooks/useGlobalHotkeys"
 import LiveAnnouncer from "./components/LiveAnnouncer"
 import "./i18n" // Initialize i18n on app load
 
-function App() {
+function DesktopApp() {
   const debugPanelOpen = useDebugPanelStore(s => s.open)
   const { hotkeyHelpOpen, setHotkeyHelpOpen } = useGlobalHotkeys()
   const { isConnected, musicSectionId, isLoading, loadAndConnect } = useConnectionStore(
@@ -139,6 +140,28 @@ function App() {
       <DragOverlay />
     </div>
   )
+}
+
+function App() {
+  // A regular browser has no desktop backend. Don't initialize native services
+  // or offer sign-in controls that would fail with an undefined invoke API.
+  if (!isTauri()) {
+    return (
+      <main className="flex h-screen items-center justify-center bg-app-bg p-8 text-white">
+        <div className="max-w-lg rounded-lg border border-white/10 bg-app-card p-8">
+          <p className="mb-2 text-sm font-semibold text-accent">Hibiki</p>
+          <h1 className="text-2xl font-bold">Open the Hibiki desktop app</h1>
+          <p className="mt-3 text-sm leading-relaxed text-white/60">
+            Plex sign-in, audio playback, and saved settings are available in the desktop app.
+          </p>
+          <p className="mt-3 text-sm leading-relaxed text-white/60">
+            This development page is running in a browser, so it cannot connect to Plex or play your library.
+          </p>
+        </div>
+      </main>
+    )
+  }
+  return <DesktopApp />
 }
 
 export default App
