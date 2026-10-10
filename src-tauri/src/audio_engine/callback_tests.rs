@@ -265,6 +265,57 @@ fn pausing_a_crossfade_freezes_both_decks_and_its_remaining_overlap() {
 }
 
 #[test]
+fn device_format_conversion_keeps_fade_boundaries_and_track_positions() {
+    use super::super::output::format::{render, SCRATCH_SAMPLES};
+    let prepare = || {
+        let mut cb = audible_callback();
+        cb.handle_load_deck(DeckId::B, meta(2), 48000, 2, 1.0, 0);
+        cb.deck_mgr.pending_deck_mut().samples = vec![0.1; 960000];
+        cb.handle_transition_to_active(true, true);
+        cb
+    };
+    let mut direct = prepare();
+    let mut converted = prepare();
+    let mut scratch = [0.0; SCRATCH_SAMPLES];
+    for command in [
+        AudioCommand::Pause,
+        AudioCommand::Resume,
+        AudioCommand::Pause,
+    ] {
+        // Commands contain no borrowed data and these toggles have no payload.
+        let second = if matches!(command, AudioCommand::Pause) {
+            AudioCommand::Pause
+        } else {
+            AudioCommand::Resume
+        };
+        direct.handle_command(command);
+        converted.handle_command(second);
+        let mut floats = vec![0.0; 32768];
+        let mut device_samples = vec![0.0_f64; floats.len()];
+        direct.process_callback(&mut floats);
+        render(&mut device_samples, 2, &mut scratch, |pcm| {
+            converted.process_callback(pcm)
+        });
+        for (sample, reference) in device_samples.iter().zip(&floats) {
+            assert!((*sample - f64::from(*reference)).abs() < 1e-6);
+        }
+        assert_eq!(
+            direct.deck_mgr.deck(DeckId::A).position,
+            converted.deck_mgr.deck(DeckId::A).position
+        );
+        assert_eq!(
+            direct.deck_mgr.deck(DeckId::B).position,
+            converted.deck_mgr.deck(DeckId::B).position
+        );
+        assert_eq!(
+            direct.crossfade_remaining_frames,
+            converted.crossfade_remaining_frames
+        );
+        assert_eq!(direct.paused, converted.paused);
+    }
+}
+
+#[test]
 fn paused_seeks_and_starved_pause_tails_do_not_play_delayed_audio() {
     let mut cb = audible_callback();
     cb.handle_command(AudioCommand::Pause);

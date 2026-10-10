@@ -267,8 +267,9 @@ pub fn run() {
                 }
                 Err(e) => {
                     tracing::error!("Failed to start audio engine: {}", e);
-                    // Still manage a dummy state so commands don't crash — they'll
-                    // just fail gracefully when trying to send to a dead channel.
+                    app.manage(audio_engine::bridge::AudioEngineState(
+                        std::sync::Arc::new(audio_engine::AudioEngine::unavailable(app.handle(), e)),
+                    ));
                 }
             }
 

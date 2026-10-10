@@ -25,7 +25,7 @@ pub mod state;
 pub mod types;
 pub mod visualizer;
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -39,6 +39,7 @@ use self::command::{AudioCommand, Command, ControlCommand, SampleBatch, SeekRequ
 use self::crossfade::types::{parse_ramp, CrossfadeSettings, TrackRamps};
 use self::deck::decode;
 use self::event::EngineEvent;
+use self::output::owner::{OutputParams, OutputThread};
 use self::output::resample::StreamingResampler;
 use self::output::CpalOutput;
 use self::request::PlaybackRequest;
@@ -56,36 +57,69 @@ pub struct AudioEngine {
     audio_cmd_tx: Sender<AudioCommand>,
     atomics: Arc<SharedAtomics>,
     cache: Arc<AudioCache>,
+    _output: Option<OutputThread>,
+    lifetime: EngineLifetime,
+    startup_error: Option<String>,
 }
 
-// SAFETY: AudioEngine only contains a crossbeam Sender (Send+Sync) and Arc (Send+Sync).
-unsafe impl Send for AudioEngine {}
-unsafe impl Sync for AudioEngine {}
+/// Stops auxiliary tasks if engine startup fails or the handle is released.
+struct EngineLifetime(Arc<AtomicBool>);
+
+impl EngineLifetime {
+    fn new() -> Self {
+        Self(Arc::new(AtomicBool::new(true)))
+    }
+}
+
+impl Drop for EngineLifetime {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
 
 impl Drop for AudioEngine {
     fn drop(&mut self) {
+        self.lifetime.0.store(false, Ordering::Release);
         let _ = self.send(Command::Shutdown);
     }
 }
 
 impl AudioEngine {
+    /// Keep native commands available when no output device could be opened.
+    pub fn unavailable(app_handle: &tauri::AppHandle, error: String) -> Self {
+        let (cmd_tx, _) = crossbeam_channel::unbounded();
+        let (audio_cmd_tx, _) = crossbeam_channel::bounded(1);
+        Self {
+            cmd_tx,
+            audio_cmd_tx,
+            atomics: Arc::new(SharedAtomics::new()),
+            cache: Self::open_cache(app_handle),
+            _output: None,
+            lifetime: EngineLifetime::new(),
+            startup_error: Some(error),
+        }
+    }
+
+    fn open_cache(app_handle: &tauri::AppHandle) -> Arc<AudioCache> {
+        use tauri::Manager;
+        let cache_dir = app_handle
+            .path()
+            .app_cache_dir()
+            .map(|d| d.join("audiocache"))
+            .unwrap_or_else(|_| std::path::PathBuf::from("audiocache"));
+        Arc::new(AudioCache::new(cache_dir, None))
+    }
+
     /// Create and start the audio engine.
     ///
     /// Creates the audio callback state, opens the cpal output (which consumes
     /// the callback state), and spawns the control task and auxiliary tasks.
     pub fn start(app_handle: tauri::AppHandle) -> Result<Self, String> {
         let atomics = Arc::new(SharedAtomics::new());
+        let lifetime = EngineLifetime::new();
 
         // Audio file cache (raw FLAC/MP3/AAC from Plex, stored on disk)
-        let cache_dir = {
-            use tauri::Manager;
-            app_handle
-                .path()
-                .app_cache_dir()
-                .map(|d| d.join("audiocache"))
-                .unwrap_or_else(|_| std::path::PathBuf::from("audiocache"))
-        };
-        let audio_cache = Arc::new(AudioCache::new(cache_dir, None));
+        let audio_cache = Self::open_cache(&app_handle);
 
         // Bridge → control task
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<ControlCommand>();
@@ -113,31 +147,25 @@ impl AudioEngine {
             atomics.clone(),
         );
 
-        // Open audio output — cb_state is consumed here (moved into cpal closure)
-        let cpal_output = CpalOutput::open(cb_state)
-            .map_err(|e| format!("failed to open audio output: {}", e))?;
+        // The owning thread creates and drops the non-Send device stream itself.
+        let output = OutputThread::start(move || {
+            let stream = CpalOutput::open(cb_state)?;
+            let params = OutputParams {
+                sample_rate: stream.sample_rate,
+                channels: stream.channels,
+            };
+            Ok((stream, params))
+        })
+        .map_err(|e| format!("failed to open audio output: {e}"))?;
 
-        let device_sample_rate = cpal_output.sample_rate;
-        let device_channels = cpal_output.channels;
+        let device_sample_rate = output.params.sample_rate;
+        let device_channels = output.params.channels;
 
         info!(
             sample_rate = device_sample_rate,
             channels = device_channels,
             "audio engine started"
         );
-
-        // Hold the cpal stream alive on a dedicated thread (Stream is not Send)
-        std::thread::Builder::new()
-            .name("audio-stream".into())
-            .spawn(move || {
-                // Keep cpal_output alive until channel closes
-                let _stream = cpal_output;
-                // Park forever — the stream lives until this thread is dropped
-                loop {
-                    std::thread::park();
-                }
-            })
-            .map_err(|e| format!("failed to spawn stream holder: {}", e))?;
 
         // Event relay thread (blocking recv, sends Tauri events to JS)
         let app_for_events = app_handle.clone();
@@ -162,17 +190,21 @@ impl AudioEngine {
         // Position polling task (reads atomics — zero locks)
         let atomics_pos = atomics.clone();
         let event_tx_pos = event_tx.clone();
+        let running_pos = lifetime.0.clone();
         tauri::async_runtime::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(250));
             loop {
                 interval.tick().await;
+                if !running_pos.load(Ordering::Acquire) {
+                    break;
+                }
                 if atomics_pos.get_state() != EngineState::Playing {
                     continue;
                 }
                 let Some((pos_ms, dur_ms, playback_id)) = atomics_pos.position_snapshot() else {
                     continue;
                 };
-                let _ = event_tx_pos.send(EngineEvent::Position {
+                let _ = event_tx_pos.try_send(EngineEvent::Position {
                     request_id: atomics_pos.active_request_id.load(Ordering::SeqCst),
                     playback_id,
                     position_ms: if dur_ms > 0 {
@@ -188,11 +220,15 @@ impl AudioEngine {
         // Visualizer task (~60fps, receives PCM from audio callback via channel,
         // accumulates into a rolling buffer, computes FFT, emits events)
         let event_tx_vis = event_tx.clone();
+        let running_vis = lifetime.0.clone();
         tauri::async_runtime::spawn(async move {
             let mut vis = VisualizerProcessor::new(device_channels);
             let mut interval = tokio::time::interval(Duration::from_millis(16));
             loop {
                 interval.tick().await;
+                if !running_vis.load(Ordering::Acquire) {
+                    break;
+                }
                 // Drain all pending PCM chunks into the rolling buffer
                 let mut got_data = false;
                 while let Ok(samples) = vis_rx.try_recv() {
@@ -203,7 +239,7 @@ impl AudioEngine {
                     continue;
                 }
                 if let Some((time_domain, freq_bins)) = vis.compute() {
-                    let _ = event_tx_vis.send(EngineEvent::VisFrame {
+                    let _ = event_tx_vis.try_send(EngineEvent::VisFrame {
                         samples: time_domain,
                         frequency_bins: freq_bins,
                     });
@@ -239,12 +275,18 @@ impl AudioEngine {
             audio_cmd_tx,
             atomics,
             cache: audio_cache,
+            _output: Some(output),
+            lifetime,
+            startup_error: None,
         })
     }
 
     /// Playback intent is invalidated here, before queued I/O can observe it.
     /// Interactive controls bypass the I/O worker so a slow server cannot block pause/seek.
     pub fn send(&self, cmd: Command) -> Result<u64, String> {
+        if let Some(error) = &self.startup_error {
+            return Err(error.clone());
+        }
         let epoch = if matches!(
             &cmd,
             Command::Play { .. } | Command::Stop | Command::Shutdown
@@ -315,6 +357,13 @@ impl AudioEngine {
     /// Access shared atomics (for bridge queries like sample rate).
     pub fn atomics(&self) -> &Arc<SharedAtomics> {
         &self.atomics
+    }
+
+    pub fn sample_rate(&self) -> Result<u32, String> {
+        if let Some(error) = &self.startup_error {
+            return Err(error.clone());
+        }
+        Ok(self.atomics.device_sample_rate.load(Ordering::Relaxed))
     }
 }
 
@@ -1539,6 +1588,9 @@ mod control_tests {
             audio_cmd_tx,
             atomics: Arc::new(SharedAtomics::new()),
             cache: Arc::new(AudioCache::new(dir.path().to_path_buf(), None)),
+            _output: None,
+            lifetime: EngineLifetime::new(),
+            startup_error: None,
         };
         let key = 42;
         let meta = TrackMeta {
@@ -1581,5 +1633,40 @@ mod control_tests {
             engine.atomics.request_epoch.load(Ordering::SeqCst),
             stop_epoch
         );
+    }
+
+    #[test]
+    fn an_unavailable_engine_returns_the_device_error_without_dispatching_commands() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<AudioEngine>();
+        let dir = tempfile::tempdir().unwrap();
+        let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
+        let (audio_cmd_tx, audio_rx) = crossbeam_channel::bounded(1);
+        let engine = AudioEngine {
+            cmd_tx,
+            audio_cmd_tx,
+            atomics: Arc::new(SharedAtomics::new()),
+            cache: Arc::new(AudioCache::new(dir.path().to_path_buf(), None)),
+            _output: None,
+            lifetime: EngineLifetime::new(),
+            startup_error: Some("no default output device".into()),
+        };
+        assert_eq!(
+            engine.sample_rate().unwrap_err(),
+            "no default output device"
+        );
+        assert_eq!(
+            engine.send(Command::Resume).unwrap_err(),
+            "no default output device"
+        );
+        assert_eq!(
+            engine
+                .send(Command::Seek { position_ms: 1000 })
+                .unwrap_err(),
+            "no default output device"
+        );
+        assert!(cmd_rx.is_empty());
+        assert!(audio_rx.is_empty());
+        assert_eq!(engine.atomics.request_epoch.load(Ordering::SeqCst), 0);
     }
 }

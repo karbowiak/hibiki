@@ -245,12 +245,7 @@ pub async fn audio_set_visualizer_enabled(
 
 #[tauri::command]
 pub async fn audio_get_sample_rate(state: State<'_, AudioEngineState>) -> Result<u32, String> {
-    let sr = state
-        .0
-        .atomics()
-        .device_sample_rate
-        .load(std::sync::atomic::Ordering::Relaxed);
-    Ok(sr)
+    state.0.sample_rate()
 }
 
 // ---------------------------------------------------------------------------
