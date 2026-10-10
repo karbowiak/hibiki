@@ -523,6 +523,10 @@ impl PlexClient {
         self.fetch_lock.clone()
     }
 
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
     pub fn is_plex_url(&self, value: &str) -> bool {
         match (url::Url::parse(&self.base_url), url::Url::parse(value)) {
             (Ok(base), Ok(target)) => base.origin() == target.origin()

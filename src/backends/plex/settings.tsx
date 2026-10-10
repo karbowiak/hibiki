@@ -63,9 +63,8 @@ export function PlexSettings() {
   const [authError, setAuthError] = useState<string | null>(null)
   const [connectingServer, setConnectingServer] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const pinIdRef = useRef<number | null>(null)
-  const pollCountRef = useRef(0)
-  const MAX_POLLS = 150
+  const authGeneration = useRef(0)
+  const mounted = useRef(true)
 
   // Library switcher state
   const [showLibrarySwitcher, setShowLibrarySwitcher] = useState(false)
@@ -78,10 +77,9 @@ export function PlexSettings() {
   }, [savedUrl, savedToken])
 
   useEffect(() => {
-    useConnectionStore.setState({ isLoading: false })
+    mounted.current = true
+    return () => { mounted.current = false; stopPolling() }
   }, [])
-
-  useEffect(() => () => stopPolling(), [])
 
   // Transition to library picker when connect sets needsLibraryPick
   useEffect(() => {
@@ -92,14 +90,16 @@ export function PlexSettings() {
 
   const isDirty = url.trim() !== savedUrl || token.trim() !== savedToken || allowInvalidCertificate !== savedException
 
-  function stopPolling() {
+  function authIsCurrent(request: number) { return mounted.current && authGeneration.current === request }
+
+  function clearPolling() {
     if (pollRef.current !== null) {
       clearInterval(pollRef.current)
       pollRef.current = null
     }
-    pinIdRef.current = null
-    pollCountRef.current = 0
   }
+
+  function stopPolling() { authGeneration.current++; clearPolling() }
 
   function afterConnect() {
     const { isConnected: ok, musicSectionId, needsLibraryPick: picking } = useConnectionStore.getState()
@@ -118,64 +118,64 @@ export function PlexSettings() {
   }
 
   const handlePickLibrary = async (section: LibrarySection) => {
+    stopPolling()
+    const request = authGeneration.current
     setAuthError(null)
     try {
       await selectLibrary(section)
-      afterConnect()
+      if (authIsCurrent(request)) afterConnect()
     } catch (err) {
-      setAuthError(String(err))
+      if (authIsCurrent(request)) setAuthError(String(err))
     }
   }
 
   const handlePlexSignIn = async () => {
+    stopPolling()
+    const request = authGeneration.current
     clearError()
     setAuthError(null)
     try {
       const pin = await startPlexAuth()
-      pinIdRef.current = pin.pin_id
-      pollCountRef.current = 0
+      if (!authIsCurrent(request)) return
       await open(pin.auth_url)
+      if (!authIsCurrent(request)) return
       setAuthState("polling")
-
+      const expires = Date.now() + 5 * 60_000
+      let polling = false
       pollRef.current = setInterval(async () => {
-        if (pinIdRef.current === null) return
-        pollCountRef.current += 1
-        if (pollCountRef.current >= MAX_POLLS) {
-          stopPolling()
-          setAuthState("idle")
+        if (!authIsCurrent(request)) return
+        if (Date.now() >= expires) {
+          stopPolling(); setAuthState("idle")
           setAuthError("Sign-in timed out after 5 minutes. Please try again.")
           return
         }
+        if (polling) return
+        polling = true
         try {
-          const authToken = await plexAuthPoll(pinIdRef.current)
-          if (!authToken) return
-          stopPolling()
-          setPendingToken(authToken)
+          const authToken = await plexAuthPoll(pin.pin_id)
+          if (!authIsCurrent(request) || !authToken) return
+          clearPolling()
           const servers = await plexGetResources(authToken)
+          if (!authIsCurrent(request)) return
+          setPendingToken(authToken)
           if (servers.length === 0) {
             setAuthState("idle")
             setAuthError("No Plex servers found on your account. Try connecting manually.")
-            return
-          }
-          if (servers.length === 1) {
+          } else if (servers.length === 1) {
             setAuthState("idle")
-            await connectToServer(servers[0], authToken)
+            await connectToServer(servers[0], authToken, request)
           } else {
-            setResources(servers)
-            setAuthState("picking")
+            setResources(servers); setAuthState("picking")
           }
         } catch (err) {
-          stopPolling()
-          setAuthState("idle")
-          setAuthError(String(err))
-        }
+          if (authIsCurrent(request)) { stopPolling(); setAuthState("idle"); setAuthError(String(err)) }
+        } finally { polling = false }
       }, 2000)
-    } catch (err) {
-      setAuthError(String(err))
-    }
+    } catch (err) { if (authIsCurrent(request)) setAuthError(String(err)) }
   }
 
-  const connectToServer = async (resource: PlexResource, authToken: string) => {
+  const connectToServer = async (resource: PlexResource, authToken: string, request = authGeneration.current) => {
+    if (!authIsCurrent(request)) return
     // For shared servers, plex.tv returns a per-resource accessToken that
     // differs from the user's main token. We must use it for all server calls.
     const effectiveToken = resource.access_token ?? authToken
@@ -210,6 +210,7 @@ export function PlexSettings() {
         }
       })
     )
+    if (!authIsCurrent(request)) return
     const successful = results
       .filter((r): r is PromiseFulfilledResult<Candidate & { latency: number }> => r.status === "fulfilled")
       .map(r => r.value)
@@ -228,11 +229,11 @@ export function PlexSettings() {
 
     try {
       await connect(successful[0].url, effectiveToken, successful.map(c => c.url), undefined, undefined, resource.client_identifier)
-      afterConnect()
+      if (authIsCurrent(request)) afterConnect()
     } catch (err) {
-      setAuthError(String(err))
+      if (authIsCurrent(request)) setAuthError(String(err))
     } finally {
-      setConnectingServer(null)
+      if (authIsCurrent(request)) setConnectingServer(null)
     }
   }
 
@@ -240,45 +241,56 @@ export function PlexSettings() {
 
   const handleManualSave = async (e: React.FormEvent) => {
     e.preventDefault()
+    stopPolling()
+    const request = authGeneration.current
     clearError()
     try {
       await connect(url.trim(), token.trim(), undefined, undefined, /^https:\/\//i.test(url.trim()) && allowInvalidCertificate)
-      afterConnect()
+      if (authIsCurrent(request)) afterConnect()
     } catch { /* Connection store displays the error. */ }
   }
 
   const handleDisconnect = async () => {
+    stopPolling()
+    const request = authGeneration.current
     setIsDisconnecting(true)
-    await disconnectAndClear()
-    setUrl("")
-    setToken("")
-    setIsDisconnecting(false)
+    try {
+      await disconnectAndClear()
+      if (authIsCurrent(request)) { setUrl(""); setToken(""); setPendingToken(""); setResources([]) }
+    } catch (err) { if (authIsCurrent(request)) setAuthError(String(err)) }
+    finally { if (authIsCurrent(request)) setIsDisconnecting(false) }
   }
 
   const handleOpenLibrarySwitcher = async () => {
+    stopPolling()
+    const request = authGeneration.current
     try {
       const sections = await getLibrarySections()
+      if (!authIsCurrent(request)) return
       const musicSections = sections.filter(s => s.section_type === "artist")
       if (musicSections.length <= 1) return
       setSwitcherSections(musicSections)
       setShowLibrarySwitcher(true)
     } catch (err) {
-      console.error("Failed to fetch library sections:", err)
+      if (authIsCurrent(request)) setAuthError(String(err))
     }
   }
 
   const handleSwitchLibrary = async (section: LibrarySection) => {
+    stopPolling()
+    const request = authGeneration.current
     setIsSwitching(true)
     try {
       await switchLibrary(section)
+      if (!authIsCurrent(request)) return
       setShowLibrarySwitcher(false)
       void fetchPlaylists()
       void fetchRecentlyAdded(50)
       void fetchHubs()
     } catch (err) {
-      console.error("Failed to switch library:", err)
+      if (authIsCurrent(request)) setAuthError(String(err))
     } finally {
-      setIsSwitching(false)
+      if (authIsCurrent(request)) setIsSwitching(false)
     }
   }
 
@@ -402,7 +414,7 @@ export function PlexSettings() {
             </div>
           )}
           <button
-            onClick={() => { setAuthState("idle"); setAuthError(null); useConnectionStore.getState().disconnect() }}
+            onClick={() => { stopPolling(); setPendingToken(""); setResources([]); setAuthState("idle"); setAuthError(null); useConnectionStore.getState().disconnect() }}
             disabled={isLoading}
             className="w-full rounded-full border border-white/20 py-2.5 text-sm font-semibold text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
@@ -474,7 +486,7 @@ export function PlexSettings() {
                     </div>
                     {isConnectingThis && (
                       <p className="mt-1 text-xs text-[#e5a00d]/80">
-                        Testing {r.connections.length + localConns.length} URLs...
+                        Testing {r.connections.length} URLs...
                       </p>
                     )}
                   </button>
@@ -488,7 +500,7 @@ export function PlexSettings() {
             </div>
           )}
           <button
-            onClick={() => { setAuthState("idle"); setAuthError(null) }}
+            onClick={() => { stopPolling(); setPendingToken(""); setResources([]); setAuthState("idle"); setAuthError(null) }}
             disabled={connectingServer !== null}
             className="w-full rounded-full border border-white/20 py-2.5 text-sm font-semibold text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >

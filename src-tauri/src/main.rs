@@ -318,6 +318,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Connection
             commands::connect_plex,
+            commands::disconnect_plex,
             // Library
             commands::get_library_sections,
             commands::search_library,

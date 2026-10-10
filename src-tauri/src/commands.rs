@@ -28,18 +28,65 @@ impl PlexState {
         PlexState(Mutex::new(None), AtomicU64::new(0))
     }
 
-    async fn begin_connection(&self) -> u64 {
-        let revision = self.1.fetch_add(1, Ordering::SeqCst) + 1;
+    async fn reset(&self, clear_config: Option<&std::path::Path>) -> Result<u64, String> {
         let mut client = self.0.lock().await;
-        if self.is_current(revision) { *client = None; }
-        revision
+        let revision = self.1.fetch_add(1, Ordering::SeqCst) + 1;
+        *client = None;
+        if let Some(directory) = clear_config {
+            crate::plex::update_settings(directory, |settings| {
+                settings.base_url.clear();
+                settings.token.clear();
+                settings.all_urls.clear();
+                settings.machine_identifier.clear();
+                settings.section_id = 0;
+                settings.section_uuid.clear();
+                settings.tls_exceptions.clear();
+                Ok(())
+            })
+            .map_err(|error| format!("{error:#}"))?;
+        }
+        Ok(revision)
     }
 
-    fn is_current(&self, revision: u64) -> bool { self.1.load(Ordering::SeqCst) == revision }
+    #[cfg(test)]
+    async fn begin_connection(&self) -> u64 {
+        self.reset(None).await.unwrap()
+    }
+
+    async fn persist(
+        &self,
+        revision: u64,
+        directory: &std::path::Path,
+        urls: Vec<String>,
+        section_id: Option<i64>,
+        section_uuid: Option<String>,
+    ) -> Result<(), String> {
+        let guard = self.0.lock().await;
+        if !self.is_current(revision) {
+            return Err("Plex connection was superseded".into());
+        }
+        let client = guard.as_ref().ok_or("Plex client not connected")?;
+        crate::plex::update_settings(directory, |settings| {
+            settings.base_url = client.base_url().to_string();
+            settings.token = client.token.clone();
+            settings.machine_identifier = client.machine_identifier.clone();
+            settings.all_urls = urls;
+            settings.section_id = section_id.unwrap_or(0);
+            settings.section_uuid = section_uuid.unwrap_or_default();
+            Ok(())
+        })
+        .map_err(|error| format!("{error:#}"))
+    }
+
+    fn is_current(&self, revision: u64) -> bool {
+        self.1.load(Ordering::SeqCst) == revision
+    }
 
     async fn publish(&self, revision: u64, client: PlexClient) -> Result<(), String> {
         let mut current = self.0.lock().await;
-        if !self.is_current(revision) { return Err("Plex connection was superseded".into()); }
+        if !self.is_current(revision) {
+            return Err("Plex connection was superseded".into());
+        }
         *current = Some(client);
         Ok(())
     }
@@ -60,6 +107,31 @@ macro_rules! client {
 // Connection
 // ---------------------------------------------------------------------------
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlexConnectionInfo {
+    machine_identifier: String,
+    sections: Vec<LibrarySection>,
+}
+
+/// Revoke the native connection before asynchronous work begins. Logout also
+/// removes only the saved Plex connection, preserving unrelated integrations.
+#[tauri::command]
+pub async fn disconnect_plex(
+    clear_saved: bool,
+    state: State<'_, PlexState>,
+    app: tauri::AppHandle,
+) -> Result<u64, String> {
+    use tauri::Manager;
+    let directory = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("{error:#}"))?;
+    state
+        .reset(clear_saved.then_some(directory.as_path()))
+        .await
+}
+
 /// Connect to a Plex Media Server.
 ///
 /// Must be called before any other command. The connection is held in state
@@ -70,22 +142,34 @@ pub async fn connect_plex(
     token: String,
     accept_invalid_certs: Option<bool>,
     expected_machine_identifier: Option<String>,
+    connection_revision: u64,
     state: State<'_, PlexState>,
     app: tauri::AppHandle,
-) -> Result<(), String> {
+) -> Result<PlexConnectionInfo, String> {
     use tauri::Manager;
-    let revision = state.begin_connection().await;
+    let revision = connection_revision;
     // Load the stable per-installation client_id so Plex can track this
     // client's sessions (required as X-Plex-Client-Identifier header for /:/timeline).
-    let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("{:#}", e))?;
     let allow_invalid = {
         // Serialize preference changes with connection ownership, too.
         let _guard = state.0.lock().await;
-        if !state.is_current(revision) { return Err("Plex connection was superseded".into()); }
-        crate::plex::tls::preference(&config_dir, &base_url, accept_invalid_certs).map_err(|e| format!("{:#}", e))?
+        if !state.is_current(revision) {
+            return Err("Plex connection was superseded".into());
+        }
+        crate::plex::tls::preference(&config_dir, &base_url, accept_invalid_certs)
+            .map_err(|e| format!("{:#}", e))?
     };
-    let (_, identity) = crate::plex::tls::probe(&base_url, allow_invalid, expected_machine_identifier.as_deref())
-        .await.map_err(|e| format!("{:#}", e))?;
+    let (_, identity) = crate::plex::tls::probe(
+        &base_url,
+        allow_invalid,
+        expected_machine_identifier.as_deref(),
+    )
+    .await
+    .map_err(|e| format!("{:#}", e))?;
     let client_id =
         crate::plex::auth::ensure_client_id(&config_dir).map_err(|e| format!("{:#}", e))?;
     let config = PlexClientConfig {
@@ -96,11 +180,21 @@ pub async fn connect_plex(
         ..Default::default()
     };
     let mut client = PlexClient::new(config).map_err(|e| format!("{:#}", e))?;
-    if !state.is_current(revision) { return Err("Plex connection was superseded".into()); }
+    if !state.is_current(revision) {
+        return Err("Plex connection was superseded".into());
+    }
     client.machine_identifier = identity.machine_identifier;
     // Do not publish a client with rejected credentials.
-    client.get_all_sections().await.map_err(|_| "Plex authentication or library access failed".to_string())?;
-    state.publish(revision, client).await
+    let sections = client
+        .get_all_sections()
+        .await
+        .map_err(|_| "Plex authentication or library access failed".to_string())?;
+    let machine_identifier = client.machine_identifier.clone();
+    state.publish(revision, client).await?;
+    Ok(PlexConnectionInfo {
+        machine_identifier,
+        sections,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -910,37 +1004,34 @@ pub async fn load_settings(app: tauri::AppHandle) -> Result<serde_json::Value, S
     crate::plex::load_settings(&config_dir).map(|settings| settings.public_view()).map_err(|e| format!("{:#}", e))
 }
 
-/// Persist connection settings to disk.
+/// Persist the verified current connection, rejecting retired ownership revisions.
 ///
-/// Loads existing settings first to preserve `client_id` across saves.
+/// Reads the native client rather than trusting frontend credentials.
 /// `all_urls` stores every known connection URL for the server (local, remote,
 /// relay) so the app can fall back if the primary URL becomes unreachable.
 #[tauri::command]
 pub async fn save_settings(
-    base_url: String,
-    token: String,
-    all_urls: Option<Vec<String>>,
+    connection_revision: u64,
+    all_urls: Vec<String>,
     section_id: Option<i64>,
     section_uuid: Option<String>,
+    state: State<'_, PlexState>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     use tauri::Manager;
-    let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
-    crate::plex::update_settings(&config_dir, |settings| {
-        settings.base_url = base_url;
-        settings.token = token;
-        if let Some(urls) = all_urls {
-            settings.all_urls = urls;
-        }
-        if let Some(id) = section_id {
-            settings.section_id = id;
-        }
-        if let Some(uuid) = section_uuid {
-            settings.section_uuid = uuid;
-        }
-        Ok(())
-    })
-    .map_err(|e| format!("{:#}", e))
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("{:#}", e))?;
+    state
+        .persist(
+            connection_revision,
+            &config_dir,
+            all_urls,
+            section_id,
+            section_uuid,
+        )
+        .await
 }
 
 /// Quickly probe a Plex server URL to check reachability and measure latency.
@@ -2135,20 +2226,149 @@ mod connection_tests {
     use super::*;
 
     #[tokio::test]
+    async fn retired_connections_cannot_persist_credentials_after_logout_or_replacement() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = PlexState::new();
+        let old = state.begin_connection().await;
+        let make_client = |base: &str, token: &str, id: &str| {
+            let mut client = PlexClient::new(PlexClientConfig {
+                base_url: base.into(),
+                token: token.into(),
+                ..Default::default()
+            })
+            .unwrap();
+            client.machine_identifier = id.into();
+            client
+        };
+        state
+            .publish(
+                old,
+                make_client("https://old.test", "dummy-old", "old-server"),
+            )
+            .await
+            .unwrap();
+        state
+            .persist(
+                old,
+                directory.path(),
+                vec!["https://old.test".into()],
+                Some(8),
+                Some("old-library".into()),
+            )
+            .await
+            .unwrap();
+        let current = state.begin_connection().await;
+        state
+            .publish(
+                current,
+                make_client("https://new.test", "dummy-new", "new-server"),
+            )
+            .await
+            .unwrap();
+        state
+            .persist(
+                current,
+                directory.path(),
+                vec!["https://new.test".into()],
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(state
+            .persist(old, directory.path(), vec![], Some(8), None)
+            .await
+            .is_err());
+        let saved = crate::plex::load_settings(directory.path()).unwrap();
+        assert_eq!(saved.base_url, "https://new.test");
+        assert_eq!(saved.token, "dummy-new");
+        assert_eq!(saved.machine_identifier, "new-server");
+        assert_eq!(saved.section_id, 0);
+        assert!(saved.section_uuid.is_empty());
+        state.reset(Some(directory.path())).await.unwrap();
+        assert!(state
+            .persist(current, directory.path(), vec![], None, None)
+            .await
+            .is_err());
+        assert!(state
+            .publish(
+                current,
+                make_client("https://new.test", "dummy-new", "new-server")
+            )
+            .await
+            .is_err());
+        assert!(state.0.lock().await.is_none());
+        assert!(crate::plex::load_settings(directory.path())
+            .unwrap()
+            .token
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn logout_clears_connection_identity_candidates_and_trust_but_preserves_other_settings() {
+        let directory = tempfile::tempdir().unwrap();
+        crate::plex::update_settings(directory.path(), |settings| {
+            settings.base_url = "https://old.test".into();
+            settings.token = "dummy-token".into();
+            settings.all_urls = vec!["https://old.test".into()];
+            settings.machine_identifier = "old-server".into();
+            settings.section_id = 8;
+            settings.section_uuid = "library".into();
+            settings.tls_exceptions = vec!["https://old.test".into()];
+            settings.client_id = "installation-id".into();
+            settings.lastfm_session_key = "dummy-lastfm".into();
+            settings.lastfm_enabled = true;
+            settings
+                .extra
+                .insert("future_setting".into(), serde_json::json!(42));
+            Ok(())
+        })
+        .unwrap();
+        let state = PlexState::new();
+        state.reset(Some(directory.path())).await.unwrap();
+        let saved = crate::plex::load_settings(directory.path()).unwrap();
+        assert!(saved.base_url.is_empty() && saved.token.is_empty() && saved.all_urls.is_empty());
+        assert!(
+            saved.machine_identifier.is_empty()
+                && saved.section_uuid.is_empty()
+                && saved.tls_exceptions.is_empty()
+        );
+        assert_eq!(saved.section_id, 0);
+        assert_eq!(saved.client_id, "installation-id");
+        assert_eq!(saved.lastfm_session_key, "dummy-lastfm");
+        assert!(saved.lastfm_enabled);
+        assert_eq!(saved.extra["future_setting"], 42);
+    }
+
+    #[tokio::test]
     async fn retired_connection_attempts_cannot_restore_an_old_client() {
         let state = PlexState::new();
         let old = state.begin_connection().await;
         let current = state.begin_connection().await;
-        let client = |token: &str| PlexClient::new(PlexClientConfig {
-            base_url: "https://example.test".into(), token: token.into(), ..Default::default()
-        }).unwrap();
-        state.publish(current, client("dummy-current")).await.unwrap();
+        let client = |token: &str| {
+            PlexClient::new(PlexClientConfig {
+                base_url: "https://example.test".into(),
+                token: token.into(),
+                ..Default::default()
+            })
+            .unwrap()
+        };
+        state
+            .publish(current, client("dummy-current"))
+            .await
+            .unwrap();
         assert!(state.publish(old, client("dummy-retired")).await.is_err());
-        assert_eq!(state.0.lock().await.as_ref().unwrap().token, "dummy-current");
+        assert_eq!(
+            state.0.lock().await.as_ref().unwrap().token,
+            "dummy-current"
+        );
         let failed_replacement = state.begin_connection().await;
         assert!(state.0.lock().await.is_none());
         assert!(state.is_current(failed_replacement));
         assert!(!state.is_current(current));
-        assert!(state.publish(current, client("dummy-retired")).await.is_err());
+        assert!(state
+            .publish(current, client("dummy-retired"))
+            .await
+            .is_err());
     }
 }

@@ -60,6 +60,11 @@ export class PlexWebSocketManager {
   private _refreshInFlight = false
   private _lastProgressUpdate = 0
 
+  constructor(
+    private readonly getStore = () => useLibraryStore.getState(),
+    private readonly createSocket = (url: string) => new WebSocket(url),
+  ) {}
+
   get isConnected() {
     return this._connected
   }
@@ -77,9 +82,10 @@ export class PlexWebSocketManager {
     this.intentionalClose = true
     this.clearTimers()
     if (this.ws) {
-      this.ws.close()
-      this.ws = null
+      this.retireSocket()
     }
+    this.baseUrl = ""
+    this.token = ""
     this._isScanning = false
     this.setConnected(false)
     this.setScanning(false)
@@ -89,23 +95,29 @@ export class PlexWebSocketManager {
 
   private openSocket() {
     if (this.ws) {
-      this.ws.close()
-      this.ws = null
+      this.retireSocket()
     }
 
-    const proto = this.baseUrl.startsWith("https") ? "wss" : "ws"
-    const host = this.baseUrl.replace(/^https?:\/\//, "")
-    const url = `${proto}://${host}/:/websockets/notifications?X-Plex-Token=${this.token}`
-
-    const ws = new WebSocket(url)
+    const endpoint = new URL(this.baseUrl)
+    endpoint.protocol = endpoint.protocol === "https:" ? "wss:" : "ws:"
+    endpoint.pathname = `${endpoint.pathname.replace(/\/+$/, "")}/:/websockets/notifications`
+    endpoint.search = ""
+    endpoint.searchParams.set("X-Plex-Token", this.token)
+    let ws: WebSocket
+    try { ws = this.createSocket(endpoint.toString()) }
+    catch { this.setConnected(false); this.scheduleReconnect(); return }
+    this.ws = ws
+    const active = () => !this.intentionalClose && this.ws === ws
 
     ws.onopen = () => {
+      if (!active()) return
       this.reconnectAttempts = 0
       this.setConnected(true)
       console.log("[PlexWS] Connected")
     }
 
     ws.onmessage = (event) => {
+      if (!active()) return
       try {
         const data = JSON.parse(event.data as string) as NotificationContainer
         this.handleMessage(data)
@@ -115,6 +127,8 @@ export class PlexWebSocketManager {
     }
 
     ws.onclose = () => {
+      if (!active()) return
+      this.ws = null
       this.setConnected(false)
       if (!this.intentionalClose) {
         this.scheduleReconnect()
@@ -125,7 +139,12 @@ export class PlexWebSocketManager {
       // onclose will fire after onerror, which handles reconnection
     }
 
-    this.ws = ws
+  }
+
+  private retireSocket() {
+    const socket = this.ws
+    this.ws = null
+    if (socket) { socket.onopen = null; socket.onmessage = null; socket.onclose = null; socket.onerror = null; socket.close() }
   }
 
   private handleMessage(data: NotificationContainer) {
@@ -209,12 +228,12 @@ export class PlexWebSocketManager {
     this._refreshInFlight = true
     this._lastRefreshAt = Date.now()
 
-    const store = useLibraryStore.getState()
+    const store = this.getStore()
     // Only invalidate TTL timestamps — do NOT nuke playlist/mix caches
     store.invalidateLibraryTTLs()
 
     console.log("[PlexWS] Refreshing library data")
-    void store.refreshAll().finally(() => {
+    void store.refreshAll().catch(() => {}).finally(() => {
       this._refreshInFlight = false
     })
   }
@@ -229,7 +248,7 @@ export class PlexWebSocketManager {
     console.log(`[PlexWS] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`)
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
-      this.openSocket()
+      if (!this.intentionalClose) this.openSocket()
     }, delay)
   }
 
@@ -246,10 +265,10 @@ export class PlexWebSocketManager {
 
   private setConnected(connected: boolean) {
     this._connected = connected
-    useLibraryStore.getState().setWsConnected(connected)
+    this.getStore().setWsConnected(connected)
   }
 
   private setScanning(scanning: boolean, progress?: number) {
-    useLibraryStore.getState().setLibraryScanning(scanning, progress ?? null)
+    this.getStore().setLibraryScanning(scanning, progress ?? null)
   }
 }

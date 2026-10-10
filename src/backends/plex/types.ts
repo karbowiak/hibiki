@@ -323,6 +323,7 @@ export interface PlexSettings {
   /** All known connection URLs ordered best-first; used as fallbacks. */
   all_urls: string[]
   tls_exceptions: string[]
+  machine_identifier: string
   /** Selected music library section ID. 0 = not yet selected. */
   section_id: number
   /** Selected music library section UUID. Empty = not yet selected. */

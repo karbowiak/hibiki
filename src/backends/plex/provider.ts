@@ -106,6 +106,10 @@ export class PlexProvider implements MusicProvider {
     this._connected = false
     this._sectionId = null
     this._sectionUuid = null
+    this._baseUrl = ""
+    this._token = ""
+    this._machineIdentifier = ""
+    this.rebuildImg()
   }
 
   isConnected(): boolean {

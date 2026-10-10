@@ -34,8 +34,15 @@ import type {
 // ---------------------------------------------------------------------------
 
 /** Connect to a Plex Media Server. Must be called before all other functions. */
-export function connectPlex(baseUrl: string, token: string, acceptInvalidCerts?: boolean, expectedMachineIdentifier?: string): Promise<void> {
-  return invoke("connect_plex", { baseUrl, token, acceptInvalidCerts: acceptInvalidCerts ?? null, expectedMachineIdentifier: expectedMachineIdentifier ?? null })
+export interface PlexConnectionInfo { machineIdentifier: string; sections: LibrarySection[] }
+
+export function connectPlex(baseUrl: string, token: string, connectionRevision: number, acceptInvalidCerts?: boolean, expectedMachineIdentifier?: string): Promise<PlexConnectionInfo> {
+  return invoke("connect_plex", { baseUrl, token, connectionRevision, acceptInvalidCerts: acceptInvalidCerts ?? null, expectedMachineIdentifier: expectedMachineIdentifier ?? null })
+}
+
+/** Revoke the client and return an ownership revision for the next connection. */
+export function disconnectPlex(clearSaved: boolean): Promise<number> {
+  return invoke("disconnect_plex", { clearSaved })
 }
 
 // ---------------------------------------------------------------------------
@@ -550,8 +557,8 @@ export function loadSettings(): Promise<PlexSettings> {
 }
 
 /** Persist connection settings to disk. `allUrls` stores every known URL for fallback. */
-export function saveSettings(baseUrl: string, token: string, allUrls?: string[], sectionId?: number, sectionUuid?: string): Promise<void> {
-  return invoke("save_settings", { baseUrl, token, allUrls: allUrls ?? null, sectionId: sectionId ?? null, sectionUuid: sectionUuid ?? null })
+export function saveSettings(connectionRevision: number, allUrls: string[], sectionId?: number, sectionUuid?: string): Promise<void> {
+  return invoke("save_settings", { connectionRevision, allUrls, sectionId: sectionId ?? null, sectionUuid: sectionUuid ?? null })
 }
 
 /**

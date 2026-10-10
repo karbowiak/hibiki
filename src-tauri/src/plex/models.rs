@@ -1240,6 +1240,10 @@ pub struct PlexSettings {
     #[serde(default)]
     pub all_urls: Vec<String>,
 
+    /// Verified server identity used before sending credentials to fallback URLs.
+    #[serde(default)]
+    pub machine_identifier: String,
+
     /// HTTPS origins whose certificates the user explicitly chose not to verify.
     #[serde(default)]
     pub tls_exceptions: Vec<String>,
@@ -1364,7 +1368,7 @@ impl PlexSettings {
         serde_json::json!({
             "base_url": self.base_url, "token": self.token,
             "client_id": self.client_id, "all_urls": self.all_urls,
-            "tls_exceptions": self.tls_exceptions,
+            "tls_exceptions": self.tls_exceptions, "machine_identifier": self.machine_identifier,
             "section_id": self.section_id, "section_uuid": self.section_uuid,
             "lastfm_api_key": self.lastfm_api_key,
             "has_lastfm_session": !self.lastfm_session_key.is_empty(),
