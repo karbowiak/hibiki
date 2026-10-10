@@ -77,10 +77,10 @@ ebur128 = "0.1"
 # FFT for visualizer frequency analysis
 realfft = "3.5"
 rubato = "5"
+tempfile = "3"
 
 [dev-dependencies]
 tokio-test = "0.4"
-tempfile = "3"
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem

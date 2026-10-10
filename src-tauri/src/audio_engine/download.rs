@@ -22,7 +22,7 @@ fn content_range(value: &str) -> Option<(u64, u64, u64)> {
 pub async fn download(
     make_request: impl Fn() -> RequestBuilder,
     mut set_length: impl FnMut(u64),
-    mut consume: impl FnMut(&[u8]),
+    mut consume: impl FnMut(&[u8]) -> Result<(), String>,
 ) -> Result<(), String> {
     let mut offset = 0u64;
     let mut total = None;
@@ -148,7 +148,7 @@ pub async fn download(
                 if total.is_some_and(|size| offset > size) {
                     return Err("media exceeded its total length".into());
                 }
-                consume(fresh);
+                consume(fresh)?;
                 if fresh.len() >= OVERLAP_BYTES {
                     tail.clear();
                     tail.extend_from_slice(&fresh[fresh.len() - OVERLAP_BYTES..]);
@@ -277,7 +277,10 @@ mod tests {
             download(
                 || client.get(&url),
                 |_| {},
-                |chunk| received.extend_from_slice(chunk),
+                |chunk| {
+                    received.extend_from_slice(chunk);
+                    Ok(())
+                },
             ),
         )
         .await

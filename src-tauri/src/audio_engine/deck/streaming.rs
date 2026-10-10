@@ -1,11 +1,11 @@
 //! Streaming audio source — bridges async HTTP download with sync symphonia Read.
 //!
-//! The async downloader appends chunks to a shared buffer. The sync reader
-//! blocks until the requested bytes are available. Since we keep all bytes,
+//! The async downloader appends chunks to an anonymous temporary file. The sync reader
+//! blocks until the requested bytes are available. Since we keep all bytes on disk,
 //! seeking within the already-downloaded region works instantly. Seeking beyond
 //! the downloaded region blocks until enough data arrives.
 
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
@@ -13,7 +13,8 @@ use symphonia::core::io::MediaSource;
 
 /// Shared state between the async downloader and the sync reader.
 struct Inner {
-    data: Vec<u8>,
+    file: std::fs::File,
+    downloaded_len: u64,
     done: bool,
     /// True when the download was aborted due to an error (not a clean finish).
     /// The reader returns `ConnectionAborted` instead of normal EOF so the
@@ -26,41 +27,53 @@ struct Inner {
 /// Thread-safe shared buffer. The downloader writes to it, the decoder reads from it.
 ///
 /// When the reader side (StreamingReader) is dropped (e.g. track skipped),
-/// the `abandoned` flag is set. Subsequent `push()` calls skip the in-memory
+/// the `abandoned` flag is set. Subsequent `push()` calls skip the temporary file
 /// accumulation — the download task should keep writing to disk (cache) only.
 pub struct SharedBuffer {
     inner: Mutex<Inner>,
     condvar: Condvar,
     /// Set to `true` when the StreamingReader is dropped. `push()` skips
-    /// in-memory accumulation but the download task can continue for caching.
+    /// temporary-file accumulation but the download task can continue for caching.
     abandoned: AtomicBool,
 }
 
 impl SharedBuffer {
-    pub fn new(content_length: Option<u64>) -> Arc<Self> {
-        let capacity = content_length.unwrap_or(64 * 1024).min(1024 * 1024) as usize;
-        Arc::new(Self {
+    pub fn new(content_length: Option<u64>) -> io::Result<Arc<Self>> {
+        let file = tempfile::tempfile()?;
+        Ok(Arc::new(Self {
             inner: Mutex::new(Inner {
-                data: Vec::with_capacity(capacity),
+                file,
+                downloaded_len: 0,
                 done: false,
                 aborted: false,
                 content_length,
             }),
             condvar: Condvar::new(),
             abandoned: AtomicBool::new(false),
-        })
+        }))
     }
 
     /// Append a chunk of bytes (called by the async downloader).
-    /// If the reader has been dropped (abandoned), skips the in-memory
-    /// accumulation to avoid wasting memory on a skipped track.
-    pub fn push(&self, chunk: &[u8]) {
+    /// If the reader has been dropped (abandoned), skips the temporary-file
+    /// accumulation to avoid wasting disk space on a skipped track.
+    pub fn push(&self, chunk: &[u8]) -> io::Result<()> {
         if self.abandoned.load(Ordering::Relaxed) {
-            return;
+            return Ok(());
         }
         let mut inner = self.inner.lock().unwrap();
-        inner.data.extend_from_slice(chunk);
+        let write = inner
+            .file
+            .seek(SeekFrom::End(0))
+            .and_then(|_| inner.file.write_all(chunk));
+        if let Err(error) = write {
+            inner.aborted = true;
+            inner.done = true;
+            self.condvar.notify_all();
+            return Err(error);
+        }
+        inner.downloaded_len += chunk.len() as u64;
         self.condvar.notify_all();
+        Ok(())
     }
 
     /// Signal that the download is complete.
@@ -111,16 +124,17 @@ impl StreamingReader {
 
 impl Read for StreamingReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
         loop {
-            let inner = self.buffer.inner.lock().unwrap();
-            let available = inner.data.len() as u64;
+            let mut inner = self.buffer.inner.lock().unwrap();
+            let available = inner.downloaded_len;
 
             if self.pos < available {
-                // Data available — copy what we can
-                let start = self.pos as usize;
-                let end = (start + buf.len()).min(inner.data.len());
-                let n = end - start;
-                buf[..n].copy_from_slice(&inner.data[start..end]);
+                let len = (available - self.pos).min(buf.len() as u64) as usize;
+                inner.file.seek(SeekFrom::Start(self.pos))?;
+                let n = inner.file.read(&mut buf[..len])?;
                 drop(inner);
                 self.pos += n as u64;
                 return Ok(n);
@@ -143,7 +157,7 @@ impl Read for StreamingReader {
             let _inner = self
                 .buffer
                 .condvar
-                .wait_while(inner, |i| (i.data.len() as u64) <= self.pos && !i.done)
+                .wait_while(inner, |i| i.downloaded_len <= self.pos && !i.done)
                 .unwrap();
         }
     }
@@ -151,21 +165,36 @@ impl Read for StreamingReader {
 
 impl Seek for StreamingReader {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        let inner = self.buffer.inner.lock().unwrap();
-        let len = inner.data.len() as u64;
+        let mut inner = self.buffer.inner.lock().unwrap();
+        if matches!(pos, SeekFrom::End(_)) && inner.content_length.is_none() {
+            // The current downloaded prefix is not the end of a chunked HTTP
+            // response. Containers that need the tail must wait for real EOF.
+            inner = self
+                .buffer
+                .condvar
+                .wait_while(inner, |state| !state.done)
+                .unwrap();
+            if inner.aborted {
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionAborted,
+                    "stream download aborted",
+                ));
+            }
+        }
+        let len = inner.downloaded_len;
         let content_len = inner.content_length.unwrap_or(len);
         drop(inner);
 
         let new_pos = match pos {
-            SeekFrom::Start(p) => p as i64,
-            SeekFrom::Current(offset) => self.pos as i64 + offset,
-            SeekFrom::End(offset) => content_len as i64 + offset,
+            SeekFrom::Start(p) => p as i128,
+            SeekFrom::Current(offset) => self.pos as i128 + offset as i128,
+            SeekFrom::End(offset) => content_len as i128 + offset as i128,
         };
 
-        if new_pos < 0 {
+        if new_pos < 0 || new_pos > u64::MAX as i128 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "seek to negative position",
+                "audio byte seek is out of range",
             ));
         }
 
@@ -176,7 +205,7 @@ impl Seek for StreamingReader {
 
 impl Drop for StreamingReader {
     fn drop(&mut self) {
-        // Signal that the reader is done — push() will skip memory accumulation.
+        // Signal that the reader is done — push() will skip file accumulation.
         // The download task can continue for caching purposes.
         self.buffer.abandoned.store(true, Ordering::Relaxed);
         // Wake any blocked push() or finish() waiting on the condvar
@@ -192,7 +221,10 @@ impl MediaSource for StreamingReader {
     }
 
     fn byte_len(&self) -> Option<u64> {
-        self.buffer.inner.lock().unwrap().content_length
+        let inner = self.buffer.inner.lock().unwrap();
+        inner
+            .content_length
+            .or_else(|| inner.done.then_some(inner.downloaded_len))
     }
 }
 
@@ -201,16 +233,92 @@ mod tests {
     use super::*;
 
     #[test]
+    fn seeking_the_end_of_a_chunked_response_waits_for_the_real_tail() {
+        let buf = SharedBuffer::new(None).unwrap();
+        buf.push(b"prefix").unwrap();
+        let source = buf.clone();
+        let reader = std::thread::spawn(move || {
+            let mut reader = StreamingReader::new(source);
+            reader.seek(SeekFrom::End(-4)).unwrap();
+            let mut tail = [0; 4];
+            reader.read_exact(&mut tail).unwrap();
+            (tail, reader.byte_len())
+        });
+        buf.push(b"tail").unwrap();
+        buf.finish();
+        assert_eq!(reader.join().unwrap(), (*b"tail", Some(10)));
+    }
+
+    #[test]
+    fn large_downloads_are_disk_backed_and_reader_seeks_do_not_change_append_positions() {
+        let buf = SharedBuffer::new(None).unwrap();
+        let mut reader = StreamingReader::new(buf.clone());
+        let chunk = [7u8; 65536];
+        for _ in 0..128 {
+            buf.push(&chunk).unwrap();
+        }
+        assert_eq!(
+            buf.inner.lock().unwrap().file.metadata().unwrap().len(),
+            8 * 1024 * 1024
+        );
+        reader.seek(SeekFrom::Start(100)).unwrap();
+        reader.read_exact(&mut [0; 1]).unwrap();
+        buf.push(b"tail").unwrap();
+        buf.finish();
+        reader.seek(SeekFrom::End(-4)).unwrap();
+        let mut tail = [0; 4];
+        reader.read_exact(&mut tail).unwrap();
+        assert_eq!(&tail, b"tail");
+        reader.seek(SeekFrom::Start(0)).unwrap();
+        reader.read_exact(&mut tail).unwrap();
+        assert_eq!(tail, [7; 4]);
+        drop(reader);
+        buf.push(b"abandoned").unwrap();
+        assert_eq!(
+            buf.inner.lock().unwrap().downloaded_len,
+            8 * 1024 * 1024 + 4
+        );
+    }
+
+    #[test]
+    fn spool_io_failure_aborts_and_wakes_the_decoder() {
+        let fixture = tempfile::NamedTempFile::new().unwrap();
+        let buf = SharedBuffer::new(None).unwrap();
+        // A genuinely unwritable file exercises the actual I/O error path.
+        buf.inner.lock().unwrap().file = std::fs::File::open(fixture.path()).unwrap();
+        let source = buf.clone();
+        let reader = std::thread::spawn(move || {
+            StreamingReader::new(source)
+                .read(&mut [0; 1])
+                .unwrap_err()
+                .kind()
+        });
+        assert!(buf.push(b"audio").is_err());
+        assert!(buf.is_aborted());
+        assert_eq!(reader.join().unwrap(), io::ErrorKind::ConnectionAborted);
+    }
+
+    #[test]
+    fn empty_reads_do_not_block_and_overflowing_seeks_return_errors() {
+        let buf = SharedBuffer::new(Some(u64::MAX)).unwrap();
+        let mut reader = StreamingReader::new(buf);
+        assert_eq!(reader.read(&mut []).unwrap(), 0);
+        assert_eq!(reader.seek(SeekFrom::Start(u64::MAX)).unwrap(), u64::MAX);
+        assert!(reader.seek(SeekFrom::Current(1)).is_err());
+        assert!(reader.seek(SeekFrom::End(1)).is_err());
+    }
+
+    #[test]
     fn hostile_content_length_does_not_reserve_the_entire_response() {
-        let buf = SharedBuffer::new(Some(u64::MAX));
-        assert!(buf.inner.lock().unwrap().data.capacity() <= 1024 * 1024);
+        let buf = SharedBuffer::new(Some(u64::MAX)).unwrap();
+        assert_eq!(buf.inner.lock().unwrap().file.metadata().unwrap().len(), 0);
         buf.set_content_length(u64::MAX);
-        assert!(buf.inner.lock().unwrap().data.capacity() <= 1024 * 1024);
+        assert_eq!(buf.inner.lock().unwrap().file.metadata().unwrap().len(), 0);
     }
 
     #[test]
     fn cancelling_a_download_wakes_a_blocked_decoder() {
-        let buf = SharedBuffer::new(None);
+        let buf = SharedBuffer::new(None).unwrap();
         let source = buf.clone();
         let reader = std::thread::spawn(move || {
             StreamingReader::new(source)
@@ -224,9 +332,9 @@ mod tests {
 
     #[test]
     fn basic_write_read() {
-        let buf = SharedBuffer::new(None);
-        buf.push(b"hello");
-        buf.push(b" world");
+        let buf = SharedBuffer::new(None).unwrap();
+        buf.push(b"hello").unwrap();
+        buf.push(b" world").unwrap();
         buf.finish();
 
         let mut reader = StreamingReader::new(buf);
@@ -237,8 +345,8 @@ mod tests {
 
     #[test]
     fn seek_within_buffer() {
-        let buf = SharedBuffer::new(None);
-        buf.push(b"0123456789");
+        let buf = SharedBuffer::new(None).unwrap();
+        buf.push(b"0123456789").unwrap();
         buf.finish();
 
         let mut reader = StreamingReader::new(buf);
@@ -255,13 +363,13 @@ mod tests {
 
     #[test]
     fn concurrent_write_read() {
-        let buf = SharedBuffer::new(None);
+        let buf = SharedBuffer::new(None).unwrap();
         let buf_clone = buf.clone();
 
         let writer = std::thread::spawn(move || {
             for i in 0..10 {
                 std::thread::sleep(std::time::Duration::from_millis(5));
-                buf_clone.push(format!("{}", i).as_bytes());
+                buf_clone.push(format!("{}", i).as_bytes()).unwrap();
             }
             buf_clone.finish();
         });

@@ -1150,7 +1150,7 @@ fn fetch_and_decode_incremental(
             guard.as_ref().cloned()
         };
 
-        let shared = SharedBuffer::new(None);
+        let shared = SharedBuffer::new(None).map_err(|error| format!("Cannot create audio spool: {error}"))?;
         let shared_w = shared.clone();
         let shared_return = shared.clone();
 
@@ -1162,13 +1162,14 @@ fn fetch_and_decode_incremental(
                         .unwrap_or_else(|| crate::plex::client::public_media_request(&url_owned)),
                     |length| shared_w.set_content_length(length),
                     |chunk| {
-                        shared_w.push(chunk);
+                        shared_w.push(chunk).map_err(|error| format!("Audio spool write failed: {error}"))?;
                         if let Some(ref mut cache_writer) = writer {
                             if let Err(error) = cache_writer.write_chunk(chunk) {
                                 tracing::warn!(%error, "audio cache write failed; continuing playback");
                                 if let Some(writer) = writer.take() { writer.abort(); }
                             }
                         }
+                        Ok(())
                     },
                 ).await;
                 if let Err(error) = result {

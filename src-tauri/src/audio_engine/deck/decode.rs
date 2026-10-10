@@ -417,9 +417,9 @@ pub(crate) mod tests {
     fn initial_playback_buffer_is_ready_before_the_full_track_has_arrived() {
         use super::super::streaming::{SharedBuffer, StreamingReader};
         let wav = generate_test_wav(44100, 2, 3.0);
-        let shared = SharedBuffer::new(Some(wav.len() as u64));
+        let shared = SharedBuffer::new(Some(wav.len() as u64)).unwrap();
         // Only half the three-second file has arrived; the body is still open.
-        shared.push(&wav[..44 + 44100 * 2 * 2 * 3 / 2]);
+        shared.push(&wav[..44 + 44100 * 2 * 2 * 3 / 2]).unwrap();
         let source = shared.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         let worker = std::thread::spawn(move || {
@@ -442,14 +442,14 @@ pub(crate) mod tests {
         let wav = generate_test_wav(44100, 2, 0.5);
         let total_len = wav.len();
 
-        let shared = SharedBuffer::new(Some(total_len as u64));
+        let shared = SharedBuffer::new(Some(total_len as u64)).unwrap();
 
         // Simulate chunked delivery
         let shared_w = shared.clone();
         let writer = std::thread::spawn(move || {
             for chunk in wav.chunks(4096) {
                 std::thread::sleep(std::time::Duration::from_millis(1));
-                shared_w.push(chunk);
+                shared_w.push(chunk).unwrap();
             }
             shared_w.finish();
         });
