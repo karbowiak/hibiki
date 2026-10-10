@@ -335,6 +335,95 @@ fn invalid_normalization_metadata_cannot_silence_a_track_or_break_its_crossfade_
 }
 
 #[test]
+fn recovering_a_device_retains_native_playback_identity_pause_seek_and_listening_time() {
+    use super::super::output::device_render::DeviceRenderer;
+    use super::super::output::owner::{CallbackOwner, OutputParams};
+    let mut renderer = DeviceRenderer::new(audible_callback());
+    let id = renderer.source.deck_mgr.active_deck().playback_id;
+    renderer
+        .configure(OutputParams {
+            sample_rate: 48000,
+            channels: 2,
+        })
+        .unwrap();
+    renderer.render(&mut [0.0; 9600]);
+    let before = renderer.source.deck_mgr.active_deck().played_frames;
+    let (returned, recovery) = crossbeam_channel::bounded(1);
+    let mut callback = CallbackOwner::new(renderer, returned);
+    callback.render(&mut [0.0; 9600]);
+    drop(callback);
+    let mut renderer = recovery.recv().unwrap();
+    assert_eq!(renderer.source.deck_mgr.active_deck().playback_id, id);
+    assert!(renderer.source.deck_mgr.active_deck().played_frames > before);
+    renderer.source.handle_command(AudioCommand::Pause);
+    renderer.source.poll_without_output();
+    let listened = renderer.source.deck_mgr.active_deck().played_frames;
+    let position = renderer.source.deck_mgr.active_deck().position;
+    for _ in 0..10 {
+        renderer.source.poll_without_output();
+    }
+    renderer
+        .configure(OutputParams {
+            sample_rate: 44100,
+            channels: 1,
+        })
+        .unwrap();
+    let mut paused = [1.0; 4410];
+    renderer.render(&mut paused);
+    assert!(paused.iter().all(|sample| *sample == 0.0));
+    assert_eq!(renderer.source.deck_mgr.active_deck().position, position);
+    assert_eq!(
+        renderer.source.deck_mgr.active_deck().played_frames,
+        listened
+    );
+    renderer
+        .source
+        .handle_command(AudioCommand::SeekInBuffer { position: 5000 });
+    renderer.source.poll_without_output();
+    assert_eq!(renderer.source.deck_mgr.active_deck().position_ms(), 5000);
+    assert_eq!(
+        renderer.source.deck_mgr.active_deck().played_frames,
+        listened
+    );
+    renderer
+        .configure(OutputParams {
+            sample_rate: 8000,
+            channels: 2,
+        })
+        .unwrap();
+    renderer.source.handle_command(AudioCommand::Resume);
+    let mut resumed = [0.0; 1600];
+    renderer.render(&mut resumed);
+    assert!(resumed.iter().any(|sample| sample.abs() > 0.01));
+    assert_eq!(renderer.source.deck_mgr.active_deck().playback_id, id);
+    assert!((5100..=5120).contains(&renderer.source.deck_mgr.active_deck().position_ms()));
+}
+
+#[test]
+fn reopening_an_audible_output_fades_in_without_restarting_the_playback_envelope() {
+    use super::super::output::device_render::DeviceRenderer;
+    use super::super::output::owner::OutputParams;
+    let mut renderer = DeviceRenderer::new(audible_callback());
+    let listened = renderer.source.deck_mgr.active_deck().played_frames;
+    renderer
+        .configure(OutputParams {
+            sample_rate: 48000,
+            channels: 2,
+        })
+        .unwrap();
+    let mut output = [0.0; FADE_SAMPLES * 2];
+    renderer.render(&mut output);
+    assert_eq!(output[0], 0.0);
+    assert!(output[FADE_SAMPLES..]
+        .iter()
+        .all(|sample| (*sample - 0.3).abs() < 1e-6));
+    assert_eq!(
+        renderer.source.deck_mgr.active_deck().played_frames,
+        listened + FADE_FRAMES as u64 * 2
+    );
+}
+
+#[test]
 fn paused_seeks_and_starved_pause_tails_do_not_play_delayed_audio() {
     let mut cb = audible_callback();
     cb.handle_command(AudioCommand::Pause);

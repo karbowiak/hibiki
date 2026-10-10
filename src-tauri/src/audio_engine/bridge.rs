@@ -248,6 +248,13 @@ pub async fn audio_get_sample_rate(state: State<'_, AudioEngineState>) -> Result
     state.0.sample_rate()
 }
 
+#[tauri::command]
+pub async fn audio_get_output_available(
+    state: State<'_, AudioEngineState>,
+) -> Result<bool, String> {
+    Ok(state.0.output_available())
+}
+
 // ---------------------------------------------------------------------------
 // Cache
 // ---------------------------------------------------------------------------

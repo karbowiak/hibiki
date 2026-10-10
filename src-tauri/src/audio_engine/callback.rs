@@ -46,6 +46,7 @@ pub struct SharedAtomics {
     pub duration_ms: Arc<AtomicU64>,
     pub active_rating_key: Arc<AtomicI64>,
     pub device_sample_rate: Arc<AtomicU32>,
+    pub output_available: Arc<AtomicBool>,
     /// Which physical deck is currently active (0 = A, 1 = B).
     /// Written by the audio callback on every swap, read by the control thread
     /// to determine which deck is pending for preloads.
@@ -79,6 +80,7 @@ impl SharedAtomics {
             duration_ms: Arc::new(AtomicU64::new(0)),
             active_rating_key: Arc::new(AtomicI64::new(0)),
             device_sample_rate: Arc::new(AtomicU32::new(44100)),
+            output_available: Arc::new(AtomicBool::new(false)),
             active_deck_id: Arc::new(AtomicU8::new(0)), // A = 0
 
             deck_a_generation: Arc::new(AtomicU64::new(0)),
@@ -274,6 +276,24 @@ impl AudioCallbackState {
 
         // 11. Send visualizer data (~60fps)
         self.maybe_send_vis_frame(data);
+    }
+
+    pub fn poll_without_output(&mut self) {
+        // A pause issued while the device is absent must not play a delayed tail.
+        self.drain_sample_batches();
+        self.process_commands();
+        if self.paused {
+            self.playback_envelope.silence();
+            if self.waiting_for_play && self.is_crossfading {
+                self.crossfade_remaining_frames = 0;
+                self.check_crossfade_complete(0);
+            }
+        }
+        self.check_decode_failure();
+        self.update_position_atomics();
+        self.atomics
+            .crossfading
+            .store(self.is_crossfading, Ordering::SeqCst);
     }
 
     fn mix_with_transitions(&mut self, data: &mut [f32]) -> usize {

@@ -273,6 +273,7 @@ export function Player() {
   // positionMs updates at ~4 Hz — isolate it as a primitive selector so only
   // the progress bar re-renders on each tick, not the entire Player subtree.
   const positionMs = usePlayerStore(s => s.positionMs)
+  const outputAvailable = useDeviceStore(s => s.outputAvailable)
 
   const {
     currentTrack,
@@ -385,15 +386,18 @@ export function Player() {
 
   // Initialize Web Audio engine event listeners on mount.
   useEffect(() => {
+    let active = true
     let cleanup: (() => void) | undefined
     hydrateSleepTimer()
     initAudioEvents().then((fn) => {
+      if (!active) { fn(); return }
       cleanup = fn
       syncToEngine()
       syncAudioSettings()
       useDeviceStore.getState().initDeviceTracking()
     })
     return () => {
+      active = false
       cleanup?.()
       useDeviceStore.getState().dispose()
     }
@@ -554,9 +558,9 @@ export function Player() {
       )}
 
       {/* Error toast — shown briefly when playRadio or other player actions fail */}
-      {playerError && (
-        <div className="absolute bottom-28 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-red-900/90 px-4 py-2 text-sm text-white shadow-xl backdrop-blur-sm max-w-md text-center">
-          {playerError}
+      {(playerError || (!outputAvailable && currentTrack && !isInternetRadioActive)) && (
+        <div role="status" className="absolute bottom-28 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-red-900/90 px-4 py-2 text-sm text-white shadow-xl backdrop-blur-sm max-w-md text-center">
+          {playerError || "Waiting for an audio output device…"}
         </div>
       )}
       {fullscreenOpen && <VisualizerFullscreen />}

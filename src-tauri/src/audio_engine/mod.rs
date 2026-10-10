@@ -39,9 +39,9 @@ use self::command::{AudioCommand, Command, ControlCommand, SampleBatch, SeekRequ
 use self::crossfade::types::{parse_ramp, CrossfadeSettings, TrackRamps};
 use self::deck::decode;
 use self::event::EngineEvent;
-use self::output::owner::{OutputParams, OutputThread};
+use self::output::owner::OutputThread;
 use self::output::resample::StreamingResampler;
-use self::output::CpalOutput;
+use self::output::CpalDriver;
 use self::request::PlaybackRequest;
 use self::types::{DeckId, EngineState, TrackMeta};
 use self::visualizer::VisualizerProcessor;
@@ -138,7 +138,7 @@ impl AudioEngine {
         let (vis_tx, vis_rx) = crossbeam_channel::bounded::<Vec<f32>>(16);
 
         // Create the callback state — it will be moved into the cpal closure
-        let cb_state = AudioCallbackState::new(
+        let mut cb_state = AudioCallbackState::new(
             audio_cmd_rx,
             deck_a_rx,
             deck_b_rx,
@@ -147,14 +147,18 @@ impl AudioEngine {
             atomics.clone(),
         );
 
-        // The owning thread creates and drops the non-Send device stream itself.
-        let output = OutputThread::start(move || {
-            let stream = CpalOutput::open(cb_state)?;
-            let params = OutputParams {
-                sample_rate: stream.sample_rate,
-                channels: stream.channels,
-            };
-            Ok((stream, params))
+        let mix = output::initial_mix_params();
+        cb_state.device_sample_rate = mix.sample_rate;
+        cb_state.device_channels = mix.channels;
+        cb_state.dsp_chain.set_sample_rate(mix.sample_rate);
+        atomics
+            .device_sample_rate
+            .store(mix.sample_rate, Ordering::Relaxed);
+        let output_app = app_handle.clone();
+        let output_atomics = atomics.clone();
+        // Keep callback state when replacing or temporarily losing the physical device.
+        let output = OutputThread::start(cb_state, move || {
+            CpalDriver::new(output_app, output_atomics)
         })
         .map_err(|e| format!("failed to open audio output: {e}"))?;
 
@@ -354,9 +358,8 @@ impl AudioEngine {
         &self.cache
     }
 
-    /// Access shared atomics (for bridge queries like sample rate).
-    pub fn atomics(&self) -> &Arc<SharedAtomics> {
-        &self.atomics
+    pub fn output_available(&self) -> bool {
+        self.atomics.output_available.load(Ordering::Acquire)
     }
 
     pub fn sample_rate(&self) -> Result<u32, String> {

@@ -509,6 +509,7 @@ pub fn run() {
             audio_engine::bridge::audio_set_mixramp_db,
             audio_engine::bridge::audio_set_visualizer_enabled,
             audio_engine::bridge::audio_get_sample_rate,
+            audio_engine::bridge::audio_get_output_available,
             audio_engine::bridge::audio_set_cache_max_bytes,
             audio_engine::bridge::audio_clear_cache,
             audio_engine::bridge::audio_get_cache_stats,
