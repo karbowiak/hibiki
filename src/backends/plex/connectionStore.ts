@@ -27,6 +27,7 @@ interface ConnectionState {
   musicSectionTitle: string | null
 
   allUrls: string[]
+  tlsExceptions: string[]
 
   /** All music sections on the connected server */
   availableMusicSections: LibrarySection[]
@@ -34,7 +35,7 @@ interface ConnectionState {
   needsLibraryPick: boolean
 
   loadAndConnect: () => Promise<void>
-  connect: (baseUrl: string, token: string, allUrls?: string[], savedSectionId?: number) => Promise<void>
+  connect: (baseUrl: string, token: string, allUrls?: string[], savedSectionId?: number, acceptInvalidCerts?: boolean, expectedMachineIdentifier?: string) => Promise<void>
   /** Select a library section (called from the picker or auto-select) */
   selectLibrary: (section: LibrarySection) => Promise<void>
   /** Switch to a different library while already connected */
@@ -56,6 +57,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   sectionUuid: null,
   musicSectionTitle: null,
   allUrls: [],
+  tlsExceptions: [],
   availableMusicSections: [],
   needsLibraryPick: false,
 
@@ -63,6 +65,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     set({ isLoading: true, error: null })
     try {
       const settings = await loadSettings()
+      set({ tlsExceptions: settings.tls_exceptions ?? [] })
       if (!settings.base_url || !settings.token) {
         set({ isLoading: false })
         return
@@ -86,10 +89,16 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }
   },
 
-  connect: async (baseUrl: string, token: string, allUrls?: string[], savedSectionId?: number) => {
-    set({ isLoading: true, error: null })
+  connect: async (baseUrl: string, token: string, allUrls?: string[], savedSectionId?: number, acceptInvalidCerts?: boolean, expectedMachineIdentifier?: string) => {
+    usePlayerStore.getState().stop()
+    if (wsManager) { wsManager.disconnect(); wsManager = null }
+    useProviderStore.getState().clearProvider()
+    useLibraryStore.getState().clearAll()
+    set({ isLoading: true, isConnected: false, needsLibraryPick: false, error: null })
     try {
-      await connectPlex(baseUrl, token)
+      await connectPlex(baseUrl, token, acceptInvalidCerts, expectedMachineIdentifier)
+      const saved = await loadSettings()
+      set({ tlsExceptions: saved.tls_exceptions ?? [] })
       await saveSettings(baseUrl, token, allUrls)
       const sections = await getLibrarySections()
       const musicSections = sections.filter(s => s.section_type === "artist")

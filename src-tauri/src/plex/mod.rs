@@ -39,6 +39,7 @@ pub mod playlist;
 pub mod playqueue;
 pub mod server;
 pub mod streaming;
+pub mod tls;
 
 // Re-exports for convenience
 pub use auth::{load as load_settings, update as update_settings};

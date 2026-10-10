@@ -82,6 +82,7 @@ tempfile = "3"
 
 [dev-dependencies]
 tokio-test = "0.4"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem

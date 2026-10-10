@@ -1240,6 +1240,10 @@ pub struct PlexSettings {
     #[serde(default)]
     pub all_urls: Vec<String>,
 
+    /// HTTPS origins whose certificates the user explicitly chose not to verify.
+    #[serde(default)]
+    pub tls_exceptions: Vec<String>,
+
     /// Selected music library section ID.
     #[serde(default)]
     pub section_id: i64,
@@ -1360,6 +1364,7 @@ impl PlexSettings {
         serde_json::json!({
             "base_url": self.base_url, "token": self.token,
             "client_id": self.client_id, "all_urls": self.all_urls,
+            "tls_exceptions": self.tls_exceptions,
             "section_id": self.section_id, "section_uuid": self.section_uuid,
             "lastfm_api_key": self.lastfm_api_key,
             "has_lastfm_session": !self.lastfm_session_key.is_empty(),

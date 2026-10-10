@@ -22,6 +22,7 @@ export function PlexSettings() {
     clearError,
     baseUrl: savedUrl,
     token: savedToken,
+    tlsExceptions,
     needsLibraryPick,
     availableMusicSections,
     musicSectionTitle,
@@ -37,6 +38,7 @@ export function PlexSettings() {
     clearError: s.clearError,
     baseUrl: s.baseUrl,
     token: s.token,
+    tlsExceptions: s.tlsExceptions,
     needsLibraryPick: s.needsLibraryPick,
     availableMusicSections: s.availableMusicSections,
     musicSectionTitle: s.musicSectionTitle,
@@ -49,6 +51,11 @@ export function PlexSettings() {
   const [showToken, setShowToken] = useState(false)
   const [isDisconnecting, setIsDisconnecting] = useState(false)
   const [showManual, setShowManual] = useState(false)
+  const [allowInvalidCertificate, setAllowInvalidCertificate] = useState(false)
+  let serverOrigin = ""
+  try { serverOrigin = new URL(url.trim()).origin } catch {}
+  const savedException = tlsExceptions.includes(serverOrigin)
+  useEffect(() => { setAllowInvalidCertificate(savedException) }, [serverOrigin, savedException])
 
   const [authState, setAuthState] = useState<AuthState>("idle")
   const [resources, setResources] = useState<PlexResource[]>([])
@@ -83,7 +90,7 @@ export function PlexSettings() {
     }
   }, [needsLibraryPick, availableMusicSections])
 
-  const isDirty = url.trim() !== savedUrl || token.trim() !== savedToken
+  const isDirty = url.trim() !== savedUrl || token.trim() !== savedToken || allowInvalidCertificate !== savedException
 
   function stopPolling() {
     if (pollRef.current !== null) {
@@ -176,27 +183,16 @@ export function PlexSettings() {
     setConnectingServer(resource.name)
     setAuthError(null)
 
-    console.log("[connectToServer] Picked server:", resource.name, "owned:", resource.owned, "connections:", resource.connections)
-
     interface Candidate { url: string; isLocal: boolean; isHttps: boolean; isRelay: boolean }
     const seen = new Set<string>()
     const candidates: Candidate[] = []
 
     for (const conn of resource.connections) {
-      if (conn.local) {
-        const httpUrl = `http://${conn.address}:${conn.port}`
-        if (!seen.has(httpUrl)) {
-          seen.add(httpUrl)
-          candidates.push({ url: httpUrl, isLocal: true, isHttps: false, isRelay: false })
-        }
-      }
       if (conn.uri && !seen.has(conn.uri)) {
         seen.add(conn.uri)
         candidates.push({ url: conn.uri, isLocal: conn.local, isHttps: conn.uri.startsWith("https://"), isRelay: conn.relay })
       }
     }
-
-    console.log("[connectToServer] Candidates:", candidates.map(c => `${c.url} (local=${c.isLocal}, relay=${c.isRelay})`))
 
     if (candidates.length === 0) {
       setConnectingServer(null)
@@ -207,11 +203,9 @@ export function PlexSettings() {
     const results = await Promise.allSettled(
       candidates.map(async c => {
         try {
-          const latency = await testServerConnection(c.url, effectiveToken)
-          console.log("[connectToServer] OK:", c.url, `${latency}ms`)
+          const latency = await testServerConnection(c.url, resource.client_identifier)
           return { ...c, latency }
         } catch (err) {
-          console.log("[connectToServer] FAIL:", c.url, String(err))
           throw err
         }
       })
@@ -220,13 +214,11 @@ export function PlexSettings() {
       .filter((r): r is PromiseFulfilledResult<Candidate & { latency: number }> => r.status === "fulfilled")
       .map(r => r.value)
       .sort((a, b) => {
+        if (a.isHttps !== b.isHttps) return a.isHttps ? -1 : 1
         if (a.isRelay !== b.isRelay) return a.isRelay ? 1 : -1
         if (a.isLocal !== b.isLocal) return a.isLocal ? -1 : 1
-        if (a.isHttps !== b.isHttps) return a.isHttps ? -1 : 1
         return a.latency - b.latency
       })
-
-    console.log("[connectToServer] Successful:", successful.map(c => `${c.url} (${c.latency}ms)`))
 
     if (successful.length === 0) {
       setConnectingServer(null)
@@ -235,13 +227,9 @@ export function PlexSettings() {
     }
 
     try {
-      console.log("[connectToServer] Connecting to:", successful[0].url)
-      await connect(successful[0].url, effectiveToken, successful.map(c => c.url))
-      const { isConnected: ok, musicSectionId: secId } = useConnectionStore.getState()
-      console.log("[connectToServer] After connect: isConnected=%s, musicSectionId=%s", ok, secId)
+      await connect(successful[0].url, effectiveToken, successful.map(c => c.url), undefined, undefined, resource.client_identifier)
       afterConnect()
     } catch (err) {
-      console.error("[connectToServer] connect() failed:", err)
       setAuthError(String(err))
     } finally {
       setConnectingServer(null)
@@ -253,8 +241,10 @@ export function PlexSettings() {
   const handleManualSave = async (e: React.FormEvent) => {
     e.preventDefault()
     clearError()
-    await connect(url.trim(), token.trim())
-    afterConnect()
+    try {
+      await connect(url.trim(), token.trim(), undefined, undefined, /^https:\/\//i.test(url.trim()) && allowInvalidCertificate)
+      afterConnect()
+    } catch { /* Connection store displays the error. */ }
   }
 
   const handleDisconnect = async () => {
@@ -553,10 +543,11 @@ export function PlexSettings() {
             {showManual && (
               <form onSubmit={handleManualSave} className="space-y-4">
                 <div>
-                  <label className="mb-1.5 block text-xs font-medium text-white/50 uppercase tracking-wider">
+                  <label htmlFor="plex-server-url" className="mb-1.5 block text-xs font-medium text-white/50 uppercase tracking-wider">
                     Server URL
                   </label>
                   <input
+                    id="plex-server-url"
                     type="text"
                     value={url}
                     onChange={e => setUrl(e.target.value)}
@@ -568,11 +559,12 @@ export function PlexSettings() {
                   />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-xs font-medium text-white/50 uppercase tracking-wider">
+                  <label htmlFor="plex-server-token" className="mb-1.5 block text-xs font-medium text-white/50 uppercase tracking-wider">
                     Plex Token
                   </label>
                   <div className="relative">
                     <input
+                      id="plex-server-token"
                       type={showToken ? "text" : "password"}
                       value={token}
                       onChange={e => setToken(e.target.value)}
@@ -585,7 +577,7 @@ export function PlexSettings() {
                       type="button"
                       onClick={() => setShowToken(v => !v)}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/70 transition-colors"
-                      tabIndex={-1}
+                      aria-label={showToken ? "Hide Plex token" : "Show Plex token"}
                     >
                       {showToken ? (
                         <svg height="16" width="16" viewBox="0 0 24 24" fill="currentColor">
@@ -600,6 +592,14 @@ export function PlexSettings() {
                   </div>
                 </div>
 
+                {/^https:\/\//i.test(url.trim()) && (
+                  <label className="flex items-start gap-3 rounded-xl border border-white/10 p-3 text-sm text-white/70">
+                    <input type="checkbox" checked={allowInvalidCertificate} onChange={e => setAllowInvalidCertificate(e.target.checked)} className="mt-1 accent-accent" />
+                    <span>Allow an unverified certificate for this server
+                      <span className="mt-1 block text-xs text-white/40">Use only for a server you trust. Normal certificate checks remain enabled for other hosts.</span>
+                    </span>
+                  </label>
+                )}
                 {error && (
                   <div className="rounded-xl bg-red-500/10 border border-red-500/20 px-4 py-3 text-sm text-red-400">
                     {error}

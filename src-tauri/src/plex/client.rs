@@ -11,6 +11,29 @@ use tracing::{debug, instrument};
 
 use crate::plex::models::PlexApiResponse;
 
+fn request_error(error: reqwest_middleware::Error) -> anyhow::Error {
+    match error {
+        reqwest_middleware::Error::Reqwest(error) => error.without_url().into(),
+        reqwest_middleware::Error::Middleware(_) => anyhow::anyhow!("Plex request failed"),
+    }
+}
+
+fn token_header(value: &str) -> HeaderValue {
+    let mut header = HeaderValue::from_str(value).unwrap_or_else(|_| HeaderValue::from_static(""));
+    header.set_sensitive(true);
+    header
+}
+
+fn without_plex_token(value: &str) -> String {
+    let Ok(mut url) = url::Url::parse(value) else { return value.into(); };
+    if !url.query_pairs().any(|(key, _)| key.eq_ignore_ascii_case("X-Plex-Token")) { return value.into(); }
+    let filtered = url.query().unwrap_or_default().split('&').filter(|pair| {
+        !url::form_urlencoded::parse(pair.as_bytes()).next().is_some_and(|(key, _)| key.eq_ignore_ascii_case("X-Plex-Token"))
+    }).collect::<Vec<_>>().join("&");
+    url.set_query(if filtered.is_empty() { None } else { Some(&filtered) });
+    url.into()
+}
+
 /// Never forward Plex headers (or token-bearing URLs) across an origin redirect.
 fn plex_redirect_policy() -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(|attempt| {
@@ -33,14 +56,14 @@ pub fn public_media_request(url: &str) -> reqwest::RequestBuilder {
             .read_timeout(std::time::Duration::from_secs(15))
             .build().expect("public media HTTP client")
     });
-    CLIENT.get(url)
+    CLIENT.get(without_plex_token(url))
 }
 
 const PRODUCT_NAME: &str = "Hibiki";
 const PRODUCT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Configuration for the PlexClient
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PlexClientConfig {
     /// Base URL of the Plex server (e.g., "http://localhost:32400")
     pub base_url: String,
@@ -70,8 +93,15 @@ impl Default for PlexClientConfig {
     }
 }
 
+impl std::fmt::Debug for PlexClientConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PlexClientConfig").field("has_token", &!self.token.is_empty())
+            .field("accept_invalid_certs", &self.accept_invalid_certs).finish_non_exhaustive()
+    }
+}
+
 /// Plex API client with retry logic and connection pooling
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PlexClient {
     base_url: String,
     pub token: String,
@@ -96,6 +126,12 @@ pub struct PlexClient {
     /// trades a bit of preload parallelism for reliability. The lock is
     /// async-safe so other tokio work runs freely while a fetch holds it.
     fetch_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+}
+
+impl std::fmt::Debug for PlexClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PlexClient").field("has_token", &!self.token.is_empty()).finish_non_exhaustive()
+    }
 }
 
 impl PlexClient {
@@ -123,6 +159,8 @@ impl PlexClient {
     /// # });
     /// ```
     pub fn new(config: PlexClientConfig) -> Result<Self> {
+        super::tls::server_url(&config.base_url)?;
+        HeaderValue::from_str(&config.token).context("Invalid Plex token header")?;
         // Build retry policy with exponential backoff
         // Only 1 retry — large playlist item requests can take a long time to
         // evaluate server-side, and retrying a 60-second timeout 4 times would
@@ -165,6 +203,7 @@ impl PlexClient {
             // evaluate server-side even with correct pagination params.
             .timeout(std::time::Duration::from_secs(120))
             .danger_accept_invalid_certs(config.accept_invalid_certs)
+            .danger_accept_invalid_hostnames(config.accept_invalid_certs)
             .default_headers(default_headers.clone())
             .build()
             .context("Failed to build HTTP client")?;
@@ -179,6 +218,7 @@ impl PlexClient {
             .read_timeout(std::time::Duration::from_secs(15))
             .redirect(plex_redirect_policy())
             .danger_accept_invalid_certs(config.accept_invalid_certs)
+            .danger_accept_invalid_hostnames(config.accept_invalid_certs)
             .default_headers(default_headers)
             .build()
             .context("Failed to build media HTTP client")?;
@@ -206,36 +246,34 @@ impl PlexClient {
     ///
     /// # Arguments
     /// * `path` - API path (e.g., "/library/sections")
-    #[instrument(skip(self))]
+    #[instrument(skip_all)]
     pub async fn get<T>(&self, path: &str) -> Result<T>
     where
         T: DeserializeOwned,
     {
         let url = self.build_url(path);
-        debug!("GET request to {}", url);
+        debug!("GET request");
 
         let response = self
             .client
             .get(&url)
-            .header("X-Plex-Token", &self.token)
+            .header("X-Plex-Token", token_header(&self.token))
             .header("Accept", "application/json")
             .send()
-            .await
+            .await.map_err(request_error)
             .context("GET request failed")?;
 
         debug!("Response status: {}", response.status());
 
         if !response.status().is_success() {
             return Err(anyhow::anyhow!(
-                "HTTP error: {} for URL: {}",
-                response.status(),
-                url
+                "HTTP error: {}", response.status()
             ));
         }
 
         let wrapper = response
             .json::<PlexApiResponse<T>>()
-            .await
+            .await.map_err(|error| error.without_url())
             .context("Failed to parse JSON response")?;
 
         Ok(wrapper.container)
@@ -245,12 +283,12 @@ impl PlexClient {
     pub async fn get_text(&self, path: &str) -> Result<String> {
         let url = self.build_url(path);
         let response = self.client.get(&url)
-            .header("X-Plex-Token", &self.token)
-            .send().await.context("GET request failed")?;
+            .header("X-Plex-Token", token_header(&self.token))
+            .send().await.map_err(request_error).context("GET request failed")?;
         if !response.status().is_success() {
-            return Err(anyhow::anyhow!("HTTP error: {} for URL: {}", response.status(), url));
+            return Err(anyhow::anyhow!("HTTP error: {}", response.status()));
         }
-        response.text().await.context("Failed to read response text")
+        response.text().await.map_err(|error| error.without_url()).context("Failed to read response text")
     }
 
     /// Fetch raw response text — for debugging API responses in tests.
@@ -258,46 +296,44 @@ impl PlexClient {
     pub async fn get_raw(&self, path: &str) -> Result<String> {
         let url = self.build_url(path);
         let response = self.client.get(&url)
-            .header("X-Plex-Token", &self.token)
+            .header("X-Plex-Token", token_header(&self.token))
             .header("Accept", "application/json")
-            .send().await.context("GET request failed")?;
-        response.text().await.context("Failed to read response text")
+            .send().await.map_err(request_error).context("GET request failed")?;
+        response.text().await.map_err(|error| error.without_url()).context("Failed to read response text")
     }
 
     /// Perform a POST request with a JSON body.
     ///
     /// Automatically unwraps the Plex `{"MediaContainer": <T>}` envelope.
-    #[instrument(skip(self, body))]
+    #[instrument(skip_all)]
     pub async fn post<T>(&self, path: &str, body: serde_json::Value) -> Result<T>
     where
         T: DeserializeOwned,
     {
         let url = self.build_url(path);
-        debug!("POST request to {}", url);
+        debug!("POST request");
 
         let response = self
             .client
             .post(&url)
-            .header("X-Plex-Token", &self.token)
+            .header("X-Plex-Token", token_header(&self.token))
             .header("Accept", "application/json")
             .json(&body)
             .send()
-            .await
+            .await.map_err(request_error)
             .context("POST request failed")?;
 
         debug!("Response status: {}", response.status());
 
         if !response.status().is_success() {
             return Err(anyhow::anyhow!(
-                "HTTP error: {} for URL: {}",
-                response.status(),
-                url
+                "HTTP error: {}", response.status()
             ));
         }
 
         let wrapper = response
             .json::<PlexApiResponse<T>>()
-            .await
+            .await.map_err(|error| error.without_url())
             .context("Failed to parse JSON response")?;
 
         Ok(wrapper.container)
@@ -311,38 +347,35 @@ impl PlexClient {
     ///
     /// # Returns
     /// * `Result<T>` - The deserialized response or an error
-    #[instrument(skip(self, body))]
+    #[instrument(skip_all)]
     pub async fn put<T>(&self, path: &str, body: serde_json::Value) -> Result<T>
     where
         T: DeserializeOwned,
     {
         let url = self.build_url(path);
-        debug!("PUT request to {}", url);
-        debug!("Request body: {}", body);
+        debug!("PUT request");
 
         let response = self
             .client
             .put(&url)
-            .header("X-Plex-Token", &self.token)
+            .header("X-Plex-Token", token_header(&self.token))
             .header("Accept", "application/json")
             .json(&body)
             .send()
-            .await
+            .await.map_err(request_error)
             .context("PUT request failed")?;
 
         debug!("Response status: {}", response.status());
 
         if !response.status().is_success() {
             return Err(anyhow::anyhow!(
-                "HTTP error: {} for URL: {}",
-                response.status(),
-                url
+                "HTTP error: {}", response.status()
             ));
         }
 
         let json = response
             .json::<T>()
-            .await
+            .await.map_err(|error| error.without_url())
             .context("Failed to parse JSON response")?;
 
         Ok(json)
@@ -351,66 +384,62 @@ impl PlexClient {
     /// Perform a POST request with query parameters and no body.
     ///
     /// Automatically unwraps the Plex `{"MediaContainer": <T>}` envelope.
-    #[instrument(skip(self))]
+    #[instrument(skip_all)]
     pub async fn post_params<T>(&self, path: &str, params: &[(&str, &str)]) -> Result<T>
     where
         T: DeserializeOwned,
     {
         let url = self.build_url(path);
-        debug!("POST (params) request to {}", url);
+        debug!("POST (params) request");
 
         let response = self
             .client
             .post(&url)
-            .header("X-Plex-Token", &self.token)
+            .header("X-Plex-Token", token_header(&self.token))
             .header("Accept", "application/json")
             .query(params)
             .send()
-            .await
+            .await.map_err(request_error)
             .context("POST request failed")?;
 
         debug!("Response status: {}", response.status());
 
         if !response.status().is_success() {
             return Err(anyhow::anyhow!(
-                "HTTP error: {} for URL: {}",
-                response.status(),
-                url
+                "HTTP error: {}", response.status()
             ));
         }
 
         let wrapper = response
             .json::<PlexApiResponse<T>>()
-            .await
+            .await.map_err(|error| error.without_url())
             .context("Failed to parse JSON response")?;
 
         Ok(wrapper.container)
     }
 
     /// Perform a PUT request with query parameters and no body, ignoring the response body.
-    #[instrument(skip(self))]
+    #[instrument(skip_all)]
     pub async fn put_params_ok(&self, path: &str, params: &[(&str, &str)]) -> Result<()>
     {
         let url = self.build_url(path);
-        debug!("PUT (params) request to {}", url);
+        debug!("PUT (params) request");
 
         let response = self
             .client
             .put(&url)
-            .header("X-Plex-Token", &self.token)
+            .header("X-Plex-Token", token_header(&self.token))
             .header("Accept", "application/json")
             .query(params)
             .send()
-            .await
+            .await.map_err(request_error)
             .context("PUT request failed")?;
 
         debug!("Response status: {}", response.status());
 
         if !response.status().is_success() {
             return Err(anyhow::anyhow!(
-                "HTTP error: {} for URL: {}",
-                response.status(),
-                url
+                "HTTP error: {}", response.status()
             ));
         }
 
@@ -424,27 +453,25 @@ impl PlexClient {
     ///
     /// # Returns
     /// * `Result<()>` - Success or an error
-    #[instrument(skip(self))]
+    #[instrument(skip_all)]
     pub async fn delete(&self, path: &str) -> Result<()> {
         let url = self.build_url(path);
-        debug!("DELETE request to {}", url);
+        debug!("DELETE request");
 
         let response = self
             .client
             .delete(&url)
-            .header("X-Plex-Token", &self.token)
+            .header("X-Plex-Token", token_header(&self.token))
             .header("Accept", "application/json")
             .send()
-            .await
+            .await.map_err(request_error)
             .context("DELETE request failed")?;
 
         debug!("Response status: {}", response.status());
 
         if !response.status().is_success() {
             return Err(anyhow::anyhow!(
-                "HTTP error: {} for URL: {}",
-                response.status(),
-                url
+                "HTTP error: {}", response.status()
             ));
         }
 
@@ -455,35 +482,34 @@ impl PlexClient {
     ///
     /// Use this when you already have the complete URL including query params.
     /// Like `get()`, automatically unwraps the Plex `{"MediaContainer": <T>}` envelope.
-    #[instrument(skip(self))]
+    #[instrument(skip_all)]
     pub async fn get_url<T>(&self, url: &str) -> Result<T>
     where
         T: DeserializeOwned,
     {
-        debug!("GET request to {}", url);
+        if !self.is_plex_url(url) { anyhow::bail!("Plex API URL does not belong to the connected server"); }
+        debug!("GET request");
 
         let response = self
             .client
             .get(url)
-            .header("X-Plex-Token", &self.token)
+            .header("X-Plex-Token", token_header(&self.token))
             .header("Accept", "application/json")
             .send()
-            .await
+            .await.map_err(request_error)
             .context("GET request failed")?;
 
         debug!("Response status: {}", response.status());
 
         if !response.status().is_success() {
             return Err(anyhow::anyhow!(
-                "HTTP error: {} for URL: {}",
-                response.status(),
-                url
+                "HTTP error: {}", response.status()
             ));
         }
 
         let wrapper = response
             .json::<PlexApiResponse<T>>()
-            .await
+            .await.map_err(|error| error.without_url())
             .context("Failed to parse JSON response")?;
 
         Ok(wrapper.container)
@@ -499,14 +525,15 @@ impl PlexClient {
 
     pub fn is_plex_url(&self, value: &str) -> bool {
         match (url::Url::parse(&self.base_url), url::Url::parse(value)) {
-            (Ok(base), Ok(target)) => base.origin() == target.origin(),
+            (Ok(base), Ok(target)) => base.origin() == target.origin()
+                && target.username().is_empty() && target.password().is_none(),
             _ => false,
         }
     }
 
     pub fn media_request(&self, url: &str) -> reqwest::RequestBuilder {
         if self.is_plex_url(url) {
-            self.media_client.get(url).header("X-Plex-Token", &self.token)
+            self.media_client.get(without_plex_token(url)).header("X-Plex-Token", token_header(&self.token))
         } else {
             public_media_request(url)
         }
@@ -519,24 +546,24 @@ impl PlexClient {
     /// against any other in-flight `fetch_bytes` call via `fetch_lock`. See the
     /// field docs for the rationale on both — TL;DR Plex's media endpoint hates
     /// reused pooled connections AND hates concurrent large-body downloads.
-    #[instrument(skip(self, url))]
+    #[instrument(skip_all)]
     pub async fn fetch_bytes(&self, url: &str) -> Result<Vec<u8>> {
         debug!("fetching audio bytes");
         let _guard = self.fetch_lock.lock().await;
 
         let response = self.media_request(url)
             .send()
-            .await
+            .await.map_err(|error| error.without_url())
             .context("fetch_bytes request failed")?;
 
         let status = response.status();
         if !status.is_success() {
-            return Err(anyhow::anyhow!("HTTP {} for URL: {}", status, url));
+            return Err(anyhow::anyhow!("HTTP {}", status));
         }
 
         let bytes = response
             .bytes()
-            .await
+            .await.map_err(|error| error.without_url())
             .context("fetch_bytes failed reading body")?;
         debug!("fetch_bytes complete: {} bytes", bytes.len());
         Ok(bytes.to_vec())
@@ -546,36 +573,35 @@ impl PlexClient {
     /// Perform a PUT request against a pre-built full URL (no `build_url` call).
     ///
     /// Use this when the URL already contains query params (e.g. `?after=N`).
-    #[instrument(skip(self, body))]
+    #[instrument(skip_all)]
     pub async fn put_url<T>(&self, url: &str, body: serde_json::Value) -> Result<T>
     where
         T: DeserializeOwned,
     {
-        debug!("PUT request to {}", url);
+        if !self.is_plex_url(url) { anyhow::bail!("Plex API URL does not belong to the connected server"); }
+        debug!("PUT request");
 
         let response = self
             .client
             .put(url)
-            .header("X-Plex-Token", &self.token)
+            .header("X-Plex-Token", token_header(&self.token))
             .header("Accept", "application/json")
             .json(&body)
             .send()
-            .await
+            .await.map_err(request_error)
             .context("PUT request failed")?;
 
         debug!("Response status: {}", response.status());
 
         if !response.status().is_success() {
             return Err(anyhow::anyhow!(
-                "HTTP error: {} for URL: {}",
-                response.status(),
-                url
+                "HTTP error: {}", response.status()
             ));
         }
 
         response
             .json::<T>()
-            .await
+            .await.map_err(|error| error.without_url())
             .context("Failed to parse JSON response")
     }
 
@@ -609,6 +635,22 @@ impl PlexClient {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn tokens_are_sensitive_headers_and_url_cleanup_preserves_other_signed_query_bytes() {
+        let config = PlexClientConfig { base_url: "https://plex.test:32400".into(), token: "dummy-private-token".into(), ..Default::default() };
+        assert!(!format!("{config:?}").contains("dummy-private-token"));
+        let client = PlexClient::new(config).unwrap();
+        assert!(!format!("{client:?}").contains("dummy-private-token"));
+        let request = client.media_request("https://plex.test:32400/file?X-Plex-Token=dummy-private-token&signature=a%20b%2Bc").build().unwrap();
+        assert_eq!(request.url().query(), Some("signature=a%20b%2Bc"));
+        assert!(request.headers()["X-Plex-Token"].is_sensitive());
+        let public = public_media_request("https://public.test/file?signature=a%20b%2Bc").build().unwrap();
+        assert_eq!(public.url().query(), Some("signature=a%20b%2Bc"));
+        let foreign = client.media_request("https://foreign.test/file?X-Plex-Token=dummy-private-token").build().unwrap();
+        assert!(foreign.url().query().is_none());
+        assert!(!foreign.headers().contains_key("X-Plex-Token"));
+    }
 
     #[test]
     fn media_credentials_are_scoped_to_the_plex_server_origin() {

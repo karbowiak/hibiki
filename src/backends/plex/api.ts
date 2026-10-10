@@ -34,8 +34,8 @@ import type {
 // ---------------------------------------------------------------------------
 
 /** Connect to a Plex Media Server. Must be called before all other functions. */
-export function connectPlex(baseUrl: string, token: string): Promise<void> {
-  return invoke("connect_plex", { baseUrl, token })
+export function connectPlex(baseUrl: string, token: string, acceptInvalidCerts?: boolean, expectedMachineIdentifier?: string): Promise<void> {
+  return invoke("connect_plex", { baseUrl, token, acceptInvalidCerts: acceptInvalidCerts ?? null, expectedMachineIdentifier: expectedMachineIdentifier ?? null })
 }
 
 // ---------------------------------------------------------------------------
@@ -559,8 +559,8 @@ export function saveSettings(baseUrl: string, token: string, allUrls?: string[],
  * Uses a 5-second timeout with no retries — call in parallel for multiple candidates.
  * Returns latency in milliseconds.
  */
-export function testServerConnection(url: string, token: string): Promise<number> {
-  return invoke("test_server_connection", { url, token })
+export function testServerConnection(url: string, expectedMachineIdentifier?: string): Promise<number> {
+  return invoke("test_server_connection", { url, expectedMachineIdentifier: expectedMachineIdentifier ?? null })
 }
 
 /** Delete all cached Plex artwork from disk. Called before a force-refresh. */

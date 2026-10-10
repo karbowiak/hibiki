@@ -6,6 +6,7 @@
 
 use tauri::State;
 use tokio::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::mediasession::{MediaSessionState, MediaUpdate};
 use crate::plex::lyrics::LyricLine;
@@ -20,11 +21,27 @@ use crate::plex::{
 // ---------------------------------------------------------------------------
 
 /// Shared Plex client state managed by Tauri.
-pub struct PlexState(pub Mutex<Option<PlexClient>>);
+pub struct PlexState(pub Mutex<Option<PlexClient>>, AtomicU64);
 
 impl PlexState {
     pub fn new() -> Self {
-        PlexState(Mutex::new(None))
+        PlexState(Mutex::new(None), AtomicU64::new(0))
+    }
+
+    async fn begin_connection(&self) -> u64 {
+        let revision = self.1.fetch_add(1, Ordering::SeqCst) + 1;
+        let mut client = self.0.lock().await;
+        if self.is_current(revision) { *client = None; }
+        revision
+    }
+
+    fn is_current(&self, revision: u64) -> bool { self.1.load(Ordering::SeqCst) == revision }
+
+    async fn publish(&self, revision: u64, client: PlexClient) -> Result<(), String> {
+        let mut current = self.0.lock().await;
+        if !self.is_current(revision) { return Err("Plex connection was superseded".into()); }
+        *current = Some(client);
+        Ok(())
     }
 }
 
@@ -51,33 +68,39 @@ macro_rules! client {
 pub async fn connect_plex(
     base_url: String,
     token: String,
+    accept_invalid_certs: Option<bool>,
+    expected_machine_identifier: Option<String>,
     state: State<'_, PlexState>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     use tauri::Manager;
+    let revision = state.begin_connection().await;
     // Load the stable per-installation client_id so Plex can track this
     // client's sessions (required as X-Plex-Client-Identifier header for /:/timeline).
     let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
+    let allow_invalid = {
+        // Serialize preference changes with connection ownership, too.
+        let _guard = state.0.lock().await;
+        if !state.is_current(revision) { return Err("Plex connection was superseded".into()); }
+        crate::plex::tls::preference(&config_dir, &base_url, accept_invalid_certs).map_err(|e| format!("{:#}", e))?
+    };
+    let (_, identity) = crate::plex::tls::probe(&base_url, allow_invalid, expected_machine_identifier.as_deref())
+        .await.map_err(|e| format!("{:#}", e))?;
     let client_id =
         crate::plex::auth::ensure_client_id(&config_dir).map_err(|e| format!("{:#}", e))?;
     let config = PlexClientConfig {
         base_url,
         token,
         client_id,
-        // Plex servers on the LAN commonly use self-signed or Plex-issued
-        // certificates that may not validate against the system trust store.
-        accept_invalid_certs: true,
+        accept_invalid_certs: allow_invalid,
         ..Default::default()
     };
     let mut client = PlexClient::new(config).map_err(|e| format!("{:#}", e))?;
-    // Fetch the server's machine identifier — needed for playlist URI construction.
-    if let Ok(identity) = client.get_identity().await {
-        client.machine_identifier = identity.machine_identifier;
-    }
-    let mut guard = state.0.lock().await;
-    *guard = Some(client);
-
-    Ok(())
+    if !state.is_current(revision) { return Err("Plex connection was superseded".into()); }
+    client.machine_identifier = identity.machine_identifier;
+    // Do not publish a client with rejected credentials.
+    client.get_all_sections().await.map_err(|_| "Plex authentication or library access failed".to_string())?;
+    state.publish(revision, client).await
 }
 
 // ---------------------------------------------------------------------------
@@ -926,27 +949,12 @@ pub async fn save_settings(
 /// multiple candidate URLs to find the fastest/best connection.
 /// Returns latency in milliseconds on success.
 #[tauri::command]
-pub async fn test_server_connection(url: String, token: String) -> Result<u64, String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .danger_accept_invalid_certs(true)
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let probe_url = format!("{}/identity", url.trim_end_matches('/'));
-    let start = std::time::Instant::now();
-
-    client
-        .get(&probe_url)
-        .header("X-Plex-Token", &token)
-        .header("Accept", "application/json")
-        .send()
-        .await
-        .map_err(|e| format!("Connection failed: {}", e))?
-        .error_for_status()
-        .map_err(|e| format!("Server error: {}", e))?;
-
-    Ok(start.elapsed().as_millis() as u64)
+pub async fn test_server_connection(url: String, expected_machine_identifier: Option<String>, app: tauri::AppHandle) -> Result<u64, String> {
+    use tauri::Manager;
+    let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
+    let allow_invalid = crate::plex::tls::preference(&config_dir, &url, None).map_err(|e| format!("{:#}", e))?;
+    crate::plex::tls::probe(&url, allow_invalid, expected_machine_identifier.as_deref()).await
+        .map(|(latency, _)| latency).map_err(|e| format!("{:#}", e))
 }
 
 // ---------------------------------------------------------------------------
@@ -2120,4 +2128,27 @@ pub fn get_audio_output_device() -> String {
 #[tauri::command]
 pub fn get_audio_output_devices() -> Vec<crate::audio_devices::AudioOutputDevice> {
     crate::audio_devices::get_output_devices()
+}
+
+#[cfg(test)]
+mod connection_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn retired_connection_attempts_cannot_restore_an_old_client() {
+        let state = PlexState::new();
+        let old = state.begin_connection().await;
+        let current = state.begin_connection().await;
+        let client = |token: &str| PlexClient::new(PlexClientConfig {
+            base_url: "https://example.test".into(), token: token.into(), ..Default::default()
+        }).unwrap();
+        state.publish(current, client("dummy-current")).await.unwrap();
+        assert!(state.publish(old, client("dummy-retired")).await.is_err());
+        assert_eq!(state.0.lock().await.as_ref().unwrap().token, "dummy-current");
+        let failed_replacement = state.begin_connection().await;
+        assert!(state.0.lock().await.is_none());
+        assert!(state.is_current(failed_replacement));
+        assert!(!state.is_current(current));
+        assert!(state.publish(current, client("dummy-retired")).await.is_err());
+    }
 }

@@ -7,6 +7,7 @@ mod commands;
 mod db;
 mod deezer;
 mod genius;
+mod image_fetch;
 mod itunes;
 mod itunes_throttle;
 mod lastfm;
@@ -60,15 +61,6 @@ static IMGCACHE_RT: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
         .enable_all()
         .build()
         .expect("Failed to create image-cache async runtime")
-});
-
-/// Shared HTTP client for image fetching (accepts self-signed certs for local Plex servers).
-static IMG_HTTP: Lazy<reqwest::Client> = Lazy::new(|| {
-    reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .expect("Failed to build image HTTP client")
 });
 
 /// Derives a deterministic cache key for an image.
@@ -148,7 +140,7 @@ async fn resolve_image(
     // Helper: cache bytes to disk and return them
     let cache_and_return = |bytes: Vec<u8>, dir: &Option<std::path::PathBuf>, key: &str| -> Vec<u8> {
         if let Some(ref d) = dir {
-            let _ = std::fs::write(d.join(key), &bytes);
+            image_fetch::cache(&d.join(key), &bytes);
         }
         bytes
     };
@@ -158,7 +150,7 @@ async fn resolve_image(
         let _ = std::fs::create_dir_all(dir);
         let file_path = dir.join(&cache_key);
         if file_path.exists() {
-            if let Ok(bytes) = std::fs::read(&file_path) {
+            if let Some(bytes) = image_fetch::read_cached(&file_path) {
                 return Some(bytes);
             }
         }
@@ -166,13 +158,10 @@ async fn resolve_image(
 
     // Try fetching from src URL
     if !src.is_empty() {
-        if let Ok(resp) = IMG_HTTP.get(src).send().await {
-            if resp.status().is_success() {
-                if let Ok(bytes) = resp.bytes().await {
-                    if !bytes.is_empty() {
-                        return Some(cache_and_return(bytes.to_vec(), &cache_dir, &cache_key));
-                    }
-                }
+        let client = app.state::<commands::PlexState>().0.lock().await.clone();
+        if let Some(request) = image_fetch::request(client.as_ref(), src) {
+            if let Some(bytes) = image_fetch::fetch(request).await {
+                return Some(cache_and_return(bytes, &cache_dir, &cache_key));
             }
         }
     }
@@ -185,19 +174,15 @@ async fn resolve_image(
             if let Some(ref dir) = cache_dir {
                 let fb_path = dir.join(&fb_cache_key);
                 if fb_path.exists() {
-                    if let Ok(bytes) = std::fs::read(&fb_path) {
+                    if let Some(bytes) = image_fetch::read_cached(&fb_path) {
                         return Some(bytes);
                     }
                 }
             }
             // Fetch fallback URL
-            if let Ok(resp) = IMG_HTTP.get(&fallback_url).send().await {
-                if resp.status().is_success() {
-                    if let Ok(bytes) = resp.bytes().await {
-                        if !bytes.is_empty() {
-                            return Some(cache_and_return(bytes.to_vec(), &cache_dir, &fb_cache_key));
-                        }
-                    }
+            if let Some(request) = image_fetch::request(None, &fallback_url) {
+                if let Some(bytes) = image_fetch::fetch(request).await {
+                    return Some(cache_and_return(bytes, &cache_dir, &fb_cache_key));
                 }
             }
         }
