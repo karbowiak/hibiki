@@ -587,15 +587,21 @@ impl PlexClient {
     /// # Returns
     /// * `String` - The full URL
     pub fn build_url(&self, path: &str) -> String {
-        let base = self.base_url.trim_end_matches('/');
-        let path = path.trim_start_matches('/');
-        let url = format!("{}/{}", base, path);
-        // Always request loudness ramps so crossfade data is available
+        let url = self.build_endpoint_url(path);
+        // Request analysis with track metadata so crossfade data is available.
         if url.contains('?') {
             format!("{}&includeLoudnessRamps=1", url)
         } else {
             format!("{}?includeLoudnessRamps=1", url)
         }
+    }
+
+    /// Build an endpoint URL without adding track-metadata options. Personalized
+    /// discovery responses can depend on their query, even for unrelated flags.
+    pub fn build_endpoint_url(&self, path: &str) -> String {
+        let base = self.base_url.trim_end_matches('/');
+        let path = path.trim_start_matches('/');
+        format!("{}/{}", base, path)
     }
 }
 

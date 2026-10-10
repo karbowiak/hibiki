@@ -66,7 +66,9 @@ function App() {
       void Promise.all([
         fetchPlaylists(),
         fetchRecentlyAdded(50),
-        fetchHubs(),
+        // Personalized mixes change on the server. Refresh them on connection
+        // instead of trusting a persisted recommendation from a previous run.
+        fetchHubs({ force: true }),
         fetchTags(),    // 24h TTL — rarely hits network after first load
       ]).then(() => {
         void prefetchAllPlaylists()

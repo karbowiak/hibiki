@@ -55,23 +55,25 @@ impl PlexClient {
     /// * `Result<Vec<Hub>>` - List of hubs for the section
     #[instrument(skip(self))]
     pub async fn get_section_hubs(&self, section_id: i64) -> Result<Vec<Hub>> {
-        // Use the same params as PlexAmp (reverse-engineered from app.asar):
+        // Match the desktop Plexamp discovery query (verified against 4.50.19
+        // requests). Both count and extra flags affect personalized mix selection;
+        // don't add includeLoudnessRamps here. Fetch analysis with track metadata.
         //   includeMyMixes=1            → "Mixes for You" (music.mixes.* hubs) — requires Plex Pass + server-generated mixes
         //   includeAnniversaryReleases=1 → "On This Day" hub
         //   includeStations=1           → "Stations" (Library Radio, Deep Cuts Radio, etc.)
         //   includeStationDirectories=1 → Station directories
         //   includeLibraryPlaylists=1   → "Recent Playlists" hub
         //   excludeElements=Similar,Mood → strips noisy sub-elements
-        //   count=12                    → items per hub (PlexAmp uses 6 or 8 depending on device)
+        //   count=6                     → desktop hub count; mixes can exceed this
         let path = format!(
-            "/hubs/sections/{}?count=12&includeExternalMetadata=1&includeMyMixes=1&includeAnniversaryReleases=1&excludeElements=Similar,Mood&includeLibraryPlaylists=1&includeStations=1&includeStationDirectories=1&excludeFields=summary",
+            "/hubs/sections/{}?count=6&includeExternalMetadata=1&includeMyMixes=1&includeAnniversaryReleases=1&excludeElements=Similar,Mood&includeLibraryPlaylists=1&includeStations=1&includeStationDirectories=1&excludeFields=summary",
             section_id
         );
 
         debug!("Fetching section hubs for section {}", section_id);
 
         let container: MediaContainer<Hub> = self
-            .get(&path)
+            .get_url(&self.build_endpoint_url(&path))
             .await
             .with_context(|| format!("Failed to fetch section hubs for section {}", section_id))?;
 
@@ -310,6 +312,59 @@ impl PlexClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::{PlexClientConfig, PlexMedia};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn desktop_discovery_preserves_all_personalized_mixes_and_its_query() {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let client = PlexClient::new(PlexClientConfig {
+                base_url: format!("http://{}", listener.local_addr().unwrap()),
+                token: "test-token".into(),
+                ..Default::default()
+            }).unwrap();
+            // Personalized mixes have no ratingKey, and the server can return
+            // more mixes than count. Preserve every key and the server's order.
+            let body = serde_json::json!({"MediaContainer": {"Hub": [{
+                "hubIdentifier": "music.mixes.5", "title": "Mixes For You", "size": 9,
+                "Metadata": (0..9).map(|i| serde_json::json!({
+                    "type": "playlist", "title": format!("Artist {i} Mix"),
+                    "key": format!("/library/sections/5/all?or=1&album.id={i}")
+                })).collect::<Vec<_>>()
+            }]}}).to_string();
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0; 4096];
+                while !request.windows(4).any(|b| b == b"\r\n\r\n") {
+                    let n = socket.read(&mut buffer).await.unwrap();
+                    assert!(n > 0 && request.len() < 65536);
+                    request.extend_from_slice(&buffer[..n]);
+                }
+                let response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
+                socket.write_all(response.as_bytes()).await.unwrap();
+                String::from_utf8(request).unwrap()
+            });
+            let hubs = client.get_section_hubs(5).await.unwrap();
+            let request = server.await.unwrap();
+            let target = request.lines().next().unwrap().split_whitespace().nth(1).unwrap();
+            let url = url::Url::parse(&format!("http://localhost{target}")).unwrap();
+            let params: std::collections::HashMap<_, _> = url.query_pairs().collect();
+            assert_eq!(url.path(), "/hubs/sections/5");
+            assert_eq!(params.get("count").map(|s| s.as_ref()), Some("6"));
+            assert_eq!(params.get("includeMyMixes").map(|s| s.as_ref()), Some("1"));
+            assert!(!params.contains_key("includeLoudnessRamps"));
+            assert!(request.to_lowercase().contains("x-plex-product: hibiki\r\n"));
+            assert_eq!(hubs[0].metadata.len(), 9);
+            for (i, item) in hubs[0].metadata.iter().enumerate() {
+                let PlexMedia::Playlist(mix) = item else { panic!("expected mix playlist") };
+                assert_eq!(mix.rating_key, 0);
+                assert_eq!(mix.title, format!("Artist {i} Mix"));
+                assert_eq!(mix.key, format!("/library/sections/5/all?or=1&album.id={i}"));
+            }
+        }).await.expect("mock discovery request timed out");
+    }
 
     #[test]
     fn test_build_url_from_params_empty() {
