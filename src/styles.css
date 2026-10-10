@@ -677,3 +677,60 @@ body {
   width: 100% !important;
   flex-shrink: unset !important;
 }
+
+.player-body {
+  height: var(--player-height);
+}
+
+.player-center button {
+  pointer-events: auto;
+}
+
+.player-tools {
+  /* Align tools with the transport row and keep them clear of the seek target. */
+  margin-bottom: 28px;
+}
+
+/* Give tools their own row when they would crowd the centered transport. */
+@media (max-width: 1320px) {
+  .player-body {
+    height: auto;
+    min-height: var(--player-height);
+  }
+  .player-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    gap: 8px 16px;
+    padding-block: 8px;
+  }
+  .player-track {
+    width: auto !important;
+    min-width: 0;
+  }
+  .player-center {
+    position: static;
+    grid-column: 1 / -1;
+    grid-row: 2;
+    height: auto;
+    padding-inline: 0;
+  }
+  .player-center-content {
+    width: 100%;
+    padding-top: 0;
+  }
+  .player-tools {
+    grid-column: 2;
+    grid-row: 1;
+    width: auto;
+    min-width: 0;
+    margin-bottom: 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .player-tools {
+    flex-direction: column;
+    align-items: flex-end;
+  }
+}

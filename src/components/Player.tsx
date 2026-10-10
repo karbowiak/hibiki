@@ -338,7 +338,7 @@ export function Player() {
   )
 
   const [sleepRemaining, setSleepRemaining] = useState<string | null>(null)
-  const { endsAt: sleepEndsAt, hydrate: hydrateSleepTimer } = useSleepTimerStore(useShallow(s => ({ endsAt: s.endsAt, hydrate: s.hydrate })))
+  const { endsAt: sleepEndsAt, endOfTrack: sleepEndOfTrack, hydrate: hydrateSleepTimer } = useSleepTimerStore(useShallow(s => ({ endsAt: s.endsAt, endOfTrack: s.endOfTrack, hydrate: s.hydrate })))
 
   const {
     isQueueOpen, setQueueOpen,
@@ -515,7 +515,7 @@ export function Player() {
         >
           <Link
             href={albumId ? `/album/${albumId}` : "#"}
-            className={`block h-full w-full overflow-hidden ${albumId ? "cursor-pointer" : "cursor-default"} ${vinylSpin ? "rounded-full" : ""}`}
+            className={`block h-full w-full overflow-hidden ${albumId ? "cursor-pointer" : "cursor-default"} ${vinylSpin ? "rounded-full" : "rounded-md"}`}
             style={vinylSpin ? {
               animation: "vinyl-spin 3s linear infinite",
               animationPlayState: isPlaying ? "running" : "paused",
@@ -561,12 +561,12 @@ export function Player() {
       )}
       {fullscreenOpen && <VisualizerFullscreen />}
       <div className="flex h-fit w-screen min-w-[620px] flex-col overflow-clip bg-app-card">
-        <div style={{ height: "var(--player-height)" }}>
-          <div className="relative flex h-full items-center justify-between" style={{ paddingInline: "var(--spacing-player)" }}>
+        <div className="player-body">
+          <div className="player-layout relative flex h-full items-center justify-between" style={{ paddingInline: "var(--spacing-player)" }}>
 
             {/* Left: current track info */}
             <div
-              className="group/left min-w-[11.25rem] transition-all duration-300"
+              className="player-track group/left min-w-[11.25rem] transition-all duration-300"
               style={isArtExpanded && thumbUrl
                 ? { width: `calc(30% + ${sidebarWidth - 80}px)`, paddingLeft: sidebarWidth }
                 : { width: "30%" }
@@ -582,7 +582,7 @@ export function Player() {
                     {/* Album art — click navigates to album */}
                     <Link
                       href={albumId ? `/album/${albumId}` : "#"}
-                      className={`block h-full w-full overflow-hidden ${albumId ? "cursor-pointer" : "cursor-default"} ${vinylSpin ? "rounded-full" : ""}`}
+                      className={`block h-full w-full overflow-hidden ${albumId ? "cursor-pointer" : "cursor-default"} ${vinylSpin ? "rounded-full" : "rounded-md"}`}
                       style={vinylSpin ? {
                         animation: "vinyl-spin 3s linear infinite",
                         animationPlayState: isPlaying ? "running" : "paused",
@@ -682,9 +682,9 @@ export function Player() {
             </div>
 
             {/* Center: controls + progress — absolutely centered, never shifts */}
-            <div className="absolute inset-x-0 top-0 flex h-full items-center justify-center z-10 pointer-events-none px-4">
-            <div className="flex w-[40%] max-w-[45.125rem] flex-col items-center pt-2 pointer-events-auto">
-              <div className="grid grid-cols-[1fr_auto_1fr] items-center w-full">
+            <div className="player-center absolute inset-x-0 top-0 flex h-full items-center justify-center z-10 pointer-events-none px-4">
+            <div className="player-center-content flex w-[40%] max-w-[45.125rem] flex-col items-center pt-2">
+              <div className="grid grid-cols-[1fr_auto_1fr] items-center w-full" role="group" aria-label="Playback controls">
                 {/* Left wing: radio, shuffle */}
                 <div className="flex items-center justify-end gap-x-1.5">
 
@@ -707,6 +707,8 @@ export function Player() {
                 {/* Shuffle */}
                 <button
                   onClick={toggleShuffle}
+                  aria-label="Shuffle"
+                  aria-pressed={shuffle}
                   className={`flex h-8 w-8 items-center justify-center transition-colors ${shuffleActive ? "text-accent" : "text-white text-opacity-70 hover:text-opacity-100"}`}
                 >
                   <svg role="img" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
@@ -722,6 +724,7 @@ export function Player() {
                 {/* Prev */}
                 <button
                   onClick={prev}
+                  aria-label="Previous track"
                   className="flex h-8 w-8 items-center justify-center text-white text-opacity-70 hover:text-opacity-100"
                 >
                   <svg role="img" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
@@ -732,6 +735,8 @@ export function Player() {
                 {/* Play/Pause — long-press to stop & clear queue */}
                 <button
                   {...playPauseLongPress}
+                  aria-label={isPlaying ? "Pause" : "Play"}
+                  title={isPlaying ? "Pause (hold to stop)" : "Play (hold to stop)"}
                   className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--text-primary)] text-[var(--bg-base)] hover:scale-[1.06] select-none"
                 >
                   {isBuffering ? (
@@ -753,6 +758,7 @@ export function Player() {
                 {/* Next */}
                 <button
                   onClick={next}
+                  aria-label="Next track"
                   className="flex h-8 w-8 items-center justify-center text-white text-opacity-70 hover:text-opacity-100"
                 >
                   <svg role="img" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
@@ -795,6 +801,55 @@ export function Player() {
                   </PlayerPopover>
                 )}
 
+                </div>
+              </div>
+
+              {/* Progress / seek bar */}
+              <div className="mt-1.5 flex w-full items-center gap-x-2 pointer-events-auto">
+                <div className="text-[0.688rem] text-white text-opacity-70">
+                  {formatMs(seekHoverPct !== null
+                    ? (currentTrack?.duration ?? 0) * seekHoverPct / 100
+                    : positionMs)}
+                </div>
+                <div
+                  className="relative flex-1 h-7 cursor-pointer select-none"
+                  onMouseMove={e => {
+                    const rect = e.currentTarget.getBoundingClientRect()
+                    setSeekHoverPct(Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100)))
+                  }}
+                  onMouseLeave={() => setSeekHoverPct(null)}
+                  onClick={e => {
+                    const rect = e.currentTarget.getBoundingClientRect()
+                    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+                    seekTo((currentTrack?.duration ?? 0) * pct)
+                  }}
+                >
+                  <VisualizerCanvas
+                    progressPct={progressPct}
+                    hoverPct={seekHoverPct}
+                    levels={waveformLevels}
+                    mode={compactMode}
+                  />
+                  <input
+                    type="range"
+                    min={0}
+                    max={currentTrack?.duration ?? 0}
+                    value={positionMs}
+                    onChange={(e) => seekTo(parseFloat(e.target.value))}
+                    className="absolute inset-0 h-full w-full opacity-0"
+                    aria-label="Seek"
+                  />
+                </div>
+                <div className="text-[0.688rem] text-white text-opacity-70">
+                  {formatMs(currentTrack?.duration ?? 0)}
+                </div>
+              </div>
+            </div>
+            </div>
+
+            {/* Right: DJ, lyrics, sleep, visualization, queue and volume */}
+            <div className="player-tools flex w-[30%] min-w-[11.25rem] items-center justify-end gap-1" role="group" aria-label="Player tools">
+              <div className="player-tools-buttons flex flex-shrink-0 items-center gap-1">
                 {/* Guest DJ — icon only when inactive, icon+name pill when active */}
                 {hasDjModes && <PlayerPopover
                   icon={
@@ -838,6 +893,7 @@ export function Player() {
                         : "text-white/40 hover:text-white/70"
                     }`}
                     aria-label="Lyrics"
+                    aria-pressed={isQueuePinned ? isQueueOpen && queueActiveTab === "lyrics" : isLyricsOpen}
                   >
                     <IconBlockquote size={18} stroke={1.5} />
                   </button>
@@ -849,128 +905,83 @@ export function Player() {
                     <IconZzz size={18} stroke={1.5} />
                   }
                   label="Sleep Timer"
-                  active={!!sleepEndsAt}
+                  active={!!sleepEndsAt || sleepEndOfTrack}
                   subtitle={sleepRemaining}
                   width={224}
                 >
                   {(close) => <SleepTimerPanel onClose={close} />}
                 </PlayerPopover>
-                </div>
-              </div>
 
-              {/* Progress / seek bar */}
-              <div className="mt-1.5 flex w-full items-center gap-x-2">
-                <div className="text-[0.688rem] text-white text-opacity-70">
-                  {formatMs(seekHoverPct !== null
-                    ? (currentTrack?.duration ?? 0) * seekHoverPct / 100
-                    : positionMs)}
-                </div>
-                <div
-                  className="relative flex-1 h-7 cursor-pointer select-none"
-                  onMouseMove={e => {
-                    const rect = e.currentTarget.getBoundingClientRect()
-                    setSeekHoverPct(Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100)))
-                  }}
-                  onMouseLeave={() => setSeekHoverPct(null)}
-                  onClick={e => {
-                    const rect = e.currentTarget.getBoundingClientRect()
-                    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
-                    seekTo((currentTrack?.duration ?? 0) * pct)
-                  }}
+                {/* Visualizer mode cycle */}
+                <button
+                  onClick={cycleCompactMode}
+                  title={`Visualizer: ${compactMode}`}
+                  className="flex-shrink-0 flex h-8 w-8 items-center justify-center transition-colors text-white/40 hover:text-white/70"
+                  aria-label="Cycle visualizer mode"
                 >
-                  <VisualizerCanvas
-                    progressPct={progressPct}
-                    hoverPct={seekHoverPct}
-                    levels={waveformLevels}
-                    mode={compactMode}
-                  />
-                  <input
-                    type="range"
-                    min={0}
-                    max={currentTrack?.duration ?? 0}
-                    value={positionMs}
-                    onChange={(e) => seekTo(parseFloat(e.target.value))}
-                    className="absolute inset-0 h-full w-full opacity-0"
-                    aria-label="Seek"
-                  />
-                </div>
-                <div className="text-[0.688rem] text-white text-opacity-70">
-                  {formatMs(currentTrack?.duration ?? 0)}
-                </div>
+                  <IconActivity size={18} stroke={1.5} />
+                </button>
+
+                {/* Fullscreen visualizer expand */}
+                <button
+                  onClick={openFullscreen}
+                  title="Open fullscreen visualizer"
+                  className="flex-shrink-0 flex h-8 w-8 items-center justify-center transition-colors text-white/40 hover:text-white/70"
+                  aria-label="Open fullscreen visualizer"
+                >
+                  <IconMaximize size={18} stroke={1.5} />
+                </button>
+
+                {/* EQ */}
+                <PlayerPopover
+                  icon={
+                    <IconAdjustments size={18} stroke={1.5} />
+                  }
+                  label="Equalizer"
+                  active={eqEnabled}
+                  width={480}
+                >
+                  {(close) => <EqPanel onClose={close} />}
+                </PlayerPopover>
+
+                {/* Queue toggle */}
+                <button
+                  onClick={() => setQueueOpen(!isQueueOpen)}
+                  className={`flex-shrink-0 mr-1 flex h-8 w-8 items-center justify-center transition-colors ${isQueueOpen ? "text-accent" : "text-white/40 hover:text-white/70"}`}
+                  aria-label="Queue"
+                >
+                  <IconPlaylist size={18} stroke={1.5} />
+                </button>
+
               </div>
-            </div>
-            </div>
-
-            {/* Right: volume + extra controls */}
-            <div className="flex w-[30%] min-w-[11.25rem] items-center justify-end gap-1">
-
-              {/* Visualizer mode cycle */}
-              <button
-                onClick={cycleCompactMode}
-                title={`Visualizer: ${compactMode}`}
-                className="flex-shrink-0 flex h-8 w-8 items-center justify-center transition-colors text-white/40 hover:text-white/70"
-                aria-label="Cycle visualizer mode"
-              >
-                <IconActivity size={18} stroke={1.5} />
-              </button>
-
-              {/* Fullscreen visualizer expand */}
-              <button
-                onClick={openFullscreen}
-                title="Open fullscreen visualizer"
-                className="flex-shrink-0 flex h-8 w-8 items-center justify-center transition-colors text-white/40 hover:text-white/70"
-                aria-label="Open fullscreen visualizer"
-              >
-                <IconMaximize size={18} stroke={1.5} />
-              </button>
-
-              {/* EQ */}
-              <PlayerPopover
-                icon={
-                  <IconAdjustments size={18} stroke={1.5} />
-                }
-                label="Equalizer"
-                active={eqEnabled}
-                width={480}
-              >
-                {(close) => <EqPanel onClose={close} />}
-              </PlayerPopover>
-
-              {/* Queue toggle */}
-              <button
-                onClick={() => setQueueOpen(!isQueueOpen)}
-                className={`flex-shrink-0 mr-1 flex h-8 w-8 items-center justify-center transition-colors ${isQueueOpen ? "text-accent" : "text-white/40 hover:text-white/70"}`}
-                aria-label="Queue"
-              >
-                <IconPlaylist size={18} stroke={1.5} />
-              </button>
-
-              {/* Volume icon — muted / low / full */}
-              <button onClick={() => setVolume(volume === 0 ? 80 : 0)} className="flex-shrink-0 flex h-8 w-8 items-center justify-center text-white/70 hover:text-white transition-colors">
-                {volume === 0 ? (
-                  <IconVolumeOff size={18} stroke={1.5} />
-                ) : volume < 50 ? (
-                  <IconVolume2 size={18} stroke={1.5} />
-                ) : (
-                  <IconVolume size={18} stroke={1.5} />
-                )}
-              </button>
-              {/* Squiggly volume slider */}
-              <div ref={volumeSliderRef} className="relative flex items-center">
-                {volumeTooltipVisible && (
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-0.5 rounded-md bg-app-card border border-[var(--border)] text-xs font-bold text-white shadow-lg pointer-events-none whitespace-nowrap">
-                    {Math.round(volume)}%
-                  </div>
-                )}
-                <SquigglyVolumeSlider
-                  volume={volume}
-                  onChange={v => {
-                    setVolume(v)
-                    setVolumeTooltipVisible(true)
-                    if (volumeTooltipTimer.current) clearTimeout(volumeTooltipTimer.current)
-                    volumeTooltipTimer.current = setTimeout(() => setVolumeTooltipVisible(false), 1500)
-                  }}
-                />
+              <div className="flex flex-shrink-0 items-center gap-1">
+                {/* Volume icon — muted / low / full */}
+                <button onClick={() => setVolume(volume === 0 ? 80 : 0)} aria-label={volume === 0 ? "Unmute" : "Mute"} className="flex-shrink-0 flex h-8 w-8 items-center justify-center text-white/70 hover:text-white transition-colors">
+                  {volume === 0 ? (
+                    <IconVolumeOff size={18} stroke={1.5} />
+                  ) : volume < 50 ? (
+                    <IconVolume2 size={18} stroke={1.5} />
+                  ) : (
+                    <IconVolume size={18} stroke={1.5} />
+                  )}
+                </button>
+                {/* Squiggly volume slider */}
+                <div ref={volumeSliderRef} className="relative flex items-center">
+                  {volumeTooltipVisible && (
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-0.5 rounded-md bg-app-card border border-[var(--border)] text-xs font-bold text-white shadow-lg pointer-events-none whitespace-nowrap">
+                      {Math.round(volume)}%
+                    </div>
+                  )}
+                  <SquigglyVolumeSlider
+                    volume={volume}
+                    onChange={v => {
+                      setVolume(v)
+                      setVolumeTooltipVisible(true)
+                      if (volumeTooltipTimer.current) clearTimeout(volumeTooltipTimer.current)
+                      volumeTooltipTimer.current = setTimeout(() => setVolumeTooltipVisible(false), 1500)
+                    }}
+                  />
+                </div>
               </div>
             </div>
           </div>
