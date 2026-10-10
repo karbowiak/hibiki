@@ -61,11 +61,13 @@ impl PlexState {
         section_id: Option<i64>,
         section_uuid: Option<String>,
     ) -> Result<(), String> {
-        let guard = self.0.lock().await;
+        let mut guard = self.0.lock().await;
         if !self.is_current(revision) {
             return Err("Plex connection was superseded".into());
         }
-        let client = guard.as_ref().ok_or("Plex client not connected")?;
+        let client = guard.as_mut().ok_or("Plex client not connected")?;
+        let scope =
+            client.cache_scope_for_library(section_id.unwrap_or(0), section_uuid.as_deref());
         crate::plex::update_settings(directory, |settings| {
             settings.base_url = client.base_url().to_string();
             settings.token = client.token.clone();
@@ -75,7 +77,9 @@ impl PlexState {
             settings.section_uuid = section_uuid.unwrap_or_default();
             Ok(())
         })
-        .map_err(|error| format!("{error:#}"))
+        .map_err(|error| format!("{error:#}"))?;
+        client.library_scope = scope;
+        Ok(())
     }
 
     fn is_current(&self, revision: u64) -> bool {
@@ -112,6 +116,7 @@ macro_rules! client {
 pub struct PlexConnectionInfo {
     machine_identifier: String,
     sections: Vec<LibrarySection>,
+    cache_scopes: std::collections::BTreeMap<String, String>,
 }
 
 /// Revoke the native connection before asynchronous work begins. Logout also
@@ -190,10 +195,20 @@ pub async fn connect_plex(
         .await
         .map_err(|_| "Plex authentication or library access failed".to_string())?;
     let machine_identifier = client.machine_identifier.clone();
+    let cache_scopes = sections
+        .iter()
+        .map(|section| {
+            (
+                section.key.to_string(),
+                client.cache_scope_for_library(section.key, section.uuid.as_deref()),
+            )
+        })
+        .collect();
     state.publish(revision, client).await?;
     Ok(PlexConnectionInfo {
         machine_identifier,
         sections,
+        cache_scopes,
     })
 }
 
@@ -2280,6 +2295,13 @@ mod connection_tests {
             .await
             .is_err());
         let saved = crate::plex::load_settings(directory.path()).unwrap();
+        {
+            let guard = state.0.lock().await;
+            let client = guard.as_ref().unwrap();
+            assert_eq!(client.library_scope, client.cache_scope_for_library(0, None));
+            assert_eq!(client.cache_scope_for_library(1, None), client.cache_scope_for_library(1, Some("")));
+            assert_ne!(client.cache_scope_for_library(1, None), client.cache_scope_for_library(2, None));
+        }
         assert_eq!(saved.base_url, "https://new.test");
         assert_eq!(saved.token, "dummy-new");
         assert_eq!(saved.machine_identifier, "new-server");

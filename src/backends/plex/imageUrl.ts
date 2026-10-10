@@ -1,13 +1,34 @@
 /**
  * Plex-specific image URL assembly.
  *
- * Assembles the raw Plex server URL (with token) then wraps it in the
+ * Assembles a token-free source URL, with an opaque account/library scope, in the
  * semantic `image://` scheme via the shared buildImageUrl().
  */
 
 import { buildImageUrl, buildExternalImageUrl } from "../../lib/imageUrl"
 
 type EntityType = "artist" | "album" | "track" | "playlist"
+
+function artworkSource(baseUrl: string, path: string): string | null {
+  const absolute = /^https?:\/\//i.test(path)
+    ? path
+    : `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`
+  try {
+    const url = new URL(absolute)
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return null
+    if (![...url.searchParams.keys()].some((key) => key.toLowerCase() === "x-plex-token")) return absolute
+    const filtered = url.search
+      .slice(1)
+      .split("&")
+      .filter((pair) => [...new URLSearchParams(pair).keys()][0]?.toLowerCase() !== "x-plex-token")
+      .join("&")
+    // Preserve signed query bytes that do not belong to Plex credentials.
+    url.search = filtered ? `?${filtered}` : ""
+    return url.toString()
+  } catch {
+    return null
+  }
+}
 
 /**
  * Build a semantic image URL for a Plex entity.
@@ -28,19 +49,11 @@ export function buildPlexImageUrl(
   thumbPath: string,
   name?: string | null,
   artist?: string | null,
+  scope?: string | null
 ): string | null {
   if (!baseUrl || !token || !thumbPath) return null
-  // If the path is already an absolute URL (e.g. image field from newer PMS),
-  // use it directly without prepending the Plex server base URL.
-  let plexUrl: string
-  if (thumbPath.startsWith("http://") || thumbPath.startsWith("https://")) {
-    plexUrl = thumbPath
-  } else {
-    const base = baseUrl.replace(/\/$/, "")
-    const cleanPath = thumbPath.replace(/^\//, "")
-    plexUrl = `${base}/${cleanPath}?X-Plex-Token=${token}`
-  }
-  return buildImageUrl(entityType, entityId, plexUrl, name, artist)
+  const source = artworkSource(baseUrl, thumbPath)
+  return buildImageUrl(entityType, entityId, source, name, artist, scope)
 }
 
 /**
@@ -51,10 +64,8 @@ export function buildPlexExternalImageUrl(
   baseUrl: string,
   token: string,
   thumbPath: string,
+  scope?: string | null
 ): string | null {
   if (!baseUrl || !token || !thumbPath) return null
-  const base = baseUrl.replace(/\/$/, "")
-  const cleanPath = thumbPath.replace(/^\//, "")
-  const plexUrl = `${base}/${cleanPath}?X-Plex-Token=${token}`
-  return buildExternalImageUrl(plexUrl)
+  return buildExternalImageUrl(artworkSource(baseUrl, thumbPath), scope)
 }

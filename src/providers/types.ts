@@ -74,6 +74,8 @@ export interface LyricsSource {
 export interface MusicProvider {
   readonly name: string
   readonly capabilities: ProviderCapabilities
+  /** Opaque account/server/library digest. Null disables persistent provider caches. */
+  readonly cacheScope?: string | null
 
   // --- Connection ---
   connect(config: Record<string, unknown>): Promise<void>

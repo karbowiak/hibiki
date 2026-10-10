@@ -40,12 +40,15 @@ export const useConnectionStore = createPlexConnectionStore({
       token: context.token,
       sectionId: section.key,
       sectionUuid: section.uuid ?? null,
-      machineIdentifier: context.machineIdentifier
+      machineIdentifier: context.machineIdentifier,
+      cacheScope: context.cacheScopes[String(section.key)]
     })
     return provider
   },
-  activateProvider: (provider, context, section) => {
+  activateProvider: async (provider, context, section) => {
     useProviderStore.getState().setProvider(provider)
+    await useLibraryStore.getState().activateProvider(provider)
+    if (useProviderStore.getState().provider !== provider) return
     wsManager = new PlexWebSocketManager()
     wsManager.connect(context.baseUrl, context.token, section.key)
   }

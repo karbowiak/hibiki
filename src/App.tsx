@@ -35,6 +35,7 @@ import LiveAnnouncer from "./components/LiveAnnouncer"
 import "./i18n" // Initialize i18n on app load
 
 function DesktopApp() {
+  const activeProvider = useProviderStore(s => s.provider)
   const debugPanelOpen = useDebugPanelStore(s => s.open)
   const { hotkeyHelpOpen, setHotkeyHelpOpen } = useGlobalHotkeys()
   const { isConnected, musicSectionId, isLoading, loadAndConnect } = useConnectionStore(
@@ -60,7 +61,8 @@ function DesktopApp() {
   }, [])
 
   useEffect(() => {
-    if (isConnected && musicSectionId !== null) {
+    let active = true
+    if (isConnected && musicSectionId !== null && activeProvider) {
       // Fetch all home-page data in parallel, THEN start background prefetch.
       // Starting prefetch early was competing with fetchHubs/fetchRecentlyAdded
       // for Plex server connections, causing hubs to silently fail.
@@ -72,11 +74,13 @@ function DesktopApp() {
         fetchHubs({ force: true }),
         fetchTags(),    // 24h TTL — rarely hits network after first load
       ]).then(() => {
+        if (!active || useProviderStore.getState().provider !== activeProvider) return
         void prefetchAllPlaylists()
         void prefetchMixTracks()
       })
     }
-  }, [isConnected, musicSectionId])
+    return () => { active = false }
+  }, [isConnected, musicSectionId, activeProvider])
 
   useEffect(() => {
     if (!isLoading && !isConnected && location !== "/settings") {

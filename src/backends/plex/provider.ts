@@ -5,6 +5,7 @@
  * Mappers convert Plex types to generic types, resolving image URLs during conversion.
  */
 
+import { providerCacheScope } from "../../lib/providerCacheScope"
 import { canScrobble } from "../../audio/playbackJournal"
 import type { MusicProvider, ProviderCapabilities, LevelData, LyricLineData, TrackPlaybackInfo } from "../../providers/types"
 import type {
@@ -60,6 +61,9 @@ export class PlexProvider implements MusicProvider {
     syncTracks: true,
   }
 
+  private _cacheScope: string | null = null
+  get cacheScope() { return this._cacheScope }
+
   private _connected = false
   private _baseUrl = ""
   private _token = ""
@@ -79,8 +83,9 @@ export class PlexProvider implements MusicProvider {
   private rebuildImg() {
     const base = this._baseUrl
     const token = this._token
+    const scope = this._cacheScope
     this.img = (path, entityType, entityId, name, artist) =>
-      buildPlexImageUrl(base, token, entityType, entityId, path, name, artist) ?? ""
+      buildPlexImageUrl(base, token, entityType, entityId, path, name, artist, scope) ?? ""
   }
 
   // ---------------------------------------------------------------------------
@@ -98,12 +103,16 @@ export class PlexProvider implements MusicProvider {
     this._sectionId = sectionId
     this._sectionUuid = sectionUuid
     this._machineIdentifier = (config.machineIdentifier as string) ?? ""
+    this._cacheScope = typeof config.cacheScope === "string" && /^plex-[a-f0-9]{64}$/.test(config.cacheScope)
+      ? config.cacheScope
+      : await providerCacheScope("plex", this._machineIdentifier, token, sectionUuid || String(sectionId), baseUrl)
     this.rebuildImg()
     this._connected = true
   }
 
   async disconnect(): Promise<void> {
     this._connected = false
+    this._cacheScope = null
     this._sectionId = null
     this._sectionUuid = null
     this._baseUrl = ""

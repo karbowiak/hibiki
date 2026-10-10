@@ -29,6 +29,7 @@
 pub mod audio;
 pub mod auth;
 pub mod client;
+pub mod cache_scope;
 pub mod lyrics;
 pub mod collection;
 pub mod discovery;

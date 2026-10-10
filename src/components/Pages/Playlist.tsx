@@ -100,7 +100,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
 
   useEffect(() => {
     if (playlistId) void fetchPlaylistItems(playlistId)
-  }, [playlistId, pageRefreshKey])
+  }, [playlistId, pageRefreshKey, provider])
 
   useEffect(() => {
     // Don't attach while a fetch is in progress — re-attaches when it completes,

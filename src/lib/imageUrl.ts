@@ -9,7 +9,7 @@
  *   image://localhost/playlist/{id}?src=...
  *
  * The Rust handler fetches `src`, falls back to Deezer/iTunes by `name` when
- * `src` fails. Cache key: `{type}_{id}_{md5(src)[..8]}.img`.
+ * `src` fails. Native cache keys include the verified account/library scope.
  *
  * This module is backend-agnostic — each backend owns its own URL assembly
  * (see backends/plex/imageUrl.ts).
@@ -37,6 +37,7 @@ export function buildImageUrl(
   sourceUrl: string | null | undefined,
   name?: string | null,
   artist?: string | null,
+  scope?: string | null,
 ): string | null {
   if (!entityId) return null
   // Need at least a source URL or a name for fallback
@@ -46,8 +47,9 @@ export function buildImageUrl(
   if (sourceUrl) params.set("src", sourceUrl)
   if (name) params.set("name", name)
   if (artist) params.set("artist", artist)
+  if (scope) params.set("scope", scope)
 
-  return `${IMAGE_BASE}/${entityType}/${entityId}?${params.toString()}`
+  return `${IMAGE_BASE}/${entityType}/${encodeURIComponent(entityId)}?${params.toString()}`
 }
 
 /**
@@ -57,7 +59,9 @@ export function buildImageUrl(
  *
  * Returns null if sourceUrl is null/undefined/empty.
  */
-export function buildExternalImageUrl(sourceUrl: string | null | undefined): string | null {
+export function buildExternalImageUrl(sourceUrl: string | null | undefined, scope?: string | null): string | null {
   if (!sourceUrl) return null
-  return `${IMAGE_BASE}/ext/img?src=${encodeURIComponent(sourceUrl)}`
+  const params = new URLSearchParams({src: sourceUrl})
+  if (scope) params.set("scope", scope)
+  return `${IMAGE_BASE}/ext/img?${params}`
 }

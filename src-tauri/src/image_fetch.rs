@@ -35,6 +35,28 @@ pub fn request(client: Option<&PlexClient>, value: &str) -> Option<reqwest::Requ
     Some(PUBLIC.get(url))
 }
 
+/// Digest-only filenames cannot contain entity IDs, paths or credentials.
+pub fn cache_key(
+    scope: &str,
+    entity_type: &str,
+    entity_id: &str,
+    src: &str,
+    name: &str,
+    artist: &str,
+) -> String {
+    use sha2::{Digest, Sha256};
+    let tuple = serde_json::to_vec(&[scope, entity_type, entity_id, src, name, artist])
+        .expect("string tuple");
+    format!("v2_{:x}.img", Sha256::digest(tuple))
+}
+
+pub fn scope_matches(client: Option<&PlexClient>, requested: &str) -> bool {
+    requested.is_empty()
+        || client.is_some_and(|client| {
+            !client.library_scope.is_empty() && client.library_scope == requested
+        })
+}
+
 pub async fn fetch(request: reqwest::RequestBuilder) -> Option<Vec<u8>> {
     let mut response = request.send().await.ok()?;
     if !response.status().is_success()
@@ -87,6 +109,59 @@ pub fn cache(path: &Path, bytes: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn artwork_cache_separates_accounts_and_metadata_names_and_cannot_escape_its_directory() {
+        let key = cache_key(
+            "account-a",
+            "artist",
+            "../../private",
+            "https://plex.test/image",
+            "Name",
+            "Artist",
+        );
+        assert!(!key.contains('/') && !key.contains("private"));
+        assert_ne!(
+            key,
+            cache_key(
+                "account-b",
+                "artist",
+                "../../private",
+                "https://plex.test/image",
+                "Name",
+                "Artist"
+            )
+        );
+        assert_ne!(
+            cache_key("", "artist", "1", "", "First", ""),
+            cache_key("", "artist", "1", "", "Second", "")
+        );
+        assert_ne!(
+            key,
+            cache_key(
+                "account-a",
+                "album",
+                "../../private",
+                "https://plex.test/image",
+                "Name",
+                "Artist"
+            )
+        );
+    }
+
+    #[test]
+    fn old_scoped_image_urls_are_rejected_before_cache_access_or_credentials() {
+        let mut client = PlexClient::new(crate::plex::PlexClientConfig {
+            base_url: "https://plex.test".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        client.library_scope = "current-library".into();
+        assert!(scope_matches(Some(&client), "current-library"));
+        assert!(!scope_matches(Some(&client), "old-library"));
+        assert!(!scope_matches(None, "current-library"));
+        assert!(scope_matches(None, ""));
+    }
+
     #[test]
     fn foreign_artwork_cannot_send_plex_query_tokens_or_embedded_credentials() {
         assert!(request(

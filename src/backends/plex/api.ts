@@ -34,7 +34,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 /** Connect to a Plex Media Server. Must be called before all other functions. */
-export interface PlexConnectionInfo { machineIdentifier: string; sections: LibrarySection[] }
+export interface PlexConnectionInfo { machineIdentifier: string; sections: LibrarySection[]; cacheScopes: Record<string, string> }
 
 export function connectPlex(baseUrl: string, token: string, connectionRevision: number, acceptInvalidCerts?: boolean, expectedMachineIdentifier?: string): Promise<PlexConnectionInfo> {
   return invoke("connect_plex", { baseUrl, token, connectionRevision, acceptInvalidCerts: acceptInvalidCerts ?? null, expectedMachineIdentifier: expectedMachineIdentifier ?? null })

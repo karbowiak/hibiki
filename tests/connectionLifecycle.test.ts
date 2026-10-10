@@ -250,3 +250,21 @@ test("logout disk failures remain visible and do not restore the old session", a
   expect(state().error).toContain("Cannot clear saved credentials")
   expect(state().isConnected).toBe(false)
 })
+
+test("cancellation while provider caches hydrate cannot publish a retired connection", async () => {
+  const hydrating = deferred<void>()
+  const { state } = harness({
+    activateProvider: async (_provider, context) => {
+      if (context.baseUrl.includes("old")) await hydrating.promise
+    }
+  })
+  const old = state()
+    .connect("https://old.test", "dummy-old")
+    .catch((error) => error)
+  await settle()
+  await state().connect("https://new.test", "dummy-new")
+  hydrating.resolve()
+  expect(await old).toBeInstanceOf(ConnectionSupersededError)
+  expect(state().baseUrl).toBe("https://new.test")
+  expect(state().isConnected).toBe(true)
+})

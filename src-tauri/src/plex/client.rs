@@ -107,6 +107,7 @@ pub struct PlexClient {
     pub token: String,
     pub client_id: String,
     pub machine_identifier: String,
+    pub library_scope: String,
     pub client: ClientWithMiddleware,
     /// Separate reqwest client for `fetch_bytes` (audio download path).
     ///
@@ -233,6 +234,7 @@ impl PlexClient {
             token: config.token,
             client_id: config.client_id,
             machine_identifier: String::new(),
+            library_scope: String::new(),
             client,
             media_client,
             fetch_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
@@ -521,6 +523,12 @@ impl PlexClient {
     /// the Plex token or this server's TLS configuration.
     pub fn media_fetch_lock(&self) -> std::sync::Arc<tokio::sync::Mutex<()>> {
         self.fetch_lock.clone()
+    }
+
+    pub fn cache_scope_for_library(&self, id: i64, uuid: Option<&str>) -> String {
+        let library = uuid.filter(|value| !value.is_empty())
+            .map(str::to_string).unwrap_or_else(|| id.to_string());
+        super::cache_scope::library_scope(&self.machine_identifier, &self.token, &library, &self.base_url)
     }
 
     pub fn base_url(&self) -> &str {

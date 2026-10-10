@@ -63,19 +63,6 @@ static IMGCACHE_RT: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
         .expect("Failed to create image-cache async runtime")
 });
 
-/// Derives a deterministic cache key for an image.
-///
-/// Format: `{entity_type}_{entity_id}_{md5(src)[..8]}.img`
-/// When src is empty (fallback-only): `{entity_type}_{entity_id}_fallback.img`
-fn img_cache_key(entity_type: &str, entity_id: &str, src: &str) -> String {
-    if src.is_empty() {
-        return format!("{}_{}_fallback.img", entity_type, entity_id);
-    }
-    use md5::{Digest, Md5};
-    let hash = format!("{:x}", Md5::digest(src.as_bytes()));
-    format!("{}_{}_{}.img", entity_type, entity_id, &hash[..8])
-}
-
 /// Attempt metadata fallback — search Deezer/iTunes for an image URL by entity name.
 async fn metadata_fallback_url(
     entity_type: &str,
@@ -122,6 +109,7 @@ async fn resolve_image(
     src: &str,
     name: &str,
     artist: &str,
+    requested_scope: &str,
 ) -> Option<Vec<u8>> {
     use tauri::Manager;
 
@@ -130,7 +118,10 @@ async fn resolve_image(
         return None;
     }
 
-    let cache_key = img_cache_key(entity_type, entity_id, src);
+    let client = app.state::<commands::PlexState>().0.lock().await.clone();
+    if !image_fetch::scope_matches(client.as_ref(), requested_scope) { return None; }
+    let scope = client.as_ref().map(|client| client.library_scope.as_str()).unwrap_or_default();
+    let cache_key = image_fetch::cache_key(scope, entity_type, entity_id, src, name, artist);
     let cache_dir: Option<std::path::PathBuf> = app
         .path()
         .app_cache_dir()
@@ -158,7 +149,6 @@ async fn resolve_image(
 
     // Try fetching from src URL
     if !src.is_empty() {
-        let client = app.state::<commands::PlexState>().0.lock().await.clone();
         if let Some(request) = image_fetch::request(client.as_ref(), src) {
             if let Some(bytes) = image_fetch::fetch(request).await {
                 return Some(cache_and_return(bytes, &cache_dir, &cache_key));
@@ -169,7 +159,7 @@ async fn resolve_image(
     // Metadata fallback: only for entity types with names
     if !name.is_empty() && matches!(entity_type, "artist" | "album" | "track") {
         if let Some(fallback_url) = metadata_fallback_url(entity_type, name, artist).await {
-            let fb_cache_key = img_cache_key(entity_type, entity_id, &fallback_url);
+            let fb_cache_key = image_fetch::cache_key(scope, entity_type, entity_id, &fallback_url, name, artist);
             // Check fallback cache
             if let Some(ref dir) = cache_dir {
                 let fb_path = dir.join(&fb_cache_key);
@@ -290,6 +280,7 @@ pub fn run() {
                 let src = params.get("src").cloned().unwrap_or_default();
                 let name = params.get("name").cloned().unwrap_or_default();
                 let artist = params.get("artist").cloned().unwrap_or_default();
+                let scope = params.get("scope").cloned().unwrap_or_default();
 
                 // Parse path → entity_type / entity_id
                 // Paths: "artist/548757", "album/123", "ext/img", etc.
@@ -298,7 +289,7 @@ pub fn run() {
                 let entity_id = if parts.len() > 1 { parts[1] } else { "" };
 
                 // Resolve the image — result is Some(bytes) on success, None on failure.
-                let result = resolve_image(&app, entity_type, entity_id, &src, &name, &artist).await;
+                let result = resolve_image(&app, entity_type, entity_id, &src, &name, &artist, &scope).await;
 
                 responder.respond(match result {
                     Some(bytes) => tauri::http::Response::builder()

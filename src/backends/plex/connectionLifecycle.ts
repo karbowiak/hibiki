@@ -16,6 +16,7 @@ interface ConnectionContext {
   allUrls: string[]
   machineIdentifier: string
   sections: LibrarySection[]
+  cacheScopes: Record<string, string>
 }
 
 export interface ConnectionDependencies {
@@ -32,7 +33,7 @@ export interface ConnectionDependencies {
   testServerConnection(url: string, expectedMachineIdentifier?: string): Promise<number>
   startPlexAuth(): Promise<PlexAuthPin>
   createProvider(context: ConnectionContext, section: LibrarySection): Promise<MusicProvider>
-  activateProvider(provider: MusicProvider, context: ConnectionContext, section: LibrarySection): void
+  activateProvider(provider: MusicProvider, context: ConnectionContext, section: LibrarySection): void | Promise<void>
   clearSession(): void
 }
 
@@ -140,7 +141,8 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
         await provider.disconnect()
         throw new ConnectionSupersededError()
       }
-      deps.activateProvider(provider, connection, section)
+      await deps.activateProvider(provider, connection, section)
+      check(request)
       set({
         isConnected: true,
         isLoading: false,
@@ -178,6 +180,7 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
         token,
         allUrls: [...new Set([baseUrl, ...(allUrls ?? [])])],
         machineIdentifier: info.machineIdentifier,
+        cacheScopes: info.cacheScopes ?? {},
         sections
       }
       await save(request, connection)
