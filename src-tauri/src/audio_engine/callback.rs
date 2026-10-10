@@ -21,6 +21,7 @@ use super::deck::manager::{DeckManager, DeckState, FadeCurve};
 use super::dsp::DspChain;
 use super::event::{EngineEvent, TrackEndReason};
 use super::output::mixer;
+use super::output::playback_envelope::PlaybackEnvelope;
 use super::types::{DeckId, EngineState};
 
 #[cfg(test)]
@@ -128,6 +129,7 @@ pub struct AudioCallbackState {
     crossfade_remaining_frames: u64,
     pub normalization_enabled: bool,
     paused: bool,
+    playback_envelope: PlaybackEnvelope,
     waiting_for_play: bool,
     event_request_id: u64,
     pending_seek_ms: Option<u64>,
@@ -181,6 +183,7 @@ impl AudioCallbackState {
             crossfade_remaining_frames: 0,
             normalization_enabled: true,
             paused: false,
+            playback_envelope: PlaybackEnvelope::new(),
             waiting_for_play: false,
             event_request_id: 0,
             pending_seek_ms: None,
@@ -228,7 +231,7 @@ impl AudioCallbackState {
 
         // 5. Split at transition/end boundaries so the callback neither drops
         // a tail nor inserts silence when the next deck is already buffered.
-        self.mix_with_transitions(data);
+        let rendered_frames = self.mix_with_transitions(data);
         self.deck_mgr.active_deck_mut().trim_played_samples();
         if self.is_crossfading {
             self.deck_mgr.pending_deck_mut().trim_played_samples();
@@ -237,6 +240,27 @@ impl AudioCallbackState {
         // 6. Process DSP chain (direct access, no lock)
         self.dsp_chain
             .process(data, self.device_sample_rate, self.device_channels);
+
+        // Fade the final output (both decks and DSP tails), without changing the
+        // user's volume. Buffering cannot consume the fade before PCM is ready.
+        let rendered_samples = rendered_frames * usize::from(self.device_channels.max(1));
+        self.playback_envelope
+            .apply(&mut data[..rendered_samples], self.device_channels);
+        data[rendered_samples..].fill(0.0);
+        if self.paused
+            && self.deck_mgr.active_deck().position >= self.deck_mgr.active_deck().samples.len()
+        {
+            // Don't resume a pause tail seconds later if the decoder underruns.
+            self.playback_envelope.silence();
+        }
+        if self.paused
+            && self.waiting_for_play
+            && self.is_crossfading
+            && !self.playback_envelope.is_fading_out()
+        {
+            self.crossfade_remaining_frames = 0;
+            self.check_crossfade_complete(0);
+        }
 
         // 7. Update position atomics
         self.update_position_atomics();
@@ -252,12 +276,13 @@ impl AudioCallbackState {
         self.maybe_send_vis_frame(data);
     }
 
-    fn mix_with_transitions(&mut self, data: &mut [f32]) {
+    fn mix_with_transitions(&mut self, data: &mut [f32]) -> usize {
         let out_ch = self.device_channels.max(1) as usize;
         let mut offset = 0;
         while offset + out_ch <= data.len() {
             self.tick_scheduler();
-            if self.paused || self.state() != EngineState::Playing {
+            let fading_pause = self.paused && self.playback_envelope.is_fading_out();
+            if !fading_pause && (self.paused || self.state() != EngineState::Playing) {
                 break;
             }
             let active = self.deck_mgr.active_deck();
@@ -267,9 +292,17 @@ impl AudioCallbackState {
                 break;
             }
             let mut frames = ((data.len() - offset) / out_ch).min(available);
+            if self.paused {
+                // The envelope is applied after DSP, so account for this
+                // callback's earlier segments when locating its exact end.
+                frames = frames.min(
+                    (self.playback_envelope.remaining_frames() as usize)
+                        .saturating_sub(offset / out_ch),
+                );
+            }
             if self.is_crossfading {
                 frames = frames.min(self.crossfade_remaining_frames as usize);
-            } else if !self.waiting_for_play {
+            } else if !self.waiting_for_play && !self.paused {
                 let position_frames = ((active.sample_offset + active.position)
                     / active.channels.max(1) as usize) as u64;
                 if let Some(until) = self
@@ -298,6 +331,7 @@ impl AudioCallbackState {
         // Deliver a boundary reached on the last frame without waiting for
         // the following device callback.
         self.tick_scheduler();
+        offset / out_ch
     }
 
     // -----------------------------------------------------------------------
@@ -364,6 +398,7 @@ impl AudioCallbackState {
                 self.atomics.deck_b_load_id.fetch_add(1, Ordering::SeqCst);
                 self.is_crossfading = false;
                 self.waiting_for_play = false;
+                self.playback_envelope.silence();
                 self.atomics
                     .active_request_id
                     .store(request_id, Ordering::SeqCst);
@@ -390,7 +425,7 @@ impl AudioCallbackState {
                 }
                 self.emit_transition_info(request_id, None);
                 self.scheduler.reset();
-                if self.is_crossfading && self.paused {
+                if self.is_crossfading && self.paused && !self.playback_envelope.is_fading_out() {
                     self.crossfade_remaining_frames = 0;
                     self.check_crossfade_complete(0);
                 }
@@ -482,13 +517,18 @@ impl AudioCallbackState {
                 }
             }
             AudioCommand::Pause => {
+                if !self.paused {
+                    if self.state() == EngineState::Playing
+                        && self.deck_mgr.active_deck().played_frames > 0
+                    {
+                        self.playback_envelope.fade_out(self.device_sample_rate);
+                    } else {
+                        self.playback_envelope.silence();
+                    }
+                }
                 self.paused = true;
                 if self.waiting_for_play {
                     self.pending_play_paused = true;
-                    if self.is_crossfading {
-                        self.crossfade_remaining_frames = 0;
-                        self.check_crossfade_complete(0);
-                    }
                 }
                 self.set_state(EngineState::Paused);
                 let _ = self.event_tx.try_send(EngineEvent::State {
@@ -498,6 +538,7 @@ impl AudioCallbackState {
             }
             AudioCommand::Resume => {
                 self.paused = false;
+                self.playback_envelope.fade_in(self.device_sample_rate);
                 if self.waiting_for_play {
                     self.pending_play_paused = false;
                 }
@@ -528,6 +569,7 @@ impl AudioCallbackState {
                 self.atomics.deck_b_loaded_id.store(0, Ordering::SeqCst);
                 self.is_crossfading = false;
                 self.paused = false;
+                self.playback_envelope.silence();
                 self.waiting_for_play = false;
                 self.set_state(EngineState::Stopped);
                 let _ = self.event_tx.try_send(EngineEvent::State {
@@ -549,6 +591,12 @@ impl AudioCallbackState {
                 let allow_outgoing_fade =
                     !self.paused && self.deck_mgr.active_deck().played_frames > 0;
                 self.paused = self.pending_play_paused;
+                if self.paused || !allow_outgoing_fade {
+                    self.playback_envelope.silence();
+                    if !self.paused {
+                        self.playback_envelope.fade_in(self.device_sample_rate);
+                    }
+                }
                 self.handle_transition_to_active(user_skip, allow_outgoing_fade);
                 if self.paused {
                     self.set_state(EngineState::Paused);
@@ -566,6 +614,9 @@ impl AudioCallbackState {
                 }
             }
             AudioCommand::SeekInBuffer { position } => {
+                if self.paused {
+                    self.playback_envelope.silence();
+                }
                 // `position` is encoded as milliseconds from the control thread
                 if self.waiting_for_play {
                     self.pending_seek_ms = Some(position as u64);

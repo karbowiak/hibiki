@@ -1,6 +1,7 @@
 //! Audio output — cpal device stream.
 
 pub mod mixer;
+pub mod playback_envelope;
 pub mod resample;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
