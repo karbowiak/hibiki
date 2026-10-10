@@ -234,9 +234,9 @@ function SearchBasedMixBuilder({ tabType, sectionUuid, sectionId, playFromUri, o
                 )}
               >
                 {thumb ? (
-                  <img src={thumb} alt="" className={clsx("h-9 w-9 flex-shrink-0 object-cover", tabType === "artist" ? "rounded-full" : "rounded")} />
+                  <img src={thumb} alt="" className={"h-9 w-9 flex-shrink-0 rounded-md object-cover"} />
                 ) : (
-                  <div className={clsx("h-9 w-9 flex-shrink-0 bg-white/10", tabType === "artist" ? "rounded-full" : "rounded")} />
+                  <div className={"h-9 w-9 flex-shrink-0 rounded-md bg-white/10"} />
                 )}
                 <div className="min-w-0 flex-1">
                   <div className={clsx("truncate text-sm font-medium", isSeeded ? "text-accent" : "text-white")}>{title}</div>
@@ -278,9 +278,9 @@ function SearchBasedMixBuilder({ tabType, sectionUuid, sectionId, playFromUri, o
                   className="flex items-center gap-1.5 rounded-full bg-white/10 pl-1 pr-2 py-1 text-xs font-medium"
                 >
                   {thumb ? (
-                    <img src={thumb} alt="" className={clsx("h-5 w-5 flex-shrink-0 object-cover", tabType === "artist" ? "rounded-full" : "rounded-sm")} />
+                    <img src={thumb} alt="" className={"h-5 w-5 flex-shrink-0 rounded-sm object-cover"} />
                   ) : (
-                    <div className={clsx("h-5 w-5 flex-shrink-0 bg-white/20", tabType === "artist" ? "rounded-full" : "rounded-sm")} />
+                    <div className={"h-5 w-5 flex-shrink-0 rounded-sm bg-white/20"} />
                   )}
                   <span className="max-w-[120px] truncate">{item.title}</span>
                   <button

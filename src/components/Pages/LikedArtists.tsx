@@ -84,7 +84,7 @@ export function LikedArtists() {
                   onContextMenu={ctxMenu("artist", artist)}
                   className="group flex flex-col items-center gap-2 rounded-md p-3 no-underline transition-colors hover:bg-hl-card"
                 >
-                  <div className="relative w-full aspect-square overflow-hidden rounded-full bg-app-surface shadow-lg">
+                  <div className="relative w-full aspect-square overflow-hidden rounded-lg bg-app-surface shadow-lg">
                     <ArtistThumb title={artist.title} thumb={artist.thumbUrl} />
                   </div>
                   <div className="w-full text-center">

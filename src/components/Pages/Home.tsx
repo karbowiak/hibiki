@@ -231,7 +231,7 @@ export function Home() {
   return (
     <div className="space-y-8 pb-8">
       {mixesItems.length > 0 && (
-        <ScrollRow title={mixesTitle} titleHref="/stations" restoreKey="home-mixes">
+        <ScrollRow title={mixesTitle} titleHref="/stations" restoreKey="home-mixes" centerItems>
           {mixesItems.map((item, idx) => {
             if (item.type !== "playlist") return null
             const thumb = mixThumbs[item.title] ?? item.thumbUrl

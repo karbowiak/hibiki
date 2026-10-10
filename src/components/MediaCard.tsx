@@ -62,7 +62,7 @@ export function MediaCard(props: MediaCardProps) {
   return <MediaCardInner {...props} />
 }
 
-function MediaCardInner({ title, desc, thumb, thumbFallback, isArtist, scrollItem, large, href, onClick, prefetch, onPlay, onContextMenu, dragPayload }: MediaCardProps) {
+function MediaCardInner({ title, desc, thumb, thumbFallback, scrollItem, large, href, onClick, prefetch, onPlay, onContextMenu, dragPayload }: MediaCardProps) {
   const displayThumb = thumb || thumbFallback || null
   const trackDrag = useTrackDrag()
   const scrollStyle = scrollItem
@@ -84,19 +84,11 @@ function MediaCardInner({ title, desc, thumb, thumbFallback, isArtist, scrollIte
             alt={title}
             draggable={false}
             loading="lazy"
-            className={
-              isArtist
-                ? "aspect-square w-full rounded-full object-cover"
-                : "aspect-square w-full rounded-md object-cover"
-            }
+            className="aspect-square w-full rounded-lg object-cover"
           />
         ) : (
           <div
-            className={
-              isArtist
-                ? "aspect-square w-full rounded-full bg-app-surface"
-                : "aspect-square w-full rounded-md bg-app-surface"
-            }
+            className="aspect-square w-full rounded-lg bg-app-surface"
           />
         )}
         {onPlay && (

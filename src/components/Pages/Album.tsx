@@ -366,7 +366,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
 
             <div className="flex flex-wrap items-center gap-2 text-sm text-gray-300">
               {parentThumbUrl && (
-                <img src={parentThumbUrl} alt="" className="h-6 w-6 rounded-full object-cover flex-shrink-0" />
+                <img src={parentThumbUrl} alt="" className="h-6 w-6 rounded object-cover flex-shrink-0" />
               )}
               <Link
                 href={`/artist/${album.artistId}`}

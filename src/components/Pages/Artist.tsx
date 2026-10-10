@@ -64,10 +64,10 @@ function DeezerArtistAvatar({ name }: { name: string }) {
 
   const cachedUrl = buildExternalImageUrl(imageUrl)
   if (cachedUrl) {
-    return <img src={cachedUrl} alt={name} className="h-16 w-16 rounded-full object-cover" />
+    return <img src={cachedUrl} alt={name} className="h-16 w-16 rounded-md object-cover" />
   }
   return (
-    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white/10 text-xl font-bold text-white/30">
+    <div className="flex h-16 w-16 items-center justify-center rounded-md bg-white/10 text-xl font-bold text-white/30">
       {name[0]}
     </div>
   )
@@ -449,10 +449,10 @@ export function ArtistPage({ artistId }: { artistId: string }) {
               src={thumbUrl}
               alt={artist.title}
               onClick={() => setShowImageModal(true)}
-              className="h-36 w-36 flex-shrink-0 cursor-pointer rounded-full object-cover shadow-2xl ring-2 ring-transparent hover:ring-white/40 transition-all"
+              className="h-36 w-36 flex-shrink-0 cursor-pointer rounded-lg object-cover shadow-2xl ring-2 ring-transparent hover:ring-white/40 transition-all"
             />
           ) : (
-            <div className="h-36 w-36 flex-shrink-0 rounded-full bg-app-surface shadow-2xl" />
+            <div className="h-36 w-36 flex-shrink-0 rounded-lg bg-app-surface shadow-2xl" />
           )}
 
           {/* Info column — no fixed height, flows naturally */}
@@ -802,7 +802,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                     {plexId ? (
                       <Link
                         href={`/artist/${plexId}`}
-                        className="block rounded-full ring-2 ring-transparent hover:ring-white/40 transition-all"
+                        className="block rounded-md ring-2 ring-transparent hover:ring-white/40 transition-all"
                         title={`Open ${a.name}`}
                       >
                         {avatar}

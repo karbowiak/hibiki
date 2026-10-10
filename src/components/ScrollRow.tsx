@@ -9,9 +9,11 @@ interface ScrollRowProps {
   restoreKey?: string
   onPlayAll?: () => void
   onShuffleAll?: () => void
+  /** Center short rows while allowing overflowing rows to start at the left. */
+  centerItems?: boolean
 }
 
-export function ScrollRow({ title, titleHref, children, restoreKey, onPlayAll, onShuffleAll }: ScrollRowProps) {
+export function ScrollRow({ title, titleHref, children, restoreKey, onPlayAll, onShuffleAll, centerItems }: ScrollRowProps) {
   const [expanded, setExpanded] = useState(false)
   const [overflows, setOverflows] = useState(false)
   const scrollRef = useScrollRestore(restoreKey, "x")
@@ -133,7 +135,11 @@ export function ScrollRow({ title, titleHref, children, restoreKey, onPlayAll, o
           ref={scrollRef}
           className="flex gap-3 overflow-x-auto pb-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
         >
-          {children}
+          {centerItems ? (
+            <div className="mx-auto flex w-max flex-shrink-0 gap-3">
+              {children}
+            </div>
+          ) : children}
         </div>
       )}
     </div>

@@ -95,9 +95,9 @@ export function SearchDropdown({ activeIndex, onActiveIndexChange, onClose }: Pr
               onClick={() => activateItem(idx)}
             >
               {thumb ? (
-                <img src={thumb} alt="" className="h-9 w-9 rounded-full object-cover flex-shrink-0" />
+                <img src={thumb} alt="" className="h-9 w-9 rounded-md object-cover flex-shrink-0" />
               ) : (
-                <div className="h-9 w-9 rounded-full bg-white/10 flex-shrink-0" />
+                <div className="h-9 w-9 rounded-md bg-white/10 flex-shrink-0" />
               )}
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium text-white">{row.item.title}</div>
