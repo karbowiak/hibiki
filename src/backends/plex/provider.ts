@@ -5,6 +5,7 @@
  * Mappers convert Plex types to generic types, resolving image URLs during conversion.
  */
 
+import { canScrobble } from "../../audio/playbackJournal"
 import type { MusicProvider, ProviderCapabilities, LevelData, LyricLineData, TrackPlaybackInfo } from "../../providers/types"
 import type {
   MusicTrack,
@@ -501,6 +502,7 @@ export class PlexProvider implements MusicProvider {
   }
 
   onTrackEnd(track: MusicTrack, startedAtUnix: number, listenedMs: number): void {
+    if (!canScrobble(track.duration, listenedMs)) return;
     lastfmScrobble(
       track.artistName ?? "",
       track.title,

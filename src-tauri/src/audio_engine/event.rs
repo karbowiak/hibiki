@@ -3,6 +3,15 @@
 use super::crossfade::types::TransitionInfo;
 use serde::Serialize;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TrackEndReason {
+    Natural,
+    Skipped,
+    Stopped,
+    Error,
+}
+
 /// Events the engine emits to the frontend.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -13,6 +22,7 @@ pub enum EngineEvent {
     },
     Position {
         request_id: u64,
+        playback_id: u64,
         position_ms: u64,
         duration_ms: u64,
     },
@@ -22,12 +32,18 @@ pub enum EngineEvent {
     },
     TrackStarted {
         request_id: u64,
+        playback_id: u64,
         rating_key: i64,
         duration_ms: u64,
     },
     TrackEnded {
         request_id: u64,
+        playback_id: u64,
         rating_key: i64,
+        position_ms: u64,
+        duration_ms: u64,
+        listened_ms: u64,
+        reason: TrackEndReason,
     },
     Error {
         request_id: u64,

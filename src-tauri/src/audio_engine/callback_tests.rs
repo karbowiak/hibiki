@@ -22,6 +22,184 @@ fn callback() -> (AudioCallbackState, Receiver<EngineEvent>) {
     (cb, events_rx)
 }
 
+#[test]
+fn listening_time_excludes_seeks_pauses_and_unplayed_preloads() {
+    let (mut cb, events) = callback();
+    cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
+    cb.handle_load_deck(DeckId::B, meta(2), 48000, 2, 1.0, 0);
+    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 960000];
+    cb.deck_mgr.active_deck_mut().fully_decoded = true;
+    cb.deck_mgr.active_deck_mut().has_started_playing = true;
+    cb.set_state(EngineState::Playing);
+    cb.process_callback(&mut [0.0; 960]); // 10ms heard
+    cb.handle_command(AudioCommand::Pause);
+    cb.process_callback(&mut [0.0; 96000]); // One second paused
+    cb.handle_command(AudioCommand::ClearPreload);
+    cb.handle_command(AudioCommand::SeekInBuffer { position: 9000 });
+    cb.handle_command(AudioCommand::Resume);
+    cb.process_callback(&mut [0.0; 960]); // Another 10ms heard
+    cb.handle_command(AudioCommand::Stop);
+    cb.handle_command(AudioCommand::Stop);
+    let ended: Vec<_> = events
+        .try_iter()
+        .filter(|event| matches!(event, EngineEvent::TrackEnded { .. }))
+        .collect();
+    assert_eq!(
+        ended.len(),
+        1,
+        "preloads and repeated Stop must not create listens"
+    );
+    match &ended[0] {
+        EngineEvent::TrackEnded {
+            listened_ms,
+            position_ms,
+            reason,
+            rating_key,
+            playback_id,
+            ..
+        } => {
+            assert_eq!(*listened_ms, 20);
+            assert_eq!(*position_ms, 9010);
+            assert_eq!(*rating_key, 1);
+            assert_eq!(*playback_id, 1);
+            assert_eq!(*reason, TrackEndReason::Stopped);
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn a_paused_deck_reports_start_only_after_its_first_rendered_frame() {
+    let (mut cb, events) = callback();
+    cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
+    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 96000];
+    cb.deck_mgr.active_deck_mut().has_started_playing = true;
+    cb.handle_command(AudioCommand::Pause);
+    cb.process_callback(&mut [0.0; 960]);
+    assert!(!events
+        .try_iter()
+        .any(|event| matches!(event, EngineEvent::TrackStarted { .. })));
+    cb.handle_command(AudioCommand::Resume);
+    cb.process_callback(&mut [0.0; 960]);
+    cb.process_callback(&mut [0.0; 960]);
+    assert_eq!(
+        events
+            .try_iter()
+            .filter(|event| matches!(event, EngineEvent::TrackStarted { playback_id: 1, .. }))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn resuming_while_an_incoming_track_is_loading_keeps_the_outgoing_audio_audible() {
+    let (mut cb, _) = callback();
+    cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
+    cb.deck_mgr.active_deck_mut().samples = vec![0.3; 96000];
+    cb.deck_mgr.active_deck_mut().has_started_playing = true;
+    cb.set_state(EngineState::Playing);
+    cb.atomics.request_epoch.store(1, Ordering::SeqCst);
+    cb.handle_command(AudioCommand::BeginPlay { request_id: 1 });
+    cb.handle_command(AudioCommand::Pause);
+    cb.handle_command(AudioCommand::Resume);
+    let mut output = [0.0; 960];
+    cb.process_callback(&mut output);
+    assert!(output.iter().all(|sample| (*sample - 0.3).abs() < 1e-6));
+    assert!(cb.waiting_for_play);
+}
+
+#[test]
+fn selecting_a_new_track_while_paused_does_not_briefly_resume_the_outgoing_song() {
+    let (mut cb, _) = callback();
+    cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
+    cb.handle_load_deck(DeckId::B, meta(2), 48000, 2, 1.0, 0);
+    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 96000];
+    cb.deck_mgr.active_deck_mut().has_started_playing = true;
+    cb.deck_mgr.pending_deck_mut().samples = vec![0.4; 96000];
+    cb.set_state(EngineState::Playing);
+    cb.process_callback(&mut [0.0; 960]);
+    cb.handle_command(AudioCommand::Pause);
+    cb.handle_command(AudioCommand::TransitionToActive {
+        user_skip: true,
+        request_id: 0,
+    });
+    assert!(!cb.is_crossfading);
+    let mut output = [0.0; 960];
+    cb.process_callback(&mut output);
+    assert!(output.iter().all(|sample| (*sample - 0.4).abs() < 1e-6));
+}
+
+#[test]
+fn fading_between_two_occurrences_of_one_song_finishes_only_the_outgoing_identity() {
+    for key in [0, 1] {
+        let (mut cb, events) = callback();
+        for deck_id in [DeckId::A, DeckId::B] {
+            let mut metadata = meta(key);
+            metadata.duration_ms = 2000;
+            cb.handle_load_deck(deck_id, metadata, 48000, 2, 1.0, 0);
+            let deck = cb.deck_mgr.deck_mut(deck_id);
+            deck.samples = vec![0.1; 192000];
+            deck.fully_decoded = true;
+        }
+        cb.deck_mgr.active_deck_mut().has_started_playing = true;
+        cb.crossfade_settings.smart_crossfade = false;
+        cb.crossfade_settings.crossfade_window_ms = 400;
+        cb.set_state(EngineState::Playing);
+        cb.compute_and_set_schedule();
+        cb.process_callback(&mut vec![0.0; 48000 * 2 * 17 / 10]);
+        let starts: Vec<_> = events
+            .try_iter()
+            .filter_map(|event| match event {
+                EngineEvent::TrackStarted {
+                    playback_id,
+                    rating_key,
+                    ..
+                } => Some((playback_id, rating_key)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(starts, [(1, key), (2, key)]);
+        cb.process_callback(&mut vec![0.0; 48000 * 2 * 3 / 10]);
+        let ends: Vec<_> = events
+            .try_iter()
+            .filter_map(|event| match event {
+                EngineEvent::TrackEnded {
+                    playback_id,
+                    listened_ms,
+                    reason,
+                    ..
+                } => Some((playback_id, listened_ms, reason)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ends, [(1, 2000, TrackEndReason::Natural)]);
+        assert_eq!(cb.deck_mgr.active_deck().playback_id, 2);
+    }
+}
+
+#[test]
+fn position_snapshots_do_not_mix_id_duration_and_position_from_different_plays() {
+    let (mut cb, _) = callback();
+    cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
+    let atomics = cb.atomics.clone();
+    let writer = std::thread::spawn(move || {
+        for id in 1..20000u64 {
+            let deck = cb.deck_mgr.active_deck_mut();
+            deck.playback_id = id;
+            deck.position = id as usize * 96000;
+            deck.meta.as_mut().unwrap().duration_ms = id * 10000;
+            cb.update_position_atomics();
+        }
+    });
+    for _ in 0..40000 {
+        if let Some((position, duration, playback)) = atomics.position_snapshot() {
+            assert_eq!(position, playback * 1000);
+            assert_eq!(duration, playback * 10000);
+        }
+    }
+    writer.join().unwrap();
+}
+
 fn meta(key: i64) -> TrackMeta {
     TrackMeta {
         rating_key: key,
@@ -589,7 +767,7 @@ fn manual_skips_between_album_tracks_fade_after_the_new_buffer_is_ready() {
     cb.deck_mgr.active_deck_mut().has_started_playing = true;
     cb.deck_mgr.pending_deck_mut().samples = vec![0.1; 96000];
     cb.set_state(EngineState::Playing);
-    cb.handle_transition_to_active(true);
+    cb.handle_transition_to_active(true, true);
     assert!(cb.is_crossfading);
 }
 

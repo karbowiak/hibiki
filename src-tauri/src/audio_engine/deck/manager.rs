@@ -60,6 +60,10 @@ impl FadeCurve {
 /// State of a single deck.
 #[derive(Debug)]
 pub struct DeckState {
+    pub playback_id: u64,
+    pub played_frames: u64,
+    pub start_reported: bool,
+    pub end_reported: bool,
     /// Decoded audio samples (interleaved f32).
     pub samples: Vec<f32>,
     /// Current read position in samples (interleaved index).
@@ -97,6 +101,10 @@ pub struct DeckState {
 impl DeckState {
     pub fn new(_id: DeckId) -> Self {
         Self {
+            playback_id: 0,
+            played_frames: 0,
+            start_reported: false,
+            end_reported: false,
             samples: Vec::new(),
             position: 0,
             meta: None,
@@ -117,6 +125,10 @@ impl DeckState {
 
     /// Reset deck for reuse with a new track.
     pub fn reset(&mut self) {
+        self.playback_id = 0;
+        self.played_frames = 0;
+        self.start_reported = false;
+        self.end_reported = false;
         self.samples.clear();
         self.position = 0;
         self.sample_offset = 0;

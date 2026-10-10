@@ -169,10 +169,12 @@ impl AudioEngine {
                 if atomics_pos.get_state() != EngineState::Playing {
                     continue;
                 }
-                let pos_ms = atomics_pos.position_ms.load(Ordering::Relaxed);
-                let dur_ms = atomics_pos.duration_ms.load(Ordering::Relaxed);
+                let Some((pos_ms, dur_ms, playback_id)) = atomics_pos.position_snapshot() else {
+                    continue;
+                };
                 let _ = event_tx_pos.send(EngineEvent::Position {
                     request_id: atomics_pos.active_request_id.load(Ordering::SeqCst),
+                    playback_id,
                     position_ms: if dur_ms > 0 {
                         pos_ms.min(dur_ms)
                     } else {
@@ -1211,6 +1213,9 @@ fn decode_initial_batch(
     let initial_batch_size = (setup.sample_rate as usize * setup.channels as usize).min(262144);
     let mut samples =
         decode::decode_batch(setup, initial_batch_size).map_err(|e| format!("{e}"))?;
+    if samples.is_empty() {
+        return Err("No decodable audio frames were found".into());
+    }
     let source_rate = setup.sample_rate;
     let source_channels = setup.channels;
 
@@ -1321,6 +1326,16 @@ fn resolve_gain_db(
 #[cfg(test)]
 mod control_tests {
     use super::*;
+
+    #[test]
+    fn empty_audio_is_rejected_before_a_deck_is_loaded() {
+        let mut decoder =
+            decode::probe_audio(decode::tests::generate_test_wav(44100, 2, 0.0)).unwrap();
+        assert!(decode_initial_batch(&mut decoder, 48000, 2)
+            .err()
+            .unwrap()
+            .contains("No decodable audio"));
+    }
 
     #[test]
     fn paused_decoding_stays_bounded_and_seeks_and_cancellation_bypass_backpressure() {

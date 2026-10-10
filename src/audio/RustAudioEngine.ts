@@ -1,7 +1,7 @@
 /**
  * Audio engine — Tauri IPC bridge to the Rust audio engine.
  *
- * Maps the public API to Tauri invoke() commands and listen() events.
+ * Maps the public API to Tauri this.ipc.invoke() commands and this.ipc.listen() events.
  * The Rust engine handles all audio processing: fetch, decode (symphonia),
  * DSP (EQ, limiter, volume), crossfade, and output (cpal → CoreAudio).
  *
@@ -9,6 +9,7 @@
  */
 
 import type { TransitionInfo } from "./transitionInfo"
+import type { TrackStarted, TrackEnded } from "./playbackJournal"
 import { PlaybackEventGate } from "./playbackEventGate"
 import { invoke } from "@tauri-apps/api/core"
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
@@ -18,10 +19,11 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 // ---------------------------------------------------------------------------
 
 export interface AudioEngineCallbacks {
-  onPosition(positionMs: number, durationMs: number): void
+  onPosition(positionMs: number, durationMs: number, playbackId: number): void
   onState(state: "playing" | "paused" | "buffering" | "stopped"): void
-  onTrackStarted(ratingKey: number, durationMs?: number): void
-  onTrackEnded(ratingKey: number): void
+  onTrackStarted(event: TrackStarted): void
+  onTrackEnded(event: TrackEnded): void
+  onControlError?(message: string): void
   onTransitionScheduled?(transition: TransitionInfo | null): void
   onError(message: string): void
   onVisFrame?(samples: Float32Array): void
@@ -33,10 +35,10 @@ export interface AudioEngineCallbacks {
 
 // Payload field names are snake_case from Rust serde (rename_all only affects
 // the enum tag, not struct fields in internally-tagged enums).
-interface PositionPayload { request_id: number; position_ms: number; duration_ms: number }
+interface PositionPayload { request_id: number; playback_id: number; position_ms: number; duration_ms: number }
 interface StatePayload { request_id: number; state: string }
-interface TrackStartedPayload { request_id: number; rating_key: number; duration_ms: number }
-interface TrackEndedPayload { request_id: number; rating_key: number }
+interface TrackStartedPayload extends TrackStarted { request_id: number }
+interface TrackEndedPayload extends TrackEnded { request_id: number }
 interface TransitionPayload { request_id: number; transition: TransitionInfo | null }
 interface ErrorPayload { request_id: number; message: string }
 interface VisFramePayload { samples: number[]; frequency_bins: number[] }
@@ -45,7 +47,10 @@ interface VisFramePayload { samples: number[]; frequency_bins: number[] }
 // Engine
 // ---------------------------------------------------------------------------
 
-class RustAudioEngine {
+export interface AudioTransport { invoke: typeof invoke; listen: typeof listen }
+
+export class RustAudioEngine {
+  constructor(private ipc: AudioTransport = { invoke, listen }) {}
   private cb: AudioEngineCallbacks | null = null
   private eventGate = new PlaybackEventGate()
   private listenerGeneration = 0
@@ -62,7 +67,7 @@ class RustAudioEngine {
   async init(callbacks: AudioEngineCallbacks): Promise<void> {
     this.cb = callbacks
     await this.setupEventListeners()
-    this.cachedSampleRate = await invoke<number>("audio_get_sample_rate").catch(() => 44100)
+    this.cachedSampleRate = await this.ipc.invoke<number>("audio_get_sample_rate").catch(() => 44100)
   }
 
   beginSelection(): void {
@@ -78,25 +83,27 @@ class RustAudioEngine {
     this.unlisteners = []
 
     const registrations: (() => Promise<UnlistenFn>)[] = [
-      () => listen<PositionPayload>("audio://position", e => {
-        this.eventGate.accept(e.payload.request_id, () => this.cb?.onPosition(e.payload.position_ms, e.payload.duration_ms))
+      () => this.ipc.listen<PositionPayload>("audio://position", e => {
+        this.eventGate.accept(e.payload.request_id, () => this.cb?.onPosition(e.payload.position_ms, e.payload.duration_ms, e.payload.playback_id))
       }),
-      () => listen<StatePayload>("audio://state", e => {
+      () => this.ipc.listen<StatePayload>("audio://state", e => {
         this.eventGate.accept(e.payload.request_id, () => this.cb?.onState(e.payload.state as "playing" | "paused" | "buffering" | "stopped"))
       }),
-      () => listen<TrackStartedPayload>("audio://track-started", e => {
-        this.eventGate.accept(e.payload.request_id, () => this.cb?.onTrackStarted(e.payload.rating_key, e.payload.duration_ms))
+      () => this.ipc.listen<TrackStartedPayload>("audio://track-started", e => {
+        this.eventGate.accept(e.payload.request_id, () => this.cb?.onTrackStarted(e.payload))
       }),
-      () => listen<TrackEndedPayload>("audio://track-ended", e => {
-        this.eventGate.accept(e.payload.request_id, () => this.cb?.onTrackEnded(e.payload.rating_key))
+      () => this.ipc.listen<TrackEndedPayload>("audio://track-ended", e => {
+        // Ends are validated against known journal identities. An outgoing
+        // deck can legitimately finish after selection changed or Stop.
+        this.cb?.onTrackEnded(e.payload)
       }),
-      () => listen<TransitionPayload>("audio://transition-scheduled", e => {
+      () => this.ipc.listen<TransitionPayload>("audio://transition-scheduled", e => {
         this.eventGate.accept(e.payload.request_id, () => this.cb?.onTransitionScheduled?.(e.payload.transition))
       }),
-      () => listen<ErrorPayload>("audio://error", e => {
+      () => this.ipc.listen<ErrorPayload>("audio://error", e => {
         this.eventGate.accept(e.payload.request_id, () => this.cb?.onError(e.payload.message))
       }),
-      () => listen<VisFramePayload>("audio://vis-frame", e => {
+      () => this.ipc.listen<VisFramePayload>("audio://vis-frame", e => {
         const samples = new Float32Array(e.payload.samples)
         this.lastFrequencyBins = new Float32Array(e.payload.frequency_bins)
         this.cb?.onVisFrame?.(samples)
@@ -118,7 +125,7 @@ class RustAudioEngine {
   }
 
   private sendControl(command: string, args?: Record<string, unknown>): void {
-    void invoke(command, args).catch(error => this.cb?.onError(String(error)))
+    void this.ipc.invoke(command, args).catch(error => this.cb?.onControlError?.(String(error)))
   }
 
   // ---------------------------------------------------------------------------
@@ -137,7 +144,7 @@ class RustAudioEngine {
     albumPlayback = false,
   ): Promise<void> {
     const ticket = this.eventGate.begin()
-    const requestId = await invoke<number>("audio_play", {
+    const requestId = await this.ipc.invoke<number>("audio_play", {
       url,
       ratingKey,
       durationMs,
@@ -162,7 +169,7 @@ class RustAudioEngine {
     endRamp?: string | null,
     albumPlayback = false,
   ): Promise<void> {
-    await invoke("audio_preload_next", {
+    await this.ipc.invoke("audio_preload_next", {
       url,
       ratingKey,
       durationMs,
@@ -230,7 +237,7 @@ class RustAudioEngine {
    * The Rust engine ramps volume to 0, waits duckMs, then ramps back.
    */
   duckAndApply(fn_: () => void, duckMs = 30): void {
-    void invoke("audio_duck_and_apply", { duckMs }).then(fn_).catch(error => this.cb?.onError(String(error)))
+    void this.ipc.invoke("audio_duck_and_apply", { duckMs }).then(fn_).catch(error => this.cb?.onError(String(error)))
   }
 
   // ---------------------------------------------------------------------------
@@ -292,7 +299,7 @@ class RustAudioEngine {
   }
 
   async getCacheStats(): Promise<{ total_bytes: number; file_count: number; max_bytes: number }> {
-    return invoke("audio_get_cache_stats")
+    return this.ipc.invoke("audio_get_cache_stats")
   }
 
   // ---------------------------------------------------------------------------

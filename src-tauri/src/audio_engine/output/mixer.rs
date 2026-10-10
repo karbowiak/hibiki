@@ -129,6 +129,7 @@ fn advance_position(deck: &mut DeckState) {
         return;
     }
     deck.position += deck_ch;
+    deck.played_frames = deck.played_frames.saturating_add(1);
 }
 
 #[cfg(test)]
@@ -139,6 +140,10 @@ mod tests {
 
     fn make_deck(_id: DeckId, samples: Vec<f32>, channels: u16) -> DeckState {
         DeckState {
+            playback_id: 0,
+            played_frames: 0,
+            start_reported: false,
+            end_reported: false,
             samples,
             position: 0,
             meta: None,

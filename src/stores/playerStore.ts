@@ -2,6 +2,8 @@ import { create } from "zustand"
 import { persist } from "zustand/middleware"
 import { listen } from "@tauri-apps/api/event"
 import { fireAndForget } from "../lib/async"
+import { PlaybackJournal, listenedEnough, startedQueueIndex } from "../audio/playbackJournal"
+import type { MusicProvider } from "../providers/types"
 import { dispatchPlaybackWhenReady } from "../audio/playbackRequests"
 import { isAlbumPlayback, selectReplayGain } from "../audio/playbackContext"
 import type { TransitionInfo } from "../audio/transitionInfo"
@@ -129,6 +131,7 @@ interface PlayerState {
   jumpToQueueItem: (index: number) => void
   /** Remove all tracks after the current one. */
   clearUpcoming: () => void
+  refreshPreload: () => void
 
   /** Initialize Tauri event listeners for the Rust audio engine. Call once on app mount. */
   initAudioEvents: () => Promise<() => void>
@@ -186,7 +189,7 @@ let _transcodeRetriedTrackId: string | null = null
 // Periodic timeline reporting — throttle to every 10 seconds
 // ---------------------------------------------------------------------------
 
-let _lastTimelineReportMs = 0
+let _lastTimelineReportedAt = 0
 const TIMELINE_REPORT_INTERVAL_MS = 10_000
 
 // Fire-and-forget wrappers — timeline/scrobble errors (400, 404) are
@@ -195,21 +198,10 @@ const _reportProgress = (trackId: string, state: string, positionMs: number, dur
   const provider = getProvider()
   if (provider) fireAndForget(provider.reportProgress(trackId, positionMs, state, duration))
 }
-const _markPlayed = (trackId: string) => {
-  const provider = getProvider()
-  if (provider) fireAndForget(provider.markPlayed(trackId))
-}
 
-// ---------------------------------------------------------------------------
-// Last.fm integration — module-level tracking
-// ---------------------------------------------------------------------------
-
-/**
- * Unix timestamp (seconds) when the current track started playing.
- * Set in _onTrackBecomesActive, used by the track-ended handler to pass
- * `started_at_unix` to the Last.fm scrobble API.
- */
-let _trackStartedAtUnix = 0
+// Each native play retains its own metadata and provider across outgoing overlaps.
+const _playbackJournal = new PlaybackJournal<{ track: MusicTrack; provider: MusicProvider | null; positionMs: number }>()
+let _pendingSelectedTrackId: string | null = null
 
 // ---------------------------------------------------------------------------
 // Radio — module-level state
@@ -563,13 +555,14 @@ function fetchLyricsForTrack(track: MusicTrack): void {
 
 /** Pre-buffer the next track in queue for gapless playback. */
 async function preloadNextTrack(queue: MusicTrack[], queueIndex: number, repeat: 0 | 1 | 2): Promise<void> {
-  if (repeat === 1) return
+  if (repeat === 1 || useSleepTimerStore.getState().endOfTrack) return
   const generation = _playGeneration
   const sourceTrackId = queue[queueIndex]?.id
   const isCurrent = () => {
     const state = usePlayerStore.getState()
     return generation === _playGeneration && state.currentTrack?.id === sourceTrackId
       && state.repeat !== 1
+      && !useSleepTimerStore.getState().endOfTrack
       && state.queue[(state.queueIndex + 1) % state.queue.length]?.id === nextTrack.id
   }
   let nextIndex = queueIndex + 1
@@ -695,15 +688,8 @@ function _onTrackBecomesActive(track: MusicTrack, index: number, get: () => Play
   const isPodcast = _isPodcastTrack(track)
   set({ currentTrack: track, transitionInfo: null, queueIndex: index, isPlaying: _playbackDesired, positionMs: 0,
         waveformLevels: null, lyricsLines: null })
-  _lastTimelineReportMs = 0
+  _lastTimelineReportedAt = 0
   _transcodeRetriedTrackId = null
-
-  if (useNotificationStore.getState().notificationsEnabled) {
-    sendNotification({
-      title: track.title,
-      body: `${track.artistName ?? "Unknown Artist"} • ${track.albumName ?? "Unknown Album"}`,
-    })
-  }
 
   if (!isPodcast) {
     // If the track lacks stream details (from a list endpoint), enrich it.
@@ -720,8 +706,21 @@ function _onTrackBecomesActive(track: MusicTrack, index: number, get: () => Play
       }))
     }
     fetchLyricsForTrack(track)
-    _reportProgress(track.id, "playing", 0, track.duration)
   }
+  if (get().djMode) fireAndForget(insertDjTracks(get, set))
+}
+
+function _onTrackAudiblyStarted(track: MusicTrack, provider: MusicProvider | null): void {
+  const isPodcast = _isPodcastTrack(track)
+  _lastTimelineReportedAt = Date.now()
+  if (useNotificationStore.getState().notificationsEnabled) {
+    sendNotification({
+      title: track.title,
+      body: `${track.artistName ?? "Unknown Artist"} • ${track.albumName ?? "Unknown Album"}`,
+    })
+  }
+
+  if (!isPodcast && provider) fireAndForget(provider.reportProgress(track.id, 0, "playing", track.duration))
   if (provider?.updateNowPlaying) {
     fireAndForget(provider.updateNowPlaying(
       track.title,
@@ -740,15 +739,11 @@ function _onTrackBecomesActive(track: MusicTrack, index: number, get: () => Play
     `Now playing: ${track.title} by ${track.artistName ?? "Unknown Artist"}`
   )
 
-  // Record when this track started (for scrobble timestamp)
-  _trackStartedAtUnix = Math.floor(Date.now() / 1000)
-
   // Notify provider of track start (scrobbling, external integrations) — skip for podcasts
   if (provider?.onTrackStart && !isPodcast) {
     provider.onTrackStart(track)
   }
 
-  if (get().djMode) fireAndForget(insertDjTracks(get, set))
 }
 
 /**
@@ -786,6 +781,7 @@ async function _startPlayback(track: MusicTrack, index: number, get: () => Playe
     set({ isInternetRadioActive: false })
   }
   const gen = ++_playGeneration
+  _pendingSelectedTrackId = track.id
   _playbackDesired = true
   if (_gaplessTimeoutId !== null) { clearTimeout(_gaplessTimeoutId); _gaplessTimeoutId = null }
   engine.beginSelection()
@@ -1062,6 +1058,7 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   stop: () => {
+    _pendingSelectedTrackId = null
     _playbackDesired = false
     ++_playGeneration
     if (_gaplessTimeoutId !== null) { clearTimeout(_gaplessTimeoutId); _gaplessTimeoutId = null }
@@ -1071,10 +1068,6 @@ export const usePlayerStore = create<PlayerState>()(
     if (isInternetRadioActive) {
       radioStop()
       useRadioStreamStore.getState().stopStream()
-    }
-    // Report stopped to Plex server
-    if (currentTrack) {
-      _reportProgress(currentTrack.id, "stopped", positionMs, currentTrack.duration)
     }
     // Report stopped to OS media controls
     const provider = getProvider()
@@ -1110,24 +1103,33 @@ export const usePlayerStore = create<PlayerState>()(
     _playbackDesired = false
     engine.pause()
     set({ isPlaying: false })
-    const { currentTrack, positionMs } = get()
-    if (currentTrack) {
-      _reportProgress(currentTrack.id, "paused", positionMs, currentTrack.duration)
-      const provider = getProvider()
-      if (provider?.setNowPlayingState) fireAndForget(provider.setNowPlayingState("paused", positionMs))
+    const audible = _playbackJournal.current()
+    if (audible?.provider && audible.provider === getProvider()) {
+      fireAndForget(audible.provider.reportProgress(audible.track.id, audible.positionMs, "paused", audible.track.duration))
+      if (audible.provider.setNowPlayingState) fireAndForget(audible.provider.setNowPlayingState("paused", audible.positionMs))
     }
   },
 
   resume: () => {
     if (!get().currentTrack) return
+    const state = get()
+    if (_pendingSelectedTrackId === null && state.currentTrack.duration > 0 && state.positionMs >= state.currentTrack.duration) {
+      if (state.repeat === 1 || (state.queueIndex + 1 >= state.queue.length && state.repeat !== 2 && !state.isRadioMode)) {
+        fireAndForget(playAtIndex(state.queueIndex, get, set))
+      } else get().next()
+      return
+    }
+    if (_pendingSelectedTrackId === null && _playbackJournal.currentId === null) {
+      fireAndForget(playAtIndex(state.queueIndex, get, set))
+      return
+    }
     _playbackDesired = true
     engine.resume()
     set({ isPlaying: true })
-    const { currentTrack, positionMs } = get()
-    if (currentTrack) {
-      _reportProgress(currentTrack.id, "playing", positionMs, currentTrack.duration)
-      const provider = getProvider()
-      if (provider?.setNowPlayingState) fireAndForget(provider.setNowPlayingState("playing", positionMs))
+    const audible = _playbackJournal.current()
+    if (audible?.provider && audible.provider === getProvider()) {
+      fireAndForget(audible.provider.reportProgress(audible.track.id, audible.positionMs, "playing", audible.track.duration))
+      if (audible.provider.setNowPlayingState) fireAndForget(audible.provider.setNowPlayingState("playing", audible.positionMs))
     }
   },
 
@@ -1151,6 +1153,7 @@ export const usePlayerStore = create<PlayerState>()(
         return
       } else {
         _playbackDesired = false
+        _pendingSelectedTrackId = null
         ++_playGeneration
         engine.stop()
         const provider = getProvider()
@@ -1180,8 +1183,10 @@ export const usePlayerStore = create<PlayerState>()(
     engine.seek(ms)
     set({ positionMs: ms })
     const { currentTrack } = get()
-    if (currentTrack) {
-      _reportProgress(currentTrack.id, "playing", ms, currentTrack.duration)
+    if (currentTrack && _pendingSelectedTrackId === null) {
+      const audible = _playbackJournal.current()
+      if (audible) audible.positionMs = ms
+      _reportProgress(currentTrack.id, get().isPlaying ? "playing" : "paused", ms, currentTrack.duration)
     }
   },
 
@@ -1268,6 +1273,13 @@ export const usePlayerStore = create<PlayerState>()(
     set(s => ({ queue: s.queue.slice(0, s.queueIndex + 1), transitionInfo: null }))
   },
 
+  refreshPreload: () => {
+    engine.clearPreload()
+    set({ transitionInfo: null })
+    const { queue, queueIndex, repeat } = get()
+    fireAndForget(preloadNextTrack(queue, queueIndex, repeat))
+  },
+
   initAudioEvents: async () => {
     // Sync persisted volume to the audio engine on every startup.
     get().setVolume(get().volume)
@@ -1282,7 +1294,11 @@ export const usePlayerStore = create<PlayerState>()(
           set({ transitionInfo: transition })
         }
       },
-      onPosition(positionMs, durationMs) {
+      onPosition(positionMs, durationMs, playbackId) {
+        if (playbackId !== _playbackJournal.currentId || _pendingSelectedTrackId !== null) return
+        const audible = _playbackJournal.current()
+        if (!audible || audible.provider !== getProvider()) return
+        audible.positionMs = positionMs
         const { currentTrack, queue, queueIndex, repeat, isRadioMode, isPlaying, radioMinQueue } = get()
         set({ positionMs })
 
@@ -1302,8 +1318,8 @@ export const usePlayerStore = create<PlayerState>()(
         // Periodic timeline report every 10s so Plex shows "Now Playing" on
         // other clients and correctly tracks resume position.
         if (isPlaying && currentTrack) {
-          if (positionMs - _lastTimelineReportMs >= TIMELINE_REPORT_INTERVAL_MS) {
-            _lastTimelineReportMs = positionMs
+          if (Date.now() - _lastTimelineReportedAt >= TIMELINE_REPORT_INTERVAL_MS) {
+            _lastTimelineReportedAt = Date.now()
             _reportProgress(currentTrack.id, "playing", positionMs, currentTrack.duration)
           }
         }
@@ -1319,30 +1335,21 @@ export const usePlayerStore = create<PlayerState>()(
       // Track ended naturally — scrobble + handle repeat-one.
       // For gapless/crossfade: track-started fires quickly and cancels the fallback timeout.
       // For non-gapless: the 500ms timeout calls next().
-      onTrackEnded(ratingKey) {
+      onTrackEnded(event) {
+        const record = _playbackJournal.finish(event)
+        if (!record) return
+        const { track, provider } = record.value
         const { currentTrack, repeat, queueIndex } = get()
-        const endedId = resolveTrackId(ratingKey)
-        _ratingKeyToTrackId.delete(ratingKey)
-        // Only clear waveform/lyrics if this track is still the active one.
-        const isStillActive = currentTrack?.id === endedId
-        if (isStillActive) {
-          set({ waveformLevels: null, lyricsLines: null })
+        const duration = event.duration_ms || track.duration
+        const finishedTrack = duration === track.duration ? track : { ...track, duration }
+        if (provider && provider === getProvider() && !_isPodcastTrack(track)) {
+          fireAndForget(provider.reportProgress(track.id, event.position_ms, "stopped", duration))
+          if (listenedEnough(duration, event.listened_ms)) fireAndForget(provider.markPlayed(track.id))
+          provider.onTrackEnd?.(finishedTrack, record.startedAtUnix, event.listened_ms)
         }
-        const isPodcast = currentTrack ? _isPodcastTrack(currentTrack) : false
-        if (!isPodcast) _markPlayed(endedId)
-        if (currentTrack) {
-          if (!isPodcast) {
-            _reportProgress(currentTrack.id, "stopped", currentTrack.duration, currentTrack.duration)
-          }
-          const provider = getProvider()
-          if (provider?.onTrackEnd && !isPodcast) {
-            provider.onTrackEnd(currentTrack, _trackStartedAtUnix, get().positionMs)
-          }
-        }
-
-        // If the queue already advanced (gapless/crossfade onTrackStarted fired first),
-        // don't set the fallback timeout — that would cause a double-skip.
-        if (!isStillActive) return
+        if (!record.wasCurrent || _pendingSelectedTrackId !== null || event.reason !== "natural"
+          || currentTrack?.id !== track.id) return
+        set({ waveformLevels: null, lyricsLines: null, positionMs: event.position_ms })
 
         // End-of-track sleep timer: pause and stop queue advancement
         {
@@ -1363,50 +1370,29 @@ export const usePlayerStore = create<PlayerState>()(
         }, 500)
       },
 
-      // Track started — fired for gapless transitions and crossfade completions.
-      // For user-initiated plays: currentTrack already matches, so we skip.
-      onTrackStarted(ratingKey, durationMs) {
-        // Cancel the non-gapless fallback timeout — engine handled the transition
-        if (_gaplessTimeoutId !== null) {
-          clearTimeout(_gaplessTimeoutId)
-          _gaplessTimeoutId = null
-        }
-
-        const startedId = resolveTrackId(ratingKey)
-        const { currentTrack, queue, queueIndex, repeat, isRadioMode, radioMinQueue,
-                playlistKey, playlistLoadedCount, playlistTotalCount } = get()
-
-        // User-initiated play: playAtIndex() already updated state
-        if (currentTrack?.id === startedId) {
-          if (durationMs && durationMs !== currentTrack.duration) {
-            set({ currentTrack: { ...currentTrack, duration: durationMs } })
-          }
-          return
-        }
-
-        // Gapless/crossfade transition: find the next track
-        let nextIndex = queueIndex + 1
-        if (nextIndex >= queue.length && repeat === 2) nextIndex = 0
-
-        // Verify the next track matches — fall back to searching the queue
-        if (!queue[nextIndex] || queue[nextIndex].id !== startedId) {
-          return
-        }
-
-        const track = queue[nextIndex]
-        if (!track) return
-
-        // Advance queue state — audio is already playing
-        _onTrackBecomesActive(track, nextIndex, get, set)
-
-        // Apply corrected duration
-        if (durationMs && durationMs !== track.duration) {
-          const correctedTrack = { ...track, duration: durationMs }
-          set((s: PlayerState) => ({
-            currentTrack: correctedTrack,
-            queue: s.queue.map((t, i) => i === nextIndex ? correctedTrack : t),
-          }))
-        }
+      // Native identity distinguishes automatic repeats from explicit selection.
+      onTrackStarted(event) {
+        const startedId = resolveTrackId(event.rating_key)
+        const state = get()
+        const index = startedQueueIndex(state.queue.map(track => track.id), state.queueIndex,
+          state.repeat, startedId, _pendingSelectedTrackId)
+        if (index === null) return
+        const selected = state.queue[index]
+        if (!selected) return
+        const track = event.duration_ms > 0 ? { ...selected, duration: event.duration_ms } : selected
+        const provider = getProvider()
+        if (!_playbackJournal.start(event, { track, provider, positionMs: 0 })) return
+        if (_gaplessTimeoutId !== null) { clearTimeout(_gaplessTimeoutId); _gaplessTimeoutId = null }
+        const automatic = _pendingSelectedTrackId === null
+        _pendingSelectedTrackId = null
+        if (automatic) _onTrackBecomesActive(track, index, get, set)
+        else set((s: PlayerState) => ({
+          currentTrack: { ...s.currentTrack!, duration: track.duration },
+          queue: s.queue.map((item, i) => i === index ? { ...item, duration: track.duration } : item),
+        }))
+        _onTrackAudiblyStarted(track, provider)
+        const { queue, repeat, isRadioMode, radioMinQueue, playlistKey, playlistLoadedCount, playlistTotalCount } = get()
+        const nextIndex = index
 
         // Pre-buffer the track after this one for the next gapless transition
         fireAndForget(preloadNextTrack(get().queue, nextIndex, repeat))
@@ -1421,6 +1407,11 @@ export const usePlayerStore = create<PlayerState>()(
         if (isRadioMode && queue.length - nextIndex - 1 < radioMinQueue) {
           fireAndForget(appendRadioTracks(get, set as never))
         }
+      },
+
+      onControlError(message) {
+        set({ playerError: message })
+        setTimeout(() => { if (get().playerError === message) set({ playerError: null }) }, 6000)
       },
 
       async onError(message) {
@@ -1442,6 +1433,7 @@ export const usePlayerStore = create<PlayerState>()(
               if (generation !== _playGeneration || getProvider() !== providerAtError) return
               const ratingKey = Number(currentTrack.id)
               _ratingKeyToTrackId.set(ratingKey, currentTrack.id)
+              _pendingSelectedTrackId = currentTrack.id
               await engine.play(transcodeUrl, ratingKey, currentTrack.duration, "", null, true)
               if (generation !== _playGeneration) return
               if (positionMs > 0) engine.seekTo(positionMs)
@@ -1455,6 +1447,7 @@ export const usePlayerStore = create<PlayerState>()(
         }
 
         if (generation !== _playGeneration) return
+        _pendingSelectedTrackId = null
         set({ playerError: message })
         useAnnouncerStore.getState().announce(`Playback error: ${message}`, "assertive")
         setTimeout(() => set({ playerError: null }), 6000)

@@ -34,7 +34,9 @@ export const useSleepTimerStore = create<SleepTimerState>()(
       endOfTrack: false,
 
       start: (minutes: number) => {
+        const wasEndOfTrack = get().endOfTrack
         set({ endOfTrack: false })
+        if (wasEndOfTrack) usePlayerStore.getState().refreshPreload()
         if (_timerId !== null) clearTimeout(_timerId)
         const endsAt = Date.now() + minutes * 60 * 1000
         set({ endsAt })
@@ -52,6 +54,7 @@ export const useSleepTimerStore = create<SleepTimerState>()(
           _timerId = null
         }
         set({ endsAt: null, endOfTrack: true })
+        usePlayerStore.getState().refreshPreload()
       },
 
       onTrackEnd: () => {
@@ -63,11 +66,13 @@ export const useSleepTimerStore = create<SleepTimerState>()(
       },
 
       cancel: () => {
+        const wasEndOfTrack = get().endOfTrack
         if (_timerId !== null) {
           clearTimeout(_timerId)
           _timerId = null
         }
         set({ endsAt: null, endOfTrack: false })
+        if (wasEndOfTrack) usePlayerStore.getState().refreshPreload()
       },
 
       hydrate: () => {
