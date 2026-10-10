@@ -252,19 +252,49 @@ test("logout disk failures remain visible and do not restore the old session", a
 })
 
 test("cancellation while provider caches hydrate cannot publish a retired connection", async () => {
-  const hydrating = deferred<void>()
+  const hydrating = deferred<void>(),
+    entered = deferred<void>()
   const { state } = harness({
     activateProvider: async (_provider, context) => {
-      if (context.baseUrl.includes("old")) await hydrating.promise
+      if (context.baseUrl.includes("old")) {
+        entered.resolve()
+        await hydrating.promise
+      }
     }
   })
   const old = state()
     .connect("https://old.test", "dummy-old")
     .catch((error) => error)
-  await settle()
+  await entered.promise
   await state().connect("https://new.test", "dummy-new")
   hydrating.resolve()
   expect(await old).toBeInstanceOf(ConnectionSupersededError)
   expect(state().baseUrl).toBe("https://new.test")
   expect(state().isConnected).toBe(true)
+})
+
+test("cache hydration publishes only the provider whose activation still owns the connection", async () => {
+  const firstHydration = deferred<void>(),
+    entered = deferred<void>(),
+    published: string[] = [],
+    disconnected = mock(async () => {})
+  const { state } = harness({
+    createProvider: async () => ({ disconnect: disconnected }) as unknown as MusicProvider,
+    activateProvider: async (_provider, context, _section, owns) => {
+      if (context.baseUrl.includes("old")) {
+        entered.resolve()
+        await firstHydration.promise
+      }
+      if (owns()) published.push(context.baseUrl)
+    }
+  })
+  const old = state()
+    .connect("https://old.test", "dummy-old")
+    .catch((error) => error)
+  await entered.promise
+  await state().connect("https://new.test", "dummy-new")
+  firstHydration.resolve()
+  await old
+  expect(published).toEqual(["https://new.test"])
+  expect(disconnected).toHaveBeenCalledTimes(1)
 })

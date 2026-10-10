@@ -33,7 +33,12 @@ export interface ConnectionDependencies {
   testServerConnection(url: string, expectedMachineIdentifier?: string): Promise<number>
   startPlexAuth(): Promise<PlexAuthPin>
   createProvider(context: ConnectionContext, section: LibrarySection): Promise<MusicProvider>
-  activateProvider(provider: MusicProvider, context: ConnectionContext, section: LibrarySection): void | Promise<void>
+  activateProvider(
+    provider: MusicProvider,
+    context: ConnectionContext,
+    section: LibrarySection,
+    ownsRequest: () => boolean
+  ): void | Promise<void>
   clearSession(): void
 }
 
@@ -141,8 +146,11 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
         await provider.disconnect()
         throw new ConnectionSupersededError()
       }
-      await deps.activateProvider(provider, connection, section)
-      check(request)
+      await deps.activateProvider(provider, connection, section, () => current(request))
+      if (!current(request)) {
+        await provider.disconnect()
+        throw new ConnectionSupersededError()
+      }
       set({
         isConnected: true,
         isLoading: false,
@@ -262,7 +270,10 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
             // Older saved settings have no verified identity; refresh via sign-in rather
             // than exposing their token to an address that now belongs to another server.
             if (!fallbacks.length) throw error
-            if (!expected) throw new Error("The saved Plex server has no verified identity. Sign in with Plex again to refresh its connection URLs.")
+            if (!expected)
+              throw new Error(
+                "The saved Plex server has no verified identity. Sign in with Plex again to refresh its connection URLs."
+              )
             const probes = await Promise.allSettled(
               fallbacks.map(async (url) => ({ url, latency: await deps.testServerConnection(url, expected) }))
             )

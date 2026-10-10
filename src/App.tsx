@@ -127,7 +127,7 @@ function DesktopApp() {
             const provider = useProviderStore.getState().provider
             if (provider) {
               void provider.addToPlaylist(playlist.id, pendingPlaylistItemIds.map(String))
-                .then(() => useLibraryStore.getState().invalidatePlaylistItems(playlist.id))
+                .then(() => { if (useProviderStore.getState().provider === provider) useLibraryStore.getState().invalidatePlaylistItems(playlist.id) })
                 .catch(() => {})
             }
             recordRecentPlaylist(playlist.id)

@@ -54,9 +54,10 @@ function PlaylistSection({ itemIds, close, onNewPlaylist }: PlaylistSectionProps
     .filter(p => !recentIds.includes(p.id))
 
   async function addTo(playlist: MusicPlaylist) {
-    if (!provider) return
-    recordRecentPlaylist(playlist.id)
-    await provider.addToPlaylist(playlist.id, itemIds).catch(() => {})
+    if (!provider || useProviderStore.getState().provider !== provider) return
+    try { await provider.addToPlaylist(playlist.id, itemIds) } catch { return }
+    if (useProviderStore.getState().provider !== provider) return
+    recordRecentPlaylist(playlist.id, provider)
     useLibraryStore.getState().invalidatePlaylistItems(playlist.id)
     close()
   }

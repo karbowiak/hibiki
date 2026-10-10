@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useLayoutEffect, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { Link } from "wouter"
 import { open } from "@tauri-apps/plugin-shell"
@@ -12,13 +12,20 @@ import type { MusicArtist, MusicAlbum, MusicTrack, MusicHub, MusicPlaylist } fro
 import { MediaCard } from "../MediaCard"
 import { ScrollRow } from "../ScrollRow"
 import { UltraBlur } from "../UltraBlur"
-import { getCachedArtist, prefetchAlbum, prefetchArtist, setArtistCache } from "../../stores/metadataCache"
+import {
+  getCachedArtist,
+  prefetchAlbum,
+  prefetchArtist,
+  loadArtistPage,
+  captureMetadataCache,
+  isMetadataCacheCurrent
+} from "../../stores/metadataCache"
 import { useDeezerMetadataStore } from "../../metadata/deezer/store"
 import { useArtistEnrichment } from "../../hooks/useMetadataEnrichment"
 import { buildImageUrl, buildExternalImageUrl } from "../../lib/imageUrl"
 import { formatMs } from "../../lib/formatters"
 import { ImageModal } from "../shared/ImageModal"
-import { processArtistAlbums, deduplicateHubAlbums } from "../../lib/dedup"
+import { deduplicateHubAlbums } from "../../lib/dedup"
 import { useMetadataSourceStore } from "../../stores/metadataSourceStore"
 import { HeroRating } from "../HeroRating"
 import { StarRating } from "../shared/StarRating"
@@ -83,15 +90,15 @@ export function ArtistPage({ artistId }: { artistId: string }) {
   const hasRadio = useCapability("radio")
   const hasSonicSimilarity = useCapability("sonicSimilarity")
 
-  const cached = getCachedArtist(artistId)
+  const cached = getCachedArtist(artistId, shouldDedup)
   const [artist, setArtist] = useState<MusicArtist | null>(cached?.artist ?? null)
   const [fullAlbums, setFullAlbums] = useState<MusicAlbum[]>(cached?.albums ?? [])
   const [singles, setSingles] = useState<MusicAlbum[]>(cached?.singles ?? [])
-  const [popularTracks, setPopularTracks] = useState<MusicTrack[]>([])
-  const [similarArtists, setSimilarArtists] = useState<MusicArtist[]>([])
-  const [sonicallySimilar, setSonicallySimilar] = useState<MusicArtist[]>([])
-  const [relatedHubs, setRelatedHubs] = useState<MusicHub[]>([])
-  const [stations, setStations] = useState<MusicPlaylist[]>([])
+  const [popularTracks, setPopularTracks] = useState<MusicTrack[]>(cached?.popularTracks ?? [])
+  const [similarArtists, setSimilarArtists] = useState<MusicArtist[]>(cached?.similarArtists ?? [])
+  const [sonicallySimilar, setSonicallySimilar] = useState<MusicArtist[]>(cached?.sonicallySimilar ?? [])
+  const [relatedHubs, setRelatedHubs] = useState<MusicHub[]>(cached?.relatedHubs ?? [])
+  const [stations, setStations] = useState<MusicPlaylist[]>(cached?.stations ?? [])
   const [isLoading, setIsLoading] = useState(!cached)
   const [error, setError] = useState<string | null>(null)
 
@@ -115,7 +122,10 @@ export function ArtistPage({ artistId }: { artistId: string }) {
   // Enrichment metadata from all backends
   const { lastfm: lastfmData, deezer: deezerData, itunes: itunesData } = useArtistEnrichment(artist?.title ?? null)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    let active = true
+    const session = captureMetadataCache(provider)
+    const current = () => active && isMetadataCacheCurrent(session)
     setError(null)
     setBioExpanded(false)
     setShowHeroModal(false)
@@ -123,7 +133,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
     // Seed ALL state from persistent cache — avoids loading flash AND layout shift.
     // useState(initialValue) only runs on mount, so navigating between artists
     // needs this explicit re-seed at the start of every effect run.
-    const freshCache = getCachedArtist(artistId)
+    const freshCache = getCachedArtist(artistId, shouldDedup)
     if (freshCache) {
       setArtist(freshCache.artist)
       setFullAlbums(freshCache.albums)
@@ -147,46 +157,32 @@ export function ArtistPage({ artistId }: { artistId: string }) {
       setIsLoading(true)
     }
 
-    // Always re-fetch for freshness (silently when cache-seeded).
-    if (!provider) return
-    Promise.all([
-      provider.getArtist(artistId),
-      provider.getArtistAlbumsInSection ? provider.getArtistAlbumsInSection(artistId) : provider.getArtistAlbums(artistId),
-      provider.getArtistAlbumsInSection ? provider.getArtistAlbumsInSection(artistId, "EP,Single") : Promise.resolve([] as MusicAlbum[]),
-      provider.getArtistPopularTracksInSection ? provider.getArtistPopularTracksInSection(artistId, 15) : provider.getArtistPopularTracks(artistId, 15),
-      provider.getArtistSimilar(artistId).catch(() => [] as MusicArtist[]),
-      provider.getArtistSonicallySimilar ? provider.getArtistSonicallySimilar(artistId, 20).catch(() => [] as MusicArtist[]) : Promise.resolve([] as MusicArtist[]),
-      provider.getRelatedHubs(artistId).catch(() => [] as MusicHub[]),
-      provider.getArtistStations ? provider.getArtistStations(artistId).catch(() => [] as MusicPlaylist[]) : Promise.resolve([] as MusicPlaylist[]),
-    ])
-      .then(([a, allAlbums, singleList, tracks, sim, sonic, hubs, stationList]) => {
-        const { albums, singles: dedupedSingles } = processArtistAlbums(allAlbums, singleList, shouldDedup)
-        const popularTracks = dedupe(tracks)
-
-        setArtist(a)
-        setFullAlbums(albums)
-        setSingles(dedupedSingles)
-        setPopularTracks(popularTracks)
-        setSimilarArtists(sim)
-        setSonicallySimilar(sonic)
-        setRelatedHubs(hubs)
-        setStations(stationList)
-
-        // Update persistent cache for next visit / restart
-        setArtistCache(artistId, {
-          artist: a,
-          albums,
-          singles: dedupedSingles,
-          popularTracks,
-          similarArtists: sim,
-          sonicallySimilar: sonic,
-          relatedHubs: hubs,
-          stations: stationList,
-        })
+    if (!provider || !session) {
+      setIsLoading(false)
+      return
+    }
+    loadArtistPage(artistId, { force: true, deduplicate: shouldDedup })
+      .then((entry) => {
+        if (!current()) return
+        setArtist(entry.artist)
+        setFullAlbums(entry.albums)
+        setSingles(entry.singles)
+        setPopularTracks(entry.popularTracks)
+        setSimilarArtists(entry.similarArtists)
+        setSonicallySimilar(entry.sonicallySimilar)
+        setRelatedHubs(entry.relatedHubs)
+        setStations(entry.stations)
       })
-      .catch(e => setError(String(e)))
-      .finally(() => setIsLoading(false))
-  }, [artistId, pageRefreshKey, shouldDedup])
+      .catch((error) => {
+        if (current()) setError(String(error))
+      })
+      .finally(() => {
+        if (current()) setIsLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [artistId, provider, pageRefreshKey, shouldDedup])
 
   // Compute artUrl before early returns so useFocalPoint can be called unconditionally.
   // Respect source priority — iterate through priority order, pick first source with an image.

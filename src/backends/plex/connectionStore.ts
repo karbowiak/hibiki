@@ -1,6 +1,9 @@
 import { PlexProvider } from "./provider"
 import { useProviderStore } from "../../stores/providerStore"
+import { activateMetadataCache, disconnectMetadataCache } from "../../stores/metadataCache"
 import { useLibraryStore } from "../../stores/libraryStore"
+import { useUIStore } from "../../stores/uiStore"
+import { useContextMenuStore } from "../../stores/contextMenuStore"
 import { usePlayerStore } from "../../stores/playerStore"
 import {
   connectPlex,
@@ -24,6 +27,9 @@ export const useConnectionStore = createPlexConnectionStore({
   startPlexAuth: plexAuthStart,
   clearSession: () => {
     usePlayerStore.getState().stop()
+    useContextMenuStore.setState({ open: false, data: null, type: null, playlistId: null })
+    useUIStore.getState().setShowCreatePlaylist(false)
+    useUIStore.getState().setPendingPlaylistItemIds(null)
     if (wsManager) {
       wsManager.disconnect()
       wsManager = null
@@ -32,6 +38,7 @@ export const useConnectionStore = createPlexConnectionStore({
     useProviderStore.getState().clearProvider()
     if (provider) void provider.disconnect().catch(() => {})
     useLibraryStore.getState().clearAll()
+    disconnectMetadataCache()
   },
   createProvider: async (context, section) => {
     const provider = new PlexProvider()
@@ -45,10 +52,13 @@ export const useConnectionStore = createPlexConnectionStore({
     })
     return provider
   },
-  activateProvider: async (provider, context, section) => {
+  activateProvider: async (provider, context, section, ownsRequest) => {
+    await Promise.all([
+      useLibraryStore.getState().activateProvider(provider),
+      activateMetadataCache(provider)
+    ])
+    if (!ownsRequest()) return
     useProviderStore.getState().setProvider(provider)
-    await useLibraryStore.getState().activateProvider(provider)
-    if (useProviderStore.getState().provider !== provider) return
     wsManager = new PlexWebSocketManager()
     wsManager.connect(context.baseUrl, context.token, section.key)
   }

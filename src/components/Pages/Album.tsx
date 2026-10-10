@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useLayoutEffect, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { Link } from "wouter"
 import { open } from "@tauri-apps/plugin-shell"
@@ -13,7 +13,14 @@ import type { MusicAlbum, MusicTrack, MusicHub, MusicItem } from "../../types/mu
 import { MediaCard } from "../MediaCard"
 import { ScrollRow } from "../ScrollRow"
 import { UltraBlur } from "../UltraBlur"
-import { getCachedAlbum, prefetchAlbum, prefetchArtist, setAlbumCache } from "../../stores/metadataCache"
+import {
+  getCachedAlbum,
+  prefetchAlbum,
+  prefetchArtist,
+  loadAlbumPage,
+  captureMetadataCache,
+  isMetadataCacheCurrent
+} from "../../stores/metadataCache"
 import { useAlbumEnrichment } from "../../hooks/useMetadataEnrichment"
 import { buildImageUrl } from "../../lib/imageUrl"
 import { useMetadataSourceStore } from "../../stores/metadataSourceStore"
@@ -48,7 +55,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
   const cached = getCachedAlbum(albumId)
   const [album, setAlbum] = useState<MusicAlbum | null>(cached?.album ?? null)
   const [tracks, setTracks] = useState<MusicTrack[]>(cached?.tracks ?? [])
-  const [relatedHubs, setRelatedHubs] = useState<MusicHub[]>([])
+  const [relatedHubs, setRelatedHubs] = useState<MusicHub[]>(cached?.relatedHubs ?? [])
   const [isLoading, setIsLoading] = useState(!cached)
   const [error, setError] = useState<string | null>(null)
 
@@ -74,7 +81,10 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     album?.title ?? null,
   )
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    let active = true
+    const session = captureMetadataCache(provider)
+    const current = () => active && isMetadataCacheCurrent(session)
     setError(null)
     setDescExpanded(false)
     setShowImageModal(false)
@@ -93,24 +103,27 @@ export function AlbumPage({ albumId }: { albumId: string }) {
       setIsLoading(true)
     }
 
-    // Always re-fetch for freshness (silently when cache-seeded).
-    if (!provider) return
-    Promise.all([
-      provider.getAlbum(albumId),
-      provider.getAlbumTracks(albumId),
-      provider.getRelatedHubs(albumId).catch(() => [] as MusicHub[]),
-    ])
-      .then(([al, tr, hubs]) => {
-        setAlbum(al)
-        setTracks(tr)
-        setRelatedHubs(hubs)
-
-        // Update persistent cache for next visit / restart
-        setAlbumCache(albumId, { album: al, tracks: tr, relatedHubs: hubs })
+    if (!provider || !session) {
+      setIsLoading(false)
+      return
+    }
+    loadAlbumPage(albumId, { force: true })
+      .then((entry) => {
+        if (!current()) return
+        setAlbum(entry.album)
+        setTracks(entry.tracks)
+        setRelatedHubs(entry.relatedHubs)
       })
-      .catch(e => setError(String(e)))
-      .finally(() => setIsLoading(false))
-  }, [albumId, pageRefreshKey])
+      .catch((error) => {
+        if (current()) setError(String(error))
+      })
+      .finally(() => {
+        if (current()) setIsLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [albumId, provider, pageRefreshKey])
 
   // Build set of all Plex-known tags so external tags can be filtered to only
   // those that link to something in the library (genre/mood/style stations).

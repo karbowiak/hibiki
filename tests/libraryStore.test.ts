@@ -405,3 +405,20 @@ test("live results arriving while hydration is pending win over older saved data
   await activating
   expect(store.getState().playlists[0].id).toBe("fresh")
 })
+
+test("library cache hydration completes before publication of its new provider", async () => {
+  const next = { cacheScope: "account" } as MusicProvider
+  let published: MusicProvider | null = null
+  const store = createLibraryStore({
+    getProvider: () => published,
+    storage: {
+      getItem: async () =>
+        JSON.stringify({ version: 2, scope: "account", state: { playlists: [playlist("saved")] } }),
+      setItem: async () => {},
+      removeItem: async () => {}
+    }
+  })
+  await store.getState().activateProvider(next)
+  published = next
+  expect(store.getState().playlists[0].id).toBe("saved")
+})

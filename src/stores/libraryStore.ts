@@ -365,11 +365,11 @@ export function createLibraryStore({
         const loading = cache.activate(provider.cacheScope ?? null)
         retire()
         activeProvider = provider
-        const session = capture()
+        const activation = epoch
         set(emptyLibrary())
         const initial = get()
         const saved = await loading
-        if (session && current(session)) {
+        if (epoch === activation && activeProvider === provider) {
           const restored = restoreLibrary(saved),
             now = get()
           const patch = Object.fromEntries(
