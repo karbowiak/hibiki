@@ -178,6 +178,22 @@ let _gaplessTimeoutId: ReturnType<typeof setTimeout> | null = null
 // and captures its value. After async work, if the counter changed, a newer play
 // superseded this one and the current call bails out.
 let _playGeneration = 0
+// Explicit queue selections also own their asynchronous server responses.
+// Skipping cancels a pending station/playlist selection without stopping audio.
+let _queueGeneration = 0
+let _queueContextGeneration = 0
+function beginQueueSelection(): number {
+  _radioRefillRequest = null
+  return ++_queueGeneration
+}
+function ownsQueueSelection(generation: number, provider: MusicProvider | null): boolean {
+  return generation === _queueGeneration && getProvider() === provider
+}
+function replaceQueueContext(): void {
+  ++_queueContextGeneration
+  _djInsertRequest = null
+  _playlistLoadRequest = null
+}
 // Keep play/pause intent through buffering and asynchronous URL resolution.
 let _playbackDesired = false
 
@@ -222,7 +238,7 @@ export function isRadioGenerated(trackId: string): boolean {
   return _radioGeneratedKeys.has(trackId)
 }
 
-let _radioRefillInProgress = false
+let _radioRefillRequest: symbol | null = null
 
 /** Keep only items that have actual audio (at least one media part with a key). */
 function filterPlayable(tracks: MusicTrack[]): MusicTrack[] {
@@ -235,16 +251,19 @@ async function appendRadioTracks(
   set: (updater: (s: PlayerState) => Partial<PlayerState>) => void,
 ) {
   const { isRadioMode, radioSeedKey, radioType, queue, queueIndex, radioDegreesOfSeparation, radioMinQueue } = get()
-  if (!isRadioMode || radioSeedKey === null || radioType === null || _radioRefillInProgress) return
+  if (!isRadioMode || radioSeedKey === null || radioType === null || _radioRefillRequest !== null) return
   // `queue.length - queueIndex - 1` = tracks strictly after current position
   if (queue.length - queueIndex - 1 >= radioMinQueue) return  // plenty of tracks ahead
 
   const provider = getProvider()
   if (!provider?.createRadioQueue) return
 
-  _radioRefillInProgress = true
+  const generation = _queueGeneration
+  const request = Symbol('radio refill')
+  _radioRefillRequest = request
   try {
     const result = await provider.createRadioQueue(radioSeedKey, radioType, radioDegreesOfSeparation)
+    if (!ownsQueueSelection(generation, provider)) return
     const newTracks = filterPlayable(result.tracks)
 
     // Append only tracks not already in the queue to avoid duplicates
@@ -265,10 +284,11 @@ async function appendRadioTracks(
 
     capped.forEach(t => _radioGeneratedKeys.add(t.id))
     set(s => ({ queue: [...s.queue, ...capped] }))
+    if (tracksAhead === 0) usePlayerStore.getState().refreshPreload()
   } catch (err) {
     console.error("Radio queue refill failed:", err)
   } finally {
-    _radioRefillInProgress = false
+    if (_radioRefillRequest === request) _radioRefillRequest = null
   }
 }
 
@@ -276,7 +296,7 @@ async function appendRadioTracks(
 // DJ track insertion — works in any playback context (playlist, album, radio)
 // ---------------------------------------------------------------------------
 
-let _djInsertInProgress = false
+let _djInsertRequest: symbol | null = null
 
 /**
  * Insert DJ-curated tracks into the queue based on the active DJ mode.
@@ -295,7 +315,7 @@ async function insertDjTracks(
 ) {
   const { djMode, currentTrack, queue, queueIndex } = get()
   if (!djMode || !currentTrack) return
-  if (_djInsertInProgress) return
+  if (_djInsertRequest !== null) return
 
   const provider = getProvider()
   if (!provider) return
@@ -304,7 +324,11 @@ async function insertDjTracks(
   // (Twofer alternates user→DJ→user→DJ; Stretch path is already laid out)
   if ((djMode === 'twofer' || djMode === 'stretch') && _djGeneratedKeys.has(currentTrack.id)) return
 
-  _djInsertInProgress = true
+  const context = _queueContextGeneration, active = _activeTrackGeneration
+  const request = Symbol('DJ insertion')
+  _djInsertRequest = request
+  const isCurrent = () => context === _queueContextGeneration && active === _activeTrackGeneration
+    && getProvider() === provider && get().djMode === djMode && _djInsertRequest === request
   try {
     const existingKeys = new Set(queue.map(t => t.id))
     let picks: MusicTrack[] = []
@@ -343,6 +367,7 @@ async function insertDjTracks(
                 t.id !== nextOriginal.id
               )
           } catch {
+            if (!isCurrent()) return
             // Sonic path unavailable — fall back to smart shuffle
             if (provider.createSmartShuffleQueue) {
               const result = await provider.createSmartShuffleQueue(currentTrack.id, 'track', 'stretch')
@@ -400,6 +425,13 @@ async function insertDjTracks(
       }
     }
 
+    if (!isCurrent()) return
+    const latestKeys = new Set(get().queue.map(track => track.id))
+    picks = picks.filter(track => {
+      if (latestKeys.has(track.id)) return false
+      latestKeys.add(track.id)
+      return true
+    })
     if (picks.length === 0) return
 
     picks.forEach(t => _djGeneratedKeys.add(t.id))
@@ -409,10 +441,11 @@ async function insertDjTracks(
       nq.splice(qi + 1, 0, ...picks)
       return { queue: nq }
     })
+    usePlayerStore.getState().refreshPreload()
   } catch (err) {
     console.error('DJ track insertion failed:', err)
   } finally {
-    _djInsertInProgress = false
+    if (_djInsertRequest === request) _djInsertRequest = null
   }
 }
 
@@ -487,11 +520,13 @@ function fetchLyricsForTrack(track: MusicTrack): void {
 async function preloadNextTrack(queue: MusicTrack[], queueIndex: number, repeat: 0 | 1 | 2): Promise<void> {
   if (repeat === 1 || useSleepTimerStore.getState().endOfTrack) return
   const generation = _playGeneration
+  const context = _queueContextGeneration
   const active = _activeTrackGeneration
   const sourceTrackId = queue[queueIndex]?.id
   const isCurrent = () => {
     const state = usePlayerStore.getState()
-    return generation === _playGeneration && active === _activeTrackGeneration && state.currentTrack?.id === sourceTrackId
+    return generation === _playGeneration && context === _queueContextGeneration
+      && active === _activeTrackGeneration && state.currentTrack?.id === sourceTrackId
       && state.repeat !== 1
       && !useSleepTimerStore.getState().endOfTrack
       && state.queue[(state.queueIndex + 1) % state.queue.length]?.id === nextTrack.id
@@ -539,6 +574,7 @@ async function preloadNextTrack(queue: MusicTrack[], queueIndex: number, repeat:
 }
 
 const PLAYLIST_PAGE_SIZE = 100
+let _playlistLoadRequest: symbol | null = null
 
 /** Load the next page of playlist tracks into the queue in the background. */
 async function loadMorePlaylistTracks(get: () => PlayerState, set: (fn: (s: PlayerState) => Partial<PlayerState>) => void) {
@@ -546,9 +582,15 @@ async function loadMorePlaylistTracks(get: () => PlayerState, set: (fn: (s: Play
   if (!playlistKey || playlistLoadedCount >= playlistTotalCount || isLoadingMoreTracks) return
   const provider = getProvider()
   if (!provider) return
+  const context = _queueContextGeneration
+  const request = Symbol('playlist page')
+  _playlistLoadRequest = request
+  const isCurrent = () => context === _queueContextGeneration && getProvider() === provider
+    && get().playlistKey === playlistKey && _playlistLoadRequest === request
   set(() => ({ isLoadingMoreTracks: true }))
   try {
     const result = await provider.getPlaylistItems(playlistKey, playlistLoadedCount, PLAYLIST_PAGE_SIZE)
+    if (!isCurrent()) return
     if (result.items.length > 0) {
       set(s => ({
         queue: [...s.queue, ...result.items],
@@ -559,8 +601,11 @@ async function loadMorePlaylistTracks(get: () => PlayerState, set: (fn: (s: Play
       set(() => ({ isLoadingMoreTracks: false }))
     }
   } catch (err) {
+    if (!isCurrent()) return
     console.error("Failed to load more playlist tracks:", err)
     set(() => ({ isLoadingMoreTracks: false }))
+  } finally {
+    if (_playlistLoadRequest === request) _playlistLoadRequest = null
   }
 }
 
@@ -607,6 +652,7 @@ async function enrichCurrentTrack(track: MusicTrack, provider: MusicProvider, is
 function _onTrackBecomesActive(track: MusicTrack, index: number, get: () => PlayerState, set: any): void {
   const provider = getProvider()
   const active = ++_activeTrackGeneration
+  _djInsertRequest = null
   const isCurrent = () => active === _activeTrackGeneration && getProvider() === provider && get().currentTrack?.id === track.id
   const isPodcast = _isPodcastTrack(track)
   set({ currentTrack: track, transitionInfo: null, queueIndex: index, isPlaying: _playbackDesired, positionMs: 0,
@@ -726,9 +772,9 @@ async function _startPlayback(track: MusicTrack, index: number, get: () => Playe
   if (!_playbackDesired) engine.pause()
   // Immediately preload the next track (triggers analysis + gapless prep)
   // and cache-warm a few more tracks ahead for instant skipping
-  const { queue, repeat } = get()
-  fireAndForget(preloadNextTrack(queue, index, repeat))
-  prefetchAhead(queue, index, 3)
+  const { queue, queueIndex, repeat } = get()
+  fireAndForget(preloadNextTrack(queue, queueIndex, repeat))
+  prefetchAhead(queue, queueIndex, 3)
 }
 
 /**
@@ -740,6 +786,7 @@ async function _startPlayback(track: MusicTrack, index: number, get: () => Playe
 async function playAtIndex(index: number, get: () => PlayerState, set: any): Promise<void> {
   const track = get().queue[index]
   if (!track) return
+  beginQueueSelection()
   try {
     await _startPlayback(track, index, get, set)
   } catch (err) {
@@ -782,6 +829,7 @@ export const usePlayerStore = create<PlayerState>()(
 
   playTrack: async (track: MusicTrack, context?: MusicTrack[], contextName?: string | null, contextHref?: string | null, albumPlaybackId?: string | null) => {
     const provider = getProvider()
+    const generation = beginQueueSelection()
     const itemKey = `/library/metadata/${track.id}`
     const uri = provider?.buildItemUri ? provider.buildItemUri(itemKey) : itemKey
     const { repeat } = get()
@@ -789,9 +837,12 @@ export const usePlayerStore = create<PlayerState>()(
     const queue = context ?? [track]
     const queueIndex = Math.max(0, context ? context.findIndex(t => t.id === track.id) : 0)
     // Explicit track selection: clear progressive playlist and radio context, reset shuffle.
-    set({ queue, shuffle: false,
-      playlistKey: null, playlistTotalCount: 0, playlistLoadedCount: 0,
-      isRadioMode: false, radioSeedKey: null, radioType: null,
+    _djGeneratedKeys.clear()
+    _radioGeneratedKeys.clear()
+    replaceQueueContext()
+    set({ queue, queueId: null, shuffle: false, playerError: null,
+      playlistKey: null, playlistTotalCount: 0, playlistLoadedCount: 0, isLoadingMoreTracks: false,
+      isRadioMode: false, radioSeedKey: null, radioType: null, radioSeedArtist: null,
       contextName: contextName ?? null, contextHref: contextHref ?? null, albumPlaybackId: albumPlaybackId ?? null })
 
     try {
@@ -800,7 +851,7 @@ export const usePlayerStore = create<PlayerState>()(
         provider?.createPlayQueue ? provider.createPlayQueue(uri, false, repeat) : Promise.resolve({ queueId: 0, tracks: [] }),
         _startPlayback(track, queueIndex, get, set),
       ])
-      set({ queueId: playQueue.queueId })
+      if (ownsQueueSelection(generation, provider)) set({ queueId: playQueue.queueId })
     } catch (err) {
       console.error("playTrack failed:", err)
     }
@@ -809,57 +860,68 @@ export const usePlayerStore = create<PlayerState>()(
   playFromUri: async (uri: string, forceShuffle?: boolean, contextName?: string | null, contextHref?: string | null, albumPlaybackId?: string | null) => {
     const provider = getProvider()
     if (!provider?.createPlayQueue) return
+    const generation = beginQueueSelection()
+    const isCurrent = () => ownsQueueSelection(generation, provider)
     const { repeat } = get()
     const shouldShuffle = forceShuffle ?? false
     try {
       const result = await provider.createPlayQueue(uri, shouldShuffle, repeat)
+      if (!isCurrent()) return
       if (result.tracks.length === 0) {
         set({ playerError: "Couldn't load tracks — playlist may be empty or unsupported." })
-        setTimeout(() => set({ playerError: null }), 5000)
+        setTimeout(() => { if (isCurrent()) set({ playerError: null }) }, 5000)
         return
       }
 
       _djGeneratedKeys.clear()
       _radioGeneratedKeys.clear()
-      _radioRefillInProgress = false
+      replaceQueueContext()
       set({
-        queue: result.tracks, queueId: result.queueId, shuffle: shouldShuffle,
-        playlistKey: null, playlistTotalCount: 0, playlistLoadedCount: 0,
-        isRadioMode: false, radioSeedKey: null, radioType: null,
+        queue: result.tracks, queueId: result.queueId, shuffle: shouldShuffle, playerError: null,
+        playlistKey: null, playlistTotalCount: 0, playlistLoadedCount: 0, isLoadingMoreTracks: false,
+        isRadioMode: false, radioSeedKey: null, radioType: null, radioSeedArtist: null,
         contextName: contextName ?? null, contextHref: contextHref ?? null, albumPlaybackId: albumPlaybackId ?? null,
       })
 
       await _startPlayback(result.tracks[0], 0, get, set)
     } catch (err) {
+      if (!isCurrent()) return
       console.error("playFromUri failed:", err)
       const msg = err instanceof Error ? err.message : String(err)
       set({ playerError: `Shuffle failed: ${msg}` })
-      setTimeout(() => set({ playerError: null }), 6000)
+      setTimeout(() => { if (isCurrent()) set({ playerError: null }) }, 6000)
     }
   },
 
   playPlaylist: async (playlistId: string, totalCount: number, title: string, href: string) => {
     const provider = getProvider()
     if (!provider) return
+    const generation = beginQueueSelection()
+    const isCurrent = () => ownsQueueSelection(generation, provider)
     try {
       const result = await provider.getPlaylistItems(playlistId, 0, PLAYLIST_PAGE_SIZE)
+      if (!isCurrent()) return
       const tracks = result.items
       if (tracks.length === 0) return
 
+      _djGeneratedKeys.clear()
+      _radioGeneratedKeys.clear()
+      replaceQueueContext()
       set({
-        queue: tracks, queueId: null, shuffle: false,
+        queue: tracks, queueId: null, shuffle: false, playerError: null,
         playlistKey: playlistId, playlistTotalCount: totalCount,
         playlistLoadedCount: tracks.length, isLoadingMoreTracks: false,
-        isRadioMode: false, radioSeedKey: null, radioType: null,
+        isRadioMode: false, radioSeedKey: null, radioType: null, radioSeedArtist: null,
         contextName: title, contextHref: href, albumPlaybackId: null,
       })
 
       await _startPlayback(tracks[0], 0, get, set)
     } catch (err) {
+      if (!isCurrent()) return
       console.error("playPlaylist failed:", err)
       const msg = err instanceof Error ? err.message : String(err)
       set({ playerError: `Playlist failed: ${msg}` })
-      setTimeout(() => set({ playerError: null }), 6000)
+      setTimeout(() => { if (isCurrent()) set({ playerError: null }) }, 6000)
     }
   },
 
@@ -867,14 +929,25 @@ export const usePlayerStore = create<PlayerState>()(
     const provider = getProvider()
     if (!provider?.createRadioQueue) return
 
-    _djGeneratedKeys.clear()
-    _radioGeneratedKeys.clear()
+    const generation = beginQueueSelection()
+    const active = _activeTrackGeneration
+    const before = get()
+    const audible = _playbackJournal.current()
+    const keepSeedPlaying = radioType === 'track' && before.currentTrack?.id === seedId
+      && !before.isInternetRadioActive
+      && (_pendingSelectedTrackId === seedId || (audible?.track.id === seedId && audible.provider === provider))
+    let selectionApplied = false
+    const isCurrent = () => ownsQueueSelection(generation, provider)
+      && (!keepSeedPlaying || active === _activeTrackGeneration)
+      && (selectionApplied || get().isInternetRadioActive === before.isInternetRadioActive)
     // Block the position-listener refill from firing during our own async init.
-    _radioRefillInProgress = true
+    const request = Symbol('radio selection')
+    _radioRefillRequest = request
 
     try {
       const { radioDegreesOfSeparation, radioMinQueue } = get()
       const result = await provider.createRadioQueue(seedId, radioType, radioDegreesOfSeparation)
+      if (!isCurrent()) return
 
       // Filter to playable tracks then deduplicate by id.
       const seenKeys = new Set<string>()
@@ -884,9 +957,15 @@ export const usePlayerStore = create<PlayerState>()(
 
       if (tracks.length === 0) {
         set({ playerError: "Radio returned no playable tracks — the server may not support sonic analysis for this item." })
-        setTimeout(() => set({ playerError: null }), 5000)
-        _radioRefillInProgress = false
+        setTimeout(() => { if (isCurrent()) set({ playerError: null }) }, 5000)
         return
+      }
+
+      // The server may omit or reorder the seed. Keep the current occurrence
+      // first, retaining its duration, selected media, and playback position.
+      if (keepSeedPlaying) {
+        tracks = [get().currentTrack!, ...tracks.filter(track => track.id !== seedId)]
+        seenKeys.add(seedId)
       }
 
       // Pre-fill to exactly radioMinQueue tracks after seed before setting queue state.
@@ -895,6 +974,7 @@ export const usePlayerStore = create<PlayerState>()(
       if (neededAfterSeed > 0) {
         try {
           const pq2 = await provider.createRadioQueue(seedId, radioType, radioDegreesOfSeparation)
+          if (!isCurrent()) return
           let added = 0
           filterPlayable(pq2.tracks).forEach(t => {
             if (added >= neededAfterSeed || seenKeys.has(t.id)) return
@@ -904,7 +984,11 @@ export const usePlayerStore = create<PlayerState>()(
           })
         } catch { /* non-critical — start with fewer tracks if this fails */ }
       }
+      if (!isCurrent()) return
 
+      _djGeneratedKeys.clear()
+      _radioGeneratedKeys.clear()
+      replaceQueueContext()
       // Mark all tracks except the seed (index 0) as radio-generated.
       tracks.slice(1).forEach(t => _radioGeneratedKeys.add(t.id))
 
@@ -924,25 +1008,34 @@ export const usePlayerStore = create<PlayerState>()(
         ? (tracks[0]?.artistName ?? null)
         : null
 
+      selectionApplied = true
       set({
-        queue: tracks, queueId: result.queueId,
+        queue: keepSeedPlaying ? [get().currentTrack!, ...tracks.slice(1)] : tracks,
+        queueIndex: 0, queueId: result.queueId, shuffle: false,
         isRadioMode: true, radioSeedKey: seedId, radioType, albumPlaybackId: null,
         radioSeedArtist: seedArtist,
-        playlistKey: null, playlistTotalCount: 0, playlistLoadedCount: 0,
+        playlistKey: null, playlistTotalCount: 0, playlistLoadedCount: 0, isLoadingMoreTracks: false,
         playerError: null,
-        ...(derivedSeedName ? { contextName: `${derivedSeedName} Radio`, contextHref: radioHref } : {}),
+        contextName: derivedSeedName ? `${derivedSeedName} Radio` : null, contextHref: radioHref,
       })
 
-      // Unlock position-listener refills now that the queue is fully populated.
-      _radioRefillInProgress = false
-
-      await _startPlayback(tracks[0], 0, get, set)
+      if (keepSeedPlaying) {
+        // Keep the existing native playback identity and listened time. Only
+        // replace the upcoming transition; pause/buffering intent stays intact.
+        get().refreshPreload()
+        prefetchAhead(get().queue, 0, 3)
+        if (get().djMode) fireAndForget(insertDjTracks(get, set as never))
+      } else {
+        await _startPlayback(tracks[0], 0, get, set)
+      }
     } catch (err) {
-      _radioRefillInProgress = false
+      if (!isCurrent()) return
       console.error("playRadio failed:", err)
       const msg = err instanceof Error ? err.message : String(err)
       set({ playerError: `Radio failed: ${msg}` })
-      setTimeout(() => set({ playerError: null }), 6000)
+      setTimeout(() => { if (isCurrent()) set({ playerError: null }) }, 6000)
+    } finally {
+      if (_radioRefillRequest === request) _radioRefillRequest = null
     }
   },
 
@@ -959,6 +1052,7 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   stopRadio: () => {
+    beginQueueSelection()
     set({ isRadioMode: false, radioSeedKey: null, radioType: null, radioSeedArtist: null })
   },
 
@@ -973,7 +1067,7 @@ export const usePlayerStore = create<PlayerState>()(
       ),
     }))
     _djGeneratedKeys.clear()
-    _djInsertInProgress = false
+    _djInsertRequest = null
 
     set({ djMode: mode })
 
@@ -984,6 +1078,10 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   stop: () => {
+    beginQueueSelection()
+    replaceQueueContext()
+    _djGeneratedKeys.clear()
+    _radioGeneratedKeys.clear()
     _pendingSelectedTrackId = null
     _playbackDesired = false
     ++_playGeneration
@@ -1014,6 +1112,8 @@ export const usePlayerStore = create<PlayerState>()(
       playlistKey: null,
       playlistTotalCount: 0,
       playlistLoadedCount: 0,
+      isLoadingMoreTracks: false,
+      playerError: null,
       isRadioMode: false,
       radioSeedKey: null,
       radioType: null,
@@ -1080,6 +1180,8 @@ export const usePlayerStore = create<PlayerState>()(
         fireAndForget(get().playRadio(radioSeedKey, radioType))
         return
       } else {
+        beginQueueSelection()
+        replaceQueueContext()
         _playbackDesired = false
         _pendingSelectedTrackId = null
         ++_playGeneration
