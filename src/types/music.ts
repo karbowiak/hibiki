@@ -8,6 +8,8 @@
 
 /** Extended audio/media details that list endpoints may not include. */
 export interface MediaInfo {
+  /** This item came from a full metadata request, including unavailable ramps. */
+  metadataComplete?: boolean
   container?: string | null
   fileSize?: number | null
   audioStreamId?: number | null

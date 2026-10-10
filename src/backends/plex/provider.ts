@@ -170,7 +170,9 @@ export class PlexProvider implements MusicProvider {
 
   async getTrack(id: string): Promise<MusicTrack> {
     const t = await plex.getTrack(Number(id))
-    return plexTrackToMusicTrack(t, this.img)
+    const track = plexTrackToMusicTrack(t, this.img)
+    track.mediaInfo = {...track.mediaInfo, metadataComplete: true}
+    return track
   }
 
   async getAlbum(id: string): Promise<MusicAlbum> {
@@ -293,7 +295,7 @@ export class PlexProvider implements MusicProvider {
     let stream = media?.parts?.[0]?.streams?.find(s => s.stream_type === 2)
 
     // Re-fetch if ramps are missing — cached _providerData may predate includeLoudnessRamps
-    if (!stream?.start_ramp && !stream?.end_ramp) {
+    if (!track.mediaInfo?.metadataComplete && !stream?.start_ramp && !stream?.end_ramp) {
       try {
         plexTrack = await plex.getTrack(Number(track.id))
         idx = pickBestMediaIndex(plexTrack.media ?? [])

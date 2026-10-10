@@ -5,14 +5,14 @@ import { fireAndForget } from "../lib/async"
 import { PlaybackJournal, listenedEnough, startedQueueIndex } from "../audio/playbackJournal"
 import type { MusicProvider } from "../providers/types"
 import { dispatchPlaybackWhenReady } from "../audio/playbackRequests"
-import { isAlbumPlayback, selectReplayGain } from "../audio/playbackContext"
+import { isAlbumPlayback } from "../audio/playbackContext"
 import type { TransitionInfo } from "../audio/transitionInfo"
 import { engine } from "../audio/RustAudioEngine"
 import type { MusicTrack } from "../types/music"
 import type { LevelData, LyricLineData } from "../providers/types"
 import { useProviderStore } from "./providerStore"
 import { useNotificationStore } from "./notificationStore"
-import { evictMap } from "./cacheUtils"
+import { PlaybackMetadata } from "../audio/playbackMetadata"
 import { sendNotification } from "@tauri-apps/plugin-notification"
 import { useSleepTimerStore } from "./sleepTimerStore"
 import { useAnnouncerStore } from "./announcerStore"
@@ -149,7 +149,8 @@ function getProvider() {
 // Audio prefetch — module-level dedup set
 // ---------------------------------------------------------------------------
 
-const _prefetchedPartKeys = new Set<string>()
+const playbackMetadata = new PlaybackMetadata()
+let _activeTrackGeneration = 0
 
 // ---------------------------------------------------------------------------
 // Track ID resolution — maps numeric rating_key → MusicTrack.id
@@ -417,91 +418,17 @@ async function insertDjTracks(
 
 /** Pre-resolve playback URL for a track on hover. Deduped per track id. */
 export function prefetchTrackAudio(track: MusicTrack): void {
-  if (_prefetchedPartKeys.has(track.id)) return
-  _prefetchedPartKeys.add(track.id)
-  if (track.streamUrl?.startsWith("http")) return
+  if (track.streamUrl && /^https?:\/\//i.test(track.streamUrl)) return
   const provider = getProvider()
-  if (!provider) return
-  // Just resolve the URL so it's cached by the provider — no disk cache needed
-  fireAndForget(provider.getPlaybackInfo(track).then(() => {}))
+  if (provider) fireAndForget(playbackMetadata.playbackInfo(provider, track))
 }
 
-/**
- * Session-level gain cache: track id → { trackGain, albumGain }.
- * Both values are cached together so switching modes doesn't require a new fetch.
- * List endpoints don't include Stream sub-elements, so we lazily fetch on first play.
- */
-const _gainCache = new Map<string, { trackGain: number | null; albumGain: number | null }>()
-
-/**
- * Session-level waveform stream-ID cache: track id → audio stream id (null = "no audio stream").
- * Same fallback pattern as _gainCache — list endpoints don't include Stream sub-elements.
- */
-const _waveformStreamCache = new Map<string, number | null>()
-
-/** Fetch the audio stream ID for waveform levels, falling back to a metadata call if needed. */
-async function fetchAudioStreamId(track: MusicTrack): Promise<number | null> {
-  const inline = track.mediaInfo?.audioStreamId ?? null
-  if (inline !== null) {
-    _waveformStreamCache.set(track.id, inline)
-    evictMap(_waveformStreamCache, 500)
-    return inline
-  }
-  if (_waveformStreamCache.has(track.id)) {
-    return _waveformStreamCache.get(track.id) ?? null
-  }
-  const provider = getProvider()
-  if (!provider) return null
-  try {
-    const full = await provider.getTrack(track.id)
-    const id = full.mediaInfo?.audioStreamId ?? null
-    _waveformStreamCache.set(track.id, id)
-    evictMap(_waveformStreamCache, 500)
-    return id
-  } catch {
-    _waveformStreamCache.set(track.id, null)
-    evictMap(_waveformStreamCache, 500)
-    return null
-  }
+async function fetchAudioStreamId(track: MusicTrack, provider: MusicProvider): Promise<number | null> {
+  return playbackMetadata.streamId(provider, track)
 }
 
-/**
- * Get the gain for a track, fetching full metadata if the track object
- * has no stream data (which happens for tracks loaded via list endpoints).
- * Uses album gain when playing within an album context (consecutive tracks
- * share the same albumId), track gain otherwise.
- */
-async function fetchGainDb(track: MusicTrack): Promise<number | null> {
-  const albumPlaybackId = usePlayerStore.getState().albumPlaybackId
-  const pickGain = (trackGain: number | null, albumGain: number | null) =>
-    selectReplayGain({ albumId: track.albumId, gain: trackGain, albumGain }, albumPlaybackId)
-
-  // Fast path: gain already on the MusicTrack (mapped from stream data)
-  if (track.gain !== null || track.albumGain !== null) {
-    _gainCache.set(track.id, { trackGain: track.gain, albumGain: track.albumGain })
-    evictMap(_gainCache, 500)
-    return pickGain(track.gain, track.albumGain)
-  }
-
-  // Cache hit — both track and album gain already resolved
-  if (_gainCache.has(track.id)) {
-    const cached = _gainCache.get(track.id)!
-    return pickGain(cached.trackGain, cached.albumGain)
-  }
-
-  // Fetch full track metadata — includes Stream elements with gain data
-  const provider = getProvider()
-  if (!provider) return null
-  try {
-    const full = await provider.getTrack(track.id)
-    _gainCache.set(track.id, { trackGain: full.gain, albumGain: full.albumGain })
-    evictMap(_gainCache, 500)
-    return pickGain(full.gain, full.albumGain)
-  } catch {
-    _gainCache.set(track.id, { trackGain: null, albumGain: null })
-    evictMap(_gainCache, 500)
-    return null
-  }
+async function fetchGainDb(track: MusicTrack, provider: MusicProvider): Promise<number | null> {
+  return playbackMetadata.gain(provider, track, usePlayerStore.getState().albumPlaybackId)
 }
 
 /** Simple string hash for synthetic track keys. */
@@ -530,7 +457,10 @@ async function sendToAudioEngine(track: MusicTrack, generation: number): Promise
   const provider = getProvider()
   if (!provider) return
   await dispatchPlaybackWhenReady(
-    async () => ({ info: await provider.getPlaybackInfo(track), gainDb: await fetchGainDb(track) }),
+    async () => {
+      const [gainDb, info] = await Promise.all([fetchGainDb(track, provider), playbackMetadata.playbackInfo(provider, track)])
+      return {info, gainDb}
+    },
     () => generation === _playGeneration && getProvider() === provider,
     async ({ info, gainDb }) => {
       _ratingKeyToTrackId.set(info.trackKey, track.id)
@@ -557,10 +487,11 @@ function fetchLyricsForTrack(track: MusicTrack): void {
 async function preloadNextTrack(queue: MusicTrack[], queueIndex: number, repeat: 0 | 1 | 2): Promise<void> {
   if (repeat === 1 || useSleepTimerStore.getState().endOfTrack) return
   const generation = _playGeneration
+  const active = _activeTrackGeneration
   const sourceTrackId = queue[queueIndex]?.id
   const isCurrent = () => {
     const state = usePlayerStore.getState()
-    return generation === _playGeneration && state.currentTrack?.id === sourceTrackId
+    return generation === _playGeneration && active === _activeTrackGeneration && state.currentTrack?.id === sourceTrackId
       && state.repeat !== 1
       && !useSleepTimerStore.getState().endOfTrack
       && state.queue[(state.queueIndex + 1) % state.queue.length]?.id === nextTrack.id
@@ -590,7 +521,10 @@ async function preloadNextTrack(queue: MusicTrack[], queueIndex: number, repeat:
 
   try {
     await dispatchPlaybackWhenReady(
-      async () => ({ info: await provider.getPlaybackInfo(nextTrack), gainDb: await fetchGainDb(nextTrack) }),
+      async () => {
+        const [gainDb, info] = await Promise.all([fetchGainDb(nextTrack, provider), playbackMetadata.playbackInfo(provider, nextTrack)])
+        return {info, gainDb}
+      },
       () => isCurrent() && getProvider() === provider,
       async ({ info, gainDb }) => {
         _ratingKeyToTrackId.set(info.trackKey, nextTrack.id)
@@ -642,35 +576,22 @@ async function loadMorePlaylistTracks(get: () => PlayerState, set: (fn: (s: Play
  * previously 2–3 separate getTrack() calls into one.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function enrichCurrentTrack(track: MusicTrack, index: number, get: () => PlayerState, set: any): Promise<void> {
-  const provider = getProvider()
-  if (!provider) return
+async function enrichCurrentTrack(track: MusicTrack, provider: MusicProvider, isCurrent: () => boolean, get: () => PlayerState, set: any): Promise<void> {
   try {
-    const full = await provider.getTrack(track.id)
-    // Only update if this track is still the active one
-    if (get().currentTrack?.id !== track.id) return
-    // Merge: keep fields from full metadata, preserving any non-null originals
-    const enriched: MusicTrack = { ...track, ...full }
-    set((s: PlayerState) => ({
-      currentTrack: enriched,
-      queue: s.queue.map((t, i) => i === index ? enriched : t),
-    }))
-    // Populate caches so fetchGainDb/fetchAudioStreamId don't re-fetch
-    _gainCache.set(track.id, { trackGain: full.gain, albumGain: full.albumGain })
-    evictMap(_gainCache, 500)
-    const streamId = full.mediaInfo?.audioStreamId ?? null
-    _waveformStreamCache.set(track.id, streamId)
-    evictMap(_waveformStreamCache, 500)
-    // Fetch waveform levels now that we have the stream ID
-    if (streamId && provider.getStreamLevels) {
+    const full = await playbackMetadata.fullTrack(provider, track.id)
+    if (!isCurrent()) return
+    set((state: PlayerState) => {
+      const current = state.currentTrack!
+      const enriched: MusicTrack = {...current, ...full, playlistItemId: current.playlistItemId,
+        duration: current.duration > 0 ? current.duration : full.duration}
+      return {currentTrack: enriched, queue: state.queue.map((item, index) => index === state.queueIndex && item.id === track.id ? enriched : item)}
+    })
+    const streamId = full.mediaInfo?.audioStreamId
+    if (streamId && provider.getStreamLevels && isCurrent()) {
       const levels = await provider.getStreamLevels(streamId, 128)
-      if (levels.length > 0 && get().currentTrack?.id === track.id) {
-        set({ waveformLevels: levels })
-      }
+      if (levels.length && isCurrent()) set({waveformLevels: levels})
     }
-  } catch {
-    // Non-critical — track still plays, just without enriched metadata
-  }
+  } catch { /* Playback continues when optional enrichment is unavailable. */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -685,6 +606,8 @@ async function enrichCurrentTrack(track: MusicTrack, index: number, get: () => P
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function _onTrackBecomesActive(track: MusicTrack, index: number, get: () => PlayerState, set: any): void {
   const provider = getProvider()
+  const active = ++_activeTrackGeneration
+  const isCurrent = () => active === _activeTrackGeneration && getProvider() === provider && get().currentTrack?.id === track.id
   const isPodcast = _isPodcastTrack(track)
   set({ currentTrack: track, transitionInfo: null, queueIndex: index, isPlaying: _playbackDesired, positionMs: 0,
         waveformLevels: null, lyricsLines: null })
@@ -696,13 +619,13 @@ function _onTrackBecomesActive(track: MusicTrack, index: number, get: () => Play
     // This single call replaces separate fetchAudioStreamId + fetchGainDb calls.
     const needsEnrichment = track.codec == null && track.mediaInfo?.audioStreamId == null
     if (needsEnrichment) {
-      fireAndForget(enrichCurrentTrack(track, index, get, set))
+      if (provider) fireAndForget(enrichCurrentTrack(track, provider, isCurrent, get, set))
     } else {
       // Track already has full data (from PlayQueue/radio) — just fetch waveform
-      fireAndForget(fetchAudioStreamId(track).then(streamId => {
-        if (!streamId || !provider?.getStreamLevels) return
+      fireAndForget((provider ? fetchAudioStreamId(track, provider) : Promise.resolve(null)).then(streamId => {
+        if (!isCurrent() || !streamId || !provider?.getStreamLevels) return
         return provider.getStreamLevels(streamId, 128)
-          .then(levels => { if (levels.length > 0) set({ waveformLevels: levels }) })
+          .then(levels => { if (isCurrent() && levels.length > 0) set({ waveformLevels: levels }) })
       }))
     }
     fetchLyricsForTrack(track)
@@ -753,6 +676,8 @@ function _onTrackAudiblyStarted(track: MusicTrack, provider: MusicProvider | nul
  */
 function prefetchAhead(queue: MusicTrack[], fromIndex: number, count: number): void {
   const provider = getProvider()
+  const generation = _playGeneration
+  const active = _activeTrackGeneration
   for (let i = 1; i <= count; i++) {
     const t = queue[fromIndex + i]
     if (!t) continue
@@ -762,7 +687,8 @@ function prefetchAhead(queue: MusicTrack[], fromIndex: number, count: number): v
       continue
     }
     if (!provider) continue
-    fireAndForget(provider.getPlaybackInfo(t).then(info => {
+    fireAndForget(playbackMetadata.playbackInfo(provider, t).then(info => {
+      if (generation !== _playGeneration || active !== _activeTrackGeneration || getProvider() !== provider) return
       _ratingKeyToTrackId.set(info.trackKey, t.id)
     }))
   }
@@ -1061,6 +987,8 @@ export const usePlayerStore = create<PlayerState>()(
     _pendingSelectedTrackId = null
     _playbackDesired = false
     ++_playGeneration
+    ++_activeTrackGeneration
+    useLyricsStore.getState().clear()
     if (_gaplessTimeoutId !== null) { clearTimeout(_gaplessTimeoutId); _gaplessTimeoutId = null }
     engine.stop()
     const { currentTrack, positionMs, isInternetRadioActive } = get()
@@ -1155,6 +1083,8 @@ export const usePlayerStore = create<PlayerState>()(
         _playbackDesired = false
         _pendingSelectedTrackId = null
         ++_playGeneration
+        ++_activeTrackGeneration
+        useLyricsStore.getState().clear()
         engine.stop()
         const provider = getProvider()
         if (provider?.setNowPlayingState) fireAndForget(provider.setNowPlayingState("stopped"))

@@ -10,6 +10,7 @@ import { useUIStore } from "./uiStore"
 /** Monotonically increasing generation counter — incremented on every fetchForTrack call.
  *  Any async continuation whose captured generation doesn't match the current one is stale. */
 let _fetchGeneration = 0
+let _sourceGeneration = 0
 
 interface LyricsState {
   /** All available lyrics sources for the current track. */
@@ -39,14 +40,16 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
   fetchForTrack: (trackId, artist, title) => {
     // Bump generation — all in-flight fetches from previous calls become stale
     const gen = ++_fetchGeneration
+    const sourceChoice = ++_sourceGeneration
+    const provider = useProviderStore.getState().provider
 
     // Clear previous state
     set({ sources: [], activeSourceId: null, geniusHits: [], isSearching: false, isFetchingLyrics: false })
 
-    const isStale = () => gen !== _fetchGeneration
+    const isStale = () => gen !== _fetchGeneration || useProviderStore.getState().provider !== provider
+    const ownsChoice = () => !isStale() && sourceChoice === _sourceGeneration
 
     void (async () => {
-      const provider = useProviderStore.getState().provider
       const genius = useGeniusStore.getState()
 
       // 1. Fetch Plex lyrics
@@ -87,7 +90,7 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
         (genius.alwaysFetch || plexLines.length === 0)
 
       if (!shouldSearchGenius) {
-        if (plexLines.length === 0) {
+        if (plexLines.length === 0 && ownsChoice()) {
           usePlayerStore.setState({ lyricsLines: [] })
         }
         return
@@ -102,14 +105,14 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
         set({ geniusHits: hits, isSearching: false })
 
         // Auto-fetch top Genius hit if no Plex lyrics and it's a strong match
-        if (plexLines.length === 0) {
+        if (plexLines.length === 0 && ownsChoice()) {
           if (hits.length > 0 && hits[0].relevance >= 0.5) {
             // Inline the fetch here so we can check staleness
             const hit = hits[0]
             set({ isFetchingLyrics: true })
             try {
               const geniusLines = await geniusGetLyrics(hit.url)
-              if (isStale()) return
+              if (!ownsChoice()) return
 
               const lines: LyricLineData[] = geniusLines.map(l => ({
                 startMs: 0,
@@ -126,7 +129,7 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
               set({ sources: allSources, activeSourceId: source.id, isFetchingLyrics: false })
               pushLyricsToPlayer(lines)
             } catch {
-              if (isStale()) return
+              if (!ownsChoice()) return
               set({ isFetchingLyrics: false })
               usePlayerStore.setState({ lyricsLines: [] })
             }
@@ -137,7 +140,7 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
       } catch {
         if (isStale()) return
         set({ isSearching: false })
-        if (plexLines.length === 0) {
+        if (plexLines.length === 0 && ownsChoice()) {
           usePlayerStore.setState({ lyricsLines: [] })
         }
       }
@@ -147,15 +150,19 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
   selectSource: (id) => {
     const source = get().sources.find(s => s.id === id)
     if (source) {
-      set({ activeSourceId: id })
+      ++_sourceGeneration
+      set({ activeSourceId: id, isFetchingLyrics: false })
       pushLyricsToPlayer(source.lines)
     }
   },
 
   fetchGeniusLyrics: async (hit) => {
+    const generation = _fetchGeneration, choice = ++_sourceGeneration
+    const provider = useProviderStore.getState().provider
+    const current = () => generation === _fetchGeneration && choice === _sourceGeneration && provider === useProviderStore.getState().provider
     const existing = get().sources.find(s => s.id === `genius-${hit.id}`)
     if (existing) {
-      set({ activeSourceId: existing.id })
+      set({ activeSourceId: existing.id, isFetchingLyrics: false })
       pushLyricsToPlayer(existing.lines)
       return
     }
@@ -164,6 +171,7 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
 
     try {
       const geniusLines = await geniusGetLyrics(hit.url)
+      if (!current()) return
       const lines: LyricLineData[] = geniusLines.map(l => ({
         startMs: 0,
         endMs: 0,
@@ -181,12 +189,13 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
       set({ sources, activeSourceId: source.id, isFetchingLyrics: false })
       pushLyricsToPlayer(lines)
     } catch {
-      set({ isFetchingLyrics: false })
+      if (current()) set({ isFetchingLyrics: false })
     }
   },
 
   clear: () => {
     ++_fetchGeneration
+    ++_sourceGeneration
     set({ sources: [], activeSourceId: null, geniusHits: [], isSearching: false, isFetchingLyrics: false })
   },
 }))
