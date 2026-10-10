@@ -1,6 +1,10 @@
 use super::super::crossfade::types::RampPoint;
+use super::super::output::playback_envelope::FADE_MS;
 use super::super::types::TrackMeta;
 use super::*;
+
+const FADE_FRAMES: usize = 48000 * FADE_MS as usize / 1000;
+const FADE_SAMPLES: usize = FADE_FRAMES * 2;
 
 fn callback() -> (AudioCallbackState, Receiver<EngineEvent>) {
     let (_cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
@@ -33,7 +37,7 @@ fn listening_time_excludes_seeks_pauses_and_unplayed_preloads() {
     cb.set_state(EngineState::Playing);
     cb.process_callback(&mut [0.0; 960]); // 10ms heard
     cb.handle_command(AudioCommand::Pause);
-    cb.process_callback(&mut [0.0; 96000]); // 50ms pause tail, then silence
+    cb.process_callback(&mut [0.0; 96000]); // 150ms pause tail, then silence
     cb.handle_command(AudioCommand::ClearPreload);
     cb.handle_command(AudioCommand::SeekInBuffer { position: 9000 });
     cb.handle_command(AudioCommand::Resume);
@@ -58,7 +62,7 @@ fn listening_time_excludes_seeks_pauses_and_unplayed_preloads() {
             playback_id,
             ..
         } => {
-            assert_eq!(*listened_ms, 70);
+            assert_eq!(*listened_ms, 20 + FADE_MS);
             assert_eq!(*position_ms, 9010);
             assert_eq!(*rating_key, 1);
             assert_eq!(*playback_id, 1);
@@ -130,7 +134,7 @@ fn selecting_a_new_track_while_paused_does_not_briefly_resume_the_outgoing_song(
     assert_eq!(output[0], 0.0);
     assert!(output.last().unwrap() > &0.0);
     assert_eq!(cb.deck_mgr.active_deck().rating_key(), 2);
-    cb.process_callback(&mut [0.0; 4800]);
+    cb.process_callback(&mut [0.0; FADE_SAMPLES]);
     cb.process_callback(&mut output);
     assert!(output.iter().all(|sample| (*sample - 0.4).abs() < 1e-6));
 }
@@ -152,22 +156,22 @@ fn pause_fades_to_silence_then_freezes_at_the_exact_audio_frame() {
     let mut cb = audible_callback();
     cb.handle_command(AudioCommand::SetVolume(0.5));
     cb.handle_command(AudioCommand::Pause);
-    let mut output = [1.0; 9600]; // 100ms callback, but only 50ms may advance
+    let mut output = [1.0; FADE_SAMPLES * 2]; // 300ms callback, but only the pause fade may advance
     cb.process_callback(&mut output);
     assert!((output[0] - 0.15).abs() < 1e-6);
-    assert!(output[..4800].windows(2).all(|w| w[1] <= w[0]));
-    assert!(output[4800..].iter().all(|sample| *sample == 0.0));
-    assert_eq!(cb.deck_mgr.active_deck().position_ms(), 60);
+    assert!(output[..FADE_SAMPLES].windows(2).all(|w| w[1] <= w[0]));
+    assert!(output[FADE_SAMPLES..].iter().all(|sample| *sample == 0.0));
+    assert_eq!(cb.deck_mgr.active_deck().position_ms(), 10 + FADE_MS);
     let played = cb.deck_mgr.active_deck().played_frames;
     cb.process_callback(&mut output);
     assert!(output.iter().all(|sample| *sample == 0.0));
-    assert_eq!(cb.deck_mgr.active_deck().position_ms(), 60);
+    assert_eq!(cb.deck_mgr.active_deck().position_ms(), 10 + FADE_MS);
     assert_eq!(cb.deck_mgr.active_deck().played_frames, played);
     cb.handle_command(AudioCommand::Resume);
     cb.process_callback(&mut output);
     assert_eq!(output[0], 0.0);
-    assert!(output[..4800].windows(2).all(|w| w[1] >= w[0]));
-    assert!(output[4800..]
+    assert!(output[..FADE_SAMPLES].windows(2).all(|w| w[1] >= w[0]));
+    assert!(output[FADE_SAMPLES..]
         .iter()
         .all(|sample| (*sample - 0.15).abs() < 1e-6));
     assert_eq!(cb.dsp_chain.volume.gain(), 0.5);
@@ -181,7 +185,7 @@ fn initial_play_and_buffered_resume_begin_the_fade_only_with_pcm() {
         user_skip: true,
         request_id: 0,
     });
-    let mut output = [1.0; 9600];
+    let mut output = [1.0; FADE_SAMPLES * 2];
     for _ in 0..10 {
         cb.process_callback(&mut output);
     }
@@ -189,10 +193,10 @@ fn initial_play_and_buffered_resume_begin_the_fade_only_with_pcm() {
     cb.deck_mgr
         .active_deck_mut()
         .samples
-        .extend_from_slice(&[0.3; 9600]);
+        .extend_from_slice(&[0.3; FADE_SAMPLES * 2]);
     cb.process_callback(&mut output);
     assert_eq!(output[0], 0.0);
-    assert!(output[4800..]
+    assert!(output[FADE_SAMPLES..]
         .iter()
         .all(|sample| (*sample - 0.3).abs() < 1e-6));
     cb.handle_command(AudioCommand::Pause);
@@ -204,10 +208,10 @@ fn initial_play_and_buffered_resume_begin_the_fade_only_with_pcm() {
     cb.deck_mgr
         .active_deck_mut()
         .samples
-        .extend_from_slice(&[0.3; 9600]);
+        .extend_from_slice(&[0.3; FADE_SAMPLES * 2]);
     cb.process_callback(&mut output);
     assert_eq!(output[0], 0.0);
-    assert!(output[4800..]
+    assert!(output[FADE_SAMPLES..]
         .iter()
         .all(|sample| (*sample - 0.3).abs() < 1e-6));
 }
@@ -220,14 +224,14 @@ fn pausing_across_a_scheduled_transition_does_not_stall_the_fade() {
     cb.crossfade_settings.smart_crossfade = false;
     cb.crossfade_settings.crossfade_window_ms = 1000;
     cb.compute_and_set_schedule();
-    // Put the planned transition inside the 50ms pause tail.
+    // Put the planned transition inside the pause tail.
     let start = cb.scheduler.frames_until_crossfade(0, 48000).unwrap();
     cb.deck_mgr.active_deck_mut().position = (start as usize - 480) * 2;
     cb.handle_command(AudioCommand::Pause);
-    cb.process_callback(&mut [0.0; 9600]);
+    cb.process_callback(&mut [0.0; FADE_SAMPLES * 2]);
     assert_eq!(
         cb.deck_mgr.active_deck().position,
-        (start as usize - 480 + 2400) * 2
+        (start as usize - 480 + FADE_FRAMES) * 2
     );
     assert!(!cb.playback_envelope.is_fading_out());
     assert_eq!(cb.deck_mgr.active_deck().rating_key(), 1);
@@ -245,14 +249,14 @@ fn pausing_a_crossfade_freezes_both_decks_and_its_remaining_overlap() {
     let a = cb.deck_mgr.deck(DeckId::A).position;
     let b = cb.deck_mgr.deck(DeckId::B).position;
     let overlap = cb.crossfade_remaining_frames;
-    let mut output = [1.0; 9600];
+    let mut output = [1.0; FADE_SAMPLES * 2];
     cb.process_callback(&mut output);
-    assert!(output[4800..].iter().all(|sample| *sample == 0.0));
-    assert_eq!(cb.deck_mgr.deck(DeckId::A).position, a + 4800);
-    assert_eq!(cb.deck_mgr.deck(DeckId::B).position, b + 4800);
-    assert_eq!(cb.crossfade_remaining_frames, overlap - 2400);
+    assert!(output[FADE_SAMPLES..].iter().all(|sample| *sample == 0.0));
+    assert_eq!(cb.deck_mgr.deck(DeckId::A).position, a + FADE_SAMPLES);
+    assert_eq!(cb.deck_mgr.deck(DeckId::B).position, b + FADE_SAMPLES);
+    assert_eq!(cb.crossfade_remaining_frames, overlap - FADE_FRAMES as u64);
     cb.process_callback(&mut output);
-    assert_eq!(cb.crossfade_remaining_frames, overlap - 2400);
+    assert_eq!(cb.crossfade_remaining_frames, overlap - FADE_FRAMES as u64);
     assert!(output.iter().all(|sample| *sample == 0.0));
     cb.handle_command(AudioCommand::Resume);
     cb.process_callback(&mut output);
@@ -265,7 +269,7 @@ fn paused_seeks_and_starved_pause_tails_do_not_play_delayed_audio() {
     let mut cb = audible_callback();
     cb.handle_command(AudioCommand::Pause);
     cb.handle_command(AudioCommand::SeekInBuffer { position: 5000 });
-    let mut output = [1.0; 9600];
+    let mut output = [1.0; FADE_SAMPLES * 2];
     cb.process_callback(&mut output);
     assert!(output.iter().all(|sample| *sample == 0.0));
     assert_eq!(cb.deck_mgr.active_deck().position_ms(), 5000);
@@ -280,7 +284,7 @@ fn paused_seeks_and_starved_pause_tails_do_not_play_delayed_audio() {
     cb.deck_mgr
         .active_deck_mut()
         .samples
-        .extend_from_slice(&[0.3; 9600]);
+        .extend_from_slice(&[0.3; FADE_SAMPLES * 2]);
     cb.process_callback(&mut output);
     assert!(output.iter().all(|sample| *sample == 0.0));
     assert_eq!(cb.deck_mgr.active_deck().position, position);
@@ -295,13 +299,13 @@ fn a_pause_tail_can_cross_the_end_of_an_overlap_without_advancing_extra_frames()
     cb.process_callback(&mut vec![0.0; 48000 * 2 * 480 / 1000]);
     assert_eq!(cb.crossfade_remaining_frames, 960);
     cb.handle_command(AudioCommand::Pause);
-    let mut output = [1.0; 9600];
+    let mut output = [1.0; FADE_SAMPLES * 2];
     cb.process_callback(&mut output);
-    assert_eq!(cb.deck_mgr.active_deck().position_ms(), 530);
+    assert_eq!(cb.deck_mgr.active_deck().position_ms(), 480 + FADE_MS);
     assert!(!cb.is_crossfading);
-    assert!(output[4800..].iter().all(|sample| *sample == 0.0));
+    assert!(output[FADE_SAMPLES..].iter().all(|sample| *sample == 0.0));
     cb.process_callback(&mut output);
-    assert_eq!(cb.deck_mgr.active_deck().position_ms(), 530);
+    assert_eq!(cb.deck_mgr.active_deck().position_ms(), 480 + FADE_MS);
 }
 
 #[test]
@@ -320,7 +324,7 @@ fn pausing_while_loading_during_an_overlap_frees_the_old_deck_after_the_fade() {
     );
     cb.process_callback(&mut [0.0; 960]);
     assert!(cb.is_crossfading);
-    for _ in 0..4 {
+    for _ in 1..FADE_MS / 10 {
         cb.process_callback(&mut [0.0; 960]);
     }
     assert!(
@@ -343,7 +347,7 @@ fn stop_during_a_pause_fade_is_silent_and_a_new_play_gets_its_own_fade_in() {
     cb.handle_command(AudioCommand::Pause);
     cb.process_callback(&mut [0.0; 960]);
     cb.handle_command(AudioCommand::Stop);
-    let mut output = [1.0; 9600];
+    let mut output = [1.0; FADE_SAMPLES * 2];
     cb.process_callback(&mut output);
     assert!(output.iter().all(|sample| *sample == 0.0));
     cb.handle_load_deck(cb.deck_mgr.active_id().other(), meta(2), 48000, 2, 1.0, 0);
@@ -354,7 +358,7 @@ fn stop_during_a_pause_fade_is_silent_and_a_new_play_gets_its_own_fade_in() {
     });
     cb.process_callback(&mut output);
     assert_eq!(output[0], 0.0);
-    assert!(output[4800..]
+    assert!(output[FADE_SAMPLES..]
         .iter()
         .all(|sample| (*sample - 0.3).abs() < 1e-6));
 }

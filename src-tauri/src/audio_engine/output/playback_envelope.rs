@@ -1,6 +1,6 @@
 //! Short playback fades, independent of deck transitions and master volume.
 
-const FADE_MS: u64 = 50;
+pub(crate) const FADE_MS: u64 = 150;
 
 pub struct PlaybackEnvelope {
     gain: f32,
@@ -97,7 +97,7 @@ mod tests {
     fn fade_duration_and_gain_are_independent_of_channels_and_callback_size() {
         for rate in [8000, 44100, 48000, 192000] {
             for channels in [1, 2, 8] {
-                let frames = rate as usize / 20;
+                let frames = rate as usize * FADE_MS as usize / 1000;
                 let mut envelope = PlaybackEnvelope::new();
                 envelope.fade_out(rate);
                 let mut output = vec![1.0; (frames + 20) * channels as usize];
@@ -130,7 +130,10 @@ mod tests {
         envelope.apply(&mut [1.0; 960], 2);
         let gain = envelope.gain;
         envelope.fade_out(48000);
-        assert_eq!(envelope.remaining_frames(), 1920);
+        assert_eq!(
+            envelope.remaining_frames(),
+            48000 * FADE_MS as u32 / 1000 - 480
+        );
         envelope.fade_in(48000);
         let mut output = [1.0; 960];
         envelope.apply(&mut output, 2);
