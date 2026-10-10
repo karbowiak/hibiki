@@ -5,7 +5,6 @@ import { idbJSONStorage } from "./idbStorage"
 import type { RadioStation } from "../lib/radiobrowser"
 import { radiobrowserClick } from "../lib/radiobrowser"
 import { radioPlay, radioStop, radioPause, radioResume, radioOnEvents } from "../lib/radioAudio"
-import { engine } from "../audio/RustAudioEngine"
 import { usePlayerStore } from "./playerStore"
 import { parseIcyString } from "../lib/icyParser"
 
@@ -69,14 +68,15 @@ export const useRadioStreamStore = create<RadioStreamState>()(
       recentStations: [],
 
       playStation: (station: RadioStation) => {
+        // Revoke pending Plex loads and queue requests before installing the
+        // new station. Stopping only the engine left those requests alive.
+        usePlayerStore.getState().stop()
         // Stop any existing radio stream event listeners
         clearStreamListeners()
         const revision = streamRevision
         const isCurrent = () => revision === streamRevision && usePlayerStore.getState().isInternetRadioActive
 
-        // Stop the Web Audio engine (Plex playback)
-        engine.stop()
-        // Clear Plex player state
+        // Select the live stream after the previous source has been retired.
         usePlayerStore.setState({
           isPlaying: false,
           currentTrack: null,

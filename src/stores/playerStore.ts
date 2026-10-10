@@ -18,7 +18,7 @@ import { useSleepTimerStore } from "./sleepTimerStore"
 import { useAnnouncerStore } from "./announcerStore"
 import { useVisualizerStore } from "./visualizerStore"
 import { useRadioStreamStore } from "./radioStreamStore"
-import { radioStop, radioSetVolume } from "../lib/radioAudio"
+import { radioSetVolume } from "../lib/radioAudio"
 import { useLyricsStore } from "./lyricsStore"
 
 type RadioType = 'track' | 'artist' | 'album' | 'playlist'
@@ -748,8 +748,7 @@ function prefetchAhead(queue: MusicTrack[], fromIndex: number, count: number): v
 async function _startPlayback(track: MusicTrack, index: number, get: () => PlayerState, set: any): Promise<void> {
   // If internet radio is active, stop it before starting Plex playback
   if (get().isInternetRadioActive) {
-    radioStop()
-    set({ isInternetRadioActive: false })
+    useRadioStreamStore.getState().stopStream()
   }
   const gen = ++_playGeneration
   _pendingSelectedTrackId = track.id
@@ -1091,7 +1090,6 @@ export const usePlayerStore = create<PlayerState>()(
     const { currentTrack, positionMs, isInternetRadioActive } = get()
     // Stop internet radio if active
     if (isInternetRadioActive) {
-      radioStop()
       useRadioStreamStore.getState().stopStream()
     }
     // Report stopped to OS media controls

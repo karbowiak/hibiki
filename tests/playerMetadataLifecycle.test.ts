@@ -3,11 +3,36 @@ import { JSDOM } from "jsdom"
 import type { MusicTrack } from "../src/types/music"
 import type { MusicProvider } from "../src/providers/types"
 import type { AudioEngineCallbacks } from "../src/audio/RustAudioEngine"
-import { deferred, settle } from "./helpers/radioAudioFakes"
+import {
+  deferred,
+  FakeAudio,
+  FakeContext,
+  settle,
+} from "./helpers/radioAudioFakes"
 
 const dom = new JSDOM("", { url: "https://hibiki.example.test" })
 const oldStorage = globalThis.localStorage
+const oldAudio = globalThis.Audio,
+  oldContext = globalThis.AudioContext
+const radioElements: FakeAudio[] = []
+globalThis.Audio = class extends FakeAudio {
+  constructor() {
+    super()
+    radioElements.push(this)
+  }
+} as unknown as typeof Audio
+globalThis.AudioContext = FakeContext as unknown as typeof AudioContext
 globalThis.localStorage = dom.window.localStorage
+const savedState = new Map<string, string>()
+mock.module("idb-keyval", () => ({
+  get: async (key: string) => savedState.get(key),
+  set: async (key: string, value: string) => {
+    savedState.set(key, value)
+  },
+  del: async (key: string) => {
+    savedState.delete(key)
+  },
+}))
 const core = await import("@tauri-apps/api/core")
 const lyricRequests = new Map<string, ReturnType<typeof deferred<any[]>>>()
 mock.module("@tauri-apps/api/core", () => ({
@@ -26,6 +51,7 @@ const { usePlayerStore } = await import("../src/stores/playerStore")
 const { useProviderStore } = await import("../src/stores/providerStore")
 const { useLyricsStore } = await import("../src/stores/lyricsStore")
 const { useNotificationStore } = await import("../src/stores/notificationStore")
+const { useRadioStreamStore } = await import("../src/stores/radioStreamStore")
 const notificationsEnabled =
   useNotificationStore.getState().notificationsEnabled
 useNotificationStore.setState({ notificationsEnabled: false })
@@ -92,6 +118,7 @@ function provider(name: string, extra: Partial<MusicProvider> = {}) {
 afterEach(() => {
   lyricRequests.clear()
   state().stop()
+  radioElements.length = 0
   useProviderStore.getState().clearProvider()
   ;(engine.play as any).mockClear()
   ;(engine.preloadNext as any).mockClear()
@@ -115,6 +142,81 @@ async function audiblyPlay(track: MusicTrack, context?: MusicTrack[]) {
   await settle()
   return id
 }
+
+const station = (uuid = "test-station") =>
+  ({ uuid, name: uuid, stream_url: "https://radio.example.test/stream" }) as any
+
+test("selecting internet radio revokes a pending Plex song load", async () => {
+  const pending = deferred<any>()
+  useProviderStore
+    .getState()
+    .setProvider(provider("a", { getPlaybackInfo: () => pending.promise }))
+  const playing = state().playTrack(source("1"))
+  await settle()
+  useRadioStreamStore.getState().playStation(station())
+  pending.resolve({
+    url: "https://a.test/1",
+    trackKey: 1,
+    partId: 1,
+    parentKey: "album",
+    startRamp: null,
+    endRamp: null,
+  })
+  await playing
+  expect((engine.play as any).mock.calls.length).toBe(0)
+  expect(state().isInternetRadioActive).toBe(true)
+  expect(state().currentTrack).toBeNull()
+  expect(state().queue).toEqual([])
+  expect(useRadioStreamStore.getState().currentStation?.uuid).toBe(
+    "test-station"
+  )
+})
+
+test("selecting internet radio revokes a pending Plex playlist selection", async () => {
+  const pending = deferred<any>()
+  useProviderStore
+    .getState()
+    .setProvider(provider("a", { getPlaylistItems: () => pending.promise }))
+  const playlist = state().playPlaylist("old", 1, "Old", "/playlist/old")
+  useRadioStreamStore.getState().playStation(station())
+  pending.resolve({ items: [source("1")], total: 1 })
+  await playlist
+  expect(state().isInternetRadioActive).toBe(true)
+  expect(state().queue).toEqual([])
+  expect((engine.play as any).mock.calls.length).toBe(0)
+})
+
+test("returning to Plex clears the old station and ignores late radio callbacks", async () => {
+  useProviderStore.getState().setProvider(provider("a"))
+  useRadioStreamStore.getState().playStation(station())
+  const audio = radioElements.at(-1)!
+  audio.emit("playing")
+  await state().playTrack(source("1"))
+  audio.emit("playing")
+  audio.emit("error")
+  audio.flushEvents()
+  expect(state().isInternetRadioActive).toBe(false)
+  expect(state().currentTrack?.id).toBe("1")
+  expect(useRadioStreamStore.getState().currentStation).toBeNull()
+  expect(useRadioStreamStore.getState().streamError).toBeNull()
+  expect(useRadioStreamStore.getState().isStreamPlaying).toBe(false)
+  expect(audio.paused).toBe(true)
+  expect(audio.listeners.size).toBe(0)
+})
+
+test("changing radio stations captures ownership after stopping the previous stream", () => {
+  useRadioStreamStore.getState().playStation(station("old"))
+  const old = radioElements.at(-1)!
+  useRadioStreamStore.getState().playStation(station("new"))
+  const current = radioElements.at(-1)!
+  old.emit("error")
+  old.flushEvents()
+  current.emit("playing")
+  expect(state().isInternetRadioActive).toBe(true)
+  expect(useRadioStreamStore.getState().currentStation?.uuid).toBe("new")
+  expect(useRadioStreamStore.getState().isStreamBuffering).toBe(false)
+  expect(useRadioStreamStore.getState().streamError).toBeNull()
+})
 
 test("enabling track radio preserves the native playback, position, lyrics, and waveform", async () => {
   const radioTracks = [
@@ -432,6 +534,8 @@ afterAll(() => {
   Object.assign(engine, original)
   useNotificationStore.setState({ notificationsEnabled })
   globalThis.localStorage = oldStorage
+  globalThis.Audio = oldAudio
+  globalThis.AudioContext = oldContext
   dom.window.close()
   mock.restore()
 })
@@ -507,14 +611,12 @@ test("reordering during enrichment updates the current occurrence and preserves 
 test("stopping clears lyric requests and ignores a later waveform result", async () => {
   const levels = deferred<any[]>(),
     lyrics = deferred<any[]>()
-  useProviderStore
-    .getState()
-    .setProvider(
-      provider("a", {
-        getStreamLevels: () => levels.promise,
-        getLyrics: () => lyrics.promise,
-      })
-    )
+  useProviderStore.getState().setProvider(
+    provider("a", {
+      getStreamLevels: () => levels.promise,
+      getLyrics: () => lyrics.promise,
+    })
+  )
   await state().playTrack(source("1"))
   await settle()
   state().stop()
@@ -532,13 +634,11 @@ test("manual Genius lyrics from an earlier song cannot overwrite the new selecti
   useProviderStore.getState().setProvider(provider("a"))
   await state().playTrack(source("1"))
   await settle()
-  const lyrics = useLyricsStore
-    .getState()
-    .fetchGeniusLyrics({
-      id: 1,
-      title: "Old",
-      url: "https://genius.example.test/old",
-    } as any)
+  const lyrics = useLyricsStore.getState().fetchGeniusLyrics({
+    id: 1,
+    title: "Old",
+    url: "https://genius.example.test/old",
+  } as any)
   await state().playTrack(source("2"))
   await settle()
   pending.resolve([{ text: "Old lyric" }])
@@ -557,20 +657,16 @@ test("a newer manual lyric selection wins over a delayed older hit", async () =>
   useProviderStore.getState().setProvider(provider("a"))
   await state().playTrack(source("1"))
   await settle()
-  const first = useLyricsStore
-    .getState()
-    .fetchGeniusLyrics({
-      id: 1,
-      title: "Old",
-      url: "https://genius.example.test/old",
-    } as any)
-  const second = useLyricsStore
-    .getState()
-    .fetchGeniusLyrics({
-      id: 2,
-      title: "New",
-      url: "https://genius.example.test/new",
-    } as any)
+  const first = useLyricsStore.getState().fetchGeniusLyrics({
+    id: 1,
+    title: "Old",
+    url: "https://genius.example.test/old",
+  } as any)
+  const second = useLyricsStore.getState().fetchGeniusLyrics({
+    id: 2,
+    title: "New",
+    url: "https://genius.example.test/new",
+  } as any)
   next.resolve([{ text: "New lyric" }])
   await second
   old.resolve([{ text: "Old lyric" }])
@@ -582,24 +678,18 @@ test("a newer manual lyric selection wins over a delayed older hit", async () =>
 test("selecting existing Plex lyrics retires a pending manual Genius request", async () => {
   const pending = deferred<any[]>()
   lyricRequests.set("https://genius.example.test/old", pending)
-  useProviderStore
-    .getState()
-    .setProvider(
-      provider("a", {
-        getLyrics: async () => [
-          { text: "Plex lyric", startMs: 0, endMs: 1000 },
-        ],
-      })
-    )
+  useProviderStore.getState().setProvider(
+    provider("a", {
+      getLyrics: async () => [{ text: "Plex lyric", startMs: 0, endMs: 1000 }],
+    })
+  )
   await state().playTrack(source("1"))
   await settle()
-  const request = useLyricsStore
-    .getState()
-    .fetchGeniusLyrics({
-      id: 1,
-      title: "Old",
-      url: "https://genius.example.test/old",
-    } as any)
+  const request = useLyricsStore.getState().fetchGeniusLyrics({
+    id: 1,
+    title: "Old",
+    url: "https://genius.example.test/old",
+  } as any)
   useLyricsStore.getState().selectSource("plex")
   pending.resolve([{ text: "Old lyric" }])
   await request
