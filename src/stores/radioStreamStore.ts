@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event"
 import { idbJSONStorage } from "./idbStorage"
 import type { RadioStation } from "../lib/radiobrowser"
 import { radiobrowserClick } from "../lib/radiobrowser"
-import { radioPlay, radioStop, radioPause, radioResume, radioSetVolume, radioOnEvents } from "../lib/radioAudio"
+import { radioPlay, radioStop, radioPause, radioResume, radioOnEvents } from "../lib/radioAudio"
 import { engine } from "../audio/RustAudioEngine"
 import { usePlayerStore } from "./playerStore"
 import { parseIcyString } from "../lib/icyParser"
@@ -43,6 +43,19 @@ interface RadioStreamState {
 }
 
 let _unlisten: (() => void) | null = null
+let _unlistenIcy: (() => void) | null = null
+let streamRevision = 0
+let errorTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearStreamListeners() {
+  streamRevision++
+  _unlisten?.()
+  _unlisten = null
+  _unlistenIcy?.()
+  _unlistenIcy = null
+  if (errorTimer !== null) clearTimeout(errorTimer)
+  errorTimer = null
+}
 
 export const useRadioStreamStore = create<RadioStreamState>()(
   persist(
@@ -57,8 +70,9 @@ export const useRadioStreamStore = create<RadioStreamState>()(
 
       playStation: (station: RadioStation) => {
         // Stop any existing radio stream event listeners
-        _unlisten?.()
-        _unlisten = null
+        clearStreamListeners()
+        const revision = streamRevision
+        const isCurrent = () => revision === streamRevision && usePlayerStore.getState().isInternetRadioActive
 
         // Stop the Web Audio engine (Plex playback)
         engine.stop()
@@ -94,27 +108,38 @@ export const useRadioStreamStore = create<RadioStreamState>()(
 
         // Listen for ICY metadata events from the Rust proxy (if available)
         listen<string>("radio://icy-metadata", (e) => {
+          if (!isCurrent()) return
           const parsed = parseIcyString(e.payload)
           if (parsed.title || parsed.artist) {
             useRadioStreamStore.setState({ icyNowPlaying: parsed })
           }
+        }).then(unlisten => {
+          if (isCurrent()) _unlistenIcy = unlisten
+          else unlisten()
         }).catch(() => {})
 
         // Listen for audio events
         _unlisten = radioOnEvents({
-          onPlaying: () => set({ isStreamBuffering: false, isStreamPlaying: true, streamError: null }),
-          onWaiting: () => set({ isStreamBuffering: true }),
+          onPlaying: () => { if (isCurrent()) set({ isStreamBuffering: false, isStreamPlaying: true, streamError: null }) },
+          onWaiting: () => { if (isCurrent()) set({ isStreamBuffering: true }) },
           onError: (msg) => {
+            if (!isCurrent()) return
             set({ streamError: msg, isStreamPlaying: false, isStreamBuffering: false })
-            setTimeout(() => set({ streamError: null }), 6000)
+            if (errorTimer !== null) clearTimeout(errorTimer)
+            errorTimer = setTimeout(() => { if (isCurrent()) set({ streamError: null }) }, 6000)
           },
-          onPause: () => set({ isStreamPlaying: false }),
+          onPause: () => { if (isCurrent()) set({ isStreamPlaying: false, isStreamBuffering: false }) },
+          onStop: () => {
+            if (revision !== streamRevision) return
+            clearStreamListeners()
+            usePlayerStore.setState({ isInternetRadioActive: false })
+            set({ currentStation: null, isStreamPlaying: false, isStreamBuffering: false, streamError: null, icyNowPlaying: null })
+          },
         })
       },
 
       stopStream: () => {
-        _unlisten?.()
-        _unlisten = null
+        clearStreamListeners()
         radioStop()
         usePlayerStore.setState({ isInternetRadioActive: false })
         set({ currentStation: null, isStreamPlaying: false, isStreamBuffering: false, streamError: null, icyNowPlaying: null })
@@ -122,12 +147,12 @@ export const useRadioStreamStore = create<RadioStreamState>()(
 
       pauseStream: () => {
         radioPause()
-        set({ isStreamPlaying: false })
+        set({ isStreamPlaying: false, isStreamBuffering: false })
       },
 
       resumeStream: () => {
+        set({ isStreamPlaying: true, isStreamBuffering: true, streamError: null })
         radioResume()
-        set({ isStreamPlaying: true })
       },
 
       toggleFavorite: (station: RadioStation) => {
