@@ -39,7 +39,7 @@ use self::command::{AudioCommand, Command, ControlCommand, SampleBatch, SeekRequ
 use self::crossfade::types::{parse_ramp, CrossfadeSettings, TrackRamps};
 use self::deck::decode;
 use self::event::EngineEvent;
-use self::output::resample::resample_buffer;
+use self::output::resample::StreamingResampler;
 use self::output::CpalOutput;
 use self::request::PlaybackRequest;
 use self::types::{DeckId, EngineState, TrackMeta};
@@ -928,21 +928,53 @@ fn spawn_background_decode(
                 }
 
                 match decode::decode_batch(&mut decoder, batch_size) {
-                    Ok(batch) if !batch.is_empty() => {
+                    Ok(batch) => {
                         if !request.is_current() {
                             return;
                         }
                         let mut samples = batch;
 
                         if source_rate != device_sample_rate {
-                            if let Some(resampled) = resample_buffer(
-                                &samples,
-                                source_channels,
-                                source_rate,
-                                device_sample_rate,
-                            ) {
-                                samples = resampled;
+                            if decoder.resampler.is_none() {
+                                match StreamingResampler::new(
+                                    source_channels,
+                                    source_rate,
+                                    device_sample_rate,
+                                ) {
+                                    Ok(resampler) => decoder.resampler = Some(resampler),
+                                    Err(error) => {
+                                        let _ = sample_tx.send(SampleBatch {
+                                            rating_key,
+                                            generation: current_gen,
+                                            samples: Vec::new(),
+                                            fully_decoded: false,
+                                            error: Some(error),
+                                        });
+                                        return;
+                                    }
+                                }
                             }
+                            match decoder
+                                .resampler
+                                .as_mut()
+                                .unwrap()
+                                .process(&samples, decoder.finished)
+                            {
+                                Ok(resampled) => samples = resampled,
+                                Err(error) => {
+                                    let _ = sample_tx.send(SampleBatch {
+                                        rating_key,
+                                        generation: current_gen,
+                                        samples: Vec::new(),
+                                        fully_decoded: false,
+                                        error: Some(error),
+                                    });
+                                    return;
+                                }
+                            }
+                        }
+                        if samples.is_empty() {
+                            continue;
                         }
 
                         if source_channels == 1 && device_channels >= 2 {
@@ -967,7 +999,6 @@ fn spawn_background_decode(
                             return; // Channel closed
                         }
                     }
-                    Ok(_) => {}
                     Err(e) => {
                         if !request.is_current() {
                             return;
@@ -1117,12 +1148,11 @@ fn decode_initial_batch(
     device_rate: u32,
     device_channels: u16,
 ) -> Result<IncrementalDecodeResult, String> {
+    let initial_batch_size = setup.sample_rate as usize * setup.channels as usize;
+    let mut samples =
+        decode::decode_batch(setup, initial_batch_size).map_err(|e| format!("{e}"))?;
     let source_rate = setup.sample_rate;
     let source_channels = setup.channels;
-
-    let initial_batch_size = source_rate as usize * source_channels as usize;
-    let mut samples =
-        decode::decode_batch(setup, initial_batch_size).map_err(|e| format!("{}", e))?;
 
     debug!(
         source_rate,
@@ -1133,11 +1163,9 @@ fn decode_initial_batch(
     );
 
     if source_rate != device_rate {
-        if let Some(resampled) =
-            resample_buffer(&samples, source_channels, source_rate, device_rate)
-        {
-            samples = resampled;
-        }
+        let mut resampler = StreamingResampler::new(source_channels, source_rate, device_rate)?;
+        samples = resampler.process(&samples, setup.finished)?;
+        setup.resampler = Some(resampler);
     }
 
     let out_channels = if source_channels == 1 && device_channels >= 2 {
@@ -1232,6 +1260,73 @@ fn resolve_gain_db(
 #[cfg(test)]
 mod control_tests {
     use super::*;
+
+    #[test]
+    fn initial_and_background_resampling_share_history_and_flush_the_tail_after_seeking() {
+        let source = decode::tests::generate_test_wav(44100, 2, 3.0);
+        let mut full = decode::probe_audio(source.clone()).unwrap();
+        let source_samples = decode::decode_all(&mut full).unwrap();
+        let expected = StreamingResampler::new(2, 44100, 48000)
+            .unwrap()
+            .process(&source_samples, true)
+            .unwrap();
+        let mut decoder = decode::probe_audio(source).unwrap();
+        let initial = decode_initial_batch(&mut decoder, 48000, 2).unwrap();
+        let mut combined = initial.initial_samples;
+        let epoch = Arc::new(std::sync::atomic::AtomicU64::new(1));
+        let request = PlaybackRequest::new(
+            1,
+            epoch.clone(),
+            Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        );
+        let (sample_tx, samples) = crossbeam_channel::unbounded();
+        let (seek_tx, seek_rx) = crossbeam_channel::unbounded();
+        let worker = spawn_background_decode(
+            decoder,
+            42,
+            44100,
+            2,
+            DeckId::A,
+            1,
+            sample_tx,
+            Arc::new(SharedAtomics::new()),
+            48000,
+            2,
+            request,
+            seek_rx,
+        )
+        .unwrap();
+        loop {
+            let batch = samples.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(batch.error.is_none());
+            combined.extend(batch.samples);
+            if batch.fully_decoded {
+                break;
+            }
+        }
+        assert_eq!(combined, expected);
+        assert_eq!(combined.len(), 48000 * 2 * 3);
+        seek_tx
+            .send(SeekRequest {
+                position_ms: 500,
+                generation: 2,
+            })
+            .unwrap();
+        let mut after_seek = Vec::new();
+        loop {
+            let batch = samples.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_eq!(batch.generation, 2);
+            assert!(batch.error.is_none());
+            after_seek.extend(batch.samples);
+            if batch.fully_decoded {
+                break;
+            }
+        }
+        assert_eq!(after_seek.len(), 48000 * 2 * 5 / 2);
+        assert!(after_seek.iter().all(|sample| sample.is_finite()));
+        epoch.store(2, Ordering::SeqCst);
+        worker.join().unwrap();
+    }
 
     #[test]
     fn a_completed_background_decoder_remains_seekable_and_preserves_the_seek_generation() {

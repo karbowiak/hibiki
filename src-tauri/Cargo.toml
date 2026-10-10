@@ -76,6 +76,7 @@ ebur128 = "0.1"
 
 # FFT for visualizer frequency analysis
 realfft = "3.5"
+rubato = "5"
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -36,6 +36,7 @@ use super::streaming::StreamingReader;
 
 /// Active decoder state — kept alive between batch decode calls.
 pub struct DecoderSetup {
+    pub resampler: Option<super::super::output::resample::StreamingResampler>,
     pub format: Box<dyn symphonia::core::formats::FormatReader>,
     pub decoder: Box<dyn symphonia::core::codecs::Decoder>,
     pub track_id: u32,
@@ -105,6 +106,10 @@ pub fn probe_from_source(mss: MediaSourceStream, ext: Option<&str>) -> Result<De
         .channels
         .map(|c| c.count() as u16)
         .unwrap_or(2);
+    anyhow::ensure!(
+        (8000..=768000).contains(&sample_rate) && (1..=32).contains(&channels),
+        "unsupported audio sample rate or channel count"
+    );
     let duration_samples = track.codec_params.n_frames;
     let track_id = track.id;
     let time_base = track.codec_params.time_base;
@@ -123,6 +128,7 @@ pub fn probe_from_source(mss: MediaSourceStream, ext: Option<&str>) -> Result<De
     );
 
     Ok(DecoderSetup {
+        resampler: None,
         format,
         decoder,
         track_id,
@@ -152,6 +158,9 @@ pub fn seek_to_ms(setup: &mut DecoderSetup, position_ms: u64) -> Result<()> {
     setup.decoder.reset();
     setup.finished = false;
     setup.aborted = false;
+    if let Some(resampler) = &mut setup.resampler {
+        resampler.reset();
+    }
     let delta = seeked.required_ts.saturating_sub(seeked.actual_ts);
     let frames = if let Some(base) = setup.time_base {
         let time = base.calc_time(delta);
@@ -218,6 +227,21 @@ pub fn decode_batch(setup: &mut DecoderSetup, max_samples: usize) -> Result<Vec<
         };
 
         let spec = *decoded.spec();
+        if setup.sample_buf.is_none() {
+            // HE-AAC SBR/PS can reveal a higher rate or stereo layout only
+            // when the first packet is decoded.
+            anyhow::ensure!(
+                (8000..=768000).contains(&spec.rate) && (1..=32).contains(&spec.channels.count()),
+                "unsupported decoded audio format"
+            );
+            setup.sample_rate = spec.rate;
+            setup.channels = spec.channels.count() as u16;
+        } else {
+            anyhow::ensure!(
+                spec.rate == setup.sample_rate && spec.channels.count() == setup.channels as usize,
+                "audio format changed during decoding"
+            );
+        }
         let capacity = decoded.capacity();
         let buf = setup
             .sample_buf
@@ -233,6 +257,11 @@ pub fn decode_batch(setup: &mut DecoderSetup, max_samples: usize) -> Result<Vec<
         batch.extend_from_slice(&buf.samples()[skip..]);
     }
 
+    for sample in &mut batch {
+        if !sample.is_finite() {
+            *sample = 0.0;
+        }
+    }
     Ok(batch)
 }
 
