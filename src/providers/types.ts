@@ -115,6 +115,7 @@ export interface MusicProvider {
   // --- Playback ---
   getStreamUrl(track: MusicTrack): Promise<string>
   getPlaybackInfo(track: MusicTrack): Promise<TrackPlaybackInfo>
+  getTranscodePlaybackInfo?(track: MusicTrack, bitrate?: number, codec?: string): Promise<TrackPlaybackInfo>
   rate(itemId: string, rating: number | null): Promise<void>
   markPlayed(trackId: string): Promise<void>
   reportProgress(trackId: string, positionMs: number, state: string, duration: number): Promise<void>

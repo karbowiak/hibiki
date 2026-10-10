@@ -23,6 +23,14 @@ use crate::plex::{
 /// Shared Plex client state managed by Tauri.
 pub struct PlexState(pub Mutex<Option<PlexClient>>, AtomicU64);
 
+/// Identifies the account/server/library that originated a provider request.
+#[derive(Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlexRequestContext {
+    connection_revision: u64,
+    cache_scope: String,
+}
+
 impl PlexState {
     pub fn new() -> Self {
         PlexState(Mutex::new(None), AtomicU64::new(0))
@@ -86,6 +94,26 @@ impl PlexState {
         self.1.load(Ordering::SeqCst) == revision
     }
 
+    fn checked_client<'a>(
+        &self,
+        context: &PlexRequestContext,
+        current: &'a Option<PlexClient>,
+    ) -> Result<&'a PlexClient, String> {
+        if !self.is_current(context.connection_revision) {
+            return Err("Plex connection was superseded".into());
+        }
+        let client = current.as_ref().ok_or("Plex client not connected")?;
+        if context.cache_scope.is_empty() || context.cache_scope != client.library_scope {
+            return Err("Plex music library was superseded".into());
+        }
+        Ok(client)
+    }
+
+    async fn client_for(&self, context: &PlexRequestContext) -> Result<PlexClient, String> {
+        let current = self.0.lock().await;
+        self.checked_client(context, &current).cloned()
+    }
+
     async fn publish(&self, revision: u64, client: PlexClient) -> Result<(), String> {
         let mut current = self.0.lock().await;
         if !self.is_current(revision) {
@@ -96,14 +124,10 @@ impl PlexState {
     }
 }
 
-/// Convenience macro: lock the state and return an error if not connected.
+/// Take a snapshot only when the originating connection and library still own it.
 macro_rules! client {
-    ($state:expr) => {{
-        let guard = $state.0.lock().await;
-        match guard.as_ref() {
-            Some(c) => c.clone(),
-            None => return Err("Plex client not connected. Call connect_plex first.".to_string()),
-        }
+    ($state:expr, $context:expr) => {{
+        $state.client_for(&$context).await?
     }};
 }
 
@@ -219,9 +243,10 @@ pub async fn connect_plex(
 /// Get all library sections (music, video, photo, etc.)
 #[tauri::command]
 pub async fn get_library_sections(
+    context: PlexRequestContext,
     state: State<'_, PlexState>,
 ) -> Result<Vec<LibrarySection>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.get_all_sections().await.map_err(|e| format!("{:#}", e))
 }
 
@@ -230,12 +255,13 @@ pub async fn get_library_sections(
 /// `libtype` filters by item type: "artist", "album", "track" for music.
 #[tauri::command]
 pub async fn search_library(
+    context: PlexRequestContext,
     section_id: i64,
     query: String,
     libtype: Option<String>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<crate::plex::PlexMedia>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.search(section_id, &query, libtype.as_deref(), None, None, Some(50))
         .await
         .map_err(|e| format!("{:#}", e))
@@ -244,12 +270,13 @@ pub async fn search_library(
 /// Get recently added items in a section.
 #[tauri::command]
 pub async fn get_recently_added(
+    context: PlexRequestContext,
     section_id: i64,
     libtype: Option<String>,
     limit: Option<i32>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<crate::plex::PlexMedia>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.recently_added(section_id, libtype.as_deref(), limit)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -257,8 +284,12 @@ pub async fn get_recently_added(
 
 /// Get discovery hubs for a section (home screen content).
 #[tauri::command]
-pub async fn get_hubs(section_id: i64, state: State<'_, PlexState>) -> Result<Vec<Hub>, String> {
-    let c = client!(state);
+pub async fn get_hubs(
+    context: PlexRequestContext,
+    section_id: i64,
+    state: State<'_, PlexState>,
+) -> Result<Vec<Hub>, String> {
+    let c = client!(state, context);
     c.get_section_hubs(section_id)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -267,10 +298,11 @@ pub async fn get_hubs(section_id: i64, state: State<'_, PlexState>) -> Result<Ve
 /// Get "on deck" / continue listening items.
 #[tauri::command]
 pub async fn get_on_deck(
+    context: PlexRequestContext,
     section_id: i64,
     state: State<'_, PlexState>,
 ) -> Result<Vec<crate::plex::PlexMedia>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.on_deck(section_id).await.map_err(|e| format!("{:#}", e))
 }
 
@@ -279,11 +311,12 @@ pub async fn get_on_deck(
 /// `tag_type` should be "genre", "mood", or "style".
 #[tauri::command]
 pub async fn get_section_tags(
+    context: PlexRequestContext,
     section_id: i64,
     tag_type: String,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Tag>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.get_tags(section_id, &tag_type)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -295,23 +328,41 @@ pub async fn get_section_tags(
 
 /// Get a specific track by rating key.
 #[tauri::command]
-pub async fn get_track(rating_key: i64, state: State<'_, PlexState>) -> Result<Track, String> {
-    let c = client!(state);
-    c.get_track(rating_key).await.map_err(|e| format!("{:#}", e))
+pub async fn get_track(
+    context: PlexRequestContext,
+    rating_key: i64,
+    state: State<'_, PlexState>,
+) -> Result<Track, String> {
+    let c = client!(state, context);
+    c.get_track(rating_key)
+        .await
+        .map_err(|e| format!("{:#}", e))
 }
 
 /// Get an artist by rating key.
 #[tauri::command]
-pub async fn get_artist(rating_key: i64, state: State<'_, PlexState>) -> Result<Artist, String> {
-    let c = client!(state);
-    c.get_artist(rating_key).await.map_err(|e| format!("{:#}", e))
+pub async fn get_artist(
+    context: PlexRequestContext,
+    rating_key: i64,
+    state: State<'_, PlexState>,
+) -> Result<Artist, String> {
+    let c = client!(state, context);
+    c.get_artist(rating_key)
+        .await
+        .map_err(|e| format!("{:#}", e))
 }
 
 /// Get an album by rating key.
 #[tauri::command]
-pub async fn get_album(rating_key: i64, state: State<'_, PlexState>) -> Result<Album, String> {
-    let c = client!(state);
-    c.get_album(rating_key).await.map_err(|e| format!("{:#}", e))
+pub async fn get_album(
+    context: PlexRequestContext,
+    rating_key: i64,
+    state: State<'_, PlexState>,
+) -> Result<Album, String> {
+    let c = client!(state, context);
+    c.get_album(rating_key)
+        .await
+        .map_err(|e| format!("{:#}", e))
 }
 
 /// Get albums by an artist with an optional format filter.
@@ -322,11 +373,12 @@ pub async fn get_album(rating_key: i64, state: State<'_, PlexState>) -> Result<A
 /// - `"!Single"` → full albums and EPs (excludes singles)
 #[tauri::command]
 pub async fn get_artist_albums(
+    context: PlexRequestContext,
     rating_key: i64,
     format_filter: Option<String>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Album>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.artist_albums(rating_key, format_filter.as_deref())
         .await
         .map_err(|e| format!("{:#}", e))
@@ -335,21 +387,25 @@ pub async fn get_artist_albums(
 /// Get all tracks in an album.
 #[tauri::command]
 pub async fn get_album_tracks(
+    context: PlexRequestContext,
     rating_key: i64,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Track>, String> {
-    let c = client!(state);
-    c.album_tracks(rating_key).await.map_err(|e| format!("{:#}", e))
+    let c = client!(state, context);
+    c.album_tracks(rating_key)
+        .await
+        .map_err(|e| format!("{:#}", e))
 }
 
 /// Get popular tracks for an artist (legacy: /library/all sort by ratingCount).
 #[tauri::command]
 pub async fn get_artist_popular_tracks(
+    context: PlexRequestContext,
     rating_key: i64,
     limit: Option<i32>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Track>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.artist_popular_tracks(rating_key, limit)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -358,11 +414,12 @@ pub async fn get_artist_popular_tracks(
 /// Get popular tracks for an artist using the /popularLeaves endpoint.
 #[tauri::command]
 pub async fn get_artist_popular_leaves(
+    context: PlexRequestContext,
     rating_key: i64,
     limit: Option<i32>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Track>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.artist_popular_leaves(rating_key, limit)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -378,6 +435,7 @@ pub struct PagedMediaItems {
 /// Get albums (or artists/tracks) filtered by a tag (genre/mood/style).
 #[tauri::command]
 pub async fn get_items_by_tag(
+    context: PlexRequestContext,
     section_id: i64,
     tag_type: String,
     tag_name: String,
@@ -386,7 +444,7 @@ pub async fn get_items_by_tag(
     offset: Option<i32>,
     state: State<'_, PlexState>,
 ) -> Result<PagedMediaItems, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     let (items, total) = c
         .get_by_tag(
             section_id,
@@ -404,10 +462,11 @@ pub async fn get_items_by_tag(
 /// Get metadata-based similar artists for an artist.
 #[tauri::command]
 pub async fn get_artist_similar(
+    context: PlexRequestContext,
     rating_key: i64,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Artist>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.artist_similar(rating_key)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -416,11 +475,12 @@ pub async fn get_artist_similar(
 /// Get hubs related to a specific item.
 #[tauri::command]
 pub async fn get_related_hubs(
+    context: PlexRequestContext,
     rating_key: i64,
     limit: Option<i32>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Hub>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.get_related_hubs(rating_key, limit)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -433,12 +493,13 @@ pub async fn get_related_hubs(
 /// section on the artist page.
 #[tauri::command]
 pub async fn get_artist_sonically_similar(
+    context: PlexRequestContext,
     rating_key: i64,
     limit: Option<i32>,
     max_distance: Option<f64>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Artist>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.artist_sonically_similar(rating_key, limit, max_distance)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -452,12 +513,13 @@ pub async fn get_artist_sonically_similar(
 /// `format` examples: `"EP,Single"` (singles + EPs), `null` (all albums).
 #[tauri::command]
 pub async fn get_artist_albums_in_section(
+    context: PlexRequestContext,
     section_id: i64,
     rating_key: i64,
     format: Option<String>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Album>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.artist_albums_in_section(section_id, rating_key, format.as_deref())
         .await
         .map_err(|e| format!("{:#}", e))
@@ -469,12 +531,13 @@ pub async fn get_artist_albums_in_section(
 /// compilations/live albums. This matches the Plex Web approach.
 #[tauri::command]
 pub async fn get_artist_popular_tracks_in_section(
+    context: PlexRequestContext,
     section_id: i64,
     rating_key: i64,
     limit: Option<i32>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Track>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.artist_popular_tracks_in_section(section_id, rating_key, limit)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -491,13 +554,12 @@ pub async fn get_artist_popular_tracks_in_section(
 /// frontend can display them alongside the normal mix playback controls.
 #[tauri::command]
 pub async fn get_mix_tracks(
+    context: PlexRequestContext,
     key: String,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Track>, String> {
-    let c = client!(state);
-    c.mix_tracks(&key)
-        .await
-        .map_err(|e| format!("{:#}", e))
+    let c = client!(state, context);
+    c.mix_tracks(&key).await.map_err(|e| format!("{:#}", e))
 }
 
 // ---------------------------------------------------------------------------
@@ -507,10 +569,11 @@ pub async fn get_mix_tracks(
 /// List all playlists in a section.
 #[tauri::command]
 pub async fn get_playlists(
+    context: PlexRequestContext,
     section_id: i64,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Playlist>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.list_playlists(section_id, None)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -521,11 +584,12 @@ pub async fn get_playlists(
 /// Returns tracks sorted by most recently rated.
 #[tauri::command]
 pub async fn get_liked_tracks(
+    context: PlexRequestContext,
     section_id: i64,
     limit: Option<i32>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Track>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.liked_tracks(section_id, limit)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -536,11 +600,12 @@ pub async fn get_liked_tracks(
 /// Returns artists sorted by most recently rated.
 #[tauri::command]
 pub async fn get_liked_artists(
+    context: PlexRequestContext,
     section_id: i64,
     limit: Option<i32>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Artist>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.liked_artists(section_id, limit)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -551,11 +616,12 @@ pub async fn get_liked_artists(
 /// Returns albums sorted by most recently rated.
 #[tauri::command]
 pub async fn get_liked_albums(
+    context: PlexRequestContext,
     section_id: i64,
     limit: Option<i32>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Album>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.liked_albums(section_id, limit)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -564,12 +630,13 @@ pub async fn get_liked_albums(
 /// Get all tracks in a playlist.
 #[tauri::command]
 pub async fn get_playlist_items(
+    context: PlexRequestContext,
     playlist_id: i64,
     limit: Option<i32>,
     offset: Option<i32>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Track>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.get_playlist_items(playlist_id, limit, offset)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -578,12 +645,13 @@ pub async fn get_playlist_items(
 /// Create a new playlist.
 #[tauri::command]
 pub async fn create_playlist(
+    context: PlexRequestContext,
     title: String,
     section_id: i64,
     item_ids: Vec<i64>,
     state: State<'_, PlexState>,
 ) -> Result<Playlist, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.create_playlist(&title, section_id, &item_ids)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -592,11 +660,12 @@ pub async fn create_playlist(
 /// Add items to an existing playlist.
 #[tauri::command]
 pub async fn add_items_to_playlist(
+    context: PlexRequestContext,
     playlist_id: i64,
     item_ids: Vec<i64>,
     state: State<'_, PlexState>,
 ) -> Result<(), String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.add_items(playlist_id, &item_ids)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -605,11 +674,12 @@ pub async fn add_items_to_playlist(
 /// Remove items from a playlist by their playlist-specific item IDs.
 #[tauri::command]
 pub async fn remove_items_from_playlist(
+    context: PlexRequestContext,
     playlist_id: i64,
     playlist_item_ids: Vec<i64>,
     state: State<'_, PlexState>,
 ) -> Result<(), String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.remove_items(playlist_id, &playlist_item_ids)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -618,12 +688,13 @@ pub async fn remove_items_from_playlist(
 /// Move an item within a playlist (reorder).
 #[tauri::command]
 pub async fn move_playlist_item(
+    context: PlexRequestContext,
     playlist_id: i64,
     item_id: i64,
     after_item_id: i64,
     state: State<'_, PlexState>,
 ) -> Result<(), String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.move_item(playlist_id, item_id, after_item_id)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -631,8 +702,12 @@ pub async fn move_playlist_item(
 
 /// Delete a playlist.
 #[tauri::command]
-pub async fn delete_playlist(playlist_id: i64, state: State<'_, PlexState>) -> Result<(), String> {
-    let c = client!(state);
+pub async fn delete_playlist(
+    context: PlexRequestContext,
+    playlist_id: i64,
+    state: State<'_, PlexState>,
+) -> Result<(), String> {
+    let c = client!(state, context);
     c.delete_playlist(playlist_id)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -641,12 +716,13 @@ pub async fn delete_playlist(playlist_id: i64, state: State<'_, PlexState>) -> R
 /// Edit playlist metadata (title, summary).
 #[tauri::command]
 pub async fn edit_playlist(
+    context: PlexRequestContext,
     playlist_id: i64,
     title: Option<String>,
     summary: Option<String>,
     state: State<'_, PlexState>,
 ) -> Result<(), String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.edit_playlist(playlist_id, title.as_deref(), summary.as_deref())
         .await
         .map_err(|e| format!("{:#}", e))
@@ -662,12 +738,13 @@ pub async fn edit_playlist(
 /// or pass a raw library path like `/library/metadata/{ratingKey}`.
 #[tauri::command]
 pub async fn create_play_queue(
+    context: PlexRequestContext,
     uri: String,
     shuffle: bool,
     repeat: i32,
     state: State<'_, PlexState>,
 ) -> Result<PlayQueue, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.create_play_queue(&uri, shuffle, repeat)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -676,10 +753,11 @@ pub async fn create_play_queue(
 /// Fetch an existing play queue.
 #[tauri::command]
 pub async fn get_play_queue(
+    context: PlexRequestContext,
     queue_id: i64,
     state: State<'_, PlexState>,
 ) -> Result<PlayQueue, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.get_play_queue(queue_id)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -688,12 +766,13 @@ pub async fn get_play_queue(
 /// Add items to a play queue.
 #[tauri::command]
 pub async fn add_to_play_queue(
+    context: PlexRequestContext,
     queue_id: i64,
     uri: String,
     next: bool,
     state: State<'_, PlexState>,
 ) -> Result<PlayQueue, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.add_to_play_queue(queue_id, &uri, next)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -707,6 +786,7 @@ pub async fn add_to_play_queue(
 /// continuously refreshing, sonically-curated recommendations.
 #[tauri::command]
 pub async fn create_radio_queue(
+    context: PlexRequestContext,
     rating_key: i64,
     item_type: String,
     degrees_of_separation: Option<i32>,
@@ -714,7 +794,7 @@ pub async fn create_radio_queue(
     shuffle: bool,
     state: State<'_, PlexState>,
 ) -> Result<PlayQueue, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.create_radio_queue(
         rating_key,
         &item_type,
@@ -732,6 +812,7 @@ pub async fn create_radio_queue(
 /// and the DJ persona header. Reads the installation's client ID from saved settings.
 #[tauri::command]
 pub async fn create_smart_shuffle_queue(
+    context: PlexRequestContext,
     rating_key: i64,
     item_type: String,
     dj_mode: Option<String>,
@@ -739,7 +820,7 @@ pub async fn create_smart_shuffle_queue(
     include_external: bool,
     state: State<'_, PlexState>,
 ) -> Result<PlayQueue, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     let client_id = c.client_id.clone();
     c.create_smart_shuffle_queue(
         rating_key,
@@ -759,15 +840,25 @@ pub async fn create_smart_shuffle_queue(
 
 /// Mark an item as played (scrobble).
 #[tauri::command]
-pub async fn mark_played(rating_key: i64, state: State<'_, PlexState>) -> Result<(), String> {
-    let c = client!(state);
-    c.mark_played(rating_key).await.map_err(|e| format!("{:#}", e))
+pub async fn mark_played(
+    context: PlexRequestContext,
+    rating_key: i64,
+    state: State<'_, PlexState>,
+) -> Result<(), String> {
+    let c = client!(state, context);
+    c.mark_played(rating_key)
+        .await
+        .map_err(|e| format!("{:#}", e))
 }
 
 /// Mark an item as unplayed.
 #[tauri::command]
-pub async fn mark_unplayed(rating_key: i64, state: State<'_, PlexState>) -> Result<(), String> {
-    let c = client!(state);
+pub async fn mark_unplayed(
+    context: PlexRequestContext,
+    rating_key: i64,
+    state: State<'_, PlexState>,
+) -> Result<(), String> {
+    let c = client!(state, context);
     c.mark_unplayed(rating_key)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -779,6 +870,7 @@ pub async fn mark_unplayed(rating_key: i64, state: State<'_, PlexState>) -> Resu
 /// `state_str` is one of: "playing", "paused", "buffering", "stopped".
 #[tauri::command]
 pub async fn report_timeline(
+    context: PlexRequestContext,
     rating_key: i64,
     state_str: String,
     time_ms: i64,
@@ -792,7 +884,7 @@ pub async fn report_timeline(
         "buffering" => PlaybackState::Buffering,
         _ => PlaybackState::Stopped,
     };
-    let c = client!(plex_state);
+    let c = client!(plex_state, context);
     let client_id = c.client_id.clone();
     c.report_timeline(
         rating_key,
@@ -815,11 +907,12 @@ pub async fn report_timeline(
 /// Pass `null` from the frontend (mapped to `None`) to clear the rating.
 #[tauri::command]
 pub async fn rate_item(
+    context: PlexRequestContext,
     rating_key: i64,
     rating: Option<f64>,
     state: State<'_, PlexState>,
 ) -> Result<(), String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.rate_item(rating_key, rating)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -832,12 +925,13 @@ pub async fn rate_item(
 /// Get tracks sonically similar to a given track.
 #[tauri::command]
 pub async fn get_sonically_similar(
+    context: PlexRequestContext,
     rating_key: i64,
     limit: Option<i32>,
     max_distance: Option<f64>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Track>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.sonically_similar::<Track>(rating_key, limit, max_distance)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -846,12 +940,13 @@ pub async fn get_sonically_similar(
 /// Get a track radio (mix) seeded from a track.
 #[tauri::command]
 pub async fn get_track_radio(
+    context: PlexRequestContext,
     section_id: i64,
     rating_key: i64,
     limit: Option<i32>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Track>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.track_radio(section_id, rating_key, limit, None)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -860,10 +955,11 @@ pub async fn get_track_radio(
 /// Get radio stations seeded from an artist.
 #[tauri::command]
 pub async fn get_artist_stations(
+    context: PlexRequestContext,
     rating_key: i64,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Playlist>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.artist_stations(rating_key)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -875,10 +971,11 @@ pub async fn get_artist_stations(
 /// "station" to find the station playlists.
 #[tauri::command]
 pub async fn get_section_stations(
+    context: PlexRequestContext,
     section_id: i64,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Hub>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.section_stations(section_id)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -887,12 +984,13 @@ pub async fn get_section_stations(
 /// Compute a sonic path between two tracks.
 #[tauri::command]
 pub async fn compute_sonic_path(
+    context: PlexRequestContext,
     section_id: i64,
     from_id: i64,
     to_id: i64,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Track>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.compute_sonic_path(section_id, from_id, to_id)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -904,11 +1002,12 @@ pub async fn compute_sonic_path(
 /// `sub_sample` controls resolution (128 = PlexAmp default).
 #[tauri::command]
 pub async fn get_stream_levels(
+    context: PlexRequestContext,
     stream_id: i64,
     sub_sample: Option<i32>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Level>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     c.get_stream_levels(stream_id, sub_sample)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -924,14 +1023,12 @@ pub async fn get_stream_levels(
 /// `part_key` comes from `track.media[0].parts[0].key`.
 #[tauri::command]
 pub async fn get_stream_url(
+    context: PlexRequestContext,
     part_key: String,
     state: State<'_, PlexState>,
 ) -> Result<String, String> {
-    let guard = state.0.lock().await;
-    match guard.as_ref() {
-        Some(c) => Ok(c.direct_play_url(&part_key)),
-        None => Err("Plex client not connected.".to_string()),
-    }
+    let client = client!(state, context);
+    Ok(client.direct_play_url(&part_key))
 }
 
 /// Build a thumbnail/artwork URL.
@@ -939,14 +1036,12 @@ pub async fn get_stream_url(
 /// `thumb_path` comes from `track.thumb`, `album.thumb`, `artist.thumb`, etc.
 #[tauri::command]
 pub async fn get_thumb_url(
+    context: PlexRequestContext,
     thumb_path: String,
     state: State<'_, PlexState>,
 ) -> Result<String, String> {
-    let guard = state.0.lock().await;
-    match guard.as_ref() {
-        Some(c) => Ok(c.thumb_url(&thumb_path)),
-        None => Err("Plex client not connected.".to_string()),
-    }
+    let client = client!(state, context);
+    Ok(client.thumb_url(&thumb_path))
 }
 
 /// Build an audio transcode URL.
@@ -955,16 +1050,14 @@ pub async fn get_thumb_url(
 /// `bitrate` in kbps (e.g. 320), `codec` e.g. "mp3" / "aac" / "opus".
 #[tauri::command]
 pub async fn get_audio_transcode_url(
+    context: PlexRequestContext,
     part_key: String,
     bitrate: Option<i32>,
     codec: Option<String>,
     state: State<'_, PlexState>,
 ) -> Result<String, String> {
-    let guard = state.0.lock().await;
-    match guard.as_ref() {
-        Some(c) => Ok(c.audio_transcode_url(&part_key, bitrate, codec.as_deref())),
-        None => Err("Plex client not connected.".to_string()),
-    }
+    let client = client!(state, context);
+    Ok(client.audio_transcode_url(&part_key, bitrate, codec.as_deref()))
 }
 
 /// Download an audio file's bytes via the Rust HTTP client.
@@ -979,10 +1072,11 @@ pub async fn get_audio_transcode_url(
 /// IPC serialization overhead and lands as an ArrayBuffer on the JS side.
 #[tauri::command]
 pub async fn fetch_audio_bytes(
+    context: PlexRequestContext,
     url: String,
     state: State<'_, PlexState>,
 ) -> Result<tauri::ipc::Response, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     let bytes = c.fetch_bytes(&url).await.map_err(|e| format!("{:#}", e))?;
     Ok(tauri::ipc::Response::new(bytes))
 }
@@ -993,15 +1087,21 @@ pub async fn fetch_audio_bytes(
 
 /// Get the server's identity (machine ID, version, claimed status).
 #[tauri::command]
-pub async fn get_identity(state: State<'_, PlexState>) -> Result<IdentityResponse, String> {
-    let c = client!(state);
+pub async fn get_identity(
+    context: PlexRequestContext,
+    state: State<'_, PlexState>,
+) -> Result<IdentityResponse, String> {
+    let c = client!(state, context);
     c.get_identity().await.map_err(|e| format!("{:#}", e))
 }
 
 /// Get full server capabilities and metadata.
 #[tauri::command]
-pub async fn get_server_info(state: State<'_, PlexState>) -> Result<ServerInfo, String> {
-    let c = client!(state);
+pub async fn get_server_info(
+    context: PlexRequestContext,
+    state: State<'_, PlexState>,
+) -> Result<ServerInfo, String> {
+    let c = client!(state, context);
     c.get_server_info().await.map_err(|e| format!("{:#}", e))
 }
 
@@ -1124,10 +1224,11 @@ pub async fn plex_get_resources(
 /// Prefers TTML over LRC; falls back to plain text.
 #[tauri::command]
 pub async fn get_lyrics(
+    context: PlexRequestContext,
     rating_key: i64,
     state: State<'_, PlexState>,
 ) -> Result<Vec<LyricLine>, String> {
-    let c = client!(state);
+    let c = client!(state, context);
     crate::plex::lyrics::get_lyrics(&c, rating_key)
         .await
         .map_err(|e| e.to_string())
@@ -1145,6 +1246,7 @@ pub async fn get_lyrics(
 /// the frontend logs.
 #[tauri::command]
 pub async fn update_now_playing(
+    context: PlexRequestContext,
     title: String,
     artist: String,
     album: String,
@@ -1153,12 +1255,11 @@ pub async fn update_now_playing(
     plex_state: State<'_, PlexState>,
     media_state: State<'_, MediaSessionState>,
 ) -> Result<(), String> {
-    let cover_url = {
-        let guard = plex_state.0.lock().await;
-        guard
-            .as_ref()
-            .and_then(|c| thumb_path.as_ref().map(|p| c.thumb_url(p)))
-    };
+    // Send while holding ownership, so a retired metadata message cannot be
+    // queued after the next connection's update.
+    let guard = plex_state.0.lock().await;
+    let client = plex_state.checked_client(&context, &guard)?;
+    let cover_url = thumb_path.as_ref().map(|path| client.thumb_url(path));
 
     media_state
         .0
@@ -1176,11 +1277,15 @@ pub async fn update_now_playing(
 ///
 /// `playback_state` is `"playing"`, `"paused"`, or `"stopped"`.
 #[tauri::command]
-pub fn set_now_playing_state(
+pub async fn set_now_playing_state(
+    context: PlexRequestContext,
     playback_state: String,
     position_ms: Option<u64>,
+    plex_state: State<'_, PlexState>,
     state: State<'_, MediaSessionState>,
 ) -> Result<(), String> {
+    let guard = plex_state.0.lock().await;
+    plex_state.checked_client(&context, &guard)?;
     let update = match playback_state.as_str() {
         "playing" => MediaUpdate::Playing {
             position_ms: position_ms.unwrap_or(0),
@@ -2240,6 +2345,138 @@ pub fn get_audio_output_devices() -> Vec<crate::audio_devices::AudioOutputDevice
 mod connection_tests {
     use super::*;
 
+    fn scoped_client(base: &str, token: &str, library: i64) -> PlexClient {
+        let mut client = PlexClient::new(PlexClientConfig {
+            base_url: base.into(),
+            token: token.into(),
+            ..Default::default()
+        })
+        .unwrap();
+        client.machine_identifier = "test-server".into();
+        client.library_scope = client.cache_scope_for_library(library, None);
+        client
+    }
+
+    #[tokio::test]
+    async fn provider_requests_cannot_pick_up_a_replacement_account_even_with_the_same_scope() {
+        let state = PlexState::new();
+        let revision = state.begin_connection().await;
+        let old = scoped_client("https://old.test", "dummy-old", 1);
+        let context = PlexRequestContext {
+            connection_revision: revision,
+            cache_scope: old.library_scope.clone(),
+        };
+        state.publish(revision, old).await.unwrap();
+        let snapshot = state.client_for(&context).await.unwrap();
+        let next = state.begin_connection().await;
+        let mut replacement = scoped_client("https://new.test", "dummy-new", 1);
+        replacement.library_scope = context.cache_scope.clone();
+        state.publish(next, replacement).await.unwrap();
+        assert_eq!(
+            state.client_for(&context).await.unwrap_err(),
+            "Plex connection was superseded"
+        );
+        assert_eq!(snapshot.base_url(), "https://old.test");
+        assert_eq!(snapshot.token, "dummy-old");
+        let current = PlexRequestContext {
+            connection_revision: next,
+            ..context
+        };
+        assert_eq!(
+            state.client_for(&current).await.unwrap().base_url(),
+            "https://new.test"
+        );
+    }
+
+    #[tokio::test]
+    async fn changing_libraries_retires_the_previous_scope_without_reconnecting() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = PlexState::new();
+        let revision = state.begin_connection().await;
+        let client = scoped_client("https://server.test", "dummy-token", 1);
+        let old = PlexRequestContext {
+            connection_revision: revision,
+            cache_scope: client.library_scope.clone(),
+        };
+        state.publish(revision, client).await.unwrap();
+        state.client_for(&old).await.unwrap();
+        state
+            .persist(revision, directory.path(), vec![], Some(2), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            state.client_for(&old).await.unwrap_err(),
+            "Plex music library was superseded"
+        );
+        let current = PlexRequestContext {
+            connection_revision: revision,
+            cache_scope: state.0.lock().await.as_ref().unwrap().library_scope.clone(),
+        };
+        let current_client = state.client_for(&current).await.unwrap();
+        assert_eq!(current_client.token, "dummy-token");
+        assert_ne!(current.cache_scope, old.cache_scope);
+    }
+
+    #[tokio::test]
+    async fn a_provider_request_waiting_for_the_native_lock_rechecks_ownership_after_replacement() {
+        let state = std::sync::Arc::new(PlexState::new());
+        let revision = state.begin_connection().await;
+        let client = scoped_client("https://old.test", "dummy-old", 1);
+        let old = PlexRequestContext {
+            connection_revision: revision,
+            cache_scope: client.library_scope.clone(),
+        };
+        state.publish(revision, client).await.unwrap();
+        let mut guard = state.0.lock().await;
+        let pending_state = state.clone();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let pending = tokio::spawn(async move {
+            started.send(()).unwrap();
+            pending_state.client_for(&old).await
+        });
+        ready.await.unwrap();
+        state.1.fetch_add(1, Ordering::SeqCst);
+        *guard = Some(scoped_client("https://new.test", "dummy-new", 1));
+        drop(guard);
+        assert_eq!(
+            pending.await.unwrap().unwrap_err(),
+            "Plex connection was superseded"
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_or_empty_provider_ownership_cannot_fall_back_to_the_global_client() {
+        assert!(serde_json::from_value::<PlexRequestContext>(
+            serde_json::json!({ "cacheScope": "scope" })
+        )
+        .is_err());
+        assert!(serde_json::from_value::<PlexRequestContext>(
+            serde_json::json!({ "connectionRevision": 1 })
+        )
+        .is_err());
+        let state = PlexState::new();
+        let revision = state.begin_connection().await;
+        state
+            .publish(
+                revision,
+                scoped_client("https://server.test", "dummy-token", 1),
+            )
+            .await
+            .unwrap();
+        let empty = PlexRequestContext {
+            connection_revision: revision,
+            cache_scope: String::new(),
+        };
+        assert!(state.client_for(&empty).await.is_err());
+        let selected: PlexRequestContext = serde_json::from_value(serde_json::json!({
+            "connectionRevision": revision,
+            "cacheScope": state.0.lock().await.as_ref().unwrap().library_scope.clone(),
+        }))
+        .unwrap();
+        state.client_for(&selected).await.unwrap();
+        state.begin_connection().await;
+        assert!(state.client_for(&selected).await.is_err());
+    }
     #[tokio::test]
     async fn retired_connections_cannot_persist_credentials_after_logout_or_replacement() {
         let directory = tempfile::tempdir().unwrap();

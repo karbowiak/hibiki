@@ -4,7 +4,9 @@ import { useShallow } from "zustand/react/shallow"
 import { open } from "@tauri-apps/plugin-shell"
 import { useConnectionStore } from "./connectionStore"
 import { useLibraryStore } from "../../stores/libraryStore"
-import { plexAuthPoll, plexGetResources, testServerConnection, getLibrarySections } from "./api"
+import { plexAuthPoll, plexGetResources, testServerConnection } from "./api"
+import { PlexProvider } from "./provider"
+import { useProviderStore } from "../../stores/providerStore"
 import type { PlexResource, LibrarySection } from "./types"
 
 type AuthState = "idle" | "polling" | "picking" | "picking-library"
@@ -265,8 +267,10 @@ export function PlexSettings() {
     stopPolling()
     const request = authGeneration.current
     try {
-      const sections = await getLibrarySections()
-      if (!authIsCurrent(request)) return
+      const provider = useProviderStore.getState().provider
+      if (!(provider instanceof PlexProvider)) return
+      const sections = await provider.getLibrarySections()
+      if (!authIsCurrent(request) || provider !== useProviderStore.getState().provider) return
       const musicSections = sections.filter(s => s.section_type === "artist")
       if (musicSections.length <= 1) return
       setSwitcherSections(musicSections)

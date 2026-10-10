@@ -19,7 +19,6 @@ import { useAnnouncerStore } from "./announcerStore"
 import { useVisualizerStore } from "./visualizerStore"
 import { useRadioStreamStore } from "./radioStreamStore"
 import { radioStop, radioSetVolume } from "../lib/radioAudio"
-import { getAudioTranscodeUrl } from "../backends/plex/api"
 import { useLyricsStore } from "./lyricsStore"
 
 type RadioType = 'track' | 'artist' | 'album' | 'playlist'
@@ -1456,17 +1455,13 @@ export const usePlayerStore = create<PlayerState>()(
         if (currentTrack && _transcodeRetriedTrackId !== currentTrack.id) {
           _transcodeRetriedTrackId = currentTrack.id
           try {
-            // Extract part key from provider data for transcoding
-            const providerData = currentTrack._providerData as { media?: { parts?: { key?: string }[] }[] } | undefined
-            const partKey = providerData?.media?.[0]?.parts?.[0]?.key
-            if (partKey) {
+            if (providerAtError?.getTranscodePlaybackInfo) {
               console.log("[Transcode fallback] Retrying with transcoded audio for:", currentTrack.title)
-              const transcodeUrl = await getAudioTranscodeUrl(partKey, 320, "mp3")
+              const info = await providerAtError.getTranscodePlaybackInfo(currentTrack, 320, "mp3")
               if (generation !== _playGeneration || getProvider() !== providerAtError) return
-              const ratingKey = Number(currentTrack.id)
-              _ratingKeyToTrackId.set(ratingKey, currentTrack.id)
+              _ratingKeyToTrackId.set(info.trackKey, currentTrack.id)
               _pendingSelectedTrackId = currentTrack.id
-              await engine.play(transcodeUrl, ratingKey, currentTrack.duration, "", null, true)
+              await engine.play(info.url, info.trackKey, currentTrack.duration, info.parentKey, null, true)
               if (generation !== _playGeneration) return
               if (positionMs > 0) engine.seekTo(positionMs)
               if (!_playbackDesired) engine.pause()

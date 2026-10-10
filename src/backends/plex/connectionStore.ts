@@ -48,7 +48,8 @@ export const useConnectionStore = createPlexConnectionStore({
       sectionId: section.key,
       sectionUuid: section.uuid ?? null,
       machineIdentifier: context.machineIdentifier,
-      cacheScope: context.cacheScopes[String(section.key)]
+      cacheScope: context.cacheScopes[String(section.key)],
+      connectionRevision: context.revision
     })
     return provider
   },

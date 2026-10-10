@@ -17,7 +17,8 @@ import type {
   MusicHub,
   PagedResult,
 } from "../../types/music"
-import type { Track } from "./types"
+import type { Track, LibrarySection } from "./types"
+import { createPlexApi, type PlexApi, type PlexTransport } from "./scopedApi"
 import {
   plexTrackToMusicTrack,
   plexAlbumToMusicAlbum,
@@ -36,6 +37,7 @@ import { buildPlexImageUrl } from "./imageUrl"
 import { pickBestMediaIndex } from "../../lib/dedup"
 
 export class PlexProvider implements MusicProvider {
+  constructor(private transport?: PlexTransport) {}
   readonly name = "Plex"
   readonly capabilities: ProviderCapabilities = {
     search: true,
@@ -65,6 +67,12 @@ export class PlexProvider implements MusicProvider {
   get cacheScope() { return this._cacheScope }
 
   private _connected = false
+  private _connectionGeneration = 0
+  private _api: PlexApi | null = null
+  private get api(): PlexApi {
+    if (!this._connected || !this._api) throw new Error("Plex provider is disconnected")
+    return this._api
+  }
   private _baseUrl = ""
   private _token = ""
   private _sectionId: number | null = null
@@ -93,25 +101,36 @@ export class PlexProvider implements MusicProvider {
   // ---------------------------------------------------------------------------
 
   async connect(config: Record<string, unknown>): Promise<void> {
+    const generation = ++this._connectionGeneration
+    this._connected = false
+    this._api = null
     const baseUrl = config.baseUrl as string
     const token = config.token as string
     const sectionId = config.sectionId as number
     const sectionUuid = (config.sectionUuid as string) ?? null
+    const scope = typeof config.cacheScope === "string" && /^plex-[a-f0-9]{64}$/.test(config.cacheScope)
+      ? config.cacheScope
+      : await providerCacheScope("plex", (config.machineIdentifier as string) ?? "", token, sectionUuid || String(sectionId), baseUrl)
+    if (generation !== this._connectionGeneration) throw new Error("Plex connection was superseded")
+    this._api = createPlexApi({
+      connectionRevision: config.connectionRevision as number,
+      cacheScope: scope,
+    }, this.transport, () => this._connected && generation === this._connectionGeneration)
 
     this._baseUrl = baseUrl
     this._token = token
     this._sectionId = sectionId
     this._sectionUuid = sectionUuid
     this._machineIdentifier = (config.machineIdentifier as string) ?? ""
-    this._cacheScope = typeof config.cacheScope === "string" && /^plex-[a-f0-9]{64}$/.test(config.cacheScope)
-      ? config.cacheScope
-      : await providerCacheScope("plex", this._machineIdentifier, token, sectionUuid || String(sectionId), baseUrl)
+    this._cacheScope = scope
     this.rebuildImg()
     this._connected = true
   }
 
   async disconnect(): Promise<void> {
+    ++this._connectionGeneration
     this._connected = false
+    this._api = null
     this._cacheScope = null
     this._sectionId = null
     this._sectionUuid = null
@@ -123,6 +142,10 @@ export class PlexProvider implements MusicProvider {
 
   isConnected(): boolean {
     return this._connected
+  }
+
+  getLibrarySections(): Promise<LibrarySection[]> {
+    return this.api.getLibrarySections()
   }
 
   // ---------------------------------------------------------------------------
@@ -144,7 +167,7 @@ export class PlexProvider implements MusicProvider {
   async search(query: string, type?: "track" | "album" | "artist"): Promise<MusicItem[]> {
     const sid = this.requireSection()
     const libtype = type === "track" ? "10" : type === "album" ? "9" : type === "artist" ? "8" : undefined
-    const results = await plex.searchLibrary(sid, query, libtype)
+    const results = await this.api.searchLibrary(sid, query, libtype)
     return results
       .map(m => plexMediaToMusicItem(m, this.img))
       .filter((x): x is MusicItem => x !== null)
@@ -152,7 +175,7 @@ export class PlexProvider implements MusicProvider {
 
   async getRecentlyAdded(type?: string, limit?: number): Promise<MusicItem[]> {
     const sid = this.requireSection()
-    const items = await plex.getRecentlyAdded(sid, type, limit)
+    const items = await this.api.getRecentlyAdded(sid, type, limit)
     return items
       .map(m => plexMediaToMusicItem(m, this.img))
       .filter((x): x is MusicItem => x !== null)
@@ -160,7 +183,7 @@ export class PlexProvider implements MusicProvider {
 
   async getHubs(): Promise<MusicHub[]> {
     const sid = this.requireSection()
-    const hubs = await plex.getHubs(sid)
+    const hubs = await this.api.getHubs(sid)
     return hubs.map(h => plexHubToMusicHub(h, this.img))
   }
 
@@ -169,44 +192,44 @@ export class PlexProvider implements MusicProvider {
   // ---------------------------------------------------------------------------
 
   async getTrack(id: string): Promise<MusicTrack> {
-    const t = await plex.getTrack(Number(id))
+    const t = await this.api.getTrack(Number(id))
     const track = plexTrackToMusicTrack(t, this.img)
     track.mediaInfo = {...track.mediaInfo, metadataComplete: true}
     return track
   }
 
   async getAlbum(id: string): Promise<MusicAlbum> {
-    const a = await plex.getAlbum(Number(id))
+    const a = await this.api.getAlbum(Number(id))
     return plexAlbumToMusicAlbum(a, this.img)
   }
 
   async getArtist(id: string): Promise<MusicArtist> {
-    const a = await plex.getArtist(Number(id))
+    const a = await this.api.getArtist(Number(id))
     return plexArtistToMusicArtist(a, this.img)
   }
 
   async getAlbumTracks(albumId: string): Promise<MusicTrack[]> {
-    const tracks = await plex.getAlbumTracks(Number(albumId))
+    const tracks = await this.api.getAlbumTracks(Number(albumId))
     return this.mapTracks(tracks)
   }
 
   async getArtistAlbums(artistId: string, formatFilter?: string): Promise<MusicAlbum[]> {
-    const albums = await plex.getArtistAlbums(Number(artistId), formatFilter)
+    const albums = await this.api.getArtistAlbums(Number(artistId), formatFilter)
     return albums.map(a => plexAlbumToMusicAlbum(a, this.img))
   }
 
   async getArtistPopularTracks(artistId: string, limit?: number): Promise<MusicTrack[]> {
-    const tracks = await plex.getArtistPopularTracks(Number(artistId), limit)
+    const tracks = await this.api.getArtistPopularTracks(Number(artistId), limit)
     return this.mapTracks(tracks)
   }
 
   async getArtistSimilar(artistId: string): Promise<MusicArtist[]> {
-    const artists = await plex.getArtistSimilar(Number(artistId))
+    const artists = await this.api.getArtistSimilar(Number(artistId))
     return artists.map(a => plexArtistToMusicArtist(a, this.img))
   }
 
   async getRelatedHubs(itemId: string): Promise<MusicHub[]> {
-    const hubs = await plex.getRelatedHubs(Number(itemId))
+    const hubs = await this.api.getRelatedHubs(Number(itemId))
     return hubs.map(h => plexHubToMusicHub(h, this.img))
   }
 
@@ -216,12 +239,12 @@ export class PlexProvider implements MusicProvider {
 
   async getPlaylists(): Promise<MusicPlaylist[]> {
     const sid = this.requireSection()
-    const playlists = await plex.getPlaylists(sid)
+    const playlists = await this.api.getPlaylists(sid)
     return playlists.map(p => plexPlaylistToMusicPlaylist(p, this.img))
   }
 
   async getPlaylistItems(playlistId: string, offset?: number, limit?: number): Promise<PagedResult<MusicTrack>> {
-    const tracks = await plex.getPlaylistItems(Number(playlistId), limit, offset)
+    const tracks = await this.api.getPlaylistItems(Number(playlistId), limit, offset)
     return {
       items: this.mapTracks(tracks),
       total: tracks.length, // Plex doesn't return total separately in this endpoint
@@ -230,28 +253,28 @@ export class PlexProvider implements MusicProvider {
 
   async createPlaylist(title: string, itemIds: string[]): Promise<MusicPlaylist> {
     const sid = this.requireSection()
-    const p = await plex.createPlaylist(title, sid, itemIds.map(Number))
+    const p = await this.api.createPlaylist(title, sid, itemIds.map(Number))
     return plexPlaylistToMusicPlaylist(p, this.img)
   }
 
   async addToPlaylist(playlistId: string, itemIds: string[]): Promise<void> {
-    await plex.addItemsToPlaylist(Number(playlistId), itemIds.map(Number))
+    await this.api.addItemsToPlaylist(Number(playlistId), itemIds.map(Number))
   }
 
   async removeFromPlaylist(playlistId: string, playlistItemIds: string[]): Promise<void> {
-    await plex.removeItemsFromPlaylist(Number(playlistId), playlistItemIds.map(Number))
+    await this.api.removeItemsFromPlaylist(Number(playlistId), playlistItemIds.map(Number))
   }
 
   async deletePlaylist(playlistId: string): Promise<void> {
-    await plex.deletePlaylist(Number(playlistId))
+    await this.api.deletePlaylist(Number(playlistId))
   }
 
   async editPlaylist(playlistId: string, title?: string, summary?: string): Promise<void> {
-    await plex.editPlaylist(Number(playlistId), title, summary)
+    await this.api.editPlaylist(Number(playlistId), title, summary)
   }
 
   async movePlaylistItem(playlistId: string, itemId: string, afterItemId: string): Promise<void> {
-    await plex.movePlaylistItem(Number(playlistId), Number(itemId), Number(afterItemId))
+    await this.api.movePlaylistItem(Number(playlistId), Number(itemId), Number(afterItemId))
   }
 
   // ---------------------------------------------------------------------------
@@ -260,19 +283,19 @@ export class PlexProvider implements MusicProvider {
 
   async getLikedTracks(limit?: number): Promise<MusicTrack[]> {
     const sid = this.requireSection()
-    const tracks = await plex.getLikedTracks(sid, limit)
+    const tracks = await this.api.getLikedTracks(sid, limit)
     return this.mapTracks(tracks)
   }
 
   async getLikedAlbums(limit?: number): Promise<MusicAlbum[]> {
     const sid = this.requireSection()
-    const albums = await plex.getLikedAlbums(sid, limit)
+    const albums = await this.api.getLikedAlbums(sid, limit)
     return albums.map(a => plexAlbumToMusicAlbum(a, this.img))
   }
 
   async getLikedArtists(limit?: number): Promise<MusicArtist[]> {
     const sid = this.requireSection()
-    const artists = await plex.getLikedArtists(sid, limit)
+    const artists = await this.api.getLikedArtists(sid, limit)
     return artists.map(a => plexArtistToMusicArtist(a, this.img))
   }
 
@@ -285,10 +308,11 @@ export class PlexProvider implements MusicProvider {
     const idx = pickBestMediaIndex(plexTrack.media ?? [])
     const partKey = plexTrack.media?.[idx]?.parts?.[0]?.key
     if (!partKey) throw new Error("Track has no media part")
-    return plex.getStreamUrl(partKey)
+    return this.api.getStreamUrl(partKey)
   }
 
   async getPlaybackInfo(track: MusicTrack): Promise<TrackPlaybackInfo> {
+    const api = this.api
     let plexTrack = track._providerData as Track
     let idx = pickBestMediaIndex(plexTrack.media ?? [])
     let media = plexTrack.media?.[idx]
@@ -297,7 +321,7 @@ export class PlexProvider implements MusicProvider {
     // Re-fetch if ramps are missing — cached _providerData may predate includeLoudnessRamps
     if (!track.mediaInfo?.metadataComplete && !stream?.start_ramp && !stream?.end_ramp) {
       try {
-        plexTrack = await plex.getTrack(Number(track.id))
+        plexTrack = await api.getTrack(Number(track.id))
         idx = pickBestMediaIndex(plexTrack.media ?? [])
         media = plexTrack.media?.[idx]
         stream = media?.parts?.[0]?.streams?.find(s => s.stream_type === 2)
@@ -307,7 +331,7 @@ export class PlexProvider implements MusicProvider {
     const partKey = media?.parts?.[0]?.key
     if (!partKey) throw new Error("Track has no media part")
     return {
-      url: `${this._baseUrl}${partKey}?X-Plex-Token=${this._token}`,
+      url: await api.getStreamUrl(partKey),
       trackKey: Number(track.id),
       partId: media?.parts?.[0]?.id ?? 0,
       parentKey: plexTrack.parent_key ?? "",
@@ -316,16 +340,29 @@ export class PlexProvider implements MusicProvider {
     }
   }
 
+  async getTranscodePlaybackInfo(track: MusicTrack, bitrate = 320, codec = "mp3"): Promise<TrackPlaybackInfo> {
+    const api = this.api
+    const data = track._providerData as Track | undefined
+    const media = data?.media?.[pickBestMediaIndex(data.media)]
+    const part = media?.parts?.[0]
+    if (!part?.key) throw new Error("Track has no media part")
+    return {
+      url: await api.getAudioTranscodeUrl(part.key, bitrate, codec),
+      trackKey: Number(track.id), partId: part.id ?? 0,
+      parentKey: data.parent_key ?? "", startRamp: null, endRamp: null,
+    }
+  }
+
   async rate(itemId: string, rating: number | null): Promise<void> {
-    await plex.rateItem(Number(itemId), rating)
+    await this.api.rateItem(Number(itemId), rating)
   }
 
   async markPlayed(trackId: string): Promise<void> {
-    await plex.markPlayed(Number(trackId))
+    await this.api.markPlayed(Number(trackId))
   }
 
   async reportProgress(trackId: string, positionMs: number, state: string, duration: number): Promise<void> {
-    await plex.reportTimeline(
+    await this.api.reportTimeline(
       Number(trackId),
       state as "playing" | "paused" | "buffering" | "stopped",
       positionMs,
@@ -338,12 +375,12 @@ export class PlexProvider implements MusicProvider {
   // ---------------------------------------------------------------------------
 
   async getStreamLevels(streamId: number, subSample?: number): Promise<LevelData[]> {
-    const levels = await plex.getStreamLevels(streamId, subSample)
+    const levels = await this.api.getStreamLevels(streamId, subSample)
     return levels.map(l => ({ loudness: l.loudness }))
   }
 
   async getLyrics(trackId: string): Promise<LyricLineData[]> {
-    const lines = await plex.getLyrics(Number(trackId))
+    const lines = await this.api.getLyrics(Number(trackId))
     return lines.map(l => ({ startMs: l.start_ms, endMs: l.end_ms, text: l.text }))
   }
 
@@ -353,12 +390,12 @@ export class PlexProvider implements MusicProvider {
 
   async getTags(tagType: string): Promise<{ tag: string; count: number | null }[]> {
     const sid = this.requireSection()
-    return plex.getSectionTags(sid, tagType)
+    return this.api.getSectionTags(sid, tagType)
   }
 
   async getItemsByTag(tagType: string, tagName: string, type?: string, limit?: number, offset?: number): Promise<PagedResult<MusicItem>> {
     const sid = this.requireSection()
-    const result = await plex.getItemsByTag(
+    const result = await this.api.getItemsByTag(
       sid,
       tagType as "genre" | "mood" | "style",
       tagName,
@@ -379,7 +416,7 @@ export class PlexProvider implements MusicProvider {
   // ---------------------------------------------------------------------------
 
   async getMixTracks(mixKey: string): Promise<MusicTrack[]> {
-    const tracks = await plex.getMixTracks(mixKey)
+    const tracks = await this.api.getMixTracks(mixKey)
     return this.mapTracks(tracks)
   }
 
@@ -389,12 +426,12 @@ export class PlexProvider implements MusicProvider {
 
   async getSectionStations(): Promise<MusicHub[]> {
     const sid = this.requireSection()
-    const hubs = await plex.getSectionStations(sid)
+    const hubs = await this.api.getSectionStations(sid)
     return hubs.map(h => plexHubToMusicHub(h, this.img))
   }
 
   async getArtistStations(artistId: string): Promise<MusicPlaylist[]> {
-    const stations = await plex.getArtistStations(Number(artistId))
+    const stations = await this.api.getArtistStations(Number(artistId))
     return stations.map(p => plexPlaylistToMusicPlaylist(p, this.img))
   }
 
@@ -403,45 +440,45 @@ export class PlexProvider implements MusicProvider {
   // ---------------------------------------------------------------------------
 
   async createRadioQueue(seedId: string, seedType: string, degreesOfSeparation?: number): Promise<{ queueId: number; tracks: MusicTrack[] }> {
-    const pq = await plex.createRadioQueue(Number(seedId), seedType, degreesOfSeparation)
+    const pq = await this.api.createRadioQueue(Number(seedId), seedType, degreesOfSeparation)
     return { queueId: pq.id, tracks: this.mapTracks(pq.items) }
   }
 
   async createSmartShuffleQueue(seedId: string, seedType: string, djMode?: string, degreesOfSeparation?: number): Promise<{ queueId: number; tracks: MusicTrack[] }> {
-    const pq = await plex.createSmartShuffleQueue(Number(seedId), seedType, djMode, degreesOfSeparation)
+    const pq = await this.api.createSmartShuffleQueue(Number(seedId), seedType, djMode, degreesOfSeparation)
     return { queueId: pq.id, tracks: this.mapTracks(pq.items) }
   }
 
   async createPlayQueue(uri: string, shuffle?: boolean, repeat?: number): Promise<{ queueId: number; tracks: MusicTrack[] }> {
-    const pq = await plex.createPlayQueue(uri, shuffle ?? false, repeat ?? 0)
+    const pq = await this.api.createPlayQueue(uri, shuffle ?? false, repeat ?? 0)
     return { queueId: pq.id, tracks: this.mapTracks(pq.items) }
   }
 
   async computeSonicPath(startId: string, endId: string): Promise<MusicTrack[]> {
     const sid = this.requireSection()
-    const tracks = await plex.computeSonicPath(sid, Number(startId), Number(endId))
+    const tracks = await this.api.computeSonicPath(sid, Number(startId), Number(endId))
     return this.mapTracks(tracks)
   }
 
   async getSonicallySimilar(itemId: string, limit?: number, maxDistance?: number): Promise<MusicArtist[]> {
-    const artists = await plex.getArtistSonicallySimilar(Number(itemId), limit, maxDistance)
+    const artists = await this.api.getArtistSonicallySimilar(Number(itemId), limit, maxDistance)
     return artists.map(a => plexArtistToMusicArtist(a, this.img))
   }
 
   async getArtistSonicallySimilar(artistId: string, limit?: number, maxDistance?: number): Promise<MusicArtist[]> {
-    const artists = await plex.getArtistSonicallySimilar(Number(artistId), limit, maxDistance)
+    const artists = await this.api.getArtistSonicallySimilar(Number(artistId), limit, maxDistance)
     return artists.map(a => plexArtistToMusicArtist(a, this.img))
   }
 
   async getArtistPopularTracksInSection(artistId: string, limit?: number): Promise<MusicTrack[]> {
     const sid = this.requireSection()
-    const tracks = await plex.getArtistPopularTracksInSection(sid, Number(artistId), limit)
+    const tracks = await this.api.getArtistPopularTracksInSection(sid, Number(artistId), limit)
     return this.mapTracks(tracks)
   }
 
   async getArtistAlbumsInSection(artistId: string, formatFilter?: string): Promise<MusicAlbum[]> {
     const sid = this.requireSection()
-    const albums = await plex.getArtistAlbumsInSection(sid, Number(artistId), formatFilter)
+    const albums = await this.api.getArtistAlbumsInSection(sid, Number(artistId), formatFilter)
     return albums.map(a => plexAlbumToMusicAlbum(a, this.img))
   }
 
@@ -484,11 +521,11 @@ export class PlexProvider implements MusicProvider {
   // ---------------------------------------------------------------------------
 
   async updateNowPlaying(title: string, artist: string, album: string, thumbPath: string | null, durationMs: number): Promise<void> {
-    await plex.updateNowPlaying(title, artist, album, thumbPath, durationMs)
+    await this.api.updateNowPlaying(title, artist, album, thumbPath, durationMs)
   }
 
   async setNowPlayingState(state: "playing" | "paused" | "stopped", positionMs?: number): Promise<void> {
-    await plex.setNowPlayingState(state, positionMs)
+    await this.api.setNowPlayingState(state, positionMs)
   }
 
   // ---------------------------------------------------------------------------
