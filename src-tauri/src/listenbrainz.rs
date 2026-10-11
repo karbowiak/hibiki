@@ -14,7 +14,7 @@ const LB_BASE: &str = "https://api.listenbrainz.org/1";
 static LB_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
-        .user_agent("Plexify/1.0 (https://github.com/plexify)")
+        .user_agent(concat!("Hibiki/", env!("CARGO_PKG_VERSION"), " (https://github.com/karbowiak/hibiki)"))
         .build()
         .expect("Failed to build ListenBrainz HTTP client")
 });
@@ -28,6 +28,20 @@ struct ValidateTokenResponse {
     valid: bool,
     #[serde(default)]
     user_name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SubmissionResponse {
+    status: String,
+}
+
+async fn acknowledge_submission(response: reqwest::Response) -> Result<()> {
+    let response: SubmissionResponse = response.bounded_json(MAX_JSON_BYTES).await
+        .context("Invalid ListenBrainz submission acknowledgement")?;
+    if response.status != "ok" {
+        bail!("ListenBrainz did not accept this submission");
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -78,7 +92,8 @@ fn build_additional_info(
 ) -> serde_json::Value {
     let mut info = serde_json::json!({
         "duration_ms": duration_ms,
-        "submission_client": "Plexify",
+        "submission_client": "Hibiki",
+        "submission_client_version": env!("CARGO_PKG_VERSION"),
     });
     let obj = info.as_object_mut().unwrap();
     if !recording_mbid.is_empty() {
@@ -124,7 +139,7 @@ pub async fn submit_now_playing(
         }]
     });
 
-    LB_CLIENT
+    let response = LB_CLIENT
         .post(format!("{}/submit-listens", LB_BASE))
         .header("Authorization", format!("Token {}", token))
         .json(&payload)
@@ -134,7 +149,7 @@ pub async fn submit_now_playing(
         .error_for_status().map_err(|error| error.without_url())
         .context("ListenBrainz submit-listens (now playing) returned error status")?;
 
-    Ok(())
+    acknowledge_submission(response).await
 }
 
 /// Submit a completed listen to ListenBrainz.
@@ -169,7 +184,7 @@ pub async fn submit_listen(
         }]
     });
 
-    LB_CLIENT
+    let response = LB_CLIENT
         .post(format!("{}/submit-listens", LB_BASE))
         .header("Authorization", format!("Token {}", token))
         .json(&payload)
@@ -179,5 +194,37 @@ pub async fn submit_listen(
         .error_for_status().map_err(|error| error.without_url())
         .context("ListenBrainz submit-listens returned error status")?;
 
-    Ok(())
+    acknowledge_submission(response).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn response(body: &[u8]) -> reqwest::Response {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let body = body.to_vec();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 2048];
+            let read = stream.read(&mut request).await.unwrap();
+            let request = String::from_utf8_lossy(&request[..read]).to_lowercase();
+            assert!(request.contains("user-agent: hibiki/") && request.contains("https://github.com/karbowiak/hibiki"));
+            stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+            stream.write_all(&body).await.unwrap();
+        });
+        LB_CLIENT.get(format!("http://{address}/")).send().await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn only_explicit_success_acknowledges_a_submission() {
+        for body in [b"<html>Proxy login</html>".as_slice(), b"{}", br#"{"status":"error"}"#, br#"{"status":true}"#] {
+            assert!(acknowledge_submission(response(body).await).await.is_err());
+        }
+        acknowledge_submission(response(br#"{"status":"ok"}"#).await).await.unwrap();
+        // Playing-now responses may include an MSID without changing status.
+        acknowledge_submission(response(br#"{"status":"ok","recording_msid":"recording"}"#).await).await.unwrap();
+    }
 }
