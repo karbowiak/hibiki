@@ -368,6 +368,17 @@ impl AudioEngine {
             Command::SetEq { gains_db } => AudioCommand::SetEq(gains_db),
             Command::SetEqEnabled { enabled } => AudioCommand::SetEqEnabled(enabled),
             Command::SetEqPostgain { db } => AudioCommand::SetEqPostgain(db),
+            Command::ConfigureEq {
+                gains_db,
+                enabled,
+                postgain_db,
+                duck_ms,
+            } => AudioCommand::ConfigureEq {
+                gains_db,
+                enabled,
+                postgain_db,
+                duck_ms,
+            },
             Command::SetVisualizerEnabled { enabled } => AudioCommand::SetVisualizerEnabled(enabled),
             Command::DuckAndApply { duck_ms } => AudioCommand::DuckAndApply { duck_ms },
             _ => {
@@ -402,6 +413,29 @@ impl AudioEngine {
             return Err(error.clone());
         }
         Ok(self.atomics.device_sample_rate.load(Ordering::Relaxed))
+    }
+
+    /// Prepare headroom without occupying the real-time callback or I/O worker.
+    pub fn configure_eq(
+        &self,
+        gains_db: [f32; 10],
+        enabled: bool,
+        postgain_db: Option<f32>,
+        duck_ms: u32,
+    ) -> Result<f32, String> {
+        let rate = self.sample_rate()?;
+        let postgain_db = match postgain_db {
+            Some(db) if db.is_finite() => db.clamp(-24.0, 24.0),
+            Some(_) => return Err("Invalid EQ postgain".into()),
+            None => dsp::equalizer::Equalizer::auto_postgain_db(&gains_db, rate),
+        };
+        self.send(Command::ConfigureEq {
+            gains_db,
+            enabled,
+            postgain_db,
+            duck_ms: duck_ms.min(100),
+        })?;
+        Ok(postgain_db)
     }
 }
 
@@ -1515,6 +1549,56 @@ mod control_tests {
         assert!(output.iter().all(|value| *value == 0.0));
         assert!(!callback.deck_mgr.active_deck().loaded);
         assert!(!callback.deck_mgr.pending_deck().loaded);
+        assert_eq!(engine.atomics.get_state(), EngineState::Stopped);
+    }
+
+    #[test]
+    fn eq_configuration_applies_bands_enable_and_headroom_in_one_callback_command() {
+        let directory = tempfile::tempdir().unwrap();
+        let (engine, _io, mut callback, _) = engine_with_callback(directory.path(), 1);
+        let gains = [8.0, 6.0, 4.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        let postgain = engine.configure_eq(gains, true, None, 0).unwrap();
+        assert!(postgain < -8.0);
+        // A one-slot queue can admit the entire update with no partial settings.
+        callback.poll_without_output();
+        let mut expected = dsp::DspChain::new(44100);
+        expected.set_eq_gains(&gains);
+        expected.set_postgain_db(postgain);
+        expected.set_eq_enabled(true);
+        let input: Vec<f32> = (0..44100)
+            .map(|frame| {
+                (2.0 * std::f64::consts::PI * 50.0 * f64::from(frame) / 44100.0).sin() as f32 * 0.05
+            })
+            .collect();
+        let mut actual = input.clone();
+        let mut reference = input.clone();
+        callback.dsp_chain.process(&mut actual, 44100, 1);
+        expected.process(&mut reference, 44100, 1);
+        assert_eq!(actual, reference);
+        engine.configure_eq(gains, false, Some(6.0), 0).unwrap();
+        callback.poll_without_output();
+        let mut bypass = input.clone();
+        callback.dsp_chain.process(&mut bypass, 44100, 1);
+        assert_eq!(
+            bypass, input,
+            "Disabled EQ must bypass its positive manual gain too"
+        );
+    }
+
+    #[test]
+    fn eq_admission_failure_has_no_partial_update_and_does_not_block_stop() {
+        let directory = tempfile::tempdir().unwrap();
+        let (engine, _io, mut callback, _) = engine_with_callback(directory.path(), 1);
+        engine.send(Command::SetVolume { gain: 0.4 }).unwrap();
+        assert!(engine.configure_eq([12.0; 10], true, None, 30).is_err());
+        assert!(engine
+            .configure_eq([12.0; 10], true, Some(f32::NAN), 30)
+            .is_err());
+        engine.send(Command::Stop).unwrap();
+        callback.poll_without_output();
+        let mut samples = [0.1; 128];
+        callback.dsp_chain.process(&mut samples, 44100, 2);
+        assert!(samples.iter().all(|sample| (*sample - 0.04).abs() < 1e-7));
         assert_eq!(engine.atomics.get_state(), EngineState::Stopped);
     }
 

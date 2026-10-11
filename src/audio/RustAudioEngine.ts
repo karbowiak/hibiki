@@ -50,12 +50,26 @@ interface VisFramePayload { samples: number[]; frequency_bins: number[] }
 
 export interface AudioTransport { invoke: typeof invoke; listen: typeof listen }
 
+export interface EqConfiguration {
+  gainsDb: number[]
+  enabled: boolean
+  /** Null selects native automatic headroom. */
+  postgainDb: number | null
+  duckMs?: number
+}
+
 export class RustAudioEngine {
   constructor(private ipc: AudioTransport = { invoke, listen }) {}
   private cb: AudioEngineCallbacks | null = null
   private eventGate = new PlaybackEventGate()
   private listenerGeneration = 0
   private unlisteners: UnlistenFn[] = []
+  private eqConfigurationBusy = false
+  private pendingEqConfiguration: {
+    snapshot: EqConfiguration
+    resolve: (gain: number | undefined) => void
+    reject: (error: unknown) => void
+  } | null = null
 
   // Cached visualizer data (pushed from Rust, read synchronously by components)
   private lastFrequencyBins: Float32Array | null = null
@@ -223,6 +237,39 @@ export class RustAudioEngine {
 
   setEq(gainsDb: number[]): void {
     this.sendControl("audio_set_eq", { gainsDb })
+  }
+
+  configureEq(configuration: EqConfiguration): Promise<number | undefined> {
+    const snapshot = { ...configuration, gainsDb: [...configuration.gainsDb] }
+    // At most one invoke and one pending snapshot. Superseded waiting edits
+    // resolve without an applied gain; the store fences their stale replies.
+    this.pendingEqConfiguration?.resolve(undefined)
+    const applied = new Promise<number | undefined>((resolve, reject) => {
+      this.pendingEqConfiguration = { snapshot, resolve, reject }
+    })
+    if (!this.eqConfigurationBusy) void this.flushEqConfigurations()
+    return applied
+  }
+
+  private async flushEqConfigurations(): Promise<void> {
+    this.eqConfigurationBusy = true
+    while (this.pendingEqConfiguration) {
+      const request = this.pendingEqConfiguration
+      this.pendingEqConfiguration = null
+      try {
+        request.resolve(
+          await this.ipc.invoke<number>("audio_configure_eq", {
+            gainsDb: request.snapshot.gainsDb,
+            enabled: request.snapshot.enabled,
+            postgainDb: request.snapshot.postgainDb,
+            duckMs: request.snapshot.duckMs,
+          })
+        )
+      } catch (error) {
+        request.reject(error)
+      }
+    }
+    this.eqConfigurationBusy = false
   }
 
   setEqEnabled(enabled: boolean): void {

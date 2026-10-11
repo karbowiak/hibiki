@@ -1,6 +1,94 @@
 import { expect, test } from "bun:test"
 import { RustAudioEngine, type AudioTransport } from "../src/audio/RustAudioEngine"
 import { PlaybackJournal, type TrackEnded } from "../src/audio/playbackJournal"
+import { deferred, settle } from "./helpers/radioAudioFakes"
+
+test("EQ snapshots reach native admission in order and isolate their gain arrays", async () => {
+  const requests: { args: any; result: ReturnType<typeof deferred<number>> }[] =
+    []
+  const audio = new RustAudioEngine({
+    invoke: ((command: string, args: any) => {
+      expect(command).toBe("audio_configure_eq")
+      const result = deferred<number>()
+      requests.push({ args, result })
+      return result.promise
+    }) as AudioTransport["invoke"],
+    listen: async () => () => {},
+  })
+  const gains = [8, 6, 4, 2, 0, 0, 0, 0, 0, 0]
+  const first = audio.configureEq({
+    gainsDb: gains,
+    enabled: true,
+    postgainDb: null,
+  })
+  gains[0] = 1
+  const next = audio.configureEq({
+    gainsDb: gains,
+    enabled: false,
+    postgainDb: 2,
+  })
+  await settle()
+  expect(requests).toHaveLength(1)
+  expect(requests[0].args.gainsDb[0]).toBe(8)
+  requests[0].result.resolve(-9.75)
+  expect(await first).toBe(-9.75)
+  await settle()
+  expect(requests).toHaveLength(2)
+  expect(requests[1].args.gainsDb[0]).toBe(1)
+  expect(requests[1].args.enabled).toBe(false)
+  requests[1].result.resolve(2)
+  expect(await next).toBe(2)
+})
+
+test("an EQ admission failure cannot strand a later configuration", async () => {
+  let calls = 0
+  const audio = new RustAudioEngine({
+    invoke: (async () => {
+      if (++calls === 1) throw new Error("callback unavailable")
+      return -6
+    }) as AudioTransport["invoke"],
+    listen: async () => () => {},
+  })
+  const configuration = {
+    gainsDb: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    enabled: true,
+    postgainDb: null,
+  }
+  const failed = audio.configureEq(configuration)
+  const latest = audio.configureEq(configuration)
+  await expect(failed).rejects.toThrow("callback unavailable")
+  expect(await latest).toBe(-6)
+})
+
+test("rapid EQ edits keep only the latest waiting snapshot behind the active invoke", async () => {
+  const first = deferred<number>()
+  const requests: any[] = []
+  const audio = new RustAudioEngine({
+    invoke: (async (_command, args) => {
+      requests.push(args)
+      return requests.length === 1 ? first.promise : -8
+    }) as AudioTransport["invoke"],
+    listen: async () => () => {},
+  })
+  const pending: Promise<number | undefined>[] = []
+  for (let edit = 0; edit < 1000; edit++) {
+    pending.push(
+      audio.configureEq({
+        gainsDb: [edit % 12, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        enabled: true,
+        postgainDb: null,
+      })
+    )
+  }
+  expect(requests).toHaveLength(1)
+  first.resolve(-6)
+  const results = await Promise.all(pending)
+  expect(requests).toHaveLength(2)
+  expect(requests[1].gainsDb[0]).toBe(999 % 12)
+  expect(results[0]).toBe(-6)
+  expect(results.at(-1)).toBe(-8)
+  expect(results.slice(1, -1).every((gain) => gain === undefined)).toBe(true)
+})
 
 function transport() {
   const handlers = new Map<string, (event: { payload: unknown }) => void>()

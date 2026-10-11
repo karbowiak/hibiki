@@ -18,7 +18,7 @@ function formatDb(db: number): string {
 
 /** Custom visual gain slider with accent fill and glow thumb. */
 function GainSlider({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
-  const pct = ((value + 12) / 24) * 100
+  const pct = ((value + 24) / 48) * 100
   return (
     <div className="flex items-center gap-3">
       <span className="w-16 shrink-0 text-[10px] text-[color:var(--text-muted)]">{label}</span>
@@ -33,8 +33,8 @@ function GainSlider({ label, value, onChange }: { label: string; value: number; 
         {/* Native range input (invisible, handles interaction) */}
         <input
           type="range"
-          min={-12}
-          max={12}
+          min={-24}
+          max={24}
           step={0.5}
           value={value}
           onChange={e => onChange(parseFloat(e.target.value))}
@@ -65,6 +65,7 @@ export default function EqPanel({ onClose }: Props) {
   const {
     gains, enabled, setEnabled, setBand, applyPreset,
     postgainDb, autoPostgain, setPostgainDb, setAutoPostgain,
+    applying, eqError, syncToEngine,
     currentDevice, deviceProfiles, saveProfileForDevice, deleteProfileForDevice,
   } = useEqStore()
 
@@ -147,6 +148,13 @@ export default function EqPanel({ onClose }: Props) {
           </button>
         </div>
       </div>
+
+      {eqError && (
+        <div role="alert" className="flex items-center gap-2 border-b border-[var(--border)] px-4 py-2 text-xs text-[color:var(--text-primary)]">
+          <span>{eqError}</span>
+          <button onClick={syncToEngine} className="shrink-0 text-accent underline">Retry</button>
+        </div>
+      )}
 
       {/* Active output device */}
       {(currentDevice || deviceStoreDevice) && (
@@ -256,6 +264,8 @@ export default function EqPanel({ onClose }: Props) {
           <span className="text-[11px] text-[color:var(--text-muted)] shrink-0">Gain</span>
           <button
             onClick={() => setAutoPostgain(!autoPostgain)}
+            aria-pressed={autoPostgain}
+            title="Reduce gain to compensate for EQ boosts"
             className={`text-[10px] font-semibold px-2 py-0.5 rounded-full transition-colors shrink-0 ${
               autoPostgain
                 ? "bg-accent text-[color:var(--bg-base)]"
@@ -266,7 +276,7 @@ export default function EqPanel({ onClose }: Props) {
           </button>
           {autoPostgain && (
             <span className="text-[11px] text-[color:var(--text-muted)] tabular-nums">
-              +{postgainDb.toFixed(1)} dB
+              {applying ? "Applying…" : `${postgainDb > 0 ? "+" : ""}${postgainDb.toFixed(1)} dB`}
             </span>
           )}
         </div>
@@ -282,7 +292,7 @@ export default function EqPanel({ onClose }: Props) {
           <div className="mt-1.5 flex flex-col gap-1">
             {/* Always show current device first */}
             {(() => {
-              const hasProfile = !!deviceProfiles[currentDevice]
+              const hasProfile = Object.hasOwn(deviceProfiles, currentDevice)
               return (
                 <div className="flex items-center gap-2 py-1 px-2 rounded text-xs bg-[var(--accent-tint-subtle)]">
                   <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />

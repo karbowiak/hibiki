@@ -478,6 +478,7 @@ pub fn run() {
             audio_engine::bridge::audio_set_eq,
             audio_engine::bridge::audio_set_eq_enabled,
             audio_engine::bridge::audio_set_eq_postgain,
+            audio_engine::bridge::audio_configure_eq,
             audio_engine::bridge::audio_duck_and_apply,
             audio_engine::bridge::audio_set_crossfade_window,
             audio_engine::bridge::audio_set_same_album_crossfade,

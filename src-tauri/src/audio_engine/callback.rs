@@ -792,6 +792,19 @@ impl AudioCallbackState {
             AudioCommand::SetEqPostgain(db) => {
                 self.dsp_chain.set_postgain_db(db);
             }
+            AudioCommand::ConfigureEq {
+                gains_db,
+                enabled,
+                postgain_db,
+                duck_ms,
+            } => {
+                if duck_ms > 0 {
+                    self.handle_command(AudioCommand::DuckAndApply { duck_ms });
+                }
+                self.dsp_chain.set_eq_gains(&gains_db);
+                self.dsp_chain.set_postgain_db(postgain_db);
+                self.dsp_chain.set_eq_enabled(enabled);
+            }
             AudioCommand::SetNormalization(enabled) => {
                 self.normalization_enabled = enabled;
                 for id in [DeckId::A, DeckId::B] {

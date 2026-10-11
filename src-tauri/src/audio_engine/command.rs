@@ -39,6 +39,12 @@ pub enum Command {
     SetEq { gains_db: [f32; 10] },
     SetEqEnabled { enabled: bool },
     SetEqPostgain { db: f32 },
+    ConfigureEq {
+        gains_db: [f32; 10],
+        enabled: bool,
+        postgain_db: f32,
+        duck_ms: u32,
+    },
 
     // -- Crossfade --
     SetCrossfadeWindow { ms: u32 },
@@ -126,6 +132,12 @@ pub enum AudioCommand {
     SetEq([f32; 10]),
     SetEqEnabled(bool),
     SetEqPostgain(f32),
+    ConfigureEq {
+        gains_db: [f32; 10],
+        enabled: bool,
+        postgain_db: f32,
+        duck_ms: u32,
+    },
     SetNormalization(bool),
 
     // -- Crossfade settings (for scheduler) --

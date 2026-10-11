@@ -20,6 +20,43 @@ pub struct Equalizer {
 }
 
 impl Equalizer {
+    /// Compensate the peak response of the complete cascade, including band
+    /// overlap and shelf responses. Preparation runs outside the audio callback.
+    pub fn auto_postgain_db(gains_db: &[f32; NUM_BANDS], sample_rate: u32) -> f32 {
+        let mut eq = Self::new(sample_rate);
+        eq.set_enabled(true);
+        eq.set_gains(gains_db);
+        let response = |frequency: f64| {
+            let omega = 2.0 * std::f64::consts::PI * frequency / f64::from(sample_rate.max(1));
+            let (sin, cos) = omega.sin_cos();
+            let power: f64 = eq
+                .filters
+                .iter()
+                .map(|filter| filter.response_power(cos, sin))
+                .product();
+            10.0 * power.log10()
+        };
+        let nyquist = f64::from(sample_rate) / 2.0;
+        let mut peak = response(0.0).max(response(nyquist)).max(0.0);
+        // A dense logarithmic grid resolves the fixed Q=1.4 bands at both low
+        // and high rates; also include every exact band center.
+        let low = 0.1_f64.min(nyquist.max(0.1));
+        for index in 0..=4096 {
+            let frequency = low * (nyquist.max(low) / low).powf(f64::from(index) / 4096.0);
+            peak = peak.max(response(frequency));
+        }
+        for frequency in EQ_FREQS {
+            if frequency < nyquist {
+                peak = peak.max(response(frequency));
+            }
+        }
+        if peak <= 0.001 {
+            0.0
+        } else {
+            -(peak as f32 + 0.05)
+        }
+    }
+
     pub fn new(sample_rate: u32) -> Self {
         let filters = std::array::from_fn(|i| {
             let (ftype, q) = match i {
@@ -92,6 +129,61 @@ impl DspBlock for Equalizer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_headroom_accounts_for_overlapping_filters_in_actual_pcm() {
+        let rate = 48000;
+        let gains = [8.0, 6.0, 4.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        let compensation = Equalizer::auto_postgain_db(&gains, rate);
+        assert!(
+            compensation < -8.0,
+            "Adjacent bands require additional headroom: {compensation}"
+        );
+        for frequency in [20.0, 32.0, 50.0, 64.0, 125.0, 250.0, 1000.0, 20000.0] {
+            let mut eq = Equalizer::new(rate);
+            eq.set_enabled(true);
+            eq.set_gains(&gains);
+            let mut samples: Vec<f32> = (0..rate * 2)
+                .map(|frame| {
+                    (2.0 * std::f64::consts::PI * frequency * f64::from(frame) / f64::from(rate))
+                        .sin() as f32
+                        * 0.1
+                })
+                .collect();
+            let original: f64 = samples[rate as usize..]
+                .iter()
+                .map(|sample| f64::from(*sample).powi(2))
+                .sum();
+            eq.process(&mut samples, rate, 1);
+            let scale = 10.0_f64.powf(f64::from(compensation) / 20.0);
+            let compensated: f64 = samples[rate as usize..]
+                .iter()
+                .map(|sample| (f64::from(*sample) * scale).powi(2))
+                .sum();
+            assert!(
+                compensated <= original * 1.001,
+                "EQ adds gain at {frequency} Hz despite compensation"
+            );
+        }
+    }
+
+    #[test]
+    fn automatic_headroom_is_flat_for_bypass_bands_and_never_adds_makeup_gain() {
+        for rate in [0, 8000, 44100, 48000, 96000, 192000] {
+            assert_eq!(Equalizer::auto_postgain_db(&[0.0; 10], rate), 0.0);
+            let gain = Equalizer::auto_postgain_db(&[12.0; 10], rate);
+            assert!(
+                gain.is_finite() && gain <= 0.0 && gain >= -24.0,
+                "Unrepresentable compensation: {gain} at {rate}"
+            );
+            assert!(Equalizer::auto_postgain_db(&[-12.0; 10], rate) <= 0.0);
+            assert_eq!(Equalizer::auto_postgain_db(&[f32::NAN; 10], rate), 0.0);
+        }
+        let mut gains = [0.0; 10];
+        gains[9] = 12.0;
+        assert_eq!(Equalizer::auto_postgain_db(&gains, 8000), 0.0);
+        assert!(Equalizer::auto_postgain_db(&gains, 48000) < -12.0);
+    }
 
     #[test]
     fn flat_eq_is_near_passthrough() {

@@ -6,20 +6,42 @@ import { engine } from "../audio/RustAudioEngine"
 // Constants
 // ---------------------------------------------------------------------------
 
-export const EQ_LABELS = ["32", "64", "125", "250", "500", "1K", "2K", "4K", "8K", "16K"]
+export const EQ_LABELS = [
+  "32",
+  "64",
+  "125",
+  "250",
+  "500",
+  "1K",
+  "2K",
+  "4K",
+  "8K",
+  "16K",
+]
 
-export type EqGains = [number, number, number, number, number, number, number, number, number, number]
+export type EqGains = [
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+]
 
 const FLAT: EqGains = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
 export const EQ_PRESETS: { name: string; gains: EqGains }[] = [
-  { name: "Flat",         gains: [ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0] },
-  { name: "Bass Boost",   gains: [ 8,  6,  4,  2,  0,  0,  0,  0,  0,  0] },
-  { name: "Treble Boost", gains: [ 0,  0,  0,  0,  0,  0,  2,  4,  6,  8] },
-  { name: "Vocal",        gains: [-2, -2,  0,  3,  5,  5,  3,  0, -2, -2] },
-  { name: "Electronic",   gains: [ 7,  5,  0,  0, -3, -2,  0,  4,  6,  7] },
-  { name: "Rock",         gains: [ 5,  4,  3,  1, -1, -1,  0,  3,  4,  5] },
-  { name: "Classical",    gains: [ 0,  0,  0,  0,  0,  0, -2, -3, -3, -4] },
+  { name: "Flat", gains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+  { name: "Bass Boost", gains: [8, 6, 4, 2, 0, 0, 0, 0, 0, 0] },
+  { name: "Treble Boost", gains: [0, 0, 0, 0, 0, 0, 2, 4, 6, 8] },
+  { name: "Vocal", gains: [-2, -2, 0, 3, 5, 5, 3, 0, -2, -2] },
+  { name: "Electronic", gains: [7, 5, 0, 0, -3, -2, 0, 4, 6, 7] },
+  { name: "Rock", gains: [5, 4, 3, 1, -1, -1, 0, 3, 4, 5] },
+  { name: "Classical", gains: [0, 0, 0, 0, 0, 0, -2, -3, -3, -4] },
 ]
 
 // ---------------------------------------------------------------------------
@@ -37,15 +59,75 @@ export interface EqProfile {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Compute auto postgain dB from current gains: max(0, max_boost). */
-function computeAutoPostgainDb(gains: EqGains): number {
-  const maxBoost = Math.max(0, ...gains)
-  return maxBoost
+function validGains(value: unknown): value is EqGains {
+  return (
+    Array.isArray(value) &&
+    value.length === 10 &&
+    value.every((gain) => typeof gain === "number" && Number.isFinite(gain))
+  )
 }
-
-/** Send postgain state to the Web Audio engine. */
-function sendPostgain(db: number) {
-  engine.setEqPostgain(db)
+function clampGains(gains: EqGains): EqGains {
+  return gains.map((gain) => Math.max(-12, Math.min(12, gain))) as EqGains
+}
+function profileForDevice(
+  profiles: Record<string, EqProfile>,
+  name: string
+): EqProfile | undefined {
+  return profiles && Object.hasOwn(profiles, name) ? profiles[name] : undefined
+}
+function validProfile(profile: EqProfile): boolean {
+  return (
+    !!profile &&
+    validGains(profile.gains) &&
+    typeof profile.enabled === "boolean" &&
+    typeof profile.autoPostgain === "boolean" &&
+    (profile.autoPostgain || Number.isFinite(profile.postgainDb))
+  )
+}
+let configurationRevision = 0
+function applyConfiguration(
+  get: () => EqState,
+  set: (patch: Partial<EqState>) => void,
+  duck = false
+) {
+  const revision = ++configurationRevision
+  const { gains, enabled, autoPostgain, postgainDb } = get()
+  if (
+    !validGains(gains) ||
+    typeof enabled !== "boolean" ||
+    typeof autoPostgain !== "boolean" ||
+    (!autoPostgain &&
+      (typeof postgainDb !== "number" || !Number.isFinite(postgainDb)))
+  ) {
+    set({
+      applying: false,
+      eqError: "The saved equalizer settings are invalid.",
+    })
+    return
+  }
+  const normalized = clampGains(gains)
+  set({ gains: normalized, applying: true, eqError: null })
+  void engine
+    .configureEq({
+      gainsDb: normalized,
+      enabled,
+      postgainDb: autoPostgain ? null : postgainDb,
+      duckMs: duck ? 30 : 0,
+    })
+    .then((appliedGain) => {
+      if (revision !== configurationRevision) return
+      if (typeof appliedGain !== "number" || !Number.isFinite(appliedGain))
+        throw new Error("Invalid EQ response")
+      set({ applying: false, postgainDb: appliedGain })
+    })
+    .catch(() => {
+      if (revision === configurationRevision) {
+        set({
+          applying: false,
+          eqError: "Couldn’t apply the equalizer settings. Try again.",
+        })
+      }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -59,6 +141,8 @@ interface EqState {
   // Postgain (makeup gain)
   postgainDb: number
   autoPostgain: boolean
+  applying: boolean
+  eqError: string | null
   // Device profiles
   deviceProfiles: Record<string, EqProfile>
   currentDevice: string
@@ -87,101 +171,93 @@ export const useEqStore = create<EqState>()(
       enabled: false,
       postgainDb: 0,
       autoPostgain: true,
+      applying: false,
+      eqError: null,
       deviceProfiles: {},
       currentDevice: "",
 
       setBand: (index, db) => {
+        if (
+          !Number.isInteger(index) ||
+          index < 0 ||
+          index >= 10 ||
+          !Number.isFinite(db)
+        )
+          return
+        if (!validGains(get().gains)) return
         const next = [...get().gains] as EqGains
-        next[index] = db
-        const updates: Partial<EqState> = { gains: next }
-        if (get().autoPostgain) {
-          updates.postgainDb = computeAutoPostgainDb(next)
-        }
-        set(updates)
-        if (get().enabled) {
-          engine.setEq(next)
-          if (get().autoPostgain) {
-            engine.setEqPostgain(get().postgainDb)
-          }
-        }
+        next[index] = Math.max(-12, Math.min(12, db))
+        set({ gains: next })
+        applyConfiguration(get, set)
       },
 
       setEnabled: (enabled) => {
         set({ enabled })
-        engine.setEqEnabled(enabled)
-        if (enabled) {
-          const { gains, postgainDb } = get()
-          engine.setEq(gains)
-          sendPostgain(postgainDb)
-        }
+        applyConfiguration(get, set)
       },
 
       applyPreset: (preset) => {
-        const updates: Partial<EqState> = { gains: [...preset] as EqGains }
-        if (get().autoPostgain) {
-          updates.postgainDb = computeAutoPostgainDb(preset)
-        }
-        set(updates)
-        if (get().enabled) {
-          engine.setEq(preset)
-          if (get().autoPostgain) {
-            engine.setEqPostgain(get().postgainDb)
-          }
-        }
+        if (!validGains(preset)) return
+        set({ gains: clampGains(preset) })
+        applyConfiguration(get, set)
       },
 
-      syncToEngine: () => {
-        const { gains, enabled, postgainDb, autoPostgain } = get()
-        engine.setEqEnabled(enabled)
-        if (enabled) {
-          engine.setEq(gains)
-          sendPostgain(postgainDb)
-        }
-      },
+      syncToEngine: () => applyConfiguration(get, set),
 
       setPostgainDb: (db) => {
-        set({ postgainDb: db, autoPostgain: false })
-        engine.setEqPostgain(db)
+        if (!Number.isFinite(db)) return
+        set({
+          postgainDb: Math.max(-24, Math.min(24, db)),
+          autoPostgain: false,
+        })
+        applyConfiguration(get, set)
       },
 
       setAutoPostgain: (auto) => {
-        if (auto) {
-          const postgainDb = computeAutoPostgainDb(get().gains)
-          set({ autoPostgain: true, postgainDb })
-        } else {
-          set({ autoPostgain: false })
-        }
-        sendPostgain(get().postgainDb)
+        set({ autoPostgain: auto })
+        applyConfiguration(get, set)
       },
 
       setCurrentDevice: (name) => {
-        const prev = get().currentDevice
-        const isSwitch = prev && prev !== name
-        // Auto-save outgoing device's EQ before switching
-        if (isSwitch) {
-          get().saveProfileForDevice(prev)
-        }
+        if (!name || name === get().currentDevice) return
+        const previous = get().currentDevice
+        const outgoing = profileForDevice(get().deviceProfiles, previous)
+        // An unsuccessful recall must not replace corrupt saved data with
+        // settings inherited from the preceding output device.
+        if (previous && (!outgoing || validProfile(outgoing)))
+          get().saveProfileForDevice(previous)
+        const profile = profileForDevice(get().deviceProfiles, name)
         set({ currentDevice: name })
-        if (!isSwitch) return // First detection — keep current EQ as-is
-        // Duck volume to mask filter transients, then apply new profile
-        const profile = get().deviceProfiles[name]
-        engine.duckAndApply(() => {
-          if (profile) {
-            get().loadProfileForDevice(name)
-          } else {
-            // No saved profile for new device — reset to flat
-            set({ gains: [...FLAT] as EqGains, enabled: false, postgainDb: 0, autoPostgain: true })
-            engine.setEqEnabled(false)
-          }
-        })
+        if (profile) {
+          get().loadProfileForDevice(name)
+        } else if (previous) {
+          set({
+            gains: [...FLAT] as EqGains,
+            enabled: false,
+            postgainDb: 0,
+            autoPostgain: true,
+          })
+          applyConfiguration(get, set, true)
+        } else {
+          // First detection without a profile retains the global preference.
+          applyConfiguration(get, set)
+        }
       },
 
       saveProfileForDevice: (deviceName) => {
-        const { gains, enabled, postgainDb, autoPostgain, deviceProfiles } = get()
+        if (!deviceName) return
+        const { gains, enabled, postgainDb, autoPostgain, deviceProfiles } =
+          get()
         set({
           deviceProfiles: {
             ...deviceProfiles,
-            [deviceName]: { gains: [...gains] as EqGains, enabled, postgainDb, autoPostgain },
+            [deviceName]: {
+              ...profileForDevice(deviceProfiles, deviceName),
+              gains: [...gains] as EqGains,
+              enabled,
+              postgainDb,
+              autoPostgain,
+            },
           },
         })
       },
@@ -194,20 +270,26 @@ export const useEqStore = create<EqState>()(
       },
 
       loadProfileForDevice: (deviceName) => {
-        const profile = get().deviceProfiles[deviceName]
+        const profile = profileForDevice(get().deviceProfiles, deviceName)
         if (!profile) return
+        if (!validProfile(profile)) {
+          ++configurationRevision
+          set({
+            applying: false,
+            eqError: "The saved device equalizer profile is invalid.",
+          })
+          return
+        }
         set({
-          gains: [...profile.gains] as EqGains,
+          gains: clampGains(profile.gains),
           enabled: profile.enabled,
-          postgainDb: profile.postgainDb,
+          // Automatic values are derived by the native filters, never recalled.
+          postgainDb: profile.autoPostgain
+            ? 0
+            : Math.max(-24, Math.min(24, profile.postgainDb)),
           autoPostgain: profile.autoPostgain,
         })
-        // Sync to engine
-        engine.setEqEnabled(profile.enabled)
-        if (profile.enabled) {
-          engine.setEq(profile.gains)
-          sendPostgain(profile.postgainDb)
-        }
+        applyConfiguration(get, set, true)
       },
     }),
     {
@@ -219,7 +301,6 @@ export const useEqStore = create<EqState>()(
         autoPostgain: state.autoPostgain,
         deviceProfiles: state.deviceProfiles,
       }),
-    },
-  ),
+    }
+  )
 )
-

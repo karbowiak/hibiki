@@ -54,6 +54,20 @@ pub struct BiquadFilter {
 }
 
 impl BiquadFilter {
+    /// Squared magnitude of the actual normalized filter at e^(i * omega).
+    /// Used outside the audio callback when preparing EQ headroom.
+    pub(super) fn response_power(&self, cos: f64, sin: f64) -> f64 {
+        let c = self.coeffs;
+        let cos2 = 2.0 * cos * cos - 1.0;
+        let sin2 = 2.0 * sin * cos;
+        let numerator_re = c.b0 + c.b1 * cos + c.b2 * cos2;
+        let numerator_im = c.b1 * sin + c.b2 * sin2;
+        let denominator_re = 1.0 + c.a1 * cos + c.a2 * cos2;
+        let denominator_im = c.a1 * sin + c.a2 * sin2;
+        (numerator_re * numerator_re + numerator_im * numerator_im)
+            / (denominator_re * denominator_re + denominator_im * denominator_im)
+    }
+
     pub fn new(filter_type: BiquadType, frequency: f64, q: f64, sample_rate: u32) -> Self {
         let mut f = Self {
             filter_type,

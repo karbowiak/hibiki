@@ -173,6 +173,19 @@ pub async fn audio_set_eq_postgain(
 }
 
 #[tauri::command]
+pub async fn audio_configure_eq(
+    gains_db: [f32; 10],
+    enabled: bool,
+    postgain_db: Option<f32>,
+    duck_ms: Option<u32>,
+    state: State<'_, AudioEngineState>,
+) -> Result<f32, String> {
+    state
+        .0
+        .configure_eq(gains_db, enabled, postgain_db, duck_ms.unwrap_or(0))
+}
+
+#[tauri::command]
 pub async fn audio_duck_and_apply(
     duck_ms: Option<u32>,
     state: State<'_, AudioEngineState>,
