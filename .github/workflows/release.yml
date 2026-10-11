@@ -11,19 +11,25 @@ on:
         required: true
         type: string
 
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   create-release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
     outputs:
       release_id: ${{ steps.create-release.outputs.result }}
       version: ${{ steps.get-version.outputs.version }}
       tag: ${{ steps.get-version.outputs.tag }}
+      commit: ${{ steps.get-version.outputs.commit }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
       - name: Get version from tag
         id: get-version
@@ -38,6 +44,17 @@ jobs:
           VERSION="${VERSION#v}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+          echo "commit=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Require passing CI for the exact tagged commit
+        uses: actions/github-script@v9
+        env:
+          RELEASE_TAG: ${{ steps.get-version.outputs.tag }}
+          RELEASE_COMMIT: ${{ steps.get-version.outputs.commit }}
+        with:
+          script: |
+            const { assertCI } = require('./scripts/check-release.cjs')
+            await assertCI(github, context.repo, process.env.RELEASE_TAG, process.env.RELEASE_COMMIT)
 
       - name: Create or reuse draft release
         id: create-release
@@ -97,7 +114,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.create-release.outputs.tag }}
+          ref: ${{ needs.create-release.outputs.commit }}
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -178,13 +195,38 @@ jobs:
     needs: [create-release, build-tauri]
     permissions:
       contents: write
+      actions: read
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.create-release.outputs.commit }}
+
+      - name: Verify tag, current CI and signed updater artifacts
+        uses: actions/github-script@v9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.create-release.outputs.tag }}
+          RELEASE_COMMIT: ${{ needs.create-release.outputs.commit }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+        with:
+          script: |
+            const { assertCI, assertArtifacts } = require('./scripts/check-release.cjs')
+            const config = require('./src-tauri/tauri.conf.json')
+            await assertCI(github, context.repo, process.env.RELEASE_TAG, process.env.RELEASE_COMMIT)
+            const count = await assertArtifacts(github, context.repo, process.env.RELEASE_TAG,
+              Number(process.env.RELEASE_ID), config.plugins.updater.pubkey)
+            core.info(`Verified all updater platforms and ${count} signed installer artifacts.`)
+
       - name: Publish release
         uses: actions/github-script@v9
         env:
           release_id: ${{ needs.create-release.outputs.release_id }}
+          RELEASE_TAG: ${{ needs.create-release.outputs.tag }}
+          RELEASE_COMMIT: ${{ needs.create-release.outputs.commit }}
         with:
           script: |
+            const { assertCI } = require('./scripts/check-release.cjs')
+            await assertCI(github, context.repo, process.env.RELEASE_TAG, process.env.RELEASE_COMMIT)
             await github.rest.repos.updateRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
