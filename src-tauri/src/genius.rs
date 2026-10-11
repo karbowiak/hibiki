@@ -8,6 +8,7 @@
 //! Genius does not provide lyrics via their API. Instead, we fetch the song page HTML
 //! and extract text from `<div data-lyrics-container="true">` elements.
 
+use crate::http_response::{BoundedResponseExt, MAX_JSON_BYTES, MAX_TEXT_BYTES};
 use anyhow::{bail, Context, Result};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -117,11 +118,11 @@ pub async fn get_access_token(client_id: &str, client_secret: &str) -> Result<St
             ("grant_type", "client_credentials"),
         ])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach Genius OAuth endpoint")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("Genius OAuth returned error status")?
-        .bytes()
+        .bounded_bytes(MAX_JSON_BYTES)
         .await
         .context("Failed to read Genius token response")?;
 
@@ -222,11 +223,11 @@ pub async fn search(access_token: &str, artist: &str, title: &str) -> Result<Vec
         .bearer_auth(access_token)
         .query(&[("q", &query)])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach Genius search API")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("Genius search returned error status")?
-        .bytes()
+        .bounded_bytes(MAX_JSON_BYTES)
         .await
         .context("Failed to read Genius search response")?;
 
@@ -276,11 +277,11 @@ pub async fn scrape_lyrics(url: &str) -> Result<Vec<GeniusLyricLine>> {
         .get(url)
         .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to fetch Genius song page")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("Genius song page returned error status")?
-        .text()
+        .bounded_text(MAX_TEXT_BYTES)
         .await
         .context("Failed to read Genius page HTML")?;
 

@@ -121,7 +121,7 @@ pub async fn itunes_get(
             .get(url)
             .query(query)
             .send()
-            .await
+            .await.map_err(|error| error.without_url())
             .context("iTunes request failed")?;
 
         let status = resp.status();

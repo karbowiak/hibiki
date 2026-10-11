@@ -1,6 +1,7 @@
 //! Plex API HTTP client with retry logic and connection pooling
 #![allow(dead_code)]
 
+use crate::http_response::{BoundedResponseExt, MAX_PLEX_BYTES};
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use reqwest_retry::RetryTransientMiddleware;
@@ -286,8 +287,8 @@ impl PlexClient {
         }
 
         let wrapper = response
-            .json::<PlexApiResponse<T>>()
-            .await.map_err(|error| error.without_url())
+            .bounded_json::<PlexApiResponse<T>>(MAX_PLEX_BYTES)
+            .await
             .context("Failed to parse JSON response")?;
 
         Ok(wrapper.container)
@@ -302,7 +303,7 @@ impl PlexClient {
         if !response.status().is_success() {
             return Err(anyhow::anyhow!("HTTP error: {}", response.status()));
         }
-        response.text().await.map_err(|error| error.without_url()).context("Failed to read response text")
+        response.bounded_text(MAX_PLEX_BYTES).await.context("Failed to read response text")
     }
 
     /// Fetch raw response text — for debugging API responses in tests.
@@ -313,7 +314,7 @@ impl PlexClient {
             .header("X-Plex-Token", token_header(&self.token))
             .header("Accept", "application/json")
             .send().await.map_err(request_error).context("GET request failed")?;
-        response.text().await.map_err(|error| error.without_url()).context("Failed to read response text")
+        response.bounded_text(MAX_PLEX_BYTES).await.context("Failed to read response text")
     }
 
     /// Perform a POST request with a JSON body.
@@ -346,8 +347,8 @@ impl PlexClient {
         }
 
         let wrapper = response
-            .json::<PlexApiResponse<T>>()
-            .await.map_err(|error| error.without_url())
+            .bounded_json::<PlexApiResponse<T>>(MAX_PLEX_BYTES)
+            .await
             .context("Failed to parse JSON response")?;
 
         Ok(wrapper.container)
@@ -388,8 +389,8 @@ impl PlexClient {
         }
 
         let json = response
-            .json::<T>()
-            .await.map_err(|error| error.without_url())
+            .bounded_json::<T>(MAX_PLEX_BYTES)
+            .await
             .context("Failed to parse JSON response")?;
 
         Ok(json)
@@ -425,8 +426,8 @@ impl PlexClient {
         }
 
         let wrapper = response
-            .json::<PlexApiResponse<T>>()
-            .await.map_err(|error| error.without_url())
+            .bounded_json::<PlexApiResponse<T>>(MAX_PLEX_BYTES)
+            .await
             .context("Failed to parse JSON response")?;
 
         Ok(wrapper.container)
@@ -522,8 +523,8 @@ impl PlexClient {
         }
 
         let wrapper = response
-            .json::<PlexApiResponse<T>>()
-            .await.map_err(|error| error.without_url())
+            .bounded_json::<PlexApiResponse<T>>(MAX_PLEX_BYTES)
+            .await
             .context("Failed to parse JSON response")?;
 
         Ok(wrapper.container)
@@ -595,12 +596,13 @@ impl PlexClient {
             return Err(anyhow::anyhow!("HTTP {}", status));
         }
 
+        // This legacy whole-file IPC path must also have a finite buffer size.
         let bytes = response
-            .bytes()
-            .await.map_err(|error| error.without_url())
+            .bounded_bytes(512 * 1024 * 1024)
+            .await
             .context("fetch_bytes failed reading body")?;
         debug!("fetch_bytes complete: {} bytes", bytes.len());
-        Ok(bytes.to_vec())
+        Ok(bytes)
     }
 
 
@@ -634,8 +636,8 @@ impl PlexClient {
         }
 
         response
-            .json::<T>()
-            .await.map_err(|error| error.without_url())
+            .bounded_json::<T>(MAX_PLEX_BYTES)
+            .await
             .context("Failed to parse JSON response")
     }
 

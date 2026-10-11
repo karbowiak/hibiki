@@ -4,6 +4,7 @@
 //! No API key or authentication required. All endpoints are public.
 //! Uses `roxmltree` for RSS/XML parsing (same as lyrics parsing).
 
+use crate::http_response::{BoundedResponseExt, MAX_JSON_BYTES, MAX_TEXT_BYTES};
 use anyhow::{Context, Result};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -287,7 +288,7 @@ pub async fn search_podcasts(query: &str, limit: u32) -> Result<Vec<PodcastSearc
     )
     .await
     .context("Failed to reach iTunes podcast search")?
-    .json::<ItunesSearchResponse>()
+    .bounded_json::<ItunesSearchResponse>(MAX_JSON_BYTES)
     .await
     .context("Failed to parse iTunes podcast search response")?;
 
@@ -325,11 +326,11 @@ pub async fn get_top_podcasts(category: Option<String>, limit: u32) -> Result<Ve
     let resp = PODCAST_CLIENT
         .get(&url)
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach Apple podcast charts")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("Apple podcast charts returned error status")?
-        .json::<AppleRssFeedResponse>()
+        .bounded_json::<AppleRssFeedResponse>(MAX_JSON_BYTES)
         .await
         .context("Failed to parse Apple podcast charts response")?;
 
@@ -364,15 +365,22 @@ pub async fn get_podcast_feed(feed_url: &str) -> Result<PodcastDetail> {
     let body = PODCAST_CLIENT
         .get(feed_url)
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to fetch podcast feed")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("Podcast feed returned error status")?
-        .text()
+        .bounded_text(MAX_TEXT_BYTES)
         .await
         .context("Failed to read podcast feed body")?;
 
-    let doc = roxmltree::Document::parse(&body).context("Failed to parse podcast RSS XML")?;
+    parse_feed(feed_url, &body)
+}
+
+fn parse_feed(feed_url: &str, body: &str) -> Result<PodcastDetail> {
+    let doc = roxmltree::Document::parse_with_options(body, roxmltree::ParsingOptions {
+        nodes_limit: 250_000,
+        ..Default::default()
+    }).context("Failed to parse podcast RSS XML")?;
 
     let channel = doc
         .descendants()
@@ -467,7 +475,7 @@ pub async fn lookup_podcast(itunes_id: u64) -> Result<Option<PodcastSearchResult
     )
     .await
     .context("Failed to reach iTunes podcast lookup")?
-    .json::<ItunesSearchResponse>()
+    .bounded_json::<ItunesSearchResponse>(MAX_JSON_BYTES)
     .await
     .context("Failed to parse iTunes podcast lookup response")?;
 
@@ -491,4 +499,45 @@ pub async fn lookup_podcast(itunes_id: u64) -> Result<Option<PodcastSearchResult
 /// Returns podcast categories from the Podcast Index API (cached 24h).
 pub async fn get_podcast_categories() -> Result<Vec<PodcastCategory>> {
     crate::podcastindex::get_categories().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn oversized_declared_feeds_are_rejected_before_waiting_for_the_body() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let uri = format!("http://{}/feed?token=dummy-private-token", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = [0; 2048];
+            socket.read(&mut buffer).await.unwrap();
+            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\n\r\n", MAX_TEXT_BYTES + 1).as_bytes()).await.unwrap();
+            // A client that tries buffering this body would wait for the server.
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        });
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), get_podcast_feed(&uri)).await;
+        server.abort();
+        let error = format!("{:#}", result.expect("oversized feed waited for its body").unwrap_err());
+        assert!(error.contains("exceeds"));
+        assert!(!error.contains("dummy-private-token"));
+    }
+
+    #[test]
+    fn feed_node_limits_reject_small_dense_inputs_and_keep_normal_episode_fields() {
+        let crowded = format!("<rss><channel>{}</channel></rss>", "<item/>".repeat(250_000));
+        let error = parse_feed("https://feed.example.test", &crowded).unwrap_err();
+        assert_eq!(error.downcast_ref::<roxmltree::Error>(), Some(&roxmltree::Error::NodesLimitReached));
+        let feed = parse_feed("https://feed.example.test", r#"<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel><title>Café</title><itunes:author>Author</itunes:author><item><guid>episode-1</guid><title>Episode</title><itunes:duration>01:02:03</itunes:duration><enclosure url="https://audio.example.test/1.mp3" type="audio/mpeg" length="1234"/></item></channel></rss>"#).unwrap();
+        assert_eq!(feed.title, "Café");
+        assert_eq!(feed.author, "Author");
+        assert_eq!(feed.episodes[0].duration_secs, 3723);
+        assert_eq!(feed.episodes[0].guid, "episode-1");
+        assert_eq!(feed.episodes[0].audio_size, 1234);
+        assert_eq!(feed.episodes[0].audio_url, "https://audio.example.test/1.mp3");
+        let dtd = "<!DOCTYPE rss [<!ENTITY word 'text'>]><rss><channel><title>&word;</title></channel></rss>";
+        assert_eq!(parse_feed("https://feed.example.test", dtd).unwrap_err().downcast_ref::<roxmltree::Error>(), Some(&roxmltree::Error::DtdDetected));
+    }
 }

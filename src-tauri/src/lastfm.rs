@@ -13,6 +13,7 @@
 //! 3. `get_session(api_key, api_secret, token)` — exchanges token for permanent session key
 //! 4. Store session key in `PlexSettings.lastfm_session_key`
 
+use crate::http_response::{BoundedResponseExt, MAX_JSON_BYTES};
 use anyhow::{bail, Context, Result};
 use md5::{Digest, Md5};
 use once_cell::sync::Lazy;
@@ -349,11 +350,11 @@ pub async fn get_token(api_key: &str) -> Result<LastfmAuthToken> {
             ("format", "json"),
         ])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach Last.fm")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("Last.fm auth.getToken returned error status")?
-        .bytes()
+        .bounded_bytes(MAX_JSON_BYTES)
         .await
         .context("Failed to read Last.fm token response")?;
 
@@ -391,11 +392,11 @@ pub async fn get_session(api_key: &str, api_secret: &str, token: &str) -> Result
             ("format", "json"),
         ])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach Last.fm")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("Last.fm auth.getSession returned error status")?
-        .bytes()
+        .bounded_bytes(MAX_JSON_BYTES)
         .await
         .context("Failed to read Last.fm session response")?;
 
@@ -422,11 +423,11 @@ pub async fn get_user_info(api_key: &str, username: &str) -> Result<LastfmUserIn
             ("format", "json"),
         ])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach Last.fm user.getInfo")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("Last.fm user.getInfo returned error status")?
-        .bytes()
+        .bounded_bytes(MAX_JSON_BYTES)
         .await
         .context("Failed to read Last.fm user info")?;
 
@@ -458,11 +459,11 @@ pub async fn get_artist_info(api_key: &str, artist: &str) -> Result<LastfmArtist
             ("format", "json"),
         ])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach Last.fm artist.getInfo")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("Last.fm artist.getInfo returned error status")?
-        .bytes()
+        .bounded_bytes(MAX_JSON_BYTES)
         .await
         .context("Failed to read Last.fm artist info")?;
 
@@ -515,11 +516,11 @@ pub async fn get_track_info(api_key: &str, artist: &str, track: &str) -> Result<
             ("format", "json"),
         ])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach Last.fm track.getInfo")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("Last.fm track.getInfo returned error status")?
-        .bytes()
+        .bounded_bytes(MAX_JSON_BYTES)
         .await
         .context("Failed to read Last.fm track info")?;
 
@@ -555,11 +556,11 @@ pub async fn get_album_info(api_key: &str, artist: &str, album: &str) -> Result<
             ("format", "json"),
         ])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach Last.fm album.getInfo")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("Last.fm album.getInfo returned error status")?
-        .bytes()
+        .bounded_bytes(MAX_JSON_BYTES)
         .await
         .context("Failed to read Last.fm album info")?;
 
@@ -624,11 +625,11 @@ pub async fn update_now_playing(
             ("format", "json"),
         ])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach Last.fm track.updateNowPlaying")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("Last.fm track.updateNowPlaying returned error status")?
-        .bytes()
+        .bounded_bytes(MAX_JSON_BYTES)
         .await
         .context("Failed to read Last.fm now-playing response")?;
 
@@ -697,11 +698,11 @@ pub async fn scrobble(
             ("format", "json"),
         ])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach Last.fm track.scrobble")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("Last.fm track.scrobble returned error status")?
-        .bytes()
+        .bounded_bytes(MAX_JSON_BYTES)
         .await
         .context("Failed to read Last.fm scrobble response")?;
 
@@ -743,11 +744,11 @@ pub async fn love_track(
             ("format", "json"),
         ])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .with_context(|| format!("Failed to reach Last.fm {method}"))?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .with_context(|| format!("Last.fm {method} returned error status"))?
-        .bytes()
+        .bounded_bytes(MAX_JSON_BYTES)
         .await
         .with_context(|| format!("Failed to read Last.fm {method} response"))?;
 

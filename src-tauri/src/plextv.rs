@@ -6,6 +6,7 @@
 //!   3. Poll GET /api/v2/pins/{id} until authToken is Some
 //!   4. GET /api/v2/resources     → list of user's Plex servers
 
+use crate::http_response::{BoundedResponseExt, MAX_JSON_BYTES};
 use anyhow::{Context, Result};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -89,11 +90,11 @@ pub async fn create_pin(client_id: &str) -> Result<PinInfo> {
         .header("Accept", "application/json")
         .form(&[("strong", "true")])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach plex.tv")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("plex.tv /pins returned an error status")?
-        .json()
+        .bounded_json(MAX_JSON_BYTES)
         .await
         .context("Failed to parse PIN response from plex.tv")?;
 
@@ -117,11 +118,11 @@ pub async fn poll_pin(client_id: &str, pin_id: u64) -> Result<Option<String>> {
         .header("X-Plex-Client-Identifier", client_id)
         .header("Accept", "application/json")
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach plex.tv")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("plex.tv /pins/{id} returned an error status")?
-        .json()
+        .bounded_json(MAX_JSON_BYTES)
         .await
         .context("Failed to parse PIN poll response")?;
 
@@ -145,11 +146,11 @@ pub async fn get_resources(client_id: &str, token: &str) -> Result<Vec<PlexResou
             ("includeIPv6", "0"),
         ])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach plex.tv")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("plex.tv /resources returned an error status")?
-        .json()
+        .bounded_json(MAX_JSON_BYTES)
         .await
         .context("Failed to parse resources response")?;
 

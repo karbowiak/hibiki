@@ -4,6 +4,7 @@
 //! API docs: https://podcastindex-org.github.io/docs-api/
 //! Requires a free API key+secret pair (embedded at build time).
 
+use crate::http_response::{BoundedResponseExt, MAX_JSON_BYTES};
 use anyhow::{Context, Result};
 use once_cell::sync::Lazy;
 use serde::Deserialize;
@@ -67,11 +68,11 @@ async fn pi_get<T: serde::de::DeserializeOwned>(
         req = req.query(params);
     }
     req.send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach Podcast Index API")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("Podcast Index API returned error status")?
-        .json::<T>()
+        .bounded_json::<T>(MAX_JSON_BYTES)
         .await
         .context("Failed to parse Podcast Index response")
 }

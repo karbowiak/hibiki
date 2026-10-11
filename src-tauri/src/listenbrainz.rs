@@ -4,6 +4,7 @@
 //! Authentication uses a simple user token (no OAuth). Users copy it from their
 //! ListenBrainz profile page at https://listenbrainz.org/settings/.
 
+use crate::http_response::{BoundedResponseExt, MAX_JSON_BYTES};
 use anyhow::{bail, Context, Result};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -49,11 +50,11 @@ pub async fn validate_token(token: &str) -> Result<ListenBrainzTokenResult> {
         .get(format!("{}/validate-token", LB_BASE))
         .query(&[("token", token)])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach ListenBrainz validate-token")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("ListenBrainz validate-token returned error status")?
-        .json()
+        .bounded_json(MAX_JSON_BYTES)
         .await
         .context("Failed to parse ListenBrainz validate-token response")?;
 
@@ -128,9 +129,9 @@ pub async fn submit_now_playing(
         .header("Authorization", format!("Token {}", token))
         .json(&payload)
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach ListenBrainz submit-listens (now playing)")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("ListenBrainz submit-listens (now playing) returned error status")?;
 
     Ok(())
@@ -173,9 +174,9 @@ pub async fn submit_listen(
         .header("Authorization", format!("Token {}", token))
         .json(&payload)
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach ListenBrainz submit-listens")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("ListenBrainz submit-listens returned error status")?;
 
     Ok(())

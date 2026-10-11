@@ -2359,14 +2359,15 @@ pub async fn genius_get_lyrics(
 /// to bypass CORS without needing per-endpoint Rust commands.
 #[tauri::command]
 pub async fn http_get_json(url: String) -> Result<serde_json::Value, String> {
+    use crate::http_response::{BoundedResponseExt, MAX_JSON_BYTES};
     static CLIENT: once_cell::sync::Lazy<reqwest::Client> = once_cell::sync::Lazy::new(|| {
         reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(15))
             .build()
             .expect("http client")
     });
-    let resp = CLIENT.get(&url).send().await.map_err(|e| e.to_string())?;
-    let json = resp.json::<serde_json::Value>().await.map_err(|e| e.to_string())?;
+    let resp = CLIENT.get(&url).send().await.map_err(|e| e.without_url().to_string())?;
+    let json = resp.bounded_json::<serde_json::Value>(MAX_JSON_BYTES).await.map_err(|e| format!("{e:#}"))?;
     Ok(json)
 }
 

@@ -4,6 +4,7 @@
 //! No API key or authentication is required. Rate limit: 1 req/sec.
 //! A proper User-Agent header is required by the MusicBrainz API.
 
+use crate::http_response::{BoundedResponseExt, MAX_JSON_BYTES};
 use anyhow::{Context, Result};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -208,11 +209,11 @@ pub async fn get_artist_info(artist: &str) -> Result<Option<MusicBrainzArtistInf
             ("limit", "5".to_string()),
         ])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach MusicBrainz artist search")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("MusicBrainz artist search returned error status")?
-        .json()
+        .bounded_json(MAX_JSON_BYTES)
         .await
         .context("Failed to parse MusicBrainz artist search response")?;
 
@@ -235,11 +236,11 @@ pub async fn get_artist_info(artist: &str) -> Result<Option<MusicBrainzArtistInf
         .get(format!("{}/artist/{}", MB_BASE, mbid))
         .query(&[("inc", "tags+url-rels"), ("fmt", "json")])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach MusicBrainz artist detail")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("MusicBrainz artist detail returned error status")?
-        .json()
+        .bounded_json(MAX_JSON_BYTES)
         .await
         .context("Failed to parse MusicBrainz artist detail")?;
 
@@ -282,11 +283,11 @@ pub async fn get_album_info(artist: &str, album: &str) -> Result<Option<MusicBra
             ("limit", "5"),
         ])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach MusicBrainz release-group search")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("MusicBrainz release-group search returned error status")?
-        .json()
+        .bounded_json(MAX_JSON_BYTES)
         .await
         .context("Failed to parse MusicBrainz release-group search response")?;
 
@@ -342,11 +343,11 @@ pub async fn lookup_recording_mbids(
             ("limit", "5"),
         ])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach MusicBrainz recording search")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("MusicBrainz recording search returned error status")?
-        .json()
+        .bounded_json(MAX_JSON_BYTES)
         .await
         .context("Failed to parse MusicBrainz recording search response")?;
 

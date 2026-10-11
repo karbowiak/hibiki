@@ -6,6 +6,7 @@
 //!
 //! API docs: https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/
 
+use crate::http_response::{BoundedResponseExt, MAX_JSON_BYTES};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
@@ -130,7 +131,7 @@ pub async fn search_artist(artist: &str) -> Result<Option<ItunesArtistInfo>> {
     )
     .await
     .context("Failed to reach iTunes artist search")?
-    .json::<ItunesResponse<ItunesArtistResult>>()
+    .bounded_json::<ItunesResponse<ItunesArtistResult>>(MAX_JSON_BYTES)
     .await
     .context("Failed to parse iTunes artist search response")?;
 
@@ -168,7 +169,7 @@ pub async fn search_album(artist: &str, album: &str) -> Result<Option<ItunesAlbu
     )
     .await
     .context("Failed to reach iTunes album search")?
-    .json::<ItunesResponse<ItunesAlbumResult>>()
+    .bounded_json::<ItunesResponse<ItunesAlbumResult>>(MAX_JSON_BYTES)
     .await
     .context("Failed to parse iTunes album search response")?;
 

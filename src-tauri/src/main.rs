@@ -8,6 +8,7 @@ mod commands;
 mod db;
 mod deezer;
 mod genius;
+mod http_response;
 mod image_cache;
 mod image_content;
 mod image_fetch;

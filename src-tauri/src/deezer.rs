@@ -4,6 +4,7 @@
 //! No API key or authentication is required. All endpoints are public.
 //! Rate limit: ~50 requests / 5 seconds per IP (well within normal usage).
 
+use crate::http_response::{BoundedResponseExt, MAX_JSON_BYTES};
 use anyhow::{Context, Result};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -146,11 +147,11 @@ pub async fn search_artist(artist: &str) -> Result<Option<DeezerArtistInfo>> {
         .get(format!("{}/search/artist", DEEZER_BASE))
         .query(&[("q", artist), ("limit", "5")])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach Deezer artist search")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("Deezer artist search returned error status")?
-        .json::<DeezerList<DeezerArtistItem>>()
+        .bounded_json::<DeezerList<DeezerArtistItem>>(MAX_JSON_BYTES)
         .await
         .context("Failed to parse Deezer artist search response")?;
 
@@ -184,11 +185,11 @@ pub async fn search_album(artist: &str, album: &str) -> Result<Option<DeezerAlbu
         .get(format!("{}/search/album", DEEZER_BASE))
         .query(&[("q", query.as_str()), ("limit", "10")])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach Deezer album search")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("Deezer album search returned error status")?
-        .json::<DeezerList<DeezerAlbumSearchItem>>()
+        .bounded_json::<DeezerList<DeezerAlbumSearchItem>>(MAX_JSON_BYTES)
         .await
         .context("Failed to parse Deezer album search response")?;
 
@@ -219,11 +220,11 @@ pub async fn search_album(artist: &str, album: &str) -> Result<Option<DeezerAlbu
     let detail: DeezerAlbumDetail = DEEZER_CLIENT
         .get(format!("{}/album/{}", DEEZER_BASE, album_id))
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach Deezer album detail")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("Deezer album detail returned error status")?
-        .json()
+        .bounded_json(MAX_JSON_BYTES)
         .await
         .context("Failed to parse Deezer album detail")?;
 

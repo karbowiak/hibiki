@@ -4,6 +4,7 @@
 //! Uses the free, open-source Radio Browser API. No API key or authentication required.
 //! API docs: https://de1.api.radio-browser.info/
 
+use crate::http_response::{BoundedResponseExt, MAX_JSON_BYTES};
 use anyhow::{Context, Result};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -205,11 +206,11 @@ pub async fn search_stations(params: SearchParams) -> Result<Vec<RadioStation>> 
         .get(format!("{}/json/stations/search", RB_BASE))
         .query(&query)
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach Radio Browser station search")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("Radio Browser station search returned error status")?
-        .json()
+        .bounded_json(MAX_JSON_BYTES)
         .await
         .context("Failed to parse Radio Browser station search response")?;
 
@@ -228,11 +229,11 @@ pub async fn top_stations(category: &str, count: u32) -> Result<Vec<RadioStation
         .get(format!("{}/json/stations/{}/{}", RB_BASE, cat, count))
         .query(&[("hidebroken", "true")])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach Radio Browser top stations")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("Radio Browser top stations returned error status")?
-        .json()
+        .bounded_json(MAX_JSON_BYTES)
         .await
         .context("Failed to parse Radio Browser top stations response")?;
 
@@ -245,11 +246,11 @@ pub async fn get_countries() -> Result<Vec<RadioCountry>> {
         .get(format!("{}/json/countries", RB_BASE))
         .query(&[("order", "stationcount"), ("reverse", "true")])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach Radio Browser countries")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("Radio Browser countries returned error status")?
-        .json()
+        .bounded_json(MAX_JSON_BYTES)
         .await
         .context("Failed to parse Radio Browser countries response")?;
 
@@ -277,11 +278,11 @@ pub async fn get_tags(limit: u32) -> Result<Vec<RadioTag>> {
             ("limit", &limit.to_string()),
         ])
         .send()
-        .await
+        .await.map_err(|error| error.without_url())
         .context("Failed to reach Radio Browser tags")?
-        .error_for_status()
+        .error_for_status().map_err(|error| error.without_url())
         .context("Radio Browser tags returned error status")?
-        .json()
+        .bounded_json(MAX_JSON_BYTES)
         .await
         .context("Failed to parse Radio Browser tags response")?;
 
@@ -300,6 +301,6 @@ pub async fn register_click(uuid: &str) -> Result<()> {
     let _ = RB_CLIENT
         .get(format!("{}/json/url/{}", RB_BASE, uuid))
         .send()
-        .await;
+        .await.map_err(|error| error.without_url());
     Ok(())
 }
