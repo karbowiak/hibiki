@@ -189,8 +189,18 @@ try {
           const path = new URL(route.request().url()).pathname
           const count = (artworkAttempts.get(path) ?? 0) + 1
           artworkAttempts.set(path, count)
-          if (path.endsWith("/failure-fixture") || (path.endsWith("/retry-fixture") && count < 3)) {
-            return route.fulfill({ status: 503, body: "Busy", headers: { "Retry-After": "1", "Access-Control-Allow-Origin": "*" } })
+          if (
+            path.endsWith("/failure-fixture") ||
+            (path.endsWith("/retry-fixture") && count < 3)
+          ) {
+            return route.fulfill({
+              status: 503,
+              body: "Busy",
+              headers: {
+                "Retry-After": "1",
+                "Access-Control-Allow-Origin": "*",
+              },
+            })
           }
           return route.fulfill({
             contentType: "image/svg+xml",
@@ -279,14 +289,131 @@ try {
         })
         await page.evaluate(() => (window as any).mountArtworkViewer())
         await page.evaluate(() => (window as any).mountArtworkRetry())
-        await page.waitForFunction(() => {
-          const state = (window as any).artworkRetry
-          return state?.recovered && state?.failed
-        }, null, { timeout: 10000 })
-        assert.equal(artworkAttempts.get("/album/retry-fixture"), 3, `${name}: transient artwork did not retry twice`)
-        assert.equal(artworkAttempts.get("/album/failure-fixture"), 3, `${name}: permanent artwork did not stop retrying`)
-        assert.equal(await page.getByAltText("Failed cover").count(), 0, `${name}: permanent artwork leaves a broken image`)
+        await page.waitForFunction(
+          () => {
+            const state = (window as any).artworkRetry
+            return state?.recovered && state?.failed
+          },
+          null,
+          { timeout: 10000 }
+        )
+        assert.equal(
+          artworkAttempts.get("/album/retry-fixture"),
+          3,
+          `${name}: transient artwork did not retry twice`
+        )
+        assert.equal(
+          artworkAttempts.get("/album/failure-fixture"),
+          3,
+          `${name}: permanent artwork did not stop retrying`
+        )
+        assert.equal(
+          await page.getByAltText("Failed cover").count(),
+          0,
+          `${name}: permanent artwork leaves a broken image`
+        )
         await page.evaluate(() => (window as any).unmountArtworkRetry())
+
+        await page.evaluate(() => (window as any).mountPlaylistCreator())
+        const playlistTrigger = page.getByRole("button", {
+          name: "Create fixture playlist",
+        })
+        await playlistTrigger.focus()
+        await page.keyboard.press("Enter")
+        const creator = page.getByRole("dialog", {
+          name: "Create playlist",
+          exact: true,
+        })
+        await creator.waitFor()
+        assert.equal(
+          await creator.evaluate((element) => element.matches(":modal")),
+          true,
+          `${name}: playlist creator is not native modal`
+        )
+        const creatorBounds = await creator.boundingBox()
+        assert.ok(
+          creatorBounds &&
+            creatorBounds.width >= 1399 &&
+            creatorBounds.height >= 889,
+          `${name}: playlist creator is clipped by transformed host`
+        )
+        const playlistName = creator.getByLabel("Playlist name")
+        assert.equal(
+          await playlistName.evaluate(
+            (element) => element === document.activeElement
+          ),
+          true,
+          `${name}: playlist name did not receive focus`
+        )
+        for (const key of ["Tab", "Shift+Tab", "Tab", "Tab", "Tab", "Tab"]) {
+          await page.keyboard.press(key)
+          assert.equal(
+            await creator.evaluate((element) =>
+              element.contains(document.activeElement)
+            ),
+            true,
+            `${name}: ${key} escaped playlist creator`
+          )
+        }
+        await page.keyboard.press("Escape")
+        await creator.waitFor({ state: "hidden" })
+        assert.equal(
+          await playlistTrigger.evaluate(
+            (element) => element === document.activeElement
+          ),
+          true,
+          `${name}: Escape did not restore playlist trigger focus`
+        )
+        await playlistTrigger.click()
+        await creator.waitFor()
+        await playlistName.fill("  Fixture playlist  ")
+        await page.evaluate(() => {
+          ;(window as any).playlistCreator.fail = true
+        })
+        await creator
+          .getByRole("button", { name: "Create", exact: true })
+          .click()
+        await creator
+          .getByRole("alert")
+          .filter({ hasText: "Synthetic playlist failure" })
+          .waitFor()
+        assert.equal(
+          await playlistName.inputValue(),
+          "  Fixture playlist  ",
+          `${name}: failed creation lost the entered name`
+        )
+        await page.screenshot({
+          path: join(artifactDir, `${name}-playlist-create.png`),
+        })
+        await page.evaluate(() => {
+          ;(window as any).playlistCreator.fail = false
+        })
+        await creator
+          .getByRole("button", { name: "Create", exact: true })
+          .click()
+        await creator
+          .getByRole("status")
+          .filter({ hasText: "Playlist created!" })
+          .waitFor()
+        assert.equal(
+          await page.evaluate(() => (window as any).playlistCreator.created),
+          "Fixture playlist",
+          `${name}: playlist callback did not receive trimmed title`
+        )
+        await creator.waitFor({ state: "hidden" })
+        assert.equal(
+          await playlistTrigger.evaluate(
+            (element) => element === document.activeElement
+          ),
+          true,
+          `${name}: successful creation did not restore focus`
+        )
+        assert.equal(
+          await page.evaluate(() => (window as any).playlistCreator.calls),
+          2,
+          `${name}: creation retry made duplicate requests`
+        )
+        await page.evaluate(() => (window as any).unmountPlaylistCreator())
 
         const artworkTrigger = page.getByRole("button", {
           name: "View fixture artwork",

@@ -86,19 +86,90 @@ testWindow.mountArtworkRetry = () => {
   const host = document.createElement("div")
   document.body.append(host)
   const retryRoot = createRoot(host)
-  testWindow.unmountArtworkRetry = () => { retryRoot.unmount(); host.remove() }
+  testWindow.unmountArtworkRetry = () => {
+    retryRoot.unmount()
+    host.remove()
+  }
   testWindow.artworkRetry = { recovered: false, failed: false }
-  retryRoot.render(createElement("div", null,
-    createElement(ArtworkImage, {
-      src: "http://image.localhost/album/retry-fixture", loading: "eager", alt: "Retry cover",
-      onLoad: () => { testWindow.artworkRetry.recovered = true },
-    }),
-    createElement(ArtworkImage, {
-      src: "http://image.localhost/album/failure-fixture", loading: "eager", alt: "Failed cover",
-      onFailure: () => { testWindow.artworkRetry.failed = true },
-    }),
-  ))
+  retryRoot.render(
+    createElement(
+      "div",
+      null,
+      createElement(ArtworkImage, {
+        src: "http://image.localhost/album/retry-fixture",
+        loading: "eager",
+        alt: "Retry cover",
+        onLoad: () => {
+          testWindow.artworkRetry.recovered = true
+        },
+      }),
+      createElement(ArtworkImage, {
+        src: "http://image.localhost/album/failure-fixture",
+        loading: "eager",
+        alt: "Failed cover",
+        onFailure: () => {
+          testWindow.artworkRetry.failed = true
+        },
+      })
+    )
+  )
 }
+testWindow.mountPlaylistCreator = async () => {
+  const { CreatePlaylist } =
+    await import("../../../src/components/Pages/CreatePlaylist")
+  const { useLibraryStore } = await import("../../../src/stores/libraryStore")
+  const original = useLibraryStore.getState().createPlaylist
+  testWindow.playlistCreator = { fail: false, calls: 0, created: "" }
+  useLibraryStore.setState({
+    createPlaylist: async (title) => {
+      testWindow.playlistCreator.calls++
+      if (testWindow.playlistCreator.fail)
+        throw new Error("Synthetic playlist failure")
+      return { id: "fixture-playlist", title } as any
+    },
+  })
+  const host = document.createElement("div")
+  Object.assign(host.style, {
+    transform: "translateZ(0)",
+    overflow: "hidden",
+    width: "260px",
+    height: "90px",
+  })
+  document.body.append(host)
+  const creatorRoot = createRoot(host)
+  function Fixture() {
+    const [open, setOpen] = useState(false)
+    return createElement(
+      "section",
+      null,
+      createElement(
+        "button",
+        {
+          onClick: (event) => {
+            event.currentTarget.focus({ preventScroll: true })
+            setOpen(true)
+          },
+        },
+        "Create fixture playlist"
+      ),
+      open
+        ? createElement(CreatePlaylist, {
+            onClose: () => setOpen(false),
+            onCreated: (playlist) => {
+              testWindow.playlistCreator.created = playlist.title
+            },
+          })
+        : null
+    )
+  }
+  creatorRoot.render(createElement(Fixture))
+  testWindow.unmountPlaylistCreator = () => {
+    creatorRoot.unmount()
+    host.remove()
+    useLibraryStore.setState({ createPlaylist: original })
+  }
+}
+
 function ArtworkViewerFixture() {
   const [open, setOpen] = useState(false)
   return createElement(

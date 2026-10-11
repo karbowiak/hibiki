@@ -150,21 +150,24 @@ export function CreatePlaylist({
           event.preventDefault()
           onClose()
         }
-        if (event.key === "Tab" && !nativeModal.current) {
+        if (event.key === "Tab") {
           const controls = [
             ...event.currentTarget.querySelectorAll<HTMLElement>(
               "button:not(:disabled), input:not(:disabled)"
             ),
           ]
-          const first = controls[0],
-            last = controls.at(-1)
-          if (event.shiftKey && document.activeElement === first) {
-            event.preventDefault()
-            last?.focus()
-          } else if (!event.shiftKey && document.activeElement === last) {
-            event.preventDefault()
-            first?.focus()
-          }
+          // macOS native keyboard settings may skip buttons entirely. Own the
+          // complete tab order so every control stays reachable in either host.
+          event.preventDefault()
+          const index = controls.indexOf(document.activeElement as HTMLElement)
+          const next =
+            index < 0
+              ? event.shiftKey
+                ? controls.length - 1
+                : 0
+              : (index + (event.shiftKey ? -1 : 1) + controls.length) %
+                controls.length
+          controls[next]?.focus()
         }
       }}
     >

@@ -202,6 +202,185 @@ try {
       )
       assert.ok(navigation.includes("/"))
     }
+  } else if (scenario.startsWith("reorder") || scenario === "playlist-load") {
+    mock.module("../../src/components/Page", () => ({
+      useScrollContainer: () => null,
+    }))
+    mock.module("../../src/components/shared/TrackTable", () => ({
+      TrackTable: (props: any) => (
+        <div>
+          <button
+            disabled={!props.onReorder}
+            onClick={() => props.onReorder?.(0, 1)}
+          >
+            Move occurrence
+          </button>
+          {props.tracks.map((track: any) => (
+            <p key={track.playlistItemId}>{track.playlistItemId}</p>
+          ))}
+        </div>
+      ),
+    }))
+    const { Playlist } = await import("../../src/components/Pages/Playlist")
+    const songs = [
+      {
+        id: "same-song",
+        title: "Song",
+        artistName: "Artist",
+        albumName: "Album",
+        duration: 1000,
+        playlistItemId: "occurrence-one",
+      },
+      {
+        id: "same-song",
+        title: "Song",
+        artistName: "Artist",
+        albumName: "Album",
+        duration: 1000,
+        playlistItemId: "occurrence-two",
+      },
+    ]
+    const playlists: any = {
+      "1": {
+        id: "1",
+        title: "First playlist",
+        trackCount: 2,
+        smart: false,
+        thumbUrl: null,
+      },
+      "2": {
+        id: "2",
+        title: "Second playlist",
+        trackCount: 2,
+        smart: false,
+        thumbUrl: null,
+      },
+    }
+    const fetched: string[] = [],
+      invalidated: string[] = [],
+      moved: unknown[][] = []
+    const movement = deferred<void>()
+    let failLoad = scenario === "playlist-load"
+    const fetch = async (id: string) => {
+      fetched.push(id)
+      const cache = (library.getState() as any).playlistItemsCache
+      library.setState({
+        currentPlaylist: playlists[id],
+        currentPlaylistId: id,
+        currentPlaylistItems: failLoad ? [] : (cache[id] ?? songs),
+        playlistItemsCache: failLoad
+          ? {}
+          : { ...cache, [id]: cache[id] ?? songs },
+        isLoading: false,
+        error: failLoad ? "Synthetic load failure" : null,
+      } as any)
+    }
+    library.setState({
+      currentPlaylist: null,
+      currentPlaylistId: null,
+      currentPlaylistItems: [],
+      playlistItemsCache: {},
+      isLoading: false,
+      isFetchingMore: false,
+      error: null,
+      playlistIsFullyLoaded: { "1": true, "2": true },
+      fetchPlaylistItems: fetch,
+      fetchMorePlaylistItems: async () => {},
+      reorderPlaylistItems: (id: string, from: number, to: number) => {
+        const items = [...(library.getState() as any).currentPlaylistItems]
+        const [track] = items.splice(from, 1)
+        items.splice(to, 0, track)
+        library.setState({
+          currentPlaylistItems: items,
+          playlistItemsCache: {
+            ...(library.getState() as any).playlistItemsCache,
+            [id]: items,
+          },
+        } as any)
+      },
+      invalidatePlaylistItems: (id: string) => {
+        invalidated.push(id)
+        const cache = { ...(library.getState() as any).playlistItemsCache }
+        delete cache[id]
+        library.setState({ playlistItemsCache: cache } as any)
+        if ((library.getState() as any).currentPlaylistId === id) void fetch(id)
+      },
+    } as any)
+    first.movePlaylistItem = (...args: unknown[]) => {
+      moved.push(args)
+      return movement.promise
+    }
+    const render = (id: string) =>
+      act(() => root.render(<Playlist playlistId={id} />))
+    await render("1")
+    if (scenario === "playlist-load") {
+      assert.ok(
+        document.querySelector("[role=alert]")!.textContent!.includes("songs")
+      )
+      failLoad = false
+      await act(() =>
+        [...document.querySelectorAll("button")]
+          .find((button) => button.textContent === "Reload playlist")!
+          .click()
+      )
+      assert.equal(document.querySelectorAll("[role=alert]").length, 0)
+      assert.ok(document.body.textContent!.includes("occurrence-one"))
+    } else {
+      await act(() => {
+        const button = [...document.querySelectorAll("button")].find(
+          (button) => button.textContent === "Move occurrence"
+        )!
+        button.click()
+        button.click()
+      })
+      assert.deepEqual(
+        moved,
+        [["1", "occurrence-one", "occurrence-two"]],
+        "duplicate track IDs must use occurrence IDs and admit only one move"
+      )
+      if (scenario === "reorder-route") await render("2")
+      if (scenario === "reorder-provider") {
+        playlists["1"] = { ...playlists["1"], title: "New library playlist" }
+        await act(() => useProviderStore.getState().setProvider(provider()))
+      }
+      if (scenario === "reorder-unmount") await unmount()
+      await act(async () => movement.reject(new Error("Move failed")))
+      if (scenario === "reorder-recover") {
+        assert.deepEqual(invalidated, ["1"])
+        assert.deepEqual(
+          (library.getState() as any).currentPlaylistItems.map(
+            (song: any) => song.playlistItemId
+          ),
+          ["occurrence-one", "occurrence-two"]
+        )
+        assert.ok(
+          document
+            .querySelector("[role=alert]")!
+            .textContent!.includes("order could not be saved")
+        )
+        failLoad = true
+        await act(() =>
+          [...document.querySelectorAll("button")]
+            .find((button) => button.textContent === "Reload playlist")!
+            .click()
+        )
+        assert.ok(
+          document.querySelector("[role=alert]")!.textContent!.includes("songs")
+        )
+      } else {
+        assert.deepEqual(
+          invalidated,
+          [],
+          "late recovery must not invalidate or replace the new view"
+        )
+        if (scenario === "reorder-route") {
+          assert.equal((library.getState() as any).currentPlaylistId, "2")
+          assert.ok(document.body.textContent!.includes("Second playlist"))
+        }
+        if (scenario === "reorder-provider")
+          assert.ok(document.body.textContent!.includes("New library playlist"))
+      }
+    }
   } else if (scenario === "search-topbar") {
     mock.module("../../src/metadata", () => ({ metadataBackends: [] }))
     mock.module("../../src/lib/imageCache", () => ({

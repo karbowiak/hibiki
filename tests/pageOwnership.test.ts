@@ -13,6 +13,11 @@ for (const scenario of [
   "playlist-followup",
   "search-errors",
   "search-topbar",
+  "reorder-route",
+  "reorder-provider",
+  "reorder-unmount",
+  "reorder-recover",
+  "playlist-load",
 ]) {
   test(`mounted page ownership: ${scenario}`, async () => {
     const child = Bun.spawn(
