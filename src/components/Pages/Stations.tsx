@@ -1,5 +1,5 @@
 import { ArtworkImage } from "../shared/ArtworkImage"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useLocation } from "wouter"
 import { useShallow } from "zustand/react/shallow"
 import clsx from "clsx"
@@ -8,8 +8,12 @@ import { usePlayerStore } from "../../stores/playerStore"
 import { useProviderStore } from "../../stores/providerStore"
 import { useCapability } from "../../hooks/useCapability"
 import type { RecentMix, SeedItem } from "../../stores/libraryStore"
-import { selectMix } from "./Mix"
-import { mixThumbCache, mixTitleToArtistName } from "./Home"
+import { selectMix, shuffleTracks } from "./Mix"
+import {
+  mixTitleToArtistName,
+  mixThumbnailKey,
+  useMixThumbnails,
+} from "../../hooks/useMixThumbnails"
 import { ScrollRow } from "../ScrollRow"
 import { formatTimeAgo } from "../../lib/formatters"
 import { MediaCard } from "../MediaCard"
@@ -140,37 +144,68 @@ interface SearchBasedMixBuilderProps {
   onMixStarted?: (seeds: SeedItem[], tabType: "artist" | "album" | "track") => void
 }
 
-function SearchBasedMixBuilder({ tabType, sectionUuid, sectionId, playFromUri, onMixStarted }: SearchBasedMixBuilderProps) {
-  const provider = useProviderStore(s => s.provider)
+function SearchBasedMixBuilder({
+  tabType,
+  sectionUuid,
+  sectionId,
+  playFromUri,
+  onMixStarted,
+}: SearchBasedMixBuilderProps) {
+  const provider = useProviderStore((s) => s.provider)
   const [query, setQuery] = useState("")
   const [results, setResults] = useState<MusicItem[]>([])
   const [seeds, setSeeds] = useState<MusicItem[]>([])
   const [isSearching, setIsSearching] = useState(false)
 
-  useEffect(() => {
+  const [searchError, setSearchError] = useState(false)
+  const [searchAttempt, setSearchAttempt] = useState(0)
+  useLayoutEffect(() => {
+    setQuery("")
+    setSeeds([])
+    setResults([])
+    setSearchError(false)
+  }, [provider, sectionUuid, sectionId, tabType])
+
+  useLayoutEffect(() => {
+    let active = true
+    const current = () =>
+      active && useProviderStore.getState().provider === provider
+    setResults([])
+    setSearchError(false)
     if (!provider || !query.trim()) {
-      setResults([])
       setIsSearching(false)
-      return
+      return () => {
+        active = false
+      }
     }
     setIsSearching(true)
     const timer = setTimeout(() => {
-      provider.search(query, tabType)
-        .then(res => setResults(res.filter(r => r.type === tabType)))
-        .catch(() => setResults([]))
-        .finally(() => setIsSearching(false))
+      void (async () => {
+        try {
+          const items = await provider.search(query, tabType)
+          if (current())
+            setResults(items.filter((item) => item.type === tabType))
+        } catch {
+          if (current()) setSearchError(true)
+        } finally {
+          if (current()) setIsSearching(false)
+        }
+      })()
     }, 350)
-    return () => clearTimeout(timer)
-  }, [query, provider, tabType])
+    return () => {
+      active = false
+      clearTimeout(timer)
+    }
+  }, [query, provider, tabType, searchAttempt])
 
-  const seedKeys = new Set(seeds.map(s => s.id))
+  const seedKeys = new Set(seeds.map((s) => s.id))
 
   const toggleSeed = (item: MusicItem) => {
     const key = item.id
     if (seedKeys.has(key)) {
-      setSeeds(prev => prev.filter(s => s.id !== key))
+      setSeeds((prev) => prev.filter((s) => s.id !== key))
     } else if (seeds.length < MAX_SEEDS) {
-      setSeeds(prev => [...prev, item])
+      setSeeds((prev) => [...prev, item])
     }
   }
 
@@ -187,17 +222,24 @@ function SearchBasedMixBuilder({ tabType, sectionUuid, sectionId, playFromUri, o
 
   const handleStartMix = () => {
     if (!seeds.length || !sectionUuid || !sectionId) return
-    const filterKey = tabType === "artist" ? "artist.id" :
-                      tabType === "album"  ? "album.id" : "ratingKey"
-    const params = seeds.map(s => `${filterKey}=${s.id}`).join("&")
+    const filterKey =
+      tabType === "artist"
+        ? "artist.id"
+        : tabType === "album"
+          ? "album.id"
+          : "ratingKey"
+    const params = seeds.map((s) => `${filterKey}=${s.id}`).join("&")
     const uri = `library://${sectionUuid}/directory//library/sections/${sectionId}/all?type=10&${params}`
     void playFromUri(uri, true)
-    onMixStarted?.(seeds.map(s => ({
-      id: s.id,
-      title: s.title,
-      thumb: getThumb(s),
-      subtitle: getSubtitle(s),
-    })), tabType)
+    onMixStarted?.(
+      seeds.map((s) => ({
+        id: s.id,
+        title: s.title,
+        thumb: getThumb(s),
+        subtitle: getSubtitle(s),
+      })),
+      tabType
+    )
   }
 
   return (
@@ -205,19 +247,18 @@ function SearchBasedMixBuilder({ tabType, sectionUuid, sectionId, playFromUri, o
       <input
         type="text"
         value={query}
-        onChange={e => setQuery(e.target.value)}
+        onChange={(e) => setQuery(e.target.value)}
+        aria-label={`Search for ${tabType}`}
         placeholder={`Search for ${tabType === "artist" ? "an artist" : `a ${tabType}`}…`}
-        className="w-full rounded-lg bg-white/10 px-4 py-2.5 text-sm placeholder-white/40 outline-none focus:bg-white/15 transition-colors"
+        className="w-full rounded-lg bg-white/10 px-4 py-2.5 text-sm placeholder-white/40 outline-none transition-colors focus:bg-white/15"
         autoComplete="off"
         spellCheck={false}
       />
 
-      {isSearching && (
-        <div className="text-sm text-white/40">Searching…</div>
-      )}
+      {isSearching && <div className="text-sm text-white/40">Searching…</div>}
 
       {!isSearching && results.length > 0 && (
-        <div className="max-h-64 overflow-y-auto rounded-lg bg-white/5 divide-y divide-white/5">
+        <div className="max-h-64 divide-y divide-white/5 overflow-y-auto rounded-lg bg-white/5">
           {results.slice(0, 20).map((item, idx) => {
             const itemKey = item.id ?? idx
             const title = item.title
@@ -225,70 +266,132 @@ function SearchBasedMixBuilder({ tabType, sectionUuid, sectionId, playFromUri, o
             const atLimit = seeds.length >= MAX_SEEDS
             const thumb = getThumb(item)
             return (
-              <div
+              <button
+                type="button"
+                aria-label={`Add ${title} to mix`}
+                aria-pressed={isSeeded}
+                disabled={!isSeeded && atLimit}
                 key={itemKey}
                 onClick={() => toggleSeed(item)}
                 className={clsx(
-                  "flex items-center gap-3 px-3 py-2.5 transition-colors",
-                  isSeeded ? "cursor-pointer bg-accent/20" :
-                  atLimit   ? "cursor-not-allowed opacity-40" : "cursor-pointer hover:bg-hl-row"
+                  "flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors",
+                  isSeeded
+                    ? "cursor-pointer bg-accent/20"
+                    : atLimit
+                      ? "cursor-not-allowed opacity-40"
+                      : "cursor-pointer hover:bg-hl-row"
                 )}
               >
                 {thumb ? (
-                  <ArtworkImage src={thumb} alt="" className={"h-9 w-9 flex-shrink-0 rounded-md object-cover"} />
+                  <ArtworkImage
+                    src={thumb}
+                    alt=""
+                    className={"h-9 w-9 flex-shrink-0 rounded-md object-cover"}
+                  />
                 ) : (
-                  <div className={"h-9 w-9 flex-shrink-0 rounded-md bg-white/10"} />
+                  <div
+                    className={"h-9 w-9 flex-shrink-0 rounded-md bg-white/10"}
+                  />
                 )}
                 <div className="min-w-0 flex-1">
-                  <div className={clsx("truncate text-sm font-medium", isSeeded ? "text-accent" : "text-white")}>{title}</div>
-                  <div className="truncate text-xs text-white/40">{getSubtitle(item)}</div>
+                  <div
+                    className={clsx(
+                      "truncate text-sm font-medium",
+                      isSeeded ? "text-accent" : "text-white"
+                    )}
+                  >
+                    {title}
+                  </div>
+                  <div className="truncate text-xs text-white/40">
+                    {getSubtitle(item)}
+                  </div>
                 </div>
-                <div className={clsx(
-                  "flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border transition-colors",
-                  isSeeded ? "border-accent bg-accent" : "border-white/30"
-                )}>
+                <div
+                  className={clsx(
+                    "flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border transition-colors",
+                    isSeeded ? "border-accent bg-accent" : "border-white/30"
+                  )}
+                >
                   {isSeeded && (
-                    <svg viewBox="0 0 12 12" width="10" height="10" fill="currentColor" className="text-black">
+                    <svg
+                      viewBox="0 0 12 12"
+                      width="10"
+                      height="10"
+                      fill="currentColor"
+                      className="text-black"
+                    >
                       <path d="M10.28 2.28a.75.75 0 0 1 0 1.06l-5.5 5.5a.75.75 0 0 1-1.06 0l-2.5-2.5a.75.75 0 1 1 1.06-1.06L4.5 7.19l4.72-4.91a.75.75 0 0 1 1.06 0z" />
                     </svg>
                   )}
                 </div>
-              </div>
+              </button>
             )
           })}
         </div>
       )}
 
-      {!isSearching && query.trim().length > 0 && results.length === 0 && (
-        <div className="text-sm text-white/40">No {tabType}s found for "{query}"</div>
+      {searchError && (
+        <div role="alert" className="text-sm text-red-400">
+          <p>Could not search this library.</p>
+          <button
+            onClick={() => setSearchAttempt((value) => value + 1)}
+            className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white"
+          >
+            Try again
+          </button>
+        </div>
       )}
+      {!isSearching &&
+        !searchError &&
+        query.trim().length > 0 &&
+        results.length === 0 && (
+          <div className="text-sm text-white/40">
+            No {tabType}s found for "{query}"
+          </div>
+        )}
 
       {/* Selected seeds list */}
       {seeds.length > 0 && (
         <div className="space-y-2">
-          <div className="text-xs font-medium text-white/50 uppercase tracking-wide">
+          <div className="text-xs font-medium uppercase tracking-wide text-white/50">
             Seeds ({seeds.length}/{MAX_SEEDS})
           </div>
           <div className="flex flex-wrap gap-2">
-            {seeds.map(item => {
+            {seeds.map((item) => {
               const key = item.id
               const thumb = getThumb(item)
               return (
                 <div
                   key={key}
-                  className="flex items-center gap-1.5 rounded-full bg-white/10 pl-1 pr-2 py-1 text-xs font-medium"
+                  className="flex items-center gap-1.5 rounded-full bg-white/10 py-1 pl-1 pr-2 text-xs font-medium"
                 >
                   {thumb ? (
-                    <ArtworkImage src={thumb} alt="" className={"h-5 w-5 flex-shrink-0 rounded-sm object-cover"} />
+                    <ArtworkImage
+                      src={thumb}
+                      alt=""
+                      className={
+                        "h-5 w-5 flex-shrink-0 rounded-sm object-cover"
+                      }
+                    />
                   ) : (
-                    <div className={"h-5 w-5 flex-shrink-0 rounded-sm bg-white/20"} />
+                    <div
+                      className={"h-5 w-5 flex-shrink-0 rounded-sm bg-white/20"}
+                    />
                   )}
                   <span className="max-w-[120px] truncate">{item.title}</span>
                   <button
-                    onClick={() => setSeeds(prev => prev.filter(s => s.id !== key))}
-                    className="ml-0.5 text-white/40 hover:text-white transition-colors"
+                    aria-label={`Remove ${item.title} from mix`}
+                    onClick={() =>
+                      setSeeds((prev) => prev.filter((s) => s.id !== key))
+                    }
+                    className="ml-0.5 text-white/40 transition-colors hover:text-white"
                   >
-                    <svg viewBox="0 0 12 12" width="10" height="10" fill="currentColor">
+                    <svg
+                      viewBox="0 0 12 12"
+                      width="10"
+                      height="10"
+                      fill="currentColor"
+                    >
                       <path d="M2.22 2.22a.75.75 0 0 1 1.06 0L6 4.94l2.72-2.72a.75.75 0 1 1 1.06 1.06L7.06 6l2.72 2.72a.75.75 0 1 1-1.06 1.06L6 7.06 3.28 9.78a.75.75 0 0 1-1.06-1.06L4.94 6 2.22 3.28a.75.75 0 0 1 0-1.06z" />
                     </svg>
                   </button>
@@ -298,12 +401,13 @@ function SearchBasedMixBuilder({ tabType, sectionUuid, sectionId, playFromUri, o
           </div>
           <button
             onClick={handleStartMix}
-            className="mt-2 flex items-center gap-2 rounded-full bg-accent px-6 py-2.5 text-sm font-bold text-black hover:brightness-110 active:scale-95 transition-all"
+            className="mt-2 flex items-center gap-2 rounded-full bg-accent px-6 py-2.5 text-sm font-bold text-black transition-all hover:brightness-110 active:scale-95"
           >
             <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
               <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6A3 3 0 0 0 8 5zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
             </svg>
-            Start Mix ({seeds.length} {tabType}{seeds.length !== 1 ? "s" : ""})
+            Start Mix ({seeds.length} {tabType}
+            {seeds.length !== 1 ? "s" : ""})
           </button>
         </div>
       )}
@@ -324,10 +428,22 @@ interface TagGridMixBuilderProps {
   playFromUri: (uri: string, forceShuffle?: boolean) => Promise<void>
 }
 
-function TagGridMixBuilder({ tags, tabType, sectionUuid, sectionId, colorPalette, playFromUri }: TagGridMixBuilderProps) {
-  const provider = useProviderStore(s => s.provider)
+function TagGridMixBuilder({
+  tags,
+  tabType,
+  sectionUuid,
+  sectionId,
+  colorPalette,
+  playFromUri,
+}: TagGridMixBuilderProps) {
+  const provider = useProviderStore((s) => s.provider)
   const [lastPlayed, setLastPlayed] = useState<string | null>(null)
   const [filterQuery, setFilterQuery] = useState("")
+
+  useLayoutEffect(() => {
+    setLastPlayed(null)
+    setFilterQuery("")
+  }, [provider, sectionUuid, sectionId, tabType])
 
   const filtered = filterQuery.trim()
     ? tags.filter(t => t.tag.toLowerCase().includes(filterQuery.toLowerCase()))
@@ -396,93 +512,117 @@ function TagGridMixBuilder({ tags, tabType, sectionUuid, sectionId, colorPalette
 export function StationsPage() {
   const [, navigate] = useLocation()
   const hasStations = useCapability("stations")
-  const provider = useProviderStore(s => s.provider)
+  const provider = useProviderStore((s) => s.provider)
 
-  const { hubs, tagsGenre, tagsMood, tagsStyle, recentMixes, addRecentMix } = useLibraryStore(
-    useShallow(s => ({
-      hubs: s.hubs,
-      tagsGenre: s.tagsGenre,
-      tagsMood: s.tagsMood,
-      tagsStyle: s.tagsStyle,
-      recentMixes: s.recentMixes,
-      addRecentMix: s.addRecentMix,
-    }))
-  )
+  const { hubs, tagsGenre, tagsMood, tagsStyle, recentMixes, addRecentMix } =
+    useLibraryStore(
+      useShallow((s) => ({
+        hubs: s.hubs,
+        tagsGenre: s.tagsGenre,
+        tagsMood: s.tagsMood,
+        tagsStyle: s.tagsStyle,
+        recentMixes: s.recentMixes,
+        addRecentMix: s.addRecentMix,
+      }))
+    )
 
   const { musicSectionId, sectionUuid } = useConnectionStore(
-    useShallow(s => ({
+    useShallow((s) => ({
       musicSectionId: s.musicSectionId,
       sectionUuid: s.sectionUuid,
     }))
   )
 
-  const { playFromUri, playTrack } = usePlayerStore(useShallow(s => ({
-    playFromUri: s.playFromUri,
-    playTrack:   s.playTrack,
-  })))
+  const { playFromUri, playTrack } = usePlayerStore(
+    useShallow((s) => ({
+      playFromUri: s.playFromUri,
+      playTrack: s.playTrack,
+    }))
+  )
 
   const [stations, setStations] = useState<MusicItem[]>([])
   const [stationsLoaded, setStationsLoaded] = useState(false)
+  const [stationError, setStationError] = useState(false)
+  const [stationAttempt, setStationAttempt] = useState(0)
   const [activeTab, setActiveTab] = useState<BuilderTab>("artist")
-  const [mixThumbs, setMixThumbs] = useState<Record<string, string>>(() =>
-    Object.fromEntries(mixThumbCache.entries())
-  )
-
-  if (!hasStations) { navigate("/"); return null }
-
   // Mixes for You from hubs store
   const { mixesHubs, mixesItems, mixesTitle } = useMemo(() => {
-    const mh = hubs.filter(h => h.identifier?.startsWith("music.mixes"))
-    return { mixesHubs: mh, mixesItems: mh.flatMap(h => h.items), mixesTitle: mh[0]?.title ?? "Mixes for You" }
+    const mh = hubs.filter((h) => h.identifier?.startsWith("music.mixes"))
+    return {
+      mixesHubs: mh,
+      mixesItems: mh.flatMap((h) => h.items),
+      mixesTitle: mh[0]?.title ?? "Mixes for You",
+    }
   }, [hubs])
 
-  // Resolve artist thumbnails for each mix (same logic as Home.tsx)
-  useEffect(() => {
-    if (!provider || mixesItems.length === 0) return
-    const controller = new AbortController()
-    const run = async () => {
-      const updates: Record<string, string> = {}
-      for (const item of mixesItems) {
-        if (controller.signal.aborted) break
-        if (item.type !== "playlist") continue
-        if (mixThumbCache.has(item.title)) continue
-        const artistName = mixTitleToArtistName(item.title)
-        if (!artistName) continue
-        try {
-          const results = await provider.search(artistName, "artist")
-          const artist = results.find(
-            r => r.type === "artist" && r.title.toLowerCase() === artistName.toLowerCase()
-          ) ?? results.find(r => r.type === "artist")
-          if (artist && artist.type === "artist" && artist.thumbUrl) {
-            mixThumbCache.set(item.title, artist.thumbUrl)
-            updates[item.title] = artist.thumbUrl
-          }
-        } catch { }
-      }
-      if (!controller.signal.aborted && Object.keys(updates).length > 0) {
-        setMixThumbs(prev => ({ ...prev, ...updates }))
-      }
+  const mixThumbs = useMixThumbnails(hasStations ? provider : null, mixesItems)
+  const playbackView = useRef({ active: false, revision: 0 })
+  const [playError, setPlayError] = useState(false)
+  useLayoutEffect(() => {
+    const view = { active: true, revision: 0 }
+    playbackView.current = view
+    setPlayError(false)
+    return () => {
+      view.active = false
     }
-    void run()
-    return () => controller.abort()
-  }, [provider, mixesItems.length])
+  }, [provider, hasStations])
+  function playMix(item: MusicPlaylist) {
+    if (!provider?.getMixTracks || !item.providerKey) return
+    const view = playbackView.current
+    const revision = ++view.revision
+    const current = () =>
+      view.active &&
+      view.revision === revision &&
+      useProviderStore.getState().provider === provider
+    setPlayError(false)
+    void (async () => {
+      try {
+        const items = await provider.getMixTracks!(item.providerKey!)
+        if (!current() || !items.length) return
+        const tracks = shuffleTracks(items, item.title)
+        await playTrack(tracks[0], tracks, item.title, "/mix")
+      } catch {
+        if (current()) setPlayError(true)
+      }
+    })()
+  }
 
-  // Fetch section stations on mount
   useEffect(() => {
-    if (!provider) return
+    if (!hasStations) navigate("/")
+  }, [hasStations, navigate])
+
+  // A retired section request cannot populate a replacement library.
+  useLayoutEffect(() => {
+    let active = true
+    const current = () =>
+      active && useProviderStore.getState().provider === provider
+    setStations([])
     setStationsLoaded(false)
-    provider.getSectionStations?.()
-      .then(stationHubs => {
-        if (!stationHubs) { setStationsLoaded(true); return }
-        const items = stationHubs
-          .filter(h => h.identifier?.includes("station"))
-          .flatMap(h => h.items)
-          .filter((item): item is MusicItem => Boolean(item.title))
-        setStations(items)
-      })
-      .catch(() => {})
-      .finally(() => setStationsLoaded(true))
-  }, [provider])
+    setStationError(false)
+    if (!provider || !hasStations)
+      return () => {
+        active = false
+      }
+    void (async () => {
+      try {
+        const stationHubs = (await provider.getSectionStations?.()) ?? []
+        if (current())
+          setStations(
+            stationHubs
+              .filter((hub) => hub.identifier?.includes("station"))
+              .flatMap((hub) => hub.items)
+              .filter((item): item is MusicItem => Boolean(item.title))
+          )
+      } catch {
+        if (current()) setStationError(true)
+      } finally {
+        if (current()) setStationsLoaded(true)
+      }
+    })()
+    return () => {
+      active = false
+    }
+  }, [provider, hasStations, stationAttempt])
 
   const handleStationClick = (item: MusicItem) => {
     if (!sectionUuid) return
@@ -491,24 +631,33 @@ export function StationsPage() {
     if (!uri) return
     void playFromUri(uri)
     const guid = item.guid
-    const typeSlug = guid?.replace("tv.plex://station/", "") ?? encodeURIComponent(stationKey)
+    const typeSlug =
+      guid?.replace("tv.plex://station/", "") ?? encodeURIComponent(stationKey)
     navigate(`/radio/${typeSlug}`)
   }
 
   // Tag sets and palettes for each tab
   const activeTags: { tag: string; count: number | null }[] =
-    activeTab === "genre" ? tagsGenre :
-    activeTab === "mood"  ? tagsMood  :
-    activeTab === "style" ? tagsStyle :
-    []
+    activeTab === "genre"
+      ? tagsGenre
+      : activeTab === "mood"
+        ? tagsMood
+        : activeTab === "style"
+          ? tagsStyle
+          : []
 
   const activeColorPalette =
-    activeTab === "genre" ? BG_COLORS :
-    activeTab === "mood"  ? [...BG_COLORS.slice(4), ...BG_COLORS.slice(0, 4)] :
-    [...BG_COLORS.slice(8), ...BG_COLORS.slice(0, 8)]
+    activeTab === "genre"
+      ? BG_COLORS
+      : activeTab === "mood"
+        ? [...BG_COLORS.slice(4), ...BG_COLORS.slice(0, 4)]
+        : [...BG_COLORS.slice(8), ...BG_COLORS.slice(0, 8)]
+
+  if (!hasStations) return null
 
   return (
     <div className="space-y-10 pb-8">
+      {playError && <p role="alert" className="text-sm text-red-400">Could not play this mix. Please try again.</p>}
 
       {/* Mixes for You */}
       {mixesItems.length > 0 && (
@@ -516,7 +665,7 @@ export function StationsPage() {
           {mixesItems.map((item, idx) => {
             if (item.type !== "playlist") return null
             const thumb =
-              mixThumbs[item.title] ?? item.thumbUrl ?? null
+              mixThumbs[mixThumbnailKey(item)] ?? item.thumbUrl ?? null
             return (
               <MediaCard
                 key={`${item.id}-${idx}`}
@@ -529,17 +678,7 @@ export function StationsPage() {
                   selectMix(item as MusicPlaylist)
                   navigate("/mix")
                 }}
-                onPlay={() => {
-                  const mixKey = item.providerKey
-                  if (!mixKey) return
-                  provider?.getMixTracks?.(mixKey)
-                    .then(tracks => {
-                      if (!tracks || tracks.length === 0) return
-                      const shuffled = [...tracks].sort(() => Math.random() - 0.5)
-                      void playTrack(shuffled[0], shuffled, item.title, "/mix")
-                    })
-                    .catch(() => {})
-                }}
+                onPlay={() => playMix(item)}
                 scrollItem
                 large
               />
@@ -552,9 +691,15 @@ export function StationsPage() {
       <div>
         <div className="mb-4 text-2xl font-bold">Stations</div>
         {!stationsLoaded && (
-          <div className="text-sm text-white/40">Loading stations…</div>
+          <div role="status" className="text-sm text-white/40">Loading stations…</div>
         )}
-        {stationsLoaded && stations.length === 0 && (
+        {stationError && (
+          <div role="alert" className="text-sm text-red-400">
+            <p>Could not load stations.</p>
+            <button onClick={() => setStationAttempt(value => value + 1)} className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white">Try again</button>
+          </div>
+        )}
+        {stationsLoaded && !stationError && stations.length === 0 && (
           <div className="text-sm text-white/40">No stations available on this server.</div>
         )}
         {stations.length > 0 && (

@@ -1,7 +1,16 @@
-import { useEffect, useMemo, useState } from "react"
+import {
+  mixTitleToArtistName,
+  mixThumbnailKey,
+  useMixThumbnails,
+} from "../../hooks/useMixThumbnails"
+import { useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 import { useLocation } from "wouter"
-import { useLibraryStore, useConnectionStore, usePlayerStore } from "../../stores"
+import {
+  useLibraryStore,
+  useConnectionStore,
+  usePlayerStore,
+} from "../../stores"
 import { useProviderStore } from "../../stores/providerStore"
 import { prefetchArtist, prefetchAlbum } from "../../stores/metadataCache"
 import type { MusicItem, MusicPlaylist, MusicTrack } from "../../types/music"
@@ -12,19 +21,6 @@ import { makeOnPlay } from "../../lib/mediaPlay"
 import { ScrollRow } from "../ScrollRow"
 import { MediaCard } from "../MediaCard"
 import { selectMix, shuffleTracks } from "./Mix"
-
-/** Strip common mix suffixes to get the artist name: "Ado Mix" → "Ado" */
-export function mixTitleToArtistName(title: string): string {
-  return title.replace(/\s+(Mix|Radio|Station|Mix Radio)$/i, "").trim()
-}
-
-/**
- * Module-level cache of mix title → artist thumb URL.
- * Survives component unmount/remount so images don't flash grey on navigation.
- * Shared with StationsPage so the two pages don't duplicate searches.
- * The actual image bytes are cached separately by the image:// Tauri handler.
- */
-export const mixThumbCache = new Map<string, string>()
 
 function getItemYear(item: MusicItem): number {
   if (item.type === "album") return item.year
@@ -128,85 +124,81 @@ export function makeDragPayload(item: MusicItem): DragPayload | undefined {
 export function Home() {
   // Granular selector: only re-render when recentlyAdded or hubs actually change.
   // Changes to playlistItemsCache (from background prefetch) do NOT trigger re-renders here.
-  const { recentlyAdded, hubs } = useLibraryStore(useShallow(s => ({
-    recentlyAdded: s.recentlyAdded,
-    hubs: s.hubs,
-  })))
-  const { isConnected, isLoading: isConnecting } = useConnectionStore(
-    useShallow(s => ({ isConnected: s.isConnected, isLoading: s.isLoading }))
+  const { recentlyAdded, hubs } = useLibraryStore(
+    useShallow((s) => ({
+      recentlyAdded: s.recentlyAdded,
+      hubs: s.hubs,
+    }))
   )
-  const provider = useProviderStore(s => s.provider)
-  const { playFromUri, playTrack, playPlaylist } = usePlayerStore(useShallow(s => ({
-    playFromUri: s.playFromUri,
-    playTrack:   s.playTrack,
-    playPlaylist: s.playPlaylist,
-  })))
+  const { isConnected, isLoading: isConnecting } = useConnectionStore(
+    useShallow((s) => ({ isConnected: s.isConnected, isLoading: s.isLoading }))
+  )
+  const provider = useProviderStore((s) => s.provider)
+  const { playFromUri, playTrack, playPlaylist } = usePlayerStore(
+    useShallow((s) => ({
+      playFromUri: s.playFromUri,
+      playTrack: s.playTrack,
+      playPlaylist: s.playPlaylist,
+    }))
+  )
   const [, navigate] = useLocation()
   const { handler: ctxMenu } = useContextMenu()
 
   function makeOnContextMenu(item: MusicItem) {
-    if (item.type === "album" || item.type === "artist" || item.type === "track") return ctxMenu(item.type, item)
+    if (
+      item.type === "album" ||
+      item.type === "artist" ||
+      item.type === "track"
+    )
+      return ctxMenu(item.type, item)
     return undefined
   }
-
-  // Seed from module-level cache so images are available immediately on remount.
-  const [mixThumbs, setMixThumbs] = useState<Record<string, string>>(
-    () => Object.fromEntries(mixThumbCache)
-  )
 
   const hasRealData = recentlyAdded.length > 0 || hubs.length > 0
 
   const { mixesItems, mixesTitle } = useMemo(() => {
-    const mh = hubs.filter(h => h.identifier?.startsWith("music.mixes"))
-    return { mixesItems: mh.flatMap(h => h.items), mixesTitle: mh[0]?.title ?? "Mixes for You" }
+    const mh = hubs.filter((h) => h.identifier?.startsWith("music.mixes"))
+    return {
+      mixesItems: mh.flatMap((h) => h.items),
+      mixesTitle: mh[0]?.title ?? "Mixes for You",
+    }
   }, [hubs])
 
-  // For each mix, search the library for the artist named in the title and
-  // cache their thumbnail. Already-cached titles are skipped.
-  useEffect(() => {
-    if (!isConnected || !provider || mixesItems.length === 0) return
-    const controller = new AbortController()
-
-    const run = async () => {
-      // Filter to playlist items that need resolution
-      const pending = mixesItems.filter(
-        (item): item is Extract<typeof item, { type: "playlist" }> =>
-          item.type === "playlist" && !mixThumbCache.has(item.title) && !!mixTitleToArtistName(item.title)
-      )
-      if (pending.length === 0) return
-
-      const BATCH = 5
-      const updates: Record<string, string> = {}
-
-      for (let i = 0; i < pending.length; i += BATCH) {
-        if (controller.signal.aborted) break
-        await Promise.all(
-          pending.slice(i, i + BATCH).map(async (item) => {
-            const artistName = mixTitleToArtistName(item.title)
-            if (!artistName) return
-            try {
-              const results = await provider.search(artistName, "artist")
-              const artist = results.find(
-                r => r.type === "artist" && r.title.toLowerCase() === artistName.toLowerCase()
-              ) ?? results.find(r => r.type === "artist")
-              if (artist && artist.type === "artist" && artist.thumbUrl) {
-                mixThumbCache.set(item.title, artist.thumbUrl)
-                updates[item.title] = artist.thumbUrl
-              }
-            } catch {
-              // search failure for one mix shouldn't abort the rest
-            }
-          })
-        )
-      }
-      if (!controller.signal.aborted && Object.keys(updates).length > 0) {
-        setMixThumbs(prev => ({ ...prev, ...updates }))
-      }
+  const mixThumbs = useMixThumbnails(provider, mixesItems)
+  const playbackView = useRef({ active: false, revision: 0 })
+  const [playError, setPlayError] = useState(false)
+  useLayoutEffect(() => {
+    const view = { active: true, revision: 0 }
+    playbackView.current = view
+    setPlayError(false)
+    return () => {
+      view.active = false
     }
-
-    void run()
-    return () => controller.abort()
-  }, [isConnected, provider, mixesItems.length])
+  }, [provider])
+  function playResolved(
+    load: () => Promise<MusicTrack[]>,
+    title: string,
+    route: string | null,
+    shuffle: boolean
+  ) {
+    const view = playbackView.current
+    const revision = ++view.revision
+    const current = () =>
+      view.active &&
+      view.revision === revision &&
+      useProviderStore.getState().provider === provider
+    setPlayError(false)
+    void (async () => {
+      try {
+        const items = await load()
+        if (!current() || !items.length) return
+        const tracks = shuffle ? shuffleArray(items) : items
+        await playTrack(tracks[0], tracks, title, route)
+      } catch {
+        if (current()) setPlayError(true)
+      }
+    })()
+  }
 
   if (!hasRealData) {
     const message = isConnecting
@@ -216,7 +208,7 @@ export function Home() {
         : "Not connected. Go to Settings to connect."
     return (
       <div className="space-y-8">
-        <div className="text-gray-400 text-sm">{message}</div>
+        <div className="text-sm text-gray-400">{message}</div>
       </div>
     )
   }
@@ -230,11 +222,12 @@ export function Home() {
 
   return (
     <div className="space-y-8 pb-8">
+      {playError && <p role="alert" className="text-sm text-red-400">Could not play these items. Please try again.</p>}
       {mixesItems.length > 0 && (
         <ScrollRow title={mixesTitle} titleHref="/stations" restoreKey="home-mixes" centerItems>
           {mixesItems.map((item, idx) => {
             if (item.type !== "playlist") return null
-            const thumb = mixThumbs[item.title] ?? item.thumbUrl
+            const thumb = mixThumbs[mixThumbnailKey(item)] ?? item.thumbUrl
             return (
               <MediaCard
                 key={`${item.id}-${idx}`}
@@ -250,13 +243,7 @@ export function Home() {
                 onPlay={() => {
                   const mixKey = item.providerKey as string | undefined
                   if (!mixKey || !provider?.getMixTracks) return
-                  provider.getMixTracks(mixKey)
-                    .then(tracks => {
-                      if (tracks.length === 0) return
-                      const sorted = shuffleTracks(tracks, item.title)
-                      void playTrack(sorted[0], sorted, item.title, "/mix")
-                    })
-                    .catch(() => {})
+                  playResolved(async () => shuffleTracks(await provider.getMixTracks!(mixKey), item.title), item.title, "/mix", false)
                 }}
                 scrollItem
                 large
@@ -271,18 +258,8 @@ export function Home() {
           title="Recently Added"
           titleHref="/recently-added"
           restoreKey="home-recently-added"
-          onPlayAll={provider ? () => {
-            resolveItemsToTracks(recentlyAdded.slice(0, 30), provider).then(tracks => {
-              if (tracks.length > 0) playTrack(tracks[0], tracks, "Recently Added", null)
-            })
-          } : undefined}
-          onShuffleAll={provider ? () => {
-            resolveItemsToTracks(recentlyAdded.slice(0, 30), provider).then(tracks => {
-              if (tracks.length === 0) return
-              const shuffled = shuffleArray(tracks)
-              playTrack(shuffled[0], shuffled, "Recently Added", null)
-            })
-          } : undefined}
+          onPlayAll={provider ? () => playResolved(() => resolveItemsToTracks(recentlyAdded.slice(0, 30), provider), "Recently Added", null, false) : undefined}
+          onShuffleAll={provider ? () => playResolved(() => resolveItemsToTracks(recentlyAdded.slice(0, 30), provider), "Recently Added", null, true) : undefined}
         >
           {recentlyAdded.slice(0, 30).map((item, idx) => {
             const info = getMediaInfo(item)
@@ -358,18 +335,8 @@ export function Home() {
               title={hub.title}
               titleHref={"/hub/" + encodeURIComponent(hub.identifier)}
               restoreKey={`home-hub-${hub.identifier}`}
-              onPlayAll={provider ? () => {
-                resolveItemsToTracks(items.slice(0, 30), provider).then(tracks => {
-                  if (tracks.length > 0) playTrack(tracks[0], tracks, hub.title, null)
-                })
-              } : undefined}
-              onShuffleAll={provider ? () => {
-                resolveItemsToTracks(items.slice(0, 30), provider).then(tracks => {
-                  if (tracks.length === 0) return
-                  const shuffled = shuffleArray(tracks)
-                  playTrack(shuffled[0], shuffled, hub.title, null)
-                })
-              } : undefined}
+              onPlayAll={provider ? () => playResolved(() => resolveItemsToTracks(items.slice(0, 30), provider), hub.title, null, false) : undefined}
+              onShuffleAll={provider ? () => playResolved(() => resolveItemsToTracks(items.slice(0, 30), provider), hub.title, null, true) : undefined}
             >
               {items.slice(0, 30).map((item, idx) => {
                 const info = getMediaInfo(item, { showYear: isAnniversary })
@@ -402,18 +369,8 @@ export function Home() {
             title={hub.title}
             titleHref={"/hub/" + encodeURIComponent(hub.identifier)}
             restoreKey={`home-hub-${hub.identifier}`}
-            onPlayAll={provider ? () => {
-              resolveItemsToTracks(items.slice(0, 30), provider).then(tracks => {
-                if (tracks.length > 0) playTrack(tracks[0], tracks, hub.title, null)
-              })
-            } : undefined}
-            onShuffleAll={provider ? () => {
-              resolveItemsToTracks(items.slice(0, 30), provider).then(tracks => {
-                if (tracks.length === 0) return
-                const shuffled = shuffleArray(tracks)
-                playTrack(shuffled[0], shuffled, hub.title, null)
-              })
-            } : undefined}
+            onPlayAll={provider ? () => playResolved(() => resolveItemsToTracks(items.slice(0, 30), provider), hub.title, null, false) : undefined}
+            onShuffleAll={provider ? () => playResolved(() => resolveItemsToTracks(items.slice(0, 30), provider), hub.title, null, true) : undefined}
           >
             {items.slice(0, 30).map((item, idx) => {
               const info = getMediaInfo(item, { showYear: isAnniversary })

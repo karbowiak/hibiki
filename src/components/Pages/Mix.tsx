@@ -1,5 +1,13 @@
+import { mixThumbnailKey, useMixThumbnails } from "../../hooks/useMixThumbnails"
+import type { MusicProvider } from "../../providers/types"
 import { ArtworkImage } from "../shared/ArtworkImage"
-import { useEffect, useMemo, useState } from "react"
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react"
 import { Link, useLocation } from "wouter"
 import { useShallow } from "zustand/react/shallow"
 import { useLibraryStore, usePlayerStore } from "../../stores"
@@ -15,11 +23,6 @@ import type { MusicTrack, MusicPlaylist } from "../../types/music"
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-
-function mixTitleToArtistName(title: string): string {
-  return title.replace(/\s+(Mix|Radio|Station|Mix Radio)$/i, "").trim()
-}
 
 function hashString(str: string): number {
   let hash = 5381
@@ -49,18 +52,40 @@ export function shuffleTracks(arr: MusicTrack[], title: string): MusicTrack[] {
   return result
 }
 
-const mixThumbCache = new Map<string, string>()
-
 // ---------------------------------------------------------------------------
 // Module-level state: the mix item selected on the homepage.
 // Plex hub mixes have rating_key=0 — we cannot route by ID, so Home.tsx
 // calls selectMix() before navigating to /mix.
 // ---------------------------------------------------------------------------
 
-let _selectedMix: MusicPlaylist | null = null
+let selectedMix: {
+  item: MusicPlaylist
+  provider: MusicProvider | null
+} | null = null
+const selectionListeners = new Set<() => void>()
+function subscribeSelection(listener: () => void) {
+  selectionListeners.add(listener)
+  return () => {
+    selectionListeners.delete(listener)
+  }
+}
+function getSelection() {
+  return selectedMix
+}
+
+useProviderStore.subscribe((state, previous) => {
+  if (
+    state.provider !== previous.provider &&
+    selectedMix?.provider !== state.provider
+  ) {
+    selectedMix = null
+    for (const listener of selectionListeners) listener()
+  }
+})
 
 export function selectMix(item: MusicPlaylist) {
-  _selectedMix = item
+  selectedMix = { item, provider: useProviderStore.getState().provider }
+  for (const listener of selectionListeners) listener()
 }
 
 // ---------------------------------------------------------------------------
@@ -70,11 +95,12 @@ export function selectMix(item: MusicPlaylist) {
 export function MixPage() {
   const [, navigate] = useLocation()
   const hasMixTracks = useCapability("mixTracks")
-  const [mixItem] = useState<MusicPlaylist | null>(() => _selectedMix)
-  const provider = useProviderStore(s => s.provider)
+  const selection = useSyncExternalStore(subscribeSelection, getSelection)
+  const provider = useProviderStore((s) => s.provider)
+  const mixItem = selection?.provider === provider ? selection.item : null
 
   const { playTrack, playRadio, addToQueue, currentTrack } = usePlayerStore(
-    useShallow(s => ({
+    useShallow((s) => ({
       playTrack: s.playTrack,
       playRadio: s.playRadio,
       addToQueue: s.addToQueue,
@@ -82,7 +108,10 @@ export function MixPage() {
     }))
   )
 
-  const { visible: visibleCols, toggle: toggleCol } = usePlaylistColumns("plex-mix-columns", ["album" as const])
+  const { visible: visibleCols, toggle: toggleCol } = usePlaylistColumns(
+    "plex-mix-columns",
+    ["album" as const]
+  )
 
   const [filterQuery, setFilterQuery] = useState("")
   const [debouncedQuery, setDebouncedQuery] = useState("")
@@ -92,26 +121,45 @@ export function MixPage() {
     return () => clearTimeout(t)
   }, [filterQuery])
 
-  type SortCol = "default" | "title" | "artist" | "album" | "year" | "plays" | "popularity" | "label" | "bitrate" | "format" | "added_at" | "rating" | "rated_at" | "duration"
+  type SortCol =
+    | "default"
+    | "title"
+    | "artist"
+    | "album"
+    | "year"
+    | "plays"
+    | "popularity"
+    | "label"
+    | "bitrate"
+    | "format"
+    | "added_at"
+    | "rating"
+    | "rated_at"
+    | "duration"
   const { sortCol, sortDir, handleSort } = useTableSort<SortCol>()
-
-  if (!hasMixTracks) { navigate("/"); return null }
 
   const mixKey = mixItem?.providerKey as string | undefined
 
-  const [tracks, setTracks] = useState<MusicTrack[]>(() => {
-    if (!mixKey) return []
-    // Shuffle on mount so the displayed list is randomised immediately.
-    return shuffleTracks(useLibraryStore.getState().mixTracksCache[mixKey] ?? [], mixItem?.title ?? mixKey)
-  })
-  const [isLoading, setIsLoading] = useState(() => {
-    if (!mixKey) return false
-    const cached = useLibraryStore.getState().mixTracksCache[mixKey]
-    return !cached || cached.length === 0
-  })
-  const [artistThumb, setArtistThumb] = useState<string | null>(
-    () => mixItem ? (mixThumbCache.get(mixItem.title) ?? null) : null
+  const [tracks, setTracks] = useState<MusicTrack[]>([])
+  const [isLoading, setIsLoading] = useState(false)
+  const [loadError, setLoadError] = useState(false)
+  const [loadAttempt, setLoadAttempt] = useState(0)
+  const thumbnailItems = useMemo(
+    () => (mixItem ? [{ ...mixItem, type: "playlist" as const }] : []),
+    [mixItem]
   )
+  const mixThumbs = useMixThumbnails(
+    hasMixTracks ? provider : null,
+    thumbnailItems
+  )
+
+  useEffect(() => {
+    if (!hasMixTracks) navigate("/")
+  }, [hasMixTracks, navigate])
+  useLayoutEffect(() => {
+    setFilterQuery("")
+    setDebouncedQuery("")
+  }, [provider, mixItem])
 
   // Unique artists derived from the loaded track list, preserving first-seen order.
   const artists = useMemo(() => {
@@ -126,51 +174,48 @@ export function MixPage() {
     return result
   }, [tracks])
 
-  // Fetch the track list for this mix (skipped if already pre-cached).
-  // Cache hits are already shuffled and set via the useState initializer above.
-  useEffect(() => {
-    if (!mixKey || !provider) return
+  useLayoutEffect(() => {
+    let active = true
+    const current = () =>
+      active && useProviderStore.getState().provider === provider
+    setTracks([])
+    setLoadError(false)
+    setIsLoading(false)
+    if (!mixKey || !provider || !hasMixTracks)
+      return () => {
+        active = false
+      }
     const cached = useLibraryStore.getState().mixTracksCache[mixKey]
-    if (cached && cached.length > 0) {
-      setIsLoading(false)
-      return
+    if (loadAttempt === 0 && cached?.length) {
+      setTracks(shuffleTracks(cached, mixItem?.title ?? mixKey))
+      return () => {
+        active = false
+      }
     }
     setIsLoading(true)
-    const fetch = provider.getMixTracks?.(mixKey)
-    if (!fetch) { setIsLoading(false); return }
-    fetch
-      .then(t => setTracks(shuffleTracks(t, mixItem?.title ?? mixKey)))
-      .catch(() => setTracks([]))
-      .finally(() => setIsLoading(false))
-  }, [mixKey, provider])
-
-  // Look up the artist thumbnail (e.g. "Ado Mix" → search for "Ado").
-  useEffect(() => {
-    if (!mixItem || !provider) return
-    const cached = mixThumbCache.get(mixItem.title)
-    if (cached) { setArtistThumb(cached); return }
-    const artistName = mixTitleToArtistName(mixItem.title)
-    if (!artistName) return
-    provider.search(artistName, "artist")
-      .then(results => {
-        const artist =
-          results.find(r => r.type === "artist" && r.title.toLowerCase() === artistName.toLowerCase()) ??
-          results.find(r => r.type === "artist")
-        if (artist && artist.type === "artist" && artist.thumbUrl) {
-          mixThumbCache.set(mixItem.title, artist.thumbUrl)
-          setArtistThumb(artist.thumbUrl)
-        }
-      })
-      .catch(() => {})
-  }, [mixItem?.title, provider])
+    void (async () => {
+      try {
+        const items = (await provider.getMixTracks?.(mixKey)) ?? []
+        if (current()) setTracks(shuffleTracks(items, mixItem?.title ?? mixKey))
+      } catch {
+        if (current()) setLoadError(true)
+      } finally {
+        if (current()) setIsLoading(false)
+      }
+    })()
+    return () => {
+      active = false
+    }
+  }, [mixKey, mixItem, provider, hasMixTracks, loadAttempt])
 
   const filteredTracks = useMemo(() => {
     if (!debouncedQuery) return tracks
     const q = debouncedQuery.toLowerCase()
-    return tracks.filter(t =>
-      t.title.toLowerCase().includes(q) ||
-      t.artistName.toLowerCase().includes(q) ||
-      t.albumName.toLowerCase().includes(q)
+    return tracks.filter(
+      (t) =>
+        t.title.toLowerCase().includes(q) ||
+        t.artistName.toLowerCase().includes(q) ||
+        t.albumName.toLowerCase().includes(q)
     )
   }, [tracks, debouncedQuery])
 
@@ -202,16 +247,20 @@ export function MixPage() {
     return items
   }, [filteredTracks, sortCol, sortDir])
 
+  if (!hasMixTracks) return null
+
   if (!mixItem) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-center">
         <h1 className="mb-2 text-xl font-bold">No mix selected</h1>
-        <p className="text-sm text-white/50">Navigate to a mix from the home page.</p>
+        <p className="text-sm text-white/50">
+          Navigate to a mix from the home page.
+        </p>
       </div>
     )
   }
 
-  const displayThumb = artistThumb ?? mixItem.thumbUrl
+  const displayThumb = mixThumbs[mixThumbnailKey(mixItem)] ?? mixItem.thumbUrl
   const totalMs = tracks.reduce((sum, t) => sum + t.duration, 0)
 
   function handlePlayInOrder() {
@@ -312,27 +361,43 @@ export function MixPage() {
         </div>
       </div>
 
-      {/* Track list */}
-      <TrackTable
-        tracks={sortedTracks}
-        visibleCols={visibleCols}
-        toggleCol={toggleCol}
-        sortCol={sortCol}
-        sortDir={sortDir}
-        onSort={handleSort}
-        onPlay={(track, all) => void playTrack(track, all, mixItem.title, "/mix")}
-        onAddToQueue={addToQueue}
-        onPlayRadio={playRadio}
-        columns={ALL_COLUMNS}
-        searchPlaceholder="Search in mix…  ⌘K"
-        filterQuery={filterQuery}
-        onFilterChange={setFilterQuery}
-        defaultResetTitle="Restore shuffled order"
-        isLoading={isLoading}
-        loadedCount={tracks.length}
-        emptyMessage="No tracks found for this mix."
-        currentTrackId={currentTrack?.id ?? null}
-      />
+      {loadError ? (
+        <div
+          role="alert"
+          className="mx-8 my-4 rounded-lg border border-red-400/30 p-4 text-sm text-red-400"
+        >
+          <p>Could not load this mix.</p>
+          <button
+            onClick={() => setLoadAttempt((value) => value + 1)}
+            className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white"
+          >
+            Try again
+          </button>
+        </div>
+      ) : (
+        <TrackTable
+          tracks={sortedTracks}
+          visibleCols={visibleCols}
+          toggleCol={toggleCol}
+          sortCol={sortCol}
+          sortDir={sortDir}
+          onSort={handleSort}
+          onPlay={(track, all) =>
+            void playTrack(track, all, mixItem.title, "/mix")
+          }
+          onAddToQueue={addToQueue}
+          onPlayRadio={playRadio}
+          columns={ALL_COLUMNS}
+          searchPlaceholder="Search in mix…  ⌘K"
+          filterQuery={filterQuery}
+          onFilterChange={setFilterQuery}
+          defaultResetTitle="Restore shuffled order"
+          isLoading={isLoading}
+          loadedCount={tracks.length}
+          emptyMessage="No tracks found for this mix."
+          currentTrackId={currentTrack?.id ?? null}
+        />
+      )}
     </div>
   )
 }
