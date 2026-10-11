@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, startTransition } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useLocation } from "wouter"
-import { usePlayerStore } from "../../stores"
+import { usePlayerStore, useUIStore } from "../../stores"
 import { useProviderStore } from "../../stores/providerStore"
 import { useCapability } from "../../hooks/useCapability"
 import { prefetchAlbum } from "../../stores/metadataCache"
@@ -22,69 +22,141 @@ function findScrollContainer(el: HTMLElement | null): HTMLElement | null {
   return null
 }
 
-export function TagPage({ tagType, tagName }: { tagType: TagType; tagName: string }) {
+export function TagPage({
+  tagType,
+  tagName,
+}: {
+  tagType: TagType
+  tagName: string
+}) {
   const [, navigate] = useLocation()
   const hasTags = useCapability("tags")
-  const playFromUri = usePlayerStore(s => s.playFromUri)
+  const playFromUri = usePlayerStore((s) => s.playFromUri)
 
+  const provider = useProviderStore((s) => s.provider)
+  const pageRefreshKey = useUIStore((s) => s.pageRefreshKey)
   const [albums, setAlbums] = useState<MusicAlbum[]>([])
   const [totalCount, setTotalCount] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [pageError, setPageError] = useState<string | null>(null)
+  const [hasMore, setHasMore] = useState(false)
+  const [retry, setRetry] = useState(0)
   const sentinelRef = useRef<HTMLDivElement>(null)
+  const sessionRef = useRef<{
+    active: boolean
+    pending: boolean
+    offset: number
+  } | null>(null)
 
-  if (!hasTags) { navigate("/"); return null }
-
-  // Initial fetch — reset state and load first page
   useEffect(() => {
-    const provider = useProviderStore.getState().provider
-    if (!provider?.getItemsByTag) return
-    setIsLoading(true)
+    if (!hasTags) navigate("/")
+  }, [hasTags, navigate])
+
+  useLayoutEffect(() => {
+    const session = { active: true, pending: true, offset: 0 }
+    sessionRef.current = session
+    const current = () =>
+      session.active && useProviderStore.getState().provider === provider
+    setAlbums([])
+    setTotalCount(0)
+    setHasMore(false)
+    setIsLoadingMore(false)
+    setPageError(null)
     setError(null)
-    startTransition(() => { setAlbums([]); setTotalCount(0) })
-    provider.getItemsByTag(tagType, tagName, "9", PAGE_SIZE, 0)
+    setIsLoading(hasTags)
+    if (!hasTags || !provider?.getItemsByTag) {
+      setIsLoading(false)
+      return () => {
+        session.active = false
+      }
+    }
+    void provider
+      .getItemsByTag(tagType, tagName, "9", PAGE_SIZE, 0)
       .then(({ items, total }) => {
-        startTransition(() => {
-          setAlbums(items.filter((m): m is MusicAlbum & { type: "album" } => m.type === "album"))
-          setTotalCount(total)
-        })
+        if (!current()) return
+        session.offset = items.length
+        setAlbums(
+          items.filter(
+            (m): m is MusicAlbum & { type: "album" } => m.type === "album"
+          )
+        )
+        setTotalCount(total)
+        setHasMore(items.length > 0 && session.offset < total)
       })
-      .catch(e => setError(String(e)))
-      .finally(() => setIsLoading(false))
-  }, [tagType, tagName])
+      .catch((e) => {
+        if (current()) setError(String(e))
+      })
+      .finally(() => {
+        if (!current()) return
+        session.pending = false
+        setIsLoading(false)
+      })
+    return () => {
+      session.active = false
+    }
+  }, [provider, hasTags, tagType, tagName, pageRefreshKey, retry])
 
   async function loadMore() {
-    const provider = useProviderStore.getState().provider
-    if (!provider?.getItemsByTag || isLoadingMore) return
+    const session = sessionRef.current
+    if (
+      !session?.active ||
+      session.pending ||
+      !provider?.getItemsByTag ||
+      !hasMore
+    )
+      return
+    const current = () =>
+      session.active && useProviderStore.getState().provider === provider
+    session.pending = true
     setIsLoadingMore(true)
+    setPageError(null)
     try {
-      const { items } = await provider.getItemsByTag(tagType, tagName, "9", PAGE_SIZE, albums.length)
-      startTransition(() =>
-        setAlbums(prev => [...prev, ...items.filter((m): m is MusicAlbum & { type: "album" } => m.type === "album")])
+      const { items, total } = await provider.getItemsByTag(
+        tagType,
+        tagName,
+        "9",
+        PAGE_SIZE,
+        session.offset
       )
+      if (!current()) return
+      session.offset += items.length
+      setAlbums((previous) => {
+        const ids = new Set(previous.map((album) => album.id))
+        const next = items.filter((m): m is MusicAlbum & { type: "album" } => {
+          if (m.type !== "album" || ids.has(m.id)) return false
+          ids.add(m.id)
+          return true
+        })
+        return [...previous, ...next]
+      })
+      setTotalCount(total)
+      setHasMore(items.length > 0 && session.offset < total)
+    } catch (e) {
+      if (current()) setPageError(String(e))
     } finally {
-      setIsLoadingMore(false)
+      if (current()) {
+        session.pending = false
+        setIsLoadingMore(false)
+      }
     }
   }
 
-  // Infinite scroll — re-create observer when loading state or completion changes
   useEffect(() => {
     const sentinel = sentinelRef.current
-    if (!sentinel) return
-    if (isLoading || isLoadingMore || albums.length >= totalCount) return
-
-    const root = findScrollContainer(sentinel)
+    if (!sentinel || isLoading || isLoadingMore || !hasMore || pageError) return
     const observer = new IntersectionObserver(
-      entries => {
+      (entries) => {
         if (entries[0]?.isIntersecting) void loadMore()
       },
-      { root, rootMargin: "200px" },
+      { root: findScrollContainer(sentinel), rootMargin: "200px" }
     )
     observer.observe(sentinel)
     return () => observer.disconnect()
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoading, isLoadingMore, albums.length >= totalCount])
+  }, [provider, tagType, tagName, isLoading, isLoadingMore, hasMore, pageError])
+
+  if (!hasTags) return null
 
   function handlePlayAll() {
     const provider = useProviderStore.getState().provider
@@ -93,7 +165,7 @@ export function TagPage({ tagType, tagName }: { tagType: TagType; tagName: strin
     void playFromUri(uri, true, tagName, null)
   }
 
-  const isFullyLoaded = albums.length >= totalCount && totalCount > 0
+  const isFullyLoaded = !hasMore
 
   return (
     <div className="p-8">
@@ -119,15 +191,31 @@ export function TagPage({ tagType, tagName }: { tagType: TagType; tagName: strin
         )}
       </div>
 
-      {isLoading && <div className="text-sm text-gray-400">Loading…</div>}
-      {error && <div className="text-sm text-red-400">{error}</div>}
+      {isLoading && (
+        <div role="status" className="text-sm text-gray-400">
+          Loading…
+        </div>
+      )}
+      {error && (
+        <div role="alert" className="text-sm text-red-400">
+          <p>Could not load albums: {error}</p>
+          <button
+            onClick={() => setRetry((value) => value + 1)}
+            className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white"
+          >
+            Try again
+          </button>
+        </div>
+      )}
       {!isLoading && !error && albums.length === 0 && (
-        <div className="text-sm text-gray-400">No albums found for "{tagName}".</div>
+        <div className="text-sm text-gray-400">
+          No albums found for "{tagName}".
+        </div>
       )}
 
       {albums.length > 0 && (
         <MediaGrid>
-          {albums.map(album => (
+          {albums.map((album) => (
             <MediaCard
               key={album.id}
               title={album.title}
@@ -135,10 +223,33 @@ export function TagPage({ tagType, tagName }: { tagType: TagType; tagName: strin
               thumb={album.thumbUrl}
               href={`/album/${album.id}`}
               prefetch={() => prefetchAlbum(album.id)}
-              dragPayload={{ type: "album", ids: [album.id], label: album.title }}
+              dragPayload={{
+                type: "album",
+                ids: [album.id],
+                label: album.title,
+              }}
             />
           ))}
         </MediaGrid>
+      )}
+
+      {pageError && (
+        <p role="alert" className="mt-4 text-sm text-red-400">
+          Could not load more albums: {pageError}
+        </p>
+      )}
+      {hasMore && (
+        <button
+          onClick={() => void loadMore()}
+          disabled={isLoadingMore}
+          className="mt-4 rounded-full border border-white/20 px-4 py-2 text-sm disabled:opacity-50"
+        >
+          {isLoadingMore
+            ? "Loading more…"
+            : pageError
+              ? "Try loading more again"
+              : "Load more albums"}
+        </button>
       )}
 
       {/* Sentinel — always in DOM so IntersectionObserver can attach */}
@@ -147,15 +258,27 @@ export function TagPage({ tagType, tagName }: { tagType: TagType; tagName: strin
       {/* Footer status */}
       <div className="mt-4 flex items-center justify-center gap-2 text-xs text-gray-500">
         {isLoadingMore && (
-          <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <svg
+            className="animate-spin"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
             <path d="M21 12a9 9 0 1 1-6.219-8.56" />
           </svg>
         )}
-        {!isLoading && totalCount > 0 && (
-          isFullyLoaded
-            ? <span>{totalCount} albums</span>
-            : <span>{albums.length} of {totalCount} albums</span>
-        )}
+        {!isLoading &&
+          totalCount > 0 &&
+          (isFullyLoaded ? (
+            <span>{albums.length} albums</span>
+          ) : (
+            <span>
+              {albums.length} of {totalCount} albums
+            </span>
+          ))}
       </div>
     </div>
   )

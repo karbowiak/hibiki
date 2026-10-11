@@ -1,7 +1,13 @@
+import { useProviderStore } from "../stores/providerStore"
 import { useLocation } from "wouter"
 import { useEffect, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
-import { useSearchStore, useConnectionStore, useUIStore, useLibraryStore } from "../stores"
+import {
+  useSearchStore,
+  useConnectionStore,
+  useUIStore,
+  useLibraryStore,
+} from "../stores"
 import { metadataBackends } from "../metadata"
 import { clearImageCache } from "../lib/imageCache"
 import { ActivityIndicator } from "./ActivityIndicator"
@@ -9,12 +15,36 @@ import { SearchDropdown } from "./SearchDropdown"
 import { IS_MACOS } from "../lib/platform"
 
 export function TopBar() {
+  const provider = useProviderStore((s) => s.provider)
   const [location, navigate] = useLocation()
-  const { search, clear, setQuery, query } = useSearchStore(useShallow(s => ({ search: s.search, clear: s.clear, setQuery: s.setQuery, query: s.query })))
-  const { musicSectionId, isConnected } = useConnectionStore(useShallow(s => ({ musicSectionId: s.musicSectionId, isConnected: s.isConnected })))
-  const wsConnected = useLibraryStore(s => s.wsConnected)
-  const { isRefreshing, setIsRefreshing, incrementPageRefreshKey } = useUIStore(useShallow(s => ({ isRefreshing: s.isRefreshing, setIsRefreshing: s.setIsRefreshing, incrementPageRefreshKey: s.incrementPageRefreshKey })))
-  const { refreshAll, invalidateCache } = useLibraryStore(useShallow(s => ({ refreshAll: s.refreshAll, invalidateCache: s.invalidateCache })))
+  const { search, clear, setQuery, query } = useSearchStore(
+    useShallow((s) => ({
+      search: s.search,
+      clear: s.clear,
+      setQuery: s.setQuery,
+      query: s.query,
+    }))
+  )
+  const { musicSectionId, isConnected } = useConnectionStore(
+    useShallow((s) => ({
+      musicSectionId: s.musicSectionId,
+      isConnected: s.isConnected,
+    }))
+  )
+  const wsConnected = useLibraryStore((s) => s.wsConnected)
+  const { isRefreshing, setIsRefreshing, incrementPageRefreshKey } = useUIStore(
+    useShallow((s) => ({
+      isRefreshing: s.isRefreshing,
+      setIsRefreshing: s.setIsRefreshing,
+      incrementPageRefreshKey: s.incrementPageRefreshKey,
+    }))
+  )
+  const { refreshAll, invalidateCache } = useLibraryStore(
+    useShallow((s) => ({
+      refreshAll: s.refreshAll,
+      invalidateCache: s.invalidateCache,
+    }))
+  )
   const [localQuery, setLocalQuery] = useState(query)
   const [showDropdown, setShowDropdown] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
@@ -24,13 +54,20 @@ export function TopBar() {
   useEffect(() => {
     const timer = setTimeout(() => {
       if (localQuery.trim()) {
+        const state = useSearchStore.getState()
+        if (state.query === localQuery && !state.isSearching) return
         void search(localQuery)
       } else if (!localQuery.trim()) {
         clear()
       }
     }, 350)
     return () => clearTimeout(timer)
-  }, [localQuery, musicSectionId])
+  }, [localQuery, musicSectionId, provider])
+
+  // Recent searches and provider changes update the canonical query externally.
+  useEffect(() => {
+    setLocalQuery(query)
+  }, [query])
 
   // Keep store in sync immediately for showResults logic
   useEffect(() => {
@@ -45,8 +82,12 @@ export function TopBar() {
 
   // Listen for global hotkey events from useGlobalHotkeys
   useEffect(() => {
-    function onSearchFocus() { inputRef.current?.focus() }
-    function onRefresh() { void handleRefresh() }
+    function onSearchFocus() {
+      inputRef.current?.focus()
+    }
+    function onRefresh() {
+      void handleRefresh()
+    }
     window.addEventListener("plexify:search-focus", onSearchFocus)
     window.addEventListener("plexify:refresh", onRefresh)
     return () => {
@@ -62,18 +103,16 @@ export function TopBar() {
       invalidateCache()
       incrementPageRefreshKey()
       // Clear external metadata caches so they re-fetch fresh
-      metadataBackends.forEach(b => b.clearCache?.())
-      await Promise.all([
-        clearImageCache(),
-        refreshAll(),
-      ])
+      metadataBackends.forEach((b) => b.clearCache?.())
+      await Promise.all([clearImageCache(), refreshAll()])
     } finally {
       setIsRefreshing(false)
     }
   }
 
   const handleInputFocus = () => {
-    if (location !== "/search" && localQuery.trim().length > 0) setShowDropdown(true)
+    if (location !== "/search" && localQuery.trim().length > 0)
+      setShowDropdown(true)
     setActiveIndex(-1)
   }
 
@@ -91,10 +130,10 @@ export function TopBar() {
     }
     if (e.key === "ArrowDown") {
       e.preventDefault()
-      setActiveIndex(i => i + 1)
+      setActiveIndex((i) => i + 1)
     } else if (e.key === "ArrowUp") {
       e.preventDefault()
-      setActiveIndex(i => Math.max(-1, i - 1))
+      setActiveIndex((i) => Math.max(-1, i - 1))
     } else if (e.key === "Escape") {
       e.preventDefault()
       setShowDropdown(false)
@@ -116,15 +155,28 @@ export function TopBar() {
 
   return (
     // pt-8 gives 32px of clearance for the macOS traffic-light buttons
-    <div data-tauri-drag-region className={`mb-3 flex flex-row items-center ${IS_MACOS ? "pt-8" : "pt-2"}`} style={{ paddingInline: "var(--spacing-topbar)" }}>
-      <div data-tauri-drag-region className="flex grow flex-row items-center gap-4">
+    <div
+      data-tauri-drag-region
+      className={`mb-3 flex flex-row items-center ${IS_MACOS ? "pt-8" : "pt-2"}`}
+      style={{ paddingInline: "var(--spacing-topbar)" }}
+    >
+      <div
+        data-tauri-drag-region
+        className="flex grow flex-row items-center gap-4"
+      >
         {/* Back button */}
         <button
           onClick={() => window.history.back()}
           aria-label="Go back"
-          className="h-fit rounded-full bg-app-surface p-2 hover:bg-app-surface-hover transition-colors"
+          className="h-fit rounded-full bg-app-surface p-2 transition-colors hover:bg-app-surface-hover"
         >
-          <svg role="img" height="16" width="16" className="fill-[var(--text-primary)]" viewBox="0 0 16 16">
+          <svg
+            role="img"
+            height="16"
+            width="16"
+            className="fill-[var(--text-primary)]"
+            viewBox="0 0 16 16"
+          >
             <path d="M11.03.47a.75.75 0 0 1 0 1.06L4.56 8l6.47 6.47a.75.75 0 1 1-1.06 1.06L2.44 8 9.97.47a.75.75 0 0 1 1.06 0z" />
           </svg>
         </button>
@@ -133,9 +185,15 @@ export function TopBar() {
         <button
           onClick={() => window.history.forward()}
           aria-label="Go forward"
-          className="h-fit rounded-full bg-app-surface p-2 hover:bg-app-surface-hover transition-colors"
+          className="h-fit rounded-full bg-app-surface p-2 transition-colors hover:bg-app-surface-hover"
         >
-          <svg role="img" height="16" width="16" className="fill-[var(--text-primary)]" viewBox="0 0 16 16">
+          <svg
+            role="img"
+            height="16"
+            width="16"
+            className="fill-[var(--text-primary)]"
+            viewBox="0 0 16 16"
+          >
             <path d="M4.97.47a.75.75 0 0 0 0 1.06L11.44 8l-6.47 6.47a.75.75 0 1 0 1.06 1.06L13.56 8 6.03.47a.75.75 0 0 0-1.06 0z" />
           </svg>
         </button>
@@ -143,8 +201,9 @@ export function TopBar() {
         {/* Search input — always visible, wired to store */}
         <div className="relative text-sm text-black">
           <svg
-            height="16" width="16"
-            className="absolute left-3 top-1/2 -translate-y-1/2 fill-[#121212] pointer-events-none"
+            height="16"
+            width="16"
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 fill-[#121212]"
             viewBox="0 0 24 24"
           >
             <path d="M10.533 1.279c-5.18 0-9.407 4.14-9.407 9.279s4.226 9.279 9.407 9.279c2.234 0 4.29-.77 5.907-2.058l4.353 4.353a1 1 0 1 0 1.414-1.414l-4.344-4.344a9.157 9.157 0 0 0 2.077-5.816c0-5.14-4.226-9.28-9.407-9.28zm-7.407 9.279c0-4.006 3.302-7.28 7.407-7.28s7.407 3.274 7.407 7.28-3.302 7.279-7.407 7.279-7.407-3.273-7.407-7.28z" />
@@ -152,8 +211,10 @@ export function TopBar() {
           <input
             ref={inputRef}
             type="text"
+            aria-label="Search your music library"
+            data-library-search="true"
             value={localQuery}
-            onChange={e => handleQueryChange(e.target.value)}
+            onChange={(e) => handleQueryChange(e.target.value)}
             onFocus={handleInputFocus}
             onBlur={handleInputBlur}
             onKeyDown={handleInputKeyDown}
@@ -163,11 +224,20 @@ export function TopBar() {
           {localQuery && (
             <button
               type="button"
-              onMouseDown={e => e.preventDefault()}
-              onClick={() => { setLocalQuery(""); clear(); setShowDropdown(false) }}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setLocalQuery("")
+                clear()
+                setShowDropdown(false)
+              }}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-[#121212]/40 hover:text-[#121212]"
             >
-              <svg height="12" width="12" viewBox="0 0 16 16" fill="currentColor">
+              <svg
+                height="12"
+                width="12"
+                viewBox="0 0 16 16"
+                fill="currentColor"
+              >
                 <path d="M2.47 2.47a.75.75 0 0 1 1.06 0L8 6.94l4.47-4.47a.75.75 0 1 1 1.06 1.06L9.06 8l4.47 4.47a.75.75 0 1 1-1.06 1.06L8 9.06l-4.47 4.47a.75.75 0 0 1-1.06-1.06L6.94 8 2.47 3.53a.75.75 0 0 1 0-1.06z" />
               </svg>
             </button>
@@ -191,10 +261,13 @@ export function TopBar() {
           onClick={() => void handleRefresh()}
           disabled={isRefreshing || !isConnected}
           title="Refresh library (⌘R)"
-          className="flex h-8 w-8 items-center justify-center rounded-full bg-app-surface hover:bg-app-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-app-surface transition-colors hover:bg-app-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
         >
           <svg
-            height="15" width="15" viewBox="0 0 24 24" fill="currentColor"
+            height="15"
+            width="15"
+            viewBox="0 0 24 24"
+            fill="currentColor"
             className={`text-[color:var(--text-secondary)] ${isRefreshing ? "animate-spin" : ""}`}
           >
             <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
@@ -203,21 +276,51 @@ export function TopBar() {
 
         {/* Settings toggle — click again to go back */}
         <button
-          onClick={() => location.startsWith("/settings") ? window.history.back() : navigate("/settings")}
+          onClick={() =>
+            location.startsWith("/settings")
+              ? window.history.back()
+              : navigate("/settings")
+          }
           className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
             location.startsWith("/settings")
-              ? "bg-accent/15 border border-accent/30 hover:bg-accent/25"
+              ? "border border-accent/30 bg-accent/15 hover:bg-accent/25"
               : "bg-app-surface hover:bg-app-surface-hover"
           }`}
-          title={location.startsWith("/settings") ? "Close Settings" : "Settings"}
+          title={
+            location.startsWith("/settings") ? "Close Settings" : "Settings"
+          }
         >
-          <span className={`h-2 w-2 rounded-full flex-shrink-0 ${
-            !isConnected ? "bg-red-500" : wsConnected ? "bg-green-500" : "bg-amber-500"
-          }`} />
-          <svg height="16" width="16" viewBox="0 0 24 24" fill="currentColor" className={location.startsWith("/settings") ? "text-accent" : "text-[color:var(--text-secondary)]"}>
+          <span
+            className={`h-2 w-2 flex-shrink-0 rounded-full ${
+              !isConnected
+                ? "bg-red-500"
+                : wsConnected
+                  ? "bg-green-500"
+                  : "bg-amber-500"
+            }`}
+          />
+          <svg
+            height="16"
+            width="16"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            className={
+              location.startsWith("/settings")
+                ? "text-accent"
+                : "text-[color:var(--text-secondary)]"
+            }
+          >
             <path d="M12 15.5A3.5 3.5 0 0 1 8.5 12 3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5 3.5 3.5 0 0 1-3.5 3.5m7.43-2.92c.04-.34.07-.68.07-1.08s-.03-.73-.07-1.08l2.32-1.8c.21-.16.27-.44.14-.67l-2.2-3.81c-.13-.24-.41-.31-.65-.24l-2.74 1.1c-.57-.44-1.18-.81-1.86-1.09l-.42-2.9c-.04-.26-.26-.44-.52-.44H9.5c-.26 0-.48.18-.52.44l-.42 2.9c-.68.28-1.29.65-1.86 1.09l-2.74-1.1c-.24-.07-.52 0-.65.24l-2.2 3.81c-.13.24-.07.52.14.67l2.32 1.8c-.04.35-.07.69-.07 1.08s.03.73.07 1.08L2.25 14.3c-.21.16-.27.44-.14.67l2.2 3.81c.13.24.41.31.65.24l2.74-1.1c.57.44 1.18.81 1.86 1.09l.42 2.9c.04.26.26.44.52.44h4.4c.26 0 .48-.18.52-.44l.42-2.9c.68-.28 1.29-.65 1.86-1.09l2.74 1.1c.24.07.52 0 .65-.24l2.2-3.81c.13-.24.07-.52-.14-.67l-2.32-1.8z" />
           </svg>
-          <span className={location.startsWith("/settings") ? "text-accent" : "text-[color:var(--text-primary)]"}>Settings</span>
+          <span
+            className={
+              location.startsWith("/settings")
+                ? "text-accent"
+                : "text-[color:var(--text-primary)]"
+            }
+          >
+            Settings
+          </span>
         </button>
       </div>
     </div>

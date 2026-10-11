@@ -4,7 +4,12 @@ import { useLocation } from "wouter"
 import { useShallow } from "zustand/react/shallow"
 import { useSearchStore } from "../stores"
 import { usePlayerStore } from "../stores/playerStore"
-import type { MusicItem, MusicTrack, MusicAlbum, MusicArtist } from "../types/music"
+import type {
+  MusicItem,
+  MusicTrack,
+  MusicAlbum,
+  MusicArtist,
+} from "../types/music"
 
 interface Props {
   activeIndex: number
@@ -24,21 +29,44 @@ function buildItems(results: MusicItem[]): DropdownItem[] {
 
   for (const item of results) {
     if (item.type === "artist" && artists.length < 3) {
-      artists.push({ kind: "artist", item: item as MusicArtist & { type: "artist" }, href: `/artist/${item.id}` })
+      artists.push({
+        kind: "artist",
+        item: item as MusicArtist & { type: "artist" },
+        href: `/artist/${item.id}`,
+      })
     } else if (item.type === "album" && albums.length < 3) {
-      albums.push({ kind: "album", item: item as MusicAlbum & { type: "album" }, href: `/album/${item.id}` })
+      albums.push({
+        kind: "album",
+        item: item as MusicAlbum & { type: "album" },
+        href: `/album/${item.id}`,
+      })
     } else if (item.type === "track" && tracks.length < 3) {
-      tracks.push({ kind: "track", item: item as MusicTrack & { type: "track" } })
+      tracks.push({
+        kind: "track",
+        item: item as MusicTrack & { type: "track" },
+      })
     }
   }
 
   return [...artists, ...albums, ...tracks]
 }
 
-export function SearchDropdown({ activeIndex, onActiveIndexChange, onClose }: Props) {
+export function SearchDropdown({
+  activeIndex,
+  onActiveIndexChange,
+  onClose,
+}: Props) {
   const [, navigate] = useLocation()
-  const { results, query } = useSearchStore(useShallow(s => ({ results: s.results, query: s.query })))
-  const playTrack = usePlayerStore(s => s.playTrack)
+  const { results, query, error, isSearching, search } = useSearchStore(
+    useShallow((s) => ({
+      results: s.results,
+      query: s.query,
+      error: s.error,
+      isSearching: s.isSearching,
+      search: s.search,
+    }))
+  )
+  const playTrack = usePlayerStore((s) => s.playTrack)
 
   const items = buildItems(results)
   const totalRows = items.length + 1 // +1 for "See all results"
@@ -70,6 +98,8 @@ export function SearchDropdown({ activeIndex, onActiveIndexChange, onClose }: Pr
   // Allow the parent's Enter key handler to activate the currently highlighted item
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
+      const target = e.target as Element | null
+      if (target?.getAttribute?.("data-library-search") !== "true") return
       if (e.key === "Enter" && activeIndex >= 0) {
         e.preventDefault()
         activateItem(activeIndex)
@@ -79,10 +109,40 @@ export function SearchDropdown({ activeIndex, onActiveIndexChange, onClose }: Pr
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [activeIndex, items])
 
-  if (results.length === 0) return null
+  if (results.length === 0) {
+    if (!query.trim()) return null
+    return (
+      <div
+        onKeyDown={(event) => event.stopPropagation()}
+        className="absolute left-0 top-full z-50 mt-1 w-[420px] rounded-xl bg-app-surface p-4 shadow-2xl"
+      >
+        {isSearching ? (
+          <p role="status" className="text-sm text-gray-400">
+            Searching…
+          </p>
+        ) : error ? (
+          <div role="alert" className="text-sm text-red-400">
+            <p>Search failed: {error}</p>
+            <button
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => void search(query)}
+              className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white"
+            >
+              Try again
+            </button>
+          </div>
+        ) : (
+          <p className="text-sm text-gray-400">No results for "{query}".</p>
+        )}
+      </div>
+    )
+  }
 
   return (
-    <div className="absolute top-full left-0 z-50 mt-1 w-[420px] rounded-xl bg-app-surface shadow-2xl overflow-hidden">
+    <div
+      onKeyDown={(event) => event.stopPropagation()}
+      className="absolute left-0 top-full z-50 mt-1 w-[420px] overflow-hidden rounded-xl bg-app-surface shadow-2xl"
+    >
       {items.map((row, idx) => {
         const isActive = idx === activeIndex
         if (row.kind === "artist") {
@@ -90,20 +150,29 @@ export function SearchDropdown({ activeIndex, onActiveIndexChange, onClose }: Pr
           return (
             <div
               key={row.item.id}
-              className={`flex items-center gap-3 px-3 py-2 cursor-pointer ${isActive ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
+              className={`flex cursor-pointer items-center gap-3 px-3 py-2 ${isActive ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
               onMouseEnter={() => onActiveIndexChange(idx)}
-              onMouseDown={e => e.preventDefault()}
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => activateItem(idx)}
             >
               {thumb ? (
-                <ArtworkImage loading="eager" src={thumb} alt="" className="h-9 w-9 rounded-md object-cover flex-shrink-0" />
+                <ArtworkImage
+                  loading="eager"
+                  src={thumb}
+                  alt=""
+                  className="h-9 w-9 flex-shrink-0 rounded-md object-cover"
+                />
               ) : (
-                <div className="h-9 w-9 rounded-md bg-white/10 flex-shrink-0" />
+                <div className="h-9 w-9 flex-shrink-0 rounded-md bg-white/10" />
               )}
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium text-white">{row.item.title}</div>
+                <div className="truncate text-sm font-medium text-white">
+                  {row.item.title}
+                </div>
               </div>
-              <span className="text-xs text-white/40 flex-shrink-0">Artist</span>
+              <span className="flex-shrink-0 text-xs text-white/40">
+                Artist
+              </span>
             </div>
           )
         }
@@ -113,21 +182,30 @@ export function SearchDropdown({ activeIndex, onActiveIndexChange, onClose }: Pr
           return (
             <div
               key={row.item.id}
-              className={`flex items-center gap-3 px-3 py-2 cursor-pointer ${isActive ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
+              className={`flex cursor-pointer items-center gap-3 px-3 py-2 ${isActive ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
               onMouseEnter={() => onActiveIndexChange(idx)}
-              onMouseDown={e => e.preventDefault()}
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => activateItem(idx)}
             >
               {thumb ? (
-                <ArtworkImage loading="eager" src={thumb} alt="" className="h-9 w-9 rounded object-cover flex-shrink-0" />
+                <ArtworkImage
+                  loading="eager"
+                  src={thumb}
+                  alt=""
+                  className="h-9 w-9 flex-shrink-0 rounded object-cover"
+                />
               ) : (
-                <div className="h-9 w-9 rounded bg-white/10 flex-shrink-0" />
+                <div className="h-9 w-9 flex-shrink-0 rounded bg-white/10" />
               )}
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium text-white">{row.item.title}</div>
-                <div className="truncate text-xs text-white/50">{row.item.artistName}</div>
+                <div className="truncate text-sm font-medium text-white">
+                  {row.item.title}
+                </div>
+                <div className="truncate text-xs text-white/50">
+                  {row.item.artistName}
+                </div>
               </div>
-              <span className="text-xs text-white/40 flex-shrink-0">Album</span>
+              <span className="flex-shrink-0 text-xs text-white/40">Album</span>
             </div>
           )
         }
@@ -137,39 +215,56 @@ export function SearchDropdown({ activeIndex, onActiveIndexChange, onClose }: Pr
         return (
           <div
             key={row.item.id}
-            className={`flex items-center gap-3 px-3 py-2 cursor-pointer ${isActive ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
+            className={`flex cursor-pointer items-center gap-3 px-3 py-2 ${isActive ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
             onMouseEnter={() => onActiveIndexChange(idx)}
-            onMouseDown={e => e.preventDefault()}
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => activateItem(idx)}
           >
             {thumb ? (
-              <ArtworkImage loading="eager" src={thumb} alt="" className="h-9 w-9 rounded object-cover flex-shrink-0" />
+              <ArtworkImage
+                loading="eager"
+                src={thumb}
+                alt=""
+                className="h-9 w-9 flex-shrink-0 rounded object-cover"
+              />
             ) : (
-              <div className="h-9 w-9 rounded bg-white/10 flex-shrink-0" />
+              <div className="h-9 w-9 flex-shrink-0 rounded bg-white/10" />
             )}
             <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-medium text-white">{row.item.title}</div>
+              <div className="truncate text-sm font-medium text-white">
+                {row.item.title}
+              </div>
               <div className="truncate text-xs text-white/50">
                 {row.item.artistName} · {row.item.albumName}
               </div>
             </div>
-            <span className="text-xs text-white/40 flex-shrink-0">Track</span>
+            <span className="flex-shrink-0 text-xs text-white/40">Track</span>
           </div>
         )
       })}
 
       {/* See all results row */}
       <div
-        className={`flex items-center gap-2 px-3 py-2.5 cursor-pointer border-t border-white/10 ${activeIndex === items.length ? "bg-hl-menu" : "hover:bg-hl-row"}`}
+        className={`flex cursor-pointer items-center gap-2 border-t border-white/10 px-3 py-2.5 ${activeIndex === items.length ? "bg-hl-menu" : "hover:bg-hl-row"}`}
         onMouseEnter={() => onActiveIndexChange(items.length)}
-        onMouseDown={e => e.preventDefault()}
-        onClick={() => { navigate("/search"); onClose() }}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => {
+          navigate("/search")
+          onClose()
+        }}
       >
-        <svg height="14" width="14" viewBox="0 0 24 24" fill="currentColor" className="text-white/50 flex-shrink-0">
+        <svg
+          height="14"
+          width="14"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          className="flex-shrink-0 text-white/50"
+        >
           <path d="M10.533 1.279c-5.18 0-9.407 4.14-9.407 9.279s4.226 9.279 9.407 9.279c2.234 0 4.29-.77 5.907-2.058l4.353 4.353a1 1 0 1 0 1.414-1.414l-4.344-4.344a9.157 9.157 0 0 0 2.077-5.816c0-5.14-4.226-9.28-9.407-9.28zm-7.407 9.279c0-4.006 3.302-7.28 7.407-7.28s7.407 3.274 7.407 7.28-3.302 7.279-7.407 7.279-7.407-3.273-7.407-7.28z" />
         </svg>
         <span className="text-sm text-white/70">
-          See all results for <span className="font-semibold text-white">"{query}"</span>
+          See all results for{" "}
+          <span className="font-semibold text-white">"{query}"</span>
         </span>
       </div>
     </div>

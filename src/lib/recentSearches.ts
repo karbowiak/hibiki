@@ -1,23 +1,45 @@
 const STORAGE_KEY = "plex-recent-searches"
 const MAX_RECENT = 10
 
-export function getRecentSearches(): string[] {
+function readRecentSearches(): string[] | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? (JSON.parse(raw) as string[]) : []
+    if (raw === null) return []
+    const saved: unknown = JSON.parse(raw)
+    return Array.isArray(saved) &&
+      saved.every((query) => typeof query === "string" && !!query.trim())
+      ? saved
+      : null
   } catch {
-    return []
+    return null
   }
+}
+
+export function getRecentSearches(): string[] {
+  return (readRecentSearches() ?? []).slice(0, MAX_RECENT)
 }
 
 export function recordRecentSearch(query: string): void {
   const q = query.trim()
   if (!q) return
-  const existing = getRecentSearches().filter(s => s.toLowerCase() !== q.toLowerCase())
+  const saved = readRecentSearches()
+  // A failed/malformed read must not replace an existing history with defaults.
+  if (saved === null) return
+  const existing = saved.filter(
+    (value) => value.toLowerCase() !== q.toLowerCase()
+  )
   existing.unshift(q)
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(existing.slice(0, MAX_RECENT)))
+  localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify(existing.slice(0, MAX_RECENT))
+  )
 }
 
-export function clearRecentSearches(): void {
-  localStorage.removeItem(STORAGE_KEY)
+export function clearRecentSearches(): boolean {
+  try {
+    localStorage.removeItem(STORAGE_KEY)
+    return true
+  } catch {
+    return false
+  }
 }
