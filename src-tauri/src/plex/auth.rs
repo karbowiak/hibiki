@@ -225,17 +225,37 @@ mod tests {
         save(dir.path(), &PlexSettings::default()).unwrap();
         let ready = Arc::new(Barrier::new(3));
         let stopped = Arc::new(AtomicBool::new(false));
+        #[cfg(not(windows))]
         let path = settings_path(dir.path());
+        #[cfg(windows)]
+        let observer_root = dir.path().to_path_buf();
+        let (observed, observing) = std::sync::mpsc::sync_channel(1);
         let done = stopped.clone();
         let observer = std::thread::spawn(move || {
             let mut reads = 0;
             while !done.load(Ordering::Acquire) {
-                let bytes = std::fs::read(&path).unwrap();
-                serde_json::from_slice::<PlexSettings>(&bytes).unwrap();
+                // Production readers use the transaction lock. Windows' MoveFileExW
+                // cannot replace a destination held open by an unlocked observer,
+                // even when that reader uses Rust's default delete sharing.
+                #[cfg(windows)]
+                load(&observer_root).unwrap();
+                // Unix also supports atomically observing the replacement without
+                // the lock; preserve that stronger platform-specific regression.
+                #[cfg(not(windows))]
+                {
+                    let bytes = std::fs::read(&path).unwrap();
+                    serde_json::from_slice::<PlexSettings>(&bytes).unwrap();
+                }
                 reads += 1;
+                if reads == 1 {
+                    observed.send(()).unwrap();
+                }
             }
             reads
         });
+        observing
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
         let mut writers = Vec::new();
         for field in 0..2 {
             let root = dir.path().to_path_buf();
@@ -256,11 +276,12 @@ mod tests {
             }));
         }
         ready.wait();
-        for worker in writers {
-            worker.join().unwrap();
-        }
+        let results: Vec<_> = writers.into_iter().map(|worker| worker.join()).collect();
         stopped.store(true, Ordering::Release);
         assert!(observer.join().unwrap() > 0);
+        for result in results {
+            result.unwrap();
+        }
         let settings = load(dir.path()).unwrap();
         assert_eq!(settings.section_id, 30);
         assert_eq!(settings.lastfm_love_threshold, 36);
@@ -403,31 +424,59 @@ mod tests {
     }
 
     #[test]
-    fn another_process_cannot_mutate_settings_until_the_transaction_lock_is_released() {
+    fn another_process_cannot_read_or_mutate_settings_until_the_transaction_lock_is_released() {
         use std::time::{Duration, Instant};
-        let dir = tempfile::tempdir().unwrap();
-        let lock = store_lock(dir.path()).unwrap();
-        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "plex::auth::tests::process_lock_child",
-                "--ignored",
-            ])
-            .env("HIBIKI_SETTINGS_LOCK_CHILD_DIR", dir.path())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
+        for operation in ["update", "load"] {
+            let dir = tempfile::tempdir().unwrap();
+            save(
+                dir.path(),
+                &PlexSettings {
+                    section_id: 7,
+                    ..Default::default()
+                },
+            )
             .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !dir.path().join("started").exists() {
-            assert!(Instant::now() < deadline, "child did not start");
-            std::thread::sleep(Duration::from_millis(10));
+            let lock = store_lock(dir.path()).unwrap();
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "plex::auth::tests::process_lock_child",
+                    "--ignored",
+                ])
+                .env("HIBIKI_SETTINGS_LOCK_CHILD_DIR", dir.path())
+                .env("HIBIKI_SETTINGS_LOCK_CHILD_OPERATION", operation)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !dir.path().join("started").exists() {
+                assert!(Instant::now() < deadline, "child did not start");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            std::thread::sleep(Duration::from_millis(50));
+            assert!(
+                !dir.path().join("finished").exists(),
+                "{operation} bypassed the transaction lock"
+            );
+            if operation == "load" {
+                // Publish a complete new snapshot while the reader is blocked.
+                save_locked(
+                    dir.path(),
+                    &PlexSettings {
+                        section_id: 9,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            }
+            drop(lock);
+            assert!(child.wait().unwrap().success());
+            assert_eq!(
+                load(dir.path()).unwrap().section_id,
+                if operation == "update" { 42 } else { 9 }
+            );
         }
-        std::thread::sleep(Duration::from_millis(50));
-        assert!(!dir.path().join("finished").exists());
-        drop(lock);
-        assert!(child.wait().unwrap().success());
-        assert_eq!(load(dir.path()).unwrap().section_id, 42);
     }
 
     #[test]
@@ -437,11 +486,15 @@ mod tests {
             std::env::var_os("HIBIKI_SETTINGS_LOCK_CHILD_DIR").expect("child directory"),
         );
         std::fs::write(root.join("started"), b"ready").unwrap();
-        update(&root, |settings| {
-            settings.section_id = 42;
-            Ok(())
-        })
-        .unwrap();
+        if std::env::var("HIBIKI_SETTINGS_LOCK_CHILD_OPERATION").as_deref() == Ok("load") {
+            assert_eq!(load(&root).unwrap().section_id, 9);
+        } else {
+            update(&root, |settings| {
+                settings.section_id = 42;
+                Ok(())
+            })
+            .unwrap();
+        }
         std::fs::write(root.join("finished"), b"done").unwrap();
     }
 }
