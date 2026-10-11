@@ -158,6 +158,36 @@ mod tests {
         assert!(!public.headers().contains_key("X-Plex-Token"));
     }
 
+    #[test]
+    fn nested_transcode_credentials_are_replaced_only_for_trusted_artwork() {
+        let mut client = PlexClient::new(crate::plex::PlexClientConfig {
+            base_url: "https://plex.test/plex".into(),
+            token: "current-token".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        client.library_scope = "library".into();
+        for source in ["/library/metadata/42/thumb?X-Plex-Token=old-token&signature=a%20b%2Bc", "https://plex.test/plex/library/metadata/42/thumb?x-plex-token=old-token&signature=a%20b%2Bc"] {
+            let mut uri = url::Url::parse("https://plex.test/plex/photo/:/transcode?width=600&signature=a%20b%2Bc").unwrap();
+            uri.query_pairs_mut().append_pair("url", source);
+            let request = scoped_request(Some(&client), "library", uri.as_str()).unwrap().build().unwrap();
+            let nested = request.url().query_pairs().find(|(key, _)| key == "url").unwrap().1;
+            assert!(!nested.contains("old-token"));
+            assert!(nested.contains("X-Plex-Token=current-token"));
+            assert!(nested.contains("signature=a%20b%2Bc"));
+            assert!(request.url().query().unwrap().starts_with("width=600&signature=a%20b%2Bc&url="));
+        }
+        for source in [
+            "https://foreign.test/cover.jpg?X-Plex-Token=old-token",
+            "https://plex.test/plex/:/scrobble?key=1&X-Plex-Token=old-token",
+            "/:/scrobble?key=1&X-Plex-Token=old-token",
+        ] {
+            let mut uri = url::Url::parse("https://plex.test/plex/photo/:/transcode").unwrap();
+            uri.query_pairs_mut().append_pair("url", source);
+            assert!(scoped_request(Some(&client), "library", uri.as_str()).is_none());
+        }
+    }
+
     #[tokio::test]
     async fn authenticated_redirects_remain_inside_artwork_routes() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};

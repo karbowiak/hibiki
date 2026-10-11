@@ -24,7 +24,7 @@ fn token_header(value: &str) -> HeaderValue {
     header
 }
 
-fn without_plex_token(value: &str) -> String {
+pub(super) fn without_plex_token(value: &str) -> String {
     let Ok(mut url) = url::Url::parse(value) else { return value.into(); };
     if !url.query_pairs().any(|(key, _)| key.eq_ignore_ascii_case("X-Plex-Token")) { return value.into(); }
     let filtered = url.query().unwrap_or_default().split('&').filter(|pair| {
@@ -565,7 +565,8 @@ impl PlexClient {
 
     pub fn artwork_request(&self, value: &str) -> Option<reqwest::RequestBuilder> {
         let base = url::Url::parse(&self.base_url).ok()?;
-        let target = url::Url::parse(&without_plex_token(value)).ok()?;
+        let mut target = url::Url::parse(&without_plex_token(value)).ok()?;
+        super::artwork::normalize_source(&base, &mut target, &self.token)?;
         if !super::artwork::public_url(&target) || !super::artwork::allowed(&base, &target) {
             return None;
         }

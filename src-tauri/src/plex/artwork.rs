@@ -78,6 +78,71 @@ fn server_path<'a>(base: &Url, target: &'a Url) -> Option<&'a str> {
     path.starts_with('/').then_some(path)
 }
 
+/// PlexAPI-style transcodes include a token in the nested source. Replace it
+/// only for a verified image on this server; external sources stay anonymous.
+pub fn normalize_source(base: &Url, target: &mut Url, token: &str) -> Option<()> {
+    if server_path(base, target)? != "/photo/:/transcode" {
+        return Some(());
+    }
+    let sources: Vec<_> = target
+        .query_pairs()
+        .filter(|(key, _)| key == "url")
+        .collect();
+    if sources.len() != 1 {
+        return None;
+    }
+    let value = sources[0].1.as_ref();
+    let relative = value.starts_with('/') && !value.starts_with("//");
+    let source = if relative {
+        Url::parse(&format!("http://artwork.invalid{value}")).ok()?
+    } else {
+        Url::parse(value).ok()?
+    };
+    if !source
+        .query_pairs()
+        .any(|(key, _)| key.eq_ignore_ascii_case("X-Plex-Token"))
+    {
+        return Some(());
+    }
+    let trusted = source.username().is_empty()
+        && source.password().is_none()
+        && if relative {
+            image_path(source.path())
+        } else {
+            server_path(base, &source).is_some_and(image_path)
+        };
+    if !trusted {
+        return None;
+    }
+    let mut source = Url::parse(&super::client::without_plex_token(source.as_str())).ok()?;
+    source.query_pairs_mut().append_pair("X-Plex-Token", token);
+    let value = if relative {
+        format!("{}?{}", source.path(), source.query().unwrap_or_default())
+    } else {
+        source.into()
+    };
+    let replacement = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("url", &value)
+        .finish();
+    let query = target
+        .query()?
+        .split('&')
+        .map(|pair| {
+            if url::form_urlencoded::parse(pair.as_bytes())
+                .next()
+                .is_some_and(|(key, _)| key == "url")
+            {
+                replacement.as_str()
+            } else {
+                pair
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("&");
+    target.set_query(Some(&query));
+    Some(())
+}
+
 pub fn allowed(base: &Url, target: &Url) -> bool {
     let Some(path) = server_path(base, target) else {
         return false;
@@ -102,20 +167,23 @@ pub fn allowed(base: &Url, target: &Url) -> bool {
         let Ok(source) = Url::parse(&format!("http://artwork.invalid{source}")) else {
             return false;
         };
-        return public_url(&source) && image_path(source.path());
+        return source.username().is_empty()
+            && source.password().is_none()
+            && image_path(source.path());
     }
     let Ok(source) = Url::parse(source) else {
         return false;
     };
-    public_url(&source)
-        && if base.origin() == source.origin() {
-            server_path(base, &source).is_some_and(image_path)
-        } else {
-            // A server alias must not bypass route validation, and another
-            // transcode must not hide a privileged target. Public CDN files
-            // and ordinary Plex image paths are valid source images.
-            image_path(source.path()) || source.path().rsplit('/').next().is_some_and(raster_name)
-        }
+    if base.origin() == source.origin() {
+        server_path(base, &source).is_some_and(image_path)
+    } else {
+        // A server alias must not bypass route validation, and another
+        // transcode must not hide a privileged target. Public CDN files
+        // and ordinary Plex image paths are valid source images.
+        public_url(&source)
+            && (image_path(source.path())
+                || source.path().rsplit('/').next().is_some_and(raster_name))
+    }
 }
 
 pub fn redirect_policy(base: Url) -> reqwest::redirect::Policy {
@@ -166,7 +234,7 @@ mod tests {
             "/:/resources/../scrobble",
             "/photo/:/transcode?url=%2F%3A%2Fscrobble",
             "/photo/:/transcode?url=%2F%2Fplex.test%2F%3A%2Fscrobble",
-            "/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F42%2Fthumb%3FX-Plex-Token%3Dsecret",
+            "/photo/:/transcode?url=https%3A%2F%2Fforeign.test%2Fcover.jpg%3FX-Plex-Token%3Dsecret",
             "/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F42%2Fthumb&url=%2F%3A%2Fscrobble",
             "/photo/:/transcode?url=http%3A%2F%2F127.0.0.1%3A32400%2F%3A%2Fscrobble",
         ] {

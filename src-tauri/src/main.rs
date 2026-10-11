@@ -148,6 +148,9 @@ async fn resolve_image(
                 );
             }
         }
+        // A selected source must not silently return another provider's image.
+        // The renderer retries transient failures and advances its source order.
+        return None;
     }
 
     // Metadata fallback: only for entity types with names
