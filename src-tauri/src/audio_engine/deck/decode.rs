@@ -149,6 +149,14 @@ pub fn probe_from_source(mss: MediaSourceStream, ext: Option<&str>) -> Result<De
 pub fn seek_to_ms(setup: &mut DecoderSetup, position_ms: u64) -> Result<()> {
     use symphonia::core::formats::{SeekMode, SeekTo};
     use symphonia::core::units::Time;
+    // The FDK adapter's reset() is a no-op. Reopen AAC so overlap/filterbank
+    // history and pending transport data cannot cross a seek. Build it before
+    // moving the reader, leaving the current decoder intact if setup fails.
+    let replacement = if setup.decoder.codec_params().codec == codecs::CODEC_TYPE_AAC {
+        Some(CODEC_REGISTRY.make(setup.decoder.codec_params(), &DecoderOptions::default())?)
+    } else {
+        None
+    };
     let seeked = setup.format.seek(
         SeekMode::Accurate,
         SeekTo::Time {
@@ -156,7 +164,11 @@ pub fn seek_to_ms(setup: &mut DecoderSetup, position_ms: u64) -> Result<()> {
             track_id: Some(setup.track_id),
         },
     )?;
-    setup.decoder.reset();
+    if let Some(decoder) = replacement {
+        setup.decoder = decoder;
+    } else {
+        setup.decoder.reset();
+    }
     setup.finished = false;
     setup.aborted = false;
     setup.had_decode_errors = false;
@@ -450,6 +462,64 @@ pub(crate) mod tests {
         seek_to_ms(&mut setup, 100).unwrap();
         let backwards = decode_all(&mut setup).unwrap();
         assert_eq!(backwards, original[4410 * 2..]);
+    }
+
+    fn aac_fixtures() -> [&'static [u8]; 3] {
+        [
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/audio/aac-lc-stereo.m4a"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/audio/he-aac-stereo.m4a"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/audio/he-aac-v2-stereo.m4a"
+            )),
+        ]
+    }
+
+    #[test]
+    fn aac_lc_and_he_aac_produce_finite_stereo_pcm_at_the_output_rate() {
+        for data in aac_fixtures() {
+            let mut setup = probe_audio(data.to_vec()).unwrap();
+            let samples = decode_all(&mut setup).unwrap();
+            assert_eq!(setup.sample_rate, 48000);
+            assert_eq!(setup.channels, 2);
+            assert!(!setup.aborted && !setup.had_decode_errors);
+            assert!(samples.len() > 48000 * 2);
+            assert!(samples.iter().all(|sample| sample.is_finite()));
+            assert!(samples.iter().any(|sample| sample.abs() > 0.1));
+        }
+    }
+
+    #[test]
+    fn aac_seeks_discard_previous_decoder_history() {
+        for data in aac_fixtures() {
+            let mut used = probe_audio(data.to_vec()).unwrap();
+            decode_batch(&mut used, 16384).unwrap();
+            for position in [0, 720, 333, 0] {
+                let mut fresh = probe_audio(data.to_vec()).unwrap();
+                seek_to_ms(&mut fresh, position).unwrap();
+                let expected = decode_batch(&mut fresh, 4096).unwrap();
+                assert!(!expected.is_empty());
+                seek_to_ms(&mut used, position).unwrap();
+                let actual = decode_batch(&mut used, 4096).unwrap();
+                assert_eq!(actual.len(), expected.len());
+                assert!(
+                    actual.iter().zip(&expected).all(|(a, b)| a == b),
+                    "AAC seek to {position} retained samples from the previous playback position"
+                );
+            }
+            decode_all(&mut used).unwrap();
+            assert!(used.finished);
+            let mut fresh = probe_audio(data.to_vec()).unwrap();
+            let expected = decode_batch(&mut fresh, 4096).unwrap();
+            seek_to_ms(&mut used, 0).unwrap();
+            assert_eq!(decode_batch(&mut used, 4096).unwrap(), expected);
+        }
     }
 
     #[test]
