@@ -1,12 +1,14 @@
 import { useState, useSyncExternalStore } from "react"
 import { IconAlertTriangle } from "@tabler/icons-react"
 import { preferencePersistence } from "../stores/idbStorage"
+import { localPreferencePersistence } from "../stores/localPreferenceStorage"
 import type { PersistenceIssue } from "../stores/preferencePersistence"
 
 function savedDataLabel(key: string): string {
   if (key === "radio-stream-v1") return "radio favorites and history"
   if (key === "podcast-store-v1") return "podcast subscriptions and progress"
   if (key === "metadata-source-priority-v1") return "metadata preferences"
+  if (key === "plex-audio-settings-v1") return "audio preferences"
   return "metadata cache"
 }
 
@@ -67,16 +69,43 @@ export function PersistenceNotice({
   )
 }
 
+let lastIdb: PersistenceIssue[] | undefined
+let lastLocal: PersistenceIssue[] | undefined
+let combined: PersistenceIssue[] = []
+function storageSnapshot() {
+  const idb = preferencePersistence.snapshot()
+  const local = localPreferencePersistence.snapshot()
+  if (idb !== lastIdb || local !== lastLocal) {
+    lastIdb = idb
+    lastLocal = local
+    combined = [...idb, ...local]
+  }
+  return combined
+}
+function subscribeStorage(callback: () => void) {
+  const idb = preferencePersistence.subscribe(callback)
+  const local = localPreferencePersistence.subscribe(callback)
+  return () => {
+    idb()
+    local()
+  }
+}
+
 export function StorageStatus() {
   const issues = useSyncExternalStore(
-    preferencePersistence.subscribe,
-    preferencePersistence.snapshot,
-    preferencePersistence.snapshot
+    subscribeStorage,
+    storageSnapshot,
+    storageSnapshot
   )
   return (
     <PersistenceNotice
       issues={issues}
-      onRetry={() => preferencePersistence.retry()}
+      onRetry={async () => {
+        await Promise.all([
+          preferencePersistence.retry(),
+          localPreferencePersistence.retry(),
+        ])
+      }}
     />
   )
 }
