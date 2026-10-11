@@ -1379,66 +1379,25 @@ pub async fn set_now_playing_state(
 // Image cache management
 // ---------------------------------------------------------------------------
 
-/// Delete all cached images from disk (unified imgcache/ dir).
-/// Also clears old pleximg/ + metaimg/ dirs for migration.
+/// Clear completes before acknowledgement; old downloads cannot refill the cache.
 #[tauri::command]
-pub async fn clear_image_cache(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri::Manager;
-    let cache_root = app
-        .path()
-        .app_cache_dir()
-        .map_err(|e| format!("{:#}", e))?;
-    // New unified cache dir
-    let imgcache = cache_root.join("imgcache");
-    if imgcache.exists() {
-        std::fs::remove_dir_all(&imgcache).map_err(|e| e.to_string())?;
-    }
-    // Clean up old dirs from migration
-    let pleximg = cache_root.join("pleximg");
-    if pleximg.exists() {
-        let _ = std::fs::remove_dir_all(&pleximg);
-    }
-    let metaimg = cache_root.join("metaimg");
-    if metaimg.exists() {
-        let _ = std::fs::remove_dir_all(&metaimg);
-    }
-    Ok(())
+pub async fn clear_image_cache(
+    state: tauri::State<'_, crate::image_cache::ImageCacheState>,
+) -> Result<crate::image_cache::CacheInfo, String> {
+    let cache = state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || cache.clear())
+        .await
+        .map_err(|e| e.to_string())?
 }
 
-/// Returns file count and total byte size for the unified image cache.
 #[tauri::command]
-pub async fn get_image_cache_info(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
-    use tauri::Manager;
-    let cache_root = app
-        .path()
-        .app_cache_dir()
-        .map_err(|e| format!("{:#}", e))?;
-
-    fn dir_stats(dir: &std::path::Path) -> (usize, u64) {
-        match std::fs::read_dir(dir) {
-            Ok(entries) => {
-                let mut count = 0usize;
-                let mut bytes = 0u64;
-                for entry in entries.flatten() {
-                    if let Ok(meta) = entry.metadata() {
-                        if meta.is_file() {
-                            count += 1;
-                            bytes += meta.len();
-                        }
-                    }
-                }
-                (count, bytes)
-            }
-            Err(_) => (0, 0),
-        }
-    }
-
-    let (files, bytes) = dir_stats(&cache_root.join("imgcache"));
-
-    Ok(serde_json::json!({
-        "files": files,
-        "bytes": bytes,
-    }))
+pub async fn get_image_cache_info(
+    state: tauri::State<'_, crate::image_cache::ImageCacheState>,
+) -> Result<crate::image_cache::CacheInfo, String> {
+    let cache = state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || cache.stats())
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 // ---------------------------------------------------------------------------

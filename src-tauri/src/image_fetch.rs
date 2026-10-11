@@ -2,8 +2,6 @@
 
 use crate::plex::PlexClient;
 use once_cell::sync::Lazy;
-use std::io::{Read, Write};
-use std::path::Path;
 
 pub const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
 static PUBLIC: Lazy<reqwest::Client> = Lazy::new(|| {
@@ -80,32 +78,6 @@ pub async fn fetch(request: reqwest::RequestBuilder) -> Option<Vec<u8>> {
     }
 }
 
-pub fn read_cached(path: &Path) -> Option<Vec<u8>> {
-    let file = std::fs::File::open(path).ok()?;
-    if file.metadata().ok()?.len() > MAX_IMAGE_BYTES as u64 {
-        return None;
-    }
-    let mut bytes = Vec::new();
-    file.take(MAX_IMAGE_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    (bytes.len() <= MAX_IMAGE_BYTES && !bytes.is_empty()).then_some(bytes)
-}
-
-pub fn cache(path: &Path, bytes: &[u8]) {
-    if bytes.len() > MAX_IMAGE_BYTES {
-        return;
-    }
-    let Some(parent) = path.parent() else {
-        return;
-    };
-    if let Ok(mut temporary) = tempfile::NamedTempFile::new_in(parent) {
-        if temporary.write_all(bytes).is_ok() {
-            let _ = temporary.persist(path);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,19 +145,6 @@ mod tests {
         assert!(request(None, "file:///tmp/private").is_none());
         assert!(request(None, "https://external.test/image").is_some());
     }
-    #[test]
-    fn oversized_cached_images_are_rejected_and_cache_replacements_are_complete() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("image");
-        let file = std::fs::File::create(&path).unwrap();
-        file.set_len(MAX_IMAGE_BYTES as u64 + 1).unwrap();
-        assert!(read_cached(&path).is_none());
-        cache(&path, b"first-image");
-        assert_eq!(read_cached(&path).unwrap(), b"first-image");
-        cache(&path, b"second-image");
-        assert_eq!(read_cached(&path).unwrap(), b"second-image");
-    }
-
     #[tokio::test]
     async fn oversized_image_responses_are_rejected_with_or_without_content_length() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};

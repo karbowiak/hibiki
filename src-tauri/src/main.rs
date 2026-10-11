@@ -3,10 +3,12 @@
 
 mod audio_devices;
 mod audio_engine;
+mod cache_files;
 mod commands;
 mod db;
 mod deezer;
 mod genius;
+mod image_cache;
 mod image_fetch;
 mod itunes;
 mod itunes_throttle;
@@ -39,7 +41,7 @@ use tauri_plugin_window_state::{StateFlags, WindowExt};
 // This handler:
 //   1. Parses path → entity type + ID.
 //   2. Parses query → src, name, artist params.
-//   3. Derives cache key: {type}_{id}_{md5(src)[..8]}.img
+//   3. Derives a SHA-256 key scoped to account, library and image identity.
 //   4. Returns cached bytes from disk if present.
 //   5. Fetches from src URL → success → cache + return.
 //   6. src failed/absent + name present → metadata fallback (Deezer, iTunes).
@@ -110,6 +112,8 @@ async fn resolve_image(
     name: &str,
     artist: &str,
     requested_scope: &str,
+    cache: std::sync::Arc<image_cache::ImageCache>,
+    ticket: image_cache::Ticket,
 ) -> Option<Vec<u8>> {
     use tauri::Manager;
 
@@ -122,36 +126,15 @@ async fn resolve_image(
     if !image_fetch::scope_matches(client.as_ref(), requested_scope) { return None; }
     let scope = client.as_ref().map(|client| client.library_scope.as_str()).unwrap_or_default();
     let cache_key = image_fetch::cache_key(scope, entity_type, entity_id, src, name, artist);
-    let cache_dir: Option<std::path::PathBuf> = app
-        .path()
-        .app_cache_dir()
-        .ok()
-        .map(|d| d.join("imgcache"));
-
-    // Helper: cache bytes to disk and return them
-    let cache_and_return = |bytes: Vec<u8>, dir: &Option<std::path::PathBuf>, key: &str| -> Vec<u8> {
-        if let Some(ref d) = dir {
-            image_fetch::cache(&d.join(key), &bytes);
-        }
-        bytes
-    };
-
-    // Disk cache hit
-    if let Some(ref dir) = cache_dir {
-        let _ = std::fs::create_dir_all(dir);
-        let file_path = dir.join(&cache_key);
-        if file_path.exists() {
-            if let Some(bytes) = image_fetch::read_cached(&file_path) {
-                return Some(bytes);
-            }
-        }
+    if let Some(bytes) = image_cache::read(cache.clone(), ticket.clone(), cache_key.clone()).await {
+        return Some(bytes);
     }
 
     // Try fetching from src URL
     if !src.is_empty() {
         if let Some(request) = image_fetch::request(client.as_ref(), src) {
             if let Some(bytes) = image_fetch::fetch(request).await {
-                return Some(cache_and_return(bytes, &cache_dir, &cache_key));
+                return Some(image_cache::store(cache.clone(), ticket.clone(), cache_key.clone(), bytes).await);
             }
         }
     }
@@ -160,19 +143,13 @@ async fn resolve_image(
     if !name.is_empty() && matches!(entity_type, "artist" | "album" | "track") {
         if let Some(fallback_url) = metadata_fallback_url(entity_type, name, artist).await {
             let fb_cache_key = image_fetch::cache_key(scope, entity_type, entity_id, &fallback_url, name, artist);
-            // Check fallback cache
-            if let Some(ref dir) = cache_dir {
-                let fb_path = dir.join(&fb_cache_key);
-                if fb_path.exists() {
-                    if let Some(bytes) = image_fetch::read_cached(&fb_path) {
-                        return Some(bytes);
-                    }
-                }
+            if let Some(bytes) = image_cache::read(cache.clone(), ticket.clone(), fb_cache_key.clone()).await {
+                return Some(bytes);
             }
             // Fetch fallback URL
             if let Some(request) = image_fetch::request(None, &fallback_url) {
                 if let Some(bytes) = image_fetch::fetch(request).await {
-                    return Some(cache_and_return(bytes, &cache_dir, &fb_cache_key));
+                    return Some(image_cache::store(cache.clone(), ticket.clone(), fb_cache_key, bytes).await);
                 }
             }
         }
@@ -211,6 +188,11 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(PlexState::new())
         .setup(|app| {
+            let images = match app.path().app_cache_dir() {
+                Ok(root) => image_cache::ImageCache::new(root.join("imgcache")),
+                Err(error) => image_cache::ImageCache::unavailable(error.to_string()),
+            };
+            app.manage(image_cache::ImageCacheState(std::sync::Arc::new(images)));
             // Open (or create) the local SQLite database.
             let db_path = app
                 .path()
@@ -267,6 +249,8 @@ pub fn run() {
         // image://localhost/ext/img?src=...  (one-off external, no fallback)
         .register_asynchronous_uri_scheme_protocol("image", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
+            let cache = app.state::<image_cache::ImageCacheState>().0.clone();
+            let ticket = cache.ticket();
             let uri = request.uri();
             let raw_path = uri.path().trim_start_matches('/').to_string();
             let query = uri.query().unwrap_or("").to_string();
@@ -289,7 +273,7 @@ pub fn run() {
                 let entity_id = if parts.len() > 1 { parts[1] } else { "" };
 
                 // Resolve the image — result is Some(bytes) on success, None on failure.
-                let result = resolve_image(&app, entity_type, entity_id, &src, &name, &artist, &scope).await;
+                let result = resolve_image(&app, entity_type, entity_id, &src, &name, &artist, &scope, cache, ticket).await;
 
                 responder.respond(match result {
                     Some(bytes) => tauri::http::Response::builder()
