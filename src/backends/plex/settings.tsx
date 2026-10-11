@@ -57,7 +57,15 @@ export function PlexSettings() {
   let serverOrigin = ""
   try { serverOrigin = new URL(url.trim()).origin } catch {}
   const savedException = tlsExceptions.includes(serverOrigin)
-  useEffect(() => { setAllowInvalidCertificate(savedException) }, [serverOrigin, savedException])
+  const previousOrigin = useRef<string | null>(null)
+  useEffect(() => {
+    // Connection attempts temporarily clear saved connection state. Keep the
+    // chosen exception until the origin changes or a connection succeeds.
+    if (previousOrigin.current !== serverOrigin || (savedUrl && !isLoading)) {
+      setAllowInvalidCertificate(savedException)
+    }
+    previousOrigin.current = serverOrigin
+  }, [serverOrigin, savedException, savedUrl, isLoading])
 
   const [authState, setAuthState] = useState<AuthState>("idle")
   const [resources, setResources] = useState<PlexResource[]>([])
@@ -74,8 +82,12 @@ export function PlexSettings() {
   const [isSwitching, setIsSwitching] = useState(false)
 
   useEffect(() => {
-    setUrl(savedUrl)
-    setToken(savedToken)
+    // Empty values during connection setup/failure are not an instruction to
+    // discard the form. Explicit disconnect clears it in handleDisconnect.
+    if (savedUrl || savedToken) {
+      setUrl(savedUrl)
+      setToken(savedToken)
+    }
   }, [savedUrl, savedToken])
 
   useEffect(() => {
@@ -258,7 +270,7 @@ export function PlexSettings() {
     setIsDisconnecting(true)
     try {
       await disconnectAndClear()
-      if (authIsCurrent(request)) { setUrl(""); setToken(""); setPendingToken(""); setResources([]) }
+      if (authIsCurrent(request)) { setUrl(""); setToken(""); setShowToken(false); setPendingToken(""); setResources([]); setAuthState("idle") }
     } catch (err) { if (authIsCurrent(request)) setAuthError(String(err)) }
     finally { if (authIsCurrent(request)) setIsDisconnecting(false) }
   }
