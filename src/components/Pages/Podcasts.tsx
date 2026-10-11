@@ -5,6 +5,7 @@ import { usePodcastStore } from "../../backends/podcast/store"
 import { podcastGetCategories, podcastLookup } from "../../backends/podcast/api"
 import type { PodcastCategory, PodcastSearchResult, PodcastTopChart } from "../../backends/podcast/api"
 import { ArtworkImage } from "../shared/ArtworkImage"
+import { podcastFeedPath } from "../../lib/podcastRoute"
 import { buildExternalImageUrl } from "../../lib/imageUrl"
 import { ScrollRow } from "../ScrollRow"
 
@@ -34,7 +35,9 @@ function PodcastCard({
 
   const handleClick = useCallback(async () => {
     if (feedUrl) {
-      navigate(`/podcast/${btoa(feedUrl)}`)
+      const path = podcastFeedPath(feedUrl)
+      if (path) navigate(path)
+      else setLookupError(true)
       return
     }
     const revision = ++lookupRevision.current
@@ -44,7 +47,8 @@ function PodcastCard({
       try {
         const result = await podcastLookup(itunesId)
         if (revision !== lookupRevision.current) return
-        if (result?.feed_url) navigate(`/podcast/${btoa(result.feed_url)}`)
+        const path = result?.feed_url ? podcastFeedPath(result.feed_url) : null
+        if (path) navigate(path)
         else setLookupError(true)
       } catch { if (revision === lookupRevision.current) setLookupError(true) }
     }

@@ -34,6 +34,7 @@ const { usePodcastStore } = await import("../../src/backends/podcast/store")
 const { PodcastDetailPage } = await import("../../src/components/Pages/PodcastDetail")
 const { PodcastsPage } = await import("../../src/components/Pages/Podcasts")
 const { episodesToTracks, episodeProgressKey } = await import("../../src/backends/podcast/mappers")
+const { podcastFeedPath } = await import("../../src/lib/podcastRoute")
 const { buildExternalImageUrl } = await import("../../src/lib/imageUrl")
 const state = () => usePodcastStore.getState()
 const episode = (guid: string, audio = `https://media.test/${guid}.mp3`): PodcastEpisode => ({ guid, title: guid || "Untitled", description: "", pub_date: "2026-01-01", duration_secs: 300, audio_url: audio, audio_type: "audio/mpeg", audio_size: 0, episode_number: null, season_number: null, artwork_url: null })
@@ -123,6 +124,19 @@ if (scenario === "detail-route") {
   await act(async () => root.unmount())
   await new Promise(resolve => setTimeout(resolve, 450))
   assert.equal(requests.length, 2, "unmounted debounce must not invoke the API")
+ } else if (scenario === "route-links") {
+  const unicodeFeed = "https://feeds.test/播客.xml?token=a/b+c="
+  await render(<Router><PodcastsPage /></Router>)
+  await complete(requests.find(request => request.command === "podcast_get_categories")!, [])
+  await complete(requests.find(request => request.command === "podcast_get_top")!, [{ itunes_id: 1, name: "Unicode", artist_name: "Author", artwork_url: "", feed_url: unicodeFeed }])
+  await click([...document.querySelectorAll("p")].find(node => node.textContent === "Unicode")!)
+  assert.equal(dom.window.location.pathname, podcastFeedPath(unicodeFeed))
+  await render(<PodcastDetailPage feedUrl={unicodeFeed} />)
+  const request = requests.at(-1)!
+  assert.equal(request.args.feedUrl, unicodeFeed)
+  await complete(request, feed(unicodeFeed, "Current"))
+  await click(document.querySelector('[aria-label="Play one"]')!)
+  assert.equal(player.getState().playTrack.mock.calls.at(-1)[3], podcastFeedPath(unicodeFeed))
 } else if (scenario === "identity") {
   const map = (episodes: PodcastEpisode[], url: string) => episodesToTracks(episodes, url, "Podcast", "Author", "")
   assert.notEqual(map([episode("Aa")], "a")[0].id, map([episode("BB")], "a")[0].id)

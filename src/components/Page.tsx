@@ -1,4 +1,4 @@
-import { Route, useLocation } from "wouter"
+import { Link, Route, useLocation } from "wouter"
 import { createContext, useContext, useLayoutEffect, useRef, RefObject } from "react"
 import { Playlist } from "./Pages/Playlist"
 import { Home } from "./Pages/Home"
@@ -17,6 +17,7 @@ import { RecentlyAddedPage } from "./Pages/RecentlyAddedPage"
 import { TagPage } from "./Pages/TagPage"
 import { InternetRadioPage } from "./Pages/InternetRadio"
 import { PodcastsPage } from "./Pages/Podcasts"
+import { decodePodcastFeed, PODCAST_ROUTE } from "../lib/podcastRoute"
 import { PodcastDetailPage } from "./Pages/PodcastDetail"
 import { Playlists } from "./Pages/Playlists"
 // MixPage uses module-level selectMix() state — no URL param needed
@@ -147,14 +148,12 @@ export function Page() {
           <PodcastsPage />
         </Route>
 
-        <Route path="/podcast/:encoded" key="podcast">
+        <Route path={PODCAST_ROUTE} key="podcast">
           {(params: { encoded?: string }) => {
-            try {
-              const url = params.encoded ? atob(params.encoded) : ""
-              return url ? <PodcastDetailPage feedUrl={url} /> : null
-            } catch {
-              return null
-            }
+            const url = decodePodcastFeed(params.encoded)
+            return url ? <PodcastDetailPage feedUrl={url} /> : (
+              <div role="alert" className="p-8 text-gray-400">Invalid podcast link. <Link href="/podcasts" className="text-white underline">Browse podcasts</Link></div>
+            )
           }}
         </Route>
 

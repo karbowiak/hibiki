@@ -5,6 +5,7 @@ import { usePlayerStore } from "../../stores/playerStore"
 import { episodeProgressKey, episodesToTracks } from "../../backends/podcast/mappers"
 import { EpisodeRow } from "../EpisodeRow"
 import { ArtworkImage } from "../shared/ArtworkImage"
+import { podcastFeedPath } from "../../lib/podcastRoute"
 import { buildExternalImageUrl } from "../../lib/imageUrl"
 import { UltraBlur } from "../UltraBlur"
 import type { PodcastDetail, PodcastEpisode } from "../../backends/podcast/api"
@@ -69,12 +70,12 @@ export function PodcastDetailPage({ feedUrl }: { feedUrl: string }) {
       if (isPlaying) pause(); else resume()
       return
     }
-    void playTrack(track, episodeTracks, podcast?.title ?? "Podcast", `/podcast/${btoa(feedUrl)}`)
+    void playTrack(track, episodeTracks, podcast?.title ?? "Podcast", podcastFeedPath(feedUrl))
   }
 
   const handlePlayAll = () => {
     if (episodeTracks.length === 0) return
-    void playTrack(episodeTracks[0], episodeTracks, podcast?.title ?? "Podcast", `/podcast/${btoa(feedUrl)}`)
+    void playTrack(episodeTracks[0], episodeTracks, podcast?.title ?? "Podcast", podcastFeedPath(feedUrl))
   }
 
   const handleSubscribe = () => {

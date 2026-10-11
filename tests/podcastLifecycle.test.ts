@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { resolve } from "node:path"
-for (const scenario of ["detail-route", "detail-error", "search-race", "category-retirement", "lookup-error", "search-unmount", "identity"]) {
+for (const scenario of ["detail-route", "detail-error", "search-race", "category-retirement", "lookup-error", "search-unmount", "route-links", "identity"]) {
   test(`podcast lifecycle: ${scenario}`, async () => {
     const child = Bun.spawn([process.execPath, "tests/fixtures/podcastLifecycle.tsx", scenario], {
       cwd: resolve(import.meta.dir, ".."), stdout: "pipe", stderr: "pipe",
