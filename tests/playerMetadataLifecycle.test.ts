@@ -147,6 +147,22 @@ async function audiblyPlay(track: MusicTrack, context?: MusicTrack[]) {
 const station = (uuid = "test-station") =>
   ({ uuid, name: uuid, stream_url: "https://radio.example.test/stream" }) as any
 
+test("integration now-playing ownership follows native occurrences and the source provider", async () => {
+  const p = provider("integration-owner")
+  useProviderStore.getState().setProvider(p)
+  const track = source("77")
+  await audiblyPlay(track)
+  const firstOwns = (p.onTrackStart as any).mock.calls.at(-1)[1] as () => boolean
+  expect(firstOwns()).toBe(true)
+  // Replaying the same song changes native identity even though its ID is unchanged.
+  await audiblyPlay(track)
+  const secondOwns = (p.onTrackStart as any).mock.calls.at(-1)[1] as () => boolean
+  expect(firstOwns()).toBe(false)
+  expect(secondOwns()).toBe(true)
+  useProviderStore.getState().setProvider(provider("replacement"))
+  expect(secondOwns()).toBe(false)
+})
+
 test("player starts and preloads with the source provider's native ownership", async () => {
   const plexContext = { connectionRevision: 8, cacheScope: `plex-${"a".repeat(64)}` }
   const p = provider("a", { getPlaybackInfo: async track => ({

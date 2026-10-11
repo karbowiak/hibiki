@@ -160,6 +160,6 @@ export interface MusicProvider {
   setNowPlayingState?(state: "playing" | "paused" | "stopped", positionMs?: number): Promise<void>
 
   // --- Track lifecycle hooks (scrobbling, external integrations) ---
-  onTrackStart?(track: MusicTrack): void
+  onTrackStart?(track: MusicTrack, isCurrent?: () => boolean): void
   onTrackEnd?(track: MusicTrack, startedAtUnix: number, listenedMs: number): void
 }

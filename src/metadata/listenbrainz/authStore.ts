@@ -7,6 +7,7 @@
  */
 
 import { create } from "zustand"
+import { AuthOwnership } from "../authOwnership"
 import { loadAppSettings } from "../../lib/settings"
 import {
   listenbrainzSaveToken,
@@ -32,44 +33,76 @@ interface ListenBrainzState {
   disconnect: () => Promise<void>
 }
 
+const ownership = new AuthOwnership<keyof ListenBrainzState>()
+let initialization = 0
+let authentication: Promise<unknown> | null = null
 export const useListenBrainzStore = create<ListenBrainzState>((set) => ({
   isAuthenticated: false,
   isEnabled: false,
   username: null,
 
   initialize: async () => {
+    const read = ++initialization
+    const owner = ownership.capture()
     try {
       const settings = await loadAppSettings()
-      set({
-        isAuthenticated: settings.has_listenbrainz_token,
-        isEnabled: settings.listenbrainz_enabled,
-        username: settings.listenbrainz_username || null,
-      })
+      if (read !== initialization) return
+      set(
+        owner.filter({
+          isAuthenticated: settings.has_listenbrainz_token,
+          isEnabled: settings.listenbrainz_enabled,
+          username: settings.listenbrainz_username || null,
+        })
+      )
     } catch {
       // Settings not yet saved — keep defaults
     }
   },
 
   saveToken: async (token) => {
-    const result = await listenbrainzSaveToken(token)
-    set({
-      isAuthenticated: true,
-      isEnabled: true,
-      username: result.username,
-    })
+    const owner = ownership.claim("isAuthenticated", "isEnabled", "username")
+    const request = listenbrainzSaveToken(token)
+    authentication = request
+    let result: Awaited<ReturnType<typeof listenbrainzSaveToken>>
+    try {
+      result = await request
+    } finally {
+      if (authentication === request) authentication = null
+    }
+    set(
+      owner.filter({
+        isAuthenticated: true,
+        isEnabled: true,
+        username: result.username,
+      })
+    )
   },
 
   setEnabled: async (enabled) => {
+    const owner = ownership.claim("isEnabled")
+    // Token validation enables listening on disk. Apply a newer explicit toggle
+    // after it completes so the saved setting agrees with the owned UI value.
+    if (authentication) {
+      try {
+        await authentication
+      } catch {
+        /* The toggle can still be saved. */
+      }
+      if (!owner.owns("isEnabled")) return
+    }
     await listenbrainzSetEnabledApi(enabled)
-    set({ isEnabled: enabled })
+    set(owner.filter({ isEnabled: enabled }))
   },
 
   disconnect: async () => {
+    const owner = ownership.claim("isAuthenticated", "isEnabled", "username")
     await listenbrainzDisconnectApi()
-    set({
-      isAuthenticated: false,
-      isEnabled: false,
-      username: null,
-    })
+    set(
+      owner.filter({
+        isAuthenticated: false,
+        isEnabled: false,
+        username: null,
+      })
+    )
   },
 }))

@@ -37,6 +37,7 @@ import { buildPlexImageUrl } from "./imageUrl"
 import { pickBestMediaIndex } from "../../lib/dedup"
 
 export class PlexProvider implements MusicProvider {
+  private nowPlayingGeneration = 0
   constructor(private transport?: PlexTransport) {}
   readonly name = "Plex"
   readonly capabilities: ProviderCapabilities = {
@@ -535,7 +536,8 @@ export class PlexProvider implements MusicProvider {
   // Track lifecycle hooks — scrobbling to Last.fm + ListenBrainz
   // ---------------------------------------------------------------------------
 
-  onTrackStart(track: MusicTrack): void {
+  onTrackStart(track: MusicTrack, isCurrent: () => boolean = () => true): void {
+    const generation = ++this.nowPlayingGeneration
     lastfmUpdateNowPlaying(
       track.artistName ?? "",
       track.title,
@@ -546,6 +548,7 @@ export class PlexProvider implements MusicProvider {
 
     // Resolve MBIDs (cached or fresh) then submit to ListenBrainz
     resolveTrackMbids(track).then(mbids => {
+      if (generation !== this.nowPlayingGeneration || !isCurrent()) return
       listenbrainzSubmitNowPlaying(
         track.artistName ?? "",
         track.title,

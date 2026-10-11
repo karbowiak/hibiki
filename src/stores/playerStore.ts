@@ -687,7 +687,7 @@ function _onTrackBecomesActive(track: MusicTrack, index: number, get: () => Play
   if (get().djMode) fireAndForget(insertDjTracks(get, set))
 }
 
-function _onTrackAudiblyStarted(track: MusicTrack, provider: MusicProvider | null): void {
+function _onTrackAudiblyStarted(track: MusicTrack, provider: MusicProvider | null, playbackId: number): void {
   const isPodcast = _isPodcastTrack(track)
   _lastTimelineReportedAt = Date.now()
   if (useNotificationStore.getState().notificationsEnabled) {
@@ -718,7 +718,7 @@ function _onTrackAudiblyStarted(track: MusicTrack, provider: MusicProvider | nul
 
   // Notify provider of track start (scrobbling, external integrations) — skip for podcasts
   if (provider?.onTrackStart && !isPodcast) {
-    provider.onTrackStart(track)
+    provider.onTrackStart(track, () => _playbackJournal.currentId === playbackId && getProvider() === provider)
   }
 
 }
@@ -1446,7 +1446,7 @@ export const usePlayerStore = create<PlayerState>()(
           currentTrack: { ...s.currentTrack!, duration: track.duration },
           queue: s.queue.map((item, i) => i === index ? { ...item, duration: track.duration } : item),
         }))
-        _onTrackAudiblyStarted(track, provider)
+        _onTrackAudiblyStarted(track, provider, event.playback_id)
         const { queue, repeat, isRadioMode, radioMinQueue, playlistKey, playlistLoadedCount, playlistTotalCount } = get()
         const nextIndex = index
 

@@ -9,6 +9,7 @@
  */
 
 import { create } from "zustand"
+import { AuthOwnership } from "../authOwnership"
 import { loadAppSettings } from "../../lib/settings"
 import {
   lastfmCompleteAuth,
@@ -51,6 +52,8 @@ interface LastfmState {
   setLoveThreshold: (threshold: number) => Promise<void>
 }
 
+const ownership = new AuthOwnership<keyof LastfmState>()
+let initialization = 0
 export const useLastfmStore = create<LastfmState>((set) => ({
   isAuthenticated: false,
   isEnabled: false,
@@ -60,55 +63,75 @@ export const useLastfmStore = create<LastfmState>((set) => ({
   loveThreshold: 6,
 
   initialize: async () => {
+    const read = ++initialization
+    const owner = ownership.capture()
     try {
       const settings = await loadAppSettings()
-      set({
-        isAuthenticated: settings.has_lastfm_session,
-        isEnabled: settings.lastfm_enabled,
-        hasApiKey: !!settings.lastfm_api_key,
-        username: settings.lastfm_username || null,
-        replaceMetadata: settings.lastfm_replace_metadata,
-        loveThreshold: settings.lastfm_love_threshold ?? 6,
-      })
+      if (read !== initialization) return
+      set(
+        owner.filter({
+          isAuthenticated: settings.has_lastfm_session,
+          isEnabled: settings.lastfm_enabled,
+          hasApiKey: !!settings.lastfm_api_key,
+          username: settings.lastfm_username || null,
+          replaceMetadata: settings.lastfm_replace_metadata,
+          loveThreshold: settings.lastfm_love_threshold ?? 6,
+        })
+      )
     } catch {
       // Settings not yet saved — keep defaults
     }
   },
 
   setEnabled: async (enabled) => {
+    const owner = ownership.claim("isEnabled")
     await lastfmSetEnabledApi(enabled)
-    set({ isEnabled: enabled })
+    set(owner.filter({ isEnabled: enabled }))
   },
 
   completeAuth: async (token) => {
+    const owner = ownership.claim(
+      "isAuthenticated",
+      "hasApiKey",
+      "isEnabled",
+      "username"
+    )
     const session = await lastfmCompleteAuth(token)
-    await lastfmSetEnabledApi(true)
-    set({
-      isAuthenticated: true,
-      hasApiKey: true,
-      isEnabled: true,
-      username: session.username,
-    })
+    if (!owner.owns("isAuthenticated")) return
+    if (owner.owns("isEnabled")) await lastfmSetEnabledApi(true)
+    set(
+      owner.filter({
+        isAuthenticated: true,
+        hasApiKey: true,
+        isEnabled: true,
+        username: session.username,
+      })
+    )
   },
 
   disconnect: async () => {
+    const owner = ownership.claim("isAuthenticated", "isEnabled", "username")
     await lastfmDisconnectApi()
-    set({
-      isAuthenticated: false,
-      isEnabled: false,
-      username: null,
-      // Keep hasApiKey — the API key is still on disk after disconnect;
-      // public metadata lookups remain functional without a session key.
-    })
+    set(
+      owner.filter({
+        isAuthenticated: false,
+        isEnabled: false,
+        username: null,
+        // Keep hasApiKey — the API key is still on disk after disconnect;
+        // public metadata lookups remain functional without a session key.
+      })
+    )
   },
 
   setReplaceMetadata: async (replace) => {
+    const owner = ownership.claim("replaceMetadata")
     await lastfmSetReplaceMetadataApi(replace)
-    set({ replaceMetadata: replace })
+    set(owner.filter({ replaceMetadata: replace }))
   },
 
   setLoveThreshold: async (threshold) => {
+    const owner = ownership.claim("loveThreshold")
     await lastfmSetLoveThresholdApi(threshold)
-    set({ loveThreshold: threshold })
+    set(owner.filter({ loveThreshold: threshold }))
   },
 }))
