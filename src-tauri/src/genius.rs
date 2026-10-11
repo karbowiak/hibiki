@@ -332,22 +332,14 @@ pub async fn scrape_lyrics(url: &str) -> Result<Vec<GeniusLyricLine>> {
 /// Extract text from an HTML element, converting `<br>` tags to newlines.
 fn extract_text_with_newlines(element: &scraper::ElementRef) -> String {
     let mut result = String::new();
-    for node in element.children() {
+    // Remote lyrics markup can nest elements deeply. Walk the tree without
+    // consuming one Rust stack frame for every nested span.
+    for node in element.descendants() {
         match node.value() {
             scraper::Node::Text(text) => {
                 result.push_str(text);
             }
-            scraper::Node::Element(el) => {
-                if el.name() == "br" {
-                    result.push('\n');
-                } else {
-                    // Recurse into child elements (e.g. <span>, <i>, <b>)
-                    let child_ref = scraper::ElementRef::wrap(node);
-                    if let Some(child) = child_ref {
-                        result.push_str(&extract_text_with_newlines(&child));
-                    }
-                }
-            }
+            scraper::Node::Element(el) if el.name() == "br" => result.push('\n'),
             _ => {}
         }
     }
@@ -358,6 +350,18 @@ fn extract_text_with_newlines(element: &scraper::ElementRef) -> String {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn deep_lyrics_preserve_text_and_line_breaks_without_recursive_traversal() {
+        let html = format!(
+            "<div data-lyrics-container='true'>Before<br>{}Deep{}After<br>Tail</div>",
+            "<span>".repeat(5_000), "</span>".repeat(5_000),
+        );
+        let document = scraper::Html::parse_fragment(&html);
+        let selector = scraper::Selector::parse("div[data-lyrics-container]").unwrap();
+        let element = document.select(&selector).next().unwrap();
+        assert_eq!(extract_text_with_newlines(&element), "Before\nDeepAfter\nTail");
+    }
 
     #[tokio::test]
     async fn cached_oauth_tokens_are_reused_only_for_the_same_client_and_secret() {
