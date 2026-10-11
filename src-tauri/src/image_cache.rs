@@ -41,6 +41,50 @@ struct Root {
     _lock: fs::File,
 }
 
+struct PendingImage {
+    file: Option<tempfile::NamedTempFile>,
+    path: PathBuf,
+    root: Arc<Root>,
+}
+
+impl PendingImage {
+    fn new(root: Arc<Root>) -> Result<Self, String> {
+        let prefix = format!(".imgcache.{}.", uuid::Uuid::new_v4());
+        let file = tempfile::Builder::new()
+            .prefix(&prefix)
+            .suffix(".tmp")
+            // Cleanup belongs to the original root, not its reusable pathname.
+            .disable_cleanup(true)
+            .tempfile_in(&root.directory)
+            .map_err(|e| e.to_string())?;
+        Ok(Self {
+            path: file.path().to_owned(),
+            file: Some(file),
+            root,
+        })
+    }
+
+    fn persist(mut self, path: &Path) -> Result<(), String> {
+        self.file
+            .take()
+            .expect("pending image writer")
+            .persist(path)
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+}
+
+impl Drop for PendingImage {
+    fn drop(&mut self) {
+        // Close the file before unlinking, including on platforms that disallow
+        // deletion of an open writer. A moved root leaves an owned crash orphan.
+        drop(self.file.take());
+        if directory_id(&self.root.directory) == Some(self.root.identity) {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
 #[derive(Default)]
 struct Index {
     loaded: bool,
@@ -230,6 +274,16 @@ impl ImageCache {
     }
 
     pub fn store(&self, ticket: &Ticket, key: &str, bytes: &[u8]) -> Result<(), String> {
+        self.store_with_before_publish(ticket, key, bytes, |_| {})
+    }
+
+    fn store_with_before_publish(
+        &self,
+        ticket: &Ticket,
+        key: &str,
+        bytes: &[u8],
+        before_publish: impl FnOnce(&Path),
+    ) -> Result<(), String> {
         if !owned_image(key)
             || bytes.is_empty()
             || bytes.len() > MAX_IMAGE_BYTES
@@ -255,20 +309,19 @@ impl ImageCache {
         // Reserve temporary-file bytes too, keeping disk use bounded during
         // atomic replacement of an existing complete image.
         self.make_room(&mut index, bytes.len() as u64, extra_files, Some(key))?;
-        let prefix = format!(".imgcache.{}.", uuid::Uuid::new_v4());
-        let mut temporary = tempfile::Builder::new()
-            .prefix(&prefix)
-            .suffix(".tmp")
-            .tempfile_in(&root.directory)
+        let mut temporary = PendingImage::new(root.clone())?;
+        temporary
+            .file
+            .as_mut()
+            .expect("pending image writer")
+            .write_all(bytes)
             .map_err(|e| e.to_string())?;
-        temporary.write_all(bytes).map_err(|e| e.to_string())?;
+        before_publish(&temporary.path);
         self.root()?;
         if !self.accepts(ticket) {
             return Err("Artwork request was retired".into());
         }
-        temporary
-            .persist(root.directory.join(key))
-            .map_err(|e| e.to_string())?;
+        temporary.persist(&root.directory.join(key))?;
         if let Some(old) = index.entries.insert(
             key.to_owned(),
             Entry {
@@ -704,6 +757,38 @@ mod tests {
             fs::read(outside.join("library_metadata_42_thumb.img")).unwrap(),
             b"keep"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn moving_a_cache_mid_write_cannot_redirect_temporary_file_cleanup() {
+        use std::os::unix::fs::symlink;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("images");
+        let moved = directory.path().join("moved");
+        let outside = directory.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        let cache = ImageCache::new(path.clone());
+        let mut filename = None;
+        assert!(cache
+            .store_with_before_publish(&cache.ticket(), &key(1), b"artwork", |temporary| {
+                let name = temporary.file_name().unwrap().to_owned();
+                fs::rename(&path, &moved).unwrap();
+                symlink(&outside, &path).unwrap();
+                fs::write(outside.join(&name), b"outside data").unwrap();
+                filename = Some(name);
+            })
+            .is_err());
+        let filename = filename.unwrap();
+        assert_eq!(fs::read(outside.join(&filename)).unwrap(), b"outside data");
+        assert!(moved.join(&filename).exists());
+        // Once the original directory is restored, the owned orphan is safe
+        // to clean up; the identically named outside file stays untouched.
+        fs::remove_file(&path).unwrap();
+        fs::rename(&moved, &path).unwrap();
+        assert_eq!(cache.stats().unwrap().files, 0);
+        assert!(!path.join(&filename).exists());
+        assert_eq!(fs::read(outside.join(&filename)).unwrap(), b"outside data");
     }
 
     #[cfg(unix)]
