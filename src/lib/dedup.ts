@@ -250,7 +250,9 @@ export function pickBestMediaIndex(mediaList: Media[]): number {
   if (mediaList.length <= 1) return 0
   let bestIdx = 0
   let bestScore = -1
+  const hasPlayableMedia = mediaList.some(media => !!media.parts?.[0]?.key)
   for (let i = 0; i < mediaList.length; i++) {
+    if (hasPlayableMedia && !mediaList[i].parts?.[0]?.key) continue
     const s = scoreMedia(mediaList[i])
     if (s > bestScore) {
       bestScore = s

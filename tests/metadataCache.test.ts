@@ -194,7 +194,7 @@ test("malformed metadata and unknown legacy rows cannot poison a scoped cache", 
     JSON.stringify({ state: { albums: { same: { album: album("same", "Private legacy") } } } })
   )
   h.values.set(
-    "hibiki-metadata-v2:account-a",
+    "hibiki-metadata-v3:account-a",
     JSON.stringify({
       version: 2,
       scope: "account-a",

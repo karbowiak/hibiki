@@ -266,14 +266,14 @@ test("disconnect preserves saved scope data and reconnect restores only the matc
   await h.switchTo("account-a")
   expect(h.state().playlists[0].id).toBe("private-a")
   expect(h.state().recentMixes).toHaveLength(1)
-  expect([...h.values.keys()]).toContain("hibiki-library-v2:account-a")
+  expect([...h.values.keys()]).toContain("hibiki-library-v3:account-a")
 })
 
 test("malformed hydration cannot replace store actions or adopt another account's legacy data", async () => {
   const h = harness()
   h.values.set("plex-library-v1", JSON.stringify({ state: { playlists: [playlist("legacy-private")] } }))
   h.values.set(
-    "hibiki-library-v2:account-a",
+    "hibiki-library-v3:account-a",
     JSON.stringify({
       version: 2,
       scope: "account-a",

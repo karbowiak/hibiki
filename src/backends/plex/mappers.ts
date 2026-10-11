@@ -7,6 +7,7 @@
  */
 
 import type { Track, Album, Artist, Playlist, Hub, PlexMedia } from "./types"
+import { pickBestMediaIndex } from "../../lib/dedup"
 import type {
   MusicTrack,
   MusicAlbum,
@@ -51,7 +52,7 @@ function resolveImg(
 // ---------------------------------------------------------------------------
 
 export function plexTrackToMusicTrack(t: Track, img: ImgResolver): MusicTrack {
-  const media = t.media?.[0]
+  const media = t.media?.[pickBestMediaIndex(t.media ?? [])]
   const stream = media?.parts?.[0]?.streams?.find(s => s.stream_type === 2)
   const part = media?.parts?.[0]
   const trackId = String(t.rating_key)
@@ -92,8 +93,8 @@ export function plexTrackToMusicTrack(t: Track, img: ImgResolver): MusicTrack {
     parentStudio: t.parent_studio ?? null,
     lastRatedAt: t.last_rated_at ?? null,
     providerKey: t.key ?? null,
-    startRamp: t.start_ramp ?? stream?.start_ramp ?? null,
-    endRamp: t.end_ramp ?? stream?.end_ramp ?? null,
+    startRamp: stream?.start_ramp ?? t.start_ramp ?? null,
+    endRamp: stream?.end_ramp ?? t.end_ramp ?? null,
     rawThumbPath: t.thumb ?? t.parent_thumb ?? null,
     mediaInfo: {
       container: media?.container ?? null,

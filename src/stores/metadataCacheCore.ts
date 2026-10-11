@@ -131,7 +131,7 @@ export function createMetadataCache({
   storage,
   deduplicate = () => true
 }: MetadataDependencies) {
-  const persistence = new ScopedPersistence(storage, "hibiki-metadata-v2")
+  const persistence = new ScopedPersistence(storage, "hibiki-metadata-v3")
   const owner = Symbol("metadata-cache")
   let epoch = 0,
     provider: MusicProvider | null = null

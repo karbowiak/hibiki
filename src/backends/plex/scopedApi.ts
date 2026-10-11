@@ -551,7 +551,7 @@ export function createPlexApi(
   /**
    * Get loudness/peak level data for a media stream.
    *
-   * Use for waveform visualisation. `streamId` is `track.media[0].parts[0].id`.
+   * Use for waveform visualisation. `streamId` is the selected audio Stream ID.
    * `subSample` controls resolution (128 = PlexAmp default).
    */
   function getStreamLevels(
@@ -571,7 +571,7 @@ export function createPlexApi(
   /**
    * Build a direct-play stream URL for a media part.
    *
-   * Pass `track.media[0].parts[0].key` as `partKey`.
+   * Pass the selected media part key as `partKey`.
    * Returns a URL you can set as the `src` of an `<audio>` element.
    */
   function getStreamUrl(partKey: string): Promise<string> {

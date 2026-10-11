@@ -335,8 +335,8 @@ export class PlexProvider implements MusicProvider {
       trackKey: Number(track.id),
       partId: media?.parts?.[0]?.id ?? 0,
       parentKey: plexTrack.parent_key ?? "",
-      startRamp: plexTrack.start_ramp ?? stream?.start_ramp ?? null,
-      endRamp: plexTrack.end_ramp ?? stream?.end_ramp ?? null,
+      startRamp: stream?.start_ramp ?? plexTrack.start_ramp ?? null,
+      endRamp: stream?.end_ramp ?? plexTrack.end_ramp ?? null,
     }
   }
 

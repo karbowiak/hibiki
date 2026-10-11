@@ -261,7 +261,7 @@ export function createLibraryStore({
   storage,
   delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 }: LibraryDependencies) {
-  const cache = new ScopedPersistence(storage, "hibiki-library-v2")
+  const cache = new ScopedPersistence(storage, "hibiki-library-v3")
   let epoch = 0,
     view = 0,
     activeProvider: MusicProvider | null = null
