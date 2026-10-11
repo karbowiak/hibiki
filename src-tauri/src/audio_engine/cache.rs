@@ -6,8 +6,10 @@
 //! Index: `index.json` — loaded at startup, flushed on mutations.
 //! Eviction: LRU by `last_accessed`, triggered after each write completion.
 
-use crate::cache_files::{directory_id, open_regular_file, regular_file};
-use std::collections::HashMap;
+use crate::cache_files::{
+    directory_id, open_regular_file, open_writable_regular_file, regular_file,
+};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -54,10 +56,31 @@ struct CacheOwner {
     generation: AtomicU64,
     directory: PathBuf,
     directory_id: Option<(u64, u64)>,
+    // Writers retain ownership even if the cache manager is dropped.
+    _lock: Option<fs::File>,
 }
 
 impl CacheOwner {
     fn directory_is_current(&self) -> bool {
+        let Some(lock) = self._lock.as_ref() else {
+            return false;
+        };
+        let Ok(on_disk) = fs::symlink_metadata(self.directory.join(".audio-cache.lock")) else {
+            return false;
+        };
+        let Ok(held) = lock.metadata() else {
+            return false;
+        };
+        if !regular_file(&on_disk) || !regular_file(&held) {
+            return false;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if (on_disk.dev(), on_disk.ino()) != (held.dev(), held.ino()) {
+                return false;
+            }
+        }
         self.directory_id.is_some() && directory_id(&self.directory) == self.directory_id
     }
 }
@@ -201,6 +224,17 @@ impl AudioCache {
         } else {
             cache_dir
         };
+        let root_lock = available
+            .then(|| lock_cache_directory(&cache_dir))
+            .transpose();
+        let root_lock = match root_lock {
+            Ok(lock) => lock,
+            Err(error) => {
+                warn!(%error, "audio cache disabled: cannot acquire ownership");
+                None
+            }
+        };
+        let available = available && root_lock.is_some();
         #[cfg(unix)]
         if available {
             use std::os::unix::fs::PermissionsExt;
@@ -245,6 +279,7 @@ impl AudioCache {
             generation: AtomicU64::new(0),
             directory: cache_dir.clone(),
             directory_id: directory_id(&cache_dir),
+            _lock: root_lock,
         });
         let cache = Self {
             cache_dir,
@@ -254,12 +289,55 @@ impl AudioCache {
             available,
             entry_limit,
         };
+        if available {
+            cache.remove_crash_orphans();
+        }
         // None is the application's temporary default before preferences are
         // restored. Do not discard a user's larger cache before that happens.
         if max_bytes.is_some() {
             cache.evict();
         }
         cache
+    }
+
+    fn remove_crash_orphans(&self) {
+        if self.check_directory().is_err() {
+            return;
+        }
+        let Ok(idx) = self.index.lock() else {
+            return;
+        };
+        let retained: HashSet<_> = idx
+            .entries
+            .values()
+            .map(|entry| entry.filename.as_str())
+            .collect();
+        let Ok(entries) = fs::read_dir(&self.cache_dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            let owned_index_temp = name.strip_prefix(".audio-index.").is_some_and(|suffix| {
+                suffix.len() == 6 && suffix.bytes().all(|b| b.is_ascii_alphanumeric())
+            });
+            let orphan_media = name.rsplit_once('.').is_some_and(|(key, _)| {
+                let digest = key.strip_prefix("s1-").unwrap_or(key);
+                matches!(digest.len(), 32 | 64)
+                    && digest.bytes().all(|b| b.is_ascii_hexdigit())
+                    && valid_filename(key, name)
+                    && !retained.contains(name)
+            });
+            if (owned_partial_filename(name) || owned_index_temp || orphan_media)
+                && fs::symlink_metadata(entry.path()).is_ok_and(|metadata| regular_file(&metadata))
+            {
+                if let Err(error) = fs::remove_file(entry.path()) {
+                    warn!(%error, "failed to reclaim crashed audio cache file");
+                }
+            }
+        }
     }
 
     /// Look up a cached file by rating key. Returns the file path if cached.
@@ -842,6 +920,33 @@ fn valid_filename(key: &str, filename: &str) -> bool {
             .is_some_and(|(prefix, extension)| prefix == key && valid_extension(extension))
 }
 
+fn lock_cache_directory(directory: &Path) -> Result<fs::File, String> {
+    let identity = directory_id(directory).ok_or("audio cache directory is unavailable")?;
+    let path = directory.join(".audio-cache.lock");
+    let lock = match fs::File::create_new(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            open_writable_regular_file(&path).map_err(|error| error.to_string())?
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    if !regular_file(&lock.metadata().map_err(|error| error.to_string())?) {
+        return Err("audio cache lock is not a private file".into());
+    }
+    lock.try_lock()
+        .map_err(|error| format!("audio cache is owned by another process: {error}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        lock.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|error| error.to_string())?;
+    }
+    if directory_id(directory) != Some(identity) {
+        return Err("audio cache directory changed".into());
+    }
+    Ok(lock)
+}
+
 fn owned_partial_filename(filename: &str) -> bool {
     let Some((media, id)) = filename
         .strip_suffix(".part")
@@ -894,6 +999,149 @@ pub fn extract_extension(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    fn cache_child(directory: &Path, mode: &str) {
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "audio_engine::cache::tests::cache_lock_child",
+                "--ignored",
+            ])
+            .env("HIBIKI_AUDIO_CACHE_TEST_DIR", directory)
+            .env("HIBIKI_AUDIO_CACHE_TEST_MODE", mode)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+
+    #[test]
+    fn another_process_cannot_mutate_the_active_audio_cache_or_delete_its_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = AudioCache::new(dir.path().into(), None);
+        let mut writer = cache.begin_write("42", "flac").unwrap();
+        writer.write_chunk(b"active partial").unwrap();
+        writer.writer.as_mut().unwrap().flush().unwrap();
+        let partial = writer.temp_path.clone();
+        cache_child(dir.path(), "busy");
+        assert_eq!(fs::read(partial).unwrap(), b"active partial");
+        writer.finish(&cache).unwrap();
+        assert_eq!(
+            fs::read(cache.lookup("42").unwrap()).unwrap(),
+            b"active partial"
+        );
+    }
+
+    #[test]
+    fn pending_writer_holds_exclusive_ownership_after_manager_is_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = AudioCache::new(dir.path().into(), None);
+        let writer = cache.begin_write("42", "flac").unwrap();
+        drop(cache);
+        let blocked = AudioCache::new(dir.path().into(), None);
+        assert!(blocked.clear().is_err());
+        drop(writer);
+        drop(blocked);
+        let fresh = AudioCache::new(dir.path().into(), None);
+        assert!(fresh.begin_write("42", "flac").is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replacing_the_lock_file_retires_the_old_cache_and_its_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = AudioCache::new(dir.path().into(), None);
+        let mut writer = old.begin_write("42", "flac").unwrap();
+        writer.write_chunk(b"old partial").unwrap();
+        fs::remove_file(dir.path().join(".audio-cache.lock")).unwrap();
+        let replacement = AudioCache::new(dir.path().into(), None);
+        assert!(old.clear().is_err());
+        assert!(writer.write_chunk(b"obsolete").is_err());
+        let mut fresh = replacement.begin_write("42", "flac").unwrap();
+        fresh.write_chunk(b"fresh audio").unwrap();
+        fresh.finish(&replacement).unwrap();
+        assert_eq!(
+            fs::read(replacement.lookup("42").unwrap()).unwrap(),
+            b"fresh audio"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_lock_files_cannot_touch_another_files_data_or_permissions() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        for hard_link in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let outside = dir.path().join("outside");
+            fs::write(&outside, b"private non-cache data").unwrap();
+            fs::set_permissions(&outside, fs::Permissions::from_mode(0o640)).unwrap();
+            let root = dir.path().join("cache");
+            fs::create_dir(&root).unwrap();
+            let lock = root.join(".audio-cache.lock");
+            if hard_link {
+                fs::hard_link(&outside, &lock).unwrap();
+            } else {
+                symlink(&outside, &lock).unwrap();
+            }
+            let cache = AudioCache::new(root, Some(1));
+            assert!(cache.clear().is_err());
+            assert!(cache.begin_write("42", "wav").is_err());
+            assert_eq!(fs::read(&outside).unwrap(), b"private non-cache data");
+            assert_eq!(
+                fs::metadata(outside).unwrap().permissions().mode() & 0o777,
+                0o640
+            );
+        }
+    }
+
+    #[test]
+    fn startup_reclaims_crash_orphans_without_removing_unknown_files() {
+        let dir = tempfile::tempdir().unwrap();
+        cache_child(dir.path(), "crash");
+        let cache = AudioCache::new(dir.path().into(), None);
+        assert_eq!(cache.stats().total_bytes, 0);
+        let names: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(!names.iter().any(|name| name.ends_with(".part")
+            || name == ".audio-index.ABC123"
+            || name.ends_with(".flac")));
+        assert_eq!(
+            fs::read(dir.path().join("favorite.wav")).unwrap(),
+            b"unknown file"
+        );
+        assert!(cache.begin_write("42", "flac").is_ok());
+    }
+
+    #[test]
+    #[ignore = "Invoked only by isolated cross-process cache regressions"]
+    fn cache_lock_child() {
+        let dir = PathBuf::from(std::env::var_os("HIBIKI_AUDIO_CACHE_TEST_DIR").unwrap());
+        let cache = AudioCache::new(dir.clone(), Some(1));
+        if std::env::var("HIBIKI_AUDIO_CACHE_TEST_MODE").unwrap() == "busy" {
+            assert!(cache.clear().is_err());
+            assert!(cache.set_max_bytes(1).is_err());
+            assert!(cache.begin_write("replacement", "wav").is_err());
+        } else {
+            cache.set_max_bytes(1024).unwrap();
+            let mut writer = cache.begin_write("42", "wav").unwrap();
+            writer.write_chunk(b"crashed partial").unwrap();
+            fs::write(
+                dir.join(format!("{}.flac", "a".repeat(32))),
+                b"unindexed completed file",
+            )
+            .unwrap();
+            fs::write(dir.join(".audio-index.ABC123"), b"crashed index").unwrap();
+            fs::write(dir.join("favorite.wav"), b"unknown file").unwrap();
+            std::mem::forget(writer);
+            std::process::exit(0); // Simulate loss of process without writer Drop.
+        }
+    }
+
     #[test]
     fn a_late_corrupt_file_report_cannot_discard_a_newer_download_with_the_same_key() {
         let directory = tempfile::tempdir().unwrap();
@@ -1346,6 +1594,7 @@ mod tests {
         writer.finish(&cache).unwrap();
         fs::write(cache.lookup("42").unwrap(), b"bad").unwrap();
         assert!(cache.lookup("42").is_none());
+        drop(cache);
         let reopened = AudioCache::new(directory.path().into(), None);
         let mut fresh = reopened.begin_write("42", "flac").unwrap();
         fresh.write_chunk(b"fresh complete audio").unwrap();
@@ -1445,6 +1694,7 @@ mod tests {
             .unwrap()
             .remove("gain_analysis_version");
         std::fs::write(&index_path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        drop(cache);
         let restored = AudioCache::new(dir.path().into(), None);
         assert_eq!(restored.get_computed_gain(&key), None);
         let file = restored.lookup(&key).unwrap();
@@ -1468,6 +1718,7 @@ mod tests {
                 serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
             saved["entries"][&key]["gain_analysis_version"] = serde_json::json!(version);
             std::fs::write(path, serde_json::to_vec(&saved).unwrap()).unwrap();
+            drop(cache);
             let restored = AudioCache::new(dir.path().into(), None);
             assert_eq!(restored.get_computed_gain(&key), None);
             assert_eq!(
