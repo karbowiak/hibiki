@@ -22,8 +22,9 @@ static GENIUS_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
         .expect("Failed to build Genius HTTP client")
 });
 
-/// Cached access token with expiry.
-static TOKEN_CACHE: Lazy<Mutex<Option<(String, Instant)>>> = Lazy::new(|| Mutex::new(None));
+/// Cached access token is bound to the exact client credentials and expiry.
+type TokenCache = Mutex<Option<([u8; 32], String, Instant)>>;
+static TOKEN_CACHE: Lazy<TokenCache> = Lazy::new(|| Mutex::new(None));
 
 const TOKEN_TTL_SECS: u64 = 3600; // 1 hour
 
@@ -100,18 +101,36 @@ struct SearchStats {
 
 /// Obtain an access token using client credentials. Caches for 1 hour.
 pub async fn get_access_token(client_id: &str, client_secret: &str) -> Result<String> {
+    access_token_from(
+        &GENIUS_CLIENT,
+        "https://api.genius.com/oauth/token",
+        &TOKEN_CACHE,
+        client_id,
+        client_secret,
+    ).await
+}
+
+async fn access_token_from(
+    client: &reqwest::Client,
+    endpoint: &str,
+    cache: &TokenCache,
+    client_id: &str,
+    client_secret: &str,
+) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    let credentials: [u8; 32] = Sha256::digest(serde_json::to_vec(&[client_id, client_secret])?).into();
     // Check cache
     {
-        let guard = TOKEN_CACHE.lock().unwrap();
-        if let Some((ref token, ref issued_at)) = *guard {
-            if issued_at.elapsed().as_secs() < TOKEN_TTL_SECS {
+        let guard = cache.lock().unwrap();
+        if let Some((ref key, ref token, ref issued_at)) = *guard {
+            if key == &credentials && issued_at.elapsed().as_secs() < TOKEN_TTL_SECS {
                 return Ok(token.clone());
             }
         }
     }
 
-    let resp = GENIUS_CLIENT
-        .post("https://api.genius.com/oauth/token")
+    let resp = client
+        .post(endpoint)
         .form(&[
             ("client_id", client_id),
             ("client_secret", client_secret),
@@ -133,8 +152,8 @@ pub async fn get_access_token(client_id: &str, client_secret: &str) -> Result<St
 
     // Cache the token
     {
-        let mut guard = TOKEN_CACHE.lock().unwrap();
-        *guard = Some((token.clone(), Instant::now()));
+        let mut guard = cache.lock().unwrap();
+        *guard = Some((credentials, token.clone(), Instant::now()));
     }
 
     Ok(token)
@@ -333,4 +352,45 @@ fn extract_text_with_newlines(element: &scraper::ElementRef) -> String {
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn cached_oauth_tokens_are_reused_only_for_the_same_client_and_secret() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/token", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            for (client_id, secret, token) in [("client-a", "secret-a", "token-a"), ("client-b", "secret-b", "token-b"), ("client-b", "secret-renewed", "token-renewed")] {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                let body = loop {
+                    let mut buffer = [0; 2048];
+                    let n = socket.read(&mut buffer).await.unwrap();
+                    assert!(n > 0);
+                    bytes.extend_from_slice(&buffer[..n]);
+                    if let Some(end) = bytes.windows(4).position(|chunk| chunk == b"\r\n\r\n") {
+                        let header = String::from_utf8_lossy(&bytes[..end]);
+                        let length = header.lines().find_map(|line| line.to_lowercase().strip_prefix("content-length:").map(|length| length.trim().parse::<usize>().unwrap())).unwrap();
+                        if bytes.len() >= end + 4 + length { break bytes[end+4..end+4+length].to_vec(); }
+                    }
+                };
+                let form: std::collections::HashMap<_, _> = url::form_urlencoded::parse(&body).into_owned().collect();
+                assert_eq!(form["client_id"], client_id);
+                assert_eq!(form["client_secret"], secret);
+                let body = format!(r#"{{"access_token":"{token}"}}"#);
+                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+            }
+        });
+        let cache = Mutex::new(None);
+        let client = reqwest::Client::new();
+        assert_eq!(access_token_from(&client, &endpoint, &cache, "client-a", "secret-a").await.unwrap(), "token-a");
+        assert_eq!(access_token_from(&client, &endpoint, &cache, "client-a", "secret-a").await.unwrap(), "token-a");
+        assert_eq!(access_token_from(&client, &endpoint, &cache, "client-b", "secret-b").await.unwrap(), "token-b");
+        assert_eq!(access_token_from(&client, &endpoint, &cache, "client-b", "secret-renewed").await.unwrap(), "token-renewed");
+        server.await.unwrap();
+    }
 }
