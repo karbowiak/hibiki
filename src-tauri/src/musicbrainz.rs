@@ -14,10 +14,30 @@ const MB_BASE: &str = "https://musicbrainz.org/ws/2";
 static MB_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
-        .user_agent("Plexify/1.0 (https://github.com/plexify)")
+        .user_agent(concat!("Hibiki/", env!("CARGO_PKG_VERSION"), " (https://github.com/karbowiak/hibiki)"))
         .build()
         .expect("Failed to build MusicBrainz HTTP client")
 });
+
+struct RequestLimiter(tokio::sync::Mutex<Option<tokio::time::Instant>>);
+impl RequestLimiter {
+    fn new() -> Self { Self(tokio::sync::Mutex::new(None)) }
+
+    async fn wait(&self) {
+        // FIFO asynchronous admission covers every endpoint, including the
+        // artist search followed by its detail lookup. Cancellation drops the
+        // guard; a delayed wake reserves from now so requests cannot burst.
+        let mut next = self.0.lock().await;
+        if let Some(deadline) = *next { tokio::time::sleep_until(deadline).await; }
+        *next = Some(tokio::time::Instant::now() + std::time::Duration::from_secs(1));
+    }
+}
+static LIMITER: Lazy<RequestLimiter> = Lazy::new(RequestLimiter::new);
+
+async fn musicbrainz_get(request: reqwest::RequestBuilder) -> Result<reqwest::Response> {
+    LIMITER.wait().await;
+    request.send().await.map_err(|error| error.without_url()).context("MusicBrainz request failed")
+}
 
 // ---------------------------------------------------------------------------
 // Private response models (deserialization only)
@@ -201,15 +221,14 @@ pub struct MusicBrainzRecordingMbids {
 /// Search for an artist by name, fetch full detail by MBID for relations (Wikipedia URL).
 pub async fn get_artist_info(artist: &str) -> Result<Option<MusicBrainzArtistInfo>> {
     // Step 1: search for artist
-    let search_resp: MBSearchResult<MBArtistSearchItem> = MB_CLIENT
+    let search_resp: MBSearchResult<MBArtistSearchItem> = musicbrainz_get(MB_CLIENT
         .get(format!("{}/artist", MB_BASE))
         .query(&[
             ("query", format!("artist:{}", artist)),
             ("fmt", "json".to_string()),
             ("limit", "5".to_string()),
-        ])
-        .send()
-        .await.map_err(|error| error.without_url())
+        ]))
+        .await
         .context("Failed to reach MusicBrainz artist search")?
         .error_for_status().map_err(|error| error.without_url())
         .context("MusicBrainz artist search returned error status")?
@@ -232,11 +251,10 @@ pub async fn get_artist_info(artist: &str) -> Result<Option<MusicBrainzArtistInf
     let mbid = &best.id;
 
     // Step 2: fetch full artist detail with URL relations for Wikipedia link
-    let detail: MBArtistDetail = MB_CLIENT
+    let detail: MBArtistDetail = musicbrainz_get(MB_CLIENT
         .get(format!("{}/artist/{}", MB_BASE, mbid))
-        .query(&[("inc", "tags+url-rels"), ("fmt", "json")])
-        .send()
-        .await.map_err(|error| error.without_url())
+        .query(&[("inc", "tags+url-rels"), ("fmt", "json")]))
+        .await
         .context("Failed to reach MusicBrainz artist detail")?
         .error_for_status().map_err(|error| error.without_url())
         .context("MusicBrainz artist detail returned error status")?
@@ -275,15 +293,14 @@ pub async fn get_artist_info(artist: &str) -> Result<Option<MusicBrainzArtistInf
 pub async fn get_album_info(artist: &str, album: &str) -> Result<Option<MusicBrainzAlbumInfo>> {
     let query = format!("releasegroup:{} AND artist:{}", album, artist);
 
-    let search_resp: MBSearchResult<MBReleaseGroupSearchItem> = MB_CLIENT
+    let search_resp: MBSearchResult<MBReleaseGroupSearchItem> = musicbrainz_get(MB_CLIENT
         .get(format!("{}/release-group", MB_BASE))
         .query(&[
             ("query", query.as_str()),
             ("fmt", "json"),
             ("limit", "5"),
-        ])
-        .send()
-        .await.map_err(|error| error.without_url())
+        ]))
+        .await
         .context("Failed to reach MusicBrainz release-group search")?
         .error_for_status().map_err(|error| error.without_url())
         .context("MusicBrainz release-group search returned error status")?
@@ -335,15 +352,14 @@ pub async fn lookup_recording_mbids(
         format!("recording:{} AND artist:{} AND release:{}", track, artist, album)
     };
 
-    let search_resp: MBRecordingSearchResult = MB_CLIENT
+    let search_resp: MBRecordingSearchResult = musicbrainz_get(MB_CLIENT
         .get(format!("{}/recording", MB_BASE))
         .query(&[
             ("query", query.as_str()),
             ("fmt", "json"),
             ("limit", "5"),
-        ])
-        .send()
-        .await.map_err(|error| error.without_url())
+        ]))
+        .await
         .context("Failed to reach MusicBrainz recording search")?
         .error_for_status().map_err(|error| error.without_url())
         .context("MusicBrainz recording search returned error status")?
@@ -402,4 +418,66 @@ pub async fn lookup_recording_mbids(
         release_mbid,
         release_group_mbid,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    async fn yield_tasks() {
+        for _ in 0..8 { tokio::task::yield_now().await; }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn endpoint_admission_is_shared_and_waiting_calls_remain_one_second_apart() {
+        let limiter = Arc::new(RequestLimiter::new());
+        let start = tokio::time::Instant::now();
+        let (send, mut receive) = tokio::sync::mpsc::unbounded_channel();
+        let mut tasks = Vec::new();
+        for endpoint in ["artist search", "artist detail", "album", "recording"] {
+            let limiter = limiter.clone();
+            let send = send.clone();
+            tasks.push(tokio::spawn(async move {
+                limiter.wait().await;
+                send.send((endpoint, tokio::time::Instant::now())).unwrap();
+            }));
+            yield_tasks().await;
+        }
+        assert_eq!(receive.try_recv().unwrap(), ("artist search", start));
+        assert!(receive.try_recv().is_err());
+        for (offset, endpoint) in ["artist detail", "album", "recording"].iter().enumerate() {
+            tokio::time::advance(Duration::from_secs(1)).await;
+            yield_tasks().await;
+            assert_eq!(receive.try_recv().unwrap(), (*endpoint, start + Duration::from_secs(offset as u64 + 1)));
+            assert!(receive.try_recv().is_err());
+        }
+        for task in tasks { task.await.unwrap(); }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancellation_and_delayed_executor_wake_do_not_release_a_request_burst() {
+        let limiter = Arc::new(RequestLimiter::new());
+        limiter.wait().await;
+        let cancelled = {
+            let limiter = limiter.clone();
+            tokio::spawn(async move { limiter.wait().await })
+        };
+        yield_tasks().await;
+        cancelled.abort();
+        let mut tasks = Vec::new();
+        for _ in 0..3 {
+            let limiter = limiter.clone();
+            tasks.push(tokio::spawn(async move {
+                limiter.wait().await;
+                tokio::time::Instant::now()
+            }));
+            yield_tasks().await;
+        }
+        tokio::time::advance(Duration::from_secs(30)).await;
+        let mut times = Vec::new();
+        for task in tasks { times.push(task.await.unwrap()); }
+        assert!(times.windows(2).all(|pair| pair[1] - pair[0] >= Duration::from_secs(1)));
+    }
 }
