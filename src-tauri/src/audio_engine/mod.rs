@@ -1269,13 +1269,24 @@ fn fetch_and_decode_incremental(
     let cache_key = &source.cache_key;
 
     // ---- Cache HIT: decode from local file ----
-    if let Some(file) = cache.open(cache_key) {
+    if let Some((file, stamp)) = cache.open_with_stamp(cache_key) {
         debug!(rating_key, "cache hit — decoding from file");
-        let mss = MediaSourceStream::new(Box::new(file), Default::default());
-        let mut setup = decode::probe_from_source(mss, Some(ext)).map_err(|e| format!("{}", e))?;
-        let mut result = decode_initial_batch(&mut setup, device_rate, device_channels)?;
-        result.decoder = if setup.finished { None } else { Some(setup) };
-        return Ok(result);
+        let cached: Result<IncrementalDecodeResult, String> = (|| {
+            let mss = MediaSourceStream::new(Box::new(file), Default::default());
+            let mut setup = decode::probe_from_source(mss, Some(ext)).map_err(|error| format!("{error}"))?;
+            let mut result = decode_initial_batch(&mut setup, device_rate, device_channels)?;
+            if setup.aborted || setup.had_decode_errors { return Err("cached audio contains incomplete or invalid frames".into()); }
+            result.decoder = if setup.finished { None } else { Some(setup) };
+            Ok(result)
+        })();
+        match cached {
+            Ok(result) => return Ok(result),
+            Err(error) => {
+                if !request.is_current() { return Err("audio request superseded".into()); }
+                warn!(rating_key, %error, "cached audio failed; retrying original media source");
+                cache.discard(cache_key, &stamp);
+            }
+        }
     }
 
     // ---- Cache MISS: stream from HTTP, tee to disk ----
@@ -1602,6 +1613,56 @@ mod control_tests {
         callback.dsp_chain.process(&mut samples, 44100, 2);
         assert!(samples.iter().all(|sample| (*sample - 0.04).abs() < 1e-7));
         assert_eq!(engine.atomics.get_state(), EngineState::Stopped);
+    }
+
+    #[test]
+    fn corrupt_cached_audio_is_downloaded_again_and_replaced_with_valid_bytes() {
+        use std::io::{Read, Write};
+        let directory = tempfile::tempdir().unwrap();
+        let cache = Arc::new(AudioCache::new(directory.path().into(), None));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/track.wav", listener.local_addr().unwrap());
+        let body = decode::tests::generate_test_wav(44100, 2, 0.5);
+        let reference = body.clone();
+        let server = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            let mut socket = loop {
+                if let Ok((socket, _)) = listener.accept() { break socket; }
+                if std::time::Instant::now() >= deadline { return false; }
+                std::thread::sleep(Duration::from_millis(5));
+            };
+            socket.set_nonblocking(false).unwrap();
+            socket.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            let mut header = Vec::new();
+            while !header.ends_with(b"\r\n\r\n") {
+                let mut byte = [0]; socket.read_exact(&mut byte).unwrap(); header.push(byte[0]);
+                assert!(header.len() < 16384);
+            }
+            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).unwrap();
+            socket.write_all(&body).unwrap();
+            true
+        });
+        let source = MediaSource::new(crate::plex::client::public_media_request(&url), None).unwrap();
+        let mut stale = cache.begin_write(&source.cache_key, "wav").unwrap();
+        stale.write_chunk(&vec![0; reference.len()]).unwrap();
+        stale.finish(&cache).unwrap();
+        let atomics = SharedAtomics::new();
+        atomics.request_epoch.store(1, Ordering::SeqCst);
+        let request = PlaybackRequest::new(1, atomics.request_epoch.clone(), atomics.deck_a_load_id.clone());
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let decoded = fetch_and_decode_incremental(&source, 42, &cache, runtime.handle(), 44100, 2, &request);
+        let downloaded = server.join().unwrap();
+        let decoded = decoded.expect("bad cache bytes must fall back to the original HTTP source");
+        assert!(downloaded && !decoded.aborted);
+        assert_eq!(decoded.initial_samples.len(), 22050 * 2);
+        // Finalization follows EOF on the download task, independently of probing.
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            if cache.lookup(&source.cache_key).is_some_and(|path| std::fs::read(path).ok().as_ref() == Some(&reference)) { break; }
+            assert!(std::time::Instant::now() < deadline, "fresh complete bytes were not cached");
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     #[test]

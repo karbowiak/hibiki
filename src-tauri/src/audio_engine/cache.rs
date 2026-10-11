@@ -94,6 +94,26 @@ struct CacheEntry {
     computed_gain_db: Option<f32>,
     #[serde(default)]
     gain_analysis_version: u8,
+    #[serde(default)]
+    revision: String,
+}
+
+/// Names an accepted completed download, rather than just its reusable URL key.
+#[derive(Clone, PartialEq, Eq)]
+pub(super) struct CacheStamp {
+    filename: String,
+    size_bytes: u64,
+    revision: String,
+}
+
+impl From<&CacheEntry> for CacheStamp {
+    fn from(entry: &CacheEntry) -> Self {
+        Self {
+            filename: entry.filename.clone(),
+            size_bytes: entry.size_bytes,
+            revision: entry.revision.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -244,15 +264,43 @@ impl AudioCache {
     /// Look up a cached file by rating key. Returns the file path if cached.
     /// Updates `last_accessed` on hit.
     pub fn lookup(&self, key: &str) -> Option<PathBuf> {
-        self.lookup_file(key).map(|(path, _)| path)
+        self.lookup_file(key).map(|(path, _, _)| path)
     }
 
     /// Open under the cache lock so Clear/eviction cannot race playback startup.
+    #[cfg(test)]
     pub fn open(&self, key: &str) -> Option<fs::File> {
-        self.lookup_file(key).map(|(_, file)| file)
+        self.lookup_file(key).map(|(_, file, _)| file)
     }
 
-    fn lookup_file(&self, key: &str) -> Option<(PathBuf, fs::File)> {
+    pub(super) fn open_with_stamp(&self, key: &str) -> Option<(fs::File, CacheStamp)> {
+        self.lookup_file(key).map(|(_, file, stamp)| (file, stamp))
+    }
+
+    /// A late decoder failure must never remove a newer completed download.
+    pub(super) fn discard(&self, key: &str, stamp: &CacheStamp) -> bool {
+        if self.check_directory().is_err() {
+            return false;
+        }
+        let Ok(mut idx) = self.index.lock() else {
+            return false;
+        };
+        let Some(entry) = idx.entries.get(key) else {
+            return false;
+        };
+        if CacheStamp::from(entry) != *stamp {
+            return false;
+        }
+        let entry = idx.entries.remove(key).unwrap();
+        idx.total_bytes = idx.total_bytes.saturating_sub(entry.size_bytes);
+        if valid_filename(key, &entry.filename) {
+            let _ = fs::remove_file(self.cache_dir.join(entry.filename));
+        }
+        idx.save(&self.index_path());
+        true
+    }
+
+    fn lookup_file(&self, key: &str) -> Option<(PathBuf, fs::File, CacheStamp)> {
         if !self.available || !self.owner.directory_is_current() {
             return None;
         }
@@ -278,7 +326,7 @@ impl AudioCache {
         entry.last_accessed = now_secs();
         // Don't flush index on every hit — debounce by only saving occasionally.
         // The timestamp is in memory; worst case we lose LRU precision on crash.
-        Some((path, file))
+        Some((path, file, CacheStamp::from(&*entry)))
     }
 
     /// Get the computed loudness gain for a cached track (if analyzed).
@@ -642,6 +690,7 @@ impl CacheWriter {
                 last_accessed: now_secs(),
                 computed_gain_db: None,
                 gain_analysis_version: 0,
+                revision: self.id.to_string(),
             },
         );
         idx.total_bytes = total;
@@ -887,6 +936,7 @@ fn open_regular_file(path: &Path) -> std::io::Result<fs::File> {
 
 fn valid_entry(directory: &Path, key: &str, entry: &CacheEntry) -> bool {
     valid_filename(key, &entry.filename)
+        && (entry.revision.is_empty() || uuid::Uuid::parse_str(&entry.revision).is_ok())
         && entry.size_bytes > 0
         && open_regular_file(&directory.join(&entry.filename)).is_ok_and(|file| {
             file.metadata()
@@ -923,6 +973,24 @@ pub fn extract_extension(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_late_corrupt_file_report_cannot_discard_a_newer_download_with_the_same_key() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = AudioCache::new(directory.path().into(), None);
+        let mut old = cache.begin_write("42", "flac").unwrap();
+        let mut newer = cache.begin_write("42", "flac").unwrap();
+        old.write_chunk(b"old audio").unwrap();
+        old.finish(&cache).unwrap();
+        let (_, stale_stamp) = cache.open_with_stamp("42").unwrap();
+        newer.write_chunk(b"new audio").unwrap();
+        newer.finish(&cache).unwrap();
+        assert!(!cache.discard("42", &stale_stamp));
+        assert_eq!(fs::read(cache.lookup("42").unwrap()).unwrap(), b"new audio");
+        let (_, current_stamp) = cache.open_with_stamp("42").unwrap();
+        assert!(cache.discard("42", &current_stamp));
+        assert!(cache.lookup("42").is_none());
+        assert_eq!(cache.stats().total_bytes, 0);
+    }
     #[test]
     fn clear_reports_deletion_failures_and_preserves_unexpected_directories() {
         let directory = tempfile::tempdir().unwrap();
@@ -1266,6 +1334,7 @@ mod tests {
                 last_accessed: 1,
                 computed_gain_db: None,
                 gain_analysis_version: 0,
+                revision: String::new(),
             },
         );
         index.total_bytes = size;
