@@ -102,6 +102,17 @@ impl Root {
     }
 }
 
+impl Drop for Root {
+    fn drop(&mut self) {
+        // A concurrent spawn may retain a duplicate descriptor until exec.
+        // Release at the final Arc owner instead of waiting for that close;
+        // pending image writers still retain this root and its exclusion.
+        if let Err(error) = self._lock.unlock() {
+            tracing::warn!(%error, "failed to release artwork cache ownership");
+        }
+    }
+}
+
 struct PendingImage {
     file: Option<tempfile::NamedTempFile>,
     path: PathBuf,
@@ -1060,6 +1071,38 @@ mod tests {
             String::from_utf8_lossy(&result.stdout)
         );
         assert_eq!(cache.read(&cache.ticket(), &key(1)).unwrap(), b"owned");
+    }
+
+    #[test]
+    fn final_artwork_owner_releases_inherited_lock_but_pending_writer_keeps_ownership() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = ImageCache::new(directory.path().into());
+        cache.store(&cache.ticket(), &key(1), b"owned").unwrap();
+        let root = cache.root.lock().unwrap().as_ref().unwrap().clone();
+        let inherited = root._lock.try_clone().unwrap();
+        let pending = PendingImage::new(root).unwrap();
+        drop(cache);
+        let blocked = ImageCache::new(directory.path().into());
+        assert!(
+            blocked.stats().is_err(),
+            "pending writer retains exclusivity"
+        );
+        drop(blocked);
+        drop(pending);
+        let restored = ImageCache::new(directory.path().into());
+        assert_eq!(
+            restored.read(&restored.ticket(), &key(1)).unwrap(),
+            b"owned"
+        );
+        drop(inherited);
+        let competing = ImageCache::new(directory.path().into());
+        assert!(
+            competing.stats().is_err(),
+            "replacement owner retains exclusivity"
+        );
+        restored
+            .store(&restored.ticket(), &key(2), b"next")
+            .unwrap();
     }
 
     #[test]

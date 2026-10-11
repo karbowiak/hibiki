@@ -72,6 +72,20 @@ impl CacheOwner {
     }
 }
 
+impl Drop for CacheOwner {
+    fn drop(&mut self) {
+        // Last-descriptor-close is insufficient on Unix: a concurrent process
+        // spawn can temporarily inherit the locked open-file description.
+        // This owner is shared with pending writers, so its final Drop is the
+        // point at which no cache operation can still need exclusive access.
+        if let Some(lock) = self._lock.as_ref() {
+            if let Err(error) = lock.unlock() {
+                warn!(%error, "failed to release audio cache ownership");
+            }
+        }
+    }
+}
+
 /// Active file writer — tees HTTP chunks to disk while streaming.
 pub struct CacheWriter {
     temp_path: PathBuf,
@@ -1034,6 +1048,35 @@ mod tests {
         drop(blocked);
         let fresh = AudioCache::new(dir.path().into(), None);
         assert!(fresh.begin_write("42", "flac").is_ok());
+    }
+
+    #[test]
+    fn final_cache_owner_releases_lock_even_with_a_surviving_duplicate_descriptor() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = AudioCache::new(dir.path().into(), None);
+        let mut writer = cache.begin_write("42", "flac").unwrap();
+        writer.write_chunk(b"retained encoded source").unwrap();
+        writer.finish(&cache).unwrap();
+        // A process spawn can transiently inherit this open-file description
+        // before exec closes its descriptor. Model that without forking tests.
+        let inherited = cache.owner._lock.as_ref().unwrap().try_clone().unwrap();
+        drop(cache);
+        let restored = AudioCache::new(dir.path().into(), None);
+        assert!(
+            restored.available,
+            "the final owner must release its lock explicitly"
+        );
+        assert_eq!(
+            fs::read(restored.lookup("42").unwrap()).unwrap(),
+            b"retained encoded source"
+        );
+        drop(inherited);
+        let competing = AudioCache::new(dir.path().into(), None);
+        assert!(
+            !competing.available,
+            "replacement owner retains exclusivity"
+        );
+        assert!(restored.begin_write("43", "flac").is_ok());
     }
 
     #[cfg(unix)]
