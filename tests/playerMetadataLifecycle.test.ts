@@ -196,6 +196,57 @@ test("a transcode retry keeps the originating provider's native audio ownership"
   expect((engine.play as any).mock.calls.at(-1)[9]).toEqual(plexContext)
 })
 
+test("public and podcast failures do not invoke provider transcode or replay native audio", async () => {
+  const transcode = mock(async () => { throw new Error("must not transcode public content") })
+  useProviderStore.getState().setProvider(provider("connected", { getTranscodePlaybackInfo: transcode }))
+  await state().initAudioEvents()
+  for (const track of [
+    source("podcast-error", { streamUrl: "https://podcast.test/episode", _providerData: { isPodcast: true } }),
+    source("external-error", { streamUrl: "https://public.test/stream" }),
+  ]) {
+    await state().playTrack(track, [track])
+    const plays = (engine.play as any).mock.calls.length
+    await audioCallbacks.onError("Unable to play this stream")
+    expect(transcode).not.toHaveBeenCalled()
+    expect((engine.play as any).mock.calls.length).toBe(plays)
+    expect(state().playerError).toBe("Unable to play this stream")
+  }
+})
+
+test("an old playback error timer cannot clear the same error on a new automatic occurrence", async () => {
+  useProviderStore.getState().setProvider(provider("connected"))
+  const first = source("error-first", { streamUrl: "https://public.test/first" })
+  const next = source("error-next", { streamUrl: "https://public.test/next" })
+  await state().initAudioEvents()
+  await state().playTrack(first, [first, next])
+  await settle()
+  const firstKey = (engine.play as any).mock.calls.at(-1)[1]
+  const nextKey = (engine.preloadNext as any).mock.calls.at(-1)[1]
+  audioCallbacks.onTrackStarted({ playback_id: ++playbackId, rating_key: firstKey, duration_ms: first.duration })
+  const timers: (() => void)[] = []
+  const originalTimeout = globalThis.setTimeout
+  globalThis.setTimeout = ((callback: (...args: any[]) => void, delay?: number, ...args: any[]) => {
+    if (delay === 6000) { timers.push(() => callback(...args)); return 0 }
+    return originalTimeout(callback, delay, ...args)
+  }) as typeof setTimeout
+  try {
+    await audioCallbacks.onError("Unable to play this stream")
+    audioCallbacks.onTrackStarted({ playback_id: ++playbackId, rating_key: nextKey, duration_ms: next.duration })
+    await audioCallbacks.onError("Unable to play this stream")
+    expect(state().currentTrack?.id).toBe(next.id)
+    timers[0]()
+    expect(state().playerError).toBe("Unable to play this stream")
+    // A newer identical failure on the same occurrence also owns its full timeout.
+    await audioCallbacks.onError("Unable to play this stream")
+    timers[1]()
+    expect(state().playerError).toBe("Unable to play this stream")
+    timers[2]()
+    expect(state().playerError).toBeNull()
+  } finally {
+    globalThis.setTimeout = originalTimeout
+  }
+})
+
 test("colliding podcast IDs and a positive Plex ID advance through their own native starts", async () => {
   // Aa and BB both hashed to 2112 in the old synthetic key implementation.
   const first = source("Aa", { streamUrl: "https://podcast.test/a", _providerData: { isPodcast: true } })

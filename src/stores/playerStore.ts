@@ -154,6 +154,7 @@ function getProvider() {
 
 const playbackMetadata = new PlaybackMetadata()
 let _activeTrackGeneration = 0
+let _playbackErrorRevision = 0
 
 // ---------------------------------------------------------------------------
 // Track ID resolution — maps numeric rating_key → MusicTrack.id
@@ -1613,30 +1614,41 @@ export const usePlayerStore = create<PlayerState>()(
       },
 
       onControlError(message) {
+        const errorRevision = ++_playbackErrorRevision
+        const generation = _playGeneration, active = _activeTrackGeneration
         const audible = _playbackJournal.current()
         if (audible) audible.podcastResumeTarget = null
         set({ playerError: message })
-        setTimeout(() => { if (get().playerError === message) set({ playerError: null }) }, 6000)
+        setTimeout(() => {
+          if (generation === _playGeneration && active === _activeTrackGeneration
+            && errorRevision === _playbackErrorRevision && get().playerError === message) set({ playerError: null })
+        }, 6000)
       },
 
       async onError(message) {
         const generation = _playGeneration
+        const active = _activeTrackGeneration
+        const errorRevision = ++_playbackErrorRevision
         const providerAtError = getProvider()
         console.error("Audio engine error:", message)
         const { currentTrack, positionMs } = get()
+        const isCurrent = () => generation === _playGeneration && active === _activeTrackGeneration
+          && errorRevision === _playbackErrorRevision && getProvider() === providerAtError
+          && get().currentTrack?.id === currentTrack?.id
 
         // Attempt transcode fallback once per track on playback errors
-        if (currentTrack && _transcodeRetriedTrackId !== currentTrack.id) {
+        if (currentTrack && !_isPodcastTrack(currentTrack) && !currentTrack.streamUrl
+          && _transcodeRetriedTrackId !== currentTrack.id) {
           _transcodeRetriedTrackId = currentTrack.id
           try {
             if (providerAtError?.getTranscodePlaybackInfo) {
               console.log("[Transcode fallback] Retrying with transcoded audio for:", currentTrack.title)
               const info = await providerAtError.getTranscodePlaybackInfo(currentTrack, 320, "mp3")
-              if (generation !== _playGeneration || getProvider() !== providerAtError) return
+              if (!isCurrent()) return
               rememberPlaybackKey(info.trackKey, currentTrack, "selection")
               _pendingSelectedTrackId = currentTrack.id
               await engine.play(info.url, info.trackKey, currentTrack.duration, info.parentKey, null, true, null, null, false, info.plexContext, playbackLabels(currentTrack))
-              if (generation !== _playGeneration) return
+              if (!isCurrent()) return
               if (positionMs > 0) engine.seekTo(positionMs)
               if (!_playbackDesired) engine.pause()
               set({ playerError: null })
@@ -1647,11 +1659,15 @@ export const usePlayerStore = create<PlayerState>()(
           }
         }
 
-        if (generation !== _playGeneration) return
+        if (!isCurrent()) return
         _pendingSelectedTrackId = null
         set({ playerError: message })
         useAnnouncerStore.getState().announce(`Playback error: ${message}`, "assertive")
-        setTimeout(() => set({ playerError: null }), 6000)
+        setTimeout(() => {
+          if (isCurrent() && get().playerError === message) {
+            set({ playerError: null })
+          }
+        }, 6000)
       },
 
       onVisFrame(samples) {
