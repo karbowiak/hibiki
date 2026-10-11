@@ -19,11 +19,12 @@ import { useShallow } from "zustand/react/shallow"
 import { usePlayerStore } from "../stores"
 import { formatMs } from "../lib/formatters"
 import { useUIStore } from "../stores/uiStore"
-import { isDjGenerated, isRadioGenerated } from "../stores/playerStore"
+import { capturePlaybackSelectionVersion, isDjGenerated, isRadioGenerated } from "../stores/playerStore"
 import { useDragStore } from "../stores/dragStore"
 import type { DragPayload } from "../stores/dragStore"
 import { useProviderStore } from "../stores/providerStore"
 import type { MusicTrack } from "../types/music"
+import { useAnnouncerStore } from "../stores/announcerStore"
 import { LyricsContent } from "./LyricsPanel"
 
 
@@ -273,29 +274,64 @@ export function QueuePanel() {
   const isHoveredDrop = useDragStore(s => s.isDragging && s.hoveredQueue)
   const [dropFlash, setDropFlash] = useState(false)
 
-  // Listen for media drops onto queue (tracks, albums, artists)
+  // Resolve concurrently, then apply additions in drop order within one queue.
   useEffect(() => {
-    async function onQueueDrop(e: Event) {
-      const { payload, targetQueue } = (e as CustomEvent).detail as { payload: DragPayload; targetQueue: boolean }
-      if (!targetQueue) return
-
-      let tracks: MusicTrack[] | undefined
-      if (payload.type === "track") {
-        tracks = payload.tracks
-      } else if (payload.type === "album" && provider) {
-        tracks = await provider.getAlbumTracks(payload.ids[0])
-      } else if (payload.type === "artist" && provider) {
-        tracks = await provider.getArtistPopularTracks(payload.ids[0])
+    let active = true
+    let ordered = Promise.resolve()
+    let selection = capturePlaybackSelectionVersion()
+    let scope = provider?.cacheScope
+    let flashTimer: ReturnType<typeof setTimeout> | null = null
+    let errorTimer: ReturnType<typeof setTimeout> | null = null
+    const message = "Could not add tracks to the queue. Try again."
+    setDropFlash(false)
+    function reportFailure() {
+      usePlayerStore.setState({ playerError: message })
+      useAnnouncerStore.getState().announce(message, "assertive")
+      if (errorTimer !== null) clearTimeout(errorTimer)
+      errorTimer = setTimeout(() => {
+        if (active && usePlayerStore.getState().playerError === message)
+          usePlayerStore.setState({ playerError: null })
+      }, 6000)
+    }
+    function onQueueDrop(e: Event) {
+      const detail = (e as CustomEvent).detail as { payload?: DragPayload; targetQueue?: boolean } | undefined
+      if (!detail?.targetQueue || !detail.payload || useProviderStore.getState().provider !== provider) return
+      const payload = detail.payload
+      const version = capturePlaybackSelectionVersion()
+      const capturedScope = provider?.cacheScope
+      if (selection !== version || scope !== capturedScope) {
+        // Retired I/O must not hold up drops intended for a replacement queue.
+        ordered = Promise.resolve()
+        selection = version
+        scope = capturedScope
       }
-
-      if (tracks?.length) {
+      const current = () => active && useProviderStore.getState().provider === provider
+        && provider?.cacheScope === capturedScope && capturePlaybackSelectionVersion() === version
+      const result = Promise.resolve().then(async () => {
+        if (!current()) return []
+        if (payload.type === "track") return [...(payload.tracks ?? [])]
+        if (payload.type === "album" && provider) return provider.getAlbumTracks(payload.ids[0])
+        if (payload.type === "artist" && provider) return provider.getArtistPopularTracks(payload.ids[0])
+        return []
+      }).then(tracks => ({ tracks, failed: false }), () => ({ tracks: [] as MusicTrack[], failed: true }))
+      ordered = ordered.then(() => result).then(({ tracks, failed }) => {
+        if (!current()) return
+        if (failed) { reportFailure(); return }
+        if (!tracks.length) return
         addToQueue(tracks)
         setDropFlash(true)
-        setTimeout(() => setDropFlash(false), 1000)
-      }
+        if (flashTimer !== null) clearTimeout(flashTimer)
+        flashTimer = setTimeout(() => { if (active) setDropFlash(false) }, 1000)
+      }).catch(() => { if (current()) reportFailure() })
     }
     window.addEventListener("plexify-media-drop", onQueueDrop)
-    return () => window.removeEventListener("plexify-media-drop", onQueueDrop)
+    return () => {
+      active = false
+      window.removeEventListener("plexify-media-drop", onQueueDrop)
+      if (flashTimer !== null) clearTimeout(flashTimer)
+      if (errorTimer !== null) clearTimeout(errorTimer)
+      if (usePlayerStore.getState().playerError === message) usePlayerStore.setState({ playerError: null })
+    }
   }, [addToQueue, provider])
 
   const nowPlayingRef = useRef<HTMLDivElement>(null)
