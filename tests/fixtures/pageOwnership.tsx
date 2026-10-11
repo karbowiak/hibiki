@@ -94,7 +94,131 @@ async function unmount() {
   }
 }
 try {
-  if (scenario.startsWith("tag")) {
+  if (scenario === "library-provider") {
+    const owners: any[] = []
+    library.setState({
+      playlists: [],
+      likedTracks: [],
+      likedArtists: [],
+      likedAlbums: [],
+      fetchLikedTracks: async () => {
+        owners.push(useProviderStore.getState().provider)
+      },
+      fetchLikedArtists: async () => {
+        owners.push(useProviderStore.getState().provider)
+      },
+      fetchLikedAlbums: async () => {
+        owners.push(useProviderStore.getState().provider)
+      },
+    } as any)
+    mock.module("../../src/components/ScrollRow", () => ({
+      ScrollRow: ({ children }: any) => <div>{children}</div>,
+    }))
+    const { Library } = await import("../../src/components/Pages/Library")
+    await act(async () => root.render(<Library />))
+    assert.equal(owners.length, 3)
+    const second = provider()
+    await act(async () => useProviderStore.getState().setProvider(second))
+    assert.equal(owners.length, 6)
+    assert.ok(owners.slice(3).every((owner) => owner === second))
+  } else if (scenario.startsWith("liked-")) {
+    const kind = scenario.split("-")[1]!
+    const suffix =
+      kind === "tracks" ? "Tracks" : kind === "albums" ? "Albums" : "Artists"
+    const field = `liked${suffix}`
+    const timestamp = `_${field}FetchedAt`
+    const pending: {
+      owner: any
+      reply: ReturnType<typeof deferred<void>>
+      force: boolean
+    }[] = []
+    library.setState({
+      [field]: [],
+      [timestamp]: null,
+      [`fetchLiked${suffix}`]: (_limit: any, opts: any) => {
+        const reply = deferred<void>()
+        pending.push({
+          owner: useProviderStore.getState().provider,
+          reply,
+          force: opts?.force,
+        })
+        return reply.promise
+      },
+    } as any)
+    mock.module("../../src/hooks/useContextMenu", () => ({
+      useContextMenu: () => ({ handler: () => {} }),
+    }))
+    mock.module("../../src/hooks/useMediaImage", () => ({
+      useAlbumImage: () => null,
+      useArtistImage: () => null,
+    }))
+    mock.module("../../src/hooks/useColumnPicker", () => ({
+      ALL_COLUMNS: [],
+      usePlaylistColumns: () => ({ visible: [], toggle() {} }),
+    }))
+    mock.module("../../src/components/shared/TrackTable", () => ({
+      TrackTable: ({ tracks, emptyMessage }: any) => (
+        <div>
+          {tracks.length
+            ? tracks.map((track: any) => track.title).join(",")
+            : emptyMessage}
+        </div>
+      ),
+    }))
+    const module =
+      kind === "tracks"
+        ? await import("../../src/components/Pages/Liked")
+        : kind === "albums"
+          ? await import("../../src/components/Pages/LikedAlbums")
+          : await import("../../src/components/Pages/LikedArtists")
+    const Page = Object.values(module)[0] as any
+    await act(async () =>
+      root.render(
+        <Router>
+          <Page />
+        </Router>
+      )
+    )
+    assert.equal(pending.length, 1)
+    assert.ok(document.querySelector('[role="status"]'))
+    assert.ok(!document.body.textContent?.includes("No rated"))
+    if (scenario.endsWith("provider")) {
+      const second = provider()
+      await act(async () => {
+        library.setState({ [field]: [], [timestamp]: null } as any)
+        useProviderStore.getState().setProvider(second)
+      })
+      assert.equal(pending.length, 2)
+      assert.equal(pending[1]!.owner, second)
+      await act(async () =>
+        pending[0]!.reply.reject(new Error("retired failure"))
+      )
+      assert.ok(document.querySelector('[role="status"]'))
+      assert.ok(!document.querySelector('[role="alert"]'))
+      await act(async () => {
+        library.setState({ [timestamp]: 1 } as any)
+        pending[1]!.reply.resolve()
+      })
+      assert.ok(document.body.textContent?.includes("No rated"))
+    } else {
+      // Production store absorbs transport failures but leaves its timestamp null.
+      await act(async () => pending[0]!.reply.resolve())
+      assert.ok(document.querySelector('[role="alert"]'))
+      assert.ok(!document.body.textContent?.includes("No rated"))
+      const retry = Array.from(document.querySelectorAll("button")).find(
+        (button) => button.textContent === "Try again"
+      )!
+      await act(async () => retry.click())
+      assert.equal(pending.length, 2)
+      assert.equal(pending[1]!.force, true)
+      await act(async () => {
+        library.setState({ [timestamp]: 1 } as any)
+        pending[1]!.reply.resolve()
+      })
+      assert.ok(!document.querySelector('[role="alert"]'))
+      assert.ok(document.body.textContent?.includes("No rated"))
+    }
+  } else if (scenario.startsWith("tag")) {
     const { TagPage } = await import("../../src/components/Pages/TagPage")
     const observers: { notify: () => void; active: boolean }[] = []
     globalThis.IntersectionObserver = class {

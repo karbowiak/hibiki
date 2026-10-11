@@ -1,17 +1,26 @@
+import { useLikedCollection } from "../../hooks/useLikedCollection"
 import { ArtworkImage, useArtworkFailures } from "../shared/ArtworkImage"
-import { useEffect } from "react"
 import { Link } from "wouter"
 import { useShallow } from "zustand/react/shallow"
-import { useLibraryStore, useUIStore } from "../../stores"
+import { useLibraryStore } from "../../stores"
 import { prefetchAlbum } from "../../stores/metadataCache"
 import { useAlbumImage } from "../../hooks/useMediaImage"
 import { starsFromRating } from "../../lib/formatters"
 import { MediaGrid } from "../shared/MediaGrid"
 import { useContextMenu } from "../../hooks/useContextMenu"
 
-
-function AlbumThumb({ artist, title, thumb }: { artist: string; title: string; thumb: string | null }) {
-  const { failures, onFailure } = useArtworkFailures(JSON.stringify([artist, title, thumb]))
+function AlbumThumb({
+  artist,
+  title,
+  thumb,
+}: {
+  artist: string
+  title: string
+  thumb: string | null
+}) {
+  const { failures, onFailure } = useArtworkFailures(
+    JSON.stringify([artist, title, thumb])
+  )
   const resolved = useAlbumImage(artist, title, thumb, undefined, failures)
   if (resolved) {
     return (
@@ -34,13 +43,11 @@ function AlbumThumb({ artist, title, thumb }: { artist: string; title: string; t
 }
 
 export function LikedAlbums() {
-  const { likedAlbums, fetchLikedAlbums } = useLibraryStore(useShallow(s => ({ likedAlbums: s.likedAlbums, fetchLikedAlbums: s.fetchLikedAlbums })))
-  const pageRefreshKey = useUIStore(s => s.pageRefreshKey)
+  const { likedAlbums } = useLibraryStore(
+    useShallow((s) => ({ likedAlbums: s.likedAlbums }))
+  )
+  const { status, retry } = useLikedCollection("albums")
   const { handler: ctxMenu } = useContextMenu()
-
-  useEffect(() => {
-    void fetchLikedAlbums()
-  }, [pageRefreshKey])
 
   const count = likedAlbums.length
 
@@ -48,13 +55,13 @@ export function LikedAlbums() {
     <div className="pb-12">
       {/* Header */}
       <div className="flex flex-row items-end p-8">
-        <div className="flex w-60 h-60 flex-shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-green-700 to-teal-500 shadow-2xl">
+        <div className="flex h-60 w-60 flex-shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-green-700 to-teal-500 shadow-2xl">
           <svg viewBox="0 0 24 24" width="80" height="80" fill="white">
             <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
           </svg>
         </div>
 
-        <div className="pl-6 flex flex-col justify-between flex-1 h-60 min-w-0">
+        <div className="flex h-60 min-w-0 flex-1 flex-col justify-between pl-6">
           <div>
             <div className="whitespace-nowrap text-[76px] font-black leading-none">
               Liked Albums
@@ -71,13 +78,33 @@ export function LikedAlbums() {
 
       {/* Album grid */}
       <div className="px-8 pt-2">
-        {count === 0 ? (
+        {status === "loading" ? (
+          <p
+            role="status"
+            className="px-8 py-12 text-center text-sm text-gray-400"
+          >
+            Loading rated albums…
+          </p>
+        ) : status === "error" ? (
+          <div
+            role="alert"
+            className="mx-8 my-4 rounded-lg border border-red-400/30 p-4 text-sm text-red-400"
+          >
+            <p>Could not load rated albums.</p>
+            <button
+              onClick={retry}
+              className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white"
+            >
+              Try again
+            </button>
+          </div>
+        ) : count === 0 ? (
           <div className="py-12 text-center text-sm text-gray-500">
             No rated albums yet. Rate an album in Plex to see it here.
           </div>
         ) : (
           <MediaGrid>
-            {likedAlbums.map(album => {
+            {likedAlbums.map((album) => {
               const stars = starsFromRating(album.userRating)
               return (
                 <Link
@@ -87,11 +114,15 @@ export function LikedAlbums() {
                   onContextMenu={ctxMenu("album", album)}
                   className="group flex flex-col gap-2 rounded-md p-3 no-underline transition-colors hover:bg-hl-card"
                 >
-                  <div className="relative w-full aspect-square overflow-hidden rounded-md bg-app-surface shadow-lg">
-                    <AlbumThumb artist={album.artistName} title={album.title} thumb={album.thumbUrl} />
+                  <div className="relative aspect-square w-full overflow-hidden rounded-md bg-app-surface shadow-lg">
+                    <AlbumThumb
+                      artist={album.artistName}
+                      title={album.title}
+                      thumb={album.thumbUrl}
+                    />
                   </div>
                   <div className="w-full min-w-0">
-                    <div className="truncate font-semibold text-sm text-white">
+                    <div className="truncate text-sm font-semibold text-white">
                       {album.title}
                     </div>
                     <div className="truncate text-xs text-gray-400">

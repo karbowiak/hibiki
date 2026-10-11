@@ -1,6 +1,13 @@
 import { expect, test } from "bun:test"
 import { resolve } from "node:path"
 for (const scenario of [
+  "library-provider",
+  "liked-tracks-provider",
+  "liked-artists-provider",
+  "liked-albums-provider",
+  "liked-tracks-error",
+  "liked-artists-error",
+  "liked-albums-error",
   "tag-route",
   "tag-provider",
   "tag-pagination",
