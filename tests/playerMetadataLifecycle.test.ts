@@ -585,6 +585,81 @@ test("DJ results from the old queue cannot enter the new radio queue or release 
   expect(state().queue.map((track) => track.id)).toEqual(["1", "3", "2"])
   expect((engine.preloadNext as any).mock.calls.at(-1)[1]).toBe(3)
 })
+test("mute restores the selected volume and keeps the native gain curve", () => {
+  const previous = {
+    volume: state().volume,
+    lastAudibleVolume: state().lastAudibleVolume,
+  }
+  const originalSetVolume = engine.setVolume
+  const gains: number[] = []
+  engine.setVolume = (value) => {
+    gains.push(value)
+  }
+  try {
+    state().setVolume(37)
+    state().toggleMute()
+    expect(state().volume).toBe(0)
+    expect(state().lastAudibleVolume).toBe(37)
+    state().toggleMute()
+    expect(state().volume).toBe(37)
+    expect(gains).toEqual([Math.pow(0.37, 3), 0, Math.pow(0.37, 3)])
+    state().setVolume(0)
+    state().setVolume(0)
+    state().toggleMute()
+    expect(state().volume).toBe(37)
+  } finally {
+    engine.setVolume = originalSetVolume
+    usePlayerStore.setState(previous)
+  }
+})
+
+test("a muted session restores its saved level and invalid remembered levels use the default", () => {
+  const previous = {
+    volume: state().volume,
+    lastAudibleVolume: state().lastAudibleVolume,
+  }
+  const originalSetVolume = engine.setVolume
+  engine.setVolume = () => {}
+  try {
+    usePlayerStore.setState({ volume: 0, lastAudibleVolume: 19 })
+    state().toggleMute()
+    expect(state().volume).toBe(19)
+    for (const invalid of [0, -5, NaN, Infinity]) {
+      usePlayerStore.setState({ volume: 0, lastAudibleVolume: invalid })
+      state().toggleMute()
+      expect(state().volume).toBe(80)
+    }
+    usePlayerStore.setState({ volume: 0, lastAudibleVolume: 999 })
+    state().toggleMute()
+    expect(state().volume).toBe(100)
+  } finally {
+    engine.setVolume = originalSetVolume
+    usePlayerStore.setState(previous)
+  }
+})
+
+test("nonfinite volume input cannot overwrite the selected level or enter the audio bridge", () => {
+  const previous = {
+    volume: state().volume,
+    lastAudibleVolume: state().lastAudibleVolume,
+  }
+  const originalSetVolume = engine.setVolume
+  const gains: number[] = []
+  engine.setVolume = (value) => {
+    gains.push(value)
+  }
+  try {
+    state().setVolume(23)
+    for (const invalid of [NaN, Infinity, -Infinity]) state().setVolume(invalid)
+    expect(state().volume).toBe(23)
+    expect(state().lastAudibleVolume).toBe(23)
+    expect(gains).toEqual([Math.pow(0.23, 3)])
+  } finally {
+    engine.setVolume = originalSetVolume
+    usePlayerStore.setState(previous)
+  }
+})
+
 afterAll(() => {
   Object.assign(engine, original)
   useNotificationStore.setState({ notificationsEnabled })

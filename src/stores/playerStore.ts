@@ -46,6 +46,7 @@ interface PlayerState {
   shuffle: boolean
   repeat: 0 | 1 | 2
   volume: number
+  lastAudibleVolume: number
 
   /** Progressive playlist loading context — null when not playing from a playlist. */
   playlistKey: string | null
@@ -118,6 +119,7 @@ interface PlayerState {
   prev: () => void
   seekTo: (ms: number) => void
   setVolume: (v: number) => void
+  toggleMute: () => void
   toggleShuffle: () => void
   cycleRepeat: () => void
   updatePosition: (ms: number) => void
@@ -813,6 +815,7 @@ export const usePlayerStore = create<PlayerState>()(
   shuffle: false,
   repeat: 0,
   volume: 80,
+  lastAudibleVolume: 80,
   playlistKey: null,
   playlistTotalCount: 0,
   playlistLoadedCount: 0,
@@ -1227,6 +1230,8 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   setVolume: (v: number) => {
+    if (!Number.isFinite(v)) return
+    const previous = get().volume
     const clamped = Math.max(0, Math.min(100, Math.round(v)))
     // Cubic curve: maps 0-100 slider to 0.0-1.0 gain matching human loudness perception
     const gain = clamped <= 0 ? 0 : clamped >= 100 ? 1 : Math.pow(clamped / 100, 3)
@@ -1235,7 +1240,22 @@ export const usePlayerStore = create<PlayerState>()(
     if (get().isInternetRadioActive) {
       radioSetVolume(clamped)
     }
-    set({ volume: clamped })
+    set({
+      volume: clamped,
+      lastAudibleVolume: clamped > 0
+        ? clamped
+        : Number.isFinite(previous) && previous > 0
+          ? Math.max(1, Math.min(100, Math.round(previous)))
+          : get().lastAudibleVolume,
+    })
+  },
+
+  toggleMute: () => {
+    const { volume, lastAudibleVolume } = get()
+    const restored = Number.isFinite(lastAudibleVolume) && lastAudibleVolume > 0
+      ? Math.min(100, lastAudibleVolume)
+      : 80
+    get().setVolume(volume > 0 ? 0 : restored)
   },
 
   toggleShuffle: () => {
@@ -1531,6 +1551,7 @@ export const usePlayerStore = create<PlayerState>()(
       // Only persist lightweight user preferences — not playback runtime state.
       partialize: (state) => ({
         volume: state.volume,
+        lastAudibleVolume: state.lastAudibleVolume,
         shuffle: state.shuffle,
         repeat: state.repeat,
         djMode: state.djMode,

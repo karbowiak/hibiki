@@ -49,6 +49,10 @@ function RadioPlayerBar() {
   const volumeTooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [volumeTooltipVisible, setVolumeTooltipVisible] = useState(false)
 
+  useEffect(() => () => {
+    if (volumeTooltipTimer.current) clearTimeout(volumeTooltipTimer.current)
+  }, [])
+
   const { currentStation, isStreamPlaying, isStreamBuffering, streamError, icyNowPlaying, stopStream, pauseStream, resumeStream } =
     useRadioStreamStore(useShallow(s => ({
       currentStation: s.currentStation,
@@ -61,9 +65,10 @@ function RadioPlayerBar() {
       resumeStream: s.resumeStream,
     })))
 
-  const { volume, setVolume } = usePlayerStore(useShallow(s => ({
+  const { volume, setVolume, toggleMute } = usePlayerStore(useShallow(s => ({
     volume: s.volume,
     setVolume: s.setVolume,
+    toggleMute: s.toggleMute,
   })))
 
   // Media session metadata for internet radio (updated with ICY now-playing when available)
@@ -165,11 +170,11 @@ function RadioPlayerBar() {
                   className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--text-primary)] text-[var(--bg-base)] hover:scale-[1.06]"
                 >
                   {isStreamPlaying ? (
-                    <svg role="img" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
+                    <svg aria-hidden="true" focusable="false" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
                       <path d="M2.7 1a.7.7 0 0 0-.7.7v12.6a.7.7 0 0 0 .7.7h2.6a.7.7 0 0 0 .7-.7V1.7a.7.7 0 0 0-.7-.7H2.7zm8 0a.7.7 0 0 0-.7.7v12.6a.7.7 0 0 0 .7.7h2.6a.7.7 0 0 0 .7-.7V1.7a.7.7 0 0 0-.7-.7h-2.6z" />
                     </svg>
                   ) : (
-                    <svg role="img" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
+                    <svg aria-hidden="true" focusable="false" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
                       <path d="M3 1.713a.7.7 0 0 1 1.05-.607l10.89 6.288a.7.7 0 0 1 0 1.212L4.05 14.894A.7.7 0 0 1 3 14.288V1.713z" />
                     </svg>
                   )}
@@ -210,18 +215,18 @@ function RadioPlayerBar() {
               </button>
 
               {/* Volume icon */}
-              <button onClick={() => setVolume(volume === 0 ? 80 : 0)} className="flex-shrink-0 flex h-8 w-8 items-center justify-center text-white/70 hover:text-white transition-colors">
+              <button onClick={toggleMute} aria-label={volume === 0 ? "Unmute" : "Mute"} className="flex-shrink-0 flex h-8 w-8 items-center justify-center text-white/70 hover:text-white transition-colors">
                 {volume === 0 ? (
-                  <svg role="img" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
+                  <svg aria-hidden="true" focusable="false" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
                     <path d="M13.86 5.47a.75.75 0 0 0-1.061 0l-1.47 1.47-1.47-1.47A.75.75 0 0 0 8.8 6.53L10.269 8l-1.47 1.47a.75.75 0 1 0 1.06 1.06l1.47-1.47 1.47 1.47a.75.75 0 0 0 1.06-1.06L12.39 8l1.47-1.47a.75.75 0 0 0 0-1.06z" />
                     <path d="M10.116 1.5A.75.75 0 0 0 8.991.85l-6.925 4a3.642 3.642 0 0 0-1.33 4.967 3.639 3.639 0 0 0 1.33 1.332l6.925 4a.75.75 0 0 0 1.125-.649v-13a.75.75 0 0 0-.002-.001zm0 12.34L3.322 9.688a2.14 2.14 0 0 1 0-3.7l6.794-3.99v11.84z" />
                   </svg>
                 ) : volume < 50 ? (
-                  <svg role="img" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
+                  <svg aria-hidden="true" focusable="false" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
                     <path d="M9.741.85a.75.75 0 0 1 .375.65v13a.75.75 0 0 1-1.125.65l-6.925-4a3.642 3.642 0 0 1-1.33-4.967 3.639 3.639 0 0 1 1.33-1.332l6.925-4a.75.75 0 0 1 .75 0zm-6.924 5.3a2.139 2.139 0 0 0 0 3.7l5.8 3.35V2.8l-5.8 3.35zm8.683 4.21v-4.2a2.447 2.447 0 0 1 0 4.2z" />
                   </svg>
                 ) : (
-                  <svg role="img" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
+                  <svg aria-hidden="true" focusable="false" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
                     <path d="M9.741.85a.75.75 0 0 1 .375.65v13a.75.75 0 0 1-1.125.65l-6.925-4a3.642 3.642 0 0 1-1.33-4.967 3.639 3.639 0 0 1 1.33-1.332l6.925-4a.75.75 0 0 1 .75 0zm-6.924 5.3a2.139 2.139 0 0 0 0 3.7l5.8 3.35V2.8l-5.8 3.35zm8.683 6.087a4.502 4.502 0 0 0 0-8.474v1.65a2.999 2.999 0 0 1 0 5.175v1.649z" />
                   </svg>
                 )}
@@ -233,20 +238,13 @@ function RadioPlayerBar() {
                     {Math.round(volume)}%
                   </div>
                 )}
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={volume}
-                  onChange={e => {
-                    setVolume(parseInt(e.target.value, 10))
+                <SquigglyVolumeSlider
+                  volume={volume}
+                  onChange={value => {
+                    setVolume(value)
                     setVolumeTooltipVisible(true)
                     if (volumeTooltipTimer.current) clearTimeout(volumeTooltipTimer.current)
                     volumeTooltipTimer.current = setTimeout(() => setVolumeTooltipVisible(false), 1500)
-                  }}
-                  className="h-1 w-full cursor-pointer appearance-none rounded-full"
-                  style={{
-                    background: `linear-gradient(to right, var(--accent) 0%, var(--accent) ${volume}%, #535353 ${volume}%, #535353 100%)`,
                   }}
                 />
               </div>
@@ -269,6 +267,10 @@ export function Player() {
   const volumeTooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [seekHoverPct, setSeekHoverPct] = useState<number | null>(null)
   const [volumeTooltipVisible, setVolumeTooltipVisible] = useState(false)
+
+  useEffect(() => () => {
+    if (volumeTooltipTimer.current) clearTimeout(volumeTooltipTimer.current)
+  }, [])
 
   // positionMs updates at ~4 Hz — isolate it as a primitive selector so only
   // the progress bar re-renders on each tick, not the entire Player subtree.
@@ -296,6 +298,7 @@ export function Player() {
     prev,
     seekTo,
     setVolume,
+    toggleMute,
     toggleShuffle,
     cycleRepeat,
     stop,
@@ -322,6 +325,7 @@ export function Player() {
     prev: s.prev,
     seekTo: s.seekTo,
     setVolume: s.setVolume,
+    toggleMute: s.toggleMute,
     toggleShuffle: s.toggleShuffle,
     cycleRepeat: s.cycleRepeat,
     stop: s.stop,
@@ -960,7 +964,7 @@ export function Player() {
               </div>
               <div className="flex flex-shrink-0 items-center gap-1">
                 {/* Volume icon — muted / low / full */}
-                <button onClick={() => setVolume(volume === 0 ? 80 : 0)} aria-label={volume === 0 ? "Unmute" : "Mute"} className="flex-shrink-0 flex h-8 w-8 items-center justify-center text-white/70 hover:text-white transition-colors">
+                <button onClick={toggleMute} aria-label={volume === 0 ? "Unmute" : "Mute"} className="flex-shrink-0 flex h-8 w-8 items-center justify-center text-white/70 hover:text-white transition-colors">
                   {volume === 0 ? (
                     <IconVolumeOff size={18} stroke={1.5} />
                   ) : volume < 50 ? (

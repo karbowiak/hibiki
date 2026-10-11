@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useEffect, useId, useRef, useState } from "react"
 import { useEasterEggStore } from "../stores/easterEggStore"
 
 interface Props {
@@ -35,16 +35,15 @@ function buildWavePath(pct: number, amplitude: number, phase: number): string {
 const RAINBOW_STOPS = 5
 
 export default function SquigglyVolumeSlider({ volume, onChange }: Props) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const dragging = useRef(false)
+  const gradientId = useId()
 
   // Animation state kept in refs to avoid re-renders on every frame
-  const ampRef = useRef(0)       // current rendered amplitude
-  const targetAmp = useRef(0)    // target amplitude (spikes on change, decays to 0)
-  const phaseRef = useRef(0)     // rolling phase offset
-  const animRef = useRef(0)
+  const ampRef = useRef(0) // current rendered amplitude
+  const targetAmp = useRef(0) // target amplitude (spikes on change, decays to 0)
+  const phaseRef = useRef(0) // rolling phase offset
+  const animRef = useRef<number | null>(null)
   const prevVolume = useRef(volume)
-  const rainbowMode = useEasterEggStore(s => s.rainbow)
+  const rainbowMode = useEasterEggStore((s) => s.rainbow)
 
   // Rainbow hue offset — drives gradient stop colors via React state
   const [rainbowHue, setRainbowHue] = useState(0)
@@ -52,44 +51,42 @@ export default function SquigglyVolumeSlider({ volume, onChange }: Props) {
   // We only trigger React re-renders via this single state value
   const [, forceRender] = useState(0)
 
-  // When volume changes, spike the amplitude and advance phase
+  // Animate only while a changed volume has a visible wave.
   useEffect(() => {
     const delta = Math.abs(volume - prevVolume.current)
     prevVolume.current = volume
     if (delta < 0.5) return
-    // Spike amplitude proportional to volume level (louder = bigger wave)
-    targetAmp.current = Math.min(MAX_AMP, (volume / 100) * MAX_AMP + delta * 0.1)
+    targetAmp.current = Math.min(
+      MAX_AMP,
+      (volume / 100) * MAX_AMP + delta * 0.1
+    )
     phaseRef.current += delta * 0.2
-  }, [volume])
+    if (animRef.current !== null) return
 
-  // Animation loop: smoothly approach target amp, then decay to 0
-  useEffect(() => {
-    let running = true
     const tick = () => {
-      if (!running) return
-
-      // Decay target back to zero
-      targetAmp.current *= (1 - DECAY)
+      targetAmp.current *= 1 - DECAY
       if (targetAmp.current < 0.01) targetAmp.current = 0
-
-      // Ease current amplitude toward target
-      const diff = targetAmp.current - ampRef.current
-      ampRef.current += diff * 0.2
-
-      // Advance phase while there's visible wave
+      ampRef.current += (targetAmp.current - ampRef.current) * 0.2
       if (ampRef.current > 0.01) {
         phaseRef.current += 0.12
-        forceRender(n => n + 1)
-      } else if (ampRef.current !== 0) {
+        forceRender((n) => n + 1)
+        animRef.current = requestAnimationFrame(tick)
+      } else {
         ampRef.current = 0
-        forceRender(n => n + 1)
+        animRef.current = null
+        forceRender((n) => n + 1)
       }
-
-      animRef.current = requestAnimationFrame(tick)
     }
     animRef.current = requestAnimationFrame(tick)
-    return () => { running = false; cancelAnimationFrame(animRef.current) }
-  }, [])
+  }, [volume])
+
+  useEffect(
+    () => () => {
+      if (animRef.current !== null) cancelAnimationFrame(animRef.current)
+      animRef.current = null
+    },
+    []
+  )
 
   // Rainbow color cycling — separate interval so it doesn't depend on the squiggle
   useEffect(() => {
@@ -100,26 +97,36 @@ export default function SquigglyVolumeSlider({ volume, onChange }: Props) {
     return () => clearInterval(id)
   }, [rainbowMode])
 
-  const volumeFromX = useCallback((clientX: number) => {
-    const rect = containerRef.current?.getBoundingClientRect()
-    if (!rect) return volume
-    return Math.round(Math.max(0, Math.min(100, ((clientX - rect.left - PAD_X) / TRACK_WIDTH) * 100)))
-  }, [volume])
-
-  const onPointerDown = useCallback((e: React.PointerEvent) => {
-    dragging.current = true
-    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
-    onChange(volumeFromX(e.clientX))
-  }, [onChange, volumeFromX])
-
-  const onPointerMove = useCallback((e: React.PointerEvent) => {
-    if (!dragging.current) return
-    onChange(volumeFromX(e.clientX))
-  }, [onChange, volumeFromX])
-
-  const onPointerUp = useCallback(() => {
-    dragging.current = false
-  }, [])
+  const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    let next: number
+    switch (event.key) {
+      case "ArrowRight":
+      case "ArrowUp":
+        next = volume + 1
+        break
+      case "ArrowLeft":
+      case "ArrowDown":
+        next = volume - 1
+        break
+      case "PageUp":
+        next = volume + 10
+        break
+      case "PageDown":
+        next = volume - 10
+        break
+      case "Home":
+        next = 0
+        break
+      case "End":
+        next = 100
+        break
+      default:
+        return
+    }
+    event.preventDefault()
+    const clamped = Math.max(0, Math.min(100, next))
+    if (clamped !== volume) onChange(clamped)
+  }
 
   const amp = ampRef.current
   const phase = phaseRef.current
@@ -134,17 +141,26 @@ export default function SquigglyVolumeSlider({ volume, onChange }: Props) {
 
   return (
     <div
-      ref={containerRef}
-      className="relative cursor-pointer select-none touch-none"
+      className="relative select-none rounded-md focus-within:ring-2 focus-within:ring-[var(--accent)]"
       style={{ width: WIDTH, height: HEIGHT }}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
     >
-      <svg width={WIDTH} height={HEIGHT} className="block">
+      <svg
+        width={WIDTH}
+        height={HEIGHT}
+        className="block"
+        aria-hidden="true"
+        focusable="false"
+      >
         {rainbowMode && (
           <defs>
-            <linearGradient id="rainbow-vol-grad" gradientUnits="userSpaceOnUse" x1={PAD_X} y1={0} x2={PAD_X + TRACK_WIDTH * (volume / 100)} y2={0}>
+            <linearGradient
+              id={gradientId}
+              gradientUnits="userSpaceOnUse"
+              x1={PAD_X}
+              y1={0}
+              x2={PAD_X + TRACK_WIDTH * (volume / 100)}
+              y2={0}
+            >
               {Array.from({ length: RAINBOW_STOPS }, (_, i) => {
                 const hue = (rainbowHue + (i / (RAINBOW_STOPS - 1)) * 360) % 360
                 return (
@@ -158,8 +174,20 @@ export default function SquigglyVolumeSlider({ volume, onChange }: Props) {
             </linearGradient>
           </defs>
         )}
-        <path d={inactivePath} fill="none" stroke="#535353" strokeWidth={2} strokeLinecap="round" />
-        <path d={activePath} fill="none" stroke={rainbowMode ? "url(#rainbow-vol-grad)" : "var(--accent)"} strokeWidth={2} strokeLinecap="round" />
+        <path
+          d={inactivePath}
+          fill="none"
+          stroke="#535353"
+          strokeWidth={2}
+          strokeLinecap="round"
+        />
+        <path
+          d={activePath}
+          fill="none"
+          stroke={rainbowMode ? `url(#${gradientId})` : "var(--accent)"}
+          strokeWidth={2}
+          strokeLinecap="round"
+        />
         <circle
           cx={knobX}
           cy={knobY}
@@ -168,6 +196,18 @@ export default function SquigglyVolumeSlider({ volume, onChange }: Props) {
           style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.3))" }}
         />
       </svg>
+      <input
+        type="range"
+        min={0}
+        max={100}
+        step={1}
+        value={volume}
+        aria-label="Volume"
+        aria-valuetext={`${volume}%`}
+        onInput={(event) => onChange(event.currentTarget.valueAsNumber)}
+        onKeyDown={onKeyDown}
+        className="volume-slider absolute inset-0 m-0 h-full w-full cursor-pointer opacity-0"
+      />
     </div>
   )
 }

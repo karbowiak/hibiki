@@ -637,6 +637,25 @@ body {
   cursor: pointer;
 }
 
+/* The native volume input's thumb centers match the SVG's six-pixel padding. */
+.volume-slider {
+  appearance: none;
+  background: transparent;
+}
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+}
+.volume-slider::-moz-range-thumb {
+  width: 12px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+}
+
 .range-styled::-webkit-slider-runnable-track {
   height: 4px;
   border-radius: 2px;
