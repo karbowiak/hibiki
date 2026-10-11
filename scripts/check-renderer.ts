@@ -437,6 +437,39 @@ try {
           [],
           `${name}: artwork controls violated CSP`
         )
+        await page.evaluate(() => (window as any).mountImageCacheControls())
+        const clearCache = page.getByRole("button", {
+          name: "Clear image cache",
+        })
+        const cacheStatus = page.getByRole("status")
+        await cacheStatus.filter({ hasText: "2 files" }).waitFor()
+        await clearCache.click()
+        assert.equal(await clearCache.isDisabled(), true)
+        assert.equal(await clearCache.textContent(), "Clearing...")
+        await page.screenshot({
+          path: join(artifactDir, `${name}-image-cache-pending.png`),
+        })
+        await page.evaluate(() => (window as any).finishImageCacheClear(true))
+        await page
+          .getByRole("alert")
+          .filter({ hasText: "One artwork file could not be removed" })
+          .waitFor()
+        await cacheStatus.filter({ hasText: "1 file" }).waitFor()
+        await page.screenshot({
+          path: join(artifactDir, `${name}-image-cache-error.png`),
+        })
+        await page.getByRole("button", { name: "Retry" }).click()
+        assert.equal(await clearCache.isDisabled(), true)
+        assert.equal(
+          await page.evaluate(() => (window as any).imageCacheClearCalls),
+          2
+        )
+        await page.evaluate(() => (window as any).finishImageCacheClear())
+        await cacheStatus.filter({ hasText: "0 B · 0 files" }).waitFor()
+        assert.equal(await clearCache.isDisabled(), true)
+        await page.screenshot({
+          path: join(artifactDir, `${name}-image-cache-cleared.png`),
+        })
         await page.evaluate(() => (window as any).tryUntrustedContent(true))
         await page.waitForTimeout(100)
         assert.equal(
@@ -484,7 +517,7 @@ try {
         )
         await page.evaluate(() => (window as any).disposeRenderer())
         console.log(
-          `${name}: app, MilkDrop, artwork analysis/viewer, IPC, radio, Plex WS/WSS, and CSP enforcement passed`
+          `${name}: app, MilkDrop, artwork analysis/viewer/cache controls, IPC, radio, Plex WS/WSS, and CSP enforcement passed`
         )
         await context.close()
       } finally {

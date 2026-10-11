@@ -9,6 +9,8 @@ import { PlexWebSocketManager } from "../../../src/backends/plex/websocket"
 import { createElement, useState } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { ImageModal } from "../../../src/components/shared/ImageModal"
+import { ImageCacheControls } from "../../../src/components/ImageCacheControls"
+import type { ImageCacheInfo } from "../../../src/lib/imageCache"
 import "../../../src/styles.css"
 
 const state = {
@@ -29,6 +31,56 @@ const state = {
 const testWindow = window as any
 testWindow.rendererCheck = state
 let artworkRoot: Root | null = null
+let cacheControlsRoot: Root | null = null
+let cacheInfo: ImageCacheInfo
+let cacheReply: {
+  resolve: (info: ImageCacheInfo) => void
+  reject: (error: Error) => void
+} | null = null
+testWindow.mountImageCacheControls = () => {
+  cacheControlsRoot?.unmount()
+  const host =
+    document.getElementById("cache-controls-fixture") ??
+    document.createElement("div")
+  host.id = "cache-controls-fixture"
+  Object.assign(host.style, {
+    width: "640px",
+    margin: "32px",
+    padding: "24px",
+    background: "#181818",
+    borderRadius: "12px",
+  })
+  document.body.append(host)
+  cacheInfo = {
+    files: 2,
+    bytes: 2048,
+    max_bytes: 512 * 1024 * 1024,
+    max_files: 4096,
+  }
+  testWindow.imageCacheClearCalls = 0
+  cacheControlsRoot = createRoot(host)
+  cacheControlsRoot.render(
+    createElement(ImageCacheControls, {
+      backend: {
+        async getInfo() {
+          return { ...cacheInfo }
+        },
+        clear() {
+          testWindow.imageCacheClearCalls++
+          return new Promise<ImageCacheInfo>((resolve, reject) => {
+            cacheReply = { resolve, reject }
+          })
+        },
+      },
+    })
+  )
+}
+testWindow.finishImageCacheClear = (fail = false) => {
+  cacheInfo = { ...cacheInfo, files: fail ? 1 : 0, bytes: fail ? 1024 : 0 }
+  if (fail)
+    cacheReply!.reject(new Error("One artwork file could not be removed"))
+  else cacheReply!.resolve({ ...cacheInfo })
+}
 function ArtworkViewerFixture() {
   const [open, setOpen] = useState(false)
   return createElement(
@@ -117,6 +169,7 @@ let context: AudioContext | null = null
 const plexSockets: PlexWebSocketManager[] = []
 testWindow.pauseRadio = () => radio?.pause()
 testWindow.disposeRenderer = async () => {
+  cacheControlsRoot?.unmount()
   artworkRoot?.unmount()
   for (const socket of plexSockets) socket.disconnect()
   radio?.stop()

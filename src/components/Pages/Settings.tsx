@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react"
 import { useLocation } from "wouter"
 import { open } from "@tauri-apps/plugin-shell"
 import clsx from "clsx"
-import { clearImageCache, getImageCacheInfo, type ImageCacheInfo } from "../../lib/imageCache"
+import { ImageCacheControls } from "../ImageCacheControls"
 import { engine } from "../../audio/RustAudioEngine"
 import { AudioCacheControls } from "../AudioCacheControls"
 import { getVersion } from "@tauri-apps/api/app"
@@ -225,13 +225,6 @@ function SettingCard({
 // ---------------------------------------------------------------------------
 // Playback section
 // ---------------------------------------------------------------------------
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B"
-  const units = ["B", "KB", "MB", "GB"]
-  const i = Math.floor(Math.log(bytes) / Math.log(1024))
-  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
-}
 
 // Playback section removed — crossfade is always-on with smart defaults,
 // normalization defaults to track mode +3dB, controllable via EQ panel.
@@ -693,8 +686,6 @@ function VisualizerColorsCard() {
 // ---------------------------------------------------------------------------
 
 function CacheSection() {
-  const [imgCacheInfo, setImgCacheInfo] = useState<ImageCacheInfo | null>(null)
-  const [imgClearing, setImgClearing] = useState(false)
   const [libClearing, setLibClearing] = useState(false)
   const [metaClearing, setMetaClearing] = useState(false)
   const [, forceUpdate] = useState(0)
@@ -710,21 +701,6 @@ function CacheSection() {
   const mixCacheCount = Object.keys(libStore.mixTracksCache).length
 
   const metaStats = getMetadataCacheStats()
-
-  useEffect(() => {
-    void getImageCacheInfo().then(setImgCacheInfo).catch(() => {})
-  }, [])
-
-  async function handleClearImages() {
-    setImgClearing(true)
-    try {
-      await clearImageCache()
-      const info = await getImageCacheInfo()
-      setImgCacheInfo(info)
-    } finally {
-      setImgClearing(false)
-    }
-  }
 
   function handleClearLibrary() {
     setLibClearing(true)
@@ -747,23 +723,7 @@ function CacheSection() {
 
       {/* Image Cache */}
       <SettingCard title="Image Cache" description="Artwork fetched from Plex and external metadata sources.">
-        <div className="flex items-center gap-4">
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-white">Cached Images</p>
-            <p className="text-xs text-white/40 mt-0.5">
-              {imgCacheInfo
-                ? `${formatBytes(imgCacheInfo.bytes)} · ${imgCacheInfo.files} ${imgCacheInfo.files === 1 ? "file" : "files"}`
-                : "Loading..."}
-            </p>
-          </div>
-          <button
-            onClick={() => void handleClearImages()}
-            disabled={imgClearing || (imgCacheInfo?.files ?? 0) === 0}
-            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 hover:border-white/20 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
-          >
-            {imgClearing ? "Clearing..." : "Clear"}
-          </button>
-        </div>
+        <ImageCacheControls />
       </SettingCard>
 
       {/* Library Cache */}
@@ -986,24 +946,6 @@ function CapabilityGrid({ caps, labels }: { caps: { [k: string]: boolean }; labe
 }
 
 function PlexSection() {
-  const [imgCacheInfo, setImgCacheInfo] = useState<ImageCacheInfo | null>(null)
-  const [imgClearing, setImgClearing] = useState(false)
-
-  useEffect(() => {
-    void getImageCacheInfo().then(setImgCacheInfo).catch(() => {})
-  }, [])
-
-  async function handleClearImages() {
-    setImgClearing(true)
-    try {
-      await clearImageCache()
-      const info = await getImageCacheInfo()
-      setImgCacheInfo(info)
-    } finally {
-      setImgClearing(false)
-    }
-  }
-
   return (
     <div className="max-w-2xl space-y-6">
       {/* Plex connection settings */}
@@ -1018,23 +960,7 @@ function PlexSection() {
 
       {/* Image Cache */}
       <SettingCard title="Image Cache" description="Artwork fetched from Plex and external metadata sources is saved to disk.">
-        <div className="flex items-center gap-4">
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-white">Cached Images</p>
-            <p className="text-xs text-white/40 mt-0.5">
-              {imgCacheInfo
-                ? `${formatBytes(imgCacheInfo.bytes)} · ${imgCacheInfo.files} ${imgCacheInfo.files === 1 ? "file" : "files"}`
-                : "Loading..."}
-            </p>
-          </div>
-          <button
-            onClick={() => void handleClearImages()}
-            disabled={imgClearing || (imgCacheInfo?.files ?? 0) === 0}
-            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 hover:border-white/20 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
-          >
-            {imgClearing ? "Clearing..." : "Clear"}
-          </button>
-        </div>
+        <ImageCacheControls />
       </SettingCard>
     </div>
   )

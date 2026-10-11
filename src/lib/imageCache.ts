@@ -8,10 +8,12 @@ import { invoke } from "@tauri-apps/api/core"
 export interface ImageCacheInfo {
   files: number
   bytes: number
+  max_bytes: number
+  max_files: number
 }
 
 /** Delete all cached images from disk (unified imgcache/ dir + old migration dirs). */
-export function clearImageCache(): Promise<void> {
+export function clearImageCache(): Promise<ImageCacheInfo> {
   return invoke("clear_image_cache")
 }
 
