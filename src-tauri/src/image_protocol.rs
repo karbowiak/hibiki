@@ -1,7 +1,7 @@
 //! Bounded artwork request admission and shared resolution. Keys retain the
 //! captured connection and cache generation, even while waiting for a worker.
 
-use crate::image_cache::Ticket;
+use crate::image_cache::{self, ImageCache, Ticket};
 use crate::image_fetch;
 use crate::plex::PlexClient;
 use futures::future::{BoxFuture, FutureExt, Shared};
@@ -82,6 +82,17 @@ impl ImageRequest {
         )
     }
 
+    pub fn legacy_cache_key(&self, context: &ImageContext) -> String {
+        image_fetch::legacy_cache_key(
+            context.cache_scope(),
+            &self.kind,
+            &self.id,
+            &self.src,
+            &self.name,
+            &self.artist,
+        )
+    }
+
     pub fn requires_connection(&self, context: &ImageContext) -> bool {
         !self.scope.is_empty()
             || context
@@ -96,6 +107,26 @@ pub struct ImageContext {
     pub revision: u64,
     pub client: Option<PlexClient>,
     identity: String,
+}
+
+pub async fn cached_artwork(
+    request: &ImageRequest,
+    context: &ImageContext,
+    cache: Arc<ImageCache>,
+    ticket: Ticket,
+) -> Option<Vec<u8>> {
+    let key = request.cache_key(context);
+    if let Some(bytes) =
+        image_cache::read_validated(cache.clone(), ticket.clone(), key.clone()).await
+    {
+        return Some(bytes);
+    }
+    let legacy = request.legacy_cache_key(context);
+    if legacy == key {
+        return None;
+    }
+    let bytes = image_cache::read_validated(cache.clone(), ticket.clone(), legacy).await?;
+    Some(image_cache::store(cache, ticket, key, bytes).await)
 }
 
 impl ImageContext {
@@ -144,6 +175,7 @@ pub struct WorkKey {
     connection: String,
     revision: u64,
     ticket: Ticket,
+    requested_scope: String,
 }
 
 impl WorkKey {
@@ -153,6 +185,7 @@ impl WorkKey {
             connection: context.identity.clone(),
             revision: context.revision,
             ticket,
+            requested_scope: request.scope.clone(),
         }
     }
 }
@@ -245,6 +278,19 @@ pub fn error_response(status: u16) -> tauri::http::Response<Vec<u8>> {
     response.body(Vec::new()).expect("image error response")
 }
 
+pub fn success_response(bytes: Vec<u8>) -> tauri::http::Response<Vec<u8>> {
+    let Some(mime) = crate::image_content::mime(&bytes) else {
+        return error_response(404);
+    };
+    tauri::http::Response::builder()
+        .header("Content-Type", mime)
+        .header("X-Content-Type-Options", "nosniff")
+        .header("Cache-Control", "max-age=604800")
+        .header("Access-Control-Allow-Origin", "*")
+        .body(bytes)
+        .unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,11 +299,43 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
+    #[tokio::test]
+    async fn views_share_source_bytes_and_migrate_old_cache_entries_before_network() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = Arc::new(ImageCache::new(directory.path().into()));
+        let context = ImageContext::new(1, None);
+        let first = request(1);
+        let png = crate::image_content::test_png();
+        let ticket = cache.ticket();
+        cache
+            .store(&ticket, &first.legacy_cache_key(&context), &png)
+            .unwrap();
+        assert_eq!(
+            cached_artwork(&first, &context, cache.clone(), ticket.clone()).await,
+            Some(png.clone())
+        );
+        let mut second = request(2);
+        second.kind = "album".into();
+        second.name = "Another view of the same source".into();
+        second.src = first.src.clone();
+        assert_eq!(first.cache_key(&context), second.cache_key(&context));
+        assert_eq!(
+            cached_artwork(&second, &context, cache.clone(), ticket.clone()).await,
+            Some(png)
+        );
+        assert!(WorkKey::new(&first, &context, ticket.clone()) == WorkKey::new(&second, &context, ticket.clone()));
+        second.scope = "explicit-scope".into();
+        assert!(
+            WorkKey::new(&first, &context, ticket.clone())
+                != WorkKey::new(&second, &context, ticket)
+        );
+    }
+
     fn request(id: usize) -> ImageRequest {
         ImageRequest::parse(
             "GET",
             &format!("artist/{id}"),
-            "src=https%3A%2F%2Fcdn.test%2Fart.png",
+            &format!("src=https%3A%2F%2Fcdn.test%2Fart-{id}.png"),
             0,
         )
         .unwrap()
@@ -443,12 +521,9 @@ mod tests {
                     let count = active.fetch_add(1, Ordering::SeqCst) + 1;
                     peak.fetch_max(count, Ordering::SeqCst);
                     tokio::time::sleep(Duration::from_millis(10)).await;
-                    socket
-                        .write_all(
-                            b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc",
-                        )
-                        .await
-                        .unwrap();
+                    let artwork = crate::image_content::test_png();
+                    socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", artwork.len()).as_bytes()).await.unwrap();
+                    socket.write_all(&artwork).await.unwrap();
                     active.fetch_sub(1, Ordering::SeqCst);
                 });
             }
@@ -470,9 +545,21 @@ mod tests {
             }));
         }
         while let Some(bytes) = requests.next().await {
-            assert_eq!(&**bytes.unwrap(), b"abc");
+            assert_eq!(&**bytes.unwrap(), &crate::image_content::test_png());
         }
         server.await.unwrap();
         assert_eq!(peak.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn validated_artwork_uses_its_actual_mime_and_disables_document_sniffing() {
+        let png = crate::image_content::test_png();
+        let response = success_response(png.clone());
+        assert_eq!(response.headers()["Content-Type"], "image/png");
+        assert_eq!(response.headers()["X-Content-Type-Options"], "nosniff");
+        assert_eq!(response.body(), &png);
+        let invalid = success_response(b"<html>Sign in</html>".to_vec());
+        assert_eq!(invalid.status(), 404);
+        assert_eq!(invalid.headers()["Cache-Control"], "no-store");
     }
 }

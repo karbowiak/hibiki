@@ -31,7 +31,12 @@ pub fn request(client: Option<&PlexClient>, value: &str) -> Option<reqwest::Requ
         return None;
     }
     if let Some(client) = client.filter(|client| client.is_plex_url(value)) {
-        return client.artwork_request(value);
+        return client.artwork_request(value).map(|request| {
+            request.header(
+                "Accept",
+                "image/jpeg, image/png, image/webp, image/gif, image/bmp, image/x-icon",
+            )
+        });
     }
     if url
         .query_pairs()
@@ -39,7 +44,10 @@ pub fn request(client: Option<&PlexClient>, value: &str) -> Option<reqwest::Requ
     {
         return None;
     }
-    Some(PUBLIC.get(url))
+    Some(PUBLIC.get(url).header(
+        "Accept",
+        "image/jpeg, image/png, image/webp, image/gif, image/bmp, image/x-icon",
+    ))
 }
 
 pub fn scoped_request(
@@ -57,6 +65,22 @@ pub fn scoped_request(
 
 /// Digest-only filenames cannot contain entity IDs, paths or credentials.
 pub fn cache_key(
+    scope: &str,
+    entity_type: &str,
+    entity_id: &str,
+    src: &str,
+    name: &str,
+    artist: &str,
+) -> String {
+    if !src.is_empty() {
+        use sha2::{Digest, Sha256};
+        let source = serde_json::to_vec(&[scope, "source", src]).expect("image source tuple");
+        return format!("v2_{:x}.img", Sha256::digest(source));
+    }
+    legacy_cache_key(scope, entity_type, entity_id, src, name, artist)
+}
+
+pub fn legacy_cache_key(
     scope: &str,
     entity_type: &str,
     entity_id: &str,
@@ -91,6 +115,10 @@ pub async fn fetch(request: reqwest::RequestBuilder) -> Option<Vec<u8>> {
     {
         return None;
     }
+    let declared = match response.headers().get(reqwest::header::CONTENT_TYPE) {
+        Some(value) => Some(value.to_str().ok()?.to_owned()),
+        None => None,
+    };
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.ok()? {
         if chunk.len() > MAX_IMAGE_BYTES.saturating_sub(bytes.len()) {
@@ -98,16 +126,63 @@ pub async fn fetch(request: reqwest::RequestBuilder) -> Option<Vec<u8>> {
         }
         bytes.extend_from_slice(&chunk);
     }
-    if bytes.is_empty() {
-        None
-    } else {
-        Some(bytes)
-    }
+    crate::image_content::validate(bytes, declared).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn artwork_rejects_html_error_pages_even_when_http_status_is_success() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let uri = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = [0_u8; 2048];
+            socket.read(&mut buffer).await.unwrap();
+            let body = b"<html><body>Sign in</body></html>";
+            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+            socket.write_all(body).await.unwrap();
+        });
+        assert!(fetch(request(None, &uri).unwrap()).await.is_none());
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn artwork_checks_http_mime_against_pixels_and_accepts_untyped_cdn_images() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for declared in [
+            Some("image/png"),
+            Some("application/octet-stream"),
+            None,
+            Some("text/html"),
+            Some("image/jpeg"),
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let uri = format!("http://{}", listener.local_addr().unwrap());
+            let png = crate::image_content::test_png();
+            let expected = png.clone();
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buffer = [0_u8; 2048];
+                socket.read(&mut buffer).await.unwrap();
+                let mime = declared
+                    .map(|value| format!("Content-Type: {value}\r\n"))
+                    .unwrap_or_default();
+                socket.write_all(format!("HTTP/1.1 200 OK\r\n{mime}Content-Length: {}\r\nConnection: close\r\n\r\n", png.len()).as_bytes()).await.unwrap();
+                socket.write_all(&png).await.unwrap();
+            });
+            let bytes = fetch(request(None, &uri).unwrap()).await;
+            if matches!(declared, Some("text/html")) {
+                assert!(bytes.is_none());
+            } else {
+                assert_eq!(bytes, Some(expected));
+            }
+            server.await.unwrap();
+        }
+    }
 
     #[test]
     fn artwork_cannot_turn_metadata_urls_into_authenticated_api_calls() {
@@ -219,7 +294,9 @@ mod tests {
                     assert!(String::from_utf8_lossy(&bytes[..size])
                         .to_ascii_lowercase()
                         .contains("x-plex-token: dummy-private-token"));
-                    socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nimage").await.unwrap();
+                    let artwork = crate::image_content::test_png();
+                    socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", artwork.len()).as_bytes()).await.unwrap();
+                    socket.write_all(&artwork).await.unwrap();
                     true
                 } else {
                     false
@@ -292,7 +369,7 @@ mod tests {
             cache_key("", "artist", "1", "", "First", ""),
             cache_key("", "artist", "1", "", "Second", "")
         );
-        assert_ne!(
+        assert_eq!(
             key,
             cache_key(
                 "account-a",

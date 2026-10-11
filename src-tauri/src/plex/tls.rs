@@ -166,10 +166,13 @@ mod tests {
                         request.extend_from_slice(&chunk[..read]);
                     }
                     let _ = sent.send(String::from_utf8_lossy(&request).into_owned());
-                    let body =
-                        r#"{"MediaContainer":{"machineIdentifier":"test-server","claimed":true}}"#;
-                    let response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
-                    let _ = stream.write_all(response.as_bytes()).await;
+                    let (mime, body) = if request.starts_with(b"GET /library/metadata/1/thumb") {
+                        ("image/png", crate::image_content::test_png())
+                    } else {
+                        ("application/json", br#"{"MediaContainer":{"machineIdentifier":"test-server","claimed":true}}"#.to_vec())
+                    };
+                    let response = format!("HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+                    if stream.write_all(response.as_bytes()).await.is_ok() { let _ = stream.write_all(&body).await; }
                 });
             }
         });

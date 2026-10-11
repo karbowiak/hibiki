@@ -9,6 +9,7 @@ mod db;
 mod deezer;
 mod genius;
 mod image_cache;
+mod image_content;
 mod image_fetch;
 mod image_protocol;
 mod itunes;
@@ -131,15 +132,24 @@ async fn resolve_image(
     {
         return None;
     }
+    let source_request = if src.is_empty() {
+        None
+    } else {
+        // Validate authentication/provenance before either cache access or a
+        // shared resolution, including when the source has already been cached.
+        Some(image_fetch::scoped_request(context.client.as_ref(), requested_scope, src)?)
+    };
     let scope = context.cache_scope();
     let cache_key = request.cache_key(context);
-    if let Some(bytes) = image_cache::read(cache.clone(), ticket.clone(), cache_key.clone()).await {
+    if let Some(bytes) =
+        image_protocol::cached_artwork(request, context, cache.clone(), ticket.clone()).await
+    {
         return Some(bytes);
     }
 
     // Try fetching from src URL
     if !src.is_empty() {
-        if let Some(request) = image_fetch::scoped_request(context.client.as_ref(), requested_scope, src) {
+        if let Some(request) = source_request {
             if let Some(bytes) = image_fetch::fetch(request).await {
                 if requires_connection && !state.image_context_is_current(context).await {
                     return None;
@@ -164,7 +174,8 @@ async fn resolve_image(
             let fb_cache_key =
                 image_fetch::cache_key(scope, entity_type, entity_id, &fallback_url, name, artist);
             if let Some(bytes) =
-                image_cache::read(cache.clone(), ticket.clone(), fb_cache_key.clone()).await
+                image_cache::read_validated(cache.clone(), ticket.clone(), fb_cache_key.clone())
+                    .await
             {
                 return Some(bytes);
             }
@@ -309,12 +320,7 @@ pub fn run() {
                 }).await;
                 let current = !requires_connection || app.state::<commands::PlexState>().image_context_is_current(&context).await;
                 responder.respond(match result.filter(|_| current) {
-                    Some(bytes) => tauri::http::Response::builder()
-                        .header("Content-Type", "image/jpeg")
-                        .header("Cache-Control", "max-age=604800")
-                        .header("Access-Control-Allow-Origin", "*")
-                        .body((*bytes).clone())
-                        .unwrap(),
+                    Some(bytes) => image_protocol::success_response((*bytes).clone()),
                     None => image_protocol::error_response(404),
                 });
             });

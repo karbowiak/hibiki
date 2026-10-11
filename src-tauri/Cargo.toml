@@ -80,6 +80,7 @@ ebur128 = "0.1"
 realfft = "3.5"
 rubato = "5"
 tempfile = "3"
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "ico", "pnm"] }
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -5,7 +5,8 @@ use crate::cache_files::{
     directory_id, file_is_current, open_regular_file, open_writable_regular_file, regular_file,
 };
 use crate::image_fetch::MAX_IMAGE_BYTES;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -17,6 +18,45 @@ use std::time::SystemTime;
 
 pub const MAX_CACHE_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_CACHE_FILES: usize = 4096;
+const PROOF_FILE: &str = ".imgcache.verified-v1.json";
+const MAX_PROOF_BYTES: u64 = 1024 * 1024;
+// Bump whenever the full raster validation policy changes.
+const VALIDATOR_VERSION: u32 = 2;
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Proof {
+    sha256: String,
+    mime: String,
+}
+
+impl Proof {
+    fn of(bytes: &[u8]) -> Option<Self> {
+        Some(Self {
+            sha256: format!("{:x}", Sha256::digest(bytes)),
+            mime: crate::image_content::mime(bytes)?.to_owned(),
+        })
+    }
+    fn matches(&self, bytes: &[u8]) -> bool {
+        crate::image_content::mime(bytes) == Some(self.mime.as_str())
+            && self.sha256 == format!("{:x}", Sha256::digest(bytes))
+    }
+    fn valid(&self) -> bool {
+        self.sha256.len() == 64
+            && self.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+            && matches!(
+                self.mime.as_str(),
+                "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/bmp"
+            )
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ProofManifest {
+    validator_version: u32,
+    entries: HashMap<String, Proof>,
+}
 
 pub struct ImageCacheState(pub Arc<ImageCache>);
 
@@ -117,9 +157,11 @@ struct Index {
     loaded: bool,
     entries: HashMap<String, Entry>,
     bytes: u64,
+    proof_bytes: u64,
 }
 
 struct Entry {
+    proof: Option<Proof>,
     bytes: u64,
     accessed: SystemTime,
 }
@@ -204,6 +246,13 @@ impl ImageCache {
         let root = self.root()?;
         index.entries.clear();
         index.bytes = 0;
+        let (mut proofs, mut proof_bytes) = load_proofs(&root)?;
+        if proof_bytes > self.max_bytes {
+            remove_owned_file(&root.directory.join(PROOF_FILE))?;
+            proofs.clear();
+            proof_bytes = 0;
+        }
+        index.proof_bytes = proof_bytes;
         for entry in fs::read_dir(&root.directory).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
             let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
@@ -230,9 +279,11 @@ impl ImageCache {
                 continue;
             }
             index.bytes += metadata.len();
+            let proof = proofs.get(&name).cloned();
             index.entries.insert(
                 name,
                 Entry {
+                    proof,
                     bytes: metadata.len(),
                     accessed: metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
                 },
@@ -251,7 +302,11 @@ impl ImageCache {
         protected: Option<&str>,
     ) -> Result<(), String> {
         let root = self.root()?;
-        while index.bytes.saturating_add(extra_bytes) > self.max_bytes
+        while index
+            .bytes
+            .saturating_add(index.proof_bytes)
+            .saturating_add(extra_bytes)
+            > self.max_bytes
             || index.entries.len().saturating_add(extra_files) > self.max_files
         {
             let oldest = index
@@ -270,6 +325,10 @@ impl ImageCache {
     }
 
     pub fn read(&self, ticket: &Ticket, key: &str) -> Option<Vec<u8>> {
+        self.read_with_proof(ticket, key).map(|(bytes, _)| bytes)
+    }
+
+    fn read_with_proof(&self, ticket: &Ticket, key: &str) -> Option<(Vec<u8>, bool)> {
         if !owned_image(key) || !self.accepts(ticket) {
             return None;
         }
@@ -279,14 +338,16 @@ impl ImageCache {
         if !self.accepts(ticket) {
             return None;
         }
-        let entry = index.entries.get_mut(key)?;
         let path = root.directory.join(key);
         let file = open_writable_regular_file(&path)
             .or_else(|_| open_regular_file(&path))
             .ok()?;
-        if file.metadata().ok()?.len() != entry.bytes {
-            return None;
+        if file.metadata().ok()?.len() != index.entries.get(key)?.bytes {
+            // Manual changes invalidate both the old size accounting and proof.
+            index.loaded = false;
+            self.load(&mut index).ok()?;
         }
+        let entry = index.entries.get_mut(key)?;
         let mut bytes = Vec::new();
         (&file)
             .take(MAX_IMAGE_BYTES as u64 + 1)
@@ -297,11 +358,51 @@ impl ImageCache {
         }
         entry.accessed = SystemTime::now();
         let _ = file.set_modified(entry.accessed);
-        Some(bytes)
+        let verified = entry
+            .proof
+            .as_ref()
+            .is_some_and(|proof| proof.matches(&bytes));
+        Some((bytes, verified))
     }
 
     pub fn store(&self, ticket: &Ticket, key: &str, bytes: &[u8]) -> Result<(), String> {
         self.store_with_before_publish(ticket, key, bytes, |_| {})
+    }
+
+    fn discard_if_unchanged(
+        &self,
+        ticket: &Ticket,
+        key: &str,
+        expected: &[u8],
+    ) -> Result<(), String> {
+        if !owned_image(key) || !self.accepts(ticket) {
+            return Ok(());
+        }
+        let mut index = self.index.lock().map_err(|e| e.to_string())?;
+        let root = self.root()?;
+        self.load(&mut index)?;
+        if !self.accepts(ticket) {
+            return Ok(());
+        }
+        let path = root.directory.join(key);
+        let Ok(file) = open_regular_file(&path) else {
+            return Ok(());
+        };
+        let mut current = Vec::new();
+        file.take(MAX_IMAGE_BYTES as u64 + 1)
+            .read_to_end(&mut current)
+            .map_err(|e| e.to_string())?;
+        if current != expected {
+            return Ok(());
+        }
+        if !self.accepts(ticket) || !root.is_current() {
+            return Ok(());
+        }
+        remove_owned_file(&path)?;
+        if let Some(entry) = index.entries.remove(key) {
+            index.bytes -= entry.bytes;
+        }
+        Ok(())
     }
 
     fn store_with_before_publish(
@@ -325,6 +426,20 @@ impl ImageCache {
             return Err("Artwork request was retired".into());
         }
         self.load(&mut index)?;
+        self.publish(&mut index, &root, ticket, key, bytes, None, before_publish)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn publish(
+        &self,
+        index: &mut Index,
+        root: &Arc<Root>,
+        ticket: &Ticket,
+        key: &str,
+        bytes: &[u8],
+        proof: Option<Proof>,
+        before_publish: impl FnOnce(&Path),
+    ) -> Result<(), String> {
         if index
             .entries
             .get(key)
@@ -335,7 +450,7 @@ impl ImageCache {
         let extra_files = usize::from(!index.entries.contains_key(key));
         // Reserve temporary-file bytes too, keeping disk use bounded during
         // atomic replacement of an existing complete image.
-        self.make_room(&mut index, bytes.len() as u64, extra_files, Some(key))?;
+        self.make_room(index, bytes.len() as u64, extra_files, Some(key))?;
         let mut temporary = PendingImage::new(root.clone())?;
         temporary
             .file
@@ -352,6 +467,7 @@ impl ImageCache {
         if let Some(old) = index.entries.insert(
             key.to_owned(),
             Entry {
+                proof,
                 bytes: bytes.len() as u64,
                 accessed: SystemTime::now(),
             },
@@ -362,10 +478,141 @@ impl ImageCache {
         Ok(())
     }
 
+    /// Publish validation only if this generation still owns these exact input bytes.
+    fn remember_validation(
+        &self,
+        ticket: &Ticket,
+        key: &str,
+        expected: &[u8],
+        validated: &[u8],
+    ) -> Result<(), String> {
+        if !owned_image(key) || !self.accepts(ticket) {
+            return Ok(());
+        }
+        let mut index = self.index.lock().map_err(|e| e.to_string())?;
+        let root = self.root()?;
+        self.load(&mut index)?;
+        if !self.accepts(ticket) {
+            return Ok(());
+        }
+        let path = root.directory.join(key);
+        let Ok(file) = open_regular_file(&path) else {
+            return Ok(());
+        };
+        let mut current = Vec::new();
+        (&file)
+            .take(MAX_IMAGE_BYTES as u64 + 1)
+            .read_to_end(&mut current)
+            .map_err(|e| e.to_string())?;
+        if current != expected
+            || !file_is_current(&file, &path)
+            || !self.accepts(ticket)
+            || !root.is_current()
+        {
+            return Ok(());
+        }
+        let Some(proof) = Proof::of(validated) else {
+            return Ok(());
+        };
+        if expected != validated {
+            self.publish(
+                &mut index,
+                &root,
+                ticket,
+                key,
+                validated,
+                Some(proof),
+                |_| {},
+            )?;
+        } else if let Some(entry) = index.entries.get_mut(key) {
+            entry.proof = Some(proof);
+        }
+        self.save_proofs(&mut index, &root, ticket, Some(key))
+    }
+
+    fn store_verified(&self, ticket: &Ticket, key: &str, bytes: &[u8]) -> Result<(), String> {
+        let Some(proof) = Proof::of(bytes) else {
+            return self.store(ticket, key, bytes);
+        };
+        if !owned_image(key)
+            || bytes.is_empty()
+            || bytes.len() > MAX_IMAGE_BYTES
+            || bytes.len() as u64 > self.max_bytes
+            || self.max_files == 0
+        {
+            return Err("Invalid artwork cache entry".into());
+        }
+        let mut index = self.index.lock().map_err(|e| e.to_string())?;
+        let root = self.root()?;
+        if !self.accepts(ticket) {
+            return Err("Artwork request was retired".into());
+        }
+        self.load(&mut index)?;
+        self.publish(&mut index, &root, ticket, key, bytes, Some(proof), |_| {})?;
+        // Metadata durability is optional; valid artwork remains usable if it fails.
+        self.save_proofs(&mut index, &root, ticket, Some(key))
+    }
+
+    fn save_proofs(
+        &self,
+        index: &mut Index,
+        root: &Arc<Root>,
+        ticket: &Ticket,
+        protected: Option<&str>,
+    ) -> Result<(), String> {
+        let mut manifest = ProofManifest {
+            validator_version: VALIDATOR_VERSION,
+            entries: HashMap::new(),
+        };
+        let mut size = serde_json::to_vec(&manifest)
+            .map_err(|e| e.to_string())?
+            .len();
+        let mut candidates: Vec<_> = index
+            .entries
+            .iter()
+            .filter_map(|(name, entry)| {
+                entry
+                    .proof
+                    .as_ref()
+                    .map(|proof| (name, entry.accessed, proof))
+            })
+            .collect();
+        candidates.sort_unstable_by_key(|(_, accessed, _)| std::cmp::Reverse(*accessed));
+        for (name, _, proof) in candidates.into_iter().take(MAX_CACHE_FILES) {
+            let extra = serde_json::to_vec(&(name, proof))
+                .map_err(|e| e.to_string())?
+                .len();
+            if size + extra > MAX_PROOF_BYTES as usize {
+                continue;
+            }
+            size += extra;
+            manifest.entries.insert(name.clone(), proof.clone());
+        }
+        let bytes = serde_json::to_vec(&manifest).map_err(|e| e.to_string())?;
+        if bytes.len() as u64 > MAX_PROOF_BYTES {
+            return Err("Artwork verification manifest is too large".into());
+        }
+        // Both old manifest and its atomic replacement occupy disk until publication.
+        self.make_room(index, bytes.len() as u64, 0, protected)?;
+        let mut temporary = PendingImage::new(root.clone())?;
+        temporary
+            .file
+            .as_mut()
+            .expect("pending proof writer")
+            .write_all(&bytes)
+            .map_err(|e| e.to_string())?;
+        if !self.accepts(ticket) || !root.is_current() {
+            return Err("Artwork request was retired".into());
+        }
+        temporary.persist(&root.directory.join(PROOF_FILE))?;
+        index.proof_bytes = bytes.len() as u64;
+        Ok(())
+    }
+
     fn info(&self, index: &Index) -> CacheInfo {
         CacheInfo {
             files: index.entries.len(),
-            bytes: index.bytes,
+            bytes: index.bytes + index.proof_bytes,
             max_bytes: self.max_bytes,
             max_files: self.max_files,
         }
@@ -388,10 +635,9 @@ impl ImageCache {
         for entry in fs::read_dir(&root.directory).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
             let name = entry.file_name();
-            if name
-                .to_str()
-                .is_some_and(|name| owned_image(name) || owned_temporary(name))
-            {
+            if name.to_str().is_some_and(|name| {
+                owned_image(name) || owned_temporary(name) || name == PROOF_FILE
+            }) {
                 if let Err(error) = remove_owned_file(&entry.path()) {
                     failure = Some(error);
                 }
@@ -410,6 +656,68 @@ impl ImageCache {
         rescan?;
         Ok(self.info(&index))
     }
+}
+
+fn load_proofs(root: &Root) -> Result<(HashMap<String, Proof>, u64), String> {
+    let path = root.directory.join(PROOF_FILE);
+    let read = || -> Option<(HashMap<String, Proof>, u64)> {
+        // The ordinary cache opener repairs mode bits. Verification metadata
+        // must already be private before it can be accepted as trusted proof.
+        let before = fs::symlink_metadata(&path).ok()?;
+        if !regular_file(&before) {
+            return None;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if before.permissions().mode() & 0o077 != 0 {
+                return None;
+            }
+        }
+        let file = open_regular_file(&path).ok()?;
+        let metadata = file.metadata().ok()?;
+        if metadata.len() == 0 || metadata.len() > MAX_PROOF_BYTES {
+            return None;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o077 != 0 {
+                return None;
+            }
+        }
+        let mut bytes = Vec::new();
+        (&file)
+            .take(MAX_PROOF_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .ok()?;
+        if bytes.len() as u64 != metadata.len()
+            || !file_is_current(&file, &path)
+            || !root.is_current()
+        {
+            return None;
+        }
+        let manifest: ProofManifest = serde_json::from_slice(&bytes).ok()?;
+        if manifest.validator_version != VALIDATOR_VERSION
+            || manifest.entries.len() > MAX_CACHE_FILES
+            || manifest
+                .entries
+                .iter()
+                .any(|(name, proof)| !owned_image(name) || !proof.valid())
+        {
+            return None;
+        }
+        Some((manifest.entries, metadata.len()))
+    };
+    if let Some(value) = read() {
+        return Ok(value);
+    }
+    if !root.is_current() {
+        return Err("Artwork cache ownership changed".into());
+    }
+    // Reserved metadata is disposable. Linked targets and unknown names stay untouched.
+    remove_owned_file(&path)?;
+    Ok((HashMap::new(), 0))
 }
 
 fn open_root(directory: PathBuf) -> Result<Root, String> {
@@ -546,17 +854,55 @@ fn remove_owned_file(path: &Path) -> Result<(), String> {
     }
 }
 
-pub async fn read(cache: Arc<ImageCache>, ticket: Ticket, key: String) -> Option<Vec<u8>> {
-    tokio::task::spawn_blocking(move || cache.read(&ticket, &key))
-        .await
-        .ok()
-        .flatten()
+pub async fn read_validated(
+    cache: Arc<ImageCache>,
+    ticket: Ticket,
+    key: String,
+) -> Option<Vec<u8>> {
+    read_validated_using(cache, ticket, key, |bytes| {
+        crate::image_content::validate(bytes, None)
+    })
+    .await
+}
+
+async fn read_validated_using<F, Fut>(
+    cache: Arc<ImageCache>,
+    ticket: Ticket,
+    key: String,
+    validator: F,
+) -> Option<Vec<u8>>
+where
+    F: FnOnce(Vec<u8>) -> Fut,
+    Fut: std::future::Future<Output = Option<Vec<u8>>>,
+{
+    let reader = cache.clone();
+    let read_ticket = ticket.clone();
+    let read_key = key.clone();
+    let (bytes, verified) =
+        tokio::task::spawn_blocking(move || reader.read_with_proof(&read_ticket, &read_key))
+            .await
+            .ok()??;
+    if verified {
+        return Some(bytes);
+    }
+    if let Some(validated) = validator(bytes.clone()).await {
+        let result = validated.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            cache.remember_validation(&ticket, &key, &bytes, &validated)
+        })
+        .await;
+        return Some(result);
+    }
+    // Retire only the exact invalid snapshot, never a replacement or new generation.
+    let _ = tokio::task::spawn_blocking(move || cache.discard_if_unchanged(&ticket, &key, &bytes))
+        .await;
+    None
 }
 
 pub async fn store(cache: Arc<ImageCache>, ticket: Ticket, key: String, bytes: Vec<u8>) -> Vec<u8> {
     // A failed disk write must not hide successfully fetched artwork.
     tokio::task::spawn_blocking(move || {
-        let _ = cache.store(&ticket, &key, &bytes);
+        let _ = cache.store_verified(&ticket, &key, &bytes);
         bytes
     })
     .await
@@ -672,10 +1018,26 @@ mod tests {
             .is_err());
         assert_eq!(first.read(&first.ticket(), &key(1)).unwrap(), b"owned");
         drop(first);
-        assert_eq!(second.read(&second.ticket(), &key(1)).unwrap(), b"owned");
+        // Parallel cross-process tests can briefly inherit the old lock across
+        // fork, until exec closes its descriptor. Ownership must become usable
+        // after that handoff; an immediate single read is a timing assumption.
+        let after_owner_exit = |cache: &ImageCache| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                if let Some(bytes) = cache.read(&cache.ticket(), &key(1)) {
+                    break bytes;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Artwork cache ownership did not transfer"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        };
+        assert_eq!(after_owner_exit(&second), b"owned");
         drop(second);
         let third = ImageCache::new(directory.path().into());
-        assert_eq!(third.read(&third.ticket(), &key(1)).unwrap(), b"owned");
+        assert_eq!(after_owner_exit(&third), b"owned");
     }
 
     #[test]
@@ -927,5 +1289,347 @@ mod tests {
         server.await.unwrap();
         assert_eq!(cache.stats().unwrap().files, 0);
         assert!(!directory.path().join(key(1)).exists());
+    }
+
+    #[tokio::test]
+    async fn malformed_cached_artwork_is_retired_and_valid_artwork_keeps_its_mime() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = Arc::new(ImageCache::new(directory.path().into()));
+        let ticket = cache.ticket();
+        cache
+            .store(&ticket, &key(1), b"<html>Sign in</html>")
+            .unwrap();
+        assert!(read_validated(cache.clone(), ticket.clone(), key(1))
+            .await
+            .is_none());
+        assert_eq!(cache.stats().unwrap().files, 0);
+        let png = crate::image_content::test_png();
+        cache.store(&ticket, &key(1), &png).unwrap();
+        let bytes = read_validated(cache.clone(), ticket, key(1)).await.unwrap();
+        assert_eq!(bytes, png);
+        assert_eq!(crate::image_content::mime(&bytes), Some("image/png"));
+    }
+
+    #[test]
+    fn late_invalid_image_reports_cannot_discard_a_replacement_or_new_generation() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = ImageCache::new(directory.path().into());
+        let ticket = cache.ticket();
+        let invalid = b"<html>Sign in</html>";
+        cache.store(&ticket, &key(1), invalid).unwrap();
+        let png = crate::image_content::test_png();
+        cache.store(&ticket, &key(1), &png).unwrap();
+        cache
+            .discard_if_unchanged(&ticket, &key(1), invalid)
+            .unwrap();
+        assert_eq!(cache.read(&ticket, &key(1)), Some(png));
+        cache.clear().unwrap();
+        let current = cache.ticket();
+        cache.store(&current, &key(1), invalid).unwrap();
+        cache
+            .discard_if_unchanged(&ticket, &key(1), invalid)
+            .unwrap();
+        assert_eq!(cache.read(&current, &key(1)), Some(invalid.to_vec()));
+    }
+    async fn counted_read(
+        cache: Arc<ImageCache>,
+        key: String,
+        calls: Arc<AtomicU64>,
+    ) -> Option<Vec<u8>> {
+        read_validated_using(
+            cache.clone(),
+            cache.ticket(),
+            key,
+            move |bytes| async move {
+                calls.fetch_add(1, Ordering::Relaxed);
+                crate::image_content::validate(bytes, None).await
+            },
+        )
+        .await
+    }
+
+    async fn reopen_after_owner_exit(directory: &Path) -> Arc<ImageCache> {
+        let reopened = Arc::new(ImageCache::new(directory.into()));
+        // A concurrently forked test child may retain the old lock until exec.
+        // Wait for ownership before asserting the persistent validation proof.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while reopened.root().is_err() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Artwork cache ownership did not transfer"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+        reopened
+    }
+
+    #[tokio::test]
+    async fn verified_cache_hits_skip_decoder_in_memory_and_after_native_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let png = crate::image_content::test_png();
+        let calls = Arc::new(AtomicU64::new(0));
+        let cache = Arc::new(ImageCache::new(directory.path().into()));
+        cache.store(&cache.ticket(), &key(1), &png).unwrap();
+        assert_eq!(
+            counted_read(cache.clone(), key(1), calls.clone()).await,
+            Some(png.clone())
+        );
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            counted_read(cache.clone(), key(1), calls.clone()).await,
+            Some(png.clone())
+        );
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        drop(cache);
+        let reopened = reopen_after_owner_exit(directory.path()).await;
+        assert_eq!(
+            counted_read(reopened, key(1), calls.clone()).await,
+            Some(png)
+        );
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn already_validated_downloads_get_persistent_proof_without_another_decode() {
+        let directory = tempfile::tempdir().unwrap();
+        let png = crate::image_content::test_png();
+        let cache = Arc::new(ImageCache::new(directory.path().into()));
+        assert_eq!(
+            store(cache.clone(), cache.ticket(), key(1), png.clone()).await,
+            png
+        );
+        drop(cache);
+        let reopened = reopen_after_owner_exit(directory.path()).await;
+        let calls = Arc::new(AtomicU64::new(0));
+        assert_eq!(
+            counted_read(reopened, key(1), calls.clone()).await,
+            Some(png)
+        );
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn same_size_bitrot_invalidates_proof_and_retires_the_exact_corrupt_pixels() {
+        let directory = tempfile::tempdir().unwrap();
+        let png = crate::image_content::test_png();
+        let cache = Arc::new(ImageCache::new(directory.path().into()));
+        store(cache.clone(), cache.ticket(), key(1), png.clone()).await;
+        let mut corrupt = png.clone();
+        let idat = corrupt
+            .windows(4)
+            .position(|bytes| bytes == b"IDAT")
+            .unwrap();
+        corrupt[idat + 6] ^= 0xff;
+        fs::write(directory.path().join(key(1)), &corrupt).unwrap();
+        let calls = Arc::new(AtomicU64::new(0));
+        assert!(counted_read(cache.clone(), key(1), calls.clone())
+            .await
+            .is_none());
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert!(!directory.path().join(key(1)).exists());
+        assert_eq!(cache.stats().unwrap().files, 0);
+    }
+
+    #[tokio::test]
+    async fn normalized_legacy_pixels_are_replaced_before_their_persistent_proof() {
+        let directory = tempfile::tempdir().unwrap();
+        let ppm = b"P6\n1 1\n255\n\x01\x02\x03";
+        let cache = Arc::new(ImageCache::new(directory.path().into()));
+        cache.store(&cache.ticket(), &key(1), ppm).unwrap();
+        let calls = Arc::new(AtomicU64::new(0));
+        let png = counted_read(cache.clone(), key(1), calls.clone())
+            .await
+            .unwrap();
+        assert_eq!(crate::image_content::mime(&png), Some("image/png"));
+        assert_eq!(fs::read(directory.path().join(key(1))).unwrap(), png);
+        drop(cache);
+        let reopened = reopen_after_owner_exit(directory.path()).await;
+        assert_eq!(
+            counted_read(reopened, key(1), calls.clone()).await,
+            Some(png)
+        );
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn old_validation_after_clear_cannot_republish_proof_or_normalized_pixels() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = Arc::new(ImageCache::new(directory.path().into()));
+        let ppm = b"P6\n1 1\n255\n\x01\x02\x03";
+        cache.store(&cache.ticket(), &key(1), ppm).unwrap();
+        let (entered, entering) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let pending = tokio::spawn(read_validated_using(
+            cache.clone(),
+            cache.ticket(),
+            key(1),
+            move |bytes| async move {
+                entered.send(()).unwrap();
+                released.await.unwrap();
+                crate::image_content::validate(bytes, None).await
+            },
+        ));
+        entering.await.unwrap();
+        cache.clear().unwrap();
+        // Identical bytes in a new generation must not inherit the old validation.
+        cache.store(&cache.ticket(), &key(1), ppm).unwrap();
+        release.send(()).unwrap();
+        assert!(pending.await.unwrap().is_some());
+        assert_eq!(fs::read(directory.path().join(key(1))).unwrap(), ppm);
+        assert!(!directory.path().join(PROOF_FILE).exists());
+    }
+
+    #[tokio::test]
+    async fn late_normalization_cannot_replace_newer_artwork_under_the_same_key() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = Arc::new(ImageCache::new(directory.path().into()));
+        let ppm = b"P6\n1 1\n255\n\x01\x02\x03";
+        cache.store(&cache.ticket(), &key(1), ppm).unwrap();
+        let (entered, entering) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let pending = tokio::spawn(read_validated_using(
+            cache.clone(),
+            cache.ticket(),
+            key(1),
+            move |bytes| async move {
+                entered.send(()).unwrap();
+                released.await.unwrap();
+                crate::image_content::validate(bytes, None).await
+            },
+        ));
+        entering.await.unwrap();
+        let newer = crate::image_content::test_png();
+        cache.store(&cache.ticket(), &key(1), &newer).unwrap();
+        release.send(()).unwrap();
+        assert!(pending.await.unwrap().is_some());
+        assert_eq!(fs::read(directory.path().join(key(1))).unwrap(), newer);
+        assert!(!directory.path().join(PROOF_FILE).exists());
+    }
+
+    #[tokio::test]
+    async fn proof_persistence_failure_does_not_hide_artwork_or_exceed_the_disk_budget() {
+        let directory = tempfile::tempdir().unwrap();
+        let png = crate::image_content::test_png();
+        let limit = png.len() as u64 + 16;
+        let cache = Arc::new(ImageCache::with_limits(directory.path().into(), limit, 2));
+        assert_eq!(
+            store(cache.clone(), cache.ticket(), key(1), png.clone()).await,
+            png
+        );
+        assert_eq!(cache.read(&cache.ticket(), &key(1)), Some(png.clone()));
+        assert!(!directory.path().join(PROOF_FILE).exists());
+        assert_eq!(cache.stats().unwrap().bytes, png.len() as u64);
+        assert!(cache.stats().unwrap().bytes <= limit);
+        let calls = Arc::new(AtomicU64::new(0));
+        assert_eq!(counted_read(cache, key(1), calls.clone()).await, Some(png));
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn clear_removes_only_the_reserved_proof_manifest_and_owned_images() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = Arc::new(ImageCache::new(directory.path().into()));
+        let png = crate::image_content::test_png();
+        store(cache.clone(), cache.ticket(), key(1), png).await;
+        fs::write(directory.path().join("verified-notes.json"), b"keep").unwrap();
+        let metadata = fs::metadata(directory.path().join(PROOF_FILE)).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        }
+        assert!(metadata.len() <= MAX_PROOF_BYTES);
+        let info = cache.stats().unwrap();
+        assert_eq!(
+            info.bytes,
+            metadata.len() + fs::metadata(directory.path().join(key(1))).unwrap().len()
+        );
+        assert_eq!(cache.clear().unwrap().bytes, 0);
+        assert!(!directory.path().join(PROOF_FILE).exists());
+        assert_eq!(
+            fs::read(directory.path().join("verified-notes.json")).unwrap(),
+            b"keep"
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_or_oversized_proofs_never_bypass_the_decoder() {
+        let png = crate::image_content::test_png();
+        let good = Proof::of(&png).unwrap();
+        let mut excessive = HashMap::new();
+        for id in 0..=MAX_CACHE_FILES as u64 {
+            excessive.insert(key(id), good.clone());
+        }
+        let cases = [
+            b"{invalid".to_vec(),
+            vec![b' '; MAX_PROOF_BYTES as usize + 1],
+            serde_json::to_vec(&ProofManifest {
+                validator_version: VALIDATOR_VERSION + 1,
+                entries: HashMap::from([(key(1), good.clone())]),
+            })
+            .unwrap(),
+            serde_json::to_vec(&ProofManifest {
+                validator_version: VALIDATOR_VERSION,
+                entries: excessive,
+            })
+            .unwrap(),
+            serde_json::to_vec(&ProofManifest {
+                validator_version: VALIDATOR_VERSION,
+                entries: HashMap::from([("../outside.img".into(), good)]),
+            })
+            .unwrap(),
+        ];
+        for manifest in cases {
+            let directory = tempfile::tempdir().unwrap();
+            fs::write(directory.path().join(key(1)), &png).unwrap();
+            let path = directory.path().join(PROOF_FILE);
+            fs::write(&path, manifest).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+            }
+            let cache = Arc::new(ImageCache::new(directory.path().into()));
+            let calls = Arc::new(AtomicU64::new(0));
+            assert_eq!(
+                counted_read(cache, key(1), calls.clone()).await,
+                Some(png.clone())
+            );
+            assert_eq!(calls.load(Ordering::Relaxed), 1);
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn publicly_readable_or_linked_manifests_are_not_validation_proof() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let png = crate::image_content::test_png();
+        for linked in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let images = directory.path().join("images");
+            fs::create_dir(&images).unwrap();
+            fs::write(images.join(key(1)), &png).unwrap();
+            let outside = directory.path().join("outside.json");
+            let raw = serde_json::to_vec(&ProofManifest {
+                validator_version: VALIDATOR_VERSION,
+                entries: HashMap::from([(key(1), Proof::of(&png).unwrap())]),
+            })
+            .unwrap();
+            fs::write(&outside, &raw).unwrap();
+            if linked {
+                symlink(&outside, images.join(PROOF_FILE)).unwrap();
+            } else {
+                fs::write(images.join(PROOF_FILE), &raw).unwrap();
+                fs::set_permissions(images.join(PROOF_FILE), fs::Permissions::from_mode(0o644))
+                    .unwrap();
+            }
+            let calls = Arc::new(AtomicU64::new(0));
+            assert_eq!(
+                counted_read(Arc::new(ImageCache::new(images)), key(1), calls.clone()).await,
+                Some(png.clone())
+            );
+            assert_eq!(calls.load(Ordering::Relaxed), 1);
+            assert_eq!(fs::read(&outside).unwrap(), raw);
+        }
     }
 }
