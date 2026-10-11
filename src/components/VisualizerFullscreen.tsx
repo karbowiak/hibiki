@@ -5,6 +5,7 @@ import { useShallow } from "zustand/react/shallow"
 import { initPresetMeta, loadAllPacks, getPreset, getAllNames } from "../lib/milkdropPresets"
 import { formatMs } from "../lib/formatters"
 import { getReducedMotion } from "../hooks/useReducedMotion"
+import { useVisualizerHotkeys } from "../hooks/useVisualizerHotkeys"
 import VisualizerCanvas from "./VisualizerCanvas"
 import MilkdropPresetBrowser from "./MilkdropPresetBrowser"
 
@@ -199,71 +200,7 @@ export default function VisualizerFullscreen() {
     }
   }, [])
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    const MODES: FullscreenVisualizerMode[] = ["spectrum", "oscilloscope", "vu", "starfield", "milkdrop"]
-
-    function onKey(e: KeyboardEvent) {
-      // Ignore when typing in search input
-      if (e.target instanceof HTMLInputElement) return
-
-      // Number keys 1-5: switch visualization mode
-      const num = parseInt(e.key)
-      if (num >= 1 && num <= 5) {
-        setFullscreenMode(MODES[num - 1])
-        return
-      }
-
-      switch (e.key) {
-        case "Escape":
-          if (presetBrowserOpen) {
-            setPresetBrowserOpen(false)
-          } else {
-            closeFullscreen()
-          }
-          break
-        case "ArrowLeft":
-          if (fullscreenMode === "milkdrop") {
-            const name = getNextPresetName(-1)
-            if (name) setCurrentPreset(name)
-          }
-          break
-        case "ArrowRight":
-          if (fullscreenMode === "milkdrop") {
-            const name = getNextPresetName(1)
-            if (name) setCurrentPreset(name)
-          }
-          break
-        case "r":
-        case "R":
-          if (fullscreenMode === "milkdrop") {
-            const name = getRandomPresetName(currentPresetName ?? undefined)
-            if (name) setCurrentPreset(name)
-          }
-          break
-        case "f":
-        case "F":
-          if (fullscreenMode === "milkdrop" && currentPresetName) {
-            toggleFavorite(currentPresetName)
-          } else if (fullscreenMode !== "milkdrop") {
-            toggleNativeFullscreen()
-          }
-          break
-        case "b":
-        case "B":
-          if (fullscreenMode === "milkdrop") {
-            setPresetBrowserOpen(!presetBrowserOpen)
-          }
-          break
-      }
-    }
-    document.addEventListener("keydown", onKey)
-    return () => document.removeEventListener("keydown", onKey)
-  }, [
-    closeFullscreen, fullscreenMode, presetBrowserOpen, setPresetBrowserOpen,
-    getNextPresetName, getRandomPresetName, setCurrentPreset, currentPresetName,
-    toggleFavorite, setFullscreenMode, toggleNativeFullscreen,
-  ])
+  useVisualizerHotkeys(toggleNativeFullscreen)
 
   // Resize the 2D canvas to match its display size (DPR-aware for HiDPI).
   useEffect(() => {

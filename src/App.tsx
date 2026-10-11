@@ -15,6 +15,7 @@ import { DebugPanel } from "./components/DebugPanel"
 import { DragOverlay } from "./components/DragOverlay"
 import { HotkeyHelpModal } from "./components/HotkeyHelpModal"
 import { useDebugPanelStore } from "./stores/debugPanelStore"
+import { useVisualizerStore } from "./stores/visualizerStore"
 import { createAppMenu } from "./lib/appMenu"
 import { recordRecentPlaylist } from "./lib/recentPlaylists"
 import { useProviderStore } from "./stores/providerStore"
@@ -38,6 +39,7 @@ import "./i18n" // Initialize i18n on app load
 function DesktopApp() {
   const activeProvider = useProviderStore(s => s.provider)
   const debugPanelOpen = useDebugPanelStore(s => s.open)
+  const fullscreenOpen = useVisualizerStore(s => s.fullscreenOpen)
   const { hotkeyHelpOpen, setHotkeyHelpOpen } = useGlobalHotkeys()
   const { isConnected, musicSectionId, isLoading, loadAndConnect } = useConnectionStore(
     useShallow(s => ({ isConnected: s.isConnected, musicSectionId: s.musicSectionId, isLoading: s.isLoading, loadAndConnect: s.loadAndConnect }))
@@ -140,7 +142,7 @@ function DesktopApp() {
 
       <UpdateDialog />
       <ContextMenu />
-      {hotkeyHelpOpen && <HotkeyHelpModal onClose={() => setHotkeyHelpOpen(false)} />}
+      {hotkeyHelpOpen && <HotkeyHelpModal context={fullscreenOpen ? "visualizer" : "player"} onClose={() => setHotkeyHelpOpen(false)} />}
       {debugPanelOpen && <DebugPanel />}
       <LiveAnnouncer />
       <DragOverlay />

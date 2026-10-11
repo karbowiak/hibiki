@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react"
 import { IS_MACOS } from "../lib/platform"
+import { isCompositionKey } from "../lib/keyboard"
 
 const mod = IS_MACOS ? "Cmd" : "Ctrl"
 
@@ -71,6 +72,7 @@ export function HotkeyHelpModal({ context = "player", onClose }: Props) {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (e.defaultPrevented || e.repeat || isCompositionKey(e)) return
       if (e.key === "Escape" || e.key === "?") {
         e.preventDefault()
         e.stopPropagation()

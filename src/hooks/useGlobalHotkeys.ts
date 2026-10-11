@@ -1,64 +1,72 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import { usePlayerStore } from "../stores/playerStore"
 import { useVisualizerStore } from "../stores/visualizerStore"
-
-function isInput(e: KeyboardEvent): boolean {
-  const el = e.target as HTMLElement
-  const tag = el.tagName
-  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable
-}
-
-function hasModifier(e: KeyboardEvent): boolean {
-  return e.metaKey || e.ctrlKey || e.altKey
-}
+import { useRadioStreamStore } from "../stores/radioStreamStore"
+import {
+  hasKeyboardModifier,
+  isCompositionKey,
+  isKeyboardControl,
+} from "../lib/keyboard"
 
 export function useGlobalHotkeys() {
   const [hotkeyHelpOpen, setHotkeyHelpOpen] = useState(false)
-  const volumeBeforeMute = useRef(80)
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
+      if (e.defaultPrevented || isCompositionKey(e)) return
+      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key
       // Modifier hotkeys (work even in inputs)
-      if (e.metaKey || e.ctrlKey) {
-        if (e.key === "f" || e.key === "k") {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+        if (key === "f" || key === "k") {
+          if (e.repeat) return
           e.preventDefault()
+          const visualizer = useVisualizerStore.getState()
+          if (visualizer.fullscreenOpen) visualizer.closeFullscreen()
           window.dispatchEvent(new CustomEvent("plexify:search-focus"))
           return
         }
-        if (e.key === "r" && !e.shiftKey) {
+        if (key === "r") {
+          if (e.repeat) return
           e.preventDefault()
           window.dispatchEvent(new CustomEvent("plexify:refresh"))
           return
         }
       }
 
-      // All remaining hotkeys are suppressed when typing in inputs
-      if (isInput(e)) return
+      if (isKeyboardControl(e)) return
 
       // Hotkeys that require no modifiers
-      if (hasModifier(e)) return
+      if (hasKeyboardModifier(e)) return
+      if (e.repeat && !key.startsWith("Arrow")) return
 
       const player = usePlayerStore.getState()
       const visualizer = useVisualizerStore.getState()
 
-      switch (e.key) {
+      switch (key) {
         case " ":
-          e.preventDefault()
+          if (player.isInternetRadioActive) {
+            const radio = useRadioStreamStore.getState()
+            if (!radio.currentStation) return
+            e.preventDefault()
+            if (radio.isStreamPlaying) radio.pauseStream()
+            else radio.resumeStream()
+            break
+          }
           if (!player.currentTrack) return
+          e.preventDefault()
           if (player.isPlaying) player.pause()
           else player.resume()
           break
         case "n":
-        case "N":
           e.preventDefault()
           player.next()
           break
         case "b":
-        case "B":
           e.preventDefault()
           player.prev()
           break
         case "ArrowLeft":
+          if (!player.currentTrack || player.isInternetRadioActive) return
           e.preventDefault()
           {
             const delta = e.shiftKey ? 15000 : 5000
@@ -66,11 +74,17 @@ export function useGlobalHotkeys() {
           }
           break
         case "ArrowRight":
+          if (!player.currentTrack || player.isInternetRadioActive) return
           e.preventDefault()
           {
             const delta = e.shiftKey ? 15000 : 5000
-            const duration = player.currentTrack?.duration ?? 0
-            player.seekTo(Math.min(duration, player.positionMs + delta))
+            const duration = player.currentTrack.duration
+            const target = player.positionMs + delta
+            player.seekTo(
+              Number.isFinite(duration) && duration > 0
+                ? Math.min(duration, target)
+                : target
+            )
           }
           break
         case "ArrowUp":
@@ -82,27 +96,18 @@ export function useGlobalHotkeys() {
           player.setVolume(Math.max(0, player.volume - 5))
           break
         case "m":
-        case "M":
           e.preventDefault()
-          if (player.volume > 0) {
-            volumeBeforeMute.current = player.volume
-            player.setVolume(0)
-          } else {
-            player.setVolume(volumeBeforeMute.current)
-          }
+          player.toggleMute()
           break
         case "s":
-        case "S":
           e.preventDefault()
           player.toggleShuffle()
           break
         case "r":
-        case "R":
           e.preventDefault()
           player.cycleRepeat()
           break
         case "v":
-        case "V":
           if (!visualizer.fullscreenOpen) {
             e.preventDefault()
             visualizer.openFullscreen()
@@ -110,7 +115,7 @@ export function useGlobalHotkeys() {
           break
         case "?":
           e.preventDefault()
-          setHotkeyHelpOpen(prev => !prev)
+          setHotkeyHelpOpen((prev) => !prev)
           break
       }
     }
