@@ -5,13 +5,13 @@ use super::{
     types::DeckId,
 };
 use crossbeam_channel::Sender;
-use std::path::Path;
+use std::fs::File;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 pub(super) type Analyzer =
-    dyn Fn(&Path, &str, &dyn Fn() -> bool) -> Result<f32, String> + Send + Sync;
+    dyn Fn(File, &str, &dyn Fn() -> bool) -> Result<f32, String> + Send + Sync;
 struct Job {
     key: String,
     ext: String,
@@ -40,7 +40,9 @@ impl LoudnessAnalysis {
             commands,
             atomics,
             engine_alive,
-            Arc::new(|path, ext, current| super::loudness::analyze_loudness(path, ext, current)),
+            Arc::new(|path, ext, current| {
+                super::loudness::analyze_loudness_file(path, ext, current)
+            }),
         )
     }
     pub(super) fn with_analyzer(
@@ -80,14 +82,14 @@ impl LoudnessAnalysis {
                             // Wait for installation before publishing an update. Cache misses
                             // also wait for a completed file, never a partial download.
                             if loaded.load(Ordering::Acquire) == job.request.load_id {
-                                if let Some(path) = cache.lookup(&job.key) {
-                                    ready = Some((job.deck, path));
+                                if let Some((file, stamp)) = cache.open_with_stamp(&job.key) {
+                                    ready = Some((job.deck, file, stamp));
                                     break;
                                 }
                             }
                         }
                     }
-                    let Some((deck, path)) = ready else {
+                    let Some((deck, file, stamp)) = ready else {
                         if queue
                             .wake
                             .wait_timeout(slots, Duration::from_millis(100))
@@ -99,7 +101,11 @@ impl LoudnessAnalysis {
                     };
                     let job = slots[deck_index(deck)].take().unwrap();
                     drop(slots);
-                    let current = || alive() && job.request.is_current();
+                    let current = || {
+                        alive()
+                            && job.request.is_current()
+                            && cache.stamp_is_current(&job.key, &stamp)
+                    };
                     if !current() {
                         continue;
                     }
@@ -107,10 +113,12 @@ impl LoudnessAnalysis {
                         .get_computed_gain(&job.key)
                         .filter(|value| value.is_finite())
                         .map(Ok)
-                        .unwrap_or_else(|| analyze(&path, &job.ext, &current));
+                        .unwrap_or_else(|| analyze(file, &job.ext, &current));
                     match result {
                         Ok(gain_db) if gain_db.is_finite() && current() => {
-                            cache.set_computed_gain(&job.key, gain_db);
+                            if !cache.set_computed_gain_for_stamp(&job.key, &stamp, gain_db) {
+                                continue;
+                            }
                             // A full callback queue must not turn analysis into unbounded
                             // queued work. Retry only while this exact deck still belongs here.
                             let mut command = AudioCommand::AnalyzedGain {
@@ -331,6 +339,51 @@ mod tests {
         service.submit(&source(url), DeckId::A, old);
         started.recv_timeout(Duration::from_secs(2)).unwrap();
         atomics.deck_a_load_id.fetch_add(1, Ordering::SeqCst);
+        done.recv_timeout(Duration::from_secs(2)).unwrap();
+        shutdown(service);
+        assert!(rx.try_recv().is_err());
+        assert_eq!(cache.get_computed_gain(&source(url).cache_key), None);
+    }
+
+    #[test]
+    fn replacement_of_encoded_file_cancels_its_measurement_and_rejects_late_gain() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Arc::new(AudioCache::new(dir.path().into(), None));
+        let atomics = Arc::new(SharedAtomics::new());
+        let (started_tx, started) = crossbeam_channel::bounded(1);
+        let (done_tx, done) = crossbeam_channel::bounded(1);
+        let (tx, rx) = crossbeam_channel::bounded(4);
+        let service = LoudnessAnalysis::with_analyzer(
+            cache.clone(),
+            tx,
+            atomics.clone(),
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(move |mut file, _, current| {
+                use std::io::Read;
+                started_tx.send(()).unwrap();
+                while current() {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                let mut bytes = Vec::new();
+                file.read_to_end(&mut bytes).unwrap();
+                assert_eq!(bytes, b"synthetic cache payload");
+                done_tx.send(()).unwrap();
+                Ok(-9.0)
+            }),
+        )
+        .unwrap();
+        let url = "https://test.invalid/replaced.wav";
+        let media = source(url);
+        let mut replacement = cache
+            .begin_write(&media.cache_key, &media.extension)
+            .unwrap();
+        replacement.write_chunk(b"synthetic cache payload").unwrap();
+        cache_file(&cache, url);
+        let job = request(&atomics, DeckId::A);
+        installed(&atomics, DeckId::A, &job);
+        service.submit(&source(url), DeckId::A, job);
+        started.recv_timeout(Duration::from_secs(2)).unwrap();
+        replacement.finish(&cache).unwrap(); // Same key and size, distinct revision.
         done.recv_timeout(Duration::from_secs(2)).unwrap();
         shutdown(service);
         assert!(rx.try_recv().is_err());

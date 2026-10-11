@@ -33,6 +33,14 @@ pub fn analyze_loudness(
         return Err("analysis cancelled".into());
     }
     let file = std::fs::File::open(path).map_err(|error| format!("open: {error}"))?;
+    analyze_loudness_file(file, ext, is_current)
+}
+
+pub(super) fn analyze_loudness_file(
+    file: std::fs::File,
+    ext: &str,
+    is_current: impl Fn() -> bool,
+) -> Result<f32, String> {
     let source = MediaSourceStream::new(Box::new(file), Default::default());
     let mut decoder =
         decode::probe_from_source(source, Some(ext)).map_err(|error| format!("probe: {error}"))?;

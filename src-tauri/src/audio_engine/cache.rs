@@ -342,6 +342,42 @@ impl AudioCache {
             .flatten()
     }
 
+    pub(super) fn stamp_is_current(&self, key: &str, stamp: &CacheStamp) -> bool {
+        self.available
+            && self.owner.directory_is_current()
+            && self
+                .index
+                .lock()
+                .ok()
+                .and_then(|idx| idx.entries.get(key).map(CacheStamp::from))
+                .as_ref()
+                == Some(stamp)
+    }
+
+    pub(super) fn set_computed_gain_for_stamp(
+        &self,
+        key: &str,
+        stamp: &CacheStamp,
+        gain_db: f32,
+    ) -> bool {
+        if !gain_db.is_finite() || !self.available || !self.owner.directory_is_current() {
+            return false;
+        }
+        let Ok(mut idx) = self.index.lock() else {
+            return false;
+        };
+        let Some(entry) = idx.entries.get_mut(key) else {
+            return false;
+        };
+        if CacheStamp::from(&*entry) != *stamp {
+            return false;
+        }
+        entry.computed_gain_db = Some(gain_db);
+        entry.gain_analysis_version = GAIN_ANALYSIS_VERSION;
+        idx.save(&self.index_path());
+        true
+    }
+
     /// Store a computed loudness gain for a cached track.
     pub fn set_computed_gain(&self, key: &str, gain_db: f32) {
         if !gain_db.is_finite() || !self.available || !self.owner.directory_is_current() {
