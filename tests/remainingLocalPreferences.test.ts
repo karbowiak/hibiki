@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test"
 import { JSDOM } from "jsdom"
+import { resolve } from "node:path"
 import { PreferencePersistence } from "../src/stores/preferencePersistence"
 import { persistenceMiddleware } from "../src/stores/safePersist"
 import { deferred, settle } from "./helpers/radioAudioFakes"
@@ -475,7 +476,7 @@ test("existing localStorage keys restore all five singleton stores on startup", 
     dom.window.close();
   `
   const child = Bun.spawn([process.execPath, "-e", script], {
-    cwd: new URL("..", import.meta.url).pathname,
+    cwd: resolve(import.meta.dir, ".."),
     stdout: "pipe",
     stderr: "pipe",
   })
