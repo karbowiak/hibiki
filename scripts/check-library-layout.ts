@@ -147,29 +147,78 @@ try {
               slug === "playlists"
                 ? '#layout-fixture main a[href^="/playlist/"] button'
                 : '#layout-fixture main button[aria-label^="Play "]'
-            // Keyboard modality plus actual focus exercises CSS focus visibility
-            // on both browsers regardless of macOS Safari Tab preferences.
-            await page.keyboard.press("Tab")
-            await page.locator(selector).first().focus()
-            await page.waitForTimeout(250)
-            const visible = await page
-              .locator(selector)
-              .first()
-              .evaluate((element) => {
-                let current: Element | null = element
-                while (current) {
-                  if (getComputedStyle(current).opacity === "0") return false
-                  current = current.parentElement
-                }
-                return (
-                  element.matches(":focus-visible") &&
-                  getComputedStyle(element).boxShadow.includes("2px")
+            // Reach the control through keyboard navigation. Programmatic focus
+            // after Tab can inherit a different focus-visible modality in WebKit.
+            const target = page.locator(selector).first()
+            await page.evaluate(() => {
+              // Reset the sequential navigation start point after route changes.
+              document.body.tabIndex = -1
+              document.body.focus()
+              document.body.removeAttribute("tabindex")
+            })
+            let reached = false
+            for (let step = 0; step < 300; step++) {
+              await page.keyboard.press(
+                name === "webkit" && process.platform === "darwin"
+                  ? "Alt+Tab"
+                  : "Tab"
+              )
+              reached = await target.evaluate(
+                (element) => document.activeElement === element
+              )
+              if (reached) break
+            }
+            assert.ok(
+              reached,
+              `${name}/${slug}/${width}/${sidebar}: Play control unreachable by Tab`
+            )
+            await page
+              .waitForFunction(
+                (query) => {
+                  const element = document.querySelector(query)
+                  if (!element || !element.matches(":focus-visible"))
+                    return false
+                  let current: Element | null = element
+                  while (current) {
+                    if (Number(getComputedStyle(current).opacity) < 0.99)
+                      return false
+                    current = current.parentElement
+                  }
+                  return getComputedStyle(element).boxShadow.includes("2px")
+                },
+                selector,
+                { timeout: 3000 }
+              )
+              .catch(async (error) => {
+                await page.screenshot({
+                  path: join(
+                    artifactDir,
+                    `${name}-${slug}-${width}-${sidebar}-focus-failure.png`
+                  ),
+                })
+                const focus = await target.evaluate((element) => ({
+                  active: document.activeElement === element,
+                  focusVisible: element.matches(":focus-visible"),
+                  opacity: getComputedStyle(element).opacity,
+                  ancestors: (() => {
+                    const values: { tag: string; opacity: string }[] = []
+                    let parent = element.parentElement
+                    while (parent) {
+                      values.push({
+                        tag: parent.tagName,
+                        opacity: getComputedStyle(parent).opacity,
+                      })
+                      parent = parent.parentElement
+                    }
+                    return values
+                  })(),
+                  boxShadow: getComputedStyle(element).boxShadow,
+                }))
+                throw new Error(
+                  `${name}/${slug}/${width}/${sidebar}: hidden/unmarked focused Play control ${JSON.stringify(focus)}`,
+                  { cause: error }
                 )
               })
-            assert.ok(
-              visible,
-              `${name}/${slug}/${width}/${sidebar}: hidden/unmarked focused Play control`
-            )
             await page.screenshot({
               path: join(
                 artifactDir,
