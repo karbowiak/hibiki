@@ -29,6 +29,7 @@ mock.module("idb-keyval", () => ({
   set: async (key: string, value: string) => {
     savedState.set(key, value)
   },
+  update: async (key: string, transform: (value: unknown) => string) => { savedState.set(key, transform(savedState.get(key))) },
   del: async (key: string) => {
     savedState.delete(key)
   },

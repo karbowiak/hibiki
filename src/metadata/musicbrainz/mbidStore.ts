@@ -9,8 +9,7 @@
  */
 
 import { create } from "zustand"
-import { persist } from "zustand/middleware"
-import { idbJSONStorage } from "../../stores/idbStorage"
+import { safePersist } from "../../stores/idbStorage"
 import { evictStaleEntries } from "../../stores/cacheUtils"
 import { musicbrainzLookupRecording, type MusicBrainzRecordingMbids } from "./api"
 
@@ -37,7 +36,7 @@ function makeKey(artist: string, track: string, album: string): string {
 }
 
 export const useMbidStore = create<MbidStoreState>()(
-  persist(
+  safePersist(
     (set, get) => ({
       recordings: {},
       _hasHydrated: false,
@@ -66,11 +65,13 @@ export const useMbidStore = create<MbidStoreState>()(
         return promise
       },
 
-      clearCache: () => set({ recordings: {} }),
+      clearCache: () => {
+        set({ recordings: {} })
+        useMbidStore.persist.clearStorage()
+      },
     }),
     {
       name: "musicbrainz-mbid-cache-v1",
-      storage: idbJSONStorage,
       partialize: (s) => ({ recordings: s.recordings }),
       onRehydrateStorage: () => (state) => {
         if (state) {

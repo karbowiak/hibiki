@@ -15,7 +15,6 @@
  */
 
 import { create } from "zustand"
-import { persist } from "zustand/middleware"
 import {
   lastfmGetAlbumInfo,
   lastfmGetArtistInfo,
@@ -24,7 +23,7 @@ import {
   type LastfmArtistInfo,
   type LastfmTrackInfo,
 } from "./api"
-import { idbJSONStorage } from "../../stores/idbStorage"
+import { safePersist } from "../../stores/idbStorage"
 import { evictStaleEntries } from "../../stores/cacheUtils"
 import { useLastfmStore } from "./authStore"
 
@@ -74,7 +73,7 @@ interface LastfmMetadataState {
 // ---------------------------------------------------------------------------
 
 export const useLastfmMetadataStore = create<LastfmMetadataState>()(
-  persist(
+  safePersist(
     (set, get) => ({
       artists: {},
       albums: {},
@@ -147,7 +146,10 @@ export const useLastfmMetadataStore = create<LastfmMetadataState>()(
         return promise
       },
 
-      clearCache: () => set({ artists: {}, albums: {}, tracks: {} }),
+      clearCache: () => {
+        set({ artists: {}, albums: {}, tracks: {} })
+        useLastfmMetadataStore.persist.clearStorage()
+      },
 
       stats: () => {
         const { artists, albums, tracks } = get()
@@ -160,7 +162,6 @@ export const useLastfmMetadataStore = create<LastfmMetadataState>()(
     }),
     {
       name: "lastfm-metadata-v1",
-      storage: idbJSONStorage,
       partialize: (s) => ({
         artists: s.artists,
         albums: s.albums,

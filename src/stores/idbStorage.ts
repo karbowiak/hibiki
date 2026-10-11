@@ -1,13 +1,18 @@
-import { del, get, set } from "idb-keyval"
-import { createJSONStorage } from "zustand/middleware"
+import * as keyval from "idb-keyval"
 import type { StateStorage } from "zustand/middleware"
+import { PreferencePersistence } from "./preferencePersistence"
+import { persistenceMiddleware } from "./safePersist"
 
-/** IndexedDB-backed storage adapter for Zustand persist.
- *  IndexedDB has no practical size limit (disk-based) vs localStorage's ~5 MB cap. */
+/** Raw provider caches own their hydration and errors through ScopedPersistence. */
 export const idbStorage: StateStorage = {
-  getItem: (name) => get<string>(name).then((v) => v ?? null),
-  setItem: (name, value) => set(name, value),
-  removeItem: (name) => del(name),
+  getItem: async name => (await keyval.get<string>(name)) ?? null,
+  setItem: async (name, value) => { await keyval.set(name, value) },
+  removeItem: async name => { await keyval.del(name) },
 }
 
-export const idbJSONStorage = createJSONStorage(() => idbStorage)
+export const preferencePersistence = new PreferencePersistence({
+  get: key => keyval.get(key),
+  update: (key, transform) => keyval.update(key, transform),
+  remove: key => keyval.del(key),
+})
+export const safePersist = persistenceMiddleware(preferencePersistence)

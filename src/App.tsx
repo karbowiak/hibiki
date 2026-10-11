@@ -31,6 +31,7 @@ import "./stores/highlightStore" // import so the module sets --hl-* CSS vars on
 import { IS_WINDOWS } from "./lib/platform"
 import { WindowTitleBar } from "./components/WindowTitleBar"
 import { useGlobalHotkeys } from "./hooks/useGlobalHotkeys"
+import { StorageStatus } from "./components/PersistenceNotice"
 import LiveAnnouncer from "./components/LiveAnnouncer"
 import "./i18n" // Initialize i18n on app load
 
@@ -101,6 +102,7 @@ function DesktopApp() {
       */}
       <div className="flex h-screen flex-col overflow-hidden text-white">
         {IS_WINDOWS && <WindowTitleBar />}
+        <StorageStatus />
         {/* Sidebar + main content + optional pinned queue */}
         <div className="relative z-0 flex min-h-0 flex-1 flex-row overflow-hidden">
           <SideBar onCreatePlaylist={() => setShowCreatePlaylist(true)} />

@@ -1,7 +1,6 @@
 import { create } from "zustand"
-import { persist } from "zustand/middleware"
 import { listen } from "@tauri-apps/api/event"
-import { idbJSONStorage } from "./idbStorage"
+import { safePersist } from "./idbStorage"
 import type { RadioStation } from "../lib/radiobrowser"
 import { radiobrowserClick } from "../lib/radiobrowser"
 import { radioPlay, radioStop, radioPause, radioResume, radioOnEvents } from "../lib/radioAudio"
@@ -57,7 +56,7 @@ function clearStreamListeners() {
 }
 
 export const useRadioStreamStore = create<RadioStreamState>()(
-  persist(
+  safePersist(
     (set, get) => ({
       currentStation: null,
       isStreamPlaying: false,
@@ -173,7 +172,10 @@ export const useRadioStreamStore = create<RadioStreamState>()(
     }),
     {
       name: "radio-stream-v1",
-      storage: idbJSONStorage,
+      keyedArrays: { favorites: "uuid", recentStations: "uuid" },
+      replaceEmptyArrays: ["recentStations"],
+      validate: state => [state.favorites, state.recentStations].every(value => value === undefined
+        || (Array.isArray(value) && value.every(station => typeof station?.uuid === "string" && !!station.uuid))),
       partialize: (state) => ({
         favorites: state.favorites,
         recentStations: state.recentStations,

@@ -18,6 +18,7 @@ const storage = new Map<string, string>()
 mock.module("idb-keyval", () => ({
   get: async (name: string) => storage.get(name),
   set: async (name: string, value: string) => { storage.set(name, value) },
+  update: async (name: string, transform: (value: unknown) => string) => { storage.set(name, transform(storage.get(name))) },
   del: async (name: string) => { storage.delete(name) },
 }))
 const registrations: { handler: (e: { payload: string }) => void; registration: ReturnType<typeof deferred<() => void>>; unlisten: ReturnType<typeof mock> }[] = []

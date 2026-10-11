@@ -6,8 +6,7 @@
  */
 
 import { create } from "zustand"
-import { persist } from "zustand/middleware"
-import { idbJSONStorage } from "../../stores/idbStorage"
+import { safePersist } from "../../stores/idbStorage"
 import {
   podcastSearch,
   podcastGetFeed,
@@ -77,7 +76,7 @@ interface PodcastState {
 }
 
 export const usePodcastStore = create<PodcastState>()(
-  persist(
+  safePersist(
     (set, get) => ({
       subscriptions: [],
       feedCache: {},
@@ -226,7 +225,9 @@ export const usePodcastStore = create<PodcastState>()(
     }),
     {
       name: "podcast-store-v1",
-      storage: idbJSONStorage,
+      keyedArrays: { subscriptions: "feedUrl", "completedEpisodes.*": "$value" },
+      validate: state => (state.subscriptions === undefined || (Array.isArray(state.subscriptions)
+        && state.subscriptions.every(subscription => typeof subscription?.feedUrl === "string" && !!subscription.feedUrl))),
       partialize: (s) => ({
         subscriptions: s.subscriptions,
         feedCache: s.feedCache,

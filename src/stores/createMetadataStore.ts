@@ -1,6 +1,5 @@
 import { create } from "zustand"
-import { persist } from "zustand/middleware"
-import { idbJSONStorage } from "./idbStorage"
+import { safePersist } from "./idbStorage"
 import { evictStaleEntries } from "./cacheUtils"
 
 const DEFAULT_TTL_MS = 7 * 24 * 60 * 60_000  // 7 days
@@ -50,7 +49,7 @@ export function createMetadataStore<ArtistT, AlbumT>(
   const inflightAlbums = new Map<string, Promise<AlbumT | null>>()
 
   const store = create<MetadataStoreState<ArtistT, AlbumT>>()(
-    persist(
+    safePersist(
       (set, get) => ({
         artists: {},
         albums: {},
@@ -106,7 +105,10 @@ export function createMetadataStore<ArtistT, AlbumT>(
           return promise
         },
 
-        clearCache: () => set({ artists: {}, albums: {} }),
+        clearCache: () => {
+          set({ artists: {}, albums: {}, _hasHydrated: true })
+          store.persist.clearStorage()
+        },
 
         stats: () => {
           const { artists, albums } = get()
@@ -115,7 +117,6 @@ export function createMetadataStore<ArtistT, AlbumT>(
       }),
       {
         name: storeName,
-        storage: idbJSONStorage,
         partialize: (s) => ({ artists: s.artists, albums: s.albums }),
         onRehydrateStorage: () => (state) => {
           if (state) {

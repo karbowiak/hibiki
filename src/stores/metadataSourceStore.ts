@@ -9,8 +9,7 @@
  */
 
 import { create } from "zustand"
-import { persist } from "zustand/middleware"
-import { idbJSONStorage } from "./idbStorage"
+import { safePersist } from "./idbStorage"
 
 export type MetadataSource = "plex" | "deezer" | "lastfm" | "apple" | "musicbrainz"
 
@@ -40,14 +39,15 @@ interface MetadataSourceState {
 }
 
 export const useMetadataSourceStore = create<MetadataSourceState>()(
-  persist(
+  safePersist(
     (set) => ({
       priority: DEFAULT_PRIORITY,
       setPriority: (order) => set({ priority: order }),
     }),
     {
       name: "metadata-source-priority-v1",
-      storage: idbJSONStorage,
+      validate: state => state.priority === undefined || (Array.isArray(state.priority)
+        && state.priority.every(source => typeof source === "string")),
       partialize: (s) => ({ priority: s.priority }),
       onRehydrateStorage: () => (state) => {
         if (!state) return
