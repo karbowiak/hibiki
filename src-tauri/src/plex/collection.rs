@@ -2,6 +2,9 @@
 #![allow(dead_code)]
 
 use super::{PlexClient, MediaContainer, PlexMedia};
+use crate::http_response::{BoundedResponseExt, MAX_PLEX_BYTES};
+use super::client::{request_error, token_header};
+use super::models::PlexApiResponse;
 use anyhow::{Result, Context};
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
@@ -149,7 +152,7 @@ impl PlexClient {
         let mut request = self
             .client
             .get(&self.build_url(&path))
-            .header("X-Plex-Token", &self.token)
+            .header("X-Plex-Token", token_header(&self.token))
             .header("Accept", "application/json");
 
         if let Some(limit) = limit {
@@ -166,7 +169,7 @@ impl PlexClient {
 
         let response = request
             .send()
-            .await
+            .await.map_err(request_error)
             .context("Failed to fetch collection items")?;
 
         debug!("Response status: {}", response.status());
@@ -179,12 +182,12 @@ impl PlexClient {
             ));
         }
 
-        let container: MediaContainer<PlexMedia> = response
-            .json()
+        let wrapper: PlexApiResponse<MediaContainer<PlexMedia>> = response
+            .bounded_json(MAX_PLEX_BYTES)
             .await
             .context("Failed to parse collection items response")?;
 
-        Ok(container.metadata)
+        Ok(wrapper.container.metadata)
     }
 
     /// Add items to a collection

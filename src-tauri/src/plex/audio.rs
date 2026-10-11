@@ -64,30 +64,8 @@ impl PlexClient {
 
         debug!("Sonic similarity request to {}", url);
 
-        // Make direct HTTP request since we have a full URL
-        let response = self
-            .client
-            .get(&url)
-            .header("X-Plex-Token", &self.token)
-            .header("Accept", "application/json")
-            .send()
-            .await
-            .context("Sonic similarity request failed")?;
-
-        debug!("Response status: {}", response.status());
-
-        if !response.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "HTTP error: {} for URL: {}",
-                response.status(),
-                url
-            ));
-        }
-
-        let container: MediaContainer<T> = response
-            .json()
-            .await
-            .context("Failed to parse JSON response")?;
+        let container: MediaContainer<T> = self.get_url(&url).await
+            .context("Failed to fetch sonic metadata")?;
 
         Ok(container.metadata)
     }
@@ -142,29 +120,8 @@ impl PlexClient {
 
         debug!("Sonic adventure request to {}", url);
 
-        let response = self
-            .client
-            .get(&url)
-            .header("X-Plex-Token", &self.token)
-            .header("Accept", "application/json")
-            .send()
-            .await
-            .context("Sonic adventure request failed")?;
-
-        debug!("Response status: {}", response.status());
-
-        if !response.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "HTTP error: {} for URL: {}",
-                response.status(),
-                url
-            ));
-        }
-
-        let container: MediaContainer<Track> = response
-            .json()
-            .await
-            .context("Failed to parse JSON response")?;
+        let container: MediaContainer<Track> = self.get_url(&url).await
+            .context("Failed to fetch sonic metadata")?;
 
         Ok(container.metadata)
     }
@@ -207,29 +164,8 @@ impl PlexClient {
 
         debug!("Track radio request to {}", url);
 
-        let response = self
-            .client
-            .get(&url)
-            .header("X-Plex-Token", &self.token)
-            .header("Accept", "application/json")
-            .send()
-            .await
-            .context("Track radio request failed")?;
-
-        debug!("Response status: {}", response.status());
-
-        if !response.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "HTTP error: {} for URL: {}",
-                response.status(),
-                url
-            ));
-        }
-
-        let container: MediaContainer<Track> = response
-            .json()
-            .await
-            .context("Failed to parse JSON response")?;
+        let container: MediaContainer<Track> = self.get_url(&url).await
+            .context("Failed to fetch sonic metadata")?;
 
         Ok(container.metadata)
     }

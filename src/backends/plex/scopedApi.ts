@@ -298,6 +298,19 @@ export function createPlexApi(
     })
   }
 
+  /** Fetch a playlist page while retaining Plex's totalSize. */
+  function getPlaylistItemsPage(
+    playlistId: number,
+    limit?: number,
+    offset?: number
+  ): Promise<{ items: Track[]; total: number }> {
+    return invoke("get_playlist_items_page", {
+      playlistId,
+      limit: limit ?? null,
+      offset: offset ?? null,
+    })
+  }
+
   /** Create a new playlist from a list of track rating keys. */
   function createPlaylist(
     title: string,
@@ -693,6 +706,7 @@ export function createPlexApi(
     getLikedAlbums,
     getMixTracks,
     getPlaylistItems,
+    getPlaylistItemsPage,
     createPlaylist,
     addItemsToPlaylist,
     removeItemsFromPlaylist,

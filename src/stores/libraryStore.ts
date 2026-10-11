@@ -327,7 +327,7 @@ export function createLibraryStore({
       session: { provider: MusicProvider; epoch: number },
       id: string,
       limit: number,
-      total: number
+      _estimatedTotal: number
     ) {
       const revision = version(id),
         key = JSON.stringify([id, revision, limit])
@@ -337,11 +337,16 @@ export function createLibraryStore({
         const response = await session.provider.getPlaylistItems(id, 0, limit)
         if (!current(session) || version(id) !== revision) throw new Error("Library request was superseded")
         const items = rated(response.items)
-        const complete = total > 0 ? items.length >= total || items.length === 0 : items.length < limit
+        const total = response.total
+        const complete = items.length === 0 || (total > 0 && items.length >= total)
         set((state) => {
           const previous = state.playlistItemsCache[id]
           if (previous && previous.length > items.length) return {}
           return {
+            ...(total > 0 ? {
+              playlists: state.playlists.map(playlist => playlist.id === id ? { ...playlist, trackCount: total } : playlist),
+              ...(state.currentPlaylistId === id && state.currentPlaylist ? { currentPlaylist: { ...state.currentPlaylist, trackCount: total } } : {})
+            } : {}),
             playlistItemsCache: { ...state.playlistItemsCache, [id]: items },
             playlistIsFullyLoaded: { ...state.playlistIsFullyLoaded, [id]: complete },
             ...(state.currentPlaylistId === id ? { currentPlaylistItems: items, isLoading: false } : {})
@@ -573,10 +578,14 @@ export function createLibraryStore({
           const result = await session.provider.getPlaylistItems(id, previous.length, PAGE_SIZE)
           if (!valid() || get().playlistItemsCache[id] !== previous) return
           const items = rated([...previous, ...result.items]),
-            total = get().playlists.find((playlist) => playlist.id === id)?.trackCount ?? 0
+            total = result.total
           const complete =
-            result.items.length === 0 || (total > 0 ? items.length >= total : result.items.length < PAGE_SIZE)
+            result.items.length === 0 || (total > 0 && items.length >= total)
           set((state) => ({
+            ...(total > 0 ? {
+              playlists: state.playlists.map(playlist => playlist.id === id ? { ...playlist, trackCount: total } : playlist),
+              ...(state.currentPlaylistId === id && state.currentPlaylist ? { currentPlaylist: { ...state.currentPlaylist, trackCount: total } } : {})
+            } : {}),
             playlistItemsCache: { ...state.playlistItemsCache, [id]: items },
             playlistIsFullyLoaded: { ...state.playlistIsFullyLoaded, [id]: complete },
             ...(get().currentPlaylistId === id ? { currentPlaylistItems: items } : {})

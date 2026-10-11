@@ -864,3 +864,56 @@ test("keeping the app open after shutdown reloads the selected song at its saved
     expect((engine.resume as any).mock.calls.length).toBe(0)
   } finally { engine.prepareShutdown = prepare; engine.seekTo = seek }
 })
+
+test("playlist playback uses server totals rather than a stale selection count", async () => {
+  const offsets: number[] = []
+  useProviderStore.getState().setProvider(provider("paging", { getPlaylistItems: async (_id, offset = 0) => {
+    offsets.push(offset)
+    return { items: offset === 0 ? [source("1"), source("1")] : [source("2"), source("3")], total: 4, offset }
+  } }))
+  await state().initAudioEvents()
+  await state().playPlaylist("grown", 1, "Grown", "/playlist/grown")
+  audioCallbacks.onTrackStarted({ playback_id: ++playbackId, rating_key: 1, duration_ms: 180000 })
+  await settle()
+  expect(offsets).toEqual([0, 2])
+  expect(state().queue.map(item => item.id)).toEqual(["1", "1", "2", "3"])
+  expect(state().playlistTotalCount).toBe(4)
+})
+
+test("unknown playlist totals continue a full page and an empty response stops further requests", async () => {
+  const offsets: number[] = []
+  useProviderStore.getState().setProvider(provider("unknown-paging", { getPlaylistItems: async (_id, offset = 0) => {
+    offsets.push(offset)
+    return { items: offset === 0 ? Array.from({ length: 100 }, (_, i) => source(String(i + 1))) : [], total: 0, offset }
+  } }))
+  await state().initAudioEvents()
+  await state().playPlaylist("unknown", 1, "Unknown", "/playlist/unknown")
+  expect(state().playlistTotalCount).toBe(0)
+  usePlayerStore.setState({ queueIndex: 80 })
+  await state().next()
+  await settle()
+  expect(offsets).toEqual([0, 100])
+  expect(state().playlistTotalCount).toBe(100)
+  await state().next()
+  await settle()
+  expect(offsets).toEqual([0, 100])
+})
+
+test("unknown playback totals continue server-clamped short pages until empty", async () => {
+  const offsets: number[] = []
+  useProviderStore.getState().setProvider(provider("clamped-paging", { getPlaylistItems: async (_id, offset = 0) => {
+    offsets.push(offset)
+    return { items: offset === 0 ? [source("1")] : offset === 1 ? [source("2")] : [], total: 0, offset }
+  } }))
+  await state().initAudioEvents()
+  await state().playPlaylist("clamped", 1, "Clamped", "/playlist/clamped")
+  audioCallbacks.onTrackStarted({ playback_id: ++playbackId, rating_key: 1, duration_ms: 180000 })
+  await settle()
+  expect(offsets).toEqual([0, 1])
+  expect(state().playlistTotalCount).toBe(0)
+  await state().next()
+  await settle()
+  expect(offsets).toEqual([0, 1, 2])
+  expect(state().playlistTotalCount).toBe(2)
+  expect(state().queue.map(item => item.id)).toEqual(["1", "2"])
+})

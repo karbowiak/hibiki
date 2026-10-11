@@ -198,11 +198,18 @@ impl PlexClient {
         &self,
         section_id: i64,
         query: &str,
-        _libtype: Option<&str>,
+        libtype: Option<&str>,
         _filters: Option<&[SearchFilter]>,
         _sort: Option<&str>,
         limit: Option<i32>,
     ) -> Result<Vec<PlexMedia>> {
+        let wanted = match libtype {
+            None => None,
+            Some("8" | "artist") => Some("artist"),
+            Some("9" | "album") => Some("album"),
+            Some("10" | "track") => Some("track"),
+            Some(_) => anyhow::bail!("Unsupported music search type"),
+        };
         // Use /hubs/search which returns categorised results across all music types
         // (tracks, albums, artists) without requiring a numeric type parameter.
         let mut params = vec![
@@ -224,7 +231,8 @@ impl PlexClient {
             .with_context(|| format!("Failed to search for '{}'", query))?;
 
         // Flatten all hub metadata into a single list
-        Ok(container.hub.into_iter().flat_map(|h| h.metadata).collect())
+        Ok(container.hub.into_iter().flat_map(|h| h.metadata)
+            .filter(|item| wanted.is_none_or(|kind| item.item_type() == kind)).collect())
     }
 
     /// Fetch all items from a paginated Plex endpoint.

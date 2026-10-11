@@ -9,6 +9,7 @@
 //! - Reporting timeline progress
 
 use super::{PlexClient, MediaContainer};
+use super::client::{request_error, token_header};
 use anyhow::{Result, Context};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -115,29 +116,8 @@ impl PlexClient {
 
         debug!("Fetching active sessions from {}", url_with_params);
 
-        let response = self
-            .client
-            .get(&url_with_params)
-            .header("X-Plex-Token", &self.token)
-            .header("Accept", "application/json")
-            .send()
-            .await
-            .context("Failed to fetch active sessions")?;
-
-        debug!("Response status: {}", response.status());
-
-        if !response.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "HTTP error: {} for URL: {}",
-                response.status(),
-                url_with_params
-            ));
-        }
-
-        let container: MediaContainer<Session> = response
-            .json()
-            .await
-            .context("Failed to parse active sessions response")?;
+        let container: MediaContainer<Session> = self.get_url(&url_with_params).await
+            .context("Failed to fetch Plex history metadata")?;
 
         Ok(container.metadata)
     }
@@ -228,29 +208,8 @@ impl PlexClient {
 
         debug!("Fetching item history from {}", url);
 
-        let response = self
-            .client
-            .get(&url)
-            .header("X-Plex-Token", &self.token)
-            .header("Accept", "application/json")
-            .send()
-            .await
-            .context("Failed to fetch item history")?;
-
-        debug!("Response status: {}", response.status());
-
-        if !response.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "HTTP error: {} for URL: {}",
-                response.status(),
-                url
-            ));
-        }
-
-        let container: MediaContainer<HistoryItem> = response
-            .json()
-            .await
-            .context("Failed to parse item history response")?;
+        let container: MediaContainer<HistoryItem> = self.get_url(&url).await
+            .context("Failed to fetch Plex history metadata")?;
 
         container
             .metadata
@@ -286,10 +245,10 @@ impl PlexClient {
         let response = self
             .client
             .put(&url)
-            .header("X-Plex-Token", &self.token)
+            .header("X-Plex-Token", token_header(&self.token))
             .header("Accept", "application/json")
             .send()
-            .await
+            .await.map_err(request_error)
             .context("Failed to delete history")?;
 
         debug!("Response status: {}", response.status());
@@ -332,10 +291,10 @@ impl PlexClient {
         let response = self
             .client
             .delete(&url)
-            .header("X-Plex-Token", &self.token)
+            .header("X-Plex-Token", token_header(&self.token))
             .header("Accept", "application/json")
             .send()
-            .await
+            .await.map_err(request_error)
             .context("Failed to terminate session")?;
 
         debug!("Response status: {}", response.status());
@@ -383,10 +342,10 @@ impl PlexClient {
         let response = self
             .client
             .get(&url)
-            .header("X-Plex-Token", &self.token)
+            .header("X-Plex-Token", token_header(&self.token))
             .header("Accept", "application/json")
             .send()
-            .await
+            .await.map_err(request_error)
             .context("Failed to mark item as played")?;
 
         debug!("Response status: {}", response.status());
@@ -432,10 +391,10 @@ impl PlexClient {
         let response = self
             .client
             .get(&url)
-            .header("X-Plex-Token", &self.token)
+            .header("X-Plex-Token", token_header(&self.token))
             .header("Accept", "application/json")
             .send()
-            .await
+            .await.map_err(request_error)
             .context("Failed to mark item as unplayed")?;
 
         debug!("Response status: {}", response.status());
@@ -503,11 +462,11 @@ impl PlexClient {
         let response = self
             .client
             .get(&url)
-            .header("X-Plex-Token", &self.token)
+            .header("X-Plex-Token", token_header(&self.token))
             .header("X-Plex-Client-Identifier", client_identifier)
             .header("Accept", "application/json")
             .send()
-            .await
+            .await.map_err(request_error)
             .context("Failed to report timeline")?;
 
         debug!("Response status: {}", response.status());
@@ -546,10 +505,10 @@ impl PlexClient {
         let response = self
             .client
             .put(&url)
-            .header("X-Plex-Token", &self.token)
+            .header("X-Plex-Token", token_header(&self.token))
             .header("Accept", "application/json")
             .send()
-            .await
+            .await.map_err(request_error)
             .context("Failed to rate item")?;
 
         debug!("Response status: {}", response.status());

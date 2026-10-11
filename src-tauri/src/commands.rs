@@ -719,6 +719,21 @@ pub async fn get_playlist_items(
         .map_err(|e| format!("{:#}", e))
 }
 
+/// Get a playlist page and its server-reported total without losing occurrences.
+#[tauri::command]
+pub async fn get_playlist_items_page(
+    context: PlexRequestContext,
+    playlist_id: i64,
+    limit: Option<i32>,
+    offset: Option<i32>,
+    state: State<'_, PlexState>,
+) -> Result<crate::plex::playlist::PlaylistItemsPage, String> {
+    let c = client!(state, context);
+    c.get_playlist_items_page(playlist_id, limit, offset)
+        .await
+        .map_err(|e| format!("{:#}", e))
+}
+
 /// Create a new playlist.
 #[tauri::command]
 pub async fn create_playlist(

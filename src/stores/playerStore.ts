@@ -97,7 +97,7 @@ interface PlayerState {
   /** Play a URI via a server-side play queue. Handles full playlists with shuffle. */
   playFromUri: (uri: string, forceShuffle?: boolean, contextName?: string | null, contextHref?: string | null, albumPlaybackId?: string | null) => Promise<void>
   /** Start playing a playlist with progressive queue loading (100 tracks at a time). */
-  playPlaylist: (playlistId: string, totalCount: number, title: string, href: string) => Promise<void>
+  playPlaylist: (playlistId: string, _estimatedTotalCount: number, title: string, href: string) => Promise<void>
   /**
    * Start a radio station seeded from the given item.
    * Uses `createRadioQueue` normally, or `createSmartShuffleQueue` when Guest DJ is enabled.
@@ -606,7 +606,7 @@ let _playlistLoadRequest: symbol | null = null
 /** Load the next page of playlist tracks into the queue in the background. */
 async function loadMorePlaylistTracks(get: () => PlayerState, set: (fn: (s: PlayerState) => Partial<PlayerState>) => void) {
   const { playlistKey, playlistLoadedCount, playlistTotalCount, isLoadingMoreTracks } = get()
-  if (!playlistKey || playlistLoadedCount >= playlistTotalCount || isLoadingMoreTracks) return
+  if (!playlistKey || (playlistTotalCount > 0 && playlistLoadedCount >= playlistTotalCount) || isLoadingMoreTracks) return
   const provider = getProvider()
   if (!provider) return
   const context = _queueContextGeneration
@@ -622,10 +622,11 @@ async function loadMorePlaylistTracks(get: () => PlayerState, set: (fn: (s: Play
       set(s => ({
         queue: [...s.queue, ...result.items],
         playlistLoadedCount: s.playlistLoadedCount + result.items.length,
+        playlistTotalCount: result.total > 0 ? result.total : 0,
         isLoadingMoreTracks: false,
       }))
     } else {
-      set(() => ({ isLoadingMoreTracks: false }))
+      set(() => ({ isLoadingMoreTracks: false, playlistTotalCount: playlistLoadedCount }))
     }
   } catch (err) {
     if (!isCurrent()) return
@@ -921,7 +922,7 @@ export const usePlayerStore = create<PlayerState>()(
     }
   },
 
-  playPlaylist: async (playlistId: string, totalCount: number, title: string, href: string) => {
+  playPlaylist: async (playlistId: string, _estimatedTotalCount: number, title: string, href: string) => {
     const provider = getProvider()
     if (!provider) return
     const generation = beginQueueSelection()
@@ -937,7 +938,7 @@ export const usePlayerStore = create<PlayerState>()(
       replaceQueueContext()
       set({
         queue: tracks, queueId: null, shuffle: false, playerError: null,
-        playlistKey: playlistId, playlistTotalCount: totalCount,
+        playlistKey: playlistId, playlistTotalCount: result.total > 0 ? result.total : 0,
         playlistLoadedCount: tracks.length, isLoadingMoreTracks: false,
         isRadioMode: false, radioSeedKey: null, radioType: null, radioSeedArtist: null,
         contextName: title, contextHref: href, albumPlaybackId: null,
@@ -1203,7 +1204,7 @@ export const usePlayerStore = create<PlayerState>()(
     if (queue.length === 0) return
 
     // Proactively load the next page when within 20 tracks of the end.
-    if (playlistKey && playlistLoadedCount < playlistTotalCount && queueIndex >= queue.length - 20) {
+    if (playlistKey && (playlistTotalCount === 0 || playlistLoadedCount < playlistTotalCount) && queueIndex >= queue.length - 20) {
       fireAndForget(loadMorePlaylistTracks(get, set as never))
     }
 
@@ -1479,7 +1480,7 @@ export const usePlayerStore = create<PlayerState>()(
         prefetchAhead(get().queue, nextIndex, 3)
 
         // Progressive playlist loading: load more when approaching end
-        if (playlistKey && playlistLoadedCount < playlistTotalCount && nextIndex >= queue.length - 20) {
+        if (playlistKey && (playlistTotalCount === 0 || playlistLoadedCount < playlistTotalCount) && nextIndex >= queue.length - 20) {
           fireAndForget(loadMorePlaylistTracks(get, set as never))
         }
 

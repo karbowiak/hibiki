@@ -245,10 +245,10 @@ export class PlexProvider implements MusicProvider {
   }
 
   async getPlaylistItems(playlistId: string, offset?: number, limit?: number): Promise<PagedResult<MusicTrack>> {
-    const tracks = await this.api.getPlaylistItems(Number(playlistId), limit, offset)
+    const page = await this.api.getPlaylistItemsPage(Number(playlistId), limit, offset)
     return {
-      items: this.mapTracks(tracks),
-      total: tracks.length, // Plex doesn't return total separately in this endpoint
+      items: this.mapTracks(page.items),
+      total: page.total,
     }
   }
 

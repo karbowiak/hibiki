@@ -46,6 +46,12 @@ pub struct SmartPlaylistConfig {
     pub limit: Option<i32>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct PlaylistItemsPage {
+    pub items: Vec<Track>,
+    pub total: i64,
+}
+
 /// Smart playlist generator
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct Generator {
@@ -133,6 +139,16 @@ impl PlexClient {
         limit: Option<i32>,
         offset: Option<i32>,
     ) -> Result<Vec<Track>> {
+        Ok(self.get_playlist_items_page(playlist_id, limit, offset).await?.items)
+    }
+
+    /// Retain the server's totalSize without changing the legacy array API.
+    pub async fn get_playlist_items_page(
+        &self,
+        playlist_id: i64,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<PlaylistItemsPage> {
         let path = format!("/playlists/{}/items", playlist_id);
         let mut params = Vec::new();
 
@@ -160,7 +176,12 @@ impl PlexClient {
         debug!("Fetching playlist items from {}", url);
 
         let container: MediaContainer<Track> = self.get_url(&url).await?;
-        Ok(container.metadata)
+        Ok(PlaylistItemsPage {
+            // Zero is unknown when items exist; do not mistake a page length
+            // for the full playlist when a server omits totalSize.
+            total: container.total_size.filter(|total| *total >= 0).unwrap_or(0),
+            items: container.metadata,
+        })
     }
 
     /// Create a regular playlist from item IDs

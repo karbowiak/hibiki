@@ -364,6 +364,7 @@ pub fn run() {
             // Playlists
             commands::get_playlists,
             commands::get_playlist_items,
+            commands::get_playlist_items_page,
             commands::get_liked_tracks,
             commands::get_liked_artists,
             commands::get_liked_albums,

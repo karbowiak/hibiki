@@ -7,6 +7,8 @@
 
 use super::{PlexClient, PlayQueue};
 use crate::plex::models::{MediaContainer, MetaWithStations, PlexApiResponse, StationRef};
+use crate::http_response::{BoundedResponseExt, MAX_PLEX_BYTES};
+use super::client::{request_error, token_header};
 use anyhow::{Context, Result};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, instrument};
@@ -55,10 +57,10 @@ impl PlexClient {
         let response = self
             .client
             .post(&url_str)
-            .header("X-Plex-Token", &self.token)
+            .header("X-Plex-Token", token_header(&self.token))
             .header("Accept", "application/json")
             .send()
-            .await
+            .await.map_err(request_error)
             .context("Failed to create play queue")?;
 
         if !response.status().is_success() {
@@ -69,7 +71,7 @@ impl PlexClient {
         }
 
         let wrapper: PlexApiResponse<PlayQueue> = response
-            .json()
+            .bounded_json(MAX_PLEX_BYTES)
             .await
             .context("Failed to parse play queue response")?;
 
@@ -117,10 +119,10 @@ impl PlexClient {
         let response = self
             .client
             .put(&url_str)
-            .header("X-Plex-Token", &self.token)
+            .header("X-Plex-Token", token_header(&self.token))
             .header("Accept", "application/json")
             .send()
-            .await
+            .await.map_err(request_error)
             .context("Failed to add to play queue")?;
 
         if !response.status().is_success() {
@@ -131,7 +133,7 @@ impl PlexClient {
         }
 
         let wrapper: PlexApiResponse<PlayQueue> = response
-            .json()
+            .bounded_json(MAX_PLEX_BYTES)
             .await
             .context("Failed to parse play queue response")?;
 
@@ -177,10 +179,10 @@ impl PlexClient {
         let response = self
             .client
             .put(&self.build_url(&path))
-            .header("X-Plex-Token", &self.token)
+            .header("X-Plex-Token", token_header(&self.token))
             .header("Accept", "application/json")
             .send()
-            .await
+            .await.map_err(request_error)
             .context("Failed to move play queue item")?;
 
         if !response.status().is_success() {
@@ -402,11 +404,11 @@ impl PlexClient {
         let response = self
             .client
             .post(&url.to_string())
-            .header("X-Plex-Token", &self.token)
+            .header("X-Plex-Token", token_header(&self.token))
             .header("X-Plex-Client-Identifier", &dj_id)
             .header("Accept", "application/json")
             .send()
-            .await
+            .await.map_err(request_error)
             .context("Failed to create smart shuffle queue")?;
 
         if !response.status().is_success() {
@@ -417,7 +419,7 @@ impl PlexClient {
         }
 
         let wrapper: PlexApiResponse<PlayQueue> = response
-            .json()
+            .bounded_json(MAX_PLEX_BYTES)
             .await
             .context("Failed to parse smart shuffle queue response")?;
 
@@ -436,6 +438,141 @@ impl PlexClient {
     /// Build a library URI for an album or playlist's children.
     pub fn build_directory_uri(section_uuid: &str, item_key: &str) -> String {
         format!("library://{}/directory/{}/children", section_uuid, item_key)
+    }
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+    use super::super::{PlexClientConfig, Track, PlexMedia};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn fixture(body: &str, oversized: bool) -> (PlexClient, tokio::sync::oneshot::Receiver<String>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let body = body.to_owned();
+        let (send, receive) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = vec![0; 8192];
+            let size = stream.read(&mut request).await.unwrap();
+            let _ = send.send(String::from_utf8_lossy(&request[..size]).into_owned());
+            let length = if oversized { MAX_PLEX_BYTES + 1 } else { body.len() };
+            stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+            let _ = stream.write_all(body.as_bytes()).await;
+        });
+        let client = PlexClient::new(PlexClientConfig { base_url: format!("http://{address}"), token: "synthetic-token".into(), ..Default::default() }).unwrap();
+        (client, receive)
+    }
+
+    async fn queue_action(client: &PlexClient, action: usize) -> Result<PlayQueue> {
+        match action {
+            0 => client.create_play_queue("/library/metadata/7", false, 0).await,
+            1 => client.add_to_play_queue(55, "/library/metadata/7", true).await,
+            2 => client.create_smart_shuffle_queue(7, "track", Some("sonicallySimilar"), None, false, "fixture-installation").await,
+            _ => client.get_play_queue(55).await,
+        }
+    }
+
+    #[tokio::test]
+    async fn queue_response_envelopes_and_occurrences_survive_all_entry_points() {
+        let body = r#"{"MediaContainer":{"playQueueID":"55","playQueueTotalCount":"2","Metadata":[{"ratingKey":"7","title":"First"},{"ratingKey":"7","title":"Second"}]}}"#;
+        for action in 0..4 {
+            let (client, receive) = fixture(body, false).await;
+            let queue = queue_action(&client, action).await.unwrap();
+            assert_eq!(queue.id, 55);
+            assert_eq!(queue.total_count, 2);
+            assert_eq!(queue.items.iter().map(|track| track.title.as_str()).collect::<Vec<_>>(), ["First", "Second"]);
+            let request = receive.await.unwrap();
+            assert!(request.to_ascii_lowercase().contains("accept: application/json"));
+            assert!(request.contains(if action == 1 { "PUT /playQueues/55/items?" } else if action == 3 { "GET /playQueues/55?" } else { "POST /playQueues?" }));
+        }
+    }
+
+    #[tokio::test]
+    async fn oversized_queue_bodies_are_rejected_before_reading() {
+        for action in 0..4 {
+            let (client, _) = fixture("", true).await;
+            let error = queue_action(&client, action).await.unwrap_err().to_string();
+            assert!(error.contains("Failed to parse") || error.contains("Failed to fetch"));
+            assert!(!error.contains("synthetic-token"));
+        }
+    }
+
+    #[tokio::test]
+    async fn sonic_and_collection_reads_unwrap_the_real_media_container() {
+        let body = r#"{"MediaContainer":{"Metadata":[{"type":"track","ratingKey":"7","title":"First"},{"type":"track","ratingKey":"7","title":"Second"}]}}"#;
+        for action in 0..4 {
+            let (client, receive) = fixture(body, false).await;
+            let titles = match action {
+                0 => client.sonically_similar::<Track>(7, Some(2), None).await.unwrap().into_iter().map(|track| track.title).collect::<Vec<_>>(),
+                1 => client.sonic_adventure(1, 7, 9, Some(2)).await.unwrap().into_iter().map(|track| track.title).collect(),
+                2 => client.track_radio(1, 7, Some(2), None).await.unwrap().into_iter().map(|track| track.title).collect(),
+                _ => client.get_collection_items(1, Some(2), Some(3)).await.unwrap().into_iter().map(|item| match item { PlexMedia::Track(track) => track.title, _ => panic!("wrong mapped item") }).collect(),
+            };
+            assert_eq!(titles, ["First", "Second"]);
+            if action == 3 {
+                let request = receive.await.unwrap().to_ascii_lowercase();
+                assert!(request.contains("x-plex-container-size: 2"));
+                assert!(request.contains("x-plex-container-start: 3"));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn direct_metadata_helpers_share_response_limits() {
+        for action in 0..6 {
+            let (client, _) = fixture("", true).await;
+            let result = match action {
+                0 => client.sonically_similar::<Track>(7, None, None).await.map(|_| ()),
+                1 => client.sonic_adventure(1, 7, 9, None).await.map(|_| ()),
+                2 => client.track_radio(1, 7, None, None).await.map(|_| ()),
+                3 => client.get_collection_items(1, None, None).await.map(|_| ()),
+                4 => client.get_active_sessions(1).await.map(|_| ()),
+                _ => client.get_item_history(7).await.map(|_| ()),
+            };
+            assert!(format!("{:#}", result.unwrap_err()).contains("byte limit"));
+        }
+    }
+
+    #[tokio::test]
+    async fn playlist_pages_retain_total_size_and_duplicate_occurrences() {
+        let body = r#"{"MediaContainer":{"totalSize":"500","Metadata":[{"ratingKey":"7","playlistItemID":"10","title":"First"},{"ratingKey":"7","playlistItemID":"11","title":"Second"}]}}"#;
+        let (client, receive) = fixture(body, false).await;
+        let page = client.get_playlist_items_page(5, Some(2), Some(100)).await.unwrap();
+        assert_eq!(page.total, 500);
+        assert_eq!(page.items.len(), 2);
+        assert_eq!(page.items[0].playlist_item_id, Some(10));
+        assert_eq!(page.items[1].playlist_item_id, Some(11));
+        let request = receive.await.unwrap();
+        assert!(request.contains("X-Plex-Container-Size=2"));
+        assert!(request.contains("X-Plex-Container-Start=100"));
+        let (client, _) = fixture(body, false).await;
+        assert_eq!(client.get_playlist_items(5, Some(2), Some(100)).await.unwrap().len(), 2);
+        let (client, _) = fixture(r#"{"MediaContainer":{"Metadata":[{"ratingKey":"7","title":"First"}]}}"#, false).await;
+        let unknown = client.get_playlist_items_page(5, Some(2), Some(100)).await.unwrap();
+        assert_eq!(unknown.items.len(), 1);
+        assert_eq!(unknown.total, 0);
+        let (client, _) = fixture(r#"{"MediaContainer":{}}"#, false).await;
+        let page = client.get_playlist_items_page(5, Some(2), Some(100)).await.unwrap();
+        assert_eq!(page.items.len(), 0);
+        assert_eq!(page.total, 0);
+        let (client, _) = fixture(r#"{"MediaContainer":{"totalSize":0}}"#, false).await;
+        assert_eq!(client.get_playlist_items_page(5, Some(2), Some(100)).await.unwrap().total, 0);
+    }
+
+    #[tokio::test]
+    async fn typed_search_filters_returned_hubs_without_inventing_query_parameters() {
+        let body = r#"{"MediaContainer":{"Hub":[{"title":"Results","hubIdentifier":"fixture","Metadata":[{"type":"track","ratingKey":"7","title":"Track"},{"type":"artist","ratingKey":"8","title":"Artist"}]}]}}"#;
+        for (kind, expected) in [(None, 2), (Some("8"), 1), (Some("artist"), 1), (Some("9"), 0)] {
+            let (client, receive) = fixture(body, false).await;
+            let items = client.search(1, "fixture", kind, None, None, Some(50)).await.unwrap();
+            assert_eq!(items.len(), expected);
+            let request = receive.await.unwrap();
+            assert!(request.contains("sectionId=1"));
+            assert!(!request.contains("type="));
+            if kind == Some("8") { assert_eq!(items[0].item_type(), "artist"); }
+        }
     }
 }
 

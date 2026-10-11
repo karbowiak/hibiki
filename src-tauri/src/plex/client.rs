@@ -12,14 +12,14 @@ use tracing::{debug, instrument};
 
 use crate::plex::models::PlexApiResponse;
 
-fn request_error(error: reqwest_middleware::Error) -> anyhow::Error {
+pub(super) fn request_error(error: reqwest_middleware::Error) -> anyhow::Error {
     match error {
         reqwest_middleware::Error::Reqwest(error) => error.without_url().into(),
         reqwest_middleware::Error::Middleware(_) => anyhow::anyhow!("Plex request failed"),
     }
 }
 
-fn token_header(value: &str) -> HeaderValue {
+pub(super) fn token_header(value: &str) -> HeaderValue {
     let mut header = HeaderValue::from_str(value).unwrap_or_else(|_| HeaderValue::from_static(""));
     header.set_sensitive(true);
     header

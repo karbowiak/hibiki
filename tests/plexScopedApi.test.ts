@@ -165,3 +165,31 @@ test("direct and transcoded playback URLs use the bound native client", async ()
   ).toBe(true)
   expect(calls[1].args.partKey).toBe("/library/parts/9/file.flac")
 })
+
+test("paged playlist RPC preserves server totals and duplicate occurrences while legacy RPC stays an array", async () => {
+  const rows = [rawTrack(), rawTrack()]
+  rows[0].playlist_item_id = 10
+  rows[1].playlist_item_id = 11
+  const { calls, invoke } = transportHarness(command => command === "get_playlist_items_page" ? { items: rows, total: 500 } : rows)
+  const api = createPlexApi(context(), invoke)
+  expect(await api.getPlaylistItems(7, 2, 4)).toEqual(rows)
+  const provider = new PlexProvider(invoke)
+  await provider.connect(configuration())
+  const page = await provider.getPlaylistItems("7", 4, 2)
+  expect(page.total).toBe(500)
+  expect(page.items.map(item => item.playlistItemId)).toEqual(["10", "11"])
+  expect(calls.at(-1)?.command).toBe("get_playlist_items_page")
+  expect(calls.at(-1)?.args).toMatchObject({ context: context(), limit: 2, offset: 4 })
+  await provider.disconnect()
+})
+
+test("retiring a paged playlist owner discards the delayed page", async () => {
+  const pending = deferred<{ items: Track[]; total: number }>()
+  const { invoke } = transportHarness(() => pending.promise)
+  const provider = new PlexProvider(invoke)
+  await provider.connect(configuration())
+  const request = provider.getPlaylistItems("7", 0, 100)
+  await provider.disconnect()
+  pending.resolve({ items: [rawTrack()], total: 500 })
+  await expect(request).rejects.toThrow("superseded")
+})

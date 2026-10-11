@@ -163,8 +163,8 @@ test("a larger liked/recent limit starts a new request and a smaller result cann
 test("background prefetch with an unknown length leaves a full initial page pageable", async () => {
   const h = harness({
     getPlaylistItems: mock(async (_id, offset = 0) => ({
-      items: offset === 0 ? Array.from({ length: 50 }, (_, index) => track(String(index))) : [track("last")],
-      total: 50
+      items: offset === 0 ? Array.from({ length: 50 }, (_, index) => track(String(index))) : offset === 50 ? [track("last")] : [],
+      total: 0
     }))
   })
   await h.activate()
@@ -174,6 +174,8 @@ test("background prefetch with an unknown length leaves a full initial page page
   await h.state().fetchPlaylistItems("unknown")
   await h.state().fetchMorePlaylistItems("unknown")
   expect(h.state().currentPlaylistItems).toHaveLength(51)
+  expect(h.state().playlistIsFullyLoaded.unknown).toBe(false)
+  await h.state().fetchMorePlaylistItems("unknown")
   expect(h.state().playlistIsFullyLoaded.unknown).toBe(true)
 })
 
@@ -181,7 +183,7 @@ test("a server-truncated small playlist is not marked complete before its advert
   const h = harness({
     getPlaylistItems: mock(async (_id, offset = 0) => ({
       items: offset === 0 ? [track("first")] : [track("second")],
-      total: 1
+      total: 2
     }))
   })
   await h.activate()
@@ -421,4 +423,66 @@ test("library cache hydration completes before publication of its new provider",
   await store.getState().activateProvider(next)
   published = next
   expect(store.getState().playlists[0].id).toBe("saved")
+})
+
+test("authoritative page totals replace stale playlist counts and retain duplicate occurrences", async () => {
+  const offsets: number[] = []
+  const h = harness({ getPlaylistItems: mock(async (_id, offset = 0) => {
+    offsets.push(offset)
+    return { items: offset === 0 ? [track("same"), track("same")] : [track("third"), track("fourth"), track("fifth")], total: 5 }
+  }) })
+  await h.activate()
+  h.store.setState({ playlists: [playlist("grown", 2)] })
+  await h.state().fetchPlaylistItems("grown")
+  expect(h.state().playlistIsFullyLoaded.grown).toBe(false)
+  expect(h.state().currentPlaylist?.trackCount).toBe(5)
+  await h.state().fetchMorePlaylistItems("grown")
+  expect(offsets).toEqual([0, 2])
+  expect(h.state().currentPlaylistItems.map(item => item.id)).toEqual(["same", "same", "third", "fourth", "fifth"])
+  expect(h.state().playlistIsFullyLoaded.grown).toBe(true)
+})
+
+test("unknown totals do not let stale counts terminate full pages and an empty page is terminal", async () => {
+  const h = harness({ getPlaylistItems: mock(async (_id, offset = 0) => ({ items: offset === 0 ? [track("a"), track("b")] : [], total: 0 })) })
+  await h.activate()
+  h.store.setState({ playlists: [playlist("unknown", 2)] })
+  await h.state().fetchPlaylistItems("unknown")
+  expect(h.state().playlistIsFullyLoaded.unknown).toBe(false)
+  await h.state().fetchMorePlaylistItems("unknown")
+  expect(h.state().playlistIsFullyLoaded.unknown).toBe(true)
+  expect(h.state().playlists[0].trackCount).toBe(2)
+})
+
+test("a later authoritative total keeps a growing playlist pageable", async () => {
+  const h = harness({ getPlaylistItems: mock(async (_id, offset = 0) => ({
+    items: offset === 0 ? [track("a"), track("b")] : offset === 2 ? [track("c"), track("d")] : [track("e")],
+    total: offset === 0 ? 4 : 5
+  })) })
+  await h.activate()
+  h.store.setState({ playlists: [playlist("growing", 2)] })
+  await h.state().fetchPlaylistItems("growing")
+  await h.state().fetchMorePlaylistItems("growing")
+  expect(h.state().playlistIsFullyLoaded.growing).toBe(false)
+  expect(h.state().currentPlaylist?.trackCount).toBe(5)
+  await h.state().fetchMorePlaylistItems("growing")
+  expect(h.state().currentPlaylistItems).toHaveLength(5)
+  expect(h.state().playlistIsFullyLoaded.growing).toBe(true)
+})
+
+test("unknown totals allow server-clamped short pages until an empty page", async () => {
+  const offsets: number[] = []
+  const h = harness({ getPlaylistItems: mock(async (_id, offset = 0) => {
+    offsets.push(offset)
+    return { items: offset === 0 ? [track("a")] : offset === 1 ? [track("b")] : [], total: 0 }
+  }) })
+  await h.activate()
+  h.store.setState({ playlists: [playlist("clamped", 2)] })
+  await h.state().fetchPlaylistItems("clamped")
+  expect(h.state().playlistIsFullyLoaded.clamped).toBe(false)
+  await h.state().fetchMorePlaylistItems("clamped")
+  expect(h.state().playlistIsFullyLoaded.clamped).toBe(false)
+  await h.state().fetchMorePlaylistItems("clamped")
+  expect(h.state().playlistIsFullyLoaded.clamped).toBe(true)
+  expect(offsets).toEqual([0, 1, 2])
+  expect(h.state().currentPlaylistItems.map(item => item.id)).toEqual(["a", "b"])
 })
