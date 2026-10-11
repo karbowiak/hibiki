@@ -17,6 +17,9 @@ export default defineConfig({
   // https://tauri.studio/v1/api/config#buildconfig.beforedevcommand
   envPrefix: ["VITE_", "TAURI_"],
   build: {
+    // The production font-src policy allows local files, not data URLs.
+    assetsInlineLimit: (filePath) =>
+      /\.(?:woff2?|ttf|otf)$/i.test(filePath) ? false : undefined,
     // Tauri supports es2021
     target:
       process.env.TAURI_ENV_PLATFORM == "windows" ? "chrome105" : "safari13",
