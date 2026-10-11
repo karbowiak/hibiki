@@ -18,9 +18,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-// The native AAC parser now preserves the full configuration and speaker maps.
-// Recompute derived loudness while keeping the encoded media cache intact.
-const GAIN_ANALYSIS_VERSION: u8 = 3;
+// Revision ownership and complete-duration validation now protect measurements.
+// Recompute older derived gains while keeping the encoded media cache intact.
+const GAIN_ANALYSIS_VERSION: u8 = 4;
 /// Default max cache size: 5 GB.
 const DEFAULT_MAX_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 const MAX_INDEX_BYTES: u64 = 16 * 1024 * 1024;
@@ -378,7 +378,8 @@ impl AudioCache {
         true
     }
 
-    /// Store a computed loudness gain for a cached track.
+    /// Test fixture helper; production measurements require an exact file stamp.
+    #[cfg(test)]
     pub fn set_computed_gain(&self, key: &str, gain_db: f32) {
         if !gain_db.is_finite() || !self.available || !self.owner.directory_is_current() {
             return;

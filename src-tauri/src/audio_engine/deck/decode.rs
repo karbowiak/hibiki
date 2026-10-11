@@ -55,11 +55,29 @@ pub struct DecoderSetup {
     /// it as a complete track.
     pub aborted: bool,
     pub had_decode_errors: bool,
+    cached_file: Option<(
+        std::sync::Arc<super::super::cache::AudioCache>,
+        String,
+        super::super::cache::CacheStamp,
+    )>,
+    expected_end_ts: Option<u64>,
+    last_packet_end_ts: u64,
     time_base: Option<symphonia::core::units::TimeBase>,
     seek_skip_samples: usize,
     seek_skip_seconds: Option<f64>,
     aac_seek_from_start: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     stream_buffer: Option<std::sync::Arc<super::streaming::SharedBuffer>>,
+}
+
+impl DecoderSetup {
+    pub(in crate::audio_engine) fn attach_cached_file(
+        &mut self,
+        cache: std::sync::Arc<super::super::cache::AudioCache>,
+        key: String,
+        stamp: super::super::cache::CacheStamp,
+    ) {
+        self.cached_file = Some((cache, key, stamp));
+    }
 }
 
 /// Probe and set up a decoder from in-memory bytes (full file).
@@ -151,6 +169,11 @@ pub fn probe_from_source(mss: MediaSourceStream, ext: Option<&str>) -> Result<De
         "audio probed"
     );
 
+    let expected_end_ts = track
+        .codec_params
+        .n_frames
+        .map(|frames| track.codec_params.start_ts.saturating_add(frames));
+    let start_ts = track.codec_params.start_ts;
     Ok(DecoderSetup {
         resampler: None,
         output_frames_decoded: 0,
@@ -164,6 +187,9 @@ pub fn probe_from_source(mss: MediaSourceStream, ext: Option<&str>) -> Result<De
         finished: false,
         aborted: false,
         had_decode_errors: false,
+        cached_file: None,
+        expected_end_ts,
+        last_packet_end_ts: start_ts,
         time_base,
         seek_skip_samples: 0,
         seek_skip_seconds: None,
@@ -218,6 +244,7 @@ pub fn seek_to_ms(setup: &mut DecoderSetup, position_ms: u64) -> Result<()> {
     setup.finished = false;
     setup.aborted = false;
     setup.had_decode_errors = false;
+    setup.last_packet_end_ts = seeked.actual_ts;
     if let Some(resampler) = &mut setup.resampler {
         resampler.reset();
     }
@@ -249,6 +276,23 @@ pub fn decode_batch(setup: &mut DecoderSetup, max_samples: usize) -> Result<Vec<
 pub fn decode_batch_interruptible(
     setup: &mut DecoderSetup,
     max_samples: usize,
+    interrupted: impl FnMut() -> bool,
+) -> Result<Vec<f32>> {
+    let result = decode_batch_inner(setup, max_samples, interrupted);
+    if result.is_err() || setup.aborted || setup.had_decode_errors {
+        if let Some((cache, key, stamp)) = setup.cached_file.take() {
+            // Invalid cached frames must not be reported as successful track EOF.
+            setup.aborted = true;
+            setup.finished = true;
+            cache.discard(&key, &stamp);
+        }
+    }
+    result
+}
+
+fn decode_batch_inner(
+    setup: &mut DecoderSetup,
+    max_samples: usize,
     mut interrupted: impl FnMut() -> bool,
 ) -> Result<Vec<f32>> {
     if setup.finished {
@@ -274,7 +318,10 @@ pub fn decode_batch_interruptible(
                 setup.aborted = setup
                     .stream_buffer
                     .as_ref()
-                    .is_some_and(|buffer| buffer.is_aborted());
+                    .is_some_and(|buffer| buffer.is_aborted())
+                    || setup
+                        .expected_end_ts
+                        .is_some_and(|expected| setup.last_packet_end_ts < expected);
                 break;
             }
             Err(e) => {
@@ -289,6 +336,7 @@ pub fn decode_batch_interruptible(
             continue;
         }
 
+        setup.last_packet_end_ts = packet.ts().saturating_add(packet.dur());
         let decoded = match setup.decoder.decode(&packet) {
             Ok(d) => d,
             Err(symphonia::core::errors::Error::DecodeError(msg)) => {
@@ -388,6 +436,43 @@ fn codec_type_name(ct: codecs::CodecType) -> &'static str {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn late_cached_eof_is_incomplete_and_discards_only_the_decoded_revision() {
+        use crate::audio_engine::cache::AudioCache;
+        use std::sync::Arc;
+        for replace_during_playback in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let cache = Arc::new(AudioCache::new(dir.path().into(), None));
+            let mut replacement = cache.begin_write("42", "wav").unwrap();
+            replacement
+                .write_chunk(&generate_test_wav(44100, 2, 3.0))
+                .unwrap();
+            let mut damaged = generate_test_wav(44100, 2, 3.0);
+            damaged.truncate(44 + 44100 * 4 * 3 / 2);
+            let mut writer = cache.begin_write("42", "wav").unwrap();
+            writer.write_chunk(&damaged).unwrap();
+            writer.finish(&cache).unwrap();
+            let (file, stamp) = cache.open_with_stamp("42").unwrap();
+            let mut decoder = probe_from_source(
+                MediaSourceStream::new(Box::new(file), Default::default()),
+                Some("wav"),
+            )
+            .unwrap();
+            decoder.attach_cached_file(cache.clone(), "42".into(), stamp);
+            assert!(!decode_batch(&mut decoder, 44100 * 2).unwrap().is_empty());
+            assert!(!decoder.finished && !decoder.aborted);
+            if replace_during_playback {
+                replacement.finish(&cache).unwrap();
+            }
+            decode_all(&mut decoder).unwrap();
+            assert!(
+                decoder.finished && decoder.aborted,
+                "premature EOF must not become normal track completion"
+            );
+            assert_eq!(cache.lookup("42").is_some(), replace_during_playback);
+        }
+    }
 
     pub(crate) fn generate_test_wav(
         sample_rate: u32,

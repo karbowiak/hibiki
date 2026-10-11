@@ -1274,6 +1274,7 @@ fn fetch_and_decode_incremental(
         let cached: Result<IncrementalDecodeResult, String> = (|| {
             let mss = MediaSourceStream::new(Box::new(file), Default::default());
             let mut setup = decode::probe_from_source(mss, Some(ext)).map_err(|error| format!("{error}"))?;
+            setup.attach_cached_file(cache.clone(), cache_key.clone(), stamp.clone());
             let mut result = decode_initial_batch(&mut setup, device_rate, device_channels)?;
             if setup.aborted || setup.had_decode_errors { return Err("cached audio contains incomplete or invalid frames".into()); }
             result.decoder = if setup.finished { None } else { Some(setup) };
