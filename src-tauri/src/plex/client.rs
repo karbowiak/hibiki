@@ -117,6 +117,7 @@ pub struct PlexClient {
     /// so every download opens a fresh TCP/TLS connection. ~50–100ms handshake
     /// overhead per fetch, fully reliable.
     media_client: reqwest::Client,
+    artwork_client: reqwest::Client,
     /// Serializes media fetches process-wide. Plex has a bug (at least on the
     /// versions we've tested against) where two concurrent large-body downloads
     /// from the same client cause one in-flight transfer to be killed mid-body
@@ -220,9 +221,19 @@ impl PlexClient {
             .redirect(plex_redirect_policy())
             .danger_accept_invalid_certs(config.accept_invalid_certs)
             .danger_accept_invalid_hostnames(config.accept_invalid_certs)
-            .default_headers(default_headers)
+            .default_headers(default_headers.clone())
             .build()
             .context("Failed to build media HTTP client")?;
+
+        let artwork_client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(15))
+            .redirect(super::artwork::redirect_policy(url::Url::parse(&config.base_url)?))
+            .danger_accept_invalid_certs(config.accept_invalid_certs)
+            .danger_accept_invalid_hostnames(config.accept_invalid_certs)
+            .default_headers(default_headers)
+            .build()
+            .context("Failed to build artwork HTTP client")?;
 
         // Add middleware
         let client = ClientBuilder::new(client)
@@ -237,6 +248,7 @@ impl PlexClient {
             library_scope: String::new(),
             client,
             media_client,
+            artwork_client,
             fetch_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
         })
     }
@@ -549,6 +561,15 @@ impl PlexClient {
         } else {
             public_media_request(url)
         }
+    }
+
+    pub fn artwork_request(&self, value: &str) -> Option<reqwest::RequestBuilder> {
+        let base = url::Url::parse(&self.base_url).ok()?;
+        let target = url::Url::parse(&without_plex_token(value)).ok()?;
+        if !super::artwork::public_url(&target) || !super::artwork::allowed(&base, &target) {
+            return None;
+        }
+        Some(self.artwork_client.get(target).header("X-Plex-Token", token_header(&self.token)))
     }
 
     /// Fetch the raw response body bytes for a pre-built full URL.

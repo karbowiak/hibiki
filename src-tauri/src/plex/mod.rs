@@ -27,6 +27,7 @@
 //! ```
 
 pub mod audio;
+pub mod artwork;
 pub mod auth;
 pub mod client;
 pub mod cache_scope;

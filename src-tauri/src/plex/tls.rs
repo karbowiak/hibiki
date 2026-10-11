@@ -236,7 +236,7 @@ mod tests {
         assert!(foreign.requests.try_recv().is_err());
         let image = crate::image_fetch::request(
             Some(&exception),
-            &format!("{}/cover?X-Plex-Token=dummy-private-token", server.url),
+            &format!("{}/library/metadata/1/thumb?X-Plex-Token=dummy-private-token", server.url),
         )
         .unwrap();
         assert!(crate::image_fetch::fetch(image).await.is_some());

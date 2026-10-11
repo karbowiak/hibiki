@@ -137,7 +137,7 @@ async fn resolve_image(
 
     // Try fetching from src URL
     if !src.is_empty() {
-        if let Some(request) = image_fetch::request(context.client.as_ref(), src) {
+        if let Some(request) = image_fetch::scoped_request(context.client.as_ref(), requested_scope, src) {
             if let Some(bytes) = image_fetch::fetch(request).await {
                 if requires_connection && !state.image_context_is_current(context).await {
                     return None;

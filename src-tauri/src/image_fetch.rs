@@ -8,6 +8,15 @@ static PUBLIC: Lazy<reqwest::Client> = Lazy::new(|| {
     reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 10 {
+                attempt.error("too many public artwork redirects")
+            } else if crate::plex::artwork::public_url(attempt.url()) {
+                attempt.follow()
+            } else {
+                attempt.error("refusing credentials in public artwork redirect")
+            }
+        }))
         .build()
         .expect("public image client")
 });
@@ -22,7 +31,7 @@ pub fn request(client: Option<&PlexClient>, value: &str) -> Option<reqwest::Requ
         return None;
     }
     if let Some(client) = client.filter(|client| client.is_plex_url(value)) {
-        return Some(client.media_request(value));
+        return client.artwork_request(value);
     }
     if url
         .query_pairs()
@@ -31,6 +40,19 @@ pub fn request(client: Option<&PlexClient>, value: &str) -> Option<reqwest::Requ
         return None;
     }
     Some(PUBLIC.get(url))
+}
+
+pub fn scoped_request(
+    client: Option<&PlexClient>,
+    scope: &str,
+    value: &str,
+) -> Option<reqwest::RequestBuilder> {
+    if !scope_matches(client, scope)
+        || (client.is_some_and(|client| client.is_plex_url(value)) && scope.is_empty())
+    {
+        return None;
+    }
+    request(client, value)
 }
 
 /// Digest-only filenames cannot contain entity IDs, paths or credentials.
@@ -86,6 +108,134 @@ pub async fn fetch(request: reqwest::RequestBuilder) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn artwork_cannot_turn_metadata_urls_into_authenticated_api_calls() {
+        let client = PlexClient::new(crate::plex::PlexClientConfig {
+            base_url: "https://plex.test".into(),
+            token: "dummy-private-token".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        for path in [
+            "/:/scrobble?key=1",
+            "/:/unscrobble?key=1",
+            "/library/sections/1/refresh",
+            "/library/metadata/1",
+            "/library/metadata/1/theme",
+        ] {
+            assert!(
+                request(Some(&client), &format!("https://plex.test{path}")).is_none(),
+                "artwork must reject {path} before building a privileged request"
+            );
+        }
+    }
+
+    #[test]
+    fn authenticated_artwork_requires_the_current_library_scope() {
+        let mut client = PlexClient::new(crate::plex::PlexClientConfig {
+            base_url: "https://plex.test/plex".into(),
+            token: "dummy-private-token".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        client.library_scope = "current-library".into();
+        let uri =
+            "https://plex.test/plex/library/metadata/42/thumb?X-Plex-Token=old-token&width=600";
+        assert!(scoped_request(Some(&client), "", uri).is_none());
+        assert!(scoped_request(Some(&client), "old-library", uri).is_none());
+        let request = scoped_request(Some(&client), "current-library", uri)
+            .unwrap()
+            .build()
+            .unwrap();
+        assert_eq!(request.url().query(), Some("width=600"));
+        assert!(request.headers()["X-Plex-Token"].is_sensitive());
+        assert_eq!(request.headers()["X-Plex-Token"], "dummy-private-token");
+        let public = scoped_request(Some(&client), "", "https://cdn.test/cover.jpg")
+            .unwrap()
+            .build()
+            .unwrap();
+        assert!(!public.headers().contains_key("X-Plex-Token"));
+    }
+
+    #[tokio::test]
+    async fn authenticated_redirects_remain_inside_artwork_routes() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for (redirect, allowed) in [
+            ("/library/metadata/2/art/123", true),
+            ("/:/scrobble?key=1", false),
+            (
+                "/library/metadata/2/thumb?X-Plex-Token=another-token",
+                false,
+            ),
+            ("https://foreign.invalid/library/metadata/2/thumb", false),
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut bytes = [0_u8; 4096];
+                let size = socket.read(&mut bytes).await.unwrap();
+                assert!(String::from_utf8_lossy(&bytes[..size])
+                    .to_ascii_lowercase()
+                    .contains("x-plex-token: dummy-private-token"));
+                socket.write_all(format!("HTTP/1.1 302 Found\r\nLocation: {redirect}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+                drop(socket);
+                let second =
+                    tokio::time::timeout(std::time::Duration::from_millis(250), listener.accept())
+                        .await;
+                if let Ok(Ok((mut socket, _))) = second {
+                    let size = socket.read(&mut bytes).await.unwrap();
+                    assert!(String::from_utf8_lossy(&bytes[..size])
+                        .to_ascii_lowercase()
+                        .contains("x-plex-token: dummy-private-token"));
+                    socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nimage").await.unwrap();
+                    true
+                } else {
+                    false
+                }
+            });
+            let client = PlexClient::new(crate::plex::PlexClientConfig {
+                base_url: base.clone(),
+                token: "dummy-private-token".into(),
+                ..Default::default()
+            })
+            .unwrap();
+            let result =
+                fetch(request(Some(&client), &format!("{base}/library/metadata/1/thumb")).unwrap())
+                    .await;
+            assert_eq!(result.is_some(), allowed, "redirect {redirect}");
+            assert_eq!(
+                server.await.unwrap(),
+                allowed,
+                "must not send the rejected hop"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn public_redirects_cannot_introduce_query_credentials() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let uri = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut bytes = [0_u8; 4096];
+            let size = socket.read(&mut bytes).await.unwrap();
+            assert!(!String::from_utf8_lossy(&bytes[..size])
+                .to_ascii_lowercase()
+                .contains("x-plex-token"));
+            socket.write_all(b"HTTP/1.1 302 Found\r\nLocation: /cover?x-plex-token=secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+            drop(socket);
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(250), listener.accept())
+                    .await
+                    .is_err()
+            );
+        });
+        assert!(fetch(request(None, &uri).unwrap()).await.is_none());
+        server.await.unwrap();
+    }
     #[test]
     fn artwork_cache_separates_accounts_and_metadata_names_and_cannot_escape_its_directory() {
         let key = cache_key(
