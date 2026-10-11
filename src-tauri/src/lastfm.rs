@@ -326,10 +326,39 @@ fn best_image(images: &[ImageItem]) -> Option<String> {
 /// Check whether a JSON response body is a Last.fm application-level error.
 /// Last.fm returns HTTP 200 even for errors like "Artist not found" (error code 6).
 fn check_lastfm_error(bytes: &[u8]) -> Result<()> {
-    if let Ok(err) = serde_json::from_slice::<LastfmError>(bytes) {
+    let response: serde_json::Value = serde_json::from_slice(bytes)
+        .context("Invalid Last.fm JSON response")?;
+    if response.get("error").is_some() {
+        let err: LastfmError = serde_json::from_value(response)
+            .context("Invalid Last.fm error response")?;
         if err.error != 0 {
             bail!("Last.fm error {}: {}", err.error, err.message);
         }
+    }
+    Ok(())
+}
+
+fn check_scrobble_response(bytes: &[u8]) -> Result<()> {
+    check_lastfm_error(bytes)?;
+    let response: serde_json::Value = serde_json::from_slice(bytes)?;
+    let batch = response.get("scrobbles").context("Missing Last.fm scrobble acknowledgement")?;
+    let number = |value: Option<&serde_json::Value>| {
+        value.and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse::<u64>().ok()))
+    };
+    let attributes = batch.get("@attr");
+    let accepted = number(attributes.and_then(|value| value.get("accepted")));
+    let ignored = number(attributes.and_then(|value| value.get("ignored")));
+    let item = batch.get("scrobble").and_then(|value| {
+        if let Some(items) = value.as_array() {
+            if items.len() == 1 { items.first() } else { None }
+        } else { Some(value) }
+    });
+    let code_value = item.and_then(|value| value.get("ignoredMessage")).and_then(|value| value.get("code"));
+    let code = number(code_value);
+    // HTTP 200 can still mean an ignored scrobble. Only an explicit accepted
+    // single submission permits the durable listening queue to delete its job.
+    if accepted != Some(1) || ignored != Some(0) || (code_value.is_some() && code != Some(0)) {
+        bail!("Last.fm did not accept this scrobble (ignored code {})", code.map(|code| code.to_string()).unwrap_or_else(|| "unknown".into()));
     }
     Ok(())
 }
@@ -706,7 +735,7 @@ pub async fn scrobble(
         .await
         .context("Failed to read Last.fm scrobble response")?;
 
-    check_lastfm_error(&resp)
+    check_scrobble_response(&resp)
 }
 
 /// Love or unlove a track on Last.fm.
@@ -764,5 +793,36 @@ mod credential_tests {
         assert_eq!(json["username"], "listener");
         assert!(json.get("session_key").is_none());
         assert_eq!(session.session_key, "private-session");
+    }
+}
+
+#[cfg(test)]
+mod response_tests {
+    use super::*;
+
+    #[test]
+    fn ignored_or_malformed_scrobbles_are_not_successful_acknowledgements() {
+        for body in [
+            br##"{"scrobbles":{"@attr":{"accepted":"0","ignored":"1"},"scrobble":{"ignoredMessage":{"code":"5","#text":"Daily limit"}}}}"##.as_slice(),
+            b"<html>Proxy login</html>".as_slice(),
+            b"{}".as_slice(),
+            br#"{"scrobbles":{"@attr":{"accepted":"1","ignored":"0"},"scrobble":{"ignoredMessage":{"code":"4"}}}}"#.as_slice(),
+            br#"{"scrobbles":{"@attr":{"accepted":"1","ignored":"0"},"scrobble":{"ignoredMessage":{"code":"invalid"}}}}"#.as_slice(),
+        ] {
+            assert!(check_scrobble_response(body).is_err(), "unaccepted scrobble was acknowledged");
+        }
+    }
+
+    #[test]
+    fn accepted_single_scrobble_counts_allow_string_and_numeric_api_attributes() {
+        for body in [
+            br##"{"scrobbles":{"@attr":{"accepted":"1","ignored":"0"},"scrobble":{"ignoredMessage":{"code":"0","#text":""}}}}"##.as_slice(),
+            br#"{"scrobbles":{"@attr":{"accepted":1,"ignored":0},"scrobble":[{"ignoredMessage":{"code":0}}]}}"#.as_slice(),
+        ] {
+            assert!(check_scrobble_response(body).is_ok());
+        }
+        assert!(check_lastfm_error(b"<html>Proxy error</html>").is_err());
+        assert!(check_lastfm_error(br#"{"error":9,"message":"Session invalid"}"#).is_err());
+        assert!(check_lastfm_error(b"{}").is_ok());
     }
 }
