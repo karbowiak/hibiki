@@ -26,8 +26,39 @@
       }
     ],
     "security": {
-      "csp": null,
-      "capabilities": ["default"]
+      "csp": {
+        "default-src": "'none'",
+        "script-src": "'self' 'unsafe-eval'",
+        "script-src-attr": "'none'",
+        "style-src": "'self' 'unsafe-inline'",
+        "font-src": "'self' https://encore.scdn.co",
+        "img-src": "'self' image: http://image.localhost https: http: data: blob:",
+        "connect-src": "'self' ipc: http://ipc.localhost image: http://image.localhost https: http: wss: ws:",
+        "media-src": "https: http: blob:",
+        "worker-src": "'none'",
+        "frame-src": "'none'",
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'",
+        "frame-ancestors": "'none'"
+      },
+      "capabilities": ["default"],
+      "devCsp": {
+        "default-src": "'none'",
+        "script-src": "'self' 'unsafe-eval' 'unsafe-inline'",
+        "script-src-attr": "'none'",
+        "style-src": "'self' 'unsafe-inline'",
+        "font-src": "'self' https://encore.scdn.co",
+        "img-src": "'self' image: http://image.localhost https: http: data: blob:",
+        "connect-src": "'self' ipc: http://ipc.localhost image: http://image.localhost https: http: wss: ws:",
+        "media-src": "https: http: blob:",
+        "worker-src": "'none'",
+        "frame-src": "'none'",
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'",
+        "frame-ancestors": "'none'"
+      }
     }
   },
   "bundle": {
@@ -51,7 +82,9 @@
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",
       "timestampUrl": "",
-      "nsis": { "installerIcon": "./icons/icon.ico" }
+      "nsis": {
+        "installerIcon": "./icons/icon.ico"
+      }
     },
     "createUpdaterArtifacts": true
   },

@@ -10,6 +10,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  renderer-security:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Install isolated renderer test browsers
+        run: bunx --no-install playwright install --with-deps chromium webkit
+      - name: Check production renderer features and CSP enforcement
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run bun run test:renderer
+
   check:
     runs-on: ${{ matrix.platform.runner }}
     strategy:

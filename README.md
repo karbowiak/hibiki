@@ -260,10 +260,22 @@ bun run tauri build # production bundle
 
 ```bash
 bun run build      # TypeScript checks and production frontend build
+bun run test:frontend # Frontend regressions with synthetic data
 bun run test:unit  # Rust unit tests; no Plex server required
 ```
 
 Builds require Bun, a stable Rust toolchain, and the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/). Set `PI_KEY` and `PI_SECRET` for Podcast Index, or use empty values when testing without that integration. `bun run test` also runs the live Plex integration tests, which require `PLEX_URL` and `PLEX_TOKEN` and can modify the server's playlists and playback history.
+
+The renderer security check builds production assets and exercises MilkDrop, radio playback and pause, artwork, fonts, Plex notification WebSockets, and CSP enforcement in isolated Chromium and WebKit profiles:
+
+```bash
+bunx --no-install playwright install chromium webkit
+bun run test:renderer
+```
+
+On Linux, install browser system dependencies with `playwright install --with-deps chromium webkit`. To use an existing Chrome binary with a fresh test profile, set `HIBIKI_CHROME_CHANNEL=chrome`. The fixture supplies synthetic font, image, media, and IPC responses; it does not use saved browser sessions or Plex servers. Screenshots are saved under `.tmp/renderer-checks/`.
+
+Production CSP blocks inline and remote scripts, frames, objects, injected base URLs, and form submissions. MilkDrop's bundled preset compiler requires `unsafe-eval`; inline styles support the current dynamic UI styling. HTTP(S) artwork and streams and WS(S) Plex notifications remain supported, and Circular fonts use the existing `encore.scdn.co` origin. Development CSP additionally permits the Vite React refresh preamble; the WebSocket rules also support local hot reload. Tauri's automatic script nonce/hash handling remains enabled.
 
 On Linux, CI builds an unsigned debug AppImage and validates its extracted metadata. Release builds run the same check before publishing:
 
