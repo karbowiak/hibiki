@@ -86,6 +86,10 @@ image = { version = "=0.25.10", default-features = false, features = ["png", "jp
 tokio-test = "0.4"
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 
+# Artwork cache hits hash validated bytes; keep that hot path fast in the dev app.
+[profile.dev.package.sha2]
+opt-level = 3
+
 [target.'cfg(unix)'.dependencies]
 # Portable O_NOFOLLOW/O_NONBLOCK flags for opening only actual cached files.
 libc = "0.2"
