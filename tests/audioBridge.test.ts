@@ -60,3 +60,72 @@ test("a failed control command cannot masquerade as a decode error or trigger tr
   expect(playbackErrors).toEqual([])
   audio.destroy()
 })
+
+test("native audio dispatch copies Plex ownership and public streams explicitly omit it", async () => {
+  const calls: { command: string; args: any }[] = []
+  const audio = new RustAudioEngine({
+    invoke: (async (command, args) => {
+      calls.push({ command, args })
+      return command === "audio_play" ? 1 : undefined
+    }) as AudioTransport["invoke"],
+    listen: async () => () => {},
+  })
+  const context = {
+    connectionRevision: 8,
+    cacheScope: `plex-${"a".repeat(64)}`,
+    token: "never forwarded",
+  }
+  const playing = audio.play(
+    "https://server.test/track",
+    7,
+    180000,
+    "album",
+    -3,
+    false,
+    null,
+    null,
+    false,
+    context
+  )
+  context.connectionRevision = 9
+  await playing
+  await audio.preloadNext(
+    "https://server.test/next",
+    8,
+    180000,
+    "album",
+    -4,
+    false,
+    null,
+    null,
+    false,
+    context
+  )
+  context.cacheScope = "replaced"
+  await audio.play(
+    "https://server.test/public-podcast",
+    -1,
+    180000,
+    "",
+    null,
+    true
+  )
+  await audio.preloadNext(
+    "https://server.test/public-next",
+    -2,
+    180000,
+    "",
+    null,
+    true
+  )
+  expect(calls[0].args.context).toEqual({
+    connectionRevision: 8,
+    cacheScope: `plex-${"a".repeat(64)}`,
+  })
+  expect(calls[1].args.context).toEqual({
+    connectionRevision: 9,
+    cacheScope: `plex-${"a".repeat(64)}`,
+  })
+  expect(calls[2].args.context).toBeNull()
+  expect(calls[3].args.context).toBeNull()
+})

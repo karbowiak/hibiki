@@ -147,6 +147,33 @@ async function audiblyPlay(track: MusicTrack, context?: MusicTrack[]) {
 const station = (uuid = "test-station") =>
   ({ uuid, name: uuid, stream_url: "https://radio.example.test/stream" }) as any
 
+test("player starts and preloads with the source provider's native ownership", async () => {
+  const plexContext = { connectionRevision: 8, cacheScope: `plex-${"a".repeat(64)}` }
+  const p = provider("a", { getPlaybackInfo: async track => ({
+    url: `https://a.test/${track.id}`, trackKey: Number(track.id), partId: 1,
+    parentKey: "album", startRamp: null, endRamp: null, plexContext,
+  }) })
+  useProviderStore.getState().setProvider(p)
+  await state().playTrack(source("1"), [source("1"), source("2")])
+  await settle()
+  expect((engine.play as any).mock.calls.at(-1)[9]).toEqual(plexContext)
+  expect((engine.preloadNext as any).mock.calls.at(-1)[9]).toEqual(plexContext)
+})
+
+test("a transcode retry keeps the originating provider's native audio ownership", async () => {
+  const plexContext = { connectionRevision: 8, cacheScope: `plex-${"a".repeat(64)}` }
+  const p = provider("a", { getTranscodePlaybackInfo: async track => ({
+    url: `https://a.test/transcode/${track.id}`, trackKey: Number(track.id), partId: 1,
+    parentKey: "album", startRamp: null, endRamp: null, plexContext,
+  }) })
+  useProviderStore.getState().setProvider(p)
+  await audiblyPlay(source("1"))
+  usePlayerStore.setState({ positionMs: 0 })
+  await audioCallbacks.onError("Unsupported test codec")
+  expect((engine.play as any).mock.calls.at(-1)[0]).toBe("https://a.test/transcode/1")
+  expect((engine.play as any).mock.calls.at(-1)[9]).toEqual(plexContext)
+})
+
 test("selecting internet radio revokes a pending Plex song load", async () => {
   const pending = deferred<any>()
   useProviderStore

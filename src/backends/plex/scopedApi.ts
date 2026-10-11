@@ -667,6 +667,7 @@ export function createPlexApi(
   }
 
   return {
+    context: requestContext,
     getLibrarySections,
     searchLibrary,
     getRecentlyAdded,

@@ -46,8 +46,6 @@ use self::request::PlaybackRequest;
 use self::types::{DeckId, EngineState, TrackMeta};
 use self::visualizer::VisualizerProcessor;
 
-use crate::commands::PlexState;
-
 /// The main audio engine handle, held as Tauri managed state.
 ///
 /// Only holds the command channel and shared atomics — both are Send+Sync.
@@ -253,7 +251,6 @@ impl AudioEngine {
 
         // Control task — receives Commands, spawns decode work, sends AudioCommands
         let audio_cmd_for_control = audio_cmd_tx.clone();
-        let app_for_control = app_handle.clone();
         let atomics_control = atomics.clone();
         let cache_control = audio_cache.clone();
         std::thread::Builder::new()
@@ -265,7 +262,6 @@ impl AudioEngine {
                     deck_a_tx,
                     deck_b_tx,
                     event_tx,
-                    app_for_control,
                     atomics_control,
                     cache_control,
                     device_sample_rate,
@@ -381,7 +377,6 @@ fn control_thread_main(
     deck_a_tx: Sender<SampleBatch>,
     deck_b_tx: Sender<SampleBatch>,
     event_tx: Sender<EngineEvent>,
-    app_handle: tauri::AppHandle,
     atomics: Arc<SharedAtomics>,
     cache: Arc<AudioCache>,
     device_sample_rate: u32,
@@ -417,7 +412,9 @@ fn control_thread_main(
             continue;
         }
         match command {
-            Command::Play { url, meta } => {
+            Command::Play {
+                url, meta, media_request,
+            } => {
                 pending_url.clear();
                 // Keep an existing overlap audible before reusing its outgoing
                 // physical deck. A newer selection can cancel this wait.
@@ -438,7 +435,7 @@ fn control_thread_main(
                     &audio_cmd_tx,
                     deck_tx(deck, &deck_a_tx, &deck_b_tx),
                     &event_tx,
-                    &app_handle,
+                    &media_request,
                     &rt,
                     &atomics,
                     &cache,
@@ -457,7 +454,9 @@ fn control_thread_main(
                     std::thread::sleep(Duration::from_millis(5));
                 }
             }
-            Command::PreloadNext { url, meta } => {
+            Command::PreloadNext {
+                url, meta, media_request,
+            } => {
                 if preload_revision != atomics.preload_revision.load(Ordering::SeqCst) {
                     continue;
                 }
@@ -493,7 +492,7 @@ fn control_thread_main(
                     &audio_cmd_tx,
                     deck_tx(deck, &deck_a_tx, &deck_b_tx),
                     &event_tx,
-                    &app_handle,
+                    &media_request,
                     &rt,
                     &atomics,
                     &cache,
@@ -608,7 +607,7 @@ fn handle_play(
     audio_cmd_tx: &Sender<AudioCommand>,
     sample_tx: &Sender<SampleBatch>,
     _event_tx: &Sender<EngineEvent>,
-    app_handle: &tauri::AppHandle,
+    media_request: &reqwest::RequestBuilder,
     rt: &tokio::runtime::Handle,
     atomics: &Arc<SharedAtomics>,
     cache: &Arc<AudioCache>,
@@ -639,7 +638,7 @@ fn handle_play(
         url,
         meta.rating_key,
         cache,
-        app_handle,
+        media_request,
         rt,
         device_rate,
         device_channels,
@@ -766,7 +765,7 @@ fn handle_preload(
     audio_cmd_tx: &Sender<AudioCommand>,
     sample_tx: &Sender<SampleBatch>,
     _event_tx: &Sender<EngineEvent>,
-    app_handle: &tauri::AppHandle,
+    media_request: &reqwest::RequestBuilder,
     rt: &tokio::runtime::Handle,
     atomics: &Arc<SharedAtomics>,
     cache: &Arc<AudioCache>,
@@ -798,7 +797,7 @@ fn handle_preload(
         url,
         meta.rating_key,
         cache,
-        app_handle,
+        media_request,
         rt,
         device_rate,
         device_channels,
@@ -1162,7 +1161,7 @@ fn fetch_and_decode_incremental(
     url: &str,
     rating_key: i64,
     cache: &Arc<AudioCache>,
-    app_handle: &tauri::AppHandle,
+    media_request: &reqwest::RequestBuilder,
     rt: &tokio::runtime::Handle,
     device_rate: u32,
     device_channels: u16,
@@ -1188,22 +1187,13 @@ fn fetch_and_decode_incremental(
     debug!(rating_key, "cache miss — streaming from Plex");
 
     use self::deck::streaming::{SharedBuffer, StreamingReader};
-    use tauri::Manager;
-
-    let app = app_handle.clone();
-    let url_owned = url.to_string();
+    let media_request = media_request.try_clone().ok_or("Cannot clone media request")?;
     let ext = cache::extract_extension(url);
     let cache_writer = cache.begin_write(&cache_key, &ext).ok();
     let cache_for_task = cache.clone();
     let request = request.clone();
 
     let shared_buf = rt.block_on(async {
-        let client = {
-            let plex_state = app.state::<PlexState>();
-            let guard = plex_state.0.lock().await;
-            guard.as_ref().cloned()
-        };
-
         let shared = SharedBuffer::new(None).map_err(|error| format!("Cannot create audio spool: {error}"))?;
         let shared_w = shared.clone();
         let shared_return = shared.clone();
@@ -1212,8 +1202,9 @@ fn fetch_and_decode_incremental(
             let download = async {
                 let mut writer = cache_writer;
                 let result = download::download(
-                    || client.as_ref().map(|client| client.media_request(&url_owned))
-                        .unwrap_or_else(|| crate::plex::client::public_media_request(&url_owned)),
+                    // This bodyless GET always supports cloning. Retries retain
+                    // the originating credentials and TLS policy.
+                    || media_request.try_clone().expect("cloneable media GET"),
                     |length| shared_w.set_content_length(length),
                     |chunk| {
                         shared_w.push(chunk).map_err(|error| format!("Audio spool write failed: {error}"))?;
@@ -1612,6 +1603,7 @@ mod control_tests {
         let play_epoch = engine
             .send(Command::Play {
                 url: "https://example.com/audio".into(),
+                media_request: crate::plex::client::public_media_request("https://example.com/audio"),
                 meta,
             })
             .unwrap();

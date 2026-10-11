@@ -41,6 +41,8 @@ export interface ProviderCapabilities {
 
 /** Everything the audio engine needs to play or preload a track. */
 export interface TrackPlaybackInfo {
+  /** Native ownership for authenticated Plex audio; absent for public streams. */
+  plexContext?: { connectionRevision: number; cacheScope: string }
   url: string
   /** Numeric key for the audio engine's internal tracking / dedup. */
   trackKey: number
@@ -72,6 +74,8 @@ export interface LyricsSource {
 }
 
 export interface MusicProvider {
+  /** Runtime identity changes when this provider revokes or replaces its connection. */
+  readonly playbackSession?: unknown
   readonly name: string
   readonly capabilities: ProviderCapabilities
   /** Opaque account/server/library digest. Null disables persistent provider caches. */

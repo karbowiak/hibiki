@@ -79,6 +79,7 @@ export class PlexProvider implements MusicProvider {
   private _sectionUuid: string | null = null
   private _machineIdentifier = ""
 
+  get playbackSession(): unknown { return this._api }
   get sectionId(): number | null { return this._sectionId }
   get sectionUuid(): string | null { return this._sectionUuid }
   get baseUrl(): string { return this._baseUrl }
@@ -332,6 +333,7 @@ export class PlexProvider implements MusicProvider {
     if (!partKey) throw new Error("Track has no media part")
     return {
       url: await api.getStreamUrl(partKey),
+      plexContext: api.context,
       trackKey: Number(track.id),
       partId: media?.parts?.[0]?.id ?? 0,
       parentKey: plexTrack.parent_key ?? "",
@@ -348,6 +350,7 @@ export class PlexProvider implements MusicProvider {
     if (!part?.key) throw new Error("Track has no media part")
     return {
       url: await api.getAudioTranscodeUrl(part.key, bitrate, codec),
+      plexContext: api.context,
       trackKey: Number(track.id), partId: part.id ?? 0,
       parentKey: data.parent_key ?? "", startRamp: null, endRamp: null,
     }

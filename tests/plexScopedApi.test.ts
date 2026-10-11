@@ -150,12 +150,12 @@ test("direct and transcoded playback URLs use the bound native client", async ()
     mediaInfo: { metadataComplete: true },
     _providerData: rawTrack(),
   } as any
-  expect((await provider.getPlaybackInfo(track)).url).toBe(
-    "https://server.test/direct"
-  )
-  expect((await provider.getTranscodePlaybackInfo(track)).url).toBe(
-    "https://server.test/transcoded"
-  )
+  const direct = await provider.getPlaybackInfo(track)
+  expect(direct.url).toBe("https://server.test/direct")
+  expect(direct.plexContext).toEqual(context())
+  const transcoded = await provider.getTranscodePlaybackInfo(track)
+  expect(transcoded.url).toBe("https://server.test/transcoded")
+  expect(transcoded.plexContext).toEqual(context())
   expect(calls.map((call) => call.command)).toEqual([
     "get_stream_url",
     "get_audio_transcode_url",

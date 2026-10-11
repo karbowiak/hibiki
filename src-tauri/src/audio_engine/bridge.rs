@@ -25,21 +25,29 @@ pub async fn audio_play(
     start_ramp: Option<String>,
     end_ramp: Option<String>,
     album_playback: Option<bool>,
+    context: Option<crate::commands::PlexRequestContext>,
+    plex_state: State<'_, crate::commands::PlexState>,
     state: State<'_, AudioEngineState>,
 ) -> Result<u64, String> {
-    state.0.send(Command::Play {
-        url,
-        meta: TrackMeta {
-            rating_key,
-            duration_ms,
-            parent_key,
-            album_playback: album_playback.unwrap_or(false),
-            gain_db,
-            skip_crossfade: skip_crossfade.unwrap_or(false),
-            start_ramp,
-            end_ramp,
-        },
-    })
+    let source_url = url.clone();
+    plex_state
+        .dispatch_audio(context.as_ref(), &source_url, |media_request| {
+            state.0.send(Command::Play {
+                url,
+                media_request,
+                meta: TrackMeta {
+                    rating_key,
+                    duration_ms,
+                    parent_key,
+                    album_playback: album_playback.unwrap_or(false),
+                    gain_db,
+                    skip_crossfade: skip_crossfade.unwrap_or(false),
+                    start_ramp,
+                    end_ramp,
+                },
+            })
+        })
+        .await
 }
 
 #[tauri::command]
@@ -53,23 +61,29 @@ pub async fn audio_preload_next(
     start_ramp: Option<String>,
     end_ramp: Option<String>,
     album_playback: Option<bool>,
+    context: Option<crate::commands::PlexRequestContext>,
+    plex_state: State<'_, crate::commands::PlexState>,
     state: State<'_, AudioEngineState>,
 ) -> Result<(), String> {
-    state
-        .0
-        .send(Command::PreloadNext {
-            url,
-            meta: TrackMeta {
-                rating_key,
-                duration_ms,
-                parent_key,
-                album_playback: album_playback.unwrap_or(false),
-                gain_db,
-                skip_crossfade: skip_crossfade.unwrap_or(false),
-                start_ramp,
-                end_ramp,
-            },
+    let source_url = url.clone();
+    plex_state
+        .dispatch_audio(context.as_ref(), &source_url, |media_request| {
+            state.0.send(Command::PreloadNext {
+                url,
+                media_request,
+                meta: TrackMeta {
+                    rating_key,
+                    duration_ms,
+                    parent_key,
+                    album_playback: album_playback.unwrap_or(false),
+                    gain_db,
+                    skip_crossfade: skip_crossfade.unwrap_or(false),
+                    start_ramp,
+                    end_ramp,
+                },
+            })
         })
+        .await
         .map(|_| ())
 }
 

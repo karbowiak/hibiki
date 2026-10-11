@@ -16,9 +16,17 @@ pub struct ControlCommand {
 /// Commands from Tauri bridge → control task.
 pub enum Command {
     // -- Playback --
-    Play { url: String, meta: TrackMeta },
+    Play {
+        url: String,
+        meta: TrackMeta,
+        media_request: reqwest::RequestBuilder,
+    },
     ClearPreload,
-    PreloadNext { url: String, meta: TrackMeta },
+    PreloadNext {
+        url: String,
+        meta: TrackMeta,
+        media_request: reqwest::RequestBuilder,
+    },
     Pause,
     Resume,
     Stop,

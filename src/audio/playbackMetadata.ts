@@ -4,6 +4,7 @@ import { selectReplayGain } from "./playbackContext"
 import { evictMap } from "../stores/cacheUtils"
 
 interface Session {
+  identity: unknown
   scope: string | null | undefined
   full: Map<string, MusicTrack>
   fullRequests: Map<string, Promise<MusicTrack>>
@@ -29,8 +30,9 @@ export class PlaybackMetadata {
   private sessions = new WeakMap<MusicProvider, Session>()
   private session(provider: MusicProvider) {
     let session = this.sessions.get(provider)
-    if (!session || session.scope !== provider.cacheScope) {
+    if (!session || session.scope !== provider.cacheScope || session.identity !== provider.playbackSession) {
       session = {
+        identity: provider.playbackSession,
         scope: provider.cacheScope,
         full: new Map(),
         fullRequests: new Map(),

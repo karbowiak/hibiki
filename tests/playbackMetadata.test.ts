@@ -130,3 +130,24 @@ test("different media variants of one track do not reuse a previously resolved U
   expect((await cache.playbackInfo(p, track("1", -3, -5, 20))).url).toBe("https://a.test/20")
   expect(p.getPlaybackInfo).toHaveBeenCalledTimes(2)
 })
+
+test("reconnecting the same provider and scope cannot reuse old native audio ownership", async () => {
+  const cache = new PlaybackMetadata()
+  let revision = 1
+  const p = provider("a", {
+    playbackSession: {},
+    getPlaybackInfo: mock(async () => ({
+      ...info("https://a.test/track"),
+      plexContext: { connectionRevision: revision, cacheScope: "a" },
+    })),
+  })
+  expect(
+    (await cache.playbackInfo(p, track("1"))).plexContext?.connectionRevision
+  ).toBe(1)
+  revision = 2
+  ;(p as any).playbackSession = {}
+  expect(
+    (await cache.playbackInfo(p, track("1"))).plexContext?.connectionRevision
+  ).toBe(2)
+  expect(p.getPlaybackInfo).toHaveBeenCalledTimes(2)
+})

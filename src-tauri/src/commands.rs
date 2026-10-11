@@ -36,9 +36,16 @@ impl PlexState {
         PlexState(Mutex::new(None), AtomicU64::new(0))
     }
 
-    async fn reset(&self, clear_config: Option<&std::path::Path>) -> Result<u64, String> {
+    async fn reset_with_audio_revocation(
+        &self,
+        clear_config: Option<&std::path::Path>,
+        revoke_audio: impl FnOnce(),
+    ) -> Result<u64, String> {
         let mut client = self.0.lock().await;
         let revision = self.1.fetch_add(1, Ordering::SeqCst) + 1;
+        // Audio ingress uses this same lock. Every accepted old play precedes
+        // this stop; no retired request can enqueue after it.
+        revoke_audio();
         *client = None;
         if let Some(directory) = clear_config {
             crate::plex::update_settings(directory, |settings| {
@@ -57,17 +64,23 @@ impl PlexState {
     }
 
     #[cfg(test)]
+    async fn reset(&self, clear_config: Option<&std::path::Path>) -> Result<u64, String> {
+        self.reset_with_audio_revocation(clear_config, || {}).await
+    }
+
+    #[cfg(test)]
     async fn begin_connection(&self) -> u64 {
         self.reset(None).await.unwrap()
     }
 
-    async fn persist(
+    async fn persist_with_audio_revocation(
         &self,
         revision: u64,
         directory: &std::path::Path,
         urls: Vec<String>,
         section_id: Option<i64>,
         section_uuid: Option<String>,
+        revoke_audio: impl FnOnce(),
     ) -> Result<(), String> {
         let mut guard = self.0.lock().await;
         if !self.is_current(revision) {
@@ -86,8 +99,52 @@ impl PlexState {
             Ok(())
         })
         .map_err(|error| format!("{error:#}"))?;
+        if client.library_scope != scope {
+            revoke_audio();
+        }
         client.library_scope = scope;
         Ok(())
+    }
+
+    #[cfg(test)]
+    async fn persist(
+        &self,
+        revision: u64,
+        directory: &std::path::Path,
+        urls: Vec<String>,
+        section_id: Option<i64>,
+        section_uuid: Option<String>,
+    ) -> Result<(), String> {
+        self.persist_with_audio_revocation(
+            revision,
+            directory,
+            urls,
+            section_id,
+            section_uuid,
+            || {},
+        )
+        .await
+    }
+
+    /// Validate and enqueue under connection ownership, capturing an immutable
+    /// HTTP client/header snapshot before asynchronous audio work starts.
+    pub(crate) async fn dispatch_audio(
+        &self,
+        context: Option<&PlexRequestContext>,
+        url: &str,
+        send: impl FnOnce(reqwest::RequestBuilder) -> Result<u64, String>,
+    ) -> Result<u64, String> {
+        if let Some(context) = context {
+            let guard = self.0.lock().await;
+            let client = self.checked_client(context, &guard)?;
+            if !client.is_plex_url(url) {
+                return Err("Audio URL does not belong to this Plex server".into());
+            }
+            send(client.media_request(url))
+        } else {
+            // Public episodes never inherit a same-host Plex token/TLS exception.
+            send(crate::plex::client::public_media_request(url))
+        }
     }
 
     fn is_current(&self, revision: u64) -> bool {
@@ -157,7 +214,11 @@ pub async fn disconnect_plex(
         .app_config_dir()
         .map_err(|error| format!("{error:#}"))?;
     state
-        .reset(clear_saved.then_some(directory.as_path()))
+        .reset_with_audio_revocation(clear_saved.then_some(directory.as_path()), || {
+            if let Some(audio) = app.try_state::<crate::audio_engine::bridge::AudioEngineState>() {
+                let _ = audio.0.send(crate::audio_engine::command::Command::Stop);
+            }
+        })
         .await
 }
 
@@ -1139,12 +1200,19 @@ pub async fn save_settings(
         .app_config_dir()
         .map_err(|e| format!("{:#}", e))?;
     state
-        .persist(
+        .persist_with_audio_revocation(
             connection_revision,
             &config_dir,
             all_urls,
             section_id,
             section_uuid,
+            || {
+                if let Some(audio) =
+                    app.try_state::<crate::audio_engine::bridge::AudioEngineState>()
+                {
+                    let _ = audio.0.send(crate::audio_engine::command::Command::Stop);
+                }
+            },
         )
         .await
 }
@@ -2355,6 +2423,202 @@ mod connection_tests {
         client.machine_identifier = "test-server".into();
         client.library_scope = client.cache_scope_for_library(library, None);
         client
+    }
+
+    #[tokio::test]
+    async fn queued_audio_keeps_its_account_snapshot_after_same_origin_reconnection() {
+        let state = PlexState::new();
+        let revision = state.begin_connection().await;
+        let old = scoped_client("https://server.test", "dummy-old", 1);
+        let context = PlexRequestContext {
+            connection_revision: revision,
+            cache_scope: old.library_scope.clone(),
+        };
+        state.publish(revision, old).await.unwrap();
+        let mut queued = None;
+        state
+            .dispatch_audio(
+                Some(&context),
+                "https://server.test/file?X-Plex-Token=dummy-url",
+                |request| {
+                    queued = Some(request);
+                    Ok(1)
+                },
+            )
+            .await
+            .unwrap();
+        let next = state.begin_connection().await;
+        state
+            .publish(next, scoped_client("https://server.test", "dummy-new", 1))
+            .await
+            .unwrap();
+        let original = queued.unwrap();
+        for _ in 0..2 {
+            let retry = original.try_clone().unwrap().build().unwrap();
+            assert_eq!(retry.headers()["X-Plex-Token"], "dummy-old");
+            assert!(!retry
+                .url()
+                .query_pairs()
+                .any(|(key, _)| key.eq_ignore_ascii_case("X-Plex-Token")));
+        }
+        assert!(state
+            .dispatch_audio(Some(&context), "https://server.test/file", |_| panic!(
+                "Retired audio must not enqueue"
+            ))
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn authenticated_audio_rejects_wrong_library_and_origin_before_enqueue() {
+        let state = PlexState::new();
+        let revision = state.begin_connection().await;
+        let client = scoped_client("https://server.test", "dummy-token", 1);
+        let mut context = PlexRequestContext {
+            connection_revision: revision,
+            cache_scope: client.library_scope.clone(),
+        };
+        state.publish(revision, client).await.unwrap();
+        for url in [
+            "https://external.test/file",
+            "http://server.test/file",
+            "https://server.test:444/file",
+            "https://user:pass@server.test/file",
+        ] {
+            assert_eq!(
+                state
+                    .dispatch_audio(Some(&context), url, |_| panic!(
+                        "Wrong-origin audio must not enqueue"
+                    ))
+                    .await
+                    .unwrap_err(),
+                "Audio URL does not belong to this Plex server"
+            );
+        }
+        context.cache_scope = "wrong-library".into();
+        assert_eq!(
+            state
+                .dispatch_audio(Some(&context), "https://server.test/file", |_| panic!(
+                    "Wrong-library audio must not enqueue"
+                ))
+                .await
+                .unwrap_err(),
+            "Plex music library was superseded"
+        );
+    }
+
+    #[tokio::test]
+    async fn public_audio_on_the_plex_host_never_inherits_its_private_credentials() {
+        let state = PlexState::new();
+        let revision = state.begin_connection().await;
+        state
+            .publish(
+                revision,
+                scoped_client("https://server.test", "dummy-private", 1),
+            )
+            .await
+            .unwrap();
+        state
+            .dispatch_audio(
+                None,
+                "https://server.test/podcast?X-Plex-Token=dummy-url",
+                |request| {
+                    let request = request.build().unwrap();
+                    assert!(!request.headers().contains_key("X-Plex-Token"));
+                    assert!(!request
+                        .url()
+                        .query_pairs()
+                        .any(|(key, _)| key.eq_ignore_ascii_case("X-Plex-Token")));
+                    Ok(1)
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn native_revocation_waits_for_accepted_audio_and_prevents_late_enqueue() {
+        use std::future::Future;
+        let state = std::sync::Arc::new(PlexState::new());
+        let revision = state.begin_connection().await;
+        let client = scoped_client("https://server.test", "dummy-token", 1);
+        let context = PlexRequestContext {
+            connection_revision: revision,
+            cache_scope: client.library_scope.clone(),
+        };
+        state.publish(revision, client).await.unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let order = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (entered, ready) = tokio::sync::oneshot::channel();
+        let queued = {
+            let state = state.clone();
+            let barrier = barrier.clone();
+            let order = order.clone();
+            let context = context.clone();
+            tokio::spawn(async move {
+                state
+                    .dispatch_audio(Some(&context), "https://server.test/file", |_| {
+                        entered.send(()).unwrap();
+                        barrier.wait();
+                        order.lock().unwrap().push("play");
+                        Ok(1)
+                    })
+                    .await
+                    .unwrap()
+            })
+        };
+        ready.await.unwrap();
+        let revocation = state.reset_with_audio_revocation(None, || order.lock().unwrap().push("stop"));
+        tokio::pin!(revocation);
+        let pending = std::future::poll_fn(|cx| {
+            std::task::Poll::Ready(revocation.as_mut().poll(cx).is_pending())
+        })
+        .await;
+        assert!(pending, "Native stop must wait for accepted audio ingress");
+        barrier.wait();
+        queued.await.unwrap();
+        revocation.await.unwrap();
+        assert_eq!(*order.lock().unwrap(), vec!["play", "stop"]);
+        assert!(state
+            .dispatch_audio(Some(&context), "https://server.test/file", |_| panic!(
+                "Late audio must not enqueue after stop"
+            ))
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn library_changes_revoke_audio_once_and_reject_the_previous_source_context() {
+        let state = PlexState::new();
+        let directory = tempfile::tempdir().unwrap();
+        let revision = state.begin_connection().await;
+        let client = scoped_client("https://server.test", "dummy-token", 1);
+        let context = PlexRequestContext {
+            connection_revision: revision,
+            cache_scope: client.library_scope.clone(),
+        };
+        state.publish(revision, client).await.unwrap();
+        let stops = std::sync::atomic::AtomicU64::new(0);
+        state
+            .persist_with_audio_revocation(revision, directory.path(), vec![], Some(1), None, || {
+                stops.fetch_add(1, Ordering::SeqCst);
+            })
+            .await
+            .unwrap();
+        assert_eq!(stops.load(Ordering::SeqCst), 0);
+        state
+            .persist_with_audio_revocation(revision, directory.path(), vec![], Some(2), None, || {
+                stops.fetch_add(1, Ordering::SeqCst);
+            })
+            .await
+            .unwrap();
+        assert_eq!(stops.load(Ordering::SeqCst), 1);
+        assert!(state
+            .dispatch_audio(Some(&context), "https://server.test/file", |_| panic!(
+                "Previous library must not enqueue"
+            ))
+            .await
+            .is_err());
     }
 
     #[tokio::test]

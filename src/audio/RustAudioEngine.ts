@@ -8,6 +8,7 @@
  * Module-level singleton: `import { engine } from "../audio/RustAudioEngine"`
  */
 
+import type { TrackPlaybackInfo } from "../providers/types"
 import type { TransitionInfo } from "./transitionInfo"
 import type { TrackStarted, TrackEnded } from "./playbackJournal"
 import { PlaybackEventGate } from "./playbackEventGate"
@@ -142,6 +143,7 @@ export class RustAudioEngine {
     startRamp?: string | null,
     endRamp?: string | null,
     albumPlayback = false,
+    context?: TrackPlaybackInfo["plexContext"],
   ): Promise<void> {
     const ticket = this.eventGate.begin()
     const requestId = await this.ipc.invoke<number>("audio_play", {
@@ -154,6 +156,7 @@ export class RustAudioEngine {
       startRamp: startRamp ?? null,
       endRamp: endRamp ?? null,
       albumPlayback,
+      context: context ? { connectionRevision: context.connectionRevision, cacheScope: context.cacheScope } : null,
     })
     this.eventGate.confirm(ticket, requestId)
   }
@@ -168,6 +171,7 @@ export class RustAudioEngine {
     startRamp?: string | null,
     endRamp?: string | null,
     albumPlayback = false,
+    context?: TrackPlaybackInfo["plexContext"],
   ): Promise<void> {
     await this.ipc.invoke("audio_preload_next", {
       url,
@@ -179,6 +183,7 @@ export class RustAudioEngine {
       startRamp: startRamp ?? null,
       endRamp: endRamp ?? null,
       albumPlayback,
+      context: context ? { connectionRevision: context.connectionRevision, cacheScope: context.cacheScope } : null,
     })
   }
 

@@ -498,7 +498,7 @@ async function sendToAudioEngine(track: MusicTrack, generation: number): Promise
       _ratingKeyToTrackId.set(info.trackKey, track.id)
       await engine.play(info.url, info.trackKey, track.duration, info.parentKey, gainDb,
         undefined, track.startRamp ?? info.startRamp, track.endRamp ?? info.endRamp,
-        isAlbumPlayback(track, usePlayerStore.getState().albumPlaybackId))
+        isAlbumPlayback(track, usePlayerStore.getState().albumPlaybackId), info.plexContext)
     },
   )
 }
@@ -564,7 +564,7 @@ async function preloadNextTrack(queue: MusicTrack[], queueIndex: number, repeat:
         _ratingKeyToTrackId.set(info.trackKey, nextTrack.id)
         await engine.preloadNext(info.url, info.trackKey, nextTrack.duration, info.parentKey,
           gainDb, undefined, nextTrack.startRamp ?? info.startRamp, nextTrack.endRamp ?? info.endRamp,
-          isAlbumPlayback(nextTrack, usePlayerStore.getState().albumPlaybackId))
+          isAlbumPlayback(nextTrack, usePlayerStore.getState().albumPlaybackId), info.plexContext)
       },
     )
   } catch {
@@ -1459,7 +1459,7 @@ export const usePlayerStore = create<PlayerState>()(
               if (generation !== _playGeneration || getProvider() !== providerAtError) return
               _ratingKeyToTrackId.set(info.trackKey, currentTrack.id)
               _pendingSelectedTrackId = currentTrack.id
-              await engine.play(info.url, info.trackKey, currentTrack.duration, info.parentKey, null, true)
+              await engine.play(info.url, info.trackKey, currentTrack.duration, info.parentKey, null, true, null, null, false, info.plexContext)
               if (generation !== _playGeneration) return
               if (positionMs > 0) engine.seekTo(positionMs)
               if (!_playbackDesired) engine.pause()
