@@ -85,6 +85,7 @@ pub enum AudioCommand {
     LoadDeck {
         deck: DeckId,
         meta: TrackMeta,
+        ramps: TrackRamps,
         sample_rate: u32,
         channels: u16,
         norm_gain: f32,
@@ -129,10 +130,6 @@ pub enum AudioCommand {
 
     // -- Crossfade settings (for scheduler) --
     UpdateCrossfadeSettings(CrossfadeSettings),
-    CacheRamps {
-        rating_key: i64,
-        ramps: TrackRamps,
-    },
 
     // -- Visualizer --
     SetVisualizerEnabled(bool),

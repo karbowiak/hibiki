@@ -4,6 +4,7 @@
 //! and one pending (preloaded with next track). Transitions swap roles.
 
 use super::super::output::playback_envelope::PlaybackEnvelope;
+use super::super::crossfade::types::TrackRamps;
 use super::super::types::{DeckId, TrackMeta};
 
 /// Active crossfade curve state — the mixer steps through this per-frame.
@@ -71,6 +72,8 @@ pub struct DeckState {
     pub position: usize,
     /// Track metadata (None if deck is empty).
     pub meta: Option<TrackMeta>,
+    /// Parsed ramps belonging to this exact accepted source/load.
+    pub ramps: TrackRamps,
     /// Sample rate of the decoded audio.
     pub sample_rate: u32,
     /// Number of channels in the decoded audio.
@@ -110,6 +113,7 @@ impl DeckState {
             samples: Vec::new(),
             position: 0,
             meta: None,
+            ramps: TrackRamps::default(),
             sample_rate: 44100,
             channels: 2,
             loaded: false,
@@ -161,6 +165,7 @@ impl DeckState {
         self.position = 0;
         self.sample_offset = 0;
         self.meta = None;
+        self.ramps = TrackRamps::default();
         self.loaded = false;
         self.has_started_playing = false;
         self.fade_gain = 1.0;

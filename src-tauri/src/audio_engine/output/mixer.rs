@@ -147,6 +147,7 @@ mod tests {
             samples,
             position: 0,
             meta: None,
+            ramps: Default::default(),
             sample_rate: 44100,
             channels,
             loaded: true,

@@ -31,7 +31,7 @@ pub struct RampPoint {
 }
 
 /// Parsed start and end ramps for a track.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TrackRamps {
     pub start_ramp: Vec<RampPoint>,
     pub end_ramp: Vec<RampPoint>,

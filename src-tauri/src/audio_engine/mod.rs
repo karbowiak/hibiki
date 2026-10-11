@@ -659,9 +659,6 @@ fn handle_play(
     }
     debug!(rating_key = meta.rating_key, ?deck, "play command");
 
-    // Cache ramps
-    cache_ramps(meta, audio_cmd_tx);
-
     // The callback owns playback state, including pause during loading.
 
     let norm_enabled = true; // Callback applies the current normalization preference.
@@ -725,6 +722,7 @@ fn handle_play(
             let _ = audio_cmd_tx.send(AudioCommand::LoadDeck {
                 deck,
                 meta: resolved_meta,
+                ramps: track_ramps(meta),
                 sample_rate: result.sample_rate,
                 channels: result.channels,
                 norm_gain,
@@ -825,7 +823,6 @@ fn handle_preload(
         request_id: request.epoch,
         deck,
     });
-    cache_ramps(meta, audio_cmd_tx);
 
     let norm_enabled = true;
 
@@ -884,6 +881,7 @@ fn handle_preload(
             let _ = audio_cmd_tx.send(AudioCommand::LoadDeck {
                 deck,
                 meta: resolved_meta,
+                ramps: track_ramps(meta),
                 sample_rate: result.sample_rate,
                 channels: result.channels,
                 norm_gain,
@@ -1362,15 +1360,11 @@ fn decode_initial_batch(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn cache_ramps(meta: &TrackMeta, audio_cmd_tx: &Sender<AudioCommand>) {
-    if meta.start_ramp.is_some() || meta.end_ramp.is_some() {
-        let _ = audio_cmd_tx.send(AudioCommand::CacheRamps {
-            rating_key: meta.rating_key,
-            ramps: TrackRamps {
-                start_ramp: parse_ramp(meta.start_ramp.as_deref()),
-                end_ramp: parse_ramp(meta.end_ramp.as_deref()),
-            },
-        });
+/// Parse on the control thread; accepted metadata and ramps install together.
+fn track_ramps(meta: &TrackMeta) -> TrackRamps {
+    TrackRamps {
+        start_ramp: parse_ramp(meta.start_ramp.as_deref()),
+        end_ramp: parse_ramp(meta.end_ramp.as_deref()),
     }
 }
 
@@ -1450,6 +1444,7 @@ mod control_tests {
             .audio_cmd_tx
             .send(AudioCommand::LoadDeck {
                 deck: DeckId::B,
+                ramps: track_ramps(&meta),
                 meta,
                 sample_rate: 44100,
                 channels: 2,

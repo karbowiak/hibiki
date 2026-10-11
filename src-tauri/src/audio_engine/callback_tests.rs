@@ -1,4 +1,4 @@
-use super::super::crossfade::types::RampPoint;
+use super::super::crossfade::types::{RampPoint, TrackRamps};
 use super::super::output::playback_envelope::FADE_MS;
 use super::super::types::TrackMeta;
 use super::*;
@@ -611,20 +611,14 @@ fn reports_the_native_short_mixramp_plan_with_a_zero_second_intro_crossing() {
     let (mut cb, events) = callback();
     cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
     cb.handle_load_deck(DeckId::B, meta(2), 48000, 2, 1.0, 0);
-    cb.ramp_cache.insert(
-        1,
-        TrackRamps {
-            start_ramp: vec![],
-            end_ramp: super::super::crossfade::types::parse_ramp(Some("-16 0.12;-3 4")),
-        },
-    );
-    cb.ramp_cache.insert(
-        2,
-        TrackRamps {
-            start_ramp: super::super::crossfade::types::parse_ramp(Some("-16 0;-3 1")),
-            end_ramp: vec![],
-        },
-    );
+    cb.deck_mgr.deck_mut(DeckId::A).ramps = TrackRamps {
+        start_ramp: vec![],
+        end_ramp: super::super::crossfade::types::parse_ramp(Some("-16 0.12;-3 4")),
+    };
+    cb.deck_mgr.deck_mut(DeckId::B).ramps = TrackRamps {
+        start_ramp: super::super::crossfade::types::parse_ramp(Some("-16 0;-3 1")),
+        end_ramp: vec![],
+    };
     cb.compute_and_set_schedule();
     let event = events.try_recv().unwrap();
     match &event {
@@ -710,13 +704,10 @@ fn same_album_tracks_in_a_mix_use_mixramp_unless_both_decks_have_explicit_album_
         let mut metadata = meta(key);
         metadata.parent_key = "album".into();
         cb.handle_load_deck(deck_id, metadata, 48000, 2, 1.0, 0);
-        cb.ramp_cache.insert(
-            key,
-            TrackRamps {
-                start_ramp: super::super::crossfade::types::parse_ramp(Some("-17 0;-3 1")),
-                end_ramp: super::super::crossfade::types::parse_ramp(Some("-17 1;-3 2")),
-            },
-        );
+        cb.deck_mgr.deck_mut(deck_id).ramps = TrackRamps {
+            start_ramp: super::super::crossfade::types::parse_ramp(Some("-17 0;-3 1")),
+            end_ramp: super::super::crossfade::types::parse_ramp(Some("-17 1;-3 2")),
+        };
     }
     for (out_intent, in_intent, expected_mode) in [
         (false, false, "mixRamp"),
@@ -793,20 +784,14 @@ fn a_mixramp_boundary_inside_the_output_buffer_aligns_the_first_incoming_sample(
         deck.fully_decoded = true;
         deck.has_started_playing = deck_id == DeckId::A;
     }
-    cb.ramp_cache.insert(
-        1,
-        TrackRamps {
-            start_ramp: vec![],
-            end_ramp: super::super::crossfade::types::parse_ramp(Some("-16 0.12;-3 4")),
-        },
-    );
-    cb.ramp_cache.insert(
-        2,
-        TrackRamps {
-            start_ramp: super::super::crossfade::types::parse_ramp(Some("-16 0;-3 1")),
-            end_ramp: vec![],
-        },
-    );
+    cb.deck_mgr.deck_mut(DeckId::A).ramps = TrackRamps {
+        start_ramp: vec![],
+        end_ramp: super::super::crossfade::types::parse_ramp(Some("-16 0.12;-3 4")),
+    };
+    cb.deck_mgr.deck_mut(DeckId::B).ramps = TrackRamps {
+        start_ramp: super::super::crossfade::types::parse_ramp(Some("-16 0;-3 1")),
+        end_ramp: vec![],
+    };
     cb.deck_mgr.active_deck_mut().position = 9875 * 2;
     cb.set_state(EngineState::Playing);
     cb.compute_and_set_schedule();
@@ -884,6 +869,7 @@ fn load(deck: DeckId, key: i64, epoch: u64, load_id: u64, generation: u64) -> Au
     AudioCommand::LoadDeck {
         deck,
         meta: meta(key),
+        ramps: TrackRamps::default(),
         sample_rate: 48000,
         channels: 2,
         norm_gain: 1.0,
@@ -896,6 +882,103 @@ fn load(deck: DeckId, key: i64, epoch: u64, load_id: u64, generation: u64) -> Au
         fully_decoded: true,
         seek_tx: None,
     }
+}
+
+fn deliver_ramp_load(
+    cb: &mut AudioCallbackState,
+    deck: DeckId,
+    metadata: TrackMeta,
+    epoch: u64,
+    load_id: u64,
+) {
+    let mut command = load(deck, metadata.rating_key, epoch, load_id, 1);
+    if let AudioCommand::LoadDeck { meta, ramps, .. } = &mut command {
+        *ramps = super::super::track_ramps(&metadata);
+        *meta = metadata;
+    }
+    cb.handle_command(command);
+}
+
+fn playing_ramp_source() -> AudioCallbackState {
+    let (mut cb, _) = callback();
+    cb.atomics.request_epoch.store(2, Ordering::SeqCst);
+    cb.atomics.deck_b_load_id.store(1, Ordering::SeqCst);
+    cb.handle_command(AudioCommand::BeginPlay { request_id: 2 });
+    let mut metadata = meta(42);
+    metadata.start_ramp = Some("-17 0.1;-3 1".into());
+    metadata.end_ramp = Some("-17 0.8;-3 2".into());
+    deliver_ramp_load(&mut cb, DeckId::B, metadata, 2, 1);
+    cb.handle_command(AudioCommand::TransitionToActive {
+        user_skip: true,
+        request_id: 2,
+    });
+    cb
+}
+
+#[test]
+fn loaded_ramps_keep_two_media_variants_with_the_same_track_id_separate() {
+    let mut cb = playing_ramp_source();
+    cb.atomics.deck_a_load_id.store(1, Ordering::SeqCst);
+    let mut incoming = meta(42);
+    incoming.start_ramp = Some("-17 0.4;-3 1".into());
+    incoming.end_ramp = Some("-17 4;-3 8".into());
+    deliver_ramp_load(&mut cb, DeckId::A, incoming, 2, 1);
+    let params = cb.build_crossfade_params();
+    assert_eq!(
+        params.out_end_ramp,
+        Some(super::super::crossfade::types::parse_ramp(Some(
+            "-17 0.8;-3 2"
+        )))
+    );
+    assert_eq!(
+        params.in_start_ramp,
+        Some(super::super::crossfade::types::parse_ramp(Some(
+            "-17 0.4;-3 1"
+        )))
+    );
+}
+
+#[test]
+fn loaded_ramps_are_cleared_when_a_reused_deck_receives_missing_metadata() {
+    let mut cb = playing_ramp_source();
+    cb.atomics.deck_a_load_id.store(1, Ordering::SeqCst);
+    let mut incoming = meta(42);
+    incoming.start_ramp = Some("-17 0.4;-3 1".into());
+    deliver_ramp_load(&mut cb, DeckId::A, incoming, 2, 1);
+    cb.atomics.deck_a_load_id.store(2, Ordering::SeqCst);
+    deliver_ramp_load(&mut cb, DeckId::A, meta(42), 2, 2);
+    let params = cb.build_crossfade_params();
+    assert!(params.in_start_ramp.is_none());
+    assert_eq!(
+        params.out_end_ramp,
+        Some(super::super::crossfade::types::parse_ramp(Some(
+            "-17 0.8;-3 2"
+        )))
+    );
+    let plan = compute_transition(&params).unwrap();
+    assert_eq!(
+        plan.fallback_reason,
+        Some(super::super::crossfade::types::TransitionReason::MissingRamps)
+    );
+}
+
+#[test]
+fn loaded_ramps_from_a_retired_load_cannot_change_the_audible_sources_plan() {
+    let mut cb = playing_ramp_source();
+    cb.atomics.deck_a_load_id.store(2, Ordering::SeqCst);
+    let mut retired = meta(42);
+    retired.start_ramp = Some("-17 7;-3 8".into());
+    retired.end_ramp = Some("-17 9;-3 10".into());
+    deliver_ramp_load(&mut cb, DeckId::A, retired, 1, 1);
+    assert!(!cb.deck_mgr.pending_deck().loaded);
+    let params = cb.build_crossfade_params();
+    assert_eq!(
+        params.out_end_ramp,
+        Some(super::super::crossfade::types::parse_ramp(Some(
+            "-17 0.8;-3 2"
+        )))
+    );
+    assert!(params.in_start_ramp.is_none());
 }
 
 #[test]
@@ -1235,13 +1318,10 @@ fn mixramp_keeps_both_decks_for_the_entire_overlap() {
                 time_sec: 2.0,
             },
         ];
-        cb.ramp_cache.insert(
-            key,
-            TrackRamps {
-                start_ramp: ramp.clone(),
-                end_ramp: ramp,
-            },
-        );
+        cb.deck_mgr.deck_mut(deck_id).ramps = TrackRamps {
+            start_ramp: ramp.clone(),
+            end_ramp: ramp,
+        };
     }
     cb.deck_mgr.active_deck_mut().has_started_playing = true;
     cb.set_state(EngineState::Playing);

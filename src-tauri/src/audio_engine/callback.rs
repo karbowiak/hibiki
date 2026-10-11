@@ -6,7 +6,6 @@
 //! - Position/state written to atomics
 //! - Events and visualizer data sent via `crossbeam_channel::Sender`
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 
@@ -15,7 +14,7 @@ use tracing::debug;
 
 use super::command::{AudioCommand, PlaybackControl, SampleBatch};
 use super::crossfade::scheduler::{Scheduler, SchedulerAction, SchedulerMode};
-use super::crossfade::types::{CrossfadeParams, CrossfadeSettings, TrackRamps, TransitionPlan};
+use super::crossfade::types::{CrossfadeParams, CrossfadeSettings, TransitionPlan};
 use super::crossfade::{compute_skip_duck, compute_transition};
 use super::deck::manager::{DeckManager, DeckState, FadeCurve};
 use super::dsp::DspChain;
@@ -125,7 +124,6 @@ pub struct AudioCallbackState {
     pub dsp_chain: DspChain,
     pub scheduler: Scheduler,
     pub crossfade_settings: CrossfadeSettings,
-    pub ramp_cache: HashMap<i64, TrackRamps>,
     pub is_crossfading: bool,
     /// Rating key of the track being faded OUT during crossfade.
     /// Used by check_crossfade_complete to avoid resetting a newly preloaded deck.
@@ -182,7 +180,6 @@ impl AudioCallbackState {
             dsp_chain: DspChain::new(44100),
             scheduler: Scheduler::new(),
             crossfade_settings: CrossfadeSettings::default(),
-            ramp_cache: HashMap::new(),
             is_crossfading: false,
             crossfade_out_rk: 0,
             crossfade_out_reason: TrackEndReason::Natural,
@@ -547,6 +544,7 @@ impl AudioCallbackState {
             AudioCommand::LoadDeck {
                 deck,
                 meta,
+                ramps,
                 sample_rate,
                 channels,
                 norm_gain,
@@ -582,6 +580,7 @@ impl AudioCallbackState {
                     expected_samples,
                 );
                 let d = self.deck_mgr.deck_mut(deck);
+                d.ramps = ramps;
                 d.generation = generation;
                 d.samples = initial_samples;
                 d.fully_decoded = fully_decoded;
@@ -848,15 +847,6 @@ impl AudioCallbackState {
                 self.crossfade_settings = settings;
                 // Recompute schedule if both decks loaded
                 self.compute_and_set_schedule();
-            }
-            AudioCommand::CacheRamps { rating_key, ramps } => {
-                self.ramp_cache.insert(rating_key, ramps);
-                // Keep cache bounded
-                if self.ramp_cache.len() > 100 {
-                    if let Some(&key) = self.ramp_cache.keys().next() {
-                        self.ramp_cache.remove(&key);
-                    }
-                }
             }
             AudioCommand::SetVisualizerEnabled(enabled) => {
                 self.vis_enabled = enabled;
@@ -1370,8 +1360,6 @@ impl AudioCallbackState {
     fn build_crossfade_params(&self) -> CrossfadeParams {
         let active = self.deck_mgr.active_deck();
         let pending = self.deck_mgr.pending_deck();
-        let out_ramps = self.ramp_cache.get(&active.rating_key());
-        let in_ramps = self.ramp_cache.get(&pending.rating_key());
 
         CrossfadeParams {
             out_duration_sec: active.duration_secs(),
@@ -1389,8 +1377,9 @@ impl AudioCallbackState {
             out_parent_key: active.parent_key().to_string(),
             in_parent_key: pending.parent_key().to_string(),
             album_playback: self.is_album_playback(),
-            out_end_ramp: out_ramps.map(|r| r.end_ramp.clone()),
-            in_start_ramp: in_ramps.map(|r| r.start_ramp.clone()),
+            out_end_ramp: (!active.ramps.end_ramp.is_empty()).then(|| active.ramps.end_ramp.clone()),
+            in_start_ramp: (!pending.ramps.start_ramp.is_empty())
+                .then(|| pending.ramps.start_ramp.clone()),
             crossfade_window_ms: self.crossfade_settings.crossfade_window_ms,
             smart_crossfade_max_ms: self.crossfade_settings.smart_crossfade_max_ms,
             mixramp_db: self.crossfade_settings.mixramp_db,
