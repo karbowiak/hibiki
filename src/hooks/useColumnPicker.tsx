@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, useSyncExternalStore } from "react"
+
+import { createScalarPreference, type ScalarPreference } from "../stores/scalarPreference"
 
 export type ColId = "artist" | "album" | "year" | "plays" | "popularity" | "label" | "bitrate" | "format" | "added_at" | "rating" | "rated_at"
 
@@ -16,27 +18,29 @@ export const ALL_COLUMNS: { id: ColId; label: string; defaultOn: boolean }[] = [
   { id: "rated_at",   label: "Date Rated",          defaultOn: false },
 ]
 
+const columnPreferences = new Map<string, ScalarPreference<ColId[]>>()
+
 export function usePlaylistColumns(storageKey: string, defaultCols?: ColId[]) {
-  const [visible, setVisible] = useState<Set<ColId>>(() => {
-    try {
-      const saved = localStorage.getItem(storageKey)
-      if (saved) return new Set(JSON.parse(saved) as ColId[])
-    } catch {}
-    if (defaultCols) return new Set(defaultCols)
-    return new Set(ALL_COLUMNS.filter(c => c.defaultOn).map(c => c.id))
-  })
-
-  function toggle(id: ColId) {
-    setVisible(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      localStorage.setItem(storageKey, JSON.stringify([...next]))
-      return next
-    })
+  let preference = columnPreferences.get(storageKey)
+  if (!preference) {
+    const defaults = defaultCols ?? ALL_COLUMNS.filter(c => c.defaultOn).map(c => c.id)
+    preference = createScalarPreference(storageKey, defaults, raw => {
+      const saved: unknown = JSON.parse(raw)
+      if (!Array.isArray(saved) || saved.some(id => !ALL_COLUMNS.some(column => column.id === id)))
+        throw new Error("Invalid column preferences")
+      return [...new Set(saved)] as ColId[]
+    }, value => JSON.stringify(value))
+    columnPreferences.set(storageKey, preference)
   }
-
-  return { visible, toggle }
+  const columns = useSyncExternalStore(preference.subscribe, preference.snapshot, preference.snapshot)
+  function toggle(id: ColId) {
+    if (!ALL_COLUMNS.some(column => column.id === id)) return
+    const next = new Set(preference!.snapshot())
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    preference!.set([...next])
+  }
+  return { visible: new Set(columns), toggle }
 }
 
 export function ColumnPicker({

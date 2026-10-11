@@ -1,4 +1,5 @@
 import { create } from "zustand"
+import { createScalarPreference } from "./scalarPreference"
 
 export interface AccentPreset {
   name: string
@@ -35,6 +36,14 @@ export const ACCENT_PRESETS: AccentPreset[] = [
 const DEFAULT_ACCENT = "#d946ef"
 const STORAGE_KEY = "plex-accent-color"
 
+function validAccent(hex: unknown): hex is string {
+  return typeof hex === "string" && /^#[0-9a-f]{6}$/i.test(hex)
+}
+const preference = createScalarPreference(STORAGE_KEY, DEFAULT_ACCENT, raw => {
+  if (!validAccent(raw)) throw new Error("Invalid accent preference")
+  return raw
+}, value => value)
+
 function hexToRgb(hex: string): string {
   const r = parseInt(hex.slice(1, 3), 16)
   const g = parseInt(hex.slice(3, 5), 16)
@@ -43,6 +52,7 @@ function hexToRgb(hex: string): string {
 }
 
 export function applyAccent(hex: string) {
+  if (!validAccent(hex) || typeof document === "undefined") return
   const rgb = hexToRgb(hex)
   const s = document.documentElement.style
   s.setProperty("--accent", hex)
@@ -54,7 +64,7 @@ export function applyAccent(hex: string) {
 }
 
 // Apply immediately on module load so the colour is set before first render
-applyAccent(localStorage.getItem(STORAGE_KEY) ?? DEFAULT_ACCENT)
+applyAccent(preference.snapshot())
 
 interface AccentState {
   accent: string
@@ -62,10 +72,17 @@ interface AccentState {
 }
 
 export const useAccentStore = create<AccentState>(() => ({
-  accent: localStorage.getItem(STORAGE_KEY) ?? DEFAULT_ACCENT,
+  accent: preference.snapshot(),
   setAccent: (hex: string) => {
-    localStorage.setItem(STORAGE_KEY, hex)
+    if (!validAccent(hex)) return
+    preference.set(hex)
     applyAccent(hex)
     useAccentStore.setState({ accent: hex })
   },
 }))
+
+preference.subscribe(() => {
+  const accent = preference.snapshot()
+  applyAccent(accent)
+  useAccentStore.setState({ accent })
+})

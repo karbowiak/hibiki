@@ -1,4 +1,10 @@
 import { create } from "zustand"
+import { booleanPreference } from "./scalarPreference"
+
+const queuePinned = booleanPreference("plex-queue-pinned", false)
+const lyricsPinned = booleanPreference("plex-lyrics-pinned", false)
+const dedupAlbums = booleanPreference("plex-dedup-albums", true)
+const artExpanded = booleanPreference("plex-art-expanded", false)
 
 interface UIState {
   showCreatePlaylist: boolean
@@ -41,12 +47,12 @@ export const useUIStore = create<UIState>((set) => ({
   isRefreshing: false,
   pageRefreshKey: 0,
   isQueueOpen: false,
-  isQueuePinned: localStorage.getItem("plex-queue-pinned") === "1",
+  isQueuePinned: queuePinned.snapshot(),
   isLyricsOpen: false,
-  isLyricsPinned: localStorage.getItem("plex-lyrics-pinned") === "1",
+  isLyricsPinned: lyricsPinned.snapshot(),
   queueActiveTab: "queue",
-  deduplicateAlbums: localStorage.getItem("plex-dedup-albums") !== "0",
-  isArtExpanded: localStorage.getItem("plex-art-expanded") === "1",
+  deduplicateAlbums: dedupAlbums.snapshot(),
+  isArtExpanded: artExpanded.snapshot(),
 
   setShowCreatePlaylist: (v: boolean) => set({ showCreatePlaylist: v }),
   setPendingPlaylistItemIds: (ids: string[] | null) => set({ pendingPlaylistItemIds: ids }),
@@ -54,22 +60,27 @@ export const useUIStore = create<UIState>((set) => ({
   incrementPageRefreshKey: () => set(s => ({ pageRefreshKey: s.pageRefreshKey + 1 })),
   setQueueOpen: (v: boolean) => set({ isQueueOpen: v }),
   setQueuePinned: (v: boolean) => {
-    localStorage.setItem("plex-queue-pinned", v ? "1" : "0")
+    queuePinned.set(v)
     set({ isQueuePinned: v, ...(v ? { isQueueOpen: true } : { isQueueOpen: false }) })
   },
   setLyricsOpen: (v: boolean) => set({ isLyricsOpen: v }),
   setLyricsPinned: (v: boolean) => {
-    localStorage.setItem("plex-lyrics-pinned", v ? "1" : "0")
+    lyricsPinned.set(v)
     set({ isLyricsPinned: v, ...(v ? { isLyricsOpen: true } : {}) })
   },
   setQueueActiveTab: (tab: "queue" | "lyrics") => set({ queueActiveTab: tab }),
   setDeduplicateAlbums: (v: boolean) => {
-    localStorage.setItem("plex-dedup-albums", v ? "1" : "0")
+    dedupAlbums.set(v)
     set({ deduplicateAlbums: v })
   },
   toggleArtExpanded: () => set(s => {
     const next = !s.isArtExpanded
-    localStorage.setItem("plex-art-expanded", next ? "1" : "0")
+    artExpanded.set(next)
     return { isArtExpanded: next }
   }),
 }))
+
+queuePinned.subscribe(() => useUIStore.setState({ isQueuePinned: queuePinned.snapshot() }))
+lyricsPinned.subscribe(() => useUIStore.setState({ isLyricsPinned: lyricsPinned.snapshot() }))
+dedupAlbums.subscribe(() => useUIStore.setState({ deduplicateAlbums: dedupAlbums.snapshot() }))
+artExpanded.subscribe(() => useUIStore.setState({ isArtExpanded: artExpanded.snapshot() }))

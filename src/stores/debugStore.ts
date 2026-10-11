@@ -1,6 +1,9 @@
 import { create } from "zustand"
+import { booleanPreference } from "./scalarPreference"
 
 const STORAGE_KEY = "plex-debug-enabled"
+
+const preference = booleanPreference(STORAGE_KEY, false)
 
 interface DebugState {
   debugEnabled: boolean
@@ -8,10 +11,12 @@ interface DebugState {
 }
 
 export const useDebugStore = create<DebugState>(() => ({
-  debugEnabled: localStorage.getItem(STORAGE_KEY) === "1",
+  debugEnabled: preference.snapshot(),
 
   setDebugEnabled: (v: boolean) => {
-    localStorage.setItem(STORAGE_KEY, v ? "1" : "0")
+    preference.set(v)
     useDebugStore.setState({ debugEnabled: v })
   },
 }))
+
+preference.subscribe(() => useDebugStore.setState({ debugEnabled: preference.snapshot() }))

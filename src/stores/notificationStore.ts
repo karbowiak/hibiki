@@ -1,6 +1,9 @@
 import { create } from "zustand"
+import { booleanPreference } from "./scalarPreference"
 
 const STORAGE_KEY = "plex-notifications-enabled"
+
+const preference = booleanPreference(STORAGE_KEY, true)
 
 interface NotificationState {
   notificationsEnabled: boolean
@@ -8,10 +11,12 @@ interface NotificationState {
 }
 
 export const useNotificationStore = create<NotificationState>(() => ({
-  notificationsEnabled: localStorage.getItem(STORAGE_KEY) !== "0",
+  notificationsEnabled: preference.snapshot(),
 
   setNotificationsEnabled: (v: boolean) => {
-    localStorage.setItem(STORAGE_KEY, v ? "1" : "0")
+    preference.set(v)
     useNotificationStore.setState({ notificationsEnabled: v })
   },
 }))
+
+preference.subscribe(() => useNotificationStore.setState({ notificationsEnabled: preference.snapshot() }))
