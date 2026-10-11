@@ -28,7 +28,7 @@ pub mod types;
 pub mod visualizer;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crossbeam_channel::{bounded, Sender};
@@ -38,7 +38,7 @@ use tracing::{debug, info, warn};
 use self::cache::AudioCache;
 use self::analysis::LoudnessAnalysis;
 use self::callback::{AudioCallbackState, SharedAtomics};
-use self::command::{AudioCommand, Command, ControlCommand, SampleBatch, SeekRequest};
+use self::command::{AudioCommand, Command, ControlCommand, PlaybackControl, SampleBatch, SeekRequest};
 use self::crossfade::types::{parse_ramp, CrossfadeSettings, TrackRamps};
 use self::deck::decode;
 use self::event::EngineEvent;
@@ -57,6 +57,7 @@ use self::visualizer::VisualizerProcessor;
 /// The cpal output stream lives on a dedicated holder thread.
 pub struct AudioEngine {
     cmd_tx: Sender<ControlCommand>,
+    command_admission: Mutex<()>,
     audio_cmd_tx: Sender<AudioCommand>,
     atomics: Arc<SharedAtomics>,
     cache: Arc<AudioCache>,
@@ -94,6 +95,7 @@ impl AudioEngine {
         let (audio_cmd_tx, _) = crossbeam_channel::bounded(1);
         Self {
             cmd_tx,
+            command_admission: Mutex::new(()),
             audio_cmd_tx,
             atomics: Arc::new(SharedAtomics::new()),
             cache: Self::open_cache(app_handle),
@@ -285,6 +287,7 @@ impl AudioEngine {
 
         Ok(Self {
             cmd_tx,
+            command_admission: Mutex::new(()),
             audio_cmd_tx,
             atomics,
             cache: audio_cache,
@@ -297,8 +300,16 @@ impl AudioEngine {
     /// Playback intent is invalidated here, before queued I/O can observe it.
     /// Interactive controls bypass the I/O worker so a slow server cannot block pause/seek.
     pub fn send(&self, cmd: Command) -> Result<u64, String> {
+        // Only admission is serialized; the real-time callback never locks.
+        // Publishing Stop and admitting a subsequent Play must have one order.
+        let _admission = self
+            .command_admission
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         if let Some(error) = &self.startup_error {
-            return Err(error.clone());
+            if !matches!(&cmd, Command::Stop | Command::Shutdown) {
+                return Err(error.clone());
+            }
         }
         let epoch = if matches!(
             &cmd,
@@ -308,6 +319,12 @@ impl AudioEngine {
         } else {
             self.atomics.request_epoch.load(Ordering::SeqCst)
         };
+        if matches!(&cmd, Command::Stop | Command::Shutdown) {
+            self.atomics.stop_revision.store(epoch, Ordering::SeqCst);
+            if matches!(&cmd, Command::Stop) {
+                return Ok(epoch);
+            }
+        }
         if matches!(&cmd, Command::ClearPreload) {
             self.atomics.preload_revision.fetch_add(1, Ordering::SeqCst);
         }
@@ -327,12 +344,23 @@ impl AudioEngine {
                     .map(|_| epoch)
                     .map_err(|_| "audio engine is unavailable".into());
             }
-            Command::ClearPreload => AudioCommand::ClearPreload,
-            Command::Pause => AudioCommand::Pause,
-            Command::Resume => AudioCommand::Resume,
-            Command::Stop => AudioCommand::Stop,
-            Command::Seek { position_ms } => AudioCommand::SeekInBuffer {
-                position: position_ms as usize,
+            Command::ClearPreload => AudioCommand::PlaybackControl {
+                request_id: epoch,
+                control: PlaybackControl::ClearPreload,
+            },
+            Command::Pause => AudioCommand::PlaybackControl {
+                request_id: epoch,
+                control: PlaybackControl::Pause,
+            },
+            Command::Resume => AudioCommand::PlaybackControl {
+                request_id: epoch,
+                control: PlaybackControl::Resume,
+            },
+            Command::Seek { position_ms } => AudioCommand::PlaybackControl {
+                request_id: epoch,
+                control: PlaybackControl::SeekInBuffer {
+                    position: position_ms as usize,
+                },
             },
             Command::SetVolume { gain } => AudioCommand::SetVolume(gain),
             Command::SetNormalization { enabled } => AudioCommand::SetNormalization(enabled),
@@ -340,9 +368,7 @@ impl AudioEngine {
             Command::SetEq { gains_db } => AudioCommand::SetEq(gains_db),
             Command::SetEqEnabled { enabled } => AudioCommand::SetEqEnabled(enabled),
             Command::SetEqPostgain { db } => AudioCommand::SetEqPostgain(db),
-            Command::SetVisualizerEnabled { enabled } => {
-                AudioCommand::SetVisualizerEnabled(enabled)
-            }
+            Command::SetVisualizerEnabled { enabled } => AudioCommand::SetVisualizerEnabled(enabled),
             Command::DuckAndApply { duck_ms } => AudioCommand::DuckAndApply { duck_ms },
             _ => {
                 return self
@@ -571,12 +597,14 @@ fn make_request(epoch: u64, deck: DeckId, atomics: &SharedAtomics) -> PlaybackRe
         DeckId::A => atomics.deck_a_loaded_id.clone(),
         DeckId::B => atomics.deck_b_loaded_id.clone(),
     };
-    PlaybackRequest::new(epoch, atomics.request_epoch.clone(), owner).with_audible_deck(
-        atomics.active_deck_id.clone(),
-        if deck == DeckId::A { 0 } else { 1 },
-        atomics.crossfading.clone(),
-        loaded,
-    )
+    PlaybackRequest::new(epoch, atomics.request_epoch.clone(), owner)
+        .with_stop_guard(atomics.stop_revision.clone())
+        .with_audible_deck(
+            atomics.active_deck_id.clone(),
+            if deck == DeckId::A { 0 } else { 1 },
+            atomics.crossfading.clone(),
+            loaded,
+        )
 }
 
 fn wait_for_load(deck: DeckId, request: &PlaybackRequest, atomics: &SharedAtomics) {
@@ -1360,6 +1388,141 @@ fn resolve_gain_db(meta: &TrackMeta, cache_key: &str, cache: &Arc<AudioCache>) -
 mod control_tests {
     use super::*;
 
+    fn engine_with_callback(
+        directory: &std::path::Path,
+        capacity: usize,
+    ) -> (
+        AudioEngine,
+        crossbeam_channel::Receiver<ControlCommand>,
+        AudioCallbackState,
+        crossbeam_channel::Receiver<EngineEvent>,
+    ) {
+        let atomics = Arc::new(SharedAtomics::new());
+        atomics.request_epoch.store(1, Ordering::SeqCst);
+        let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
+        let (audio_cmd_tx, audio_rx) = crossbeam_channel::bounded(capacity);
+        let engine = AudioEngine {
+            cmd_tx,
+            command_admission: Mutex::new(()),
+            audio_cmd_tx,
+            atomics: atomics.clone(),
+            cache: Arc::new(AudioCache::new(directory.into(), None)),
+            _output: None,
+            lifetime: EngineLifetime::new(),
+            startup_error: None,
+        };
+        let (_a_tx, a_rx) = crossbeam_channel::bounded(4);
+        let (_b_tx, b_rx) = crossbeam_channel::bounded(4);
+        let (events, event_rx) = crossbeam_channel::unbounded();
+        let (visualizer, _vis_rx) = crossbeam_channel::bounded(4);
+        let callback = AudioCallbackState::new(audio_rx, a_rx, b_rx, events, visualizer, atomics);
+        (engine, cmd_rx, callback, event_rx)
+    }
+
+    fn queue_test_play(engine: &AudioEngine) -> u64 {
+        engine
+            .send(Command::Play {
+                source: MediaSource::new(
+                    crate::plex::client::public_media_request("https://test.invalid/new.wav"),
+                    None,
+                )
+                .unwrap(),
+                meta: TrackMeta {
+                    rating_key: 42,
+                    duration_ms: 1000,
+                    parent_key: String::new(),
+                    album_playback: false,
+                    gain_db: None,
+                    skip_crossfade: true,
+                    start_ramp: None,
+                    end_ramp: None,
+                },
+            })
+            .unwrap()
+    }
+
+    fn queue_test_load(engine: &AudioEngine, command: ControlCommand) -> PlaybackRequest {
+        let Command::Play { meta, .. } = command.command else {
+            panic!("Expected Play")
+        };
+        let request = make_request(command.epoch, DeckId::B, &engine.atomics);
+        engine
+            .audio_cmd_tx
+            .send(AudioCommand::LoadDeck {
+                deck: DeckId::B,
+                meta,
+                sample_rate: 44100,
+                channels: 2,
+                norm_gain: 1.0,
+                expected_samples: 44100,
+                request_id: command.epoch,
+                preload_revision: None,
+                load_id: request.load_id,
+                generation: 1,
+                initial_samples: vec![0.1; 44100],
+                fully_decoded: true,
+                seek_tx: None,
+            })
+            .unwrap();
+        engine
+            .audio_cmd_tx
+            .send(AudioCommand::TransitionToActive {
+                user_skip: true,
+                request_id: command.epoch,
+            })
+            .unwrap();
+        request
+    }
+
+    #[test]
+    fn a_play_admitted_after_stop_survives_delayed_stop_acknowledgement() {
+        let directory = tempfile::tempdir().unwrap();
+        let (engine, io, mut callback, events) = engine_with_callback(directory.path(), 8);
+        let stopped = engine.send(Command::Stop).unwrap();
+        let playing = queue_test_play(&engine);
+        let request = queue_test_load(&engine, io.recv().unwrap());
+        assert!(playing > stopped);
+        assert!(request.is_current());
+        let mut output = [0.0; 1024];
+        callback.process_callback(&mut output);
+        assert!(
+            request.is_current(),
+            "Stop must not revoke a later deck owner"
+        );
+        assert_eq!(callback.deck_mgr.active_deck().rating_key(), 42);
+        assert_eq!(engine.atomics.get_state(), EngineState::Playing);
+        assert_eq!(
+            engine.atomics.active_request_id.load(Ordering::SeqCst),
+            playing
+        );
+        assert!(output.iter().any(|value| *value > 0.0));
+        let ids: Vec<_> = events
+            .try_iter()
+            .filter_map(|event| match event {
+                EngineEvent::State { request_id, .. } => Some(request_id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ids.first(), Some(&stopped));
+        assert_eq!(ids.last(), Some(&playing));
+    }
+
+    #[test]
+    fn stop_rejects_a_late_load_and_transition_from_the_retired_play() {
+        let directory = tempfile::tempdir().unwrap();
+        let (engine, io, mut callback, _) = engine_with_callback(directory.path(), 8);
+        queue_test_play(&engine);
+        let request = queue_test_load(&engine, io.recv().unwrap());
+        engine.send(Command::Stop).unwrap();
+        assert!(!request.is_current());
+        let mut output = [1.0; 1024];
+        callback.process_callback(&mut output);
+        assert!(output.iter().all(|value| *value == 0.0));
+        assert!(!callback.deck_mgr.active_deck().loaded);
+        assert!(!callback.deck_mgr.pending_deck().loaded);
+        assert_eq!(engine.atomics.get_state(), EngineState::Stopped);
+    }
+
     #[test]
     fn cached_playback_is_loaded_without_waiting_for_a_blocked_loudness_scan() {
         let dir = tempfile::tempdir().unwrap();
@@ -1788,12 +1951,59 @@ mod control_tests {
     }
 
     #[test]
+    fn stop_survives_a_full_callback_queue_and_cancels_the_audible_source() {
+        for (without_output, shutdown) in [(false, false), (true, false), (false, true), (true, true)] {
+            let directory = tempfile::tempdir().unwrap();
+            let (engine, _io, mut callback, event_rx) = engine_with_callback(directory.path(), 4);
+            let atomics = engine.atomics.clone();
+            let audible = make_request(1, DeckId::A, &atomics);
+            atomics
+                .deck_a_loaded_id
+                .store(audible.load_id, Ordering::SeqCst);
+            let deck = callback.deck_mgr.active_deck_mut();
+            deck.loaded = true;
+            deck.samples = vec![0.1; 44100];
+            deck.has_started_playing = true;
+            deck.played_frames = 100;
+            deck.playback_id = 1;
+            atomics.set_state(EngineState::Playing);
+            assert!(audible.is_current());
+            for _ in 0..4 {
+                engine.send(Command::Resume).unwrap();
+            }
+            let stopped = engine
+                .send(if shutdown {
+                    Command::Shutdown
+                } else {
+                    Command::Stop
+                })
+                .expect("Revocation must not depend on queue capacity");
+            assert!(
+                !audible.is_current(),
+                "Source cancellation must precede callback acknowledgement"
+            );
+            let mut output = [1.0; 512];
+            if without_output {
+                callback.poll_without_output();
+            } else {
+                callback.process_callback(&mut output);
+                assert!(output.iter().all(|value| *value == 0.0));
+            }
+            assert!(!callback.deck_mgr.active_deck().loaded);
+            assert!(!callback.deck_mgr.pending_deck().loaded);
+            assert_eq!(atomics.get_state(), EngineState::Stopped);
+            assert!(event_rx.try_iter().any(|event| matches!(event, EngineEvent::State { request_id, state } if request_id == stopped && state == "stopped")));
+        }
+    }
+
+    #[test]
     fn interactive_controls_bypass_a_busy_io_worker_and_stop_invalidates_queued_play() {
         let dir = tempfile::tempdir().unwrap();
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
         let (audio_cmd_tx, audio_rx) = crossbeam_channel::bounded(32);
         let engine = AudioEngine {
             cmd_tx,
+            command_admission: Mutex::new(()),
             audio_cmd_tx,
             atomics: Arc::new(SharedAtomics::new()),
             cache: Arc::new(AudioCache::new(dir.path().to_path_buf(), None)),
@@ -1817,7 +2027,8 @@ mod control_tests {
                 source: MediaSource::new(
                     crate::plex::client::public_media_request("https://example.com/audio"),
                     None,
-                ).unwrap(),
+                )
+                .unwrap(),
                 meta,
             })
             .unwrap();
@@ -1830,12 +2041,21 @@ mod control_tests {
             audio_rx.recv().unwrap(),
             AudioCommand::BeginPlay { .. }
         ));
-        assert!(matches!(audio_rx.recv().unwrap(), AudioCommand::Pause));
+        assert!(
+            matches!(audio_rx.recv().unwrap(), AudioCommand::PlaybackControl { request_id, control: PlaybackControl::Pause } if request_id == play_epoch)
+        );
         assert!(matches!(
             audio_rx.recv().unwrap(),
-            AudioCommand::SeekInBuffer { position: 500 }
+            AudioCommand::PlaybackControl { request_id, control: PlaybackControl::SeekInBuffer { position: 500 } } if request_id == play_epoch
         ));
-        assert!(matches!(audio_rx.recv().unwrap(), AudioCommand::Stop));
+        assert!(
+            audio_rx.try_recv().is_err(),
+            "Stop uses its independent atomic signal"
+        );
+        assert_eq!(
+            engine.atomics.stop_revision.load(Ordering::SeqCst),
+            stop_epoch
+        );
         assert_eq!(cmd_rx.recv().unwrap().epoch, play_epoch);
         assert!(
             cmd_rx.try_recv().is_err(),
@@ -1856,6 +2076,7 @@ mod control_tests {
         let (audio_cmd_tx, audio_rx) = crossbeam_channel::bounded(1);
         let engine = AudioEngine {
             cmd_tx,
+            command_admission: Mutex::new(()),
             audio_cmd_tx,
             atomics: Arc::new(SharedAtomics::new()),
             cache: Arc::new(AudioCache::new(dir.path().to_path_buf(), None)),

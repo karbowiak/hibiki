@@ -9,6 +9,7 @@ pub struct PlaybackRequest {
     current_epoch: Arc<AtomicU64>,
     pub load_id: u64,
     owner: Arc<AtomicU64>,
+    stop_revision: Option<Arc<AtomicU64>>,
     preload_revision: Option<(Arc<AtomicU64>, u64)>,
     audible_deck: Option<(Arc<AtomicU8>, u8, Arc<AtomicBool>, Arc<AtomicU64>)>,
 }
@@ -21,6 +22,7 @@ impl PlaybackRequest {
             current_epoch,
             load_id,
             owner,
+            stop_revision: None,
             preload_revision: None,
             audible_deck: None,
         }
@@ -28,6 +30,11 @@ impl PlaybackRequest {
 
     pub fn for_preload(mut self, revision: Arc<AtomicU64>, value: u64) -> Self {
         self.preload_revision = Some((revision, value));
+        self
+    }
+
+    pub fn with_stop_guard(mut self, revision: Arc<AtomicU64>) -> Self {
+        self.stop_revision = Some(revision);
         self
     }
 
@@ -47,6 +54,13 @@ impl PlaybackRequest {
     }
 
     pub fn is_current(&self) -> bool {
+        if self
+            .stop_revision
+            .as_ref()
+            .is_some_and(|revision| revision.load(Ordering::SeqCst) > self.epoch)
+        {
+            return false;
+        }
         let audible = self
             .audible_deck
             .as_ref()
@@ -73,6 +87,35 @@ impl PlaybackRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stop_revokes_both_audible_crossfade_sources_while_new_play_preserves_them() {
+        let epoch = Arc::new(AtomicU64::new(1));
+        let stopped = Arc::new(AtomicU64::new(0));
+        let active = Arc::new(AtomicU8::new(0));
+        let fading = Arc::new(AtomicBool::new(true));
+        let sources: Vec<_> = (0..2)
+            .map(|deck| {
+                PlaybackRequest::new(1, epoch.clone(), Arc::new(AtomicU64::new(0)))
+                    .with_stop_guard(stopped.clone())
+                    .with_audible_deck(
+                        active.clone(),
+                        deck,
+                        fading.clone(),
+                        Arc::new(AtomicU64::new(1)),
+                    )
+            })
+            .collect();
+        epoch.store(2, Ordering::SeqCst);
+        assert!(sources.iter().all(PlaybackRequest::is_current));
+        stopped.store(3, Ordering::SeqCst);
+        epoch.store(3, Ordering::SeqCst);
+        assert!(sources.iter().all(|request| !request.is_current()));
+        epoch.store(4, Ordering::SeqCst);
+        let later =
+            PlaybackRequest::new(4, epoch, Arc::new(AtomicU64::new(0))).with_stop_guard(stopped);
+        assert!(later.is_current());
+    }
 
     #[test]
     fn clearing_the_next_track_keeps_the_promoted_active_download_alive() {

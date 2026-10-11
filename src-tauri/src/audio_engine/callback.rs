@@ -13,7 +13,7 @@ use std::sync::Arc;
 use crossbeam_channel::{Receiver, Sender};
 use tracing::debug;
 
-use super::command::{AudioCommand, SampleBatch};
+use super::command::{AudioCommand, PlaybackControl, SampleBatch};
 use super::crossfade::scheduler::{Scheduler, SchedulerAction, SchedulerMode};
 use super::crossfade::types::{CrossfadeParams, CrossfadeSettings, TrackRamps, TransitionPlan};
 use super::crossfade::{compute_skip_duck, compute_transition};
@@ -33,6 +33,8 @@ mod tests;
 /// The audio callback WRITES, other threads READ.
 pub struct SharedAtomics {
     pub request_epoch: Arc<AtomicU64>,
+    /// Guaranteed Stop admission, independent of ordinary command capacity.
+    pub stop_revision: Arc<AtomicU64>,
     pub preload_revision: Arc<AtomicU64>,
     pub active_request_id: Arc<AtomicU64>,
     pub deck_a_load_id: Arc<AtomicU64>,
@@ -67,6 +69,7 @@ impl SharedAtomics {
     pub fn new() -> Self {
         Self {
             request_epoch: Arc::new(AtomicU64::new(0)),
+            stop_revision: Arc::new(AtomicU64::new(0)),
             preload_revision: Arc::new(AtomicU64::new(0)),
             active_request_id: Arc::new(AtomicU64::new(0)),
             deck_a_load_id: Arc::new(AtomicU64::new(0)),
@@ -137,6 +140,7 @@ pub struct AudioCallbackState {
     event_request_id: u64,
     pending_seek_ms: Option<u64>,
     pending_play_paused: bool,
+    applied_stop_revision: u64,
 
     // ---- Lock-free inputs ----
     cmd_rx: Receiver<AudioCommand>,
@@ -191,6 +195,7 @@ impl AudioCallbackState {
             event_request_id: 0,
             pending_seek_ms: None,
             pending_play_paused: false,
+            applied_stop_revision: 0,
 
             cmd_rx,
             deck_a_rx,
@@ -399,13 +404,66 @@ impl AudioCallbackState {
     // -----------------------------------------------------------------------
 
     fn process_commands(&mut self) {
+        self.apply_pending_stop();
         while let Ok(cmd) = self.cmd_rx.try_recv() {
+            self.apply_pending_stop();
             self.handle_command(cmd);
         }
+        self.apply_pending_stop();
+    }
+
+    fn apply_pending_stop(&mut self) {
+        let revision = self.atomics.stop_revision.load(Ordering::SeqCst);
+        if revision > self.applied_stop_revision {
+            self.applied_stop_revision = revision;
+            self.stop_playback(revision);
+        }
+    }
+
+    fn stop_playback(&mut self, request_id: u64) {
+        self.dsp_chain.reset();
+        self.event_request_id = request_id;
+        self.report_track_ended(DeckId::A, TrackEndReason::Stopped);
+        self.report_track_ended(DeckId::B, TrackEndReason::Stopped);
+        self.emit_transition_info(request_id, None);
+        self.scheduler.reset();
+        self.deck_mgr.stop_all();
+        self.atomics.deck_a_loaded_id.store(0, Ordering::SeqCst);
+        self.atomics.deck_b_loaded_id.store(0, Ordering::SeqCst);
+        self.atomics
+            .active_request_id
+            .store(request_id, Ordering::SeqCst);
+        self.is_crossfading = false;
+        self.crossfade_remaining_frames = 0;
+        self.paused = false;
+        self.playback_envelope.silence();
+        self.waiting_for_play = false;
+        self.pending_seek_ms = None;
+        self.pending_play_paused = false;
+        self.set_state(EngineState::Stopped);
+        let _ = self.event_tx.try_send(EngineEvent::State {
+            request_id,
+            state: "stopped".into(),
+        });
     }
 
     fn handle_command(&mut self, cmd: AudioCommand) {
         match cmd {
+            AudioCommand::PlaybackControl { request_id, control } => {
+                if request_id != self.atomics.request_epoch.load(Ordering::SeqCst)
+                    || request_id <= self.atomics.stop_revision.load(Ordering::SeqCst)
+                {
+                    return;
+                }
+                self.handle_command(match control {
+                    PlaybackControl::ClearPreload => AudioCommand::ClearPreload,
+                    PlaybackControl::Pause => AudioCommand::Pause,
+                    PlaybackControl::Resume => AudioCommand::Resume,
+                    PlaybackControl::SeekInBuffer { position } => {
+                        AudioCommand::SeekInBuffer { position }
+                    }
+                });
+            }
             AudioCommand::FailPlay {
                 request_id,
                 message,
@@ -585,25 +643,9 @@ impl AudioCallbackState {
                     .into(),
                 });
             }
+            #[cfg(test)]
             AudioCommand::Stop => {
-                self.dsp_chain.reset();
-                self.event_request_id = self.atomics.request_epoch.load(Ordering::SeqCst);
-                self.report_track_ended(DeckId::A, TrackEndReason::Stopped);
-                self.report_track_ended(DeckId::B, TrackEndReason::Stopped);
-                self.emit_transition_info(self.event_request_id, None);
-                self.scheduler.reset();
-                self.deck_mgr.stop_all();
-                self.atomics.deck_a_loaded_id.store(0, Ordering::SeqCst);
-                self.atomics.deck_b_loaded_id.store(0, Ordering::SeqCst);
-                self.is_crossfading = false;
-                self.paused = false;
-                self.playback_envelope.silence();
-                self.waiting_for_play = false;
-                self.set_state(EngineState::Stopped);
-                let _ = self.event_tx.try_send(EngineEvent::State {
-                    request_id: self.event_request_id,
-                    state: "stopped".into(),
-                });
+                self.stop_playback(self.atomics.request_epoch.load(Ordering::SeqCst));
             }
             AudioCommand::TransitionToActive {
                 user_skip,

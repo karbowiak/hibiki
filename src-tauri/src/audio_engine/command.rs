@@ -63,6 +63,11 @@ pub enum Command {
 ///
 /// These must be cheap to handle — no I/O, no blocking, no allocation in hot paths.
 pub enum AudioCommand {
+    /// Ordinary playback controls belong to the play intent that admitted them.
+    PlaybackControl {
+        request_id: u64,
+        control: PlaybackControl,
+    },
     FailPlay {
         request_id: u64,
         message: String,
@@ -100,6 +105,8 @@ pub enum AudioCommand {
     // -- Playback --
     Pause,
     Resume,
+    // Production Stop uses SharedAtomics::stop_revision, never this queue.
+    #[cfg(test)]
     Stop,
     /// Swap pending → active. Audio callback computes crossfade plan internally.
     TransitionToActive {
@@ -134,6 +141,13 @@ pub enum AudioCommand {
     DuckAndApply {
         duck_ms: u32,
     },
+}
+
+pub enum PlaybackControl {
+    ClearPreload,
+    Pause,
+    Resume,
+    SeekInBuffer { position: usize },
 }
 
 /// A batch of decoded samples sent from a bg decode thread to the audio callback.
