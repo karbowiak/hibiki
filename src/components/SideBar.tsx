@@ -1,3 +1,4 @@
+import { ArtworkImage } from "./shared/ArtworkImage"
 import { Link, useLocation } from "wouter"
 import { useMemo, useRef, useState, useCallback, useEffect } from "react"
 import clsx from "clsx"
@@ -111,7 +112,7 @@ function SortablePlaylistItem({ playlist, location, playPlaylist, ctxMenu, justD
       >
         <div className="relative h-10 w-10 flex-shrink-0 overflow-hidden rounded bg-app-surface">
           {artUrl && (
-            <img src={artUrl} alt="" className="h-full w-full object-cover" draggable={false} />
+            <ArtworkImage loading="eager" src={artUrl} alt="" className="h-full w-full object-cover" draggable={false} />
           )}
           <button
             onClick={e => {

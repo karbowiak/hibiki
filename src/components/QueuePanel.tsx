@@ -1,3 +1,4 @@
+import { ArtworkImage } from "./shared/ArtworkImage"
 import { useEffect, useRef, useState } from "react"
 import { useResizable } from "../hooks/useResizable"
 import {
@@ -66,7 +67,7 @@ function PlayedRow({ thumb, title, artist, durationMs, isGuestDj, isRadio, onJum
     >
       <span className="w-5 flex-shrink-0" />
       {thumb ? (
-        <img src={thumb} alt="" className="h-10 w-10 rounded-sm flex-shrink-0 object-cover" />
+        <ArtworkImage src={thumb} alt="" className="h-10 w-10 rounded-sm flex-shrink-0 object-cover" />
       ) : (
         <div className="h-10 w-10 rounded-sm flex-shrink-0 bg-app-surface" />
       )}
@@ -93,7 +94,7 @@ function NowPlayingRow({ thumb, title, artist, durationMs, isGuestDj, isRadio }:
         </svg>
       </span>
       {thumb ? (
-        <img src={thumb} alt="" className="h-10 w-10 rounded-sm flex-shrink-0 object-cover" />
+        <ArtworkImage src={thumb} alt="" className="h-10 w-10 rounded-sm flex-shrink-0 object-cover" />
       ) : (
         <div className="h-10 w-10 rounded-sm flex-shrink-0 bg-app-surface" />
       )}
@@ -146,7 +147,7 @@ function SortableUpcomingItem({ id, index, thumb, title, artist, durationMs, isG
       </span>
 
       {thumb ? (
-        <img src={thumb} alt="" className="h-10 w-10 rounded-sm flex-shrink-0 object-cover" />
+        <ArtworkImage src={thumb} alt="" className="h-10 w-10 rounded-sm flex-shrink-0 object-cover" />
       ) : (
         <div className="h-10 w-10 rounded-sm flex-shrink-0 bg-app-surface" />
       )}

@@ -1,3 +1,4 @@
+import { ArtworkImage } from "../../../src/components/shared/ArtworkImage"
 import {
   initPresetMeta,
   loadAllPacks,
@@ -80,6 +81,23 @@ testWindow.finishImageCacheClear = (fail = false) => {
   if (fail)
     cacheReply!.reject(new Error("One artwork file could not be removed"))
   else cacheReply!.resolve({ ...cacheInfo })
+}
+testWindow.mountArtworkRetry = () => {
+  const host = document.createElement("div")
+  document.body.append(host)
+  const retryRoot = createRoot(host)
+  testWindow.unmountArtworkRetry = () => { retryRoot.unmount(); host.remove() }
+  testWindow.artworkRetry = { recovered: false, failed: false }
+  retryRoot.render(createElement("div", null,
+    createElement(ArtworkImage, {
+      src: "http://image.localhost/album/retry-fixture", loading: "eager", alt: "Retry cover",
+      onLoad: () => { testWindow.artworkRetry.recovered = true },
+    }),
+    createElement(ArtworkImage, {
+      src: "http://image.localhost/album/failure-fixture", loading: "eager", alt: "Failed cover",
+      onFailure: () => { testWindow.artworkRetry.failed = true },
+    }),
+  ))
 }
 function ArtworkViewerFixture() {
   const [open, setOpen] = useState(false)

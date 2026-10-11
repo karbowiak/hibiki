@@ -1,3 +1,4 @@
+import { ArtworkImage } from "./shared/ArtworkImage"
 import { useEffect, useRef, useState, useCallback } from "react"
 import { useVisualizerStore, type FullscreenVisualizerMode } from "../stores/visualizerStore"
 import { usePlayerStore } from "../stores/playerStore"
@@ -641,7 +642,7 @@ export default function VisualizerFullscreen() {
         {/* Track info — fixed width so layout doesn't shift */}
         <div className="flex items-center gap-3 w-[220px] shrink-0">
           {thumbUrl && (
-            <img src={thumbUrl} className="w-10 h-10 rounded object-cover shrink-0" alt="" />
+            <ArtworkImage loading="eager" src={thumbUrl} className="w-10 h-10 rounded object-cover shrink-0" alt="" />
           )}
           <div className="min-w-0">
             <div className="text-white font-semibold text-sm truncate">

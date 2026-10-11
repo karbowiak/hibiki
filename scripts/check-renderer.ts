@@ -184,15 +184,20 @@ try {
             headers: { "Access-Control-Allow-Origin": "*" },
           })
         )
-        await context.route("http://image.localhost/**", (route) =>
-          route.fulfill({
+        const artworkAttempts = new Map<string, number>()
+        await context.route("http://image.localhost/**", (route) => {
+          const path = new URL(route.request().url()).pathname
+          const count = (artworkAttempts.get(path) ?? 0) + 1
+          artworkAttempts.set(path, count)
+          if (path.endsWith("/failure-fixture") || (path.endsWith("/retry-fixture") && count < 3)) {
+            return route.fulfill({ status: 503, body: "Busy", headers: { "Retry-After": "1", "Access-Control-Allow-Origin": "*" } })
+          }
+          return route.fulfill({
             contentType: "image/svg+xml",
-            body: route.request().url().endsWith("/modal-fixture")
-              ? modalArtwork
-              : svg,
+            body: path.endsWith("/modal-fixture") ? modalArtwork : svg,
             headers: { "Access-Control-Allow-Origin": "*" },
           })
-        )
+        })
         await context.route("http://ipc.localhost/**", (route) =>
           route.fulfill({
             contentType: "text/plain",
@@ -273,6 +278,16 @@ try {
           path: join(artifactDir, `${name}-milkdrop.png`),
         })
         await page.evaluate(() => (window as any).mountArtworkViewer())
+        await page.evaluate(() => (window as any).mountArtworkRetry())
+        await page.waitForFunction(() => {
+          const state = (window as any).artworkRetry
+          return state?.recovered && state?.failed
+        }, null, { timeout: 10000 })
+        assert.equal(artworkAttempts.get("/album/retry-fixture"), 3, `${name}: transient artwork did not retry twice`)
+        assert.equal(artworkAttempts.get("/album/failure-fixture"), 3, `${name}: permanent artwork did not stop retrying`)
+        assert.equal(await page.getByAltText("Failed cover").count(), 0, `${name}: permanent artwork leaves a broken image`)
+        await page.evaluate(() => (window as any).unmountArtworkRetry())
+
         const artworkTrigger = page.getByRole("button", {
           name: "View fixture artwork",
         })

@@ -1,3 +1,4 @@
+import { ArtworkImage } from "../shared/ArtworkImage"
 import { useEffect, useMemo, useState } from "react"
 import { useLocation } from "wouter"
 import { useShallow } from "zustand/react/shallow"
@@ -92,7 +93,7 @@ function RecentMixCard({ mix, sectionUuid, sectionId, playFromUri }: {
     >
       <div className="mb-3 aspect-square overflow-hidden rounded-lg grid grid-cols-2 gap-px bg-black/20">
         {thumbs.map((t, i) => t ? (
-          <img key={i} src={t} alt="" className="h-full w-full object-cover" />
+          <ArtworkImage key={i} src={t} alt="" className="h-full w-full object-cover" />
         ) : (
           <div key={i} className="bg-white/10" />
         ))}
@@ -234,7 +235,7 @@ function SearchBasedMixBuilder({ tabType, sectionUuid, sectionId, playFromUri, o
                 )}
               >
                 {thumb ? (
-                  <img src={thumb} alt="" className={"h-9 w-9 flex-shrink-0 rounded-md object-cover"} />
+                  <ArtworkImage src={thumb} alt="" className={"h-9 w-9 flex-shrink-0 rounded-md object-cover"} />
                 ) : (
                   <div className={"h-9 w-9 flex-shrink-0 rounded-md bg-white/10"} />
                 )}
@@ -278,7 +279,7 @@ function SearchBasedMixBuilder({ tabType, sectionUuid, sectionId, playFromUri, o
                   className="flex items-center gap-1.5 rounded-full bg-white/10 pl-1 pr-2 py-1 text-xs font-medium"
                 >
                   {thumb ? (
-                    <img src={thumb} alt="" className={"h-5 w-5 flex-shrink-0 rounded-sm object-cover"} />
+                    <ArtworkImage src={thumb} alt="" className={"h-5 w-5 flex-shrink-0 rounded-sm object-cover"} />
                   ) : (
                     <div className={"h-5 w-5 flex-shrink-0 rounded-sm bg-white/20"} />
                   )}

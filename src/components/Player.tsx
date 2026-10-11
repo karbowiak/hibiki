@@ -1,3 +1,4 @@
+import { ArtworkImage } from "./shared/ArtworkImage"
 import { useEffect, useRef, useState } from "react"
 import { Link } from "wouter"
 import { useShallow } from "zustand/react/shallow"
@@ -530,7 +531,7 @@ export function Player() {
             } : undefined}
             onClick={e => { if (!albumId) e.preventDefault() }}
           >
-            <img src={thumbUrl} alt={currentTrack?.albumName ?? ""} className="h-full w-full object-cover" />
+            <ArtworkImage loading="eager" src={thumbUrl} alt={currentTrack?.albumName ?? ""} className="h-full w-full object-cover" />
           </Link>
           {/* Hover overlay buttons — bottom-right */}
           <div className="pointer-events-none absolute inset-0 flex items-end justify-end gap-1 opacity-0 transition-opacity group-hover/expanded:opacity-100 group-focus-within/expanded:opacity-100 p-1.5">
@@ -598,7 +599,7 @@ export function Player() {
                       onClick={e => { if (!albumId) e.preventDefault() }}
                     >
                       {thumbUrl ? (
-                        <img src={thumbUrl} alt="" className="h-full w-full object-cover" />
+                        <ArtworkImage loading="eager" src={thumbUrl} alt="" className="h-full w-full object-cover" />
                       ) : (
                         <div className="h-full w-full bg-app-surface" />
                       )}

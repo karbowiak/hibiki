@@ -1,3 +1,4 @@
+import { ArtworkImage } from "../shared/ArtworkImage"
 import { useEffect, useMemo, useState } from "react"
 import { Link, useLocation } from "wouter"
 import { useShallow } from "zustand/react/shallow"
@@ -232,7 +233,7 @@ export function MixPage() {
         <div className="relative z-10 flex flex-row items-end w-full gap-0">
           {/* Cover art */}
           {displayThumb ? (
-            <img src={displayThumb} alt="" className="w-60 h-60 rounded-md shadow-2xl object-cover flex-shrink-0" />
+            <ArtworkImage loading="eager" src={displayThumb} alt="" className="w-60 h-60 rounded-md shadow-2xl object-cover flex-shrink-0" />
           ) : (
             <div className="w-60 h-60 rounded-md bg-app-surface shadow-2xl flex-shrink-0 flex items-center justify-center">
               <svg height="64" width="64" viewBox="0 0 24 24" fill="currentColor" className="text-white/20">

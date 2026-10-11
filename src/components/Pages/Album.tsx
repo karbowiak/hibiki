@@ -1,3 +1,5 @@
+import { ArtworkImage, useArtworkFailures } from "../shared/ArtworkImage"
+import { useAlbumImage } from "../../hooks/useMediaImage"
 import { useLayoutEffect, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { Link } from "wouter"
@@ -22,7 +24,6 @@ import {
   isMetadataCacheCurrent
 } from "../../stores/metadataCache"
 import { useAlbumEnrichment } from "../../hooks/useMetadataEnrichment"
-import { buildImageUrl } from "../../lib/imageUrl"
 import { useMetadataSourceStore } from "../../stores/metadataSourceStore"
 import { HeroRating } from "../HeroRating"
 import { StarRating } from "../shared/StarRating"
@@ -149,20 +150,13 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     return m
   }, [albumGenre, albumStyle, albumMood, tagsGenre, tagsMood, tagsStyle])
 
+  const { failures, onFailure } = useArtworkFailures(JSON.stringify([albumId, album?.artistName, album?.title, album?.thumbUrl]))
+  const thumbUrl = useAlbumImage(album?.artistName ?? null, album?.title ?? null, album?.thumbUrl ?? null, albumId, failures)
+
   if (isLoading) return <div className="p-8 text-sm text-gray-400">Loading album…</div>
   if (error) return <div className="p-8 text-sm text-red-400">{error}</div>
   if (!album) return null
 
-  const plexThumb   = album.thumbUrl
-  const deezerCover = deezerData?.cover_url ? buildImageUrl("album", albumId, deezerData.cover_url, album.title, album.artistName) : null
-  const appleCover  = itunesData?.cover_url ? buildImageUrl("album", albumId, itunesData.cover_url, album.title, album.artistName) : null
-  let thumbUrl: string | null = null
-  for (const src of priority) {
-    if (src === "plex"   && plexThumb)   { thumbUrl = plexThumb;   break }
-    if (src === "deezer" && deezerCover) { thumbUrl = deezerCover; break }
-    if (src === "apple"  && appleCover)  { thumbUrl = appleCover;  break }
-  }
-  if (!thumbUrl) thumbUrl = plexThumb ?? deezerCover ?? appleCover ?? null
   const parentThumbUrl = album.artistThumbUrl
 
   const formatLabel = album.format ?? "Album"
@@ -368,7 +362,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
               onClick={e => { e.currentTarget.focus({ preventScroll: true }); setShowImageModal(true) }}
               className="w-52 h-52 rounded-md shadow-2xl flex-shrink-0 ring-2 ring-transparent hover:ring-white/40 focus-visible:ring-white/70 focus-visible:outline-none transition-all duration-200"
             >
-              <img src={thumbUrl} alt="" className="h-full w-full rounded-md object-cover" />
+              <ArtworkImage src={thumbUrl} onFailure={onFailure} loading="eager" alt="" className="h-full w-full rounded-md object-cover" />
             </button>
           ) : (
             <div className="w-52 h-52 rounded-md bg-app-surface shadow-2xl flex-shrink-0" />
@@ -381,7 +375,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
 
             <div className="flex flex-wrap items-center gap-2 text-sm text-gray-300">
               {parentThumbUrl && (
-                <img src={parentThumbUrl} alt="" className="h-6 w-6 rounded object-cover flex-shrink-0" />
+                <ArtworkImage src={parentThumbUrl} alt="" className="h-6 w-6 rounded object-cover flex-shrink-0" />
               )}
               <Link
                 href={`/artist/${album.artistId}`}

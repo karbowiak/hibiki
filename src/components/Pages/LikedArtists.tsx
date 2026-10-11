@@ -1,3 +1,4 @@
+import { ArtworkImage, useArtworkFailures } from "../shared/ArtworkImage"
 import { useEffect } from "react"
 import { Link } from "wouter"
 import { useShallow } from "zustand/react/shallow"
@@ -10,10 +11,12 @@ import { useContextMenu } from "../../hooks/useContextMenu"
 
 
 function ArtistThumb({ title, thumb }: { title: string; thumb: string | null }) {
-  const resolved = useArtistImage(title, thumb)
+  const { failures, onFailure } = useArtworkFailures(JSON.stringify([title, thumb]))
+  const resolved = useArtistImage(title, thumb, undefined, failures)
   if (resolved) {
     return (
-      <img
+      <ArtworkImage
+        onFailure={onFailure}
         src={resolved}
         alt={title}
         loading="lazy"

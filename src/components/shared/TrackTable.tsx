@@ -1,3 +1,4 @@
+import { ArtworkImage } from "./ArtworkImage"
 import { useRef, useEffect, useCallback } from "react"
 import { Link } from "wouter"
 import {
@@ -125,7 +126,7 @@ function TrackRowCells({
       <td className="p-2">
         <div className="flex items-center gap-3">
           {track.thumbUrl ? (
-            <img className="h-10 w-10 rounded-sm flex-shrink-0 object-cover" src={track.thumbUrl} alt="" />
+            <ArtworkImage className="h-10 w-10 rounded-sm flex-shrink-0 object-cover" src={track.thumbUrl} alt="" />
           ) : (
             <div className="h-10 w-10 rounded-sm flex-shrink-0 bg-app-surface" />
           )}

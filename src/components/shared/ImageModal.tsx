@@ -1,3 +1,4 @@
+import { ArtworkImage } from "./ArtworkImage"
 import { useLayoutEffect, useRef } from "react"
 import { createPortal } from "react-dom"
 import { IconX } from "@tabler/icons-react"
@@ -105,7 +106,7 @@ export function ImageModal({
       >
         <IconX size={24} aria-hidden="true" />
       </button>
-      <img
+      <ArtworkImage loading="eager"
         src={src}
         alt={alt}
         className={

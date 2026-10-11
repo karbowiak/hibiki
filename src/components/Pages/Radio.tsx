@@ -1,3 +1,4 @@
+import { ArtworkImage } from "../shared/ArtworkImage"
 import { useEffect, useState } from "react"
 import { useLocation } from "wouter"
 import { usePlayerStore } from "../../stores/playerStore"
@@ -120,7 +121,7 @@ export function RadioPage({ stationType }: Props) {
       {/* Station art / icon */}
       <div className="mb-6 h-40 w-40 overflow-hidden rounded-xl shadow-2xl flex items-center justify-center bg-gradient-to-br from-[#2d1b4e] to-[#1a3a5c]">
         {thumb ? (
-          <img src={thumb} alt="" className="h-full w-full object-cover" />
+          <ArtworkImage loading="eager" src={thumb} alt="" className="h-full w-full object-cover" />
         ) : (
           <svg height="64" width="64" viewBox="0 0 24 24" fill="currentColor" className="text-white/40">
             <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6zm-2 16a2 2 0 1 1 0-4 2 2 0 0 1 0 4z" />
@@ -161,7 +162,7 @@ export function RadioPage({ stationType }: Props) {
           </div>
           <div className="flex items-center gap-3">
             {nowPlayingThumb ? (
-              <img src={nowPlayingThumb} alt="" className="h-12 w-12 rounded object-cover flex-shrink-0" />
+              <ArtworkImage loading="eager" src={nowPlayingThumb} alt="" className="h-12 w-12 rounded object-cover flex-shrink-0" />
             ) : (
               <div className="h-12 w-12 rounded bg-white/10 flex-shrink-0" />
             )}

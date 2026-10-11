@@ -1,3 +1,4 @@
+import { ArtworkImage } from "../shared/ArtworkImage"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 import { useLibraryStore, usePlayerStore, useUIStore } from "../../stores"
@@ -182,7 +183,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
         <div className="relative z-10 flex flex-row items-end w-full gap-0">
           {/* Cover art */}
           {thumbUrl ? (
-            <img src={thumbUrl} alt="" className="w-60 h-60 rounded-md shadow-2xl object-cover flex-shrink-0" />
+            <ArtworkImage loading="eager" src={thumbUrl} alt="" className="w-60 h-60 rounded-md shadow-2xl object-cover flex-shrink-0" />
           ) : (
             <div className="w-60 h-60 rounded-md bg-app-surface shadow-2xl flex-shrink-0" />
           )}

@@ -14,12 +14,12 @@ const appleOriginal = useItunesMetadataStore.getState()
 const priorityOriginal = useMetadataSourceStore.getState().priority
 let root: Root
 let requests: string[]
-function Harness({ artist = "Artist", plex = "plex-art" }: { artist?: string; plex?: string | null }) {
-  const album = useAlbumImage(artist, "Album", plex, "album-id")
-  const image = useArtistImage(artist, plex, "artist-id")
+function Harness({ artist = "Artist", plex = "plex-art", failures = [] }: { artist?: string; plex?: string | null; failures?: string[] }) {
+  const album = useAlbumImage(artist, "Album", plex, "album-id", failures)
+  const image = useArtistImage(artist, plex, "artist-id", failures)
   return <output>{JSON.stringify({ album, image })}</output>
 }
-async function render(props: { artist?: string; plex?: string | null } = {}) {
+async function render(props: { artist?: string; plex?: string | null; failures?: string[] } = {}) {
   await act(async () => { root.render(<Harness {...props} />) })
 }
 beforeEach(() => {
@@ -80,4 +80,16 @@ test("changing entity does not display the previous entity's external image", as
   await render({ artist: "Other", plex: "new-plex" })
   expect(document.querySelector("output")!.textContent).not.toContain("fixture%2Fold")
   expect(document.querySelector("output")!.textContent).toContain("new-plex")
+})
+
+test("failed Plex artwork enables the next preferred provider, then skips a failed Apple image", async () => {
+  useMetadataSourceStore.setState({ priority: ["plex", "apple", "deezer"] })
+  await render({ failures: ["plex-art"] })
+  expect(requests).toContain("apple-album:Artist")
+  await act(() => useItunesMetadataStore.setState({ albums: { "artist::album": { data: { cover_url: "https://fixture/apple" } as any, cachedAt: Date.now() } } }))
+  const appleUrl = JSON.parse(document.querySelector("output")!.textContent!).album
+  expect(appleUrl).toContain("fixture%2Fapple")
+  await render({ failures: ["plex-art", appleUrl] })
+  expect(JSON.parse(document.querySelector("output")!.textContent!).album).toBeNull()
+  expect(requests).toContain("deezer-album:Artist")
 })

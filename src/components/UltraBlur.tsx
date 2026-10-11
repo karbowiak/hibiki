@@ -1,3 +1,4 @@
+import { ArtworkImage } from "./shared/ArtworkImage"
 interface Props {
   src: string | null
   className?: string
@@ -15,7 +16,7 @@ export function UltraBlur({ src, className = "" }: Props) {
       className={`absolute inset-0 overflow-hidden ${className}`}
       aria-hidden
     >
-      <img
+      <ArtworkImage loading="eager"
         src={src}
         alt=""
         className="h-full w-full object-cover"

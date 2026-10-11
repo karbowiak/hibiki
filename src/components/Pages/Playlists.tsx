@@ -1,3 +1,4 @@
+import { ArtworkImage } from "../shared/ArtworkImage"
 import { useShallow } from "zustand/react/shallow"
 import { useLibraryStore } from "../../stores"
 import { usePlayerStore } from "../../stores/playerStore"
@@ -56,7 +57,7 @@ export function Playlists() {
                 >
                   <div className="relative w-full aspect-square overflow-hidden rounded-md bg-app-surface shadow-lg">
                     {pl.thumbUrl ? (
-                      <img
+                      <ArtworkImage
                         src={pl.thumbUrl}
                         alt={pl.title}
                         loading="lazy"

@@ -1,3 +1,5 @@
+import { ArtworkImage, useArtworkFailures } from "../shared/ArtworkImage"
+import { useArtistImage } from "../../hooks/useMediaImage"
 import { useLayoutEffect, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { Link } from "wouter"
@@ -22,7 +24,7 @@ import {
 } from "../../stores/metadataCache"
 import { useDeezerMetadataStore } from "../../metadata/deezer/store"
 import { useArtistEnrichment } from "../../hooks/useMetadataEnrichment"
-import { buildImageUrl, buildExternalImageUrl } from "../../lib/imageUrl"
+import { buildExternalImageUrl } from "../../lib/imageUrl"
 import { formatMs } from "../../lib/formatters"
 import { ImageModal } from "../shared/ImageModal"
 import { deduplicateHubAlbums } from "../../lib/dedup"
@@ -71,7 +73,7 @@ function DeezerArtistAvatar({ name }: { name: string }) {
 
   const cachedUrl = buildExternalImageUrl(imageUrl)
   if (cachedUrl) {
-    return <img src={cachedUrl} alt={name} className="h-16 w-16 rounded-md object-cover" />
+    return <ArtworkImage src={cachedUrl} alt={name} className="h-16 w-16 rounded-md object-cover" />
   }
   return (
     <div className="flex h-16 w-16 items-center justify-center rounded-md bg-white/10 text-xl font-bold text-white/30">
@@ -184,16 +186,9 @@ export function ArtistPage({ artistId }: { artistId: string }) {
     }
   }, [artistId, provider, pageRefreshKey, shouldDedup])
 
-  // Compute artUrl before early returns so useFocalPoint can be called unconditionally.
-  // Respect source priority — iterate through priority order, pick first source with an image.
-  const plexArt   = artist?.artUrl ?? null
-  const deezerUrl = deezerData?.image_url ? buildImageUrl("artist", artistId, deezerData.image_url, artist?.title) : null
-  let artUrl: string | null = null
-  for (const src of priority) {
-    if (src === "plex"   && plexArt)   { artUrl = plexArt;   break }
-    if (src === "deezer" && deezerUrl) { artUrl = deezerUrl; break }
-  }
-  if (!artUrl) artUrl = plexArt ?? deezerUrl ?? null
+  const { failures, onFailure } = useArtworkFailures(JSON.stringify([artistId, artist?.title, artist?.thumbUrl, artist?.artUrl]))
+  const artUrl = useArtistImage(artist?.title ?? null, artist?.artUrl ?? null, artistId, failures)
+  const thumbUrl = useArtistImage(artist?.title ?? null, artist?.thumbUrl ?? null, artistId, failures)
   const heroBgPos = useFocalPoint(artUrl)
 
   // Map from lowercase artist name → provider ID for "Fans Also Like" linking.
@@ -257,14 +252,6 @@ export function ArtistPage({ artistId }: { artistId: string }) {
   if (error) return <div className="p-8 text-sm text-red-400">{error}</div>
   if (!artist) return null
 
-  const plexThumb = artist.thumbUrl ?? null
-  let thumbUrl: string | null = null
-  for (const src of priority) {
-    if (src === "plex"   && plexThumb) { thumbUrl = plexThumb; break }
-    if (src === "deezer" && deezerUrl) { thumbUrl = deezerUrl; break }
-  }
-  if (!thumbUrl) thumbUrl = plexThumb ?? deezerUrl ?? null
-
   const artistUri = provider?.buildItemUri
     ? provider.buildItemUri(`/library/metadata/${artistId}`)
     : null
@@ -302,6 +289,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
         className="relative flex items-end bg-cover p-8 transition-[min-height] duration-500 ease-in-out min-h-80 hero-overlay"
         style={artUrl ? { backgroundImage: `url(${artUrl})`, backgroundPosition: heroBgPos } : undefined}
       >
+        {artUrl && <ArtworkImage src={artUrl} onFailure={onFailure} loading="eager" alt="" className="hidden" />}
         {/* UltraBlur fallback when there's no wide banner art */}
         {!artUrl && <UltraBlur src={thumbUrl} />}
 
@@ -447,7 +435,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
               onClick={e => { e.currentTarget.focus({ preventScroll: true }); setShowImageModal(true) }}
               className="h-36 w-36 flex-shrink-0 rounded-lg shadow-2xl ring-2 ring-transparent hover:ring-white/40 focus-visible:ring-white/70 focus-visible:outline-none transition-all"
             >
-              <img src={thumbUrl} alt="" className="h-full w-full rounded-lg object-cover" />
+              <ArtworkImage src={thumbUrl} onFailure={onFailure} loading="eager" alt="" className="h-full w-full rounded-lg object-cover" />
             </button>
           ) : (
             <div className="h-36 w-36 flex-shrink-0 rounded-lg bg-app-surface shadow-2xl" />

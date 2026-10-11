@@ -42,8 +42,10 @@ export function useArtistImage(
   artistName: string | null,
   plexThumb: string | null,
   artistId?: string | null,
+  failedUrls: readonly string[] = [],
 ): string | null {
   const priority = useMetadataSourceStore(s => s.priority)
+  if (plexThumb && failedUrls.includes(plexThumb)) plexThumb = null
 
   const key = artistName?.toLowerCase() ?? ""
   // Stable selector — returns the existing CacheEntry object ref (or undefined).
@@ -60,7 +62,8 @@ export function useArtistImage(
     void getDeezerArtist(artistName)
   }, [priority, plexThumb, deezerHydrated, artistName, deezerEntry !== undefined, getDeezerArtist])
 
-  const deezerUrl = deezerEntry?.data?.image_url ?? null
+  const rawDeezerUrl = deezerEntry?.data?.image_url ?? null
+  const deezerUrl = rawDeezerUrl && !failedUrls.includes(buildImageUrl("artist", artistId ?? key, rawDeezerUrl, artistName) ?? "") ? rawDeezerUrl : null
 
   for (const source of priority) {
     if (source === "plex" && plexThumb) return plexThumb
@@ -89,8 +92,10 @@ export function useAlbumImage(
   albumName: string | null,
   plexThumb: string | null,
   albumId?: string | null,
+  failedUrls: readonly string[] = [],
 ): string | null {
   const priority = useMetadataSourceStore(s => s.priority)
+  if (plexThumb && failedUrls.includes(plexThumb)) plexThumb = null
 
   const key =
     artistName && albumName
@@ -104,8 +109,10 @@ export function useAlbumImage(
   const deezerHydrated = useDeezerMetadataStore(s => s._hasHydrated)
   const itunesHydrated = useItunesMetadataStore(s => s._hasHydrated)
 
-  const deezerUrl = deezerEntry?.data?.cover_url ?? null
-  const appleUrl  = itunesEntry?.data?.cover_url ?? null
+  const rawDeezerUrl = deezerEntry?.data?.cover_url ?? null
+  const deezerUrl = rawDeezerUrl && !failedUrls.includes(buildImageUrl("album", albumId ?? key, rawDeezerUrl, albumName, artistName) ?? "") ? rawDeezerUrl : null
+  const rawAppleUrl = itunesEntry?.data?.cover_url ?? null
+  const appleUrl = rawAppleUrl && !failedUrls.includes(buildImageUrl("album", albumId ?? key, rawAppleUrl, albumName, artistName) ?? "") ? rawAppleUrl : null
 
   // Warm caches when entries are missing.
   // Gate on hydration to avoid firing fetches before IndexedDB data loads.

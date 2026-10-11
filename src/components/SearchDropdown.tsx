@@ -1,3 +1,4 @@
+import { ArtworkImage } from "./shared/ArtworkImage"
 import { useEffect } from "react"
 import { useLocation } from "wouter"
 import { useShallow } from "zustand/react/shallow"
@@ -95,7 +96,7 @@ export function SearchDropdown({ activeIndex, onActiveIndexChange, onClose }: Pr
               onClick={() => activateItem(idx)}
             >
               {thumb ? (
-                <img src={thumb} alt="" className="h-9 w-9 rounded-md object-cover flex-shrink-0" />
+                <ArtworkImage loading="eager" src={thumb} alt="" className="h-9 w-9 rounded-md object-cover flex-shrink-0" />
               ) : (
                 <div className="h-9 w-9 rounded-md bg-white/10 flex-shrink-0" />
               )}
@@ -118,7 +119,7 @@ export function SearchDropdown({ activeIndex, onActiveIndexChange, onClose }: Pr
               onClick={() => activateItem(idx)}
             >
               {thumb ? (
-                <img src={thumb} alt="" className="h-9 w-9 rounded object-cover flex-shrink-0" />
+                <ArtworkImage loading="eager" src={thumb} alt="" className="h-9 w-9 rounded object-cover flex-shrink-0" />
               ) : (
                 <div className="h-9 w-9 rounded bg-white/10 flex-shrink-0" />
               )}
@@ -142,7 +143,7 @@ export function SearchDropdown({ activeIndex, onActiveIndexChange, onClose }: Pr
             onClick={() => activateItem(idx)}
           >
             {thumb ? (
-              <img src={thumb} alt="" className="h-9 w-9 rounded object-cover flex-shrink-0" />
+              <ArtworkImage loading="eager" src={thumb} alt="" className="h-9 w-9 rounded object-cover flex-shrink-0" />
             ) : (
               <div className="h-9 w-9 rounded bg-white/10 flex-shrink-0" />
             )}

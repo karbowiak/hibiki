@@ -1,3 +1,4 @@
+import { ArtworkImage, useArtworkFailures } from "./shared/ArtworkImage"
 import { Link } from "wouter"
 import clsx from "clsx"
 import { useTrackDrag } from "../hooks/useTrackDrag"
@@ -10,6 +11,7 @@ interface MediaCardProps {
   thumb: string | null
   /** Fallback image URL shown when `thumb` is null (e.g. an image:// cached external URL). */
   thumbFallback?: string | null
+  onImageFailure?: (url: string) => void
   isArtist?: boolean
   /** When true, fixes card at 160px wide and prevents flex shrink (for scroll rows) */
   scrollItem?: boolean
@@ -35,8 +37,9 @@ interface MediaCardProps {
  * Separate component to satisfy React's rules of hooks.
  */
 function ArtistImageCard({ artistName, thumb, ...rest }: MediaCardProps & { artistName: string }) {
-  const resolved = useArtistImage(artistName, thumb)
-  return <MediaCardInner {...rest} thumb={resolved} />
+  const { failures, onFailure } = useArtworkFailures(JSON.stringify([artistName, thumb]))
+  const resolved = useArtistImage(artistName, thumb, undefined, failures)
+  return <MediaCardInner {...rest} thumb={resolved} onImageFailure={onFailure} />
 }
 
 /**
@@ -44,8 +47,9 @@ function ArtistImageCard({ artistName, thumb, ...rest }: MediaCardProps & { arti
  * Separate component to satisfy React's rules of hooks.
  */
 function AlbumImageCard({ artistName, albumName, thumb, ...rest }: MediaCardProps & { artistName: string; albumName: string }) {
-  const resolved = useAlbumImage(artistName, albumName, thumb)
-  return <MediaCardInner {...rest} thumb={resolved} />
+  const { failures, onFailure } = useArtworkFailures(JSON.stringify([artistName, albumName, thumb]))
+  const resolved = useAlbumImage(artistName, albumName, thumb, undefined, failures)
+  return <MediaCardInner {...rest} thumb={resolved} onImageFailure={onFailure} />
 }
 
 export function MediaCard(props: MediaCardProps) {
@@ -62,7 +66,7 @@ export function MediaCard(props: MediaCardProps) {
   return <MediaCardInner {...props} />
 }
 
-function MediaCardInner({ title, desc, thumb, thumbFallback, scrollItem, large, href, onClick, prefetch, onPlay, onContextMenu, dragPayload }: MediaCardProps) {
+function MediaCardInner({ title, desc, thumb, thumbFallback, scrollItem, large, href, onClick, prefetch, onPlay, onContextMenu, dragPayload, onImageFailure }: MediaCardProps) {
   const displayThumb = thumb || thumbFallback || null
   const trackDrag = useTrackDrag()
   const scrollStyle = scrollItem
@@ -79,7 +83,8 @@ function MediaCardInner({ title, desc, thumb, thumbFallback, scrollItem, large, 
     <>
       <div className="relative mb-3">
         {displayThumb ? (
-          <img
+          <ArtworkImage
+            onFailure={onImageFailure}
             src={displayThumb}
             alt={title}
             draggable={false}
