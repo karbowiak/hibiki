@@ -3,6 +3,27 @@ import { RustAudioEngine, type AudioTransport } from "../src/audio/RustAudioEngi
 import { PlaybackJournal, type TrackEnded } from "../src/audio/playbackJournal"
 import { deferred, settle } from "./helpers/radioAudioFakes"
 
+test("cache mutations wait for native completion, preserve order and propagate failure", async () => {
+  const clear = deferred<{ total_bytes: number; file_count: number; max_bytes: number }>()
+  const calls: { command: string; args: unknown }[] = []
+  const stats = { total_bytes: 0, file_count: 0, max_bytes: 20 }
+  const audio = new RustAudioEngine({
+    invoke: ((command: string, args: unknown) => {
+      calls.push({ command, args })
+      return command === "audio_clear_cache" ? clear.promise : Promise.resolve(stats)
+    }) as AudioTransport["invoke"], listen: async () => () => {},
+  })
+  const clearing = audio.clearCache()
+  expect(clearing).toBeInstanceOf(Promise)
+  const setting = audio.setCacheMaxBytes(20)
+  await settle()
+  expect(calls).toHaveLength(1)
+  clear.reject(new Error("disk unavailable"))
+  await expect(clearing).rejects.toThrow("disk unavailable")
+  expect(await setting).toEqual(stats)
+  expect(calls[1]).toEqual({ command: "audio_set_cache_max_bytes", args: { bytes: 20 } })
+})
+
 test("EQ snapshots reach native admission in order and isolate their gain arrays", async () => {
   const requests: { args: any; result: ReturnType<typeof deferred<number>> }[] =
     []

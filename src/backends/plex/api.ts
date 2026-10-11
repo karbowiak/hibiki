@@ -161,18 +161,18 @@ export function audioPrefetch(url: string): Promise<void> {
 }
 
 /** Get current audio cache usage: bytes used and file count. */
-export function audioCacheInfo(): Promise<{ size_bytes: number; file_count: number }> {
-  return invoke("audio_cache_info")
+export function audioCacheInfo(): Promise<import("../../audio/RustAudioEngine").AudioCacheStats> {
+  return invoke("audio_get_cache_stats")
 }
 
 /** Delete all audio cache files from disk. */
-export function audioClearCache(): Promise<void> {
+export function audioClearCache(): Promise<import("../../audio/RustAudioEngine").AudioCacheStats> {
   return invoke("audio_clear_cache")
 }
 
 /** Set the maximum audio cache size in bytes. Pass 0 for unlimited. */
-export function audioSetCacheMaxBytes(maxBytes: number): Promise<void> {
-  return invoke("audio_set_cache_max_bytes", { maxBytes })
+export function audioSetCacheMaxBytes(maxBytes: number): Promise<import("../../audio/RustAudioEngine").AudioCacheStats> {
+  return invoke("audio_set_cache_max_bytes", { bytes: maxBytes })
 }
 
 /**

@@ -1,6 +1,6 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
-import { engine } from "../audio/RustAudioEngine"
+import { engine, type AudioCacheStats } from "../audio/RustAudioEngine"
 
 // ---------------------------------------------------------------------------
 // Store
@@ -9,8 +9,8 @@ import { engine } from "../audio/RustAudioEngine"
 interface AudioSettingsState {
   cacheMaxBytes: number
 
-  setCacheMaxBytes: (bytes: number) => void
-  syncToEngine: () => void
+  setCacheMaxBytes: (bytes: number) => Promise<AudioCacheStats>
+  syncToEngine: () => Promise<void>
 }
 
 export const useAudioSettingsStore = create<AudioSettingsState>()(
@@ -18,12 +18,13 @@ export const useAudioSettingsStore = create<AudioSettingsState>()(
     (set, get) => ({
       cacheMaxBytes: 5 * 1024 * 1024 * 1024, // 5 GB default
 
-      setCacheMaxBytes: (bytes) => {
-        set({ cacheMaxBytes: bytes })
-        engine.setCacheMaxBytes(bytes)
+      setCacheMaxBytes: async (bytes) => {
+        const stats = await engine.setCacheMaxBytes(bytes)
+        set({ cacheMaxBytes: stats.max_bytes })
+        return stats
       },
 
-      syncToEngine: () => {
+      syncToEngine: async () => {
         const { cacheMaxBytes } = get()
         // Hardcoded defaults — always on, not user-configurable
         engine.setNormalizationEnabled(true)
@@ -33,7 +34,7 @@ export const useAudioSettingsStore = create<AudioSettingsState>()(
         engine.setSmartCrossfade(true) // always use MixRamp when available
         engine.setSmartCrossfadeMax(15000)
         engine.setMixrampDb(-16)
-        engine.setCacheMaxBytes(cacheMaxBytes)
+        await engine.setCacheMaxBytes(cacheMaxBytes)
       },
     }),
     {
@@ -41,6 +42,10 @@ export const useAudioSettingsStore = create<AudioSettingsState>()(
       partialize: (state) => ({
         cacheMaxBytes: state.cacheMaxBytes,
       }),
+      merge: (saved, current) => {
+        const bytes = saved && typeof saved === "object" ? (saved as Partial<AudioSettingsState>).cacheMaxBytes : undefined
+        return { ...current, cacheMaxBytes: typeof bytes === "number" && Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : current.cacheMaxBytes }
+      },
     },
   ),
 )

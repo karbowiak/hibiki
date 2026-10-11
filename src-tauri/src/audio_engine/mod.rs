@@ -610,12 +610,6 @@ fn control_thread_main(
                     crossfade_settings.clone(),
                 ));
             }
-            Command::SetCacheMaxBytes { bytes } => {
-                cache.set_max_bytes(bytes);
-            }
-            Command::ClearCache => {
-                cache.clear();
-            }
             Command::Shutdown => break,
             _ => unreachable!("interactive commands are dispatched directly to the callback"),
         }

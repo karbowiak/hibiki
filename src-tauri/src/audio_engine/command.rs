@@ -56,10 +56,6 @@ pub enum Command {
     // -- Visualizer --
     SetVisualizerEnabled { enabled: bool },
 
-    // -- Cache --
-    SetCacheMaxBytes { bytes: u64 },
-    ClearCache,
-
     // -- Lifecycle --
     DuckAndApply { duck_ms: u32 },
     Shutdown,

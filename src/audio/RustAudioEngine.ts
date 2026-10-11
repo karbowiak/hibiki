@@ -30,6 +30,12 @@ export interface AudioEngineCallbacks {
   onVisFrame?(samples: Float32Array): void
 }
 
+export interface AudioCacheStats {
+  total_bytes: number
+  file_count: number
+  max_bytes: number
+}
+
 // ---------------------------------------------------------------------------
 // Event payloads from Rust
 // ---------------------------------------------------------------------------
@@ -59,6 +65,7 @@ export interface EqConfiguration {
 }
 
 export class RustAudioEngine {
+  private cacheTail: Promise<void> = Promise.resolve()
   constructor(private ipc: AudioTransport = { invoke, listen }) {}
   private cb: AudioEngineCallbacks | null = null
   private eventGate = new PlaybackEventGate()
@@ -342,15 +349,22 @@ export class RustAudioEngine {
   // Audio file cache
   // ---------------------------------------------------------------------------
 
-  setCacheMaxBytes(bytes: number): void {
-    this.sendControl("audio_set_cache_max_bytes", { bytes })
+  setCacheMaxBytes(bytes: number): Promise<AudioCacheStats> {
+    if (!Number.isSafeInteger(bytes) || bytes < 0) return Promise.reject(new Error("Invalid audio cache limit"))
+    return this.cacheMutation("audio_set_cache_max_bytes", { bytes })
   }
 
-  clearCache(): void {
-    this.sendControl("audio_clear_cache")
+  clearCache(): Promise<AudioCacheStats> {
+    return this.cacheMutation("audio_clear_cache")
   }
 
-  async getCacheStats(): Promise<{ total_bytes: number; file_count: number; max_bytes: number }> {
+  private cacheMutation(command: string, args?: Record<string, unknown>): Promise<AudioCacheStats> {
+    const operation = this.cacheTail.then(() => this.ipc.invoke<AudioCacheStats>(command, args))
+    this.cacheTail = operation.then(() => {}, () => {})
+    return operation
+  }
+
+  async getCacheStats(): Promise<AudioCacheStats> {
     return this.ipc.invoke("audio_get_cache_stats")
   }
 

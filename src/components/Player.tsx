@@ -397,7 +397,7 @@ export function Player() {
       if (!active) { fn(); return }
       cleanup = fn
       syncToEngine()
-      syncAudioSettings()
+      void syncAudioSettings().catch(error => { if (active) usePlayerStore.setState({ playerError: String(error) }) })
       useDeviceStore.getState().initDeviceTracking()
     })
     return () => {

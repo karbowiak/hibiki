@@ -282,25 +282,65 @@ pub async fn audio_get_output_available(
 // Cache
 // ---------------------------------------------------------------------------
 
+async fn cache_work<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|_| "Audio cache worker failed".to_string())?
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::cache_work;
+
+    #[tokio::test]
+    async fn cache_reply_waits_for_worker_completion_and_preserves_errors() {
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (release, receiver) = std::sync::mpsc::channel();
+        let mut operation = tokio::spawn(cache_work(move || {
+            started.send(()).unwrap();
+            receiver.recv().unwrap();
+            Ok(42)
+        }));
+        ready.await.unwrap();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), &mut operation)
+                .await
+                .is_err()
+        );
+        release.send(()).unwrap();
+        assert_eq!(operation.await.unwrap().unwrap(), 42);
+        assert_eq!(
+            cache_work::<()>(|| Err("storage unavailable".into()))
+                .await
+                .unwrap_err(),
+            "storage unavailable"
+        );
+    }
+}
+
 #[tauri::command]
 pub async fn audio_set_cache_max_bytes(
     bytes: u64,
     state: State<'_, AudioEngineState>,
-) -> Result<(), String> {
-    state
-        .0
-        .send(Command::SetCacheMaxBytes { bytes })
-        .map(|_| ())
+) -> Result<super::cache::CacheStats, String> {
+    let cache = state.0.cache().clone();
+    cache_work(move || cache.set_max_bytes(bytes)).await
 }
 
 #[tauri::command]
-pub async fn audio_clear_cache(state: State<'_, AudioEngineState>) -> Result<(), String> {
-    state.0.send(Command::ClearCache).map(|_| ())
+pub async fn audio_clear_cache(
+    state: State<'_, AudioEngineState>,
+) -> Result<super::cache::CacheStats, String> {
+    let cache = state.0.cache().clone();
+    cache_work(move || cache.clear()).await
 }
 
 #[tauri::command]
 pub async fn audio_get_cache_stats(
     state: State<'_, AudioEngineState>,
 ) -> Result<super::cache::CacheStats, String> {
-    Ok(state.0.cache().stats())
+    let cache = state.0.cache().clone();
+    cache_work(move || Ok(cache.stats())).await
 }

@@ -124,7 +124,7 @@ impl CacheIndex {
         read().unwrap_or_default()
     }
 
-    fn save(&self, path: &Path) {
+    fn persist(&self, path: &Path) -> Result<(), String> {
         let save = || -> Result<(), String> {
             let json = serde_json::to_vec(self).map_err(|error| error.to_string())?;
             if json.len() as u64 > MAX_INDEX_BYTES {
@@ -142,7 +142,11 @@ impl CacheIndex {
             temp.persist(path).map_err(|error| error.to_string())?;
             Ok(())
         };
-        if let Err(error) = save() {
+        save()
+    }
+
+    fn save(&self, path: &Path) {
+        if let Err(error) = self.persist(path) {
             warn!(%error, "failed to persist audio cache index");
         }
     }
@@ -361,74 +365,117 @@ impl AudioCache {
     }
 
     /// Update the maximum cache size and trigger eviction if needed.
-    pub fn set_max_bytes(&self, max: u64) {
-        if !self.available || !self.owner.directory_is_current() {
-            return;
-        }
-        if let Ok(mut idx) = self.index.lock() {
-            self.max_bytes.store(max, Ordering::Release);
-            if max != 0 && idx.partial_bytes > max {
-                self.owner.generation.fetch_add(1, Ordering::AcqRel);
-                if let Ok(files) = fs::read_dir(&self.cache_dir) {
-                    for file in files.flatten() {
-                        if file
-                            .file_name()
-                            .to_str()
-                            .is_some_and(owned_partial_filename)
-                        {
-                            let _ = fs::remove_file(file.path());
-                        }
-                    }
-                }
-                idx.partials.clear();
-                idx.partial_bytes = 0;
+    pub fn set_max_bytes(&self, max: u64) -> Result<CacheStats, String> {
+        self.check_directory()?;
+        let mut idx = self
+            .index
+            .lock()
+            .map_err(|_| "audio cache index unavailable")?;
+        let previous = self.max_bytes.swap(max, Ordering::AcqRel);
+        if max != 0 && idx.partial_bytes > max {
+            self.owner.generation.fetch_add(1, Ordering::AcqRel);
+            if let Err(error) = self.remove_partials(&mut idx) {
+                self.max_bytes.store(previous, Ordering::Release);
+                return Err(error);
             }
-            let _ = make_room(&self.cache_dir, &mut idx, max, 0, 0, self.entry_limit);
-            idx.save(&self.index_path());
+        }
+        let result = make_room(&self.cache_dir, &mut idx, max, 0, 0, self.entry_limit);
+        let saved = idx.persist(&self.index_path());
+        if let Err(error) = result.and(saved) {
+            self.max_bytes.store(previous, Ordering::Release);
+            return Err(error);
+        }
+        Ok(self.stats_with_index(&idx))
+    }
+
+    fn check_directory(&self) -> Result<(), String> {
+        if !self.available || !self.owner.directory_is_current() {
+            Err("Audio cache directory is unavailable or has moved. Restart Hibiki after checking storage permissions.".into())
+        } else {
+            Ok(())
         }
     }
 
-    /// Remove all cached files and reset the index.
-    pub fn clear(&self) {
-        if !self.available || !self.owner.directory_is_current() {
-            return;
-        }
-        if let Ok(mut idx) = self.index.lock() {
-            self.owner.generation.fetch_add(1, Ordering::AcqRel);
-            for (key, entry) in &idx.entries {
-                if valid_filename(key, &entry.filename) {
-                    let _ = fs::remove_file(self.cache_dir.join(&entry.filename));
-                }
-            }
-            // Also remove any .part files
-            if let Ok(dir) = fs::read_dir(&self.cache_dir) {
-                for entry in dir.flatten() {
+    fn remove_partials(&self, idx: &mut CacheIndex) -> Result<(), String> {
+        let directory = fs::read_dir(&self.cache_dir)
+            .map_err(|error| format!("Cannot read audio cache: {error}"))?;
+        let mut failure = None;
+        for entry in directory {
+            match entry {
+                Ok(entry)
                     if entry
                         .file_name()
                         .to_str()
-                        .is_some_and(owned_partial_filename)
-                    {
-                        let _ = fs::remove_file(entry.path());
+                        .is_some_and(owned_partial_filename) =>
+                {
+                    if let Err(error) = fs::remove_file(entry.path()) {
+                        if error.kind() != std::io::ErrorKind::NotFound {
+                            failure = Some(format!("Could not remove incomplete audio: {error}"));
+                        }
                     }
                 }
+                Err(error) => {
+                    failure = Some(format!("Cannot read audio cache: {error}"));
+                }
+                _ => {}
             }
-            idx.entries.clear();
-            idx.total_bytes = 0;
-            idx.partials.clear();
-            idx.partial_bytes = 0;
-            idx.save(&self.index_path());
+        }
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        idx.partials.clear();
+        idx.partial_bytes = 0;
+        Ok(())
+    }
+
+    /// Retire downloads and return an acknowledged snapshot after deletion.
+    pub fn clear(&self) -> Result<CacheStats, String> {
+        self.check_directory()?;
+        let mut idx = self
+            .index
+            .lock()
+            .map_err(|_| "audio cache index unavailable")?;
+        self.owner.generation.fetch_add(1, Ordering::AcqRel);
+        let mut failure = self.remove_partials(&mut idx).err();
+        idx.entries.retain(|key, entry| {
+            if !valid_filename(key, &entry.filename) {
+                return false;
+            }
+            match fs::remove_file(self.cache_dir.join(&entry.filename)) {
+                Ok(()) => false,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                Err(error) => {
+                    failure = Some(format!("Could not remove cached audio: {error}"));
+                    true
+                }
+            }
+        });
+        idx.total_bytes = idx
+            .entries
+            .values()
+            .fold(0_u64, |total, entry| total.saturating_add(entry.size_bytes));
+        if let Err(error) = idx.persist(&self.index_path()) {
+            failure = Some(error);
+        }
+        if let Some(error) = failure {
+            return Err(error);
         }
         info!("audio cache cleared");
+        Ok(self.stats_with_index(&idx))
+    }
+
+    fn stats_with_index(&self, idx: &CacheIndex) -> CacheStats {
+        CacheStats {
+            total_bytes: idx.total_bytes.saturating_add(idx.partial_bytes),
+            file_count: idx.entries.len(),
+            max_bytes: self.max_bytes.load(Ordering::Acquire),
+        }
     }
 
     /// Get cache statistics.
     pub fn stats(&self) -> CacheStats {
-        let idx = self.index.lock().unwrap();
-        CacheStats {
-            total_bytes: idx.total_bytes.saturating_add(idx.partial_bytes),
-            file_count: idx.entries.len(),
-            max_bytes: self.max_bytes.load(Ordering::Relaxed),
-        }
+        let idx = self.index.lock().unwrap_or_else(|error| error.into_inner());
+        self.stats_with_index(&idx)
     }
 
     /// Evict least-recently-accessed entries until under the max size.
@@ -876,6 +923,26 @@ pub fn extract_extension(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn clear_reports_deletion_failures_and_preserves_unexpected_directories() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = AudioCache::new(directory.path().into(), None);
+        let mut writer = cache.begin_write("42", "flac").unwrap();
+        writer.write_chunk(b"cached audio").unwrap();
+        writer.finish(&cache).unwrap();
+        let path = cache.lookup("42").unwrap();
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        fs::write(path.join("preserved.txt"), b"unrelated content").unwrap();
+        assert!(cache.clear().is_err());
+        assert_eq!(cache.stats().file_count, 1);
+        assert_eq!(
+            fs::read(path.join("preserved.txt")).unwrap(),
+            b"unrelated content"
+        );
+        let persisted = CacheIndex::load(&directory.path().join("index.json"));
+        assert_eq!(persisted.entries.len(), 1);
+    }
     #[cfg(unix)]
     #[test]
     fn startup_default_does_not_evict_a_larger_cache_before_preferences_are_restored() {
@@ -893,7 +960,7 @@ mod tests {
         let cache = AudioCache::new(directory.path().into(), None);
         assert!(cache.lookup("42").is_some());
         assert_eq!(cache.stats().total_bytes, DEFAULT_MAX_BYTES + 1);
-        cache.set_max_bytes(DEFAULT_MAX_BYTES + 2);
+        cache.set_max_bytes(DEFAULT_MAX_BYTES + 2).unwrap();
         assert!(cache.lookup("42").is_some());
     }
     #[test]
@@ -943,7 +1010,7 @@ mod tests {
         let cache = AudioCache::new(directory.path().into(), Some(10));
         let mut old = cache.begin_write("old", "flac").unwrap();
         old.write_chunk(&[0; 6]).unwrap();
-        cache.clear();
+        cache.clear().unwrap();
         let mut fresh = cache.begin_write("fresh", "flac").unwrap();
         fresh.write_chunk(&[1; 6]).unwrap();
         drop(old);
@@ -994,7 +1061,7 @@ mod tests {
         let cache = AudioCache::new(directory.path().into(), Some(20));
         let mut pending = cache.begin_write("42", "flac").unwrap();
         pending.write_chunk(&[0; 16]).unwrap();
-        cache.set_max_bytes(5);
+        cache.set_max_bytes(5).unwrap();
         assert!(pending.finish(&cache).is_err());
         let mut fresh = cache.begin_write("new", "flac").unwrap();
         fresh.write_chunk(&[1; 5]).unwrap();
@@ -1027,7 +1094,7 @@ mod tests {
         fs::create_dir(&cache_dir).unwrap();
         fs::write(cache_dir.join("42.flac"), b"private data!").unwrap();
         let hit = cache.open("42");
-        cache.clear();
+        assert!(cache.clear().is_err());
         assert!(hit.is_none());
         assert_eq!(
             fs::read(cache_dir.join("42.flac")).unwrap(),
@@ -1047,7 +1114,7 @@ mod tests {
         write_index(&cache_dir, "42", "42.flac", 12);
         let cache = AudioCache::new(cache_dir, None);
         assert!(cache.open("42").is_none());
-        cache.clear();
+        cache.clear().unwrap();
         assert_eq!(fs::read(preserved).unwrap(), b"another file");
     }
     #[cfg(unix)]
@@ -1070,7 +1137,7 @@ mod tests {
         fs::rename(&cache_dir, directory.path().join("original-cache")).unwrap();
         symlink(&outside, &cache_dir).unwrap();
         let hit = cache.open("42");
-        cache.clear();
+        assert!(cache.clear().is_err());
         let continued = pending.write_chunk(b"late bytes");
         let finalized = pending.finish(&cache);
         assert_eq!(fs::read(outside.join("42.flac")).unwrap(), b"private data!");
@@ -1089,7 +1156,7 @@ mod tests {
         writer.write_chunk(b"currently playing audio").unwrap();
         writer.finish(&cache).unwrap();
         let mut playing = cache.open("42").unwrap();
-        cache.clear();
+        cache.clear().unwrap();
         assert!(cache.open("42").is_none());
         let mut bytes = Vec::new();
         playing.read_to_end(&mut bytes).unwrap();
@@ -1225,7 +1292,7 @@ mod tests {
             write_index(&cache_dir, "42", &filename, 23);
             let cache = AudioCache::new(cache_dir, None);
             let invalid_hit = cache.lookup("42");
-            cache.clear();
+            cache.clear().unwrap();
             assert_eq!(fs::read(&preserved).unwrap(), b"user data outside cache");
             assert!(invalid_hit.is_none());
             assert_eq!(cache.stats().file_count, 0);
@@ -1240,7 +1307,7 @@ mod tests {
         write_index(directory.path(), "42", "other.flac", 14);
         let cache = AudioCache::new(directory.path().into(), None);
         let invalid_hit = cache.lookup("42");
-        cache.clear();
+        cache.clear().unwrap();
         assert_eq!(fs::read(preserved).unwrap(), b"another source");
         assert!(invalid_hit.is_none());
     }
@@ -1253,7 +1320,7 @@ mod tests {
         fs::write(&unrelated, b"preserved unrelated file").unwrap();
         let mut obsolete = cache.begin_write("42", "flac").unwrap();
         obsolete.write_chunk(b"first chunk").unwrap();
-        cache.clear();
+        cache.clear().unwrap();
         assert!(obsolete.write_chunk(b"late chunk").is_err());
         assert!(obsolete.finish(&cache).is_err());
         assert_eq!(fs::read(unrelated).unwrap(), b"preserved unrelated file");
@@ -1312,7 +1379,7 @@ mod tests {
         write_index(&cache_dir, "42", "42.flac", 14);
         let cache = AudioCache::new(cache_dir.clone(), None);
         assert!(cache.lookup("42").is_none());
-        cache.clear();
+        cache.clear().unwrap();
         assert_eq!(fs::read(preserved).unwrap(), b"private source");
         let outside_index = directory.path().join("outside.json");
         fs::write(&outside_index, b"{\"entries\":{},\"total_bytes\":123}").unwrap();
@@ -1362,7 +1429,7 @@ mod tests {
         symlink(&outside, &cache_path).unwrap();
         let cache = AudioCache::new(cache_path, None);
         let hit = cache.lookup("42");
-        cache.clear();
+        assert!(cache.clear().is_err());
         assert_eq!(
             fs::read(outside.join("42.flac")).unwrap(),
             b"preserved source"
@@ -1457,7 +1524,7 @@ mod tests {
         assert_eq!(stats.total_bytes, 5);
 
         // Clear
-        cache.clear();
+        cache.clear().unwrap();
         assert!(cache.lookup("42").is_none());
         assert_eq!(cache.stats().file_count, 0);
     }

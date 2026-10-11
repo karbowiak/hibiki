@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-shell"
 import clsx from "clsx"
 import { clearImageCache, getImageCacheInfo, type ImageCacheInfo } from "../../lib/imageCache"
 import { engine } from "../../audio/RustAudioEngine"
+import { AudioCacheControls } from "../AudioCacheControls"
 import { getVersion } from "@tauri-apps/api/app"
 import { useAudioSettingsStore } from "../../stores/audioSettingsStore"
 import { useUpdateStore } from "../../stores/updateStore"
@@ -691,23 +692,11 @@ function VisualizerColorsCard() {
 // Cache section
 // ---------------------------------------------------------------------------
 
-const CACHE_SIZE_OPTIONS = [
-  { label: "1 GB", bytes: 1 * 1024 * 1024 * 1024 },
-  { label: "2 GB", bytes: 2 * 1024 * 1024 * 1024 },
-  { label: "5 GB", bytes: 5 * 1024 * 1024 * 1024 },
-  { label: "10 GB", bytes: 10 * 1024 * 1024 * 1024 },
-  { label: "20 GB", bytes: 20 * 1024 * 1024 * 1024 },
-  { label: "50 GB", bytes: 50 * 1024 * 1024 * 1024 },
-  { label: "Unlimited", bytes: 0 },
-]
-
 function CacheSection() {
   const [imgCacheInfo, setImgCacheInfo] = useState<ImageCacheInfo | null>(null)
   const [imgClearing, setImgClearing] = useState(false)
   const [libClearing, setLibClearing] = useState(false)
   const [metaClearing, setMetaClearing] = useState(false)
-  const [audioCacheStats, setAudioCacheStats] = useState<{ total_bytes: number; file_count: number; max_bytes: number } | null>(null)
-  const [audioCacheClearing, setAudioCacheClearing] = useState(false)
   const [, forceUpdate] = useState(0)
 
   const cacheMaxBytes = useAudioSettingsStore(s => s.cacheMaxBytes)
@@ -724,7 +713,6 @@ function CacheSection() {
 
   useEffect(() => {
     void getImageCacheInfo().then(setImgCacheInfo).catch(() => {})
-    void engine.getCacheStats().then(setAudioCacheStats).catch(() => {})
   }, [])
 
   async function handleClearImages() {
@@ -750,54 +738,11 @@ function CacheSection() {
     setTimeout(() => { setMetaClearing(false); forceUpdate(n => n + 1) }, 300)
   }
 
-  async function handleClearAudioCache() {
-    setAudioCacheClearing(true)
-    try {
-      engine.clearCache()
-      // Give Rust a moment to process, then refresh stats
-      await new Promise(r => setTimeout(r, 200))
-      const stats = await engine.getCacheStats()
-      setAudioCacheStats(stats)
-    } finally {
-      setAudioCacheClearing(false)
-    }
-  }
-
   return (
     <div className="flex flex-col gap-5 max-w-2xl">
       {/* Audio Cache */}
       <SettingCard title="Audio Cache" description="Cached audio files from Plex for instant replay. Tracks are cached as they play.">
-        <div className="flex items-center gap-4">
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-white">Cached Tracks</p>
-            <p className="text-xs text-white/40 mt-0.5">
-              {audioCacheStats
-                ? `${formatBytes(audioCacheStats.total_bytes)} · ${audioCacheStats.file_count} ${audioCacheStats.file_count === 1 ? "track" : "tracks"}`
-                : "Loading..."}
-            </p>
-          </div>
-          <button
-            onClick={() => void handleClearAudioCache()}
-            disabled={audioCacheClearing || (audioCacheStats?.file_count ?? 0) === 0}
-            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 hover:border-white/20 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
-          >
-            {audioCacheClearing ? "Clearing..." : "Clear"}
-          </button>
-        </div>
-        <div className="flex items-center gap-4 mt-3">
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-white">Max Cache Size</p>
-          </div>
-          <select
-            value={cacheMaxBytes}
-            onChange={e => setCacheMaxBytes(Number(e.target.value))}
-            className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/70 hover:border-white/20 transition-colors flex-shrink-0"
-          >
-            {CACHE_SIZE_OPTIONS.map(opt => (
-              <option key={opt.bytes} value={opt.bytes}>{opt.label}</option>
-            ))}
-          </select>
-        </div>
+        <AudioCacheControls backend={engine} maximum={cacheMaxBytes} onMaximumChange={setCacheMaxBytes} />
       </SettingCard>
 
       {/* Image Cache */}
