@@ -154,20 +154,27 @@ fn audible_callback() -> AudioCallbackState {
 #[test]
 fn pause_fades_to_silence_then_freezes_at_the_exact_audio_frame() {
     let mut cb = audible_callback();
+    assert!(!cb.output_is_idle());
     cb.handle_command(AudioCommand::SetVolume(0.5));
     cb.handle_command(AudioCommand::Pause);
+    assert!(
+        !cb.output_is_idle(),
+        "pause tail must reach the output converter"
+    );
     let mut output = [1.0; FADE_SAMPLES * 2]; // 300ms callback, but only the pause fade may advance
     cb.process_callback(&mut output);
     assert!((output[0] - 0.15).abs() < 1e-6);
     assert!(output[..FADE_SAMPLES].windows(2).all(|w| w[1] <= w[0]));
     assert!(output[FADE_SAMPLES..].iter().all(|sample| *sample == 0.0));
     assert_eq!(cb.deck_mgr.active_deck().position_ms(), 10 + FADE_MS);
+    assert!(cb.output_is_idle());
     let played = cb.deck_mgr.active_deck().played_frames;
     cb.process_callback(&mut output);
     assert!(output.iter().all(|sample| *sample == 0.0));
     assert_eq!(cb.deck_mgr.active_deck().position_ms(), 10 + FADE_MS);
     assert_eq!(cb.deck_mgr.active_deck().played_frames, played);
     cb.handle_command(AudioCommand::Resume);
+    assert!(!cb.output_is_idle());
     cb.process_callback(&mut output);
     assert_eq!(output[0], 0.0);
     assert!(output[..FADE_SAMPLES].windows(2).all(|w| w[1] >= w[0]));

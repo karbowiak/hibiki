@@ -11,6 +11,10 @@ pub trait RenderSource: Send {
     fn params(&self) -> OutputParams;
     fn render(&mut self, samples: &mut [f32]);
     fn poll(&mut self);
+    /// True only after source pause/stop fades have finished.
+    fn is_idle(&self) -> bool {
+        false
+    }
     fn has_audio_history(&self) -> bool {
         false
     }
@@ -123,6 +127,11 @@ struct SincOutput {
     pending_frames: usize,
     ready_frames: usize,
     read_frame: usize,
+    silent_frames: usize,
+    flush_frames: usize,
+    idle: bool,
+    #[cfg(test)]
+    processing_calls: usize,
 }
 
 impl SincOutput {
@@ -147,6 +156,7 @@ impl SincOutput {
             FixedAsync::Output,
         )
         .map_err(|error| format!("output resampler: {error}"))?;
+        let flush_frames = parameters.sinc_len + processor.input_frames_max();
         let input = vec![0.0; processor.input_frames_max() * 2];
         let output = vec![0.0; processor.output_frames_max() * 2];
         Ok(Self {
@@ -156,6 +166,11 @@ impl SincOutput {
             pending_frames: 0,
             ready_frames: 0,
             read_frame: 0,
+            silent_frames: 0,
+            flush_frames,
+            idle: false,
+            #[cfg(test)]
+            processing_calls: 0,
         })
     }
 
@@ -163,6 +178,27 @@ impl SincOutput {
         let needed = self.processor.input_frames_next();
         if self.pending_frames < needed {
             source.render(&mut self.input[self.pending_frames * 2..needed * 2]);
+        }
+        let quiet = source.is_idle() && self.input[..needed * 2].iter().all(|value| *value == 0.0);
+        if quiet {
+            self.silent_frames = self
+                .silent_frames
+                .saturating_add(needed.saturating_sub(self.pending_frames));
+        } else {
+            self.silent_frames = 0;
+            self.idle = false;
+        }
+        if self.idle {
+            // The finite sinc history and queued output have drained. Keep
+            // polling/rendering controls, but freeze the silent converter phase.
+            self.output.fill(0.0);
+            self.ready_frames = self.processor.output_frames_next();
+            self.read_frame = 0;
+            return Ok(());
+        }
+        #[cfg(test)]
+        {
+            self.processing_calls += 1;
         }
         let input = InterleavedSlice::new(&self.input[..needed * 2], 2, needed).map_err(|_| ())?;
         let frames = self.output.len() / 2;
@@ -176,6 +212,11 @@ impl SincOutput {
         }
         self.input.copy_within(consumed * 2..needed * 2, 0);
         self.pending_frames = needed - consumed;
+        self.idle = quiet
+            && self.silent_frames >= self.flush_frames
+            && self.output[..produced * 2]
+                .iter()
+                .all(|value| *value == 0.0);
         self.ready_frames = produced;
         self.read_frame = 0;
         Ok(())
@@ -210,6 +251,105 @@ mod tests {
             }
         }
         fn poll(&mut self) {}
+    }
+
+    struct PausableTone {
+        tone: Tone,
+        paused: bool,
+        idle_hint: bool,
+        renders: usize,
+    }
+    impl RenderSource for PausableTone {
+        fn params(&self) -> OutputParams {
+            self.tone.params()
+        }
+        fn render(&mut self, samples: &mut [f32]) {
+            self.renders += 1;
+            if self.paused {
+                samples.fill(0.0)
+            } else {
+                self.tone.render(samples)
+            }
+        }
+        fn poll(&mut self) {}
+        fn is_idle(&self) -> bool {
+            self.paused && self.idle_hint
+        }
+    }
+
+    #[test]
+    fn settled_pause_bypasses_sinc_without_cutting_tail_or_losing_resumed_signal() {
+        for target_rate in [8000, 44100, 96000] {
+            let make = |idle_hint| {
+                let mut renderer = DeviceRenderer::new(PausableTone {
+                    tone: Tone {
+                        frames: 0,
+                        rate: 48000,
+                        hz: 440.0,
+                    },
+                    paused: false,
+                    idle_hint,
+                    renders: 0,
+                });
+                renderer
+                    .configure(OutputParams {
+                        sample_rate: target_rate,
+                        channels: 2,
+                    })
+                    .unwrap();
+                renderer
+            };
+            let mut optimized = make(true);
+            let mut reference = make(false);
+            let mut actual = vec![0.0; target_rate as usize / 10 * 2];
+            let mut expected = actual.clone();
+            optimized.render(&mut actual);
+            reference.render(&mut expected);
+            assert_eq!(actual, expected);
+            optimized.source.paused = true;
+            reference.source.paused = true;
+            // Includes queued nonzero device output and the finite sinc tail.
+            optimized.render(&mut actual);
+            reference.render(&mut expected);
+            assert_eq!(actual, expected, "pause tail was cut at {target_rate} Hz");
+            assert!(actual.iter().any(|sample| *sample != 0.0));
+            assert!(optimized.resampler.as_ref().unwrap().idle);
+            let calls = optimized.resampler.as_ref().unwrap().processing_calls;
+            let rendered = optimized.source.renders;
+            let listened = optimized.source.tone.frames;
+            for _ in 0..20 {
+                optimized.render(&mut actual);
+            }
+            assert_eq!(
+                optimized.resampler.as_ref().unwrap().processing_calls,
+                calls
+            );
+            assert!(
+                optimized.source.renders > rendered,
+                "controls must still be serviced"
+            );
+            assert_eq!(
+                optimized.source.tone.frames, listened,
+                "silence is not listening"
+            );
+            assert!(actual.iter().all(|sample| *sample == 0.0));
+            optimized.source.paused = false;
+            optimized.render(&mut actual);
+            assert!(optimized.resampler.as_ref().unwrap().processing_calls > calls);
+            assert!(optimized.source.tone.frames > listened);
+            let settled = &actual[actual.len() / 2..];
+            assert!(settled.iter().all(|sample| sample.is_finite()));
+            let rms = (settled
+                .chunks_exact(2)
+                .map(|frame| f64::from(frame[0]).powi(2))
+                .sum::<f64>()
+                / (settled.len() / 2) as f64)
+                .sqrt();
+            assert!(
+                (0.16..0.19).contains(&rms),
+                "resumed 440 Hz amplitude was lost: {rms}"
+            );
+        }
     }
 
     #[test]

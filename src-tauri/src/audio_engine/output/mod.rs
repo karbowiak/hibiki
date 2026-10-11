@@ -48,6 +48,9 @@ impl RenderSource for AudioCallbackState {
     fn poll(&mut self) {
         self.poll_without_output();
     }
+    fn is_idle(&self) -> bool {
+        self.output_is_idle()
+    }
     fn has_audio_history(&self) -> bool {
         self.deck_mgr.deck(super::types::DeckId::A).played_frames > 0
             || self.deck_mgr.deck(super::types::DeckId::B).played_frames > 0

@@ -296,6 +296,11 @@ impl AudioCallbackState {
         self.maybe_send_vis_frame(&data[..rendered_samples]);
     }
 
+    pub(crate) fn output_is_idle(&self) -> bool {
+        (self.paused || self.state() == EngineState::Stopped)
+            && !self.playback_envelope.is_fading_out()
+    }
+
     pub fn poll_without_output(&mut self) {
         // A pause issued while the device is absent must not play a delayed tail.
         self.drain_sample_batches();
