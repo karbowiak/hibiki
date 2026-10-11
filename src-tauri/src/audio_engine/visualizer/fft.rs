@@ -1,7 +1,8 @@
 //! FFT processing — Hann window + realfft → frequency bins in dB.
 
-use realfft::RealFftPlanner;
+use realfft::{num_complex::Complex, RealFftPlanner, RealToComplex};
 use std::f32::consts::PI;
+use std::sync::Arc;
 
 /// FFT size (matching the JS engine's AnalyserNode fftSize).
 pub const FFT_SIZE: usize = 2048;
@@ -20,40 +21,56 @@ fn hann_window(size: usize) -> Vec<f32> {
 ///
 /// Input: `FFT_SIZE` mono samples (if stereo, caller should downmix first).
 /// Output: `NUM_BINS` values in dB (relative to full scale).
-pub fn compute_fft(samples: &[f32]) -> Vec<f32> {
-    if samples.len() < FFT_SIZE {
-        return vec![-100.0; NUM_BINS];
+pub struct FftProcessor {
+    window: Vec<f32>,
+    windowed: Vec<f32>,
+    fft: Arc<dyn RealToComplex<f32>>,
+    spectrum: Vec<Complex<f32>>,
+    scratch: Vec<Complex<f32>>,
+}
+
+impl FftProcessor {
+    pub fn new() -> Self {
+        let fft = RealFftPlanner::<f32>::new().plan_fft_forward(FFT_SIZE);
+        Self {
+            window: hann_window(FFT_SIZE),
+            windowed: vec![0.0; FFT_SIZE],
+            spectrum: fft.make_output_vec(),
+            scratch: fft.make_scratch_vec(),
+            fft,
+        }
     }
 
-    let window = hann_window(FFT_SIZE);
+    pub fn compute(&mut self, samples: &[f32]) -> Vec<f32> {
+        if samples.len() < FFT_SIZE {
+            return vec![-100.0; NUM_BINS];
+        }
 
-    // Apply window
-    let mut windowed: Vec<f32> = samples[..FFT_SIZE]
-        .iter()
-        .zip(window.iter())
-        .map(|(s, w)| s * w)
-        .collect();
+        for ((out, sample), weight) in self.windowed.iter_mut().zip(samples).zip(&self.window) {
+            *out = sample * weight;
+        }
+        if self
+            .fft
+            .process_with_scratch(&mut self.windowed, &mut self.spectrum, &mut self.scratch)
+            .is_err()
+        {
+            return vec![-100.0; NUM_BINS];
+        }
 
-    // Compute FFT
-    let mut planner = RealFftPlanner::<f32>::new();
-    let fft = planner.plan_fft_forward(FFT_SIZE);
-    let mut spectrum = fft.make_output_vec();
-
-    fft.process(&mut windowed, &mut spectrum).ok();
-
-    // Convert to dB magnitude
-    let scale = 2.0 / FFT_SIZE as f32;
-    spectrum
-        .iter()
-        .map(|c| {
-            let magnitude = c.norm() * scale;
-            if magnitude > 1e-10 {
-                20.0 * magnitude.log10()
-            } else {
-                -100.0
-            }
-        })
-        .collect()
+        // Convert to dB magnitude
+        let scale = 2.0 / FFT_SIZE as f32;
+        self.spectrum
+            .iter()
+            .map(|c| {
+                let magnitude = c.norm() * scale;
+                if magnitude > 1e-10 {
+                    20.0 * magnitude.log10()
+                } else {
+                    -100.0
+                }
+            })
+            .collect()
+    }
 }
 
 /// Downmix interleaved stereo to mono by averaging channels.
@@ -78,13 +95,34 @@ pub fn downmix_to_mono(interleaved: &[f32], channels: u16) -> Vec<f32> {
 mod tests {
     use super::*;
 
+    fn compute_fft(samples: &[f32]) -> Vec<f32> {
+        FftProcessor::new().compute(samples)
+    }
+
+    #[test]
+    fn reused_fft_has_no_history_and_matches_fresh_processing() {
+        let mut processor = FftProcessor::new();
+        for frequency in [1000.0, 4000.0, 0.0, 250.0] {
+            let samples: Vec<f32> = (0..FFT_SIZE)
+                .map(|i| (2.0 * PI * frequency * i as f32 / 48000.0).sin())
+                .collect();
+            let expected = compute_fft(&samples);
+            let actual = processor.compute(&samples);
+            assert_eq!(actual, expected);
+        }
+    }
+
     #[test]
     fn fft_of_silence_is_low_db() {
         let samples = vec![0.0f32; FFT_SIZE];
         let bins = compute_fft(&samples);
         assert_eq!(bins.len(), NUM_BINS);
         for &db in &bins {
-            assert!(db <= -90.0, "silence should produce very low dB, got {}", db);
+            assert!(
+                db <= -90.0,
+                "silence should produce very low dB, got {}",
+                db
+            );
         }
     }
 

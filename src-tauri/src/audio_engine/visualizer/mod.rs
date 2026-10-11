@@ -6,7 +6,7 @@
 
 pub mod fft;
 
-use self::fft::{compute_fft, downmix_to_mono, FFT_SIZE};
+use self::fft::{downmix_to_mono, FftProcessor, FFT_SIZE};
 
 /// Processes audio samples for visualizer output.
 ///
@@ -20,6 +20,7 @@ pub struct VisualizerProcessor {
     channels: u16,
     /// Max buffer size — keeps the last N samples to bound memory.
     max_samples: usize,
+    fft: FftProcessor,
 }
 
 impl VisualizerProcessor {
@@ -30,6 +31,7 @@ impl VisualizerProcessor {
             buffer: Vec::with_capacity(max_samples),
             channels,
             max_samples,
+            fft: FftProcessor::new(),
         }
     }
 
@@ -45,7 +47,7 @@ impl VisualizerProcessor {
 
     /// Compute FFT from the accumulated buffer.
     /// Returns `(time_domain_samples, frequency_bins)` or `None` if not enough data.
-    pub fn compute(&self) -> Option<(Vec<f32>, Vec<f32>)> {
+    pub fn compute(&mut self) -> Option<(Vec<f32>, Vec<f32>)> {
         let ch = self.channels.max(1) as usize;
         let min_interleaved = FFT_SIZE * ch;
 
@@ -64,7 +66,7 @@ impl VisualizerProcessor {
         let time_domain = window.to_vec();
 
         // Frequency-domain bins (dB)
-        let bins = compute_fft(window);
+        let bins = self.fft.compute(window);
 
         Some((time_domain, bins))
     }
