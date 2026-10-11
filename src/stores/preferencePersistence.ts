@@ -40,6 +40,7 @@ interface Entry {
   rules: PatchRules
   version: number
   validate?: (state: SavedState) => boolean
+  hasPendingIntent?: () => boolean
 }
 export interface PreferenceSession {
   read(): Promise<Envelope | null>
@@ -105,7 +106,8 @@ export class PreferencePersistence {
     key: string,
     rules: PatchRules = {},
     version = 0,
-    validate?: (state: SavedState) => boolean
+    validate?: (state: SavedState) => boolean,
+    hasPendingIntent?: () => boolean
   ): PreferenceSession {
     const previous = this.entries.get(key)
     const owner = Symbol(key)
@@ -122,6 +124,7 @@ export class PreferencePersistence {
       rules,
       version,
       validate,
+      hasPendingIntent,
     }
     this.entries.set(key, entry)
     if (previous?.writing) {
@@ -315,6 +318,22 @@ export class PreferencePersistence {
           }
         })
     )
+  }
+  /** Closing may proceed only after every accepted edit/delete is durable. */
+  async flushForShutdown(): Promise<void> {
+    await Promise.all([...this.entries].map(async ([, entry]) => {
+      if (!entry.ready && (entry.pending.length || entry.hasPendingIntent?.())) {
+        try { await entry.retryHydration?.() } catch { /* Retain changes for Retry. */ }
+      }
+    }))
+    await this.flush()
+    for (const [key, entry] of this.entries) {
+      if (entry.pending.length || entry.deletePending || entry.hasPendingIntent?.()) {
+        entry.issue = { ...(entry.issue ?? { key, operation: entry.ready ? "write" : "read" }), hasPendingChanges: entry.pending.length > 0 || !!entry.hasPendingIntent?.() }
+        this.notify()
+        throw new Error("Some preferences could not be saved. Retry before closing Hibiki.")
+      }
+    }
   }
   async flush(): Promise<void> {
     await Promise.all(

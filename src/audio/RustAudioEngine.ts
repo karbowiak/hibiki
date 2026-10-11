@@ -30,6 +30,8 @@ export interface AudioEngineCallbacks {
   onVisFrame?(samples: Float32Array): void
 }
 
+export interface PlaybackLabels { artist: string; track: string; album: string; album_artist: string }
+
 export interface AudioCacheStats {
   total_bytes: number
   file_count: number
@@ -165,6 +167,7 @@ export class RustAudioEngine {
     endRamp?: string | null,
     albumPlayback = false,
     context?: TrackPlaybackInfo["plexContext"],
+    labels?: PlaybackLabels,
   ): Promise<void> {
     const ticket = this.eventGate.begin()
     const requestId = await this.ipc.invoke<number>("audio_play", {
@@ -177,6 +180,7 @@ export class RustAudioEngine {
       startRamp: startRamp ?? null,
       endRamp: endRamp ?? null,
       albumPlayback,
+      labels: labels ?? null,
       context: context ? { connectionRevision: context.connectionRevision, cacheScope: context.cacheScope } : null,
     })
     this.eventGate.confirm(ticket, requestId)
@@ -193,6 +197,7 @@ export class RustAudioEngine {
     endRamp?: string | null,
     albumPlayback = false,
     context?: TrackPlaybackInfo["plexContext"],
+    labels?: PlaybackLabels,
   ): Promise<void> {
     await this.ipc.invoke("audio_preload_next", {
       url,
@@ -204,8 +209,14 @@ export class RustAudioEngine {
       startRamp: startRamp ?? null,
       endRamp: endRamp ?? null,
       albumPlayback,
+      labels: labels ?? null,
       context: context ? { connectionRevision: context.connectionRevision, cacheScope: context.cacheScope } : null,
     })
+  }
+
+  async prepareShutdown(): Promise<TrackEnded[]> {
+    this.eventGate.disable()
+    return this.ipc.invoke<TrackEnded[]>("prepare_app_shutdown")
   }
 
   clearPreload(): void {

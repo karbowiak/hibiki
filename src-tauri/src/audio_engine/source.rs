@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 pub(crate) struct MediaSource {
     pub(crate) request: reqwest::RequestBuilder,
     pub(crate) cache_key: String,
+    pub(crate) plex_scope: Option<String>,
     pub(crate) extension: String,
 }
 
@@ -48,6 +49,7 @@ impl MediaSource {
         Ok(Self {
             request: reqwest::RequestBuilder::from_parts(client, request),
             cache_key,
+            plex_scope: plex_scope.map(str::to_owned),
             extension,
         })
     }

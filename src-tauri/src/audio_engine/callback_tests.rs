@@ -603,6 +603,8 @@ fn meta(key: i64) -> TrackMeta {
         skip_crossfade: false,
         start_ramp: None,
         end_ramp: None,
+        labels: None,
+        reporting_binding: None,
     }
 }
 
@@ -1528,4 +1530,93 @@ fn an_analysis_completed_while_normalization_is_off_is_available_for_later_enabl
     mixer::mix_decks(deck, &mut empty, &mut output, 2, false);
     assert_eq!(output[0], 1.0);
     assert!((output[FADE_SAMPLES] - 0.5).abs() < 1e-5);
+}
+
+#[test]
+fn shutdown_barrier_follows_actual_ends_for_paused_and_outgoing_decks_even_when_ui_queue_is_full() {
+    let (mut cb, _events) = callback();
+    let (full_tx, _full_rx) = crossbeam_channel::bounded(1);
+    full_tx
+        .send(EngineEvent::State {
+            request_id: 1,
+            state: "playing".into(),
+        })
+        .unwrap();
+    cb.event_tx = full_tx;
+    let (history_tx, history_rx) = crossbeam_channel::unbounded();
+    cb.set_history_sender(history_tx);
+    for (deck, key, heard) in [(DeckId::A, 1, 48000 * 100), (DeckId::B, 2, 48000 * 5)] {
+        cb.handle_load_deck(deck, meta(key), 48000, 2, 1.0, 0);
+        let loaded = cb.deck_mgr.deck_mut(deck);
+        loaded.playback_id = key as u64;
+        loaded.played_frames = heard;
+        loaded.position = 48000 * 2 * 9; // The seek position must not change heard time.
+    }
+    cb.paused = true;
+    cb.atomics.request_epoch.store(9, Ordering::SeqCst);
+    let (reply, _receive) = crossbeam_channel::bounded(1);
+    cb.handle_command(AudioCommand::PrepareShutdown {
+        request_id: 9,
+        reply,
+    });
+    let first = history_rx.recv().unwrap();
+    let second = history_rx.recv().unwrap();
+    for (event, listened) in [(first, 100_000), (second, 5000)] {
+        let crate::listening_history::HistoryEvent::Playback(event) = event else {
+            panic!("end before barrier")
+        };
+        let end = crate::listening_history::PlaybackEnd::from_event(&event).unwrap();
+        assert_eq!(end.listened_ms, listened);
+        assert_eq!(end.reason, TrackEndReason::Stopped);
+    }
+    assert!(matches!(
+        history_rx.recv().unwrap(),
+        crate::listening_history::HistoryEvent::Barrier(_)
+    ));
+    cb.handle_command(AudioCommand::Stop);
+    assert!(
+        history_rx.try_recv().is_err(),
+        "no duplicate ends after acknowledgement"
+    );
+}
+
+#[test]
+fn native_visualizer_stops_sending_pcm_after_pause_tail_or_stop() {
+    let (mut cb, _events) = callback();
+    let (vis_tx, vis_rx) = crossbeam_channel::unbounded();
+    cb.vis_tx = vis_tx;
+    cb.vis_enabled = true;
+    cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
+    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 48000 * 2 * 10];
+    cb.deck_mgr.active_deck_mut().fully_decoded = true;
+    cb.deck_mgr.active_deck_mut().has_started_playing = true;
+    cb.set_state(EngineState::Playing);
+    cb.process_callback(&mut [0.0; 9600]);
+    assert!(vis_rx.try_recv().is_ok());
+    cb.handle_command(AudioCommand::Pause);
+    cb.process_callback(&mut [0.0; 96000]);
+    let tail = vis_rx.try_recv().unwrap();
+    assert!(
+        tail.len() <= FADE_SAMPLES,
+        "pause tail excludes zero padding"
+    );
+    cb.process_callback(&mut [0.0; 96000]);
+    assert!(vis_rx.try_recv().is_err());
+    cb.handle_command(AudioCommand::Stop);
+    cb.process_callback(&mut [0.0; 96000]);
+    assert!(vis_rx.try_recv().is_err());
+}
+
+#[test]
+fn cancelled_shutdown_acknowledgement_cannot_stop_a_new_playback_intent() {
+    let (mut cb, _events) = callback();
+    cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
+    cb.deck_mgr.active_deck_mut().played_frames = 48000;
+    cb.atomics.request_epoch.store(2, Ordering::SeqCst);
+    cb.set_state(EngineState::Playing);
+    let (reply, receive) = crossbeam_channel::bounded(1);
+    cb.handle_command(AudioCommand::PrepareShutdown { request_id: 1, reply });
+    assert!(receive.recv().unwrap().is_err());
+    assert_eq!(cb.atomics.get_state(), EngineState::Playing);
+    assert_eq!(cb.deck_mgr.active_deck().played_frames, 48000);
 }

@@ -32,6 +32,9 @@ import "./stores/highlightStore" // import so the module sets --hl-* CSS vars on
 import { IS_WINDOWS } from "./lib/platform"
 import { WindowTitleBar } from "./components/WindowTitleBar"
 import { useGlobalHotkeys } from "./hooks/useGlobalHotkeys"
+import { initializeShutdown } from "./lib/shutdown"
+import { ListeningSyncStatus } from "./components/ListeningSyncStatus"
+import { ShutdownNotice } from "./components/ShutdownNotice"
 import { StorageStatus } from "./components/PersistenceNotice"
 import LiveAnnouncer from "./components/LiveAnnouncer"
 import "./i18n" // Initialize i18n on app load
@@ -54,6 +57,13 @@ function DesktopApp() {
   const initGenius = useGeniusStore(s => s.initialize)
   const initListenBrainz = useListenBrainzStore(s => s.initialize)
   const [location, navigate] = useLocation()
+
+  useEffect(() => {
+    let disposed = false
+    let cleanup: (() => void) | undefined
+    void initializeShutdown().then(unlisten => { if (disposed) unlisten(); else cleanup = unlisten })
+    return () => { disposed = true; cleanup?.() }
+  }, [])
 
   useEffect(() => {
     void loadAndConnect()
@@ -105,6 +115,7 @@ function DesktopApp() {
       <div className="flex h-screen flex-col overflow-hidden text-white">
         {IS_WINDOWS && <WindowTitleBar />}
         <StorageStatus />
+        <ListeningSyncStatus />
         {/* Sidebar + main content + optional pinned queue */}
         <div className="relative z-0 flex min-h-0 flex-1 flex-row overflow-hidden">
           <SideBar onCreatePlaylist={() => setShowCreatePlaylist(true)} />
@@ -140,6 +151,7 @@ function DesktopApp() {
         />
       )}
 
+      <ShutdownNotice />
       <UpdateDialog />
       <ContextMenu />
       {hotkeyHelpOpen && <HotkeyHelpModal context={fullscreenOpen ? "visualizer" : "player"} onClose={() => setHotkeyHelpOpen(false)} />}

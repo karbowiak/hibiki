@@ -1,7 +1,7 @@
 //! Recoverable CPAL output. Device streams stay on their owning thread.
 
-pub mod device_render;
 pub mod channelmap;
+pub mod device_render;
 pub(super) mod format;
 pub mod mixer;
 pub mod owner;
@@ -255,6 +255,8 @@ mod tests {
             skip_crossfade: false,
             start_ramp: None,
             end_ramp: None,
+            labels: None,
+            reporting_binding: None,
         });
         atomics.set_state(EngineState::Playing);
         let (opened, openings) = bounded(4);

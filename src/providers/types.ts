@@ -161,5 +161,4 @@ export interface MusicProvider {
 
   // --- Track lifecycle hooks (scrobbling, external integrations) ---
   onTrackStart?(track: MusicTrack, isCurrent?: () => boolean): void
-  onTrackEnd?(track: MusicTrack, startedAtUnix: number, listenedMs: number): void
 }

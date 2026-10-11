@@ -119,6 +119,7 @@ export function createSleepTimerStore(
       }),
       {
         name: "plex-sleep-timer-v1",
+        hasPendingIntent: () => pendingTimer !== null,
         partialize: (state) => ({
           endsAt: state.endsAt,
           endOfTrack: state.endOfTrack,

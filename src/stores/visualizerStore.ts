@@ -228,6 +228,7 @@ export function createVisualizerStore(persist = safeLocalPersist) {
       }),
       {
         name: "plex-visualizer-v1",
+        hasPendingIntent: () => Object.keys(pending).length > 0,
         onRehydrateStorage: () => {
           hydrated = false
           return (state, error) => {

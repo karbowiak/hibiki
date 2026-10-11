@@ -10,6 +10,17 @@ use super::AudioEngine;
 /// Tauri managed state wrapper.
 pub struct AudioEngineState(pub Arc<AudioEngine>);
 
+fn reporting_binding(app: &tauri::AppHandle) -> Result<crate::listening_history::Binding, String> {
+    use tauri::Manager;
+    let directory = app
+        .path()
+        .app_config_dir()
+        .map_err(|_| "Listening account settings unavailable")?;
+    let settings = crate::plex::load_settings(&directory)
+        .map_err(|_| "Listening account settings could not be loaded")?;
+    Ok(crate::listening_history::Binding::capture(&settings, None))
+}
+
 // ---------------------------------------------------------------------------
 // Playback commands
 // ---------------------------------------------------------------------------
@@ -25,10 +36,13 @@ pub async fn audio_play(
     start_ramp: Option<String>,
     end_ramp: Option<String>,
     album_playback: Option<bool>,
+    labels: Option<crate::listening_history::TrackLabels>,
     context: Option<crate::commands::PlexRequestContext>,
     plex_state: State<'_, crate::commands::PlexState>,
     state: State<'_, AudioEngineState>,
+    app: tauri::AppHandle,
 ) -> Result<u64, String> {
+    let binding = reporting_binding(&app)?;
     plex_state
         .dispatch_audio(context.as_ref(), &url, |source| {
             state.0.send(Command::Play {
@@ -42,6 +56,8 @@ pub async fn audio_play(
                     skip_crossfade: skip_crossfade.unwrap_or(false),
                     start_ramp,
                     end_ramp,
+                    labels,
+                    reporting_binding: Some(binding),
                 },
             })
         })
@@ -59,10 +75,13 @@ pub async fn audio_preload_next(
     start_ramp: Option<String>,
     end_ramp: Option<String>,
     album_playback: Option<bool>,
+    labels: Option<crate::listening_history::TrackLabels>,
     context: Option<crate::commands::PlexRequestContext>,
     plex_state: State<'_, crate::commands::PlexState>,
     state: State<'_, AudioEngineState>,
+    app: tauri::AppHandle,
 ) -> Result<(), String> {
+    let binding = reporting_binding(&app)?;
     plex_state
         .dispatch_audio(context.as_ref(), &url, |source| {
             state.0.send(Command::PreloadNext {
@@ -76,6 +95,8 @@ pub async fn audio_preload_next(
                     skip_crossfade: skip_crossfade.unwrap_or(false),
                     start_ramp,
                     end_ramp,
+                    labels,
+                    reporting_binding: Some(binding),
                 },
             })
         })

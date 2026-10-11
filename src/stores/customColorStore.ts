@@ -96,6 +96,7 @@ export function createCustomColorStore(persist = safeLocalPersist) {
       }),
       {
         name: "plex-custom-colors",
+        hasPendingIntent: () => pendingEnabled !== undefined || pendingReset || pendingOverrides.size > 0,
         partialize: (state) => ({
           enabled: state.enabled,
           overrides: state.overrides,

@@ -39,6 +39,7 @@ export function createEasterEggStore(persist = safeLocalPersist) {
       }),
       {
         name: "easter-eggs-v1",
+        hasPendingIntent: () => Object.keys(pending).length > 0,
         onRehydrateStorage: () => {
           hydrated = false
           return (state, error) => {

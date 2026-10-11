@@ -19,6 +19,8 @@ test("a saved muted player restores its previous audible volume after hydration"
     engine.setVolume = () => {};
     store.getState().setVolume(19);
     store.getState().toggleMute();
+    const { localPreferencePersistence } = await import("./src/stores/localPreferenceStorage");
+    await localPreferencePersistence.flushForShutdown();
     let saved = JSON.parse(localStorage.getItem("plex-player-prefs"));
     if (saved.state.volume !== 0 || saved.state.lastAudibleVolume !== 19) throw Error("Muted level was not persisted");
     store.persist.setOptions({ storage: {

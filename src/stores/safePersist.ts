@@ -10,6 +10,7 @@ import { PreferencePersistence } from "./preferencePersistence"
 export interface SafePersistOptions<T, P>
   extends PersistOptions<T, P>, PatchRules {
   validate?: (state: SavedState) => boolean
+  hasPendingIntent?: () => boolean
 }
 
 /** Zustand hydration merges local intent before allowing any saved-data writes. */
@@ -40,7 +41,7 @@ export function persistenceMiddleware(service: PreferencePersistence) {
       }
       return !options.validate || options.validate(saved)
     }
-    const session = service.register(options.name, options, version, validate)
+    const session = service.register(options.name, options, version, validate, options.hasPendingIntent)
     return persist<T, [], [], P>(
       (set, get, api) => {
         const initial = creator(set, get, api)

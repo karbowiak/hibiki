@@ -1,8 +1,8 @@
 import { create } from "zustand"
-import { persist } from "zustand/middleware"
+import { safeLocalPersist } from "./localPreferenceStorage"
 import { listen } from "@tauri-apps/api/event"
 import { fireAndForget } from "../lib/async"
-import { PlaybackJournal, listenedEnough, startedQueueIndex } from "../audio/playbackJournal"
+import { PlaybackJournal, startedQueueIndex } from "../audio/playbackJournal"
 import type { MusicProvider } from "../providers/types"
 import { dispatchPlaybackWhenReady } from "../audio/playbackRequests"
 import { isAlbumPlayback } from "../audio/playbackContext"
@@ -220,6 +220,25 @@ const _reportProgress = (trackId: string, state: string, positionMs: number, dur
 // Each native play retains its own metadata and provider across outgoing overlaps.
 const _playbackJournal = new PlaybackJournal<{ track: MusicTrack; provider: MusicProvider | null; positionMs: number }>()
 let _pendingSelectedTrackId: string | null = null
+let _shutdownResumePosition: number | null = null
+
+function playbackLabels(track: MusicTrack) {
+  return { artist: track.artistName ?? "", track: track.title, album: track.albumName ?? "", album_artist: track.artistName ?? "" }
+}
+
+/** Freeze renderer advancement; native stop acknowledges both audible decks. */
+export async function preparePlaybackShutdown(): Promise<void> {
+  _playbackDesired = false
+  ++_playGeneration
+  if (_gaplessTimeoutId !== null) { clearTimeout(_gaplessTimeoutId); _gaplessTimeoutId = null }
+  useRadioStreamStore.getState().stopStream()
+  _shutdownResumePosition = usePlayerStore.getState().positionMs
+  usePlayerStore.setState({ isPlaying: false, isBuffering: false, transitionInfo: null })
+  try {
+    const endings = await engine.prepareShutdown()
+    for (const ending of endings) _playbackJournal.finish(ending)
+  } finally { _playbackJournal.clear() }
+}
 
 // ---------------------------------------------------------------------------
 // Radio — module-level state
@@ -507,7 +526,7 @@ async function sendToAudioEngine(track: MusicTrack, generation: number): Promise
       _ratingKeyToTrackId.set(info.trackKey, track.id)
       await engine.play(info.url, info.trackKey, track.duration, info.parentKey, gainDb,
         undefined, track.startRamp ?? info.startRamp, track.endRamp ?? info.endRamp,
-        isAlbumPlayback(track, usePlayerStore.getState().albumPlaybackId), info.plexContext)
+        isAlbumPlayback(track, usePlayerStore.getState().albumPlaybackId), info.plexContext, playbackLabels(track))
     },
   )
 }
@@ -573,7 +592,7 @@ async function preloadNextTrack(queue: MusicTrack[], queueIndex: number, repeat:
         _ratingKeyToTrackId.set(info.trackKey, nextTrack.id)
         await engine.preloadNext(info.url, info.trackKey, nextTrack.duration, info.parentKey,
           gainDb, undefined, nextTrack.startRamp ?? info.startRamp, nextTrack.endRamp ?? info.endRamp,
-          isAlbumPlayback(nextTrack, usePlayerStore.getState().albumPlaybackId), info.plexContext)
+          isAlbumPlayback(nextTrack, usePlayerStore.getState().albumPlaybackId), info.plexContext, playbackLabels(nextTrack))
       },
     )
   } catch {
@@ -759,6 +778,7 @@ async function _startPlayback(track: MusicTrack, index: number, get: () => Playe
   if (get().isInternetRadioActive) {
     useRadioStreamStore.getState().stopStream()
   }
+  _shutdownResumePosition = null
   const gen = ++_playGeneration
   _pendingSelectedTrackId = track.id
   _playbackDesired = true
@@ -802,7 +822,7 @@ async function playAtIndex(index: number, get: () => PlayerState, set: any): Pro
 }
 
 export const usePlayerStore = create<PlayerState>()(
-  persist(
+  safeLocalPersist(
     (set, get) => ({
   currentTrack: null,
   transitionInfo: null,
@@ -1148,6 +1168,15 @@ export const usePlayerStore = create<PlayerState>()(
   resume: () => {
     if (!get().currentTrack) return
     const state = get()
+    if (_shutdownResumePosition !== null) {
+      const position = _shutdownResumePosition
+      _shutdownResumePosition = null
+      const generation = _playGeneration + 1
+      fireAndForget(playAtIndex(state.queueIndex, get, set).then(() => {
+        if (generation === _playGeneration && position > 0) engine.seekTo(position)
+      }))
+      return
+    }
     if (_pendingSelectedTrackId === null && state.currentTrack.duration > 0 && state.positionMs >= state.currentTrack.duration) {
       if (state.repeat === 1 || (state.queueIndex + 1 >= state.queue.length && state.repeat !== 2 && !state.isRadioMode)) {
         fireAndForget(playAtIndex(state.queueIndex, get, set))
@@ -1394,15 +1423,10 @@ export const usePlayerStore = create<PlayerState>()(
       onTrackEnded(event) {
         const record = _playbackJournal.finish(event)
         if (!record) return
-        const { track, provider } = record.value
+        const { track } = record.value
         const { currentTrack, repeat, queueIndex } = get()
-        const duration = event.duration_ms || track.duration
-        const finishedTrack = duration === track.duration ? track : { ...track, duration }
-        if (provider && provider === getProvider() && !_isPodcastTrack(track)) {
-          fireAndForget(provider.reportProgress(track.id, event.position_ms, "stopped", duration))
-          if (listenedEnough(duration, event.listened_ms)) fireAndForget(provider.markPlayed(track.id))
-          provider.onTrackEnd?.(finishedTrack, record.startedAtUnix, event.listened_ms)
-        }
+        // Native history retains actual listened frames and submits all final
+        // reports through one durable, account-bound outbox.
         if (!record.wasCurrent || _pendingSelectedTrackId !== null || event.reason !== "natural"
           || currentTrack?.id !== track.id) return
         set({ waveformLevels: null, lyricsLines: null, positionMs: event.position_ms })
@@ -1486,7 +1510,7 @@ export const usePlayerStore = create<PlayerState>()(
               if (generation !== _playGeneration || getProvider() !== providerAtError) return
               _ratingKeyToTrackId.set(info.trackKey, currentTrack.id)
               _pendingSelectedTrackId = currentTrack.id
-              await engine.play(info.url, info.trackKey, currentTrack.duration, info.parentKey, null, true, null, null, false, info.plexContext)
+              await engine.play(info.url, info.trackKey, currentTrack.duration, info.parentKey, null, true, null, null, false, info.plexContext, playbackLabels(currentTrack))
               if (generation !== _playGeneration) return
               if (positionMs > 0) engine.seekTo(positionMs)
               if (!_playbackDesired) engine.pause()

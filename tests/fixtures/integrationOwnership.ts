@@ -198,9 +198,8 @@ if (scenario === "hydration") {
     false
   )
 
-  // A completed eligible listen is independent of the current playback identity.
-  provider.onTrackEnd(track("A"), 1234, 100000)
-  lookups.get("A")!.resolve(null)
-  await tick()
-  assert.equal(take("listenbrainz_submit_listen").args.track, "A")
+  // Final listens belong to the native durable outbox, never this renderer hook.
+  assert.equal((provider as any).onTrackEnd, undefined)
+  assert.equal(pending.some(item => item.command === "lastfm_scrobble" || item.command === "listenbrainz_submit_listen"), false)
+
 } else throw new Error(`Unknown scenario ${scenario}`)

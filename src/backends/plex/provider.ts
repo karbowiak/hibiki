@@ -6,7 +6,6 @@
  */
 
 import { providerCacheScope } from "../../lib/providerCacheScope"
-import { canScrobble } from "../../audio/playbackJournal"
 import type { MusicProvider, ProviderCapabilities, LevelData, LyricLineData, TrackPlaybackInfo } from "../../providers/types"
 import type {
   MusicTrack,
@@ -30,8 +29,8 @@ import {
 } from "./mappers"
 
 import * as plex from "./api"
-import { lastfmScrobble, lastfmUpdateNowPlaying } from "../../metadata/lastfm/api"
-import { listenbrainzSubmitNowPlaying, listenbrainzSubmitListen, type ListenBrainzMbids } from "../../metadata/listenbrainz/api"
+import { lastfmUpdateNowPlaying } from "../../metadata/lastfm/api"
+import { listenbrainzSubmitNowPlaying, type ListenBrainzMbids } from "../../metadata/listenbrainz/api"
 import { useMbidStore } from "../../metadata/musicbrainz/mbidStore"
 import { buildPlexImageUrl } from "./imageUrl"
 import { pickBestMediaIndex } from "../../lib/dedup"
@@ -559,30 +558,7 @@ export class PlexProvider implements MusicProvider {
     }).catch(() => {})
   }
 
-  onTrackEnd(track: MusicTrack, startedAtUnix: number, listenedMs: number): void {
-    if (!canScrobble(track.duration, listenedMs)) return;
-    lastfmScrobble(
-      track.artistName ?? "",
-      track.title,
-      track.albumName ?? "",
-      track.artistName ?? "",
-      track.duration ?? 0,
-      startedAtUnix,
-      listenedMs,
-    ).catch(() => {})
 
-    // Resolve MBIDs (likely already cached from onTrackStart) then submit
-    resolveTrackMbids(track).then(mbids => {
-      listenbrainzSubmitListen(
-        track.artistName ?? "",
-        track.title,
-        track.albumName ?? "",
-        track.duration ?? 0,
-        startedAtUnix,
-        mbids,
-      ).catch(() => {})
-    }).catch(() => {})
-  }
 }
 
 /**

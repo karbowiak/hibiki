@@ -9,6 +9,7 @@
 //! - **Background decode threads** (std::thread): symphonia decode, sends SampleBatch
 //!   via per-deck channels to the audio callback.
 
+mod analysis;
 pub mod bridge;
 pub mod cache;
 pub mod callback;
@@ -16,9 +17,8 @@ pub mod command;
 pub mod crossfade;
 pub mod deck;
 mod download;
-mod analysis;
 pub mod dsp;
-pub mod event;
+pub(crate) mod event;
 pub mod loudness;
 pub mod output;
 mod request;
@@ -35,16 +35,16 @@ use crossbeam_channel::{bounded, Sender};
 use tauri::Emitter;
 use tracing::{debug, info, warn};
 
-use self::cache::AudioCache;
 use self::analysis::LoudnessAnalysis;
+use self::cache::AudioCache;
 use self::callback::{AudioCallbackState, SharedAtomics};
 use self::command::{AudioCommand, Command, ControlCommand, PlaybackControl, SampleBatch, SeekRequest};
 use self::crossfade::types::{parse_ramp, CrossfadeSettings, TrackRamps};
 use self::deck::decode;
 use self::event::EngineEvent;
+use self::output::channelmap::StereoDownmix;
 use self::output::owner::OutputThread;
 use self::output::resample::StreamingResampler;
-use self::output::channelmap::StereoDownmix;
 use self::output::CpalDriver;
 use self::request::PlaybackRequest;
 use self::source::MediaSource;
@@ -64,6 +64,8 @@ pub struct AudioEngine {
     _output: Option<OutputThread>,
     lifetime: EngineLifetime,
     startup_error: Option<String>,
+    pub(crate) history: Arc<crate::listening_history::NativeHistory>,
+    closing: AtomicBool,
 }
 
 /// Stops auxiliary tasks if engine startup fails or the handle is released.
@@ -102,6 +104,8 @@ impl AudioEngine {
             _output: None,
             lifetime: EngineLifetime::new(),
             startup_error: Some(error),
+            history: crate::listening_history::NativeHistory::new(),
+            closing: AtomicBool::new(false),
         }
     }
 
@@ -122,6 +126,10 @@ impl AudioEngine {
     pub fn start(app_handle: tauri::AppHandle) -> Result<Self, String> {
         let atomics = Arc::new(SharedAtomics::new());
         let lifetime = EngineLifetime::new();
+        let history = crate::listening_history::NativeHistory::new();
+        let history_tx = history
+            .start(app_handle.clone())
+            .map_err(|error| error.to_string())?;
 
         // Audio file cache (raw FLAC/MP3/AAC from Plex, stored on disk)
         let audio_cache = Self::open_cache(&app_handle);
@@ -162,6 +170,7 @@ impl AudioEngine {
         let output_app = app_handle.clone();
         let output_atomics = atomics.clone();
         // Keep callback state when replacing or temporarily losing the physical device.
+        cb_state.set_history_sender(history_tx);
         let output = OutputThread::start(cb_state, move || {
             CpalDriver::new(output_app, output_atomics)
         })
@@ -294,18 +303,62 @@ impl AudioEngine {
             _output: Some(output),
             lifetime,
             startup_error: None,
+            history: history.clone(),
+            closing: AtomicBool::new(false),
         })
+    }
+
+    pub(crate) fn prepare_shutdown(
+        &self,
+    ) -> Result<Vec<crate::listening_history::PlaybackEnd>, String> {
+        if self.startup_error.is_some() {
+            return self.history.pending();
+        }
+        let (reply, receive) = crossbeam_channel::bounded(1);
+        {
+            let _admission = self
+                .command_admission
+                .lock()
+                .map_err(|_| "Audio admission unavailable")?;
+            self.closing.store(true, Ordering::Release);
+            let request_id = self.atomics.request_epoch.fetch_add(1, Ordering::SeqCst) + 1;
+            self.audio_cmd_tx
+                .send_timeout(
+                    AudioCommand::PrepareShutdown { request_id, reply },
+                    Duration::from_millis(250),
+                )
+                .map_err(|_| "Audio shutdown could not reach the callback")?;
+        }
+        receive
+            .recv_timeout(Duration::from_secs(3))
+            .map_err(|_| "Audio shutdown acknowledgement timed out".to_owned())?
+    }
+    pub(crate) fn primary_timeline_allowed(&self, end: &crate::listening_history::PlaybackEnd) -> bool {
+        self.closing.load(Ordering::Acquire)
+            && self.atomics.get_state() == self::types::EngineState::Stopped
+            && self.atomics.request_epoch.load(Ordering::Acquire) == end.request_id
+    }
+    pub(crate) fn cancel_shutdown(&self) {
+        self.closing.store(false, Ordering::Release);
     }
 
     /// Playback intent is invalidated here, before queued I/O can observe it.
     /// Interactive controls bypass the I/O worker so a slow server cannot block pause/seek.
-    pub fn send(&self, cmd: Command) -> Result<u64, String> {
+    pub fn send(&self, mut cmd: Command) -> Result<u64, String> {
         // Only admission is serialized; the real-time callback never locks.
         // Publishing Stop and admitting a subsequent Play must have one order.
         let _admission = self
             .command_admission
             .lock()
             .unwrap_or_else(|error| error.into_inner());
+        if self.closing.load(Ordering::Acquire)
+            && matches!(
+                &cmd,
+                Command::Play { .. } | Command::PreloadNext { .. } | Command::Resume
+            )
+        {
+            return Err("Hibiki is preparing to close".into());
+        }
         if let Some(error) = &self.startup_error {
             if !matches!(&cmd, Command::Stop | Command::Shutdown) {
                 return Err(error.clone());
@@ -319,6 +372,11 @@ impl AudioEngine {
         } else {
             self.atomics.request_epoch.load(Ordering::SeqCst)
         };
+        if let Command::Play { source, meta } | Command::PreloadNext { source, meta } = &mut cmd {
+            meta.reporting_binding
+                .get_or_insert_with(Default::default)
+                .plex = source.plex_scope.clone();
+        }
         if matches!(&cmd, Command::Stop | Command::Shutdown) {
             self.atomics.stop_revision.store(epoch, Ordering::SeqCst);
             if matches!(&cmd, Command::Stop) {
@@ -379,7 +437,9 @@ impl AudioEngine {
                 postgain_db,
                 duck_ms,
             },
-            Command::SetVisualizerEnabled { enabled } => AudioCommand::SetVisualizerEnabled(enabled),
+            Command::SetVisualizerEnabled { enabled } => {
+                AudioCommand::SetVisualizerEnabled(enabled)
+            }
             Command::DuckAndApply { duck_ms } => AudioCommand::DuckAndApply { duck_ms },
             _ => {
                 return self
@@ -1452,6 +1512,8 @@ mod control_tests {
             _output: None,
             lifetime: EngineLifetime::new(),
             startup_error: None,
+            history: crate::listening_history::NativeHistory::new(),
+            closing: AtomicBool::new(false),
         };
         let (_a_tx, a_rx) = crossbeam_channel::bounded(4);
         let (_b_tx, b_rx) = crossbeam_channel::bounded(4);
@@ -1478,6 +1540,8 @@ mod control_tests {
                     skip_crossfade: true,
                     start_ramp: None,
                     end_ramp: None,
+                    labels: None,
+                    reporting_binding: None,
                 },
             })
             .unwrap()
@@ -1745,6 +1809,8 @@ mod control_tests {
             skip_crossfade: true,
             start_ramp: None,
             end_ramp: None,
+            labels: None,
+            reporting_binding: None,
         };
         let start = std::time::Instant::now();
         handle_play(
@@ -2182,6 +2248,8 @@ mod control_tests {
             _output: None,
             lifetime: EngineLifetime::new(),
             startup_error: None,
+            history: crate::listening_history::NativeHistory::new(),
+            closing: AtomicBool::new(false),
         };
         let key = 42;
         let meta = TrackMeta {
@@ -2193,6 +2261,8 @@ mod control_tests {
             skip_crossfade: true,
             start_ramp: None,
             end_ramp: None,
+            labels: None,
+            reporting_binding: None,
         };
         let play_epoch = engine
             .send(Command::Play {
@@ -2255,6 +2325,8 @@ mod control_tests {
             _output: None,
             lifetime: EngineLifetime::new(),
             startup_error: Some("no default output device".into()),
+            history: crate::listening_history::NativeHistory::new(),
+            closing: AtomicBool::new(false),
         };
         assert_eq!(
             engine.sample_rate().unwrap_err(),

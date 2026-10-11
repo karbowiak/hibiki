@@ -49,3 +49,12 @@ describe("native playback journal", () => {
     expect(startedQueueIndex(["same", "next"], 0, 0, "unexpected", null)).toBeNull()
   })
 })
+
+test("retiring renderer records after acknowledged shutdown rejects late duplicate starts and ends", () => {
+  const journal = new PlaybackJournal<string>()
+  journal.start(start(1), "track")
+  journal.clear()
+  expect(journal.current()).toBeNull()
+  expect(journal.start(start(1), "late track")).toBe(false)
+  expect(journal.finish(end(1))).toBeNull()
+})

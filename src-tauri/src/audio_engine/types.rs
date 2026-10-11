@@ -63,4 +63,8 @@ pub struct TrackMeta {
     pub skip_crossfade: bool,
     pub start_ramp: Option<String>,
     pub end_ramp: Option<String>,
+    #[serde(default)]
+    pub labels: Option<crate::listening_history::TrackLabels>,
+    #[serde(skip)]
+    pub reporting_binding: Option<crate::listening_history::Binding>,
 }

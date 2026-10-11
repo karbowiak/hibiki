@@ -55,6 +55,7 @@ export function createLyricsOffsetStore(persist = safeLocalPersist) {
       }),
       {
         name: "plex-lyrics-offsets",
+        hasPendingIntent: () => pendingOffsets.size > 0,
         partialize: (s) => ({ offsets: s.offsets }),
         validate: (saved) =>
           saved.offsets === undefined ||

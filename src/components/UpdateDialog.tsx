@@ -1,10 +1,13 @@
 import { useState, useEffect } from "react"
+import { runPreparedUpdate } from "../lib/gracefulShutdown"
+import { prepareUpdateExit, keepOpen } from "../lib/shutdown"
 import { useUpdateStore } from "../stores/updateStore"
 
 export function UpdateDialog() {
   const { update, showDialog, setShowDialog, checkForUpdate } = useUpdateStore()
   const [installing, setInstalling] = useState(false)
   const [done, setDone] = useState(false)
+  const [installError, setInstallError] = useState<string | null>(null)
   const [progress, setProgress] = useState<{ downloaded: number; total: number | null }>({ downloaded: 0, total: null })
 
   useEffect(() => {
@@ -17,23 +20,30 @@ export function UpdateDialog() {
 
   const handleInstall = async () => {
     setInstalling(true)
+    setInstallError(null)
     try {
-      await update.downloadAndInstall((event) => {
-        if (event.event === "Started" && event.data.contentLength) {
-          setProgress((p) => ({ ...p, total: event.data.contentLength! }))
-        } else if (event.event === "Progress") {
-          setProgress((p) => ({ ...p, downloaded: p.downloaded + event.data.chunkLength }))
-        }
+      await runPreparedUpdate({
+        download: () => update.download(event => {
+          if (event.event === "Started" && event.data.contentLength) {
+            setProgress(p => ({ ...p, total: event.data.contentLength! }))
+          } else if (event.event === "Progress") {
+            setProgress(p => ({ ...p, downloaded: p.downloaded + event.data.chunkLength }))
+          }
+        }),
+        prepareExit: prepareUpdateExit,
+        install: () => update.install(),
+        resume: keepOpen,
       })
-      // On Windows (NSIS passive), the installer handles restart automatically.
-      // On macOS/Linux, prompt the user to relaunch manually.
       setDone(true)
     } catch {
+      setInstallError("The update failed. Hibiki stayed open; retry when ready.")
       setInstalling(false)
     }
   }
 
   const dismiss = () => {
+    void keepOpen().catch(() => {})
+    setInstallError(null)
     setShowDialog(false)
     setInstalling(false)
     setDone(false)
@@ -95,6 +105,7 @@ export function UpdateDialog() {
             )}
 
             {/* Actions */}
+            {installError && <p role="alert" className="mb-3 text-sm text-amber-200">{installError}</p>}
             {!installing && (
               <div className="flex justify-end gap-3">
                 <button

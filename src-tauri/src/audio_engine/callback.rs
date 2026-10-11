@@ -19,8 +19,8 @@ use super::crossfade::{compute_skip_duck, compute_transition};
 use super::deck::manager::{DeckManager, DeckState, FadeCurve};
 use super::dsp::DspChain;
 use super::event::{EngineEvent, TrackEndReason};
-use super::output::mixer;
 use super::loudness;
+use super::output::mixer;
 use super::output::playback_envelope::PlaybackEnvelope;
 use super::types::{DeckId, EngineState};
 
@@ -147,6 +147,7 @@ pub struct AudioCallbackState {
 
     // ---- Lock-free outputs ----
     event_tx: Sender<EngineEvent>,
+    history_tx: Option<Sender<crate::listening_history::HistoryEvent>>,
     vis_tx: Sender<Vec<f32>>,
 
     // ---- Atomics (callback writes, others read) ----
@@ -199,6 +200,7 @@ impl AudioCallbackState {
             deck_b_rx,
 
             event_tx,
+            history_tx: None,
             vis_tx,
 
             atomics,
@@ -217,6 +219,13 @@ impl AudioCallbackState {
     // -----------------------------------------------------------------------
     // Main callback — called by cpal every ~10ms
     // -----------------------------------------------------------------------
+
+    pub(crate) fn set_history_sender(
+        &mut self,
+        sender: Sender<crate::listening_history::HistoryEvent>,
+    ) {
+        self.history_tx = Some(sender);
+    }
 
     pub fn process_callback(&mut self, data: &mut [f32]) {
         let frames = data.len() / self.device_channels.max(1) as usize;
@@ -284,7 +293,7 @@ impl AudioCallbackState {
         self.tick_duck(frames as u32);
 
         // 11. Send visualizer data (~60fps)
-        self.maybe_send_vis_frame(data);
+        self.maybe_send_vis_frame(&data[..rendered_samples]);
     }
 
     pub fn poll_without_output(&mut self) {
@@ -446,7 +455,30 @@ impl AudioCallbackState {
 
     fn handle_command(&mut self, cmd: AudioCommand) {
         match cmd {
-            AudioCommand::PlaybackControl { request_id, control } => {
+            AudioCommand::PrepareShutdown { request_id, reply } => {
+                if request_id != self.atomics.request_epoch.load(Ordering::SeqCst) {
+                    let _ = reply.try_send(Err("Shutdown request was superseded".into()));
+                    return;
+                }
+                self.stop_playback(request_id);
+                if let Some(history) = &self.history_tx {
+                    if let Err(error) =
+                        history.send(crate::listening_history::HistoryEvent::Barrier(reply))
+                    {
+                        if let crate::listening_history::HistoryEvent::Barrier(reply) = error.0 {
+                            let _ = reply
+                                .try_send(Err("Native listening history is unavailable".into()));
+                        }
+                    }
+                } else {
+                    let _ = reply.try_send(Ok(Vec::new()));
+                }
+            }
+
+            AudioCommand::PlaybackControl {
+                request_id,
+                control,
+            } => {
                 if request_id != self.atomics.request_epoch.load(Ordering::SeqCst)
                     || request_id <= self.atomics.stop_revision.load(Ordering::SeqCst)
                 {
@@ -1235,7 +1267,7 @@ impl AudioCallbackState {
     // -----------------------------------------------------------------------
 
     fn maybe_send_vis_frame(&mut self, data: &[f32]) {
-        if !self.vis_enabled {
+        if !self.vis_enabled || data.is_empty() {
             return;
         }
         self.vis_frame_accum += data.len() as u64;
@@ -1426,6 +1458,24 @@ impl AudioCallbackState {
             rating_key: active.rating_key(),
             duration_ms: (active.duration_secs() as f64 * 1000.0).round() as u64,
         };
+        if let Some(history) = self
+            .history_tx
+            .as_ref()
+            .filter(|_| !active.history_start_reported)
+        {
+            active.history_start_reported = history
+                .send(crate::listening_history::HistoryEvent::Started(
+                    event.clone(),
+                    active.meta.as_ref().and_then(|meta| meta.labels.clone()),
+                    active
+                        .meta
+                        .as_ref()
+                        .and_then(|meta| meta.reporting_binding.clone())
+                        .unwrap_or_default(),
+                    crate::listening_history::unix_time(),
+                ))
+                .is_ok();
+        }
         if self.event_tx.try_send(event).is_ok() {
             active.start_reported = true;
         }
@@ -1445,6 +1495,17 @@ impl AudioCallbackState {
             listened_ms: deck.played_frames.saturating_mul(1000) / deck.sample_rate.max(1) as u64,
             reason,
         };
+        if let Some(history) = self
+            .history_tx
+            .as_ref()
+            .filter(|_| !deck.history_end_reported)
+        {
+            deck.history_end_reported = history
+                .send(crate::listening_history::HistoryEvent::Playback(
+                    event.clone(),
+                ))
+                .is_ok();
+        }
         if self.event_tx.try_send(event).is_ok() {
             deck.end_reported = true;
         }

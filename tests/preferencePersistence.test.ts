@@ -474,3 +474,63 @@ test("invalid saved dictionary fields are protected before store actions can use
   expect(backend.writes).toBe(0)
   expect(service.snapshot()[0].operation).toBe("read")
 })
+
+test("shutdown waits for pending hydration edits to be retained", async () => {
+  const backend = new Backend()
+  backend.save("preferences", saved)
+  backend.readBarrier = deferred()
+  const service = new PreferencePersistence(backend)
+  const prefs = store(service)
+  prefs.getState().toggle("close-pending")
+  let finished = false
+  const flush = service.flushForShutdown().then(() => { finished = true })
+  await settle()
+  expect(finished).toBe(false)
+  backend.readBarrier.resolve(backend.records.get("preferences"))
+  await flush
+  expect(backend.state().favorites.some((item: any) => item.uuid === "close-pending")).toBe(true)
+})
+
+test("failed local retention rejects shutdown and preserves edits for retry", async () => {
+  const backend = new Backend()
+  backend.save("preferences", saved)
+  const service = new PreferencePersistence(backend)
+  const prefs = store(service)
+  await hydrated(prefs)
+  backend.writeError = true
+  prefs.getState().toggle("unsaved-listener-choice")
+  await expect(service.flushForShutdown()).rejects.toThrow("could not be saved")
+  expect(service.snapshot().some(issue => issue.hasPendingChanges)).toBe(true)
+  backend.writeError = false
+  await service.flushForShutdown()
+  expect(backend.state().favorites.some((item: any) => item.uuid === "unsaved-listener-choice")).toBe(true)
+})
+
+test("shutdown protects explicit default intents that create no pre-hydration patch", async () => {
+  const backend = new Backend()
+  backend.save("choice", { enabled: true })
+  backend.readError = true
+  const service = new PreferencePersistence(backend)
+  let hydratedChoice = false, intent = false
+  const persist = persistenceMiddleware(service)
+  const prefs = createStore<{ enabled: boolean; disable(): void }>()(persist((set) => ({
+    enabled: false,
+    disable: () => { if (!hydratedChoice) intent = true; set({ enabled: false }) },
+  }), {
+    name: "choice",
+    partialize: state => ({ enabled: state.enabled }),
+    hasPendingIntent: () => intent,
+    onRehydrateStorage: () => { hydratedChoice = false; return (state, error) => {
+      if (!state || error) return
+      if (intent) { prefs.setState({ enabled: false }); intent = false }
+      hydratedChoice = true
+    } },
+  }))
+  await settle()
+  prefs.getState().disable()
+  await expect(service.flushForShutdown()).rejects.toThrow("could not be saved")
+  expect(service.snapshot()[0].hasPendingChanges).toBe(true)
+  backend.readError = false
+  await service.flushForShutdown()
+  expect(backend.state("choice").enabled).toBe(false)
+})

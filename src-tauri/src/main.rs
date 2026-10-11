@@ -15,6 +15,7 @@ mod itunes;
 mod itunes_throttle;
 mod lastfm;
 mod listenbrainz;
+mod listening_history;
 mod mediasession;
 mod musicbrainz;
 mod plex;
@@ -22,6 +23,7 @@ mod plextv;
 mod podcast;
 mod podcastindex;
 mod radiobrowser;
+mod shutdown;
 
 use commands::PlexState;
 use mediasession::MediaSessionState;
@@ -213,6 +215,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .manage(PlexState::new())
+        .manage(shutdown::ShutdownState::default())
+        .manage(listening_history::ReportingState::default())
         .setup(|app| {
             let images = match app.path().app_cache_dir() {
                 Ok(root) => image_cache::ImageCache::new(root.join("imgcache")),
@@ -231,6 +235,7 @@ pub fn run() {
             let db_state = db::DbState::open(&db_path)
                 .map_err(|e| Box::<dyn std::error::Error>::from(e))?;
             app.manage(db_state);
+            listening_history::start_worker(app.handle().clone());
 
             // Start the system Now Playing / media-key integration.
             // Must be called from setup (main thread) so macOS can register
@@ -315,6 +320,14 @@ pub fn run() {
             });
         })
         .invoke_handler(tauri::generate_handler![
+            shutdown::shutdown_listener_ready,
+            shutdown::prepare_app_shutdown,
+            shutdown::complete_app_shutdown,
+            shutdown::cancel_app_shutdown,
+            shutdown::approve_update_exit,
+            listening_history::flush_listening_outbox,
+            listening_history::listening_history_status,
+            listening_history::retry_listening_history,
             // Connection
             commands::connect_plex,
             commands::disconnect_plex,
@@ -500,8 +513,17 @@ pub fn run() {
             audio_engine::bridge::audio_clear_cache,
             audio_engine::bridge::audio_get_cache_stats,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            let state = app.state::<shutdown::ShutdownState>();
+            if state.approved() { return; }
+            match event {
+                tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::CloseRequested { api, .. }, .. } => { api.prevent_close(); state.request(app); }
+                tauri::RunEvent::ExitRequested { code, api, .. } if code != Some(tauri::RESTART_EXIT_CODE) => { api.prevent_exit(); state.request(app); }
+                _ => {}
+            }
+        });
 }
 
 fn main() {

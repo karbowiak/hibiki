@@ -24,6 +24,13 @@ export class PlaybackJournal<T> {
     return true
   }
 
+  clear(): void {
+    for (const id of this.records.keys()) this.completed.add(id)
+    this.records.clear()
+    this.currentId = null
+    while (this.completed.size > 64) this.completed.delete(this.completed.values().next().value!)
+  }
+
   current(): T | null {
     return this.currentId === null ? null : this.records.get(this.currentId)?.value ?? null
   }

@@ -3,8 +3,8 @@
 //! Mirrors the TypeScript DeckManager: two reusable decks, one active (playing)
 //! and one pending (preloaded with next track). Transitions swap roles.
 
-use super::super::output::playback_envelope::PlaybackEnvelope;
 use super::super::crossfade::types::TrackRamps;
+use super::super::output::playback_envelope::PlaybackEnvelope;
 use super::super::types::{DeckId, TrackMeta};
 
 /// Active crossfade curve state — the mixer steps through this per-frame.
@@ -66,6 +66,8 @@ pub struct DeckState {
     pub played_frames: u64,
     pub start_reported: bool,
     pub end_reported: bool,
+    pub history_start_reported: bool,
+    pub history_end_reported: bool,
     /// Decoded audio samples (interleaved f32).
     pub samples: Vec<f32>,
     /// Current read position in samples (interleaved index).
@@ -110,6 +112,8 @@ impl DeckState {
             played_frames: 0,
             start_reported: false,
             end_reported: false,
+            history_start_reported: false,
+            history_end_reported: false,
             samples: Vec::new(),
             position: 0,
             meta: None,
@@ -161,6 +165,8 @@ impl DeckState {
         self.played_frames = 0;
         self.start_reported = false;
         self.end_reported = false;
+        self.history_start_reported = false;
+        self.history_end_reported = false;
         self.samples.clear();
         self.position = 0;
         self.sample_offset = 0;

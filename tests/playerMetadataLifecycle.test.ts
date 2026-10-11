@@ -48,7 +48,7 @@ mock.module("@tauri-apps/api/event", () => ({
   ...events,
   listen: async () => () => {},
 }))
-const { usePlayerStore } = await import("../src/stores/playerStore")
+const { usePlayerStore, preparePlaybackShutdown } = await import("../src/stores/playerStore")
 const { useProviderStore } = await import("../src/stores/providerStore")
 const { useLyricsStore } = await import("../src/stores/lyricsStore")
 const { useNotificationStore } = await import("../src/stores/notificationStore")
@@ -347,9 +347,9 @@ test("enabling track radio preserves the native playback, position, lyrics, and 
     listened_ms: 100000,
     reason: "skipped",
   })
-  expect((p.onTrackEnd as any).mock.calls.length).toBe(1)
-  expect((p.onTrackEnd as any).mock.calls[0][2]).toBe(100000)
-  expect((p.markPlayed as any).mock.calls.length).toBe(1)
+  // Native history owns durable final reports; renderer handoff must not duplicate them.
+  expect((p.onTrackEnd as any).mock.calls.length).toBe(0)
+  expect((p.markPlayed as any).mock.calls.length).toBe(0)
 })
 
 test("a paused radio seed stays paused when the station arrives without the seed", async () => {
@@ -842,4 +842,25 @@ test("selecting existing Plex lyrics retires a pending manual Genius request", a
   expect(useLyricsStore.getState().activeSourceId).toBe("plex")
   expect(useLyricsStore.getState().isFetchingLyrics).toBe(false)
   expect(state().lyricsLines?.[0].text).toBe("Plex lyric")
+})
+
+
+test("keeping the app open after shutdown reloads the selected song at its saved position", async () => {
+  const prepare = engine.prepareShutdown
+  const seek = engine.seekTo
+  engine.prepareShutdown = async () => []
+  engine.seekTo = mock(() => {})
+  try {
+    useProviderStore.getState().setProvider(provider("resume-owner"))
+    await audiblyPlay(source("77"))
+    usePlayerStore.setState({ positionMs: 43210 })
+    await preparePlaybackShutdown()
+    expect(state().isPlaying).toBe(false)
+    ;(engine.play as any).mockClear()
+    state().resume()
+    for (let turn = 0; turn < 5; turn++) await settle()
+    expect((engine.play as any).mock.calls.length).toBe(1)
+    expect((engine.seekTo as any).mock.calls).toEqual([[43210]])
+    expect((engine.resume as any).mock.calls.length).toBe(0)
+  } finally { engine.prepareShutdown = prepare; engine.seekTo = seek }
 })

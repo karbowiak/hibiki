@@ -144,6 +144,8 @@ mod tests {
             played_frames: 0,
             start_reported: false,
             end_reported: false,
+            history_start_reported: false,
+            history_end_reported: false,
             samples,
             position: 0,
             meta: None,

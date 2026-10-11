@@ -106,6 +106,11 @@ pub enum AudioCommand {
         gain_db: f32,
     },
     // -- Playback --
+    PrepareShutdown {
+        request_id: u64,
+        reply:
+            crossbeam_channel::Sender<Result<Vec<crate::listening_history::PlaybackEnd>, String>>,
+    },
     Pause,
     Resume,
     // Production Stop uses SharedAtomics::stop_revision, never this queue.
