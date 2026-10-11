@@ -362,12 +362,14 @@ export function AlbumPage({ albumId }: { albumId: string }) {
         <div className="relative z-10 flex flex-row items-end w-full gap-6">
           {/* Album art — click to open modal */}
           {thumbUrl ? (
-            <img
-              src={thumbUrl}
-              alt=""
-              onClick={() => setShowImageModal(true)}
-              className="w-52 h-52 rounded-md shadow-2xl object-cover flex-shrink-0 cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all duration-200"
-            />
+            <button
+              type="button"
+              aria-label={`View ${album.title} artwork`}
+              onClick={e => { e.currentTarget.focus({ preventScroll: true }); setShowImageModal(true) }}
+              className="w-52 h-52 rounded-md shadow-2xl flex-shrink-0 ring-2 ring-transparent hover:ring-white/40 focus-visible:ring-white/70 focus-visible:outline-none transition-all duration-200"
+            >
+              <img src={thumbUrl} alt="" className="h-full w-full rounded-md object-cover" />
+            </button>
           ) : (
             <div className="w-52 h-52 rounded-md bg-app-surface shadow-2xl flex-shrink-0" />
           )}

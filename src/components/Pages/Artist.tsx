@@ -310,7 +310,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
         {/* Expand hero image — top-right, only when a banner image exists */}
         {artUrl && (
           <button
-            onClick={() => setShowHeroModal(true)}
+            onClick={e => { e.currentTarget.focus({ preventScroll: true }); setShowHeroModal(true) }}
             title="View full image"
             className="absolute top-4 right-4 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/40 text-white/70 hover:bg-black/60 hover:text-white transition-all"
           >
@@ -441,12 +441,14 @@ export function ArtistPage({ artistId }: { artistId: string }) {
         <div className="relative z-10 flex w-full items-end gap-6">
           {/* Avatar — click to open modal */}
           {thumbUrl ? (
-            <img
-              src={thumbUrl}
-              alt={artist.title}
-              onClick={() => setShowImageModal(true)}
-              className="h-36 w-36 flex-shrink-0 cursor-pointer rounded-lg object-cover shadow-2xl ring-2 ring-transparent hover:ring-white/40 transition-all"
-            />
+            <button
+              type="button"
+              aria-label={`View ${artist.title} artwork`}
+              onClick={e => { e.currentTarget.focus({ preventScroll: true }); setShowImageModal(true) }}
+              className="h-36 w-36 flex-shrink-0 rounded-lg shadow-2xl ring-2 ring-transparent hover:ring-white/40 focus-visible:ring-white/70 focus-visible:outline-none transition-all"
+            >
+              <img src={thumbUrl} alt="" className="h-full w-full rounded-lg object-cover" />
+            </button>
           ) : (
             <div className="h-36 w-36 flex-shrink-0 rounded-lg bg-app-surface shadow-2xl" />
           )}

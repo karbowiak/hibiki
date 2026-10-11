@@ -533,7 +533,7 @@ export function Player() {
             <img src={thumbUrl} alt={currentTrack?.albumName ?? ""} className="h-full w-full object-cover" />
           </Link>
           {/* Hover overlay buttons — bottom-right */}
-          <div className="pointer-events-none absolute inset-0 flex items-end justify-end gap-1 opacity-0 transition-opacity group-hover/expanded:opacity-100 p-1.5">
+          <div className="pointer-events-none absolute inset-0 flex items-end justify-end gap-1 opacity-0 transition-opacity group-hover/expanded:opacity-100 group-focus-within/expanded:opacity-100 p-1.5">
             <button
               onClick={e => { e.stopPropagation(); e.preventDefault(); toggleArtExpanded() }}
               className="pointer-events-auto flex h-6 w-6 items-center justify-center rounded-sm bg-black/70 text-white/80 hover:text-white hover:bg-black/90 transition-colors"
@@ -542,7 +542,7 @@ export function Player() {
               <IconChevronDown size={16} stroke={2} />
             </button>
             <button
-              onClick={e => { e.stopPropagation(); e.preventDefault(); setShowImageModal(true) }}
+              onClick={e => { e.stopPropagation(); e.preventDefault(); e.currentTarget.focus({ preventScroll: true }); setShowImageModal(true) }}
               className="pointer-events-auto flex h-6 w-6 items-center justify-center rounded-sm bg-black/70 text-white/80 hover:text-white hover:bg-black/90 transition-colors"
               title="View full size"
             >
@@ -605,7 +605,7 @@ export function Player() {
                     </Link>
                     {/* Hover overlay buttons — bottom-right */}
                     {thumbUrl && (
-                      <div className="pointer-events-none absolute inset-0 flex items-end justify-end gap-0.5 opacity-0 transition-opacity group-hover/art:opacity-100 p-0.5">
+                      <div className="pointer-events-none absolute inset-0 flex items-end justify-end gap-0.5 opacity-0 transition-opacity group-hover/art:opacity-100 group-focus-within/art:opacity-100 p-0.5">
                         <button
                           onClick={e => { e.stopPropagation(); e.preventDefault(); toggleArtExpanded() }}
                           className="pointer-events-auto flex h-5 w-5 items-center justify-center rounded-sm bg-black/70 text-white/80 hover:text-white hover:bg-black/90 transition-colors"
@@ -614,7 +614,7 @@ export function Player() {
                           {isArtExpanded ? <IconChevronDown size={14} stroke={2} /> : <IconChevronUp size={14} stroke={2} />}
                         </button>
                         <button
-                          onClick={e => { e.stopPropagation(); e.preventDefault(); setShowImageModal(true) }}
+                          onClick={e => { e.stopPropagation(); e.preventDefault(); e.currentTarget.focus({ preventScroll: true }); setShowImageModal(true) }}
                           className="pointer-events-auto flex h-5 w-5 items-center justify-center rounded-sm bg-black/70 text-white/80 hover:text-white hover:bg-black/90 transition-colors"
                           title="View full size"
                         >

@@ -6,6 +6,10 @@ import {
 import { detectFocalPoint } from "../../../src/lib/focalPoint"
 import { RadioAudioPlayer } from "../../../src/lib/radioAudio"
 import { PlexWebSocketManager } from "../../../src/backends/plex/websocket"
+import { createElement, useState } from "react"
+import { createRoot, type Root } from "react-dom/client"
+import { ImageModal } from "../../../src/components/shared/ImageModal"
+import "../../../src/styles.css"
 
 const state = {
   ready: false,
@@ -24,6 +28,59 @@ const state = {
 }
 const testWindow = window as any
 testWindow.rendererCheck = state
+let artworkRoot: Root | null = null
+function ArtworkViewerFixture() {
+  const [open, setOpen] = useState(false)
+  return createElement(
+    "section",
+    {
+      // Reproduce the stacking/containing context used by artwork in the player.
+      style: {
+        transform: "translateZ(0)",
+        overflow: "hidden",
+        width: 240,
+        height: 120,
+      },
+    },
+    createElement(
+      "button",
+      {
+        onClick: (event) => {
+          event.currentTarget.focus({ preventScroll: true })
+          setOpen(true)
+        },
+      },
+      "View fixture artwork"
+    ),
+    createElement("button", { onClick: () => {} }, "Background control"),
+    open
+      ? createElement(ImageModal, {
+          src: "http://image.localhost/album/modal-fixture",
+          alt: "Fixture album cover",
+          onClose: () => setOpen(false),
+        })
+      : null
+  )
+}
+testWindow.mountArtworkViewer = () => {
+  const host = document.createElement("div")
+  document.body.append(host)
+  artworkRoot = createRoot(host)
+  artworkRoot.render(createElement(ArtworkViewerFixture))
+  const player = document.createElement("div")
+  player.id = "fixture-player-overlay"
+  Object.assign(player.style, {
+    position: "fixed",
+    bottom: "0",
+    width: "100%",
+    height: "100px",
+    zIndex: "10000",
+    background: "#282828",
+    color: "white",
+  })
+  player.textContent = "Synthetic player overlay"
+  document.body.append(player)
+}
 document.addEventListener("securitypolicyviolation", (event) => {
   state.violations.push(event.effectiveDirective)
 })
@@ -60,6 +117,7 @@ let context: AudioContext | null = null
 const plexSockets: PlexWebSocketManager[] = []
 testWindow.pauseRadio = () => radio?.pause()
 testWindow.disposeRenderer = async () => {
+  artworkRoot?.unmount()
   for (const socket of plexSockets) socket.disconnect()
   radio?.stop()
   if (context && context.state !== "closed") await context.close()

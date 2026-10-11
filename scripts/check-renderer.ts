@@ -39,6 +39,8 @@ wav.write("data", 36)
 wav.writeUInt32LE(samples * 2, 40)
 const svg =
   '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#748ac7"/></svg>'
+const modalArtwork =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512"><defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#d946ef"/><stop offset="1" stop-color="#385c99"/></linearGradient></defs><rect width="512" height="512" rx="12" fill="url(#bg)"/><circle cx="256" cy="215" r="100" fill="#ffffff" fill-opacity=".15"/><text x="256" y="375" text-anchor="middle" fill="white" font-family="sans-serif" font-size="42">Hibiki</text></svg>'
 const font = await Bun.file(
   resolve(
     root,
@@ -185,7 +187,9 @@ try {
         await context.route("http://image.localhost/**", (route) =>
           route.fulfill({
             contentType: "image/svg+xml",
-            body: svg,
+            body: route.request().url().endsWith("/modal-fixture")
+              ? modalArtwork
+              : svg,
             headers: { "Access-Control-Allow-Origin": "*" },
           })
         )
@@ -268,6 +272,171 @@ try {
         await page.screenshot({
           path: join(artifactDir, `${name}-milkdrop.png`),
         })
+        await page.evaluate(() => (window as any).mountArtworkViewer())
+        const artworkTrigger = page.getByRole("button", {
+          name: "View fixture artwork",
+        })
+        await artworkTrigger.focus()
+        await page.keyboard.press("Enter")
+        const viewer = page.getByRole("dialog", { name: "Fixture album cover" })
+        await viewer.waitFor({ timeout: 3000 })
+        assert.equal(
+          await viewer.evaluate((element) => element.matches(":modal")),
+          true,
+          `${name}: artwork viewer is not modal`
+        )
+        const bounds = await viewer.boundingBox()
+        assert.ok(
+          bounds && bounds.width >= 1399 && bounds.height >= 889,
+          `${name}: artwork viewer is clipped by its parent`
+        )
+        const closeImage = viewer.getByRole("button", { name: "Close image" })
+        assert.equal(
+          await closeImage.evaluate(
+            (element) => element === document.activeElement
+          ),
+          true,
+          `${name}: artwork viewer did not take focus`
+        )
+        for (const key of ["Tab", "Shift+Tab"]) {
+          await page.keyboard.press(key)
+          assert.equal(
+            await page.evaluate(
+              () => !!document.activeElement?.closest("dialog")
+            ),
+            true,
+            `${name}: ${key} left the artwork viewer`
+          )
+        }
+        await page
+          .getByRole("button", { name: "Background control" })
+          .evaluate((element: HTMLElement) => element.focus())
+        assert.equal(
+          await closeImage.evaluate(
+            (element) => element === document.activeElement
+          ),
+          true,
+          `${name}: background control took modal focus`
+        )
+        await viewer.getByRole("img").click()
+        assert.equal(
+          await viewer.isVisible(),
+          true,
+          `${name}: clicking artwork dismissed it`
+        )
+        assert.equal(
+          await page.evaluate(
+            () => !!document.elementFromPoint(700, 850)?.closest("dialog")
+          ),
+          true,
+          `${name}: player overlay covers artwork viewer`
+        )
+        await page.screenshot({
+          path: join(artifactDir, `${name}-artwork-viewer.png`),
+        })
+        await page.keyboard.press("Escape")
+        await viewer.waitFor({ state: "detached" })
+        assert.equal(
+          await artworkTrigger.evaluate(
+            (element) => element === document.activeElement
+          ),
+          true,
+          `${name}: closing artwork did not restore focus`
+        )
+        await artworkTrigger.click()
+        await closeImage.click()
+        await viewer.waitFor({ state: "detached" })
+        await artworkTrigger.click()
+        await viewer.click({ position: { x: 10, y: 10 } })
+        await viewer.waitFor({ state: "detached" })
+        // Exercise the older system-WebKit path without attaching to a real
+        // user profile or requiring an obsolete browser in CI.
+        const backgroundBeforeFallback = await page.evaluate(() => {
+          const player = document.getElementById("fixture-player-overlay")!
+          player.setAttribute("aria-hidden", "false")
+          Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+            configurable: true,
+            value: undefined,
+          })
+          return document.body.style.overflow
+        })
+        for (const dismissal of ["Escape", "button", "backdrop"]) {
+          await artworkTrigger.click()
+          await viewer.waitFor()
+          assert.equal(
+            await viewer.evaluate((element) => element.matches(":modal")),
+            false
+          )
+          assert.equal(
+            await closeImage.evaluate(
+              (element) => element === document.activeElement
+            ),
+            true
+          )
+          await page.keyboard.press("Shift+Tab")
+          assert.equal(
+            await closeImage.evaluate(
+              (element) => element === document.activeElement
+            ),
+            true
+          )
+          await page
+            .locator("section button")
+            .last()
+            .evaluate((element: HTMLElement) => element.focus())
+          assert.equal(
+            await closeImage.evaluate(
+              (element) => element === document.activeElement
+            ),
+            true
+          )
+          assert.deepEqual(
+            await page.evaluate(() => ({
+              overflow: document.body.style.overflow,
+              backgroundHidden: document
+                .getElementById("fixture-player-overlay")!
+                .getAttribute("aria-hidden"),
+              topmost: !!document.elementFromPoint(700, 850)?.closest("dialog"),
+            })),
+            { overflow: "hidden", backgroundHidden: "true", topmost: true }
+          )
+          if (dismissal === "Escape") {
+            await page.screenshot({
+              path: join(artifactDir, `${name}-artwork-viewer-fallback.png`),
+            })
+            await page.keyboard.press("Escape")
+          } else if (dismissal === "button") await closeImage.click()
+          else await viewer.click({ position: { x: 10, y: 10 } })
+          await viewer.waitFor({ state: "detached" })
+          assert.equal(
+            await artworkTrigger.evaluate(
+              (element) => element === document.activeElement
+            ),
+            true,
+            `${name}: fallback ${dismissal} did not restore the focused artwork trigger`
+          )
+          assert.deepEqual(
+            await page.evaluate(() => ({
+              overflow: document.body.style.overflow,
+              backgroundHidden: document
+                .getElementById("fixture-player-overlay")!
+                .getAttribute("aria-hidden"),
+              backgroundInert: document
+                .getElementById("fixture-player-overlay")!
+                .hasAttribute("inert"),
+            })),
+            {
+              overflow: backgroundBeforeFallback,
+              backgroundHidden: "false",
+              backgroundInert: false,
+            }
+          )
+        }
+        assert.deepEqual(
+          await page.evaluate(() => (window as any).rendererCheck.violations),
+          [],
+          `${name}: artwork controls violated CSP`
+        )
         await page.evaluate(() => (window as any).tryUntrustedContent(true))
         await page.waitForTimeout(100)
         assert.equal(
@@ -315,7 +484,7 @@ try {
         )
         await page.evaluate(() => (window as any).disposeRenderer())
         console.log(
-          `${name}: app, MilkDrop, artwork, IPC, radio, Plex WS/WSS, and CSP enforcement passed`
+          `${name}: app, MilkDrop, artwork analysis/viewer, IPC, radio, Plex WS/WSS, and CSP enforcement passed`
         )
         await context.close()
       } finally {
