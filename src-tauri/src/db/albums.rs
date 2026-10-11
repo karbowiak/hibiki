@@ -52,6 +52,10 @@ pub struct ReviewRow {
 
 /// Upsert a single album from Plex data.
 pub fn upsert(conn: &Connection, album: &Album) -> Result<(), String> {
+    super::atomic_upsert(conn, |conn| upsert_inner(conn, album))
+}
+
+fn upsert_inner(conn: &Connection, album: &Album) -> Result<(), String> {
     let artist_id = parse_plex_id(&album.parent_key);
 
     conn.execute(
@@ -323,6 +327,47 @@ mod tests {
             leaf_count: 12,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn failed_child_replacement_preserves_album_and_bulk_transaction() {
+        let db = DbState::open_in_memory().unwrap();
+        let conn = db.0.lock().unwrap();
+        let mut original = make_album(1, "Original", "/library/metadata/100", "Artist");
+        original.genre = vec![PlexTag {
+            tag: "Original genre".into(),
+            id: None,
+            filter: None,
+        }];
+        original.reviews = vec![Review {
+            id: Some(1),
+            tag: None,
+            text: Some("Original review".into()),
+            image: None,
+            link: None,
+            source: None,
+        }];
+        upsert(&conn, &original).unwrap();
+        let before = serde_json::to_value(get(&conn, 1).unwrap()).unwrap();
+        conn.execute_batch("CREATE TRIGGER fail_review BEFORE INSERT ON album_reviews WHEN NEW.text='Rejected' BEGIN SELECT RAISE(ABORT,'synthetic review failure'); END").unwrap();
+        let mut invalid = original.clone();
+        invalid.title = "Changed".into();
+        invalid.genre.clear();
+        invalid.reviews[0].text = Some("Rejected".into());
+        assert!(upsert(&conn, &invalid).is_err());
+        assert_eq!(
+            serde_json::to_value(get(&conn, 1).unwrap()).unwrap(),
+            before
+        );
+        assert!(conn.is_autocommit());
+        assert!(upsert_bulk(&conn, &[make_album(2, "New", "", ""), invalid]).is_err());
+        assert_eq!(
+            serde_json::to_value(get(&conn, 1).unwrap()).unwrap(),
+            before
+        );
+        assert!(get(&conn, 2).unwrap().is_none());
+        assert_eq!(count(&conn).unwrap(), 1);
+        assert!(conn.is_autocommit());
     }
 
     #[test]

@@ -42,6 +42,10 @@ pub struct TagRow {
 
 /// Upsert a single artist (from a Plex `Artist` struct) into the database.
 pub fn upsert(conn: &Connection, artist: &Artist) -> Result<(), String> {
+    super::atomic_upsert(conn, |conn| upsert_inner(conn, artist))
+}
+
+fn upsert_inner(conn: &Connection, artist: &Artist) -> Result<(), String> {
     conn.execute(
         "INSERT INTO artists (id, api_key, title, title_sort, library_section_id, album_sort,
             rating, thumb, summary, user_rating, added_at, last_viewed_at, last_rated_at,
@@ -298,6 +302,32 @@ mod tests {
             locations: vec!["/music/artist1".to_string()],
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn failed_child_replacement_preserves_artist_and_bulk_transaction() {
+        let db = DbState::open_in_memory().unwrap();
+        let conn = db.0.lock().unwrap();
+        let mut original = make_artist(1, "Original");
+        original.locations = vec!["/original".into()];
+        upsert(&conn, &original).unwrap();
+        let before = serde_json::to_value(get(&conn, 1).unwrap()).unwrap();
+        let mut invalid = make_artist(1, "Changed");
+        invalid.locations = vec!["/duplicate".into(), "/duplicate".into()];
+        assert!(upsert(&conn, &invalid).is_err());
+        assert_eq!(
+            serde_json::to_value(get(&conn, 1).unwrap()).unwrap(),
+            before
+        );
+        assert!(conn.is_autocommit());
+        assert!(upsert_bulk(&conn, &[make_artist(2, "New"), invalid]).is_err());
+        assert_eq!(
+            serde_json::to_value(get(&conn, 1).unwrap()).unwrap(),
+            before
+        );
+        assert!(get(&conn, 2).unwrap().is_none());
+        assert_eq!(count(&conn).unwrap(), 1);
+        assert!(conn.is_autocommit());
     }
 
     #[test]

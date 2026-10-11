@@ -106,6 +106,10 @@ pub struct LyricsRow {
 
 /// Upsert a single track from Plex data — includes nested media/parts/streams/lyrics.
 pub fn upsert(conn: &Connection, track: &Track) -> Result<(), String> {
+    super::atomic_upsert(conn, |conn| upsert_inner(conn, track))
+}
+
+fn upsert_inner(conn: &Connection, track: &Track) -> Result<(), String> {
     let album_id = parse_plex_id(&track.parent_key);
     let artist_id = parse_plex_id(&track.grandparent_key);
 
@@ -588,6 +592,32 @@ mod tests {
             format: "lrc".into(),
         }];
         t
+    }
+
+    #[test]
+    fn failed_child_replacement_preserves_track_and_bulk_transaction() {
+        let db = DbState::open_in_memory().unwrap();
+        let conn = db.0.lock().unwrap();
+        let original = make_track_with_media(1, "Original");
+        upsert(&conn, &original).unwrap();
+        let before = serde_json::to_value(get(&conn, 1).unwrap()).unwrap();
+        let mut invalid = original.clone();
+        invalid.title = "Changed".into();
+        invalid.media.push(invalid.media[0].clone());
+        assert!(upsert(&conn, &invalid).is_err());
+        assert_eq!(
+            serde_json::to_value(get(&conn, 1).unwrap()).unwrap(),
+            before
+        );
+        assert!(conn.is_autocommit());
+        assert!(upsert_bulk(&conn, &[make_track_with_media(2, "New"), invalid]).is_err());
+        assert_eq!(
+            serde_json::to_value(get(&conn, 1).unwrap()).unwrap(),
+            before
+        );
+        assert!(get(&conn, 2).unwrap().is_none());
+        assert_eq!(count(&conn).unwrap(), 1);
+        assert!(conn.is_autocommit());
     }
 
     #[test]

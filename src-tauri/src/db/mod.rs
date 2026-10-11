@@ -117,6 +117,36 @@ impl DbState {
     }
 }
 
+/// Atomically replace a metadata parent and its children, including inside a
+/// bulk transaction. Dropping the guard rolls back early returns and panics.
+pub(crate) fn atomic_upsert<T>(
+    conn: &Connection,
+    work: impl FnOnce(&Connection) -> Result<T, String>,
+) -> Result<T, String> {
+    const NAME: &str = "hibiki_metadata_upsert";
+    struct Rollback<'a> {
+        conn: &'a Connection,
+        active: bool,
+    }
+    impl Drop for Rollback<'_> {
+        fn drop(&mut self) {
+            if self.active {
+                let _ = self.conn.execute_batch(
+                    "ROLLBACK TO hibiki_metadata_upsert; RELEASE hibiki_metadata_upsert",
+                );
+            }
+        }
+    }
+    conn.execute_batch(&format!("SAVEPOINT {NAME}"))
+        .map_err(|error| format!("begin metadata savepoint error: {error}"))?;
+    let mut rollback = Rollback { conn, active: true };
+    let value = work(conn)?;
+    conn.execute_batch(&format!("RELEASE {NAME}"))
+        .map_err(|error| format!("commit metadata savepoint error: {error}"))?;
+    rollback.active = false;
+    Ok(value)
+}
+
 /// Database info returned by the `db_get_info` command.
 #[derive(Debug, Serialize)]
 pub struct DbInfo {
