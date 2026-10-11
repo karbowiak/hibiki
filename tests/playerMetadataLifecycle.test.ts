@@ -1038,3 +1038,59 @@ test("shutdown retains podcast native ending position before clearing renderer r
     expect((engine.seekTo as any).mock.calls.at(-1)).toEqual([15150])
   } finally { engine.prepareShutdown = prepare }
 })
+
+
+test("long repeated episode selections preserve outgoing and queued preload native identities", async () => {
+  await state().initAudioEvents()
+  const first = podcastTrack("key-original", "first")
+  const second = podcastTrack("key-original", "second")
+  await state().playTrack(first, [first, second])
+  const firstEvent = { playback_id: ++playbackId, rating_key: (engine.play as any).mock.calls.at(-1)[1], duration_ms: 300000 }
+  audioCallbacks.onTrackStarted(firstEvent)
+  await settle()
+  const secondEvent = { playback_id: ++playbackId, rating_key: (engine.preloadNext as any).mock.calls.at(-1)[1], duration_ms: 300000 }
+  audioCallbacks.onTrackStarted(secondEvent)
+  const longGuid = "long-guid".repeat(1000)
+  let selected!: MusicTrack, next!: MusicTrack
+  for (let visit = 0; visit < 600; visit++) {
+    // Fresh objects from repeated feed visits allocate distinct native keys.
+    selected = podcastTrack("key-repeat", longGuid)
+    next = podcastTrack("key-repeat", "next")
+    await state().playTrack(selected, [selected, next])
+  }
+  const selectedEvent = { playback_id: ++playbackId, rating_key: (engine.play as any).mock.calls.at(-1)[1], duration_ms: 300000 }
+  await settle()
+  const nextEvent = { playback_id: ++playbackId, rating_key: (engine.preloadNext as any).mock.calls.at(-1)[1], duration_ms: 300000 }
+  audioCallbacks.onTrackEnded({ ...firstEvent, position_ms: 45000, listened_ms: 1000, reason: "stopped" })
+  expect(usePodcastStore.getState().getEpisodeProgress("key-original", "first")).toBe(45)
+  audioCallbacks.onTrackStarted(selectedEvent)
+  expect(state().currentTrack?.id).toBe(selected.id)
+  audioCallbacks.onTrackStarted(nextEvent)
+  expect(state().currentTrack?.id).toBe(next.id)
+  audioCallbacks.onTrackEnded({ ...secondEvent, position_ms: 32000, listened_ms: 1000, reason: "skipped" })
+  expect(usePodcastStore.getState().getEpisodeProgress("key-original", "second")).toBe(32)
+  state().stop()
+  // Stop retires unowned reverse entries while the captured old journal record
+  // still owns this native ending, even with the visible queue already cleared.
+  audioCallbacks.onTrackEnded({ ...selectedEvent, position_ms: 12000, listened_ms: 1000, reason: "stopped" })
+  expect(usePodcastStore.getState().getEpisodeProgress("key-repeat", longGuid)).toBe(12)
+})
+
+
+test("custom positive provider IDs keep pending play/preload identity through queue object replacement", async () => {
+  await state().initAudioEvents()
+  useProviderStore.getState().setProvider(provider("custom-positive", { getPlaybackInfo: async track => ({
+    url: `https://custom-positive.test/${track.id}`, trackKey: track.id === "opaque-a" ? 99 : 100,
+    partId: 1, parentKey: "album", startRamp: null, endRamp: null,
+  }) }))
+  const first = source("opaque-a"), next = source("opaque-b")
+  await state().playTrack(first, [first, next])
+  await settle()
+  const preloadKey = (engine.preloadNext as any).mock.calls.at(-1)[1]
+  expect(preloadKey).toBe(100)
+  usePlayerStore.setState({ currentTrack: { ...first }, queue: [{ ...first }, { ...next }] })
+  audioCallbacks.onTrackStarted({ playback_id: ++playbackId, rating_key: 99, duration_ms: first.duration })
+  expect(state().currentTrack?.id).toBe("opaque-a")
+  audioCallbacks.onTrackStarted({ playback_id: ++playbackId, rating_key: preloadKey, duration_ms: next.duration })
+  expect(state().currentTrack?.id).toBe("opaque-b")
+})

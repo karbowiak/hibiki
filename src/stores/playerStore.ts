@@ -2,6 +2,7 @@ import { create } from "zustand"
 import { safeLocalPersist } from "./localPreferenceStorage"
 import { listen } from "@tauri-apps/api/event"
 import { fireAndForget } from "../lib/async"
+import { PlaybackKeyLookup } from "../audio/playbackKeyLookup"
 import { PlaybackJournal, startedQueueIndex } from "../audio/playbackJournal"
 import type { MusicProvider } from "../providers/types"
 import { dispatchPlaybackWhenReady } from "../audio/playbackRequests"
@@ -159,7 +160,31 @@ let _activeTrackGeneration = 0
 // ---------------------------------------------------------------------------
 
 /** Maps numeric rating_key (sent to Rust engine) → MusicTrack.id string. */
-const _ratingKeyToTrackId = new Map<number, string>()
+let _selectionPlaybackKey: number | null = null
+let _preloadPlaybackKey: number | null = null
+const _trackPlaybackKeys = new WeakMap<MusicTrack, number>()
+const _acceptedPlaybackKeys = new Map<number, number>() // playback_id → rating_key, journal-sized
+const _ratingKeyToTrackId = new PlaybackKeyLookup(() => {
+  const keys = new Set(_acceptedPlaybackKeys.values())
+  if (_selectionPlaybackKey !== null) keys.add(_selectionPlaybackKey)
+  if (_preloadPlaybackKey !== null) keys.add(_preloadPlaybackKey)
+  const state = usePlayerStore.getState()
+  const tracks = [state.currentTrack, ...state.queue.slice(state.queueIndex, state.queueIndex + 4)]
+  if (state.repeat === 2 && state.queue.length) tracks.push(state.queue[(state.queueIndex + 1) % state.queue.length])
+  for (const track of tracks) {
+    if (!track) continue
+    const key = _trackPlaybackKeys.get(track)
+    if (key !== undefined) keys.add(key)
+  }
+  return keys
+})
+
+function rememberPlaybackKey(key: number, track: MusicTrack, owner?: "selection" | "preload"): void {
+  if (owner === "selection") _selectionPlaybackKey = key
+  if (owner === "preload") _preloadPlaybackKey = key
+  _trackPlaybackKeys.set(track, key)
+  _ratingKeyToTrackId.set(key, track.id)
+}
 
 function resolveTrackId(ratingKey: number): string {
   return _ratingKeyToTrackId.get(ratingKey) ?? String(ratingKey)
@@ -279,9 +304,16 @@ export async function preparePlaybackShutdown(): Promise<void> {
   const endings = await engine.prepareShutdown()
   for (const ending of endings) {
     const record = _playbackJournal.finish(ending)
-    if (record) savePodcastProgress(record.value, ending.position_ms, true, ending.reason === "natural")
+    if (record) {
+      _acceptedPlaybackKeys.delete(ending.playback_id)
+      savePodcastProgress(record.value, ending.position_ms, true, ending.reason === "natural")
+    }
   }
   _playbackJournal.clear()
+  _acceptedPlaybackKeys.clear()
+  _selectionPlaybackKey = null
+  _preloadPlaybackKey = null
+  _ratingKeyToTrackId.clearUnowned()
 }
 
 // ---------------------------------------------------------------------------
@@ -553,8 +585,8 @@ async function sendToAudioEngine(track: MusicTrack, generation: number): Promise
   // Direct URL tracks (podcasts, external audio) bypass provider.getPlaybackInfo()
   if (track.streamUrl && /^https?:\/\//i.test(track.streamUrl)) {
     const syntheticKey = directTrackKey(track)
-    _ratingKeyToTrackId.set(syntheticKey, track.id)
     if (generation !== _playGeneration) return
+    rememberPlaybackKey(syntheticKey, track, "selection")
     await engine.play(track.streamUrl, syntheticKey, track.duration, "", null, true)
     return
   }
@@ -567,7 +599,7 @@ async function sendToAudioEngine(track: MusicTrack, generation: number): Promise
     },
     () => generation === _playGeneration && getProvider() === provider,
     async ({ info, gainDb }) => {
-      _ratingKeyToTrackId.set(info.trackKey, track.id)
+      rememberPlaybackKey(info.trackKey, track, "selection")
       await engine.play(info.url, info.trackKey, track.duration, info.parentKey, gainDb,
         undefined, track.startRamp ?? info.startRamp, track.endRamp ?? info.endRamp,
         isAlbumPlayback(track, usePlayerStore.getState().albumPlaybackId), info.plexContext, playbackLabels(track))
@@ -615,8 +647,8 @@ async function preloadNextTrack(queue: MusicTrack[], queueIndex: number, repeat:
   if (nextTrack.streamUrl?.startsWith("http")) {
     try {
       const syntheticKey = directTrackKey(nextTrack)
-      _ratingKeyToTrackId.set(syntheticKey, nextTrack.id)
       if (!isCurrent()) return
+      rememberPlaybackKey(syntheticKey, nextTrack, "preload")
       await engine.preloadNext(nextTrack.streamUrl, syntheticKey, nextTrack.duration, "", null, true)
     } catch { /* non-critical */ }
     return
@@ -633,7 +665,7 @@ async function preloadNextTrack(queue: MusicTrack[], queueIndex: number, repeat:
       },
       () => isCurrent() && getProvider() === provider,
       async ({ info, gainDb }) => {
-        _ratingKeyToTrackId.set(info.trackKey, nextTrack.id)
+        rememberPlaybackKey(info.trackKey, nextTrack, "preload")
         await engine.preloadNext(info.url, info.trackKey, nextTrack.duration, info.parentKey,
           gainDb, undefined, nextTrack.startRamp ?? info.startRamp, nextTrack.endRamp ?? info.endRamp,
           isAlbumPlayback(nextTrack, usePlayerStore.getState().albumPlaybackId), info.plexContext, playbackLabels(nextTrack))
@@ -801,13 +833,13 @@ function prefetchAhead(queue: MusicTrack[], fromIndex: number, count: number): v
     if (!t) continue
     if (t.streamUrl?.startsWith("http")) {
       const key = directTrackKey(t)
-      _ratingKeyToTrackId.set(key, t.id)
+      rememberPlaybackKey(key, t)
       continue
     }
     if (!provider) continue
     fireAndForget(playbackMetadata.playbackInfo(provider, t).then(info => {
       if (generation !== _playGeneration || active !== _activeTrackGeneration || getProvider() !== provider) return
-      _ratingKeyToTrackId.set(info.trackKey, t.id)
+      rememberPlaybackKey(info.trackKey, t)
     }))
   }
 }
@@ -826,6 +858,8 @@ async function _startPlayback(track: MusicTrack, index: number, get: () => Playe
   const outgoing = _playbackJournal.current()
   savePodcastProgress(outgoing, outgoing?.positionMs ?? 0, true)
   _shutdownResumePosition = null
+  _selectionPlaybackKey = null
+  _preloadPlaybackKey = null
   _podcastRequestedSeek = null
   const gen = ++_playGeneration
   _pendingSelectedTrackId = track.id
@@ -1154,6 +1188,8 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   stop: () => {
+    _selectionPlaybackKey = null
+    _preloadPlaybackKey = null
     const audible = _playbackJournal.current()
     savePodcastProgress(audible, audible?.positionMs ?? 0, true)
     beginQueueSelection()
@@ -1202,6 +1238,7 @@ export const usePlayerStore = create<PlayerState>()(
       contextName: null,
       contextHref: null,
     })
+    _ratingKeyToTrackId.clearUnowned()
   },
 
   pause: () => {
@@ -1367,6 +1404,7 @@ export const usePlayerStore = create<PlayerState>()(
   cycleRepeat: () => {
     const repeat = ((get().repeat + 1) % 3) as 0 | 1 | 2
     set({ repeat })
+    _preloadPlaybackKey = null
     engine.clearPreload()
     if (repeat !== 1) fireAndForget(preloadNextTrack(get().queue, get().queueIndex, repeat))
   },
@@ -1415,11 +1453,13 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   clearUpcoming: () => {
+    _preloadPlaybackKey = null
     engine.clearPreload()
     set(s => ({ queue: s.queue.slice(0, s.queueIndex + 1), transitionInfo: null }))
   },
 
   refreshPreload: () => {
+    _preloadPlaybackKey = null
     engine.clearPreload()
     set({ transitionInfo: null })
     const { queue, queueIndex, repeat } = get()
@@ -1490,6 +1530,8 @@ export const usePlayerStore = create<PlayerState>()(
       onTrackEnded(event) {
         const record = _playbackJournal.finish(event)
         if (!record) return
+        _acceptedPlaybackKeys.delete(event.playback_id)
+        _ratingKeyToTrackId.trim()
         const { track } = record.value
         savePodcastProgress(record.value, event.position_ms, true, event.reason === "natural")
         const { currentTrack, repeat, queueIndex } = get()
@@ -1534,6 +1576,11 @@ export const usePlayerStore = create<PlayerState>()(
           ? requestedSeek.positionMs : podcastResumePosition(track)
         _podcastRequestedSeek = null
         if (!_playbackJournal.start(event, { track, provider, positionMs: resumePosition, podcastSavedAt: Date.now(), podcastResumeTarget: resumePosition > 0 ? resumePosition : null })) return
+        _acceptedPlaybackKeys.set(event.playback_id, event.rating_key)
+        if (_selectionPlaybackKey === event.rating_key) _selectionPlaybackKey = null
+        if (_preloadPlaybackKey === event.rating_key) _preloadPlaybackKey = null
+        while (_acceptedPlaybackKeys.size > 64) _acceptedPlaybackKeys.delete(_acceptedPlaybackKeys.keys().next().value!)
+        _ratingKeyToTrackId.trim()
         if (_gaplessTimeoutId !== null) { clearTimeout(_gaplessTimeoutId); _gaplessTimeoutId = null }
         const automatic = _pendingSelectedTrackId === null
         _pendingSelectedTrackId = null
@@ -1586,7 +1633,7 @@ export const usePlayerStore = create<PlayerState>()(
               console.log("[Transcode fallback] Retrying with transcoded audio for:", currentTrack.title)
               const info = await providerAtError.getTranscodePlaybackInfo(currentTrack, 320, "mp3")
               if (generation !== _playGeneration || getProvider() !== providerAtError) return
-              _ratingKeyToTrackId.set(info.trackKey, currentTrack.id)
+              rememberPlaybackKey(info.trackKey, currentTrack, "selection")
               _pendingSelectedTrackId = currentTrack.id
               await engine.play(info.url, info.trackKey, currentTrack.duration, info.parentKey, null, true, null, null, false, info.plexContext, playbackLabels(currentTrack))
               if (generation !== _playGeneration) return
