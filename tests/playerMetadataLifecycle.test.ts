@@ -174,6 +174,33 @@ test("a transcode retry keeps the originating provider's native audio ownership"
   expect((engine.play as any).mock.calls.at(-1)[9]).toEqual(plexContext)
 })
 
+test("colliding podcast IDs and a positive Plex ID advance through their own native starts", async () => {
+  // Aa and BB both hashed to 2112 in the old synthetic key implementation.
+  const first = source("Aa", { streamUrl: "https://podcast.test/a", _providerData: { isPodcast: true } })
+  const second = source("BB", { streamUrl: "https://podcast.test/b", _providerData: { isPodcast: true } })
+  const plex = source("2112")
+  useProviderStore.getState().setProvider(provider("a"))
+  await state().initAudioEvents()
+  await state().playTrack(first, [first, second, plex])
+  await settle()
+  const firstKey = (engine.play as any).mock.calls.at(-1)[1]
+  const secondKey = (engine.preloadNext as any).mock.calls.at(-1)[1]
+  expect(firstKey).toBeLessThan(0)
+  expect(secondKey).toBeLessThan(0)
+  expect(secondKey).not.toBe(firstKey)
+  audioCallbacks.onTrackStarted({ playback_id: ++playbackId, rating_key: firstKey, duration_ms: first.duration })
+  expect(state().currentTrack?.id).toBe("Aa")
+  expect(state().queueIndex).toBe(0)
+  audioCallbacks.onTrackStarted({ playback_id: ++playbackId, rating_key: secondKey, duration_ms: second.duration })
+  expect(state().currentTrack?.id).toBe("BB")
+  expect(state().queueIndex).toBe(1)
+  await settle()
+  expect((engine.preloadNext as any).mock.calls.at(-1)[1]).toBe(2112)
+  audioCallbacks.onTrackStarted({ playback_id: ++playbackId, rating_key: 2112, duration_ms: plex.duration })
+  expect(state().currentTrack?.id).toBe("2112")
+  expect(state().queueIndex).toBe(2)
+})
+
 test("selecting internet radio revokes a pending Plex song load", async () => {
   const pending = deferred<any>()
   useProviderStore

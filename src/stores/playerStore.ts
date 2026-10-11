@@ -463,11 +463,18 @@ async function fetchGainDb(track: MusicTrack, provider: MusicProvider): Promise<
   return playbackMetadata.gain(provider, track, usePlayerStore.getState().albumPlaybackId)
 }
 
-/** Simple string hash for synthetic track keys. */
-function hashCode(s: string): number {
-  let h = 0
-  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0
-  return h
+// Public tracks use a separate numeric namespace from positive Plex IDs.
+// A weak lookup keeps each track object stable through preload and playback
+// without retaining every episode object for the lifetime of the app.
+const _directTrackKeys = new WeakMap<MusicTrack, number>()
+let _nextDirectTrackKey = -1
+function directTrackKey(track: MusicTrack): number {
+  const existing = _directTrackKeys.get(track)
+  if (existing !== undefined) return existing
+  if (!Number.isSafeInteger(_nextDirectTrackKey)) throw new Error("Audio track keys exhausted")
+  const key = _nextDirectTrackKey--
+  _directTrackKeys.set(track, key)
+  return key
 }
 
 /** Check if a track is a podcast episode (has direct stream URL + podcast provider data). */
@@ -480,7 +487,7 @@ function _isPodcastTrack(track: MusicTrack): boolean {
 async function sendToAudioEngine(track: MusicTrack, generation: number): Promise<void> {
   // Direct URL tracks (podcasts, external audio) bypass provider.getPlaybackInfo()
   if (track.streamUrl && /^https?:\/\//i.test(track.streamUrl)) {
-    const syntheticKey = Math.abs(hashCode(track.id))
+    const syntheticKey = directTrackKey(track)
     _ratingKeyToTrackId.set(syntheticKey, track.id)
     if (generation !== _playGeneration) return
     await engine.play(track.streamUrl, syntheticKey, track.duration, "", null, true)
@@ -542,7 +549,7 @@ async function preloadNextTrack(queue: MusicTrack[], queueIndex: number, repeat:
   // Direct URL tracks (podcasts) — preload without provider
   if (nextTrack.streamUrl?.startsWith("http")) {
     try {
-      const syntheticKey = Math.abs(hashCode(nextTrack.id))
+      const syntheticKey = directTrackKey(nextTrack)
       _ratingKeyToTrackId.set(syntheticKey, nextTrack.id)
       if (!isCurrent()) return
       await engine.preloadNext(nextTrack.streamUrl, syntheticKey, nextTrack.duration, "", null, true)
@@ -727,7 +734,7 @@ function prefetchAhead(queue: MusicTrack[], fromIndex: number, count: number): v
     const t = queue[fromIndex + i]
     if (!t) continue
     if (t.streamUrl?.startsWith("http")) {
-      const key = Math.abs(hashCode(t.id))
+      const key = directTrackKey(t)
       _ratingKeyToTrackId.set(key, t.id)
       continue
     }

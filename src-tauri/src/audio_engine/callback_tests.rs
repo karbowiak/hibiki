@@ -1265,3 +1265,23 @@ fn mixramp_keeps_both_decks_for_the_entire_overlap() {
         1
     );
 }
+
+
+#[test]
+fn public_track_keys_in_the_negative_namespace_keep_native_start_and_end_identity() {
+    let (mut cb, events) = callback();
+    cb.handle_load_deck(DeckId::A, meta(-1), 48000, 2, 1.0, 0);
+    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 96000];
+    cb.deck_mgr.active_deck_mut().fully_decoded = true;
+    cb.deck_mgr.active_deck_mut().has_started_playing = true;
+    cb.set_state(EngineState::Playing);
+    cb.process_callback(&mut [0.0; 960]);
+    cb.handle_command(AudioCommand::Stop);
+    let emitted: Vec<_> = events.try_iter().collect();
+    assert!(emitted
+        .iter()
+        .any(|event| matches!(event, EngineEvent::TrackStarted { rating_key: -1, .. })));
+    assert!(emitted
+        .iter()
+        .any(|event| matches!(event, EngineEvent::TrackEnded { rating_key: -1, .. })));
+}
