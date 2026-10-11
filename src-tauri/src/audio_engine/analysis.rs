@@ -142,7 +142,12 @@ impl LoudnessAnalysis {
             worker: Some(worker),
         })
     }
-    pub fn submit(&self, url: &str, deck: DeckId, request: PlaybackRequest) {
+    pub fn submit(
+        &self,
+        source: &super::source::MediaSource,
+        deck: DeckId,
+        request: PlaybackRequest,
+    ) {
         if !request.is_current() {
             return;
         }
@@ -150,8 +155,8 @@ impl LoudnessAnalysis {
             // At most one queued source per physical deck; a new owner replaces
             // obsolete work instead of building a backlog during rapid skips.
             slots[deck_index(deck)] = Some(Job {
-                key: super::cache::cache_key(url),
-                ext: super::cache::extract_extension(url),
+                key: source.cache_key.clone(),
+                ext: source.extension.clone(),
                 deck,
                 request,
             });
@@ -180,13 +185,17 @@ fn deck_index(deck: DeckId) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::super::cache::{cache_key, extract_extension};
+    use super::super::source::MediaSource;
     use super::*;
     use std::sync::atomic::{AtomicU64, AtomicUsize};
 
+    fn source(url: &str) -> MediaSource {
+        MediaSource::new(crate::plex::client::public_media_request(url), None).unwrap()
+    }
     fn cache_file(cache: &AudioCache, url: &str) {
+        let media = source(url);
         let mut writer = cache
-            .begin_write(&cache_key(url), &extract_extension(url))
+            .begin_write(&media.cache_key, &media.extension)
             .unwrap();
         writer.write_chunk(b"synthetic cache payload").unwrap();
         writer.finish(cache).unwrap();
@@ -232,11 +241,15 @@ mod tests {
         .unwrap();
         let active = request(&atomics, DeckId::A);
         installed(&atomics, DeckId::A, &active);
-        service.submit("https://test.invalid/not-complete.wav", DeckId::A, active);
+        service.submit(
+            &source("https://test.invalid/not-complete.wav"),
+            DeckId::A,
+            active,
+        );
         let url = "https://test.invalid/ready.wav";
         cache_file(&cache, url);
         let preload = request(&atomics, DeckId::B);
-        service.submit(url, DeckId::B, preload.clone());
+        service.submit(&source(url), DeckId::B, preload.clone());
         assert!(rx.recv_timeout(Duration::from_millis(150)).is_err());
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         installed(&atomics, DeckId::B, &preload);
@@ -244,7 +257,7 @@ mod tests {
             matches!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), AudioCommand::AnalyzedGain { deck: DeckId::B, load_id, .. } if load_id == preload.load_id)
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert_eq!(cache.get_computed_gain(&cache_key(url)), Some(-6.0));
+        assert_eq!(cache.get_computed_gain(&source(url).cache_key), Some(-6.0));
         shutdown(service);
     }
 
@@ -270,7 +283,7 @@ mod tests {
         for index in 0..1000 {
             let job = request(&atomics, DeckId::A);
             service.submit(
-                &format!("https://test.invalid/skip-{index}.wav"),
+                &source(&format!("https://test.invalid/skip-{index}.wav")),
                 DeckId::A,
                 job,
             );
@@ -279,7 +292,7 @@ mod tests {
         let url = "https://test.invalid/latest.wav";
         cache_file(&cache, url);
         installed(&atomics, DeckId::A, &latest);
-        service.submit(url, DeckId::A, latest.clone());
+        service.submit(&source(url), DeckId::A, latest.clone());
         assert!(
             matches!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), AudioCommand::AnalyzedGain { load_id, .. } if load_id == latest.load_id)
         );
@@ -315,13 +328,13 @@ mod tests {
         cache_file(&cache, url);
         let old = request(&atomics, DeckId::A);
         installed(&atomics, DeckId::A, &old);
-        service.submit(url, DeckId::A, old);
+        service.submit(&source(url), DeckId::A, old);
         started.recv_timeout(Duration::from_secs(2)).unwrap();
         atomics.deck_a_load_id.fetch_add(1, Ordering::SeqCst);
         done.recv_timeout(Duration::from_secs(2)).unwrap();
         shutdown(service);
         assert!(rx.try_recv().is_err());
-        assert_eq!(cache.get_computed_gain(&cache_key(url)), None);
+        assert_eq!(cache.get_computed_gain(&source(url).cache_key), None);
     }
 
     #[test]
@@ -348,7 +361,7 @@ mod tests {
         for deck in [DeckId::A, DeckId::B] {
             let job = request(&atomics, deck);
             installed(&atomics, deck, &job);
-            service.submit(url, deck, job);
+            service.submit(&source(url), deck, job);
             assert!(matches!(
                 rx.recv_timeout(Duration::from_secs(2)).unwrap(),
                 AudioCommand::AnalyzedGain { .. }

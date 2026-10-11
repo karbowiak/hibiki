@@ -17,15 +17,13 @@ pub struct ControlCommand {
 pub enum Command {
     // -- Playback --
     Play {
-        url: String,
+        source: super::source::MediaSource,
         meta: TrackMeta,
-        media_request: reqwest::RequestBuilder,
     },
     ClearPreload,
     PreloadNext {
-        url: String,
+        source: super::source::MediaSource,
         meta: TrackMeta,
-        media_request: reqwest::RequestBuilder,
     },
     Pause,
     Resume,

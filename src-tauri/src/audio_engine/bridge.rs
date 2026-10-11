@@ -29,12 +29,10 @@ pub async fn audio_play(
     plex_state: State<'_, crate::commands::PlexState>,
     state: State<'_, AudioEngineState>,
 ) -> Result<u64, String> {
-    let source_url = url.clone();
     plex_state
-        .dispatch_audio(context.as_ref(), &source_url, |media_request| {
+        .dispatch_audio(context.as_ref(), &url, |source| {
             state.0.send(Command::Play {
-                url,
-                media_request,
+                source,
                 meta: TrackMeta {
                     rating_key,
                     duration_ms,
@@ -65,12 +63,10 @@ pub async fn audio_preload_next(
     plex_state: State<'_, crate::commands::PlexState>,
     state: State<'_, AudioEngineState>,
 ) -> Result<(), String> {
-    let source_url = url.clone();
     plex_state
-        .dispatch_audio(context.as_ref(), &source_url, |media_request| {
+        .dispatch_audio(context.as_ref(), &url, |source| {
             state.0.send(Command::PreloadNext {
-                url,
-                media_request,
+                source,
                 meta: TrackMeta {
                     rating_key,
                     duration_ms,

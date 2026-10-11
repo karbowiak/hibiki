@@ -22,6 +22,7 @@ pub mod event;
 pub mod loudness;
 pub mod output;
 mod request;
+pub(crate) mod source;
 pub mod state;
 pub mod types;
 pub mod visualizer;
@@ -46,6 +47,7 @@ use self::output::resample::StreamingResampler;
 use self::output::channelmap::StereoDownmix;
 use self::output::CpalDriver;
 use self::request::PlaybackRequest;
+use self::source::MediaSource;
 use self::types::{DeckId, EngineState, TrackMeta};
 use self::visualizer::VisualizerProcessor;
 
@@ -397,7 +399,7 @@ fn control_thread_main(
     let rt = tauri::async_runtime::handle().inner().clone();
     let mut crossfade_settings = CrossfadeSettings::default();
     // Track what's preloaded on the pending deck so we can skip re-fetching
-    let mut pending_url = String::new();
+    let mut pending_source_key = String::new();
     let mut pending_owner: Option<(DeckId, u64)> = None;
 
     /// Read which deck is currently active from the shared atomic.
@@ -424,12 +426,8 @@ fn control_thread_main(
             continue;
         }
         match command {
-            Command::Play {
-                url,
-                meta,
-                media_request,
-            } => {
-                pending_url.clear();
+            Command::Play { source, meta } => {
+                pending_source_key.clear();
                 // Keep an existing overlap audible before reusing its outgoing
                 // physical deck. A newer selection can cancel this wait.
                 while atomics.crossfading.load(Ordering::SeqCst)
@@ -443,13 +441,12 @@ fn control_thread_main(
                 let deck = pending_deck(&atomics);
                 let request = make_request(epoch, deck, &atomics);
                 handle_play(
-                    &url,
+                    &source,
                     &meta,
                     deck,
                     &audio_cmd_tx,
                     deck_tx(deck, &deck_a_tx, &deck_b_tx),
                     &event_tx,
-                    &media_request,
                     &rt,
                     &atomics,
                     &cache,
@@ -469,11 +466,7 @@ fn control_thread_main(
                     std::thread::sleep(Duration::from_millis(5));
                 }
             }
-            Command::PreloadNext {
-                url,
-                meta,
-                media_request,
-            } => {
+            Command::PreloadNext { source, meta } => {
                 if preload_revision != atomics.preload_revision.load(Ordering::SeqCst) {
                     continue;
                 }
@@ -482,7 +475,7 @@ fn control_thread_main(
                     DeckId::A => &atomics.deck_a_load_id,
                     DeckId::B => &atomics.deck_b_load_id,
                 };
-                if url == pending_url
+                if source.cache_key == pending_source_key
                     && pending_owner == Some((pending, owner.load(Ordering::SeqCst)))
                     && atomics.preload_error_rk.load(Ordering::SeqCst) != meta.rating_key
                 {
@@ -503,13 +496,12 @@ fn control_thread_main(
                 let request = make_request(epoch, deck, &atomics)
                     .for_preload(atomics.preload_revision.clone(), preload_revision);
                 handle_preload(
-                    &url,
+                    &source,
                     &meta,
                     deck,
                     &audio_cmd_tx,
                     deck_tx(deck, &deck_a_tx, &deck_b_tx),
                     &event_tx,
-                    &media_request,
                     &rt,
                     &atomics,
                     &cache,
@@ -524,7 +516,7 @@ fn control_thread_main(
                     DeckId::B => &atomics.deck_b_loaded_id,
                 };
                 if request.is_current() && loaded.load(Ordering::SeqCst) == request.load_id {
-                    pending_url = url;
+                    pending_source_key = source.cache_key;
                     pending_owner = Some((deck, request.load_id));
                 }
             }
@@ -619,13 +611,12 @@ fn deck_tx<'a>(
 
 #[allow(clippy::too_many_arguments)]
 fn handle_play(
-    url: &str,
+    source: &MediaSource,
     meta: &TrackMeta,
     deck: DeckId,
     audio_cmd_tx: &Sender<AudioCommand>,
     sample_tx: &Sender<SampleBatch>,
     _event_tx: &Sender<EngineEvent>,
-    media_request: &reqwest::RequestBuilder,
     rt: &tokio::runtime::Handle,
     atomics: &Arc<SharedAtomics>,
     cache: &Arc<AudioCache>,
@@ -654,10 +645,9 @@ fn handle_play(
     };
 
     match fetch_and_decode_incremental(
-        url,
+        source,
         meta.rating_key,
         cache,
-        media_request,
         rt,
         device_rate,
         device_channels,
@@ -679,7 +669,7 @@ fn handle_play(
             let has_more = result.has_more;
 
             // Use available gain immediately; missing measurements run in the background.
-            let gain_db = resolve_gain_db(meta, url, cache);
+            let gain_db = resolve_gain_db(meta, &source.cache_key, cache);
             if !request.is_current() {
                 return;
             }
@@ -729,7 +719,7 @@ fn handle_play(
             wait_for_load(deck, request, atomics);
             if gain_db.is_none() {
                 if let Some(analysis) = analysis {
-                    analysis.submit(url, deck, request.clone());
+                    analysis.submit(source, deck, request.clone());
                 }
             }
             // Continue decoding in background
@@ -783,13 +773,12 @@ fn handle_play(
 
 #[allow(clippy::too_many_arguments)]
 fn handle_preload(
-    url: &str,
+    source: &MediaSource,
     meta: &TrackMeta,
     deck: DeckId,
     audio_cmd_tx: &Sender<AudioCommand>,
     sample_tx: &Sender<SampleBatch>,
     _event_tx: &Sender<EngineEvent>,
-    media_request: &reqwest::RequestBuilder,
     rt: &tokio::runtime::Handle,
     atomics: &Arc<SharedAtomics>,
     cache: &Arc<AudioCache>,
@@ -819,10 +808,9 @@ fn handle_preload(
     };
 
     match fetch_and_decode_incremental(
-        url,
+        source,
         meta.rating_key,
         cache,
-        media_request,
         rt,
         device_rate,
         device_channels,
@@ -842,7 +830,7 @@ fn handle_preload(
             let source_channels = result.source_channels;
             let has_more = result.has_more;
 
-            let gain_db = resolve_gain_db(meta, url, cache);
+            let gain_db = resolve_gain_db(meta, &source.cache_key, cache);
             if !request.is_current() {
                 return;
             }
@@ -893,7 +881,7 @@ fn handle_preload(
             wait_for_load(deck, request, atomics);
             if gain_db.is_none() {
                 if let Some(analysis) = analysis {
-                    analysis.submit(url, deck, request.clone());
+                    analysis.submit(source, deck, request.clone());
                 }
             }
 
@@ -1208,10 +1196,9 @@ struct IncrementalDecodeResult {
 /// On cache miss, tees the HTTP body to disk while streaming to the decoder.
 /// Obsolete downloads are cancelled so they cannot hold up the next track.
 fn fetch_and_decode_incremental(
-    url: &str,
+    source: &MediaSource,
     rating_key: i64,
     cache: &Arc<AudioCache>,
-    media_request: &reqwest::RequestBuilder,
     rt: &tokio::runtime::Handle,
     device_rate: u32,
     device_channels: u16,
@@ -1219,15 +1206,15 @@ fn fetch_and_decode_incremental(
 ) -> Result<IncrementalDecodeResult, String> {
     use symphonia::core::io::MediaSourceStream;
 
-    let ext = cache::extract_extension(url);
-    let cache_key = cache::cache_key(url);
+    let ext = &source.extension;
+    let cache_key = &source.cache_key;
 
     // ---- Cache HIT: decode from local file ----
-    if let Some(cached_path) = cache.lookup(&cache_key) {
+    if let Some(cached_path) = cache.lookup(cache_key) {
         debug!(rating_key, path = %cached_path.display(), "cache hit — decoding from file");
         let file = std::fs::File::open(&cached_path).map_err(|e| format!("cache read: {}", e))?;
         let mss = MediaSourceStream::new(Box::new(file), Default::default());
-        let mut setup = decode::probe_from_source(mss, Some(&ext)).map_err(|e| format!("{}", e))?;
+        let mut setup = decode::probe_from_source(mss, Some(ext)).map_err(|e| format!("{}", e))?;
         let mut result = decode_initial_batch(&mut setup, device_rate, device_channels)?;
         result.decoder = if setup.finished { None } else { Some(setup) };
         return Ok(result);
@@ -1237,9 +1224,8 @@ fn fetch_and_decode_incremental(
     debug!(rating_key, "cache miss — streaming from Plex");
 
     use self::deck::streaming::{SharedBuffer, StreamingReader};
-    let media_request = media_request.try_clone().ok_or("Cannot clone media request")?;
-    let ext = cache::extract_extension(url);
-    let cache_writer = cache.begin_write(&cache_key, &ext).ok();
+    let media_request = source.request.try_clone().ok_or("Cannot clone media request")?;
+    let cache_writer = cache.begin_write(cache_key, ext).ok();
     let cache_for_task = cache.clone();
     let request = request.clone();
 
@@ -1290,7 +1276,7 @@ fn fetch_and_decode_incremental(
     })?;
 
     let reader = StreamingReader::new(shared_buf);
-    let mut setup = decode::probe_stream(reader, Some(&ext)).map_err(|e| format!("{}", e))?;
+    let mut setup = decode::probe_stream(reader, Some(ext)).map_err(|e| format!("{}", e))?;
     let mut result = decode_initial_batch(&mut setup, device_rate, device_channels)?;
     result.decoder = if setup.finished { None } else { Some(setup) };
     Ok(result)
@@ -1362,10 +1348,10 @@ fn cache_ramps(meta: &TrackMeta, audio_cmd_tx: &Sender<AudioCommand>) {
 
 /// Resolve available metadata/cache gain without scanning a file on the
 /// playback control thread. Missing gain is handled by the background worker.
-fn resolve_gain_db(meta: &TrackMeta, url: &str, cache: &Arc<AudioCache>) -> Option<f32> {
+fn resolve_gain_db(meta: &TrackMeta, cache_key: &str, cache: &Arc<AudioCache>) -> Option<f32> {
     meta.gain_db.filter(|value| value.is_finite()).or_else(|| {
         cache
-            .get_computed_gain(&cache::cache_key(url))
+            .get_computed_gain(cache_key)
             .filter(|value| value.is_finite())
     })
 }
@@ -1379,7 +1365,9 @@ mod control_tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = Arc::new(AudioCache::new(dir.path().into(), None));
         let url = "https://test.invalid/startup.wav";
-        let mut writer = cache.begin_write(&cache::cache_key(url), "wav").unwrap();
+        let source =
+            MediaSource::new(crate::plex::client::public_media_request(url), None).unwrap();
+        let mut writer = cache.begin_write(&source.cache_key, "wav").unwrap();
         writer
             .write_chunk(&decode::tests::generate_test_wav(44100, 2, 3.0))
             .unwrap();
@@ -1425,13 +1413,12 @@ mod control_tests {
         };
         let start = std::time::Instant::now();
         handle_play(
-            url,
+            &source,
             &meta,
             DeckId::B,
             &commands,
             &samples,
             &events,
-            &crate::plex::client::public_media_request(url),
             runtime.handle(),
             &atomics,
             &cache,
@@ -1827,8 +1814,10 @@ mod control_tests {
         };
         let play_epoch = engine
             .send(Command::Play {
-                url: "https://example.com/audio".into(),
-                media_request: crate::plex::client::public_media_request("https://example.com/audio"),
+                source: MediaSource::new(
+                    crate::plex::client::public_media_request("https://example.com/audio"),
+                    None,
+                ).unwrap(),
                 meta,
             })
             .unwrap();

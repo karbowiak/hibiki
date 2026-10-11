@@ -132,7 +132,7 @@ impl PlexState {
         &self,
         context: Option<&PlexRequestContext>,
         url: &str,
-        send: impl FnOnce(reqwest::RequestBuilder) -> Result<u64, String>,
+        send: impl FnOnce(crate::audio_engine::source::MediaSource) -> Result<u64, String>,
     ) -> Result<u64, String> {
         if let Some(context) = context {
             let guard = self.0.lock().await;
@@ -140,10 +140,16 @@ impl PlexState {
             if !client.is_plex_url(url) {
                 return Err("Audio URL does not belong to this Plex server".into());
             }
-            send(client.media_request(url))
+            send(crate::audio_engine::source::MediaSource::new(
+                client.media_request(url),
+                Some(&client.library_scope),
+            )?)
         } else {
             // Public episodes never inherit a same-host Plex token/TLS exception.
-            send(crate::plex::client::public_media_request(url))
+            send(crate::audio_engine::source::MediaSource::new(
+                crate::plex::client::public_media_request(url),
+                None,
+            )?)
         }
     }
 
@@ -2454,7 +2460,7 @@ mod connection_tests {
             .unwrap();
         let original = queued.unwrap();
         for _ in 0..2 {
-            let retry = original.try_clone().unwrap().build().unwrap();
+            let retry = original.request.try_clone().unwrap().build().unwrap();
             assert_eq!(retry.headers()["X-Plex-Token"], "dummy-old");
             assert!(!retry
                 .url()
@@ -2467,6 +2473,60 @@ mod connection_tests {
             ))
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn cache_identity_uses_validated_native_scope_even_with_an_old_caller_token() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = crate::audio_engine::cache::AudioCache::new(directory.path().into(), None);
+        let state = PlexState::new();
+        let revision = state.begin_connection().await;
+        let client = scoped_client("https://server.test", "dummy-old", 1);
+        let context = PlexRequestContext {
+            connection_revision: revision,
+            cache_scope: client.library_scope.clone(),
+        };
+        state.publish(revision, client).await.unwrap();
+        let url = "https://server.test/file.flac?X-Plex-Token=dummy-old";
+        let mut key = String::new();
+        state
+            .dispatch_audio(Some(&context), url, |source| {
+                key = source.cache_key;
+                let mut writer = cache.begin_write(&key, &source.extension).unwrap();
+                writer.write_chunk(b"old private audio").unwrap();
+                writer.finish(&cache).unwrap();
+                cache.set_computed_gain(&key, -6.0);
+                Ok(1)
+            })
+            .await
+            .unwrap();
+        let revision = state.begin_connection().await;
+        let client = scoped_client("https://server.test", "dummy-new", 1);
+        let context = PlexRequestContext {
+            connection_revision: revision,
+            cache_scope: client.library_scope.clone(),
+        };
+        state.publish(revision, client).await.unwrap();
+        for context in [Some(&context), None] {
+            state
+                .dispatch_audio(context, url, |source| {
+                    assert_ne!(source.cache_key, key);
+                    assert!(cache.lookup(&source.cache_key).is_none());
+                    assert_eq!(cache.get_computed_gain(&source.cache_key), None);
+                    let request = source.request.build().unwrap();
+                    if context.is_some() {
+                        assert_eq!(request.headers()["X-Plex-Token"], "dummy-new");
+                    } else {
+                        assert!(!request.headers().contains_key("X-Plex-Token"));
+                    }
+                    assert!(request.url().query().is_none());
+                    Ok(2)
+                })
+                .await
+                .unwrap();
+        }
+        // Existing files remain on disk; new sources simply cannot address them.
+        assert!(cache.lookup(&key).is_some());
     }
 
     #[tokio::test]
@@ -2523,7 +2583,7 @@ mod connection_tests {
                 None,
                 "https://server.test/podcast?X-Plex-Token=dummy-url",
                 |request| {
-                    let request = request.build().unwrap();
+                    let request = request.request.build().unwrap();
                     assert!(!request.headers().contains_key("X-Plex-Token"));
                     assert!(!request
                         .url()

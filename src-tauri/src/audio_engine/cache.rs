@@ -335,7 +335,8 @@ impl Drop for CacheWriter {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Keep server/account/media variants separate without storing the URL or token.
+/// Legacy URL keys retained only for cache format regression fixtures.
+#[cfg(test)]
 pub fn cache_key(url: &str) -> String {
     use md5::{Digest, Md5};
     format!("{:x}", Md5::digest(url.as_bytes()))
