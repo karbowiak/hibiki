@@ -296,125 +296,8 @@ export function ArtistPage({ artistId }: { artistId: string }) {
           </button>
         )}
 
-        {/* Action buttons — absolutely positioned bottom-right, non-blocking */}
-        <div className="absolute bottom-8 right-8 z-20 flex items-center gap-3">
-          {/* Play */}
-          <button
-            onClick={() => artistUri && void playFromUri(artistUri, false, artist.title, `/artist/${artistId}`)}
-            disabled={!artistUri}
-            title="Play"
-            className="flex h-14 w-14 items-center justify-center rounded-full bg-black/30 backdrop-blur-sm border border-white/10 text-accent hover:bg-black/45 hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <svg viewBox="0 0 16 16" width="22" height="22" fill="currentColor">
-              <polygon points="3,2 13,8 3,14" />
-            </svg>
-          </button>
-          {/* Shuffle */}
-          <button
-            onClick={() => artistUri && void playFromUri(artistUri, true, artist.title, `/artist/${artistId}`)}
-            disabled={!artistUri}
-            title="Shuffle play"
-            className="flex h-11 w-11 items-center justify-center rounded-full bg-black/30 backdrop-blur-sm border border-white/10 text-accent hover:bg-black/45 hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-              <path d="M13.151.922a.75.75 0 1 0-1.06 1.06L13.109 3H11.16a3.75 3.75 0 0 0-2.873 1.34l-6.173 7.356A2.25 2.25 0 0 1 .39 12.5H0V14h.391a3.75 3.75 0 0 0 2.873-1.34l6.173-7.356A2.25 2.25 0 0 1 11.16 4.5h1.949l-1.018 1.018a.75.75 0 0 0 1.06 1.06L15.98 3.75 13.15.922zM.391 3.5H0V2h.391c1.109 0 2.16.49 2.873 1.34L4.89 5.277l-.979 1.167-1.796-2.14A2.25 2.25 0 0 0 .39 3.5zm9.831 8.17l.979 1.167.28.334A3.75 3.75 0 0 0 14.36 14.5h1.64V13h-1.64a2.25 2.25 0 0 1-1.726-.83l-.28-.335-1.733-2.063-.979 1.167 1.18 1.731z" />
-            </svg>
-          </button>
-          {/* Artist Radio */}
-          {hasRadio && <button
-            onClick={() => void playRadio(artistId, 'artist', artist.title)}
-            title="Artist Radio — continuous sonically-similar music"
-            className="flex h-11 w-11 items-center justify-center rounded-full bg-black/30 backdrop-blur-sm border border-white/10 text-accent hover:bg-black/45 hover:scale-105 active:scale-95 transition-all"
-          >
-            <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-              <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6A3 3 0 0 0 8 5zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
-            </svg>
-          </button>}
-          {/* Three-dot menu */}
-          <div className="relative">
-            <button
-              ref={menuBtnRef}
-              onClick={() => setMenuOpen(v => !v)}
-              className="flex h-9 w-9 items-center justify-center rounded-full text-white/50 hover:text-white hover:bg-white/10 transition-all"
-              title="More options"
-            >
-              <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-                <circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/>
-              </svg>
-            </button>
-            {artist && menuOpen && (() => {
-              const rect = menuBtnRef.current?.getBoundingClientRect()
-              return createPortal(<>
-                <div className="fixed inset-0 z-[9998]" onClick={() => setMenuOpen(false)} />
-                <div
-                  className="fixed z-[9999] w-56 max-h-[70vh] overflow-y-auto rounded-lg bg-app-surface shadow-xl border border-[var(--border)] py-1"
-                  style={{ top: (rect?.bottom ?? 0) + 4, right: window.innerWidth - (rect?.right ?? 0) }}
-                >
-                  {/* Queue */}
-                  <button
-                    onClick={() => { addToQueue(popularTracks); setMenuOpen(false) }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
-                  >
-                    <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z" /></svg>
-                    Add popular to queue
-                  </button>
-
-                  <hr className="my-1 border-t border-[var(--border)]" />
-
-                  {/* Rating */}
-                  <StarRating
-                    itemId={artist.id}
-                    userRating={artist.userRating ?? null}
-                    enableLove={false}
-                    artist={artist.title}
-                    track=""
-                    size={14}
-                    onRated={() => setMenuOpen(false)}
-                  />
-
-                  <hr className="my-1 border-t border-[var(--border)]" />
-
-                  {/* Share */}
-                  <div className="px-3 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/30">Share</div>
-                  <button
-                    onClick={() => { void open(`https://www.last.fm/music/${encodeURIComponent(artist.title)}`); setMenuOpen(false) }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
-                  >
-                    <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" /></svg>
-                    Last.fm
-                  </button>
-                  {deezerData?.deezer_url && (
-                    <button
-                      onClick={() => { void open(deezerData.deezer_url); setMenuOpen(false) }}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
-                    >
-                      <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" /></svg>
-                      Deezer
-                    </button>
-                  )}
-
-                  {/* Debug */}
-                  {debugEnabled && (
-                    <>
-                      <hr className="my-1 border-t border-[var(--border)]" />
-                      <div className="px-3 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/30">Debug</div>
-                      <button
-                        onClick={() => { showDebugPanel("artist", artist); setMenuOpen(false) }}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
-                      >
-                        <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M20 8h-2.81a5.985 5.985 0 0 0-1.82-1.96L17 4.41 15.59 3l-2.17 2.17a5.947 5.947 0 0 0-2.84 0L8.41 3 7 4.41l1.62 1.63C7.88 6.55 7.26 7.22 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81A6.008 6.008 0 0 0 12 22a6.008 6.008 0 0 0 5.19-3H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/></svg>
-                        Debug Info
-                      </button>
-                    </>
-                  )}
-                </div>
-              </>, document.body)
-            })()}
-          </div>
-        </div>
-
         {/* Main content row */}
-        <div className="relative z-10 flex w-full items-end gap-6">
+        <div className="relative z-10 flex w-full flex-wrap items-end gap-6">
           {/* Avatar — click to open modal */}
           {thumbUrl ? (
             <button
@@ -430,9 +313,9 @@ export function ArtistPage({ artistId }: { artistId: string }) {
           )}
 
           {/* Info column — no fixed height, flows naturally */}
-          <div className="flex min-w-0 flex-1 flex-col gap-2 pr-72">
+          <div className="flex min-w-0 flex-[1_1_20rem] flex-col gap-2">
             <div className="text-xs font-semibold uppercase tracking-widest text-gray-300">Artist</div>
-            <h1 className="text-5xl font-black leading-none text-white select-text">{artist.title}</h1>
+            <h1 className="text-5xl font-black leading-none text-white select-text break-words">{artist.title}</h1>
 
             {heroTags.length > 0 && (
               <div className="flex flex-wrap gap-1.5 pt-1">
@@ -506,6 +389,122 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                 )}
               </div>
             )}
+          </div>
+          <div className="relative z-20 ml-auto flex shrink-0 items-center gap-3">
+            {/* Play */}
+            <button
+              onClick={() => artistUri && void playFromUri(artistUri, false, artist.title, `/artist/${artistId}`)}
+              disabled={!artistUri}
+              title="Play"
+              className="flex h-14 w-14 items-center justify-center rounded-full bg-black/30 backdrop-blur-sm border border-white/10 text-accent hover:bg-black/45 hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <svg viewBox="0 0 16 16" width="22" height="22" fill="currentColor">
+                <polygon points="3,2 13,8 3,14" />
+              </svg>
+            </button>
+            {/* Shuffle */}
+            <button
+              onClick={() => artistUri && void playFromUri(artistUri, true, artist.title, `/artist/${artistId}`)}
+              disabled={!artistUri}
+              title="Shuffle play"
+              className="flex h-11 w-11 items-center justify-center rounded-full bg-black/30 backdrop-blur-sm border border-white/10 text-accent hover:bg-black/45 hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+                <path d="M13.151.922a.75.75 0 1 0-1.06 1.06L13.109 3H11.16a3.75 3.75 0 0 0-2.873 1.34l-6.173 7.356A2.25 2.25 0 0 1 .39 12.5H0V14h.391a3.75 3.75 0 0 0 2.873-1.34l6.173-7.356A2.25 2.25 0 0 1 11.16 4.5h1.949l-1.018 1.018a.75.75 0 0 0 1.06 1.06L15.98 3.75 13.15.922zM.391 3.5H0V2h.391c1.109 0 2.16.49 2.873 1.34L4.89 5.277l-.979 1.167-1.796-2.14A2.25 2.25 0 0 0 .39 3.5zm9.831 8.17l.979 1.167.28.334A3.75 3.75 0 0 0 14.36 14.5h1.64V13h-1.64a2.25 2.25 0 0 1-1.726-.83l-.28-.335-1.733-2.063-.979 1.167 1.18 1.731z" />
+              </svg>
+            </button>
+            {/* Artist Radio */}
+            {hasRadio && <button
+              onClick={() => void playRadio(artistId, 'artist', artist.title)}
+              title="Artist Radio — continuous sonically-similar music"
+              className="flex h-11 w-11 items-center justify-center rounded-full bg-black/30 backdrop-blur-sm border border-white/10 text-accent hover:bg-black/45 hover:scale-105 active:scale-95 transition-all"
+            >
+              <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+                <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6A3 3 0 0 0 8 5zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
+              </svg>
+            </button>}
+            {/* Three-dot menu */}
+            <div className="relative">
+              <button
+                ref={menuBtnRef}
+                onClick={() => setMenuOpen(v => !v)}
+                className="flex h-9 w-9 items-center justify-center rounded-full text-white/50 hover:text-white hover:bg-white/10 transition-all"
+                title="More options"
+              >
+                <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+                  <circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/>
+                </svg>
+              </button>
+              {artist && menuOpen && (() => {
+                const rect = menuBtnRef.current?.getBoundingClientRect()
+                return createPortal(<>
+                  <div className="fixed inset-0 z-[9998]" onClick={() => setMenuOpen(false)} />
+                  <div
+                    className="fixed z-[9999] w-56 max-h-[70vh] overflow-y-auto rounded-lg bg-app-surface shadow-xl border border-[var(--border)] py-1"
+                    style={{ top: (rect?.bottom ?? 0) + 4, right: window.innerWidth - (rect?.right ?? 0) }}
+                  >
+                    {/* Queue */}
+                    <button
+                      onClick={() => { addToQueue(popularTracks); setMenuOpen(false) }}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                    >
+                      <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z" /></svg>
+                      Add popular to queue
+                    </button>
+
+                    <hr className="my-1 border-t border-[var(--border)]" />
+
+                    {/* Rating */}
+                    <StarRating
+                      itemId={artist.id}
+                      itemType="artist"
+                      userRating={artist.userRating ?? null}
+                      enableLove={false}
+                      artist={artist.title}
+                      track=""
+                      size={14}
+                      onRated={() => setMenuOpen(false)}
+                    />
+
+                    <hr className="my-1 border-t border-[var(--border)]" />
+
+                    {/* Share */}
+                    <div className="px-3 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/30">Share</div>
+                    <button
+                      onClick={() => { void open(`https://www.last.fm/music/${encodeURIComponent(artist.title)}`); setMenuOpen(false) }}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                    >
+                      <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" /></svg>
+                      Last.fm
+                    </button>
+                    {deezerData?.deezer_url && (
+                      <button
+                        onClick={() => { void open(deezerData.deezer_url); setMenuOpen(false) }}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                      >
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" /></svg>
+                        Deezer
+                      </button>
+                    )}
+
+                    {/* Debug */}
+                    {debugEnabled && (
+                      <>
+                        <hr className="my-1 border-t border-[var(--border)]" />
+                        <div className="px-3 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/30">Debug</div>
+                        <button
+                          onClick={() => { showDebugPanel("artist", artist); setMenuOpen(false) }}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                        >
+                          <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M20 8h-2.81a5.985 5.985 0 0 0-1.82-1.96L17 4.41 15.59 3l-2.17 2.17a5.947 5.947 0 0 0-2.84 0L8.41 3 7 4.41l1.62 1.63C7.88 6.55 7.26 7.22 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81A6.008 6.008 0 0 0 12 22a6.008 6.008 0 0 0 5.19-3H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/></svg>
+                          Debug Info
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </>, document.body)
+              })()}
+            </div>
           </div>
         </div>
       </div>

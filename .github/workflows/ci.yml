@@ -24,6 +24,10 @@ jobs:
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: xvfb-run bun run test:renderer
+      - name: Check library layouts and keyboard focus
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run bun scripts/check-library-layout.ts
 
   check:
     runs-on: ${{ matrix.platform.runner }}

@@ -97,11 +97,11 @@ function MediaCardInner({ title, desc, thumb, thumbFallback, scrollItem, large, 
           />
         )}
         {onPlay && (
-          <div className="absolute inset-0 flex items-end justify-end p-2 opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-200">
+          <div className="absolute inset-0 flex items-end justify-end p-2 opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 focus-within:opacity-100 focus-within:translate-y-0 transition-all duration-200">
             <button
               onClick={e => { e.preventDefault(); e.stopPropagation(); onPlay(e) }}
               aria-label={`Play ${title}`}
-              className="flex h-10 w-10 items-center justify-center rounded-full bg-accent text-black shadow-lg hover:scale-105 hover:brightness-110 active:scale-95 transition-all"
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-accent text-black shadow-lg hover:scale-105 hover:brightness-110 active:scale-95 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none transition-all"
             >
               <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
                 <polygon points="3,2 13,8 3,14" />

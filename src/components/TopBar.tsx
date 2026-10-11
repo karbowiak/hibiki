@@ -157,12 +157,12 @@ export function TopBar() {
     // pt-8 gives 32px of clearance for the macOS traffic-light buttons
     <div
       data-tauri-drag-region
-      className={`mb-3 flex flex-row items-center ${IS_MACOS ? "pt-8" : "pt-2"}`}
+      className={`mb-3 flex flex-row flex-wrap items-center gap-2 ${IS_MACOS ? "pt-8" : "pt-2"}`}
       style={{ paddingInline: "var(--spacing-topbar)" }}
     >
       <div
         data-tauri-drag-region
-        className="flex grow flex-row items-center gap-4"
+        className="flex min-w-0 flex-[1_1_12rem] flex-row items-center gap-4"
       >
         {/* Back button */}
         <button
@@ -199,7 +199,7 @@ export function TopBar() {
         </button>
 
         {/* Search input — always visible, wired to store */}
-        <div className="relative text-sm text-black">
+        <div className="relative min-w-0 w-[364px] max-w-full shrink text-sm text-black">
           <svg
             height="16"
             width="16"
@@ -219,7 +219,7 @@ export function TopBar() {
             onBlur={handleInputBlur}
             onKeyDown={handleInputKeyDown}
             placeholder="What do you want to listen to?"
-            className="h-[40px] w-[364px] rounded-full bg-white pl-10 pr-4 text-black focus:outline-none"
+            className="h-[40px] w-full min-w-0 rounded-full bg-white pl-10 pr-4 text-black focus:outline-none"
           />
           {localQuery && (
             <button
@@ -252,7 +252,7 @@ export function TopBar() {
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="ml-auto flex shrink-0 items-center gap-2">
         {/* Activity indicator — always visible, animates when busy */}
         <ActivityIndicator />
 

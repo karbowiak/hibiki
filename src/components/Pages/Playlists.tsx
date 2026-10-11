@@ -16,16 +16,16 @@ export function Playlists() {
   return (
     <div className="pb-12">
       {/* Header */}
-      <div className="flex flex-row items-end p-8">
+      <div className="flex flex-wrap items-end gap-6 p-8">
         <div className="flex w-60 h-60 flex-shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-indigo-700 to-purple-500 shadow-2xl">
           <svg viewBox="0 0 24 24" width="80" height="80" fill="white">
             <path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z" />
           </svg>
         </div>
 
-        <div className="pl-6 flex flex-col justify-between flex-1 h-60 min-w-0">
+        <div className="flex min-w-0 flex-[1_1_20rem] flex-col justify-between gap-4 self-stretch">
           <div>
-            <div className="whitespace-nowrap text-[76px] font-black leading-none">
+            <div className="break-words text-[76px] font-black leading-none">
               Playlists
             </div>
             <p className="mt-2 max-w-xl select-text text-sm text-gray-400">
@@ -77,7 +77,7 @@ export function Playlists() {
                         void playPlaylist(pl.id, pl.trackCount, pl.title, href)
                       }}
                       title={`Play ${pl.title}`}
-                      className="absolute inset-0 flex items-center justify-center bg-overlay-medium opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="absolute inset-0 flex items-center justify-center bg-overlay-medium opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none transition-opacity"
                     >
                       <svg viewBox="0 0 16 16" width="24" height="24" fill="white">
                         <polygon points="3,2 13,8 3,14" />
