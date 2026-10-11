@@ -1,8 +1,16 @@
 import { describe, expect, test, mock } from "bun:test"
 import { isAlbumPlayback, selectReplayGain } from "../src/audio/playbackContext"
-import { makeOnPlay } from "../src/lib/mediaPlay"
+import { createMediaPlayController } from "../src/lib/mediaPlay"
 import type { MusicItem, MusicTrack } from "../src/types/music"
 import type { MusicProvider } from "../src/providers/types"
+
+function makeOnPlay(item: MusicItem, store: any) {
+  return createMediaPlayController({
+    getProvider: () => store.provider,
+    captureSelection: () => () => true,
+    reportError() {},
+  })(item, store)
+}
 
 describe("explicit album playback", () => {
   const track = { albumId: "album-1", gain: -2, albumGain: -5 }
@@ -19,20 +27,43 @@ describe("explicit album playback", () => {
   test("album card playback passes explicit intent, while artist and track actions do not", () => {
     const playFromUri = mock(async (..._args: unknown[]) => {})
     const playTrack = mock(async (..._args: unknown[]) => {})
-    const store = { playFromUri, playTrack, playPlaylist: mock(async () => {}),
-      provider: { buildItemUri: (key: string) => key } as MusicProvider }
-    makeOnPlay({ id: "album-1", type: "album", title: "Album" } as MusicItem, store)!()
+    const store = {
+      playFromUri,
+      playTrack,
+      playPlaylist: mock(async () => {}),
+      provider: { buildItemUri: (key: string) => key } as MusicProvider,
+    }
+    makeOnPlay(
+      { id: "album-1", type: "album", title: "Album" } as MusicItem,
+      store
+    )!()
     expect(playFromUri.mock.calls[0][4]).toBe("album-1")
-    makeOnPlay({ id: "artist-1", type: "artist", title: "Artist" } as MusicItem, store)!()
+    makeOnPlay(
+      { id: "artist-1", type: "artist", title: "Artist" } as MusicItem,
+      store
+    )!()
     expect(playFromUri.mock.calls[1][4]).toBeUndefined()
-    makeOnPlay({ ...track, id: "track-1", type: "track" } as MusicItem, store)!()
+    makeOnPlay(
+      { ...track, id: "track-1", type: "track" } as MusicItem,
+      store
+    )!()
     expect(playTrack.mock.calls[0][4]).toBeUndefined()
   })
   test("providers without server play queues still mark an album card as album playback", async () => {
     const playTrack = mock(async (..._args: unknown[]) => {})
-    const store = { playTrack, playFromUri: mock(async () => {}), playPlaylist: mock(async () => {}),
-      provider: { getAlbumTracks: async () => [{ ...track, id: "track-1" } as MusicTrack] } as MusicProvider }
-    makeOnPlay({ id: "album-1", type: "album", title: "Album" } as MusicItem, store)!()
+    const store = {
+      playTrack,
+      playFromUri: mock(async () => {}),
+      playPlaylist: mock(async () => {}),
+      provider: {
+        getAlbumTracks: async () => [{ ...track, id: "track-1" } as MusicTrack],
+      } as MusicProvider,
+    }
+    makeOnPlay(
+      { id: "album-1", type: "album", title: "Album" } as MusicItem,
+      store
+    )!()
+    await Promise.resolve()
     await Promise.resolve()
     expect(playTrack.mock.calls[0][4]).toBe("album-1")
   })

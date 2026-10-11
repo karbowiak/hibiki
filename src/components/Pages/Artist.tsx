@@ -1,6 +1,6 @@
 import { ArtworkImage, useArtworkFailures } from "../shared/ArtworkImage"
 import { useArtistImage } from "../../hooks/useMediaImage"
-import { useLayoutEffect, useEffect, useMemo, useRef, useState } from "react"
+import { useLayoutEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { Link } from "wouter"
 import { open } from "@tauri-apps/plugin-shell"
@@ -22,9 +22,7 @@ import {
   captureMetadataCache,
   isMetadataCacheCurrent
 } from "../../stores/metadataCache"
-import { useDeezerMetadataStore } from "../../metadata/deezer/store"
 import { useArtistEnrichment } from "../../hooks/useMetadataEnrichment"
-import { buildExternalImageUrl } from "../../lib/imageUrl"
 import { formatMs } from "../../lib/formatters"
 import { ImageModal } from "../shared/ImageModal"
 import { deduplicateHubAlbums } from "../../lib/dedup"
@@ -58,22 +56,12 @@ const SKIP_HUB_IDS = new Set([
   "artist.mostplayedtracks",
 ])
 
-/** Avatar for a LastFM similar artist — lazily fetches the image from Deezer. */
-function DeezerArtistAvatar({ name }: { name: string }) {
-  const getDeezerArtist = useDeezerMetadataStore(s => s.getArtist)
-  const [imageUrl, setImageUrl] = useState<string | null | undefined>(undefined)
-
-  useEffect(() => {
-    let cancelled = false
-    void getDeezerArtist(name).then(d => {
-      if (!cancelled) setImageUrl(d?.image_url ?? null)
-    })
-    return () => { cancelled = true }
-  }, [name, getDeezerArtist])
-
-  const cachedUrl = buildExternalImageUrl(imageUrl)
-  if (cachedUrl) {
-    return <ArtworkImage src={cachedUrl} alt={name} className="h-16 w-16 rounded-md object-cover" />
+/** Similar artists use the same artwork preferences as library cards. */
+export function SimilarArtistAvatar({ name, artist }: { name: string; artist?: MusicArtist }) {
+  const { failures, onFailure } = useArtworkFailures(JSON.stringify([name, artist?.id, artist?.thumbUrl]))
+  const imageUrl = useArtistImage(name, artist?.thumbUrl ?? null, artist?.id, failures)
+  if (imageUrl) {
+    return <ArtworkImage src={imageUrl} alt={name} onFailure={onFailure} loading="lazy" className="h-16 w-16 rounded-md object-cover" />
   }
   return (
     <div className="flex h-16 w-16 items-center justify-center rounded-md bg-white/10 text-xl font-bold text-white/30">
@@ -191,12 +179,12 @@ export function ArtistPage({ artistId }: { artistId: string }) {
   const thumbUrl = useArtistImage(artist?.title ?? null, artist?.thumbUrl ?? null, artistId, failures)
   const heroBgPos = useFocalPoint(artUrl)
 
-  // Map from lowercase artist name → provider ID for "Fans Also Like" linking.
+  // Map from lowercase artist name → library artist for "Fans Also Like" linking.
   // Covers both Plex-similar and sonically-similar artists that are in the library.
   const plexArtistMap = useMemo(() => {
-    const map = new Map<string, string>()
+    const map = new Map<string, MusicArtist>()
     for (const a of [...similarArtists, ...sonicallySimilar]) {
-      map.set(a.title.toLowerCase(), a.id)
+      map.set(a.title.toLowerCase(), a)
     }
     return map
   }, [similarArtists, sonicallySimilar])
@@ -772,7 +760,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
           </ScrollRow>
         )}
 
-        {/* ── Last.fm Similar Artists (images from Deezer) ── */}
+        {/* ── Last.fm Similar Artists ── */}
         {lastfmData && lastfmData.similar.length > 0 && (
           <section>
             <h2 className="mb-4 text-xl font-bold">
@@ -781,8 +769,9 @@ export function ArtistPage({ artistId }: { artistId: string }) {
             </h2>
             <div className="flex flex-wrap gap-4">
               {lastfmData.similar.map(a => {
-                const plexId = plexArtistMap.get(a.name.toLowerCase())
-                const avatar = <DeezerArtistAvatar name={a.name} />
+                const libraryArtist = plexArtistMap.get(a.name.toLowerCase())
+                const plexId = libraryArtist?.id
+                const avatar = <SimilarArtistAvatar name={a.name} artist={libraryArtist} />
                 return (
                   <div key={a.name} className="flex w-20 flex-col items-center gap-1.5">
                     {plexId ? (
