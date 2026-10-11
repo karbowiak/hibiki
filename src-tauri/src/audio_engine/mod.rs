@@ -1290,6 +1290,7 @@ fn fetch_and_decode_incremental(
     use self::deck::streaming::{SharedBuffer, StreamingReader};
     let media_request = source.request.try_clone().ok_or("Cannot clone media request")?;
     let cache_writer = cache.begin_write(cache_key, ext).ok();
+    let declared_cache_size = cache_writer.as_ref().map(|writer| writer.declared_size());
     let cache_for_task = cache.clone();
     let request = request.clone();
 
@@ -1305,7 +1306,10 @@ fn fetch_and_decode_incremental(
                     // This bodyless GET always supports cloning. Retries retain
                     // the originating credentials and TLS policy.
                     || media_request.try_clone().expect("cloneable media GET"),
-                    |length| shared_w.set_content_length(length),
+                    |length| {
+                        shared_w.set_content_length(length);
+                        if let Some(size) = &declared_cache_size { size.store(length, Ordering::Release); }
+                    },
                     |chunk| {
                         shared_w.push(chunk).map_err(|error| format!("Audio spool write failed: {error}"))?;
                         if let Some(ref mut cache_writer) = writer {
@@ -1604,6 +1608,35 @@ mod control_tests {
         callback.dsp_chain.process(&mut samples, 44100, 2);
         assert!(samples.iter().all(|sample| (*sample - 0.04).abs() < 1e-7));
         assert_eq!(engine.atomics.get_state(), EngineState::Stopped);
+    }
+
+    #[test]
+    fn cache_budget_rejection_does_not_truncate_http_playback() {
+        use std::io::{Read, Write};
+        let directory = tempfile::tempdir().unwrap();
+        let cache = Arc::new(AudioCache::new(directory.path().into(), Some(10)));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/track.wav", listener.local_addr().unwrap());
+        let body = decode::tests::generate_test_wav(44100, 2, 0.5);
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut header = Vec::new();
+            while !header.ends_with(b"\r\n\r\n") { let mut byte = [0]; socket.read_exact(&mut byte).unwrap(); header.push(byte[0]); }
+            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).unwrap();
+            socket.write_all(&body).unwrap();
+        });
+        let source = MediaSource::new(crate::plex::client::public_media_request(&url), None).unwrap();
+        let atomics = SharedAtomics::new();
+        atomics.request_epoch.store(1, Ordering::SeqCst);
+        let request = PlaybackRequest::new(1, atomics.request_epoch.clone(), atomics.deck_a_load_id.clone());
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let decoded = fetch_and_decode_incremental(&source, 42, &cache, runtime.handle(), 44100, 2, &request).unwrap();
+        server.join().unwrap();
+        assert!(!decoded.aborted);
+        assert_eq!(decoded.initial_samples.len(), 22050 * 2);
+        assert!(decoded.initial_samples.iter().any(|sample| sample.abs() > 0.05));
+        assert!(cache.lookup(&source.cache_key).is_none());
+        assert_eq!(cache.stats().total_bytes, 0);
     }
 
     #[test]

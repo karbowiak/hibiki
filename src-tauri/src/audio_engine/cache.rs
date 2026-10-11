@@ -24,6 +24,7 @@ const GAIN_ANALYSIS_VERSION: u8 = 3;
 const DEFAULT_MAX_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 const MAX_INDEX_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_KEY_BYTES: usize = 128;
+const MAX_CACHE_ENTRIES: usize = 32768;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -41,10 +42,11 @@ pub struct CacheStats {
 /// locks it or performs filesystem operations.
 pub struct AudioCache {
     cache_dir: PathBuf,
-    index: Mutex<CacheIndex>,
-    max_bytes: AtomicU64,
+    index: Arc<Mutex<CacheIndex>>,
+    max_bytes: Arc<AtomicU64>,
     owner: Arc<CacheOwner>,
     available: bool,
+    entry_limit: usize,
 }
 
 struct CacheOwner {
@@ -70,6 +72,11 @@ pub struct CacheWriter {
     filename: String,
     owner: Arc<CacheOwner>,
     generation: u64,
+    id: uuid::Uuid,
+    index: Arc<Mutex<CacheIndex>>,
+    max_bytes: Arc<AtomicU64>,
+    declared_size: Arc<AtomicU64>,
+    entry_limit: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -93,6 +100,10 @@ struct CacheEntry {
 struct CacheIndex {
     entries: HashMap<String, CacheEntry>,
     total_bytes: u64,
+    #[serde(skip)]
+    partials: HashMap<uuid::Uuid, u64>,
+    #[serde(skip)]
+    partial_bytes: u64,
 }
 
 impl CacheIndex {
@@ -144,6 +155,10 @@ impl CacheIndex {
 impl AudioCache {
     /// Create or open the cache at the given directory.
     pub fn new(cache_dir: PathBuf, max_bytes: Option<u64>) -> Self {
+        Self::with_limits(cache_dir, max_bytes, MAX_CACHE_ENTRIES)
+    }
+
+    fn with_limits(cache_dir: PathBuf, max_bytes: Option<u64>, entry_limit: usize) -> Self {
         let mut directory = fs::DirBuilder::new();
         directory.recursive(true);
         #[cfg(unix)]
@@ -206,13 +221,20 @@ impl AudioCache {
             directory: cache_dir.clone(),
             directory_id: directory_id(&cache_dir),
         });
-        Self {
+        let cache = Self {
             cache_dir,
-            index: Mutex::new(index),
-            max_bytes: AtomicU64::new(max),
+            index: Arc::new(Mutex::new(index)),
+            max_bytes: Arc::new(AtomicU64::new(max)),
             owner,
             available,
+            entry_limit,
+        };
+        // None is the application's temporary default before preferences are
+        // restored. Do not discard a user's larger cache before that happens.
+        if max_bytes.is_some() {
+            cache.evict();
         }
+        cache
     }
 
     /// Look up a cached file by rating key. Returns the file path if cached.
@@ -293,13 +315,12 @@ impl AudioCache {
         let ext = if valid_extension(ext) { ext } else { "dat" };
         let filename = format!("{}.{}", key, ext);
         let final_path = self.cache_dir.join(&filename);
-        let temp_path = self
-            .cache_dir
-            .join(format!("{}.{}.part", filename, uuid::Uuid::new_v4()));
+        let id = uuid::Uuid::new_v4();
+        let temp_path = self.cache_dir.join(format!("{}.{}.part", filename, id));
 
         // Serialize writer admission with Clear. Unindexed or invalid bytes are
         // replaced only after a complete fresh download, never reused as audio.
-        let idx = self.index.lock().map_err(|_| "cache index poisoned")?;
+        let mut idx = self.index.lock().map_err(|_| "cache index poisoned")?;
         if idx
             .entries
             .get(key)
@@ -319,6 +340,8 @@ impl AudioCache {
             .open(&temp_path)
             .map_err(|e| format!("cache create: {}", e))?;
 
+        idx.partials.insert(id, 0);
+
         Ok(CacheWriter {
             temp_path,
             final_path,
@@ -329,13 +352,40 @@ impl AudioCache {
             filename,
             owner: self.owner.clone(),
             generation: self.owner.generation.load(Ordering::Acquire),
+            id,
+            index: self.index.clone(),
+            max_bytes: self.max_bytes.clone(),
+            declared_size: Arc::new(AtomicU64::new(0)),
+            entry_limit: self.entry_limit,
         })
     }
 
     /// Update the maximum cache size and trigger eviction if needed.
     pub fn set_max_bytes(&self, max: u64) {
-        self.max_bytes.store(max, Ordering::Relaxed);
-        self.evict();
+        if !self.available || !self.owner.directory_is_current() {
+            return;
+        }
+        if let Ok(mut idx) = self.index.lock() {
+            self.max_bytes.store(max, Ordering::Release);
+            if max != 0 && idx.partial_bytes > max {
+                self.owner.generation.fetch_add(1, Ordering::AcqRel);
+                if let Ok(files) = fs::read_dir(&self.cache_dir) {
+                    for file in files.flatten() {
+                        if file
+                            .file_name()
+                            .to_str()
+                            .is_some_and(owned_partial_filename)
+                        {
+                            let _ = fs::remove_file(file.path());
+                        }
+                    }
+                }
+                idx.partials.clear();
+                idx.partial_bytes = 0;
+            }
+            let _ = make_room(&self.cache_dir, &mut idx, max, 0, 0, self.entry_limit);
+            idx.save(&self.index_path());
+        }
     }
 
     /// Remove all cached files and reset the index.
@@ -364,6 +414,8 @@ impl AudioCache {
             }
             idx.entries.clear();
             idx.total_bytes = 0;
+            idx.partials.clear();
+            idx.partial_bytes = 0;
             idx.save(&self.index_path());
         }
         info!("audio cache cleared");
@@ -373,7 +425,7 @@ impl AudioCache {
     pub fn stats(&self) -> CacheStats {
         let idx = self.index.lock().unwrap();
         CacheStats {
-            total_bytes: idx.total_bytes,
+            total_bytes: idx.total_bytes.saturating_add(idx.partial_bytes),
             file_count: idx.entries.len(),
             max_bytes: self.max_bytes.load(Ordering::Relaxed),
         }
@@ -392,31 +444,7 @@ impl AudioCache {
 
     fn evict_with_index(&self, idx: &mut CacheIndex) {
         let max = self.max_bytes.load(Ordering::Relaxed);
-        if max == 0 || idx.total_bytes <= max {
-            return;
-        }
-
-        // Sort by last_accessed ascending (oldest first)
-        let mut entries: Vec<(String, u64, u64)> = idx
-            .entries
-            .iter()
-            .map(|(key, e)| (key.clone(), e.last_accessed, e.size_bytes))
-            .collect();
-        entries.sort_by_key(|&(_, ts, _)| ts);
-
-        for (key, _, size) in entries {
-            if idx.total_bytes <= max {
-                break;
-            }
-            if let Some(entry) = idx.entries.remove(&key) {
-                if valid_filename(&key, &entry.filename) {
-                    let path = self.cache_dir.join(&entry.filename);
-                    let _ = fs::remove_file(&path);
-                }
-                idx.total_bytes = idx.total_bytes.saturating_sub(size);
-                debug!(cache_key = key, size, "evicted cached audio file");
-            }
-        }
+        let _ = make_room(&self.cache_dir, idx, max, 0, 0, self.entry_limit);
     }
 
     fn index_path(&self) -> PathBuf {
@@ -429,29 +457,70 @@ impl AudioCache {
 // ---------------------------------------------------------------------------
 
 impl CacheWriter {
+    /// Set by the HTTP header callback before delivering body chunks. Zero
+    /// means unknown; resumed bodies report the original representation size.
+    pub fn declared_size(&self) -> Arc<AtomicU64> {
+        self.declared_size.clone()
+    }
+
+    fn reject(&mut self, idx: &mut CacheIndex, reason: &str) -> Result<(), String> {
+        self.failed = true;
+        self.writer.take();
+        if self.owner.directory_is_current() {
+            let _ = fs::remove_file(&self.temp_path);
+        }
+        if let Some(bytes) = idx.partials.remove(&self.id) {
+            idx.partial_bytes = idx.partial_bytes.saturating_sub(bytes);
+        }
+        Err(reason.into())
+    }
+
     /// A failed write must never be published as complete audio.
     pub fn write_chunk(&mut self, data: &[u8]) -> Result<(), String> {
+        let index = self.index.clone();
+        let mut idx = index.lock().map_err(|_| "cache index poisoned")?;
+        if self.failed {
+            return Err("cache writer failed".into());
+        }
         if self.generation != self.owner.generation.load(Ordering::Acquire)
             || !self.owner.directory_is_current()
         {
-            self.failed = true;
-            self.writer.take();
-            if self.owner.directory_is_current() {
-                let _ = fs::remove_file(&self.temp_path);
-            }
-            return Err("cache writer retired by Clear".into());
+            return self.reject(&mut idx, "cache writer retired by Clear or storage change");
         }
-        let total = self
-            .bytes_written
+        let Some(total) = self.bytes_written.checked_add(data.len() as u64) else {
+            return self.reject(&mut idx, "cache size overflow");
+        };
+        let max = self.max_bytes.load(Ordering::Acquire);
+        if max != 0 && (total > max || self.declared_size.load(Ordering::Acquire) > max) {
+            return self.reject(&mut idx, "audio exceeds the cache limit");
+        }
+        let before = idx.entries.len();
+        let room = make_room(
+            &self.owner.directory,
+            &mut idx,
+            max,
+            data.len() as u64,
+            0,
+            self.entry_limit,
+        );
+        if idx.entries.len() != before {
+            idx.save(&self.owner.directory.join("index.json"));
+        }
+        if let Err(error) = room {
+            return self.reject(&mut idx, &error);
+        }
+        idx.partial_bytes = idx
+            .partial_bytes
             .checked_add(data.len() as u64)
             .ok_or("cache size overflow")?;
+        idx.partials.insert(self.id, total);
         let result = self
             .writer
             .as_mut()
             .ok_or("cache writer closed".to_string())
             .and_then(|w| w.write_all(data).map_err(|e| format!("cache write: {e}")));
         if result.is_err() {
-            self.failed = true;
+            return self.reject(&mut idx, "cache write failed");
         }
         result?;
         self.bytes_written = total;
@@ -488,6 +557,20 @@ impl CacheWriter {
         if !regular_file(&metadata) || metadata.len() != self.bytes_written {
             return Err("cache temporary file was replaced or truncated".into());
         }
+        let before = idx.entries.len();
+        let incoming = usize::from(!idx.entries.contains_key(&self.key));
+        let room = make_room(
+            &cache.cache_dir,
+            &mut idx,
+            self.max_bytes.load(Ordering::Acquire),
+            0,
+            incoming,
+            self.entry_limit,
+        );
+        if idx.entries.len() != before {
+            idx.save(&cache.index_path());
+        }
+        room?;
         let old_size = idx
             .entries
             .get(&self.key)
@@ -498,6 +581,9 @@ impl CacheWriter {
             .checked_add(self.bytes_written)
             .ok_or("cache size overflow")?;
         fs::rename(&self.temp_path, &self.final_path).map_err(|e| format!("cache rename: {e}"))?;
+        if let Some(bytes) = idx.partials.remove(&self.id) {
+            idx.partial_bytes = idx.partial_bytes.saturating_sub(bytes);
+        }
         if let Some(old) = idx.entries.remove(&self.key) {
             idx.total_bytes = idx.total_bytes.saturating_sub(old.size_bytes);
         }
@@ -528,12 +614,68 @@ impl Drop for CacheWriter {
         if self.owner.directory_is_current() {
             let _ = fs::remove_file(&self.temp_path);
         }
+        if let Ok(mut idx) = self.index.lock() {
+            if let Some(bytes) = idx.partials.remove(&self.id) {
+                idx.partial_bytes = idx.partial_bytes.saturating_sub(bytes);
+            }
+        }
     }
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn make_room(
+    directory: &Path,
+    idx: &mut CacheIndex,
+    max: u64,
+    extra_bytes: u64,
+    extra_entries: usize,
+    entry_limit: usize,
+) -> Result<(), String> {
+    let pending = idx
+        .partial_bytes
+        .checked_add(extra_bytes)
+        .ok_or("cache size overflow")?;
+    if max != 0 && pending > max {
+        return Err("cache budget is occupied by active downloads".into());
+    }
+    let fits = |idx: &CacheIndex| {
+        (max == 0 || idx.total_bytes <= max - pending)
+            && idx.entries.len().saturating_add(extra_entries) <= entry_limit
+    };
+    if fits(idx) {
+        return Ok(());
+    }
+    let mut entries: Vec<_> = idx
+        .entries
+        .iter()
+        .map(|(key, entry)| (key.clone(), entry.last_accessed))
+        .collect();
+    entries.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+    for (key, _) in entries {
+        if fits(idx) {
+            break;
+        }
+        let entry = &idx.entries[&key];
+        if valid_filename(&key, &entry.filename) {
+            if let Err(error) = fs::remove_file(directory.join(&entry.filename)) {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    return Err(format!("cannot evict cached audio: {error}"));
+                }
+            }
+        }
+        let removed = idx.entries.remove(&key).unwrap();
+        idx.total_bytes = idx.total_bytes.saturating_sub(removed.size_bytes);
+        debug!(cache_key = key, "evicted cached audio file");
+    }
+    if fits(idx) {
+        Ok(())
+    } else {
+        Err("audio cache has no capacity".into())
+    }
+}
 
 fn valid_key(key: &str) -> bool {
     if key.is_empty()
@@ -734,6 +876,145 @@ pub fn extract_extension(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn startup_default_does_not_evict_a_larger_cache_before_preferences_are_restored() {
+        use std::os::unix::fs::MetadataExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("42.flac");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(DEFAULT_MAX_BYTES + 1).unwrap();
+        assert!(
+            file.metadata().unwrap().blocks() * 512 < 1024 * 1024,
+            "fixture must remain sparse"
+        );
+        drop(file);
+        write_index(directory.path(), "42", "42.flac", DEFAULT_MAX_BYTES + 1);
+        let cache = AudioCache::new(directory.path().into(), None);
+        assert!(cache.lookup("42").is_some());
+        assert_eq!(cache.stats().total_bytes, DEFAULT_MAX_BYTES + 1);
+        cache.set_max_bytes(DEFAULT_MAX_BYTES + 2);
+        assert!(cache.lookup("42").is_some());
+    }
+    #[test]
+    fn a_declared_oversized_download_keeps_useful_cached_audio() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = AudioCache::new(directory.path().into(), Some(10));
+        let mut old = cache.begin_write("old", "flac").unwrap();
+        old.write_chunk(&[1; 8]).unwrap();
+        old.finish(&cache).unwrap();
+        let mut oversized = cache.begin_write("large", "flac").unwrap();
+        oversized.declared_size().store(20, Ordering::Release);
+        assert!(oversized.write_chunk(&[0; 1]).is_err());
+        assert_eq!(fs::read(cache.lookup("old").unwrap()).unwrap(), [1; 8]);
+        assert_eq!(cache.stats().total_bytes, 8);
+    }
+
+    #[test]
+    fn unlimited_bytes_still_bound_index_growth_and_keep_recent_tracks() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = AudioCache::with_limits(directory.path().into(), Some(0), 2);
+        for (timestamp, key) in ["old", "middle", "recent"].into_iter().enumerate() {
+            let mut writer = cache.begin_write(key, "flac").unwrap();
+            writer.write_chunk(&[1; 20]).unwrap();
+            writer.finish(&cache).unwrap();
+            cache
+                .index
+                .lock()
+                .unwrap()
+                .entries
+                .get_mut(key)
+                .unwrap()
+                .last_accessed = timestamp as u64;
+        }
+        assert!(cache.lookup("old").is_none());
+        assert!(cache.lookup("middle").is_some() && cache.lookup("recent").is_some());
+        assert_eq!(cache.stats().total_bytes, 40);
+        assert_eq!(cache.stats().max_bytes, 0);
+        assert_eq!(cache.stats().file_count, 2);
+        let persisted = CacheIndex::load(&directory.path().join("index.json"));
+        assert_eq!(persisted.entries.len(), 2);
+        assert_eq!(persisted.partial_bytes, 0);
+    }
+
+    #[test]
+    fn clearing_while_downloads_overlap_cannot_subtract_a_new_writers_reservation() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = AudioCache::new(directory.path().into(), Some(10));
+        let mut old = cache.begin_write("old", "flac").unwrap();
+        old.write_chunk(&[0; 6]).unwrap();
+        cache.clear();
+        let mut fresh = cache.begin_write("fresh", "flac").unwrap();
+        fresh.write_chunk(&[1; 6]).unwrap();
+        drop(old);
+        let mut next = cache.begin_write("next", "flac").unwrap();
+        assert!(next.write_chunk(&[2; 6]).is_err());
+        drop(next);
+        fresh.finish(&cache).unwrap();
+        assert_eq!(cache.stats().total_bytes, 6);
+    }
+    #[test]
+    fn a_download_larger_than_the_cache_limit_is_rejected_before_publication() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = AudioCache::new(directory.path().into(), Some(10));
+        let mut writer = cache.begin_write("42", "flac").unwrap();
+        assert!(writer.write_chunk(&[0; 11]).is_err());
+        assert!(writer.finish(&cache).is_err());
+        assert_eq!(cache.stats().total_bytes, 0);
+        assert_eq!(
+            fs::read_dir(directory.path())
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "part"))
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn simultaneous_downloads_share_the_limit_and_aborting_releases_capacity() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = AudioCache::new(directory.path().into(), Some(10));
+        let mut first = cache.begin_write("first", "flac").unwrap();
+        first.write_chunk(&[1; 6]).unwrap();
+        let mut second = cache.begin_write("second", "flac").unwrap();
+        assert!(second.write_chunk(&[2; 6]).is_err());
+        drop(second);
+        drop(first);
+        let mut fresh = cache.begin_write("fresh", "flac").unwrap();
+        fresh.write_chunk(&[3; 10]).unwrap();
+        fresh.finish(&cache).unwrap();
+        assert_eq!(cache.stats().total_bytes, 10);
+        assert_eq!(cache.stats().file_count, 1);
+    }
+
+    #[test]
+    fn lowering_the_limit_retires_an_oversized_pending_download() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = AudioCache::new(directory.path().into(), Some(20));
+        let mut pending = cache.begin_write("42", "flac").unwrap();
+        pending.write_chunk(&[0; 16]).unwrap();
+        cache.set_max_bytes(5);
+        assert!(pending.finish(&cache).is_err());
+        let mut fresh = cache.begin_write("new", "flac").unwrap();
+        fresh.write_chunk(&[1; 5]).unwrap();
+        fresh.finish(&cache).unwrap();
+        assert_eq!(cache.stats().total_bytes, 5);
+    }
+
+    #[test]
+    fn downloading_new_audio_evicts_old_entries_before_the_partial_file_grows() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = AudioCache::new(directory.path().into(), Some(10));
+        let mut old = cache.begin_write("old", "flac").unwrap();
+        old.write_chunk(&[0; 8]).unwrap();
+        old.finish(&cache).unwrap();
+        let mut next = cache.begin_write("next", "flac").unwrap();
+        next.write_chunk(&[1; 7]).unwrap();
+        assert!(cache.lookup("old").is_none());
+        next.finish(&cache).unwrap();
+        assert_eq!(cache.stats().total_bytes, 7);
+    }
     #[test]
     fn replacing_the_cache_directory_cannot_reuse_the_previous_owners_entries() {
         let directory = tempfile::tempdir().unwrap();
