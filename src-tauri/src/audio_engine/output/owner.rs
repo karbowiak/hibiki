@@ -169,6 +169,7 @@ impl Drop for OutputThread {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossbeam_channel::Receiver;
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::atomic::AtomicUsize;
@@ -207,16 +208,28 @@ mod tests {
     struct Driver {
         device: Arc<Mutex<Option<DeviceSpec>>>,
         callback: Rc<RefCell<Option<CallbackOwner<Source>>>>,
-        opened: Sender<std::thread::ThreadId>,
+        opened: Sender<(std::thread::ThreadId, u32)>,
         closed: Sender<std::thread::ThreadId>,
         statuses: Sender<bool>,
         failures: Arc<AtomicUsize>,
+        render_requests: Receiver<Sender<Option<(usize, bool)>>>,
+        frames: Arc<AtomicUsize>,
     }
     impl OutputDriver<Source> for Driver {
         type Stream = Stream;
         fn probe(&mut self) -> Result<DeviceSpec, String> {
-            if let Some(callback) = &mut *self.callback.borrow_mut() {
-                callback.render(&mut [0.0; 128]);
+            // The fixture schedules callbacks explicitly. Opening a stream is
+            // not proof that any audio callback has run on a loaded worker.
+            while let Ok(reply) = self.render_requests.try_recv() {
+                let result = self.callback.borrow_mut().as_mut().map(|callback| {
+                    let mut samples = [0.0; 128];
+                    callback.render(&mut samples);
+                    (
+                        self.frames.load(Ordering::Acquire),
+                        samples.iter().any(|sample| sample.abs() > 1e-6),
+                    )
+                });
+                reply.send(result).unwrap();
             }
             self.device
                 .lock()
@@ -226,7 +239,7 @@ mod tests {
         }
         fn open(
             &mut self,
-            _: &DeviceSpec,
+            spec: &DeviceSpec,
             callback: CallbackOwner<Source>,
             _: Arc<AtomicBool>,
         ) -> Result<Stream, String> {
@@ -244,7 +257,9 @@ mod tests {
             {
                 return Err("temporarily unavailable".into());
             }
-            self.opened.send(std::thread::current().id()).unwrap();
+            self.opened
+                .send((std::thread::current().id(), spec.params.sample_rate))
+                .unwrap();
             *self.callback.borrow_mut() = Some(callback);
             Ok(Stream {
                 callback: self.callback.clone(),
@@ -275,8 +290,18 @@ mod tests {
         let (opened, openings) = bounded(8);
         let (closed, closures) = bounded(8);
         let (statuses, status) = bounded(16);
+        let (render_request, render_requests) = bounded(1);
+        let render_once = || {
+            let (reply, rendered) = bounded::<Option<(usize, bool)>>(1);
+            render_request.send(reply).unwrap();
+            rendered
+                .recv_timeout(Duration::from_secs(1))
+                .expect("the output owner must acknowledge the scheduled callback")
+                .expect("the recovered stream must own its callback")
+        };
         let factory_device = device.clone();
         let factory_failures = failures.clone();
+        let factory_frames = frames.clone();
         let output = OutputThread::start_with_interval(
             Source {
                 frames: frames.clone(),
@@ -289,6 +314,8 @@ mod tests {
                 opened,
                 closed,
                 statuses,
+                render_requests,
+                frames: factory_frames,
             },
             Duration::from_millis(10),
         )
@@ -296,9 +323,12 @@ mod tests {
         assert!(!status.recv_timeout(Duration::from_secs(1)).unwrap());
         assert_eq!(frames.load(Ordering::Acquire), 0);
         *device.lock().unwrap() = Some(spec("Speakers", 48000));
-        let owner = openings.recv_timeout(Duration::from_secs(1)).unwrap();
+        let (owner, rate) = openings.recv_timeout(Duration::from_secs(1)).unwrap();
         assert_ne!(owner, std::thread::current().id());
+        assert_eq!(rate, 48000);
         assert!(status.recv_timeout(Duration::from_secs(1)).unwrap());
+        let (played, audible) = render_once();
+        assert!(played > 0 && audible);
         *device.lock().unwrap() = None;
         assert_eq!(
             closures.recv_timeout(Duration::from_secs(1)).unwrap(),
@@ -310,13 +340,16 @@ mod tests {
         *device.lock().unwrap() = Some(spec("Headphones", 44100));
         assert_eq!(
             openings.recv_timeout(Duration::from_secs(1)).unwrap(),
-            owner
+            (owner, 44100)
         );
         assert!(status.recv_timeout(Duration::from_secs(1)).unwrap());
-        std::thread::sleep(Duration::from_millis(30));
+        let (paused_frames, audible) = render_once();
+        assert!(
+            !audible,
+            "recovered paused output must contain only silence"
+        );
         assert_eq!(
-            frames.load(Ordering::Acquire),
-            before,
+            paused_frames, before,
             "recovering while paused must not advance the source"
         );
         paused.store(false, Ordering::Release);
@@ -327,10 +360,13 @@ mod tests {
         );
         assert_eq!(
             openings.recv_timeout(Duration::from_secs(1)).unwrap(),
-            owner
+            (owner, 48000)
         );
-        std::thread::sleep(Duration::from_millis(30));
-        assert!(frames.load(Ordering::Acquire) > before);
+        // Deliberately defer the synthetic callback until after open: a ready
+        // device alone cannot promise frame progress, regardless of elapsed time.
+        assert_eq!(frames.load(Ordering::Acquire), before);
+        let (resumed_frames, audible) = render_once();
+        assert!(resumed_frames > before && audible);
         drop(output);
         assert_eq!(
             closures.recv_timeout(Duration::from_secs(1)).unwrap(),
