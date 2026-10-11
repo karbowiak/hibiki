@@ -1,5 +1,5 @@
 import { create } from "zustand"
-import { persist } from "zustand/middleware"
+import { safeLocalPersist } from "./localPreferenceStorage"
 
 interface EasterEggState {
   rainbow: boolean
@@ -13,19 +13,53 @@ interface EasterEggState {
   toggleVaporwave: () => void
 }
 
-export const useEasterEggStore = create<EasterEggState>()(
-  persist(
-    (set) => ({
-      rainbow: false,
-      partyMode: false,
-      vinylSpin: false,
-      vaporwave: false,
+export function createEasterEggStore(persist = safeLocalPersist) {
+  // Keep explicit pre-hydration intent, including values equal to startup defaults.
+  let hydrated = false
+  const pending: Partial<EasterEggState> = {}
+  const remember = (patch: Partial<EasterEggState>) => {
+    if (!hydrated) Object.assign(pending, patch)
+    return patch
+  }
+  const store = create<EasterEggState>()(
+    persist(
+      (set) => ({
+        rainbow: false,
+        partyMode: false,
+        vinylSpin: false,
+        vaporwave: false,
 
-      toggleRainbow: () => set((s) => ({ rainbow: !s.rainbow })),
-      togglePartyMode: () => set((s) => ({ partyMode: !s.partyMode })),
-      toggleVinylSpin: () => set((s) => ({ vinylSpin: !s.vinylSpin })),
-      toggleVaporwave: () => set((s) => ({ vaporwave: !s.vaporwave })),
-    }),
-    { name: "easter-eggs-v1" },
-  ),
-)
+        toggleRainbow: () => set((s) => remember({ rainbow: !s.rainbow })),
+        togglePartyMode: () =>
+          set((s) => remember({ partyMode: !s.partyMode })),
+        toggleVinylSpin: () =>
+          set((s) => remember({ vinylSpin: !s.vinylSpin })),
+        toggleVaporwave: () =>
+          set((s) => remember({ vaporwave: !s.vaporwave })),
+      }),
+      {
+        name: "easter-eggs-v1",
+        onRehydrateStorage: () => {
+          hydrated = false
+          return (state, error) => {
+            if (!state || error) return
+            store.setState({ ...pending })
+            for (const key of Object.keys(pending))
+              delete pending[key as keyof EasterEggState]
+            hydrated = true
+          }
+        },
+        partialize: (state) => ({
+          rainbow: state.rainbow,
+          partyMode: state.partyMode,
+          vinylSpin: state.vinylSpin,
+          vaporwave: state.vaporwave,
+        }),
+      }
+    )
+  )
+
+  return store
+}
+
+export const useEasterEggStore = createEasterEggStore()

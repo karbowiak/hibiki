@@ -1,5 +1,5 @@
 import { create } from "zustand"
-import { persist } from "zustand/middleware"
+import { safeLocalPersist } from "./localPreferenceStorage"
 
 const SEMANTIC_VARS = [
   "bg-base",
@@ -27,9 +27,9 @@ export const SEMANTIC_COLOR_LABELS: Record<SemanticColor, string> = {
   "text-primary": "Text Primary",
   "text-secondary": "Text Secondary",
   "text-muted": "Text Muted",
-  "border": "Border",
+  border: "Border",
   "border-subtle": "Border Subtle",
-  "overlay": "Overlay",
+  overlay: "Overlay",
   "scrollbar-thumb": "Scrollbar",
   "range-track": "Range Track",
   "accent-secondary": "Accent Secondary",
@@ -46,7 +46,10 @@ interface CustomColorState {
   resetAll: () => void
 }
 
-function applyOverrides(overrides: Partial<Record<SemanticColor, string>>, enabled: boolean) {
+function applyOverrides(
+  overrides: Partial<Record<SemanticColor, string>>,
+  enabled: boolean
+) {
   const s = document.documentElement.style
   for (const key of SEMANTIC_VARS) {
     if (enabled && overrides[key]) {
@@ -57,32 +60,77 @@ function applyOverrides(overrides: Partial<Record<SemanticColor, string>>, enabl
   }
 }
 
-export const useCustomColorStore = create<CustomColorState>()(
-  persist(
-    (set, get) => ({
-      enabled: false,
-      overrides: {},
-      setEnabled: (v: boolean) => {
-        set({ enabled: v })
-        applyOverrides(get().overrides, v)
-      },
-      setOverride: (key: SemanticColor, value: string | null) => {
-        const overrides = { ...get().overrides }
-        if (value) overrides[key] = value
-        else delete overrides[key]
-        set({ overrides })
-        applyOverrides(overrides, get().enabled)
-      },
-      resetAll: () => {
-        set({ overrides: {}, enabled: false })
-        applyOverrides({}, false)
-      },
-    }),
-    {
-      name: "plex-custom-colors",
-      onRehydrateStorage: () => (state) => {
-        if (state) applyOverrides(state.overrides, state.enabled)
-      },
-    },
-  ),
-)
+export function createCustomColorStore(persist = safeLocalPersist) {
+  // Keep explicit pre-hydration intent, including values equal to startup defaults.
+  let hydrated = false
+  let pendingEnabled: boolean | undefined
+  let pendingReset = false
+  const pendingOverrides = new Map<SemanticColor, string | null>()
+  const store = create<CustomColorState>()(
+    persist(
+      (set, get) => ({
+        enabled: false,
+        overrides: {},
+        setEnabled: (v: boolean) => {
+          if (!hydrated) pendingEnabled = v
+          set({ enabled: v })
+          applyOverrides(get().overrides, v)
+        },
+        setOverride: (key: SemanticColor, value: string | null) => {
+          if (!hydrated) pendingOverrides.set(key, value)
+          const overrides = { ...get().overrides }
+          if (value) overrides[key] = value
+          else delete overrides[key]
+          set({ overrides })
+          applyOverrides(overrides, get().enabled)
+        },
+        resetAll: () => {
+          if (!hydrated) {
+            pendingReset = true
+            pendingEnabled = false
+            pendingOverrides.clear()
+          }
+          set({ overrides: {}, enabled: false })
+          applyOverrides({}, false)
+        },
+      }),
+      {
+        name: "plex-custom-colors",
+        partialize: (state) => ({
+          enabled: state.enabled,
+          overrides: state.overrides,
+        }),
+        validate: (saved) =>
+          saved.overrides === undefined ||
+          (saved.overrides !== null &&
+            typeof saved.overrides === "object" &&
+            !Array.isArray(saved.overrides) &&
+            Object.values(saved.overrides).every(
+              (value) => typeof value === "string"
+            )),
+        onRehydrateStorage: () => {
+          hydrated = false
+          return (state, error) => {
+            if (!state || error) return
+            const overrides = pendingReset ? {} : { ...state.overrides }
+            for (const [key, value] of pendingOverrides) {
+              if (value) overrides[key] = value
+              else delete overrides[key]
+            }
+            const enabled = pendingEnabled ?? state.enabled
+            store.setState({ overrides, enabled })
+            pendingOverrides.clear()
+            pendingEnabled = undefined
+            pendingReset = false
+            hydrated = true
+            applyOverrides(overrides, enabled)
+          }
+        },
+      }
+    )
+  )
+
+  return store
+}
+
+export const useCustomColorStore = createCustomColorStore()
