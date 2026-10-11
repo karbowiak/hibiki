@@ -239,13 +239,19 @@ impl AudioCallbackState {
             self.deck_mgr.pending_deck_mut().trim_played_samples();
         }
 
-        // 6. Process DSP chain (direct access, no lock)
-        self.dsp_chain
-            .process(data, self.device_sample_rate, self.device_channels);
+        // Stateful filters follow the source clock. Silent device padding
+        // during pause or underrun must not consume history or compressor release.
+        let rendered_samples = rendered_frames * usize::from(self.device_channels.max(1));
+        if rendered_samples > 0 {
+            self.dsp_chain.process(
+                &mut data[..rendered_samples],
+                self.device_sample_rate,
+                self.device_channels,
+            );
+        }
 
         // Fade the final output (both decks and DSP tails), without changing the
         // user's volume. Buffering cannot consume the fade before PCM is ready.
-        let rendered_samples = rendered_frames * usize::from(self.device_channels.max(1));
         self.playback_envelope
             .apply(&mut data[..rendered_samples], self.device_channels);
         data[rendered_samples..].fill(0.0);

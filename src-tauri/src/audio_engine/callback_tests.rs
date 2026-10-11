@@ -1285,3 +1285,84 @@ fn public_track_keys_in_the_negative_namespace_keep_native_start_and_end_identit
         .iter()
         .any(|event| matches!(event, EngineEvent::TrackEnded { rating_key: -1, .. })));
 }
+
+
+fn filtered_callback(samples: Vec<f32>) -> AudioCallbackState {
+    let (mut cb, _) = callback();
+    cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
+    cb.deck_mgr.active_deck_mut().samples = samples;
+    cb.deck_mgr.active_deck_mut().has_started_playing = true;
+    cb.dsp_chain.set_eq_enabled(true);
+    cb.dsp_chain
+        .set_eq_gains(&[12.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+    cb.set_state(EngineState::Playing);
+    cb
+}
+
+#[test]
+fn idle_pause_callbacks_preserve_the_filter_and_limiter_state_for_resume() {
+    let samples = vec![0.25; 48000 * 2 * 3];
+    let mut idle = filtered_callback(samples.clone());
+    let mut immediate = filtered_callback(samples);
+    for cb in [&mut idle, &mut immediate] {
+        cb.process_callback(&mut [0.0; 960]);
+        cb.handle_command(AudioCommand::Pause);
+        cb.process_callback(&mut vec![0.0; FADE_SAMPLES]);
+    }
+    for _ in 0..100 {
+        let mut silence = [1.0; 960];
+        idle.process_callback(&mut silence);
+        assert!(silence.iter().all(|sample| *sample == 0.0));
+    }
+    assert_eq!(
+        idle.deck_mgr.active_deck().played_frames,
+        immediate.deck_mgr.active_deck().played_frames
+    );
+    idle.handle_command(AudioCommand::Resume);
+    immediate.handle_command(AudioCommand::Resume);
+    let mut resumed_idle = vec![0.0; FADE_SAMPLES];
+    let mut resumed_immediate = resumed_idle.clone();
+    idle.process_callback(&mut resumed_idle);
+    immediate.process_callback(&mut resumed_immediate);
+    assert!(resumed_idle.iter().any(|sample| sample.abs() > 0.1));
+    let difference = resumed_idle
+        .iter()
+        .zip(&resumed_immediate)
+        .map(|(a, b)| (*a - *b).abs())
+        .fold(0.0_f32, f32::max);
+    assert_eq!(
+        difference, 0.0,
+        "Filters must follow source frames, not paused device callbacks"
+    );
+}
+
+#[test]
+fn an_underrun_does_not_run_filter_history_ahead_of_the_next_source_frame() {
+    let samples = vec![0.25; 960];
+    let mut underrun = filtered_callback(samples.clone());
+    let mut continuous = filtered_callback(samples);
+    let mut oversized = vec![0.0; 4800];
+    underrun.process_callback(&mut oversized);
+    continuous.process_callback(&mut [0.0; 960]);
+    assert!(oversized[960..].iter().all(|sample| *sample == 0.0));
+    for cb in [&mut underrun, &mut continuous] {
+        cb.deck_mgr
+            .active_deck_mut()
+            .samples
+            .extend_from_slice(&vec![0.25; 48000]);
+    }
+    let mut actual = [0.0; 960];
+    let mut expected = [0.0; 960];
+    underrun.process_callback(&mut actual);
+    continuous.process_callback(&mut expected);
+    assert!(actual.iter().any(|sample| sample.abs() > 0.1));
+    let difference = actual
+        .iter()
+        .zip(&expected)
+        .map(|(a, b)| (*a - *b).abs())
+        .fold(0.0_f32, f32::max);
+    assert_eq!(
+        difference, 0.0,
+        "Silent padding must not change filters between adjacent source frames"
+    );
+}
