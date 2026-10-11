@@ -28,6 +28,7 @@ const deadlines = new Map<number, () => void>()
 const requests: AbortSignal[] = []
 let root: Root | null = null
 let throwCanvas = false
+let missingCanvas = false
 let pixels: Uint8ClampedArray
 let timerId = 0
 
@@ -57,14 +58,23 @@ function imageResponse() {
     headers: { "Content-Type": "image/png" },
   })
 }
-function Harness({ url }: { url: string | null }) {
-  return <output>{useFocalPoint(url)}</output>
+function Harness({
+  url,
+  onRender,
+}: {
+  url: string | null
+  onRender?: (position: string) => void
+}) {
+  const position = useFocalPoint(url)
+  onRender?.(position)
+  return <output>{position}</output>
 }
 
 beforeEach(() => {
   images.length = created.length = revoked.length = requests.length = 0
   deadlines.clear()
   throwCanvas = false
+  missingCanvas = false
   pixels = new Uint8ClampedArray(100 * 100 * 4)
   // A bright feature in the upper right should pull the crop toward it.
   for (let y = 20; y < 40; y++) {
@@ -93,14 +103,17 @@ beforeEach(() => {
   globalThis.clearTimeout = ((id: number) => {
     deadlines.delete(id)
   }) as unknown as typeof clearTimeout
-  dom.window.HTMLCanvasElement.prototype.getContext = (() => ({
-    drawImage() {
-      if (throwCanvas) throw new Error("Canvas unavailable")
-    },
-    getImageData() {
-      return { data: pixels }
-    },
-  })) as any
+  dom.window.HTMLCanvasElement.prototype.getContext = (() =>
+    missingCanvas
+      ? null
+      : {
+          drawImage() {
+            if (throwCanvas) throw new Error("Canvas unavailable")
+          },
+          getImageData() {
+            return { data: pixels }
+          },
+        }) as any
 })
 afterEach(async () => {
   if (root) {
@@ -228,7 +241,10 @@ test("changing artist centers the new artwork immediately and cancels old analys
     root!.render(<Harness url="image://localhost/artist/first" />)
     await flush()
   })
-  await act(async () => { images[0].onload!(); await flush() })
+  await act(async () => {
+    images[0].onload!()
+    await flush()
+  })
   expect(document.querySelector("output")!.textContent).not.toBe("50% 50%")
   await act(async () => {
     root!.render(<Harness url="image://localhost/artist/second" />)
@@ -242,8 +258,113 @@ test("changing artist centers the new artwork immediately and cancels old analys
   })
   expect(requests[1].aborted).toBe(true)
   expect(images[1].onload).toBeNull()
-  await act(async () => { lateLoad(); await flush() })
+  await act(async () => {
+    lateLoad()
+    await flush()
+  })
   expect(document.querySelector("output")!.textContent).toBe("50% 50%")
-  await act(async () => { images[2].onload!(); await flush() })
+  await act(async () => {
+    images[2].onload!()
+    await flush()
+  })
   expect(document.querySelector("output")!.textContent).not.toBe("50% 50%")
+})
+
+test("successful artwork analysis survives navigation without a centered first paint or another decode", async () => {
+  const url = "image://localhost/artist/remount-success"
+  root = createRoot(document.getElementById("root")!)
+  await act(async () => {
+    root!.render(<Harness url={url} />)
+    await flush()
+  })
+  await act(async () => {
+    images[0].onload!()
+    await flush()
+  })
+  const expected = document.querySelector("output")!.textContent!
+  expect(expected).not.toBe("50% 50%")
+  await act(() => root!.unmount())
+  root = createRoot(document.getElementById("root")!)
+  const rendered: string[] = []
+  await act(async () => {
+    root!.render(
+      <Harness url={url} onRender={(position) => rendered.push(position)} />
+    )
+    await flush()
+  })
+  expect(rendered.length).toBeGreaterThan(0)
+  expect(rendered.every((position) => position === expected)).toBe(true)
+  expect(requests).toHaveLength(1)
+  expect(images).toHaveLength(1)
+  // Changing the existing hook to a cached URL also uses it during the render,
+  // rather than briefly returning the previous entity's position or the center.
+  await act(async () => {
+    root!.render(<Harness url={null} />)
+    await flush()
+  })
+  rendered.length = 0
+  await act(async () => {
+    root!.render(
+      <Harness url={url} onRender={(position) => rendered.push(position)} />
+    )
+    await flush()
+  })
+  expect(rendered.every((position) => position === expected)).toBe(true)
+  expect(requests).toHaveLength(1)
+})
+
+test("a transient analysis failure is retried rather than cached as a successful center", async () => {
+  const url = "image://localhost/artist/transient-retry"
+  throwCanvas = true
+  const failed = detectFocalPoint(url)
+  await flush()
+  images[0].onload!()
+  expect(await failed).toEqual(center)
+  throwCanvas = false
+  const retry = detectFocalPoint(url)
+  await flush()
+  images[1].onload!()
+  const point = await retry
+  expect(point.x).toBeGreaterThan(0.65)
+  expect(requests).toHaveLength(2)
+  expect(await detectFocalPoint(url)).toEqual(point)
+  expect(requests).toHaveLength(2)
+  const canceled = new AbortController()
+  canceled.abort()
+  expect(await detectFocalPoint(url, canceled.signal)).toEqual(center)
+})
+
+test("an unavailable canvas does not poison later analysis of the same image", async () => {
+  const url = "image://localhost/artist/missing-canvas-retry"
+  missingCanvas = true
+  const failed = detectFocalPoint(url)
+  await flush()
+  images[0].onload!()
+  expect(await failed).toEqual(center)
+  missingCanvas = false
+  const retry = detectFocalPoint(url)
+  await flush()
+  images[1].onload!()
+  expect((await retry).x).toBeGreaterThan(0.65)
+  expect(requests).toHaveLength(2)
+})
+
+test("successful focal-point cache is bounded and retains recently used URLs", async () => {
+  for (let index = 0; index < 257; index++) {
+    const result = detectFocalPoint(`image://localhost/artist/lru-${index}`)
+    await flush()
+    images.at(-1)!.onload!()
+    await result
+  }
+  const count = requests.length
+  await detectFocalPoint("image://localhost/artist/lru-256")
+  await detectFocalPoint("image://localhost/artist/lru-1")
+  expect(requests).toHaveLength(count)
+  const evicted = detectFocalPoint("image://localhost/artist/lru-0")
+  await flush()
+  expect(requests).toHaveLength(count + 1)
+  images.at(-1)!.onload!()
+  await evicted
+  await detectFocalPoint("image://localhost/artist/lru-1")
+  expect(requests).toHaveLength(count + 1)
 })

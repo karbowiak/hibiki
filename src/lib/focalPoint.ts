@@ -4,6 +4,23 @@ type FocalPoint = { x: number; y: number }
 const CENTER: FocalPoint = { x: 0.5, y: 0.5 }
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024
 const ANALYSIS_TIMEOUT_MS = 15_000
+const MAX_CACHED_POINTS = 256
+const successfulPoints = new Map<string, FocalPoint>()
+
+function cachedPoint(imageUrl: string): FocalPoint | null {
+  const point = successfulPoints.get(imageUrl)
+  if (!point) return null
+  successfulPoints.delete(imageUrl)
+  successfulPoints.set(imageUrl, point)
+  return { ...point }
+}
+
+function cachePoint(imageUrl: string, point: FocalPoint) {
+  successfulPoints.delete(imageUrl)
+  successfulPoints.set(imageUrl, { ...point })
+  if (successfulPoints.size > MAX_CACHED_POINTS)
+    successfulPoints.delete(successfulPoints.keys().next().value!)
+}
 
 // Bound response bodies even when a server omits Content-Length.
 async function imageBlob(response: Response): Promise<Blob | null> {
@@ -53,15 +70,19 @@ export function detectFocalPoint(
   imageUrl: string,
   signal?: AbortSignal
 ): Promise<FocalPoint> {
+  if (signal?.aborted) return Promise.resolve(CENTER)
+  const cached = cachedPoint(imageUrl)
+  if (cached) return Promise.resolve(cached)
   return new Promise((resolve) => {
     const request = new AbortController()
     let image: HTMLImageElement | null = null
     let blobUrl: string | null = null
     let deadline: ReturnType<typeof setTimeout> | undefined
     let settled = false
-    const finish = (point: FocalPoint = CENTER) => {
+    const finish = (point: FocalPoint = CENTER, succeeded = false) => {
       if (settled) return
       settled = true
+      if (succeeded) cachePoint(imageUrl, point)
       if (deadline !== undefined) clearTimeout(deadline)
       signal?.removeEventListener("abort", cancel)
       request.abort()
@@ -95,7 +116,9 @@ export function detectFocalPoint(
           if (settled) return
           // Exceptions in image event handlers do not reach the fetch catch.
           try {
-            finish(analyzeFocalPoint(image!))
+            const point = analyzeFocalPoint(image!)
+            if (point) finish(point, true)
+            else finish()
           } catch {
             finish()
           }
@@ -109,14 +132,14 @@ export function detectFocalPoint(
   })
 }
 
-function analyzeFocalPoint(img: HTMLImageElement): FocalPoint {
+function analyzeFocalPoint(img: HTMLImageElement): FocalPoint | null {
   const SIZE = 100
   const canvas = document.createElement("canvas")
   canvas.width = SIZE
   canvas.height = SIZE
   const ctx = canvas.getContext("2d")
   if (!ctx) {
-    return { x: 0.5, y: 0.5 }
+    return null
   }
 
   ctx.drawImage(img, 0, 0, SIZE, SIZE)
@@ -213,13 +236,20 @@ function analyzeFocalPoint(img: HTMLImageElement): FocalPoint {
  * React hook that asynchronously detects the focal point of an image and
  * returns it as a CSS background-position / object-position string.
  *
- * While loading (or if imageUrl is null) returns "50% 50%".
+ * Successful positions survive navigation in a bounded exact-URL cache.
+ * New artwork uses "50% 50%" while loading; transient fallbacks are not cached.
  */
 export function useFocalPoint(imageUrl: string | null): string {
+  const savedPoint = imageUrl ? cachedPoint(imageUrl) : null
+  const savedPosition = savedPoint
+    ? `${Math.round(savedPoint.x * 100)}% ${Math.round(savedPoint.y * 100)}%`
+    : null
   const [result, setResult] = useState<{
     imageUrl: string
     position: string
-  } | null>(null)
+  } | null>(() =>
+    imageUrl && savedPosition ? { imageUrl, position: savedPosition } : null
+  )
 
   useEffect(() => {
     if (!imageUrl) return
@@ -235,5 +265,7 @@ export function useFocalPoint(imageUrl: string | null): string {
     return () => controller.abort()
   }, [imageUrl])
 
-  return imageUrl && result?.imageUrl === imageUrl ? result.position : "50% 50%"
+  return imageUrl && result?.imageUrl === imageUrl
+    ? result.position
+    : (savedPosition ?? "50% 50%")
 }

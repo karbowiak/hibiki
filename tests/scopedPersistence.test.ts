@@ -131,7 +131,7 @@ test("artwork URLs contain an opaque scope and no Plex token, while preserving p
     src = url.searchParams.get("src")!
   expect(src).toBe("https://plex.test/plex/library/image?width=400")
   expect(url.searchParams.get("scope")).toBe("opaque-scope")
-  expect(url.pathname).toBe("/album/..%2Funsafe%2Fid")
+  expect(url.pathname).toBe("/ext/img")
   expect(value).not.toContain("dummy-secret")
   const signed = buildPlexImageUrl(
     "https://plex.test",

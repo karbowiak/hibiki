@@ -1,15 +1,16 @@
 /**
  * Unified image URL builder for the `image://` Tauri custom protocol.
  *
- * All images go through a single `image://` scheme with semantic entity paths:
+ * Explicit sources share a URL across cards, tracks, and detail pages:
  *
- *   image://localhost/artist/{id}?src=...&name=...
- *   image://localhost/album/{id}?src=...&artist=...&name=...
- *   image://localhost/track/{id}?src=...&artist=...&album=...
- *   image://localhost/playlist/{id}?src=...
+ *   image://localhost/ext/img?src=...&scope=...
  *
- * The Rust handler fetches `src`, falls back to Deezer/iTunes by `name` when
- * `src` fails. Native cache keys include the verified account/library scope.
+ * Metadata-only requests retain semantic paths and lookup names:
+ *
+ *   image://localhost/album/{id}?artist=...&name=...
+ *
+ * The Rust handler caches the selected source. Metadata fallback is requested
+ * when no source is available. Native keys include the verified account/library.
  *
  * This module is backend-agnostic — each backend owns its own URL assembly
  * (see backends/plex/imageUrl.ts).
@@ -40,11 +41,12 @@ export function buildImageUrl(
   scope?: string | null,
 ): string | null {
   if (!entityId) return null
+  // Entity labels must not create distinct webview resources for identical bytes.
+  if (sourceUrl) return buildExternalImageUrl(sourceUrl, scope)
   // Need at least a source URL or a name for fallback
-  if (!sourceUrl && !name) return null
+  if (!name) return null
 
   const params = new URLSearchParams()
-  if (sourceUrl) params.set("src", sourceUrl)
   if (name) params.set("name", name)
   if (artist) params.set("artist", artist)
   if (scope) params.set("scope", scope)
