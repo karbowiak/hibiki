@@ -1,7 +1,12 @@
-import { useCallback, useEffect, useRef, useMemo } from "react"
+import { useCallback, useRef, useMemo } from "react"
 import type { LevelData } from "../providers/types"
 import { useVisualizerStore, type CompactVisualizerMode } from "../stores/visualizerStore"
 import { useEasterEggStore } from "../stores/easterEggStore"
+import { usePlayerStore } from "../stores/playerStore"
+import { useAccentStore } from "../stores/accentStore"
+import { useVisualizationVisibility } from "../hooks/useVisualizationVisibility"
+import { useVisualizationFrames } from "../hooks/useVisualizationFrames"
+import { computeSpectrumFromFFT } from "../lib/visualizerSpectrum"
 
 // ---------------------------------------------------------------------------
 // Waveform math (Catmull-Rom spline — mirrors the SVG WaveformSVG logic)
@@ -85,38 +90,6 @@ function buildWaveformPath(
 }
 
 // ---------------------------------------------------------------------------
-// DFT for spectrum mode — logarithmically-spaced bins so bass/mid/treble each
-// get a fair share of display space rather than bass dominating all columns.
-// ---------------------------------------------------------------------------
-
-function computeSpectrum(samples: Float32Array, bins: number): Float32Array {
-  const N = Math.min(samples.length, 1024)
-  const result = new Float32Array(bins)
-  // Logarithmic frequency mapping: bin 0 ≈ 1 DFT component, bin 63 ≈ N/2
-  const fMin = 1
-  const fMax = N / 2
-  for (let b = 0; b < bins; b++) {
-    const f = Math.max(1, Math.round(fMin * Math.pow(fMax / fMin, b / (bins - 1))))
-    let real = 0, imag = 0
-    for (let n = 0; n < N; n++) {
-      const angle = (2 * Math.PI * f * n) / N
-      real += samples[n] * Math.cos(angle)
-      imag -= samples[n] * Math.sin(angle)
-    }
-    // Square-root compress so quiet bins are still visible
-    // Heavy compression (^0.15 instead of ^0.25) so the 50× bass/treble energy
-    // gap compresses to ~2.5× visually — no tilt hack needed.
-    result[b] = Math.pow(Math.sqrt(real * real + imag * imag) / N, 0.15)
-  }
-  // Cubic attenuation: bass ×0.4, mids ×0.45, highs ×0.8.
-  for (let b = 0; b < bins; b++) {
-    const t = b / (bins - 1)
-    result[b] *= (0.4 + 0.4 * t * t * t) * 0.9
-  }
-  return result
-}
-
-// ---------------------------------------------------------------------------
 // Accent colour helpers — reads CSS var so canvas matches the theme accent
 // ---------------------------------------------------------------------------
 
@@ -159,9 +132,15 @@ export default function VisualizerCanvas({
   mode,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const rafRef = useRef<number>(0)
   const specSmoothedRef = useRef<Float32Array | null>(null)
   const getRecentSamples = useVisualizerStore(s => s.getRecentSamples)
+  const getFrequencyData = useVisualizerStore(s => s.getFrequencyData)
+  const getSampleRate = useVisualizerStore(s => s.getSampleRate)
+  const colors = useVisualizerStore(s => `${s.vizColorLow},${s.vizColorMid},${s.vizColorHigh}`)
+  const isPlaying = usePlayerStore(s => s.isPlaying)
+  const rainbow = useEasterEggStore(s => s.rainbow)
+  const accentColor = useAccentStore(s => s.accent)
+  const visible = useVisualizationVisibility()
 
   // Preprocess waveform bars from levels (memoised — only changes when levels change)
   const waveformBars = useMemo(
@@ -184,14 +163,13 @@ export default function VisualizerCanvas({
 
     ctx.clearRect(0, 0, W, H)
 
-    const rainbow = useEasterEggStore.getState().rainbow
     const rainbowPhase = (performance.now() / 50) % 360
 
     // In rainbow mode the canvas draws its own gradient — skip getComputedStyle.
     // Otherwise refresh the cached accent every ~30 frames (~500ms at 60fps).
     let accent = cachedAccentRef.current
     if (!rainbow) {
-      if (++accentTickRef.current >= 30) {
+      if (++accentTickRef.current >= 30 || mode === "waveform") {
         accentTickRef.current = 0
         accent = readAccent(canvas)
         cachedAccentRef.current = accent
@@ -236,9 +214,9 @@ export default function VisualizerCanvas({
       ctx.fill()
     } else if (mode === "spectrum") {
       // ── Spectrum bars ──
-      const pcm = getRecentSamples(1024)
       const BINS = 64
-      const raw = computeSpectrum(pcm, BINS)
+      const fftData = isPlaying ? getFrequencyData() : null
+      const raw = fftData ? computeSpectrumFromFFT(fftData, BINS, getSampleRate()) : new Float32Array(BINS)
       // Exponential moving average: fast attack (α=0.4), moderate release (α=0.18)
       if (!specSmoothedRef.current || specSmoothedRef.current.length !== BINS) {
         specSmoothedRef.current = new Float32Array(BINS)
@@ -279,7 +257,7 @@ export default function VisualizerCanvas({
       ctx.stroke()
     } else if (mode === "oscilloscope") {
       // ── Oscilloscope line ──
-      const pcm = getRecentSamples(512)
+      const pcm = isPlaying ? getRecentSamples(512) : new Float32Array(512)
       if (rainbow) {
         const oscGrad = ctx.createLinearGradient(0, 0, W, 0)
         for (let i = 0; i <= 6; i++) {
@@ -309,7 +287,7 @@ export default function VisualizerCanvas({
       ctx.stroke()
     } else if (mode === "vu") {
       // ── VU meter (two horizontal bars for L and R) ──
-      const pcm = getRecentSamples(2048)
+      const pcm = isPlaying ? getRecentSamples(2048) : new Float32Array(2048)
       // Compute RMS for left and right channels (odd = R, even = L)
       let sumL = 0, sumR = 0, countLR = 0
       for (let i = 0; i < pcm.length - 1; i += 2) {
@@ -357,22 +335,9 @@ export default function VisualizerCanvas({
       ctx.lineTo(splitX, H)
       ctx.stroke()
     }
-  }, [mode, waveformBars, progressPct, hoverPct, getRecentSamples])
+  }, [mode, waveformBars, progressPct, hoverPct, getRecentSamples, getFrequencyData, getSampleRate, isPlaying, rainbow, accentColor, colors])
 
-  // Animation loop
-  useEffect(() => {
-    let cancelled = false
-    function loop() {
-      if (cancelled) return
-      draw()
-      rafRef.current = requestAnimationFrame(loop)
-    }
-    rafRef.current = requestAnimationFrame(loop)
-    return () => {
-      cancelled = true
-      cancelAnimationFrame(rafRef.current)
-    }
-  }, [draw])
+  useVisualizationFrames(draw, (mode !== "waveform" && isPlaying) || rainbow, visible)
 
   return (
     <div className="relative h-7 w-full pointer-events-none">

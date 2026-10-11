@@ -5,50 +5,13 @@ import { usePlayerStore } from "../stores/playerStore"
 import { useShallow } from "zustand/react/shallow"
 import { initPresetMeta, loadAllPacks, getPreset, getAllNames } from "../lib/milkdropPresets"
 import { formatMs } from "../lib/formatters"
-import { getReducedMotion } from "../hooks/useReducedMotion"
+import { useReducedMotion } from "../hooks/useReducedMotion"
 import { useVisualizerHotkeys } from "../hooks/useVisualizerHotkeys"
 import VisualizerCanvas from "./VisualizerCanvas"
 import MilkdropPresetBrowser from "./MilkdropPresetBrowser"
-
-// Compute spectrum from FFT frequency data (hardware-accelerated AnalyserNode)
-// Averages FFT bins per visual band, applies pink-noise compensation, and uses a fixed dB scale.
-function computeSpectrumFromFFT(fftData: Float32Array, bins: number, sampleRate: number): Float32Array {
-  const result = new Float32Array(bins)
-  const nyquist = sampleRate / 2
-  const binCount = fftData.length
-  const fMin = 20
-  const fMax = Math.min(nyquist, 20000)
-  const DB_MIN = -70
-  const DB_MAX = -5
-  const DB_RANGE = DB_MAX - DB_MIN
-  const REF_FREQ = 1000 // pink-noise compensation reference
-  const DB_PER_OCTAVE = 4.5
-
-  for (let b = 0; b < bins; b++) {
-    // Log-spaced frequency edges for this visual bin
-    const fLo = fMin * Math.pow(fMax / fMin, b / bins)
-    const fHi = fMin * Math.pow(fMax / fMin, (b + 1) / bins)
-    const idxLo = Math.max(0, Math.floor((fLo / nyquist) * binCount))
-    const idxHi = Math.min(binCount - 1, Math.ceil((fHi / nyquist) * binCount))
-
-    // Average in linear power domain (avoids -Infinity poisoning from empty bins)
-    let sumPower = 0
-    let count = 0
-    for (let j = idxLo; j <= idxHi; j++) {
-      sumPower += Math.pow(10, fftData[j] / 10)
-      count++
-    }
-    const avgDb = count > 0 ? 10 * Math.log10(sumPower / count) : DB_MIN
-
-    // Pink-noise compensation: boost higher frequencies relative to 1kHz
-    const centerFreq = (fLo + fHi) / 2
-    const octavesFromRef = Math.log2(centerFreq / REF_FREQ)
-    const compensated = avgDb + octavesFromRef * DB_PER_OCTAVE
-
-    result[b] = Math.max(0, Math.min(1, (compensated - DB_MIN) / DB_RANGE))
-  }
-  return result
-}
+import { computeSpectrumFromFFT } from "../lib/visualizerSpectrum"
+import { useVisualizationVisibility } from "../hooks/useVisualizationVisibility"
+import { useVisualizationFrames } from "../hooks/useVisualizationFrames"
 
 // Lerp between two hex colors
 function lerpColor(a: string, b: string, t: number): string {
@@ -58,29 +21,6 @@ function lerpColor(a: string, b: string, t: number): string {
   const g = Math.round(ag + (bg - ag) * t)
   const bl = Math.round(ab + (bb - ab) * t)
   return `rgb(${r},${g},${bl})`
-}
-
-// Fallback: Logarithmic DFT from PCM samples
-function computeSpectrum(samples: Float32Array, bins: number): Float32Array {
-  const N = Math.min(samples.length, 1024)
-  const result = new Float32Array(bins)
-  const fMin = 1
-  const fMax = N / 2
-  for (let b = 0; b < bins; b++) {
-    const f = Math.max(1, Math.round(fMin * Math.pow(fMax / fMin, b / (bins - 1))))
-    let real = 0, imag = 0
-    for (let n = 0; n < N; n++) {
-      const angle = (2 * Math.PI * f * n) / N
-      real += samples[n] * Math.cos(angle)
-      imag -= samples[n] * Math.sin(angle)
-    }
-    result[b] = Math.pow(Math.sqrt(real * real + imag * imag) / N, 0.15)
-  }
-  for (let b = 0; b < bins; b++) {
-    const t = b / (bins - 1)
-    result[b] *= (0.4 + 0.4 * t * t * t) * 0.9
-  }
-  return result
 }
 
 // Starfield hue palette for colored stars
@@ -159,7 +99,12 @@ export default function VisualizerFullscreen() {
   // to return null once butterchurn has claimed it with WebGL.
   const canvas2dRef = useRef<HTMLCanvasElement>(null)
   const canvasMilkdropRef = useRef<HTMLCanvasElement>(null)
-  const rafRef = useRef<number>(0)
+  const visible = useVisualizationVisibility()
+  const reducedMotion = useReducedMotion()
+  const active = visible && isPlaying
+  const activityRef = useRef(active)
+  activityRef.current = active
+  const [milkdropReady, setMilkdropReady] = useState(0)
 
   // Smoothing state for spectrum (exponential moving average per bin)
   const specSmoothedRef = useRef<Float32Array | null>(null)
@@ -182,7 +127,6 @@ export default function VisualizerFullscreen() {
 
   // Butterchurn state
   const audioCtxRef = useRef<AudioContext | null>(null)
-  const processorRef = useRef<ScriptProcessorNode | null>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const vizRef = useRef<any>(null)
 
@@ -223,23 +167,29 @@ export default function VisualizerFullscreen() {
 
   // Setup/teardown butterchurn when entering milkdrop mode
   useEffect(() => {
-    if (fullscreenMode !== "milkdrop") {
-      if (processorRef.current) {
-        processorRef.current.disconnect()
-        processorRef.current = null
-      }
-      if (audioCtxRef.current) {
-        void audioCtxRef.current.close()
-        audioCtxRef.current = null
-      }
-      vizRef.current = null
-      return
-    }
+    if (fullscreenMode !== "milkdrop") return
 
     const canvas = canvasMilkdropRef.current
     if (!canvas) return
 
     let cancelled = false
+    let disposed = false
+    let context: AudioContext | null = null
+    let processor: ScriptProcessorNode | null = null
+    let mute: GainNode | null = null
+    let visualizer: any = null
+    const dispose = () => {
+      if (disposed) return
+      disposed = true
+      if (processor) {
+        processor.onaudioprocess = null
+        processor.disconnect()
+      }
+      mute?.disconnect()
+      if (context) void context.close().catch(() => {})
+      if (audioCtxRef.current === context) audioCtxRef.current = null
+      if (vizRef.current === visualizer) vizRef.current = null
+    }
     ;(async () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const mod = (await import("butterchurn")) as any
@@ -249,11 +199,13 @@ export default function VisualizerFullscreen() {
       if (cancelled) return
 
       const ctx = new AudioContext({ sampleRate: 44100, latencyHint: "interactive" })
+      context = ctx
       audioCtxRef.current = ctx
+      void (activityRef.current ? ctx.resume() : ctx.suspend()).catch(() => {})
 
-      const processor = ctx.createScriptProcessor(2048, 0, 2)
-      processorRef.current = processor
+      processor = ctx.createScriptProcessor(2048, 0, 2)
       processor.onaudioprocess = (e) => {
+        if (cancelled || !activityRef.current) return
         const pcm = getRecentSamples(2048)
         const L = e.outputBuffer.getChannelData(0)
         const R = e.outputBuffer.getChannelData(1)
@@ -262,7 +214,7 @@ export default function VisualizerFullscreen() {
           R[i] = pcm[Math.min(i, pcm.length - 1)]
         }
       }
-      const mute = ctx.createGain()
+      mute = ctx.createGain()
       mute.gain.value = 0
       processor.connect(mute)
       mute.connect(ctx.destination)
@@ -274,7 +226,9 @@ export default function VisualizerFullscreen() {
 
       const viz = butterchurn.createVisualizer(ctx, canvas, { width: W, height: H, textureRatio: 1 })
       viz.connectAudio(processor)
+      visualizer = viz
       vizRef.current = viz
+      setMilkdropReady(value => value + 1)
 
       // Load all preset packs in background
       await loadAllPacks()
@@ -290,13 +244,21 @@ export default function VisualizerFullscreen() {
           if (!savedName) setCurrentPreset(initialName)
         }
       }
-    })()
+    })().catch(() => {
+      dispose()
+    })
 
     return () => {
       cancelled = true
+      dispose()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fullscreenMode])
+
+  useEffect(() => {
+    const context = audioCtxRef.current
+    if (context) void (active ? context.resume() : context.suspend()).catch(() => {})
+  }, [active, milkdropReady])
 
   // Load new preset when currentPresetName changes (after init)
   useEffect(() => {
@@ -309,7 +271,7 @@ export default function VisualizerFullscreen() {
 
   // Auto-cycle effect
   useEffect(() => {
-    if (fullscreenMode !== "milkdrop" || !autoCycleEnabled) return
+    if (fullscreenMode !== "milkdrop" || !autoCycleEnabled || !active) return
 
     const interval = setInterval(() => {
       const store = useVisualizerStore.getState()
@@ -323,7 +285,7 @@ export default function VisualizerFullscreen() {
     }, autoCycleIntervalSec * 1000)
 
     return () => clearInterval(interval)
-  }, [fullscreenMode, autoCycleEnabled, autoCycleIntervalSec, autoCycleMode])
+  }, [fullscreenMode, autoCycleEnabled, autoCycleIntervalSec, autoCycleMode, active])
 
   // Render loop
   const draw = useCallback(() => {
@@ -340,7 +302,6 @@ export default function VisualizerFullscreen() {
     const H = canvas.height
 
     // Reduced motion: show a static placeholder instead of animating
-    const reducedMotion = getReducedMotion()
     if (reducedMotion && fullscreenMode === "starfield") {
       ctx.fillStyle = "#000"
       ctx.fillRect(0, 0, W, H)
@@ -366,11 +327,11 @@ export default function VisualizerFullscreen() {
 
     if (fullscreenMode === "spectrum") {
       const BINS = 128
-      // Prefer hardware-accelerated FFT; fall back to manual DFT
-      const fftData = getFrequencyData()
+      // Native FFT bins already describe the actual output sample rate.
+      const fftData = isPlaying ? getFrequencyData() : null
       const raw = fftData
         ? computeSpectrumFromFFT(fftData, BINS, getSampleRate())
-        : computeSpectrum(getRecentSamples(1024), BINS)
+        : new Float32Array(BINS)
 
       // Exponential moving average: fast attack (α=0.6), moderate release (α=0.25)
       if (!specSmoothedRef.current || specSmoothedRef.current.length !== BINS) {
@@ -395,7 +356,7 @@ export default function VisualizerFullscreen() {
         ctx.fillRect(x + 1, H - barH, barW - 2, barH)
       }
     } else if (fullscreenMode === "oscilloscope") {
-      const pcm = getRecentSamples(1024)
+      const pcm = isPlaying ? getRecentSamples(1024) : new Float32Array(1024)
       const mid = H / 2
 
       // Build the full path once
@@ -422,7 +383,7 @@ export default function VisualizerFullscreen() {
       ctx.stroke()
       ctx.shadowBlur = 0
     } else if (fullscreenMode === "vu") {
-      const pcm = getRecentSamples(512)
+      const pcm = isPlaying ? getRecentSamples(512) : new Float32Array(512)
       let sumL = 0, sumR = 0, count = 0
       for (let i = 0; i < pcm.length - 1; i += 2) {
         sumL += pcm[i] * pcm[i]; sumR += pcm[i + 1] * pcm[i + 1]; count++
@@ -489,7 +450,7 @@ export default function VisualizerFullscreen() {
       const react01 = starfieldReactivity / 100
 
       // Audio reactivity
-      const pcm = getRecentSamples(512)
+      const pcm = isPlaying ? getRecentSamples(512) : new Float32Array(512)
       let sum = 0
       for (let i = 0; i < pcm.length; i++) sum += pcm[i] * pcm[i]
       const rms = Math.sqrt(sum / pcm.length)
@@ -587,18 +548,9 @@ export default function VisualizerFullscreen() {
         ctx.fill()
       }
     }
-  }, [fullscreenMode, getRecentSamples, getFrequencyData, getSampleRate])
+  }, [fullscreenMode, getRecentSamples, getFrequencyData, getSampleRate, isPlaying, milkdropReady, reducedMotion])
 
-  useEffect(() => {
-    let cancelled = false
-    function loop() {
-      if (cancelled) return
-      draw()
-      rafRef.current = requestAnimationFrame(loop)
-    }
-    rafRef.current = requestAnimationFrame(loop)
-    return () => { cancelled = true; cancelAnimationFrame(rafRef.current) }
-  }, [draw])
+  useVisualizationFrames(draw, active && !(fullscreenMode === "starfield" && reducedMotion), visible)
 
   const MODES: FullscreenVisualizerMode[] = ["spectrum", "oscilloscope", "vu", "starfield", "milkdrop"]
 

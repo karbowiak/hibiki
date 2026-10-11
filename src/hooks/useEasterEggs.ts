@@ -2,6 +2,8 @@ import { useEffect } from "react"
 import { useEasterEggStore } from "../stores/easterEggStore"
 import { useAccentStore, applyAccent } from "../stores/accentStore"
 import { useVisualizerStore } from "../stores/visualizerStore"
+import { usePlayerStore } from "../stores/playerStore"
+import { useVisualizationVisibility } from "./useVisualizationVisibility"
 
 function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   s /= 100; l /= 100
@@ -12,6 +14,8 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
 }
 
 export function useEasterEggs() {
+  const visible = useVisualizationVisibility()
+  const isPlaying = usePlayerStore(s => s.isPlaying)
 
   // Rainbow mode: cycle --accent / --accent-rgb CSS variables
   const rainbow = useEasterEggStore(s => s.rainbow)
@@ -23,8 +27,11 @@ export function useEasterEggs() {
       if (!vaporwave) applyAccent(useAccentStore.getState().accent)
       return
     }
+    if (!visible) return
     let raf: number
+    let running = true
     const loop = () => {
+      if (!running) return
       const hue = (performance.now() / 50) % 360
       const [r, g, b] = hslToRgb(hue, 80, 60)
       document.documentElement.style.setProperty("--accent", `hsl(${hue}, 80%, 60%)`)
@@ -32,8 +39,8 @@ export function useEasterEggs() {
       raf = requestAnimationFrame(loop)
     }
     raf = requestAnimationFrame(loop)
-    return () => cancelAnimationFrame(raf)
-  }, [rainbow, vaporwave])
+    return () => { running = false; cancelAnimationFrame(raf) }
+  }, [rainbow, vaporwave, visible])
 
   // Vaporwave mode: add class + override CSS variables
   useEffect(() => {
@@ -62,7 +69,10 @@ export function useEasterEggs() {
       document.documentElement.style.setProperty("--party-pulse", "0")
     }
 
-    if (!partyMode || reducedMotion) return
+    if (!partyMode || reducedMotion || !visible || !isPlaying) {
+      document.documentElement.style.setProperty("--party-pulse", "0")
+      return
+    }
 
     // Two-EMA beat detection: a fast EMA tracks transients, a slow EMA
     // tracks the long-term energy floor. A beat fires when fast > slow * ratio.
@@ -71,7 +81,9 @@ export function useEasterEggs() {
     let cooldown = 0 // frames to wait after a beat before allowing the next
     let raf: number
     let lastTick = 0
+    let running = true
     const loop = (now: number) => {
+      if (!running) return
       if (now - lastTick >= 50) { // ~20fps throttle
         lastTick = now
         const samples = useVisualizerStore.getState().getRecentSamples(2048)
@@ -98,9 +110,10 @@ export function useEasterEggs() {
     raf = requestAnimationFrame(loop)
 
     return () => {
+      running = false
       cancelAnimationFrame(raf)
       document.documentElement.classList.remove("party-mode")
       document.documentElement.style.setProperty("--party-pulse", "0")
     }
-  }, [partyMode])
+  }, [partyMode, visible, isPlaying])
 }

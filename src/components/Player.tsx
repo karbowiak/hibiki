@@ -31,6 +31,7 @@ import { useSleepTimerStore } from "../stores/sleepTimerStore"
 import { useRadioStreamStore } from "../stores/radioStreamStore"
 import { useEasterEggs } from "../hooks/useEasterEggs"
 import { useEasterEggStore } from "../stores/easterEggStore"
+import { useVisualizationVisibility } from "../hooks/useVisualizationVisibility"
 import { ImageModal } from "./shared/ImageModal"
 import { IconChevronUp, IconChevronDown } from "@tabler/icons-react"
 
@@ -413,10 +414,12 @@ export function Player() {
 
   // Gate PCM bridge — only run when a live-data visualizer mode or party mode is active
   const partyMode = useEasterEggStore(s => s.partyMode)
+  const visualizationVisible = useVisualizationVisibility()
   useEffect(() => {
-    const needsPcm = compactMode !== "waveform" || fullscreenOpen || partyMode
+    const needsPcm = visualizationVisible && isPlaying && (compactMode !== "waveform" || fullscreenOpen || partyMode)
     engine.setVisualizerEnabled(needsPcm)
-  }, [compactMode, fullscreenOpen, partyMode])
+    return () => engine.setVisualizerEnabled(false)
+  }, [compactMode, fullscreenOpen, partyMode, isPlaying, visualizationVisible])
 
   // Media session action handlers — wire OS media keys / headphone controls / Control Center
   useEffect(() => {
