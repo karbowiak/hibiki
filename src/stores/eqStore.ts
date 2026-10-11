@@ -84,6 +84,11 @@ function validProfile(profile: EqProfile): boolean {
     (profile.autoPostgain || Number.isFinite(profile.postgainDb))
   )
 }
+function clearedProfileNames(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((name) => typeof name === "string")
+    : []
+}
 let configurationRevision = 0
 function applyConfiguration(
   get: () => EqState,
@@ -145,6 +150,8 @@ interface EqState {
   eqError: string | null
   // Device profiles
   deviceProfiles: Record<string, EqProfile>
+  /** Explicit removals remain removed until the user saves that device again. */
+  clearedDeviceProfiles: string[]
   currentDevice: string
 
   // Core EQ actions
@@ -174,6 +181,7 @@ export const useEqStore = create<EqState>()(
       applying: false,
       eqError: null,
       deviceProfiles: {},
+      clearedDeviceProfiles: [],
       currentDevice: "",
 
       setBand: (index, db) => {
@@ -224,7 +232,11 @@ export const useEqStore = create<EqState>()(
         const outgoing = profileForDevice(get().deviceProfiles, previous)
         // An unsuccessful recall must not replace corrupt saved data with
         // settings inherited from the preceding output device.
-        if (previous && (!outgoing || validProfile(outgoing)))
+        if (
+          previous &&
+          (!outgoing || validProfile(outgoing)) &&
+          !clearedProfileNames(get().clearedDeviceProfiles).includes(previous)
+        )
           get().saveProfileForDevice(previous)
         const profile = profileForDevice(get().deviceProfiles, name)
         set({ currentDevice: name })
@@ -249,6 +261,9 @@ export const useEqStore = create<EqState>()(
         const { gains, enabled, postgainDb, autoPostgain, deviceProfiles } =
           get()
         set({
+          clearedDeviceProfiles: clearedProfileNames(
+            get().clearedDeviceProfiles
+          ).filter((name) => name !== deviceName),
           deviceProfiles: {
             ...deviceProfiles,
             [deviceName]: {
@@ -263,10 +278,19 @@ export const useEqStore = create<EqState>()(
       },
 
       deleteProfileForDevice: (deviceName) => {
+        if (!deviceName) return
         const { deviceProfiles } = get()
         const next = { ...deviceProfiles }
         delete next[deviceName]
-        set({ deviceProfiles: next })
+        set({
+          deviceProfiles: next,
+          clearedDeviceProfiles: [
+            ...new Set([
+              ...clearedProfileNames(get().clearedDeviceProfiles),
+              deviceName,
+            ]),
+          ],
+        })
       },
 
       loadProfileForDevice: (deviceName) => {
@@ -300,6 +324,7 @@ export const useEqStore = create<EqState>()(
         postgainDb: state.postgainDb,
         autoPostgain: state.autoPostgain,
         deviceProfiles: state.deviceProfiles,
+        clearedDeviceProfiles: state.clearedDeviceProfiles,
       }),
     }
   )

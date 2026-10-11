@@ -35,6 +35,7 @@ beforeEach(() => {
     eqError: null,
     currentDevice: "",
     deviceProfiles: {},
+    clearedDeviceProfiles: [],
   })
 })
 afterEach(async () => {
@@ -220,4 +221,50 @@ test("configuration errors stay in EQ settings and a retry applies the latest se
   await settle()
   expect(state().eqError).toBeNull()
   expect(state().postgainDb).toBe(-8.75)
+})
+
+test("clearing the current profile survives switching away and later EQ edits", () => {
+  useEqStore.setState({
+    currentDevice: "Headphones",
+    gains: bass,
+    deviceProfiles: {
+      Headphones: profile(bass),
+      Speakers: profile(bass, true),
+    },
+  })
+  state().deleteProfileForDevice("Headphones")
+  state().setBand(0, 7)
+  state().setCurrentDevice("Speakers")
+  expect(Object.hasOwn(state().deviceProfiles, "Headphones")).toBe(false)
+  state().setCurrentDevice("Headphones")
+  state().setCurrentDevice("Speakers")
+  expect(Object.hasOwn(state().deviceProfiles, "Headphones")).toBe(false)
+  expect(state().deviceProfiles.Speakers.autoPostgain).toBe(false)
+})
+
+test("explicit Save replaces clear intent without changing unrelated profiles", () => {
+  const other = profile(bass, true)
+  useEqStore.setState({
+    currentDevice: "Headphones",
+    gains: bass,
+    deviceProfiles: { Headphones: profile(bass), Speakers: other },
+  })
+  state().deleteProfileForDevice("Headphones")
+  state().deleteProfileForDevice("Headphones")
+  expect(state().clearedDeviceProfiles).toEqual(["Headphones"])
+  state().saveProfileForDevice("Headphones")
+  expect(state().clearedDeviceProfiles).toEqual([])
+  expect(state().deviceProfiles.Headphones.gains).toEqual(bass)
+  expect(state().deviceProfiles.Speakers).toBe(other)
+})
+
+test("late gain replies cannot recreate a cleared saved profile", async () => {
+  useEqStore.setState({ deviceProfiles: { Headphones: profile(bass) } })
+  state().setCurrentDevice("Headphones")
+  state().deleteProfileForDevice("Headphones")
+  requests[0].result.resolve(-9.75)
+  await settle()
+  expect(Object.hasOwn(state().deviceProfiles, "Headphones")).toBe(false)
+  state().setCurrentDevice("Speakers")
+  expect(Object.hasOwn(state().deviceProfiles, "Headphones")).toBe(false)
 })
