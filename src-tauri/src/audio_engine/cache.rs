@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 /// Default max cache size: 5 GB.
+const GAIN_ANALYSIS_VERSION: u8 = 1;
 const DEFAULT_MAX_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
@@ -64,6 +65,8 @@ struct CacheEntry {
     /// None = not yet analyzed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     computed_gain_db: Option<f32>,
+    #[serde(default)]
+    gain_analysis_version: u8,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -156,7 +159,10 @@ impl AudioCache {
     /// Get the computed loudness gain for a cached track (if analyzed).
     pub fn get_computed_gain(&self, key: &str) -> Option<f32> {
         let idx = self.index.lock().ok()?;
-        idx.entries.get(key)?.computed_gain_db
+        let entry = idx.entries.get(key)?;
+        (entry.gain_analysis_version == GAIN_ANALYSIS_VERSION)
+            .then_some(entry.computed_gain_db)
+            .flatten()
     }
 
     /// Store a computed loudness gain for a cached track.
@@ -164,6 +170,7 @@ impl AudioCache {
         if let Ok(mut idx) = self.index.lock() {
             if let Some(entry) = idx.entries.get_mut(key) {
                 entry.computed_gain_db = Some(gain_db);
+                entry.gain_analysis_version = GAIN_ANALYSIS_VERSION;
                 idx.save(&self.index_path());
             }
         }
@@ -306,7 +313,7 @@ impl CacheWriter {
         }
         idx.entries.insert(self.key.clone(), CacheEntry {
             filename: self.filename.clone(), size_bytes: self.bytes_written,
-            last_accessed: now_secs(), computed_gain_db: None,
+            last_accessed: now_secs(), computed_gain_db: None, gain_analysis_version: 0,
         });
         idx.total_bytes += self.bytes_written;
         cache.evict_with_index(&mut idx);
@@ -356,6 +363,31 @@ pub fn extract_extension(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn legacy_analysis_is_recomputed_without_discarding_the_cached_audio_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = AudioCache::new(dir.path().into(), None);
+        let key = cache_key("https://test.invalid/legacy.wav");
+        let mut writer = cache.begin_write(&key, "wav").unwrap();
+        writer.write_chunk(b"cached audio stays intact").unwrap();
+        writer.finish(&cache).unwrap();
+        cache.set_computed_gain(&key, -5.0);
+        let index_path = dir.path().join("index.json");
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&index_path).unwrap()).unwrap();
+        saved["entries"][&key]
+            .as_object_mut()
+            .unwrap()
+            .remove("gain_analysis_version");
+        std::fs::write(&index_path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let restored = AudioCache::new(dir.path().into(), None);
+        assert_eq!(restored.get_computed_gain(&key), None);
+        let file = restored.lookup(&key).unwrap();
+        assert_eq!(std::fs::read(file).unwrap(), b"cached audio stays intact");
+        restored.set_computed_gain(&key, -6.0);
+        assert_eq!(restored.get_computed_gain(&key), Some(-6.0));
+    }
+
     use super::*;
     use std::fs;
 

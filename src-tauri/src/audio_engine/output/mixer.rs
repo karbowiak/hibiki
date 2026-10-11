@@ -26,7 +26,7 @@ pub fn mix_decks(
             .as_ref()
             .and_then(|c| c.current_gain())
             .unwrap_or(active.fade_gain);
-        let a_gain = a_fade * active.norm_gain;
+        let a_gain = a_fade * active.next_normalization_gain();
 
         let (b_active, b_gain) = if is_crossfading && pending.has_started_playing {
             let b_fade = pending
@@ -34,7 +34,7 @@ pub fn mix_decks(
                 .as_ref()
                 .and_then(|c| c.current_gain())
                 .unwrap_or(pending.fade_gain);
-            (true, b_fade * pending.norm_gain)
+            (true, b_fade * pending.next_normalization_gain())
         } else {
             (false, 0.0)
         };
@@ -153,6 +153,7 @@ mod tests {
             has_started_playing: true,
             fade_gain: 1.0,
             norm_gain: 1.0,
+            norm_fade: None,
             fade_curve: None,
             fully_decoded: true,
             decode_error: None,

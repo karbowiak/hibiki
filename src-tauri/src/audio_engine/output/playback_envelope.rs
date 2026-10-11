@@ -2,6 +2,7 @@
 
 pub(crate) const FADE_MS: u64 = 150;
 
+#[derive(Debug)]
 pub struct PlaybackEnvelope {
     gain: f32,
     start: f32,
@@ -37,7 +38,7 @@ impl PlaybackEnvelope {
         self.fade_to(0.0, sample_rate);
     }
 
-    fn fade_to(&mut self, target: f32, sample_rate: u32) {
+    pub(crate) fn fade_to(&mut self, target: f32, sample_rate: u32) {
         // Duplicate controls must not restart or cut short an existing fade.
         if self.target == target {
             return;
@@ -56,33 +57,51 @@ impl PlaybackEnvelope {
         self.target == 0.0 && self.remaining_frames() > 0
     }
 
+    pub(crate) fn set_gain(&mut self, gain: f32) {
+        self.gain = gain;
+        self.start = gain;
+        self.target = gain;
+        self.position = 0;
+        self.frames = 0;
+    }
+
+    /// Read and advance one frame. Used for per-deck normalization as well as
+    /// the final play/pause envelope; neither fade allocates on the callback.
+    pub(crate) fn next_gain(&mut self) -> f32 {
+        let gain = self.gain;
+        if self.position < self.frames {
+            self.position += 1;
+            let t = self.position as f64 / self.frames as f64;
+            let eased = t * t * (3.0 - 2.0 * t);
+            self.gain =
+                (self.start as f64 + (self.target as f64 - self.start as f64) * eased) as f32;
+            if self.position == self.frames {
+                self.gain = self.target;
+            }
+        }
+        gain
+    }
+
     /// Advance only through rendered PCM, once per interleaved audio frame.
     /// No allocations, locks, or timers on the device callback.
     pub fn apply(&mut self, samples: &mut [f32], channels: u16) {
         if self.remaining_frames() == 0 {
             if self.gain == 0.0 {
                 samples.fill(0.0);
+            } else if self.gain != 1.0 {
+                for sample in samples {
+                    *sample *= self.gain;
+                }
             }
             return;
         }
         for frame in samples.chunks_exact_mut(usize::from(channels.max(1))) {
-            if self.gain == 0.0 {
+            let gain = self.next_gain();
+            if gain == 0.0 {
                 frame.fill(0.0);
             } else {
                 for sample in frame {
-                    *sample *= self.gain;
-                }
-            }
-            if self.position < self.frames {
-                self.position += 1;
-                let t = self.position as f64 / self.frames as f64;
-                // Smoothstep has zero slope at both endpoints. Reversing a fade
-                // starts from the current gain without an amplitude discontinuity.
-                let eased = t * t * (3.0 - 2.0 * t);
-                self.gain =
-                    (self.start as f64 + (self.target as f64 - self.start as f64) * eased) as f32;
-                if self.position == self.frames {
-                    self.gain = self.target;
+                    *sample *= gain;
                 }
             }
         }

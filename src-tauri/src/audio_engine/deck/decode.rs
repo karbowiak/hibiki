@@ -27,11 +27,6 @@ static CODEC_REGISTRY: Lazy<CodecRegistry> = Lazy::new(|| {
     registry
 });
 
-/// Access the custom codec registry (includes Opus + FDK-AAC adapters).
-pub fn codec_registry() -> &'static CodecRegistry {
-    &CODEC_REGISTRY
-}
-
 use super::streaming::StreamingReader;
 
 /// Active decoder state — kept alive between batch decode calls.
@@ -52,6 +47,7 @@ pub struct DecoderSetup {
     /// When true, the decoded audio is truncated — callers should NOT treat
     /// it as a complete track.
     pub aborted: bool,
+    pub had_decode_errors: bool,
     time_base: Option<symphonia::core::units::TimeBase>,
     seek_skip_samples: usize,
     stream_buffer: Option<std::sync::Arc<super::streaming::SharedBuffer>>,
@@ -141,6 +137,7 @@ pub fn probe_from_source(mss: MediaSourceStream, ext: Option<&str>) -> Result<De
         sample_buf: None,
         finished: false,
         aborted: false,
+        had_decode_errors: false,
         time_base,
         seek_skip_samples: 0,
         stream_buffer: None,
@@ -162,6 +159,7 @@ pub fn seek_to_ms(setup: &mut DecoderSetup, position_ms: u64) -> Result<()> {
     setup.decoder.reset();
     setup.finished = false;
     setup.aborted = false;
+    setup.had_decode_errors = false;
     if let Some(resampler) = &mut setup.resampler {
         resampler.reset();
     }
@@ -220,6 +218,7 @@ pub fn decode_batch(setup: &mut DecoderSetup, max_samples: usize) -> Result<Vec<
             Ok(d) => d,
             Err(symphonia::core::errors::Error::DecodeError(msg)) => {
                 warn!("decode error (skipping packet): {}", msg);
+                setup.had_decode_errors = true;
                 continue;
             }
             Err(e) => {

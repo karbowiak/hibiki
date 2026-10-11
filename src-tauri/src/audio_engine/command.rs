@@ -94,6 +94,11 @@ pub enum AudioCommand {
         fully_decoded: bool,
         seek_tx: Option<crossbeam_channel::Sender<SeekRequest>>,
     },
+    AnalyzedGain {
+        deck: DeckId,
+        load_id: u64,
+        gain_db: f32,
+    },
     // -- Playback --
     Pause,
     Resume,

@@ -16,6 +16,7 @@ pub mod command;
 pub mod crossfade;
 pub mod deck;
 mod download;
+mod analysis;
 pub mod dsp;
 pub mod event;
 pub mod loudness;
@@ -34,6 +35,7 @@ use tauri::Emitter;
 use tracing::{debug, info, warn};
 
 use self::cache::AudioCache;
+use self::analysis::LoudnessAnalysis;
 use self::callback::{AudioCallbackState, SharedAtomics};
 use self::command::{AudioCommand, Command, ControlCommand, SampleBatch, SeekRequest};
 use self::crossfade::types::{parse_ramp, CrossfadeSettings, TrackRamps};
@@ -250,6 +252,13 @@ impl AudioEngine {
             }
         });
 
+        let analysis = LoudnessAnalysis::start(
+            audio_cache.clone(), audio_cmd_tx.clone(), atomics.clone(), lifetime.0.clone(),
+        ).map_err(|error| {
+            warn!(%error, "cannot start optional loudness analysis");
+            error
+        }).ok();
+
         // Control task — receives Commands, spawns decode work, sends AudioCommands
         let audio_cmd_for_control = audio_cmd_tx.clone();
         let atomics_control = atomics.clone();
@@ -265,6 +274,7 @@ impl AudioEngine {
                     event_tx,
                     atomics_control,
                     cache_control,
+                    analysis,
                     device_sample_rate,
                     device_channels,
                 );
@@ -380,6 +390,7 @@ fn control_thread_main(
     event_tx: Sender<EngineEvent>,
     atomics: Arc<SharedAtomics>,
     cache: Arc<AudioCache>,
+    analysis: Option<LoudnessAnalysis>,
     device_sample_rate: u32,
     device_channels: u16,
 ) {
@@ -414,7 +425,9 @@ fn control_thread_main(
         }
         match command {
             Command::Play {
-                url, meta, media_request,
+                url,
+                meta,
+                media_request,
             } => {
                 pending_url.clear();
                 // Keep an existing overlap audible before reusing its outgoing
@@ -440,6 +453,7 @@ fn control_thread_main(
                     &rt,
                     &atomics,
                     &cache,
+                    analysis.as_ref(),
                     &crossfade_settings,
                     device_sample_rate,
                     device_channels,
@@ -456,7 +470,9 @@ fn control_thread_main(
                 }
             }
             Command::PreloadNext {
-                url, meta, media_request,
+                url,
+                meta,
+                media_request,
             } => {
                 if preload_revision != atomics.preload_revision.load(Ordering::SeqCst) {
                     continue;
@@ -497,6 +513,7 @@ fn control_thread_main(
                     &rt,
                     &atomics,
                     &cache,
+                    analysis.as_ref(),
                     &crossfade_settings,
                     device_sample_rate,
                     device_channels,
@@ -612,6 +629,7 @@ fn handle_play(
     rt: &tokio::runtime::Handle,
     atomics: &Arc<SharedAtomics>,
     cache: &Arc<AudioCache>,
+    analysis: Option<&LoudnessAnalysis>,
     _xfade: &CrossfadeSettings,
     device_rate: u32,
     device_channels: u16,
@@ -660,8 +678,8 @@ fn handle_play(
             let source_channels = result.source_channels;
             let has_more = result.has_more;
 
-            // Resolve gain: Plex metadata → cached analysis → fresh EBU R128 analysis
-            let gain_db = resolve_gain_db(meta, url, cache, request);
+            // Use available gain immediately; missing measurements run in the background.
+            let gain_db = resolve_gain_db(meta, url, cache);
             if !request.is_current() {
                 return;
             }
@@ -709,6 +727,11 @@ fn handle_play(
             });
 
             wait_for_load(deck, request, atomics);
+            if gain_db.is_none() {
+                if let Some(analysis) = analysis {
+                    analysis.submit(url, deck, request.clone());
+                }
+            }
             // Continue decoding in background
             if let Some(decoder) = result.decoder {
                 if !request.is_current() {
@@ -770,6 +793,7 @@ fn handle_preload(
     rt: &tokio::runtime::Handle,
     atomics: &Arc<SharedAtomics>,
     cache: &Arc<AudioCache>,
+    analysis: Option<&LoudnessAnalysis>,
     _xfade: &CrossfadeSettings,
     device_rate: u32,
     device_channels: u16,
@@ -818,7 +842,7 @@ fn handle_preload(
             let source_channels = result.source_channels;
             let has_more = result.has_more;
 
-            let gain_db = resolve_gain_db(meta, url, cache, request);
+            let gain_db = resolve_gain_db(meta, url, cache);
             if !request.is_current() {
                 return;
             }
@@ -867,6 +891,11 @@ fn handle_preload(
             debug!(rating_key = meta.rating_key, "preload initial batch ready");
             // The callback schedules the preloaded track after installation.
             wait_for_load(deck, request, atomics);
+            if gain_db.is_none() {
+                if let Some(analysis) = analysis {
+                    analysis.submit(url, deck, request.clone());
+                }
+            }
 
             if let Some(decoder) = result.decoder {
                 if !request.is_current() {
@@ -1331,61 +1360,109 @@ fn cache_ramps(meta: &TrackMeta, audio_cmd_tx: &Sender<AudioCommand>) {
     }
 }
 
-/// Resolve the normalization gain for a track.
-///
-/// Priority:
-/// 1. Plex-provided gain_db (most tracks)
-/// 2. Cached computed gain from previous EBU R128 analysis
-/// 3. Fresh EBU R128 analysis (for Opus/other tracks where Plex lacks loudness data)
-///    — blocks until analysis completes, result is cached for next time
-fn resolve_gain_db(
-    meta: &TrackMeta,
-    url: &str,
-    cache: &Arc<AudioCache>,
-    request: &PlaybackRequest,
-) -> Option<f32> {
-    // 1. Plex-provided gain
-    if let Some(db) = meta.gain_db.filter(|value| value.is_finite()) {
-        return Some(db);
-    }
-
-    // 2. Previously computed gain from cache
-    if let Some(db) = cache
-        .get_computed_gain(&cache::cache_key(url))
-        .filter(|value| value.is_finite())
-    {
-        debug!(
-            rating_key = meta.rating_key,
-            gain_db = format!("{:.1}", db),
-            "using cached computed gain"
-        );
-        return Some(db);
-    }
-
-    // 3. Compute gain for cached files that lack Plex loudness data
-    let ext = cache::extract_extension(url);
-    if let Some(cached_path) = cache.lookup(&cache::cache_key(url)) {
-        debug!(
-            rating_key = meta.rating_key,
-            "running loudness analysis (no Plex gain data)"
-        );
-        match loudness::analyze_loudness(&cached_path, &ext, || request.is_current()) {
-            Ok(gain_db) => {
-                cache.set_computed_gain(&cache::cache_key(url), gain_db);
-                return Some(gain_db);
-            }
-            Err(e) => {
-                warn!(rating_key = meta.rating_key, error = %e, "loudness analysis failed");
-            }
-        }
-    }
-
-    None
+/// Resolve available metadata/cache gain without scanning a file on the
+/// playback control thread. Missing gain is handled by the background worker.
+fn resolve_gain_db(meta: &TrackMeta, url: &str, cache: &Arc<AudioCache>) -> Option<f32> {
+    meta.gain_db.filter(|value| value.is_finite()).or_else(|| {
+        cache
+            .get_computed_gain(&cache::cache_key(url))
+            .filter(|value| value.is_finite())
+    })
 }
 
 #[cfg(test)]
 mod control_tests {
     use super::*;
+
+    #[test]
+    fn cached_playback_is_loaded_without_waiting_for_a_blocked_loudness_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Arc::new(AudioCache::new(dir.path().into(), None));
+        let url = "https://test.invalid/startup.wav";
+        let mut writer = cache.begin_write(&cache::cache_key(url), "wav").unwrap();
+        writer
+            .write_chunk(&decode::tests::generate_test_wav(44100, 2, 3.0))
+            .unwrap();
+        writer.finish(&cache).unwrap();
+        let atomics = Arc::new(SharedAtomics::new());
+        atomics.request_epoch.store(1, Ordering::SeqCst);
+        let request = PlaybackRequest::new(
+            1,
+            atomics.request_epoch.clone(),
+            atomics.deck_b_load_id.clone(),
+        );
+        atomics
+            .deck_b_loaded_id
+            .store(request.load_id, Ordering::SeqCst);
+        let (commands, received) = crossbeam_channel::unbounded();
+        let (analysis_started_tx, analysis_started) = crossbeam_channel::bounded(1);
+        let (release, released) = crossbeam_channel::bounded(1);
+        let alive = Arc::new(AtomicBool::new(true));
+        let analysis = LoudnessAnalysis::with_analyzer(
+            cache.clone(),
+            commands.clone(),
+            atomics.clone(),
+            alive.clone(),
+            Arc::new(move |_, _, _| {
+                analysis_started_tx.send(()).unwrap();
+                released.recv().unwrap();
+                Ok(-6.0)
+            }),
+        )
+        .unwrap();
+        let (samples, _sample_rx) = crossbeam_channel::unbounded();
+        let (events, _event_rx) = crossbeam_channel::unbounded();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let meta = TrackMeta {
+            rating_key: 42,
+            duration_ms: 3000,
+            parent_key: String::new(),
+            album_playback: false,
+            gain_db: None,
+            skip_crossfade: true,
+            start_ramp: None,
+            end_ramp: None,
+        };
+        let start = std::time::Instant::now();
+        handle_play(
+            url,
+            &meta,
+            DeckId::B,
+            &commands,
+            &samples,
+            &events,
+            &crate::plex::client::public_media_request(url),
+            runtime.handle(),
+            &atomics,
+            &cache,
+            Some(&analysis),
+            &CrossfadeSettings::default(),
+            44100,
+            2,
+            &request,
+        );
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "Playback must not wait for the scan to finish"
+        );
+        analysis_started
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        assert!(
+            matches!(received.recv().unwrap(), AudioCommand::LoadDeck { norm_gain, initial_samples, .. } if norm_gain == 1.0 && !initial_samples.is_empty())
+        );
+        assert!(matches!(
+            received.recv().unwrap(),
+            AudioCommand::TransitionToActive { .. }
+        ));
+        release.send(()).unwrap();
+        assert!(matches!(
+            received.recv_timeout(Duration::from_secs(2)).unwrap(),
+            AudioCommand::AnalyzedGain { .. }
+        ));
+        alive.store(false, Ordering::SeqCst);
+        atomics.deck_b_load_id.fetch_add(1, Ordering::SeqCst);
+    }
 
     #[test]
     fn empty_audio_is_rejected_before_a_deck_is_loaded() {

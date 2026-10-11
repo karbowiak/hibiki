@@ -3,6 +3,7 @@
 //! Mirrors the TypeScript DeckManager: two reusable decks, one active (playing)
 //! and one pending (preloaded with next track). Transitions swap roles.
 
+use super::super::output::playback_envelope::PlaybackEnvelope;
 use super::super::types::{DeckId, TrackMeta};
 
 /// Active crossfade curve state — the mixer steps through this per-frame.
@@ -82,6 +83,7 @@ pub struct DeckState {
     pub fade_gain: f32,
     /// Per-track normalization gain (from ReplayGain dB). 1.0 = no normalization.
     pub norm_gain: f32,
+    pub norm_fade: Option<PlaybackEnvelope>,
     /// Active crossfade curve (if any). The mixer reads and advances this.
     pub fade_curve: Option<FadeCurve>,
     /// True once the entire track has been decoded into `samples`.
@@ -114,6 +116,7 @@ impl DeckState {
             has_started_playing: false,
             fade_gain: 1.0,
             norm_gain: 1.0,
+            norm_fade: None,
             fade_curve: None,
             fully_decoded: false,
             decode_error: None,
@@ -121,6 +124,31 @@ impl DeckState {
             generation: 0,
             seek_tx: None,
         }
+    }
+
+    pub fn set_normalization_gain(&mut self, target: f32) {
+        if self.has_started_playing {
+            let fade = self.norm_fade.get_or_insert_with(|| {
+                let mut fade = PlaybackEnvelope::new();
+                fade.set_gain(self.norm_gain);
+                fade
+            });
+            fade.fade_to(target, self.sample_rate);
+        } else {
+            self.norm_fade = None;
+        }
+        self.norm_gain = target;
+    }
+
+    pub fn next_normalization_gain(&mut self) -> f32 {
+        let Some(fade) = self.norm_fade.as_mut() else {
+            return self.norm_gain;
+        };
+        let gain = fade.next_gain();
+        if fade.remaining_frames() == 0 {
+            self.norm_fade = None;
+        }
+        gain
     }
 
     /// Reset deck for reuse with a new track.
@@ -137,6 +165,7 @@ impl DeckState {
         self.has_started_playing = false;
         self.fade_gain = 1.0;
         self.norm_gain = 1.0;
+        self.norm_fade = None;
         self.fade_curve = None;
         self.fully_decoded = false;
         self.decode_error = None;

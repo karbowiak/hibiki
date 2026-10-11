@@ -21,6 +21,7 @@ use super::deck::manager::{DeckManager, DeckState, FadeCurve};
 use super::dsp::DspChain;
 use super::event::{EngineEvent, TrackEndReason};
 use super::output::mixer;
+use super::loudness;
 use super::output::playback_envelope::PlaybackEnvelope;
 use super::types::{DeckId, EngineState};
 
@@ -615,8 +616,7 @@ impl AudioCallbackState {
                 }
                 self.waiting_for_play = false;
                 self.event_request_id = request_id;
-                let allow_outgoing_fade =
-                    !self.paused && self.deck_mgr.active_deck().played_frames > 0;
+                let allow_outgoing_fade = !self.paused && self.deck_mgr.active_deck().played_frames > 0;
                 self.paused = self.pending_play_paused;
                 if self.paused || !allow_outgoing_fade {
                     self.playback_envelope.silence();
@@ -755,15 +755,52 @@ impl AudioCallbackState {
                 self.normalization_enabled = enabled;
                 for id in [DeckId::A, DeckId::B] {
                     let deck = self.deck_mgr.deck_mut(id);
-                    if let Some(ref meta) = deck.meta {
-                        deck.norm_gain = if enabled {
-                            super::loudness::replay_gain(meta.gain_db)
-                        } else {
-                            1.0
-                        };
-                    }
+                    let target = if enabled {
+                        loudness::replay_gain(deck.meta.as_ref().and_then(|meta| meta.gain_db))
+                    } else {
+                        1.0
+                    };
+                    deck.set_normalization_gain(target);
                 }
-                self.compute_and_set_schedule();
+                if !self.is_crossfading {
+                    self.compute_and_set_schedule();
+                }
+            }
+            AudioCommand::AnalyzedGain {
+                deck,
+                load_id,
+                gain_db,
+            } => {
+                let (owner, loaded) = match deck {
+                    DeckId::A => (&self.atomics.deck_a_load_id, &self.atomics.deck_a_loaded_id),
+                    DeckId::B => (&self.atomics.deck_b_load_id, &self.atomics.deck_b_loaded_id),
+                };
+                if !gain_db.is_finite()
+                    || owner.load(Ordering::Acquire) != load_id
+                    || loaded.load(Ordering::Acquire) != load_id
+                {
+                    return;
+                }
+                let target = self.deck_mgr.deck_mut(deck);
+                if !target.loaded {
+                    return;
+                }
+                let Some(meta) = target.meta.as_mut() else {
+                    return;
+                };
+                if meta.gain_db.is_some_and(|gain| gain.is_finite()) {
+                    return;
+                }
+                meta.gain_db = Some(gain_db);
+                let gain = if self.normalization_enabled {
+                    loudness::replay_gain(Some(gain_db))
+                } else {
+                    1.0
+                };
+                target.set_normalization_gain(gain);
+                if !self.is_crossfading {
+                    self.compute_and_set_schedule();
+                }
             }
             AudioCommand::UpdateCrossfadeSettings(settings) => {
                 self.crossfade_settings = settings;
