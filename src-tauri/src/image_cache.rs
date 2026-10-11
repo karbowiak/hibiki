@@ -522,6 +522,10 @@ impl ImageCache {
         {
             return Ok(());
         }
+        // Windows replacement can fail while the old read handle remains
+        // open. Exact-byte/identity validation is complete and
+        // the index mutex still serializes all cache publication.
+        drop(file);
         let Some(proof) = Proof::of(validated) else {
             return Ok(());
         };
@@ -1492,6 +1496,28 @@ mod tests {
             Some(png)
         );
         assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn normalized_publication_closes_its_original_handle_and_records_exact_new_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        let ppm = b"P6\n1 1\n255\n\x01\x02\x03";
+        let cache = ImageCache::new(directory.path().into());
+        let ticket = cache.ticket();
+        cache.store(&ticket, &key(1), ppm).unwrap();
+        let png = crate::image_content::validate(ppm.to_vec(), None)
+            .await
+            .unwrap();
+        // Assert publication itself, rather than the best-effort public read
+        // path which intentionally still serves valid pixels on write failure.
+        cache
+            .remember_validation(&ticket, &key(1), ppm, &png)
+            .unwrap();
+        assert_eq!(fs::read(directory.path().join(key(1))).unwrap(), png);
+        let (persisted, verified) = cache.read_with_proof(&ticket, &key(1)).unwrap();
+        assert_eq!(persisted, png);
+        assert!(verified);
+        assert_eq!(cache.stats().unwrap().files, 1);
     }
 
     #[tokio::test]

@@ -1353,13 +1353,25 @@ mod tests {
     fn replacing_the_cache_directory_cannot_reuse_the_previous_owners_entries() {
         let directory = tempfile::tempdir().unwrap();
         let cache_dir = directory.path().join("cache");
-        let cache = AudioCache::new(cache_dir.clone(), None);
+        let mut cache = AudioCache::new(cache_dir.clone(), None);
         let mut writer = cache.begin_write("42", "flac").unwrap();
         writer.write_chunk(b"cached source").unwrap();
         writer.finish(&cache).unwrap();
+        // Windows disallows moving a directory containing an open lock file.
+        // Release that handle for the physical swap, then deliberately give
+        // the stale manager a lock on the replacement. The directory identity
+        // must independently reject its old index even with a current lock.
+        drop(Arc::get_mut(&mut cache.owner).unwrap()._lock.take());
         fs::rename(&cache_dir, directory.path().join("original-cache")).unwrap();
         fs::create_dir(&cache_dir).unwrap();
         fs::write(cache_dir.join("42.flac"), b"private data!").unwrap();
+        Arc::get_mut(&mut cache.owner).unwrap()._lock =
+            Some(lock_cache_directory(&cache_dir).unwrap());
+        assert!(file_is_current(
+            cache.owner._lock.as_ref().unwrap(),
+            &cache_dir.join(".audio-cache.lock")
+        ));
+        assert_ne!(directory_id(&cache_dir), cache.owner.directory_id);
         let hit = cache.open("42");
         assert!(cache.clear().is_err());
         assert!(hit.is_none());
