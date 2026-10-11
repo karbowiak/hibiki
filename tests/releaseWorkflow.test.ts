@@ -71,6 +71,22 @@ test("published releases cannot be rebuilt", async () => {
   expect(calls).toEqual([])
 })
 
+for (const publishedFirst of [false, true]) {
+  test(`a published tag cannot be rebuilt through a stale draft (${publishedFirst ? "published" : "draft"} listed first)`, async () => {
+    const releases = [
+      { id: 42, tag_name: "v0.5.2", draft: true },
+      { id: 43, tag_name: "v0.5.2", draft: false },
+    ]
+    const { github, calls } = mock(
+      publishedFirst ? releases.reverse() : releases
+    )
+    await expect(execute(github)).rejects.toThrow(
+      "already published; refusing to replace its assets"
+    )
+    expect(calls).toEqual([])
+  })
+}
+
 test("new tags create a draft and retain the release ID output", async () => {
   const { github, calls } = mock([{ id: 1, tag_name: "v0.5.1", draft: false }])
   expect(await execute(github)).toBe(99)

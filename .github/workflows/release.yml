@@ -54,13 +54,14 @@ jobs:
               repo: context.repo.repo,
               per_page: 100
             })
-            const existing = releases.find(release => release.tag_name === tag)
-            if (existing) {
-              if (!existing.draft) {
-                throw new Error(`Release ${tag} is already published; refusing to replace its assets. Use a new version tag.`)
-              }
-              return existing.id
+            const matching = releases.filter(release => release.tag_name === tag)
+            // A stale draft and a published release can share a tag. Never let
+            // the API's listing order bypass the published-version boundary.
+            if (matching.some(release => !release.draft)) {
+              throw new Error(`Release ${tag} is already published; refusing to replace its assets. Use a new version tag.`)
             }
+            const existing = matching.find(release => release.draft)
+            if (existing) return existing.id
             const { data } = await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
