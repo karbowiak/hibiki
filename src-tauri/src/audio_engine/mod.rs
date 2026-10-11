@@ -1275,9 +1275,8 @@ fn fetch_and_decode_incremental(
     let cache_key = &source.cache_key;
 
     // ---- Cache HIT: decode from local file ----
-    if let Some(cached_path) = cache.lookup(cache_key) {
-        debug!(rating_key, path = %cached_path.display(), "cache hit — decoding from file");
-        let file = std::fs::File::open(&cached_path).map_err(|e| format!("cache read: {}", e))?;
+    if let Some(file) = cache.open(cache_key) {
+        debug!(rating_key, "cache hit — decoding from file");
         let mss = MediaSourceStream::new(Box::new(file), Default::default());
         let mut setup = decode::probe_from_source(mss, Some(ext)).map_err(|e| format!("{}", e))?;
         let mut result = decode_initial_batch(&mut setup, device_rate, device_channels)?;

@@ -1913,6 +1913,7 @@ dependencies = [
  "ebur128",
  "fdk-aac-sys",
  "futures",
+ "libc",
  "md-5",
  "once_cell",
  "opusic-sys",
@@ -1945,6 +1946,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
