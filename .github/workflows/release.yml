@@ -39,7 +39,7 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
 
-      - name: Create release
+      - name: Create or reuse draft release
         id: create-release
         uses: actions/github-script@v9
         env:
@@ -48,6 +48,19 @@ jobs:
         with:
           script: |
             const tag = process.env.RELEASE_TAG
+            // Listing releases includes drafts; getReleaseByTag only promises published releases.
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100
+            })
+            const existing = releases.find(release => release.tag_name === tag)
+            if (existing) {
+              if (!existing.draft) {
+                throw new Error(`Release ${tag} is already published; refusing to replace its assets. Use a new version tag.`)
+              }
+              return existing.id
+            }
             const { data } = await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
