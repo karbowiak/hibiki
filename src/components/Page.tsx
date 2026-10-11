@@ -1,4 +1,4 @@
-import { Link, Route, useLocation } from "wouter"
+import { Link, Route, useLocation, useRouter } from "wouter"
 import { createContext, useContext, useLayoutEffect, useRef, RefObject } from "react"
 import { Playlist } from "./Pages/Playlist"
 import { Home } from "./Pages/Home"
@@ -18,6 +18,7 @@ import { TagPage } from "./Pages/TagPage"
 import { InternetRadioPage } from "./Pages/InternetRadio"
 import { PodcastsPage } from "./Pages/Podcasts"
 import { decodePodcastFeed, PODCAST_ROUTE } from "../lib/podcastRoute"
+import { libraryRouteSegment } from "../lib/libraryRoute"
 import { PodcastDetailPage } from "./Pages/PodcastDetail"
 import { Playlists } from "./Pages/Playlists"
 // MixPage uses module-level selectMix() state — no URL param needed
@@ -57,6 +58,12 @@ const NO_PADDING_ROUTES = new Set(["playlist", "mix", "artist", "album", "collec
 
 export function Page() {
   const [location] = useLocation()
+  const router = useRouter()
+  // Matched params have already passed through decodeURI. Keep the original
+  // router location for one component decode, including custom location hooks.
+  const [rawLocation] = router.hook(router)
+  const routeBase = router.base === "/" ? "" : router.base
+  const invalidLibraryLink = <div role="alert" className="p-8 text-gray-400">Invalid library link. <Link href="/library" className="text-white underline">Browse your library</Link></div>
   const baseLoc = location.split("/")[1]?.split("?")[0]
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -165,9 +172,10 @@ export function Page() {
         </Route>
 
         <Route path="/radio/:type" key="radio">
-          {(params: { type?: string }) => (
-            <RadioPage stationType={params.type ?? ""} />
-          )}
+          {() => {
+            const station = libraryRouteSegment(rawLocation, `${routeBase}/radio/`)
+            return station ? <RadioPage stationType={station} /> : invalidLibraryLink
+          }}
         </Route>
 
         <Route path="/settings/*?" key="settings">
@@ -175,9 +183,10 @@ export function Page() {
         </Route>
 
         <Route path="/hub/:hubId" key="hub">
-          {(params: { hubId?: string }) => (
-            <HubPage hubId={decodeURIComponent(params.hubId ?? "")} />
-          )}
+          {() => {
+            const hub = libraryRouteSegment(rawLocation, `${routeBase}/hub/`)
+            return hub ? <HubPage hubId={hub} /> : invalidLibraryLink
+          }}
         </Route>
 
         <Route path="/recently-added" key="recently-added">
@@ -186,9 +195,10 @@ export function Page() {
 
         <Route path="/genre/:tagType/:tagName" key="genre">
           {(params: { tagType?: string; tagName?: string }) => {
-            const t = params.tagType as "genre" | "mood" | "style" | undefined
-            const n = decodeURIComponent(params.tagName ?? "")
-            return t && n ? <TagPage tagType={t} tagName={n} /> : null
+            const t = params.tagType
+            const n = libraryRouteSegment(rawLocation, `${routeBase}/genre/${t}/`)
+            return (t === "genre" || t === "mood" || t === "style") && n
+              ? <TagPage tagType={t} tagName={n} /> : invalidLibraryLink
           }}
         </Route>
       </div>
