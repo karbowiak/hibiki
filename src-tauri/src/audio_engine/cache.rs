@@ -7,7 +7,7 @@
 //! Eviction: LRU by `last_accessed`, triggered after each write completion.
 
 use crate::cache_files::{
-    directory_id, open_regular_file, open_writable_regular_file, regular_file,
+    directory_id, file_is_current, open_regular_file, open_writable_regular_file, regular_file,
 };
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -65,21 +65,8 @@ impl CacheOwner {
         let Some(lock) = self._lock.as_ref() else {
             return false;
         };
-        let Ok(on_disk) = fs::symlink_metadata(self.directory.join(".audio-cache.lock")) else {
+        if !file_is_current(lock, &self.directory.join(".audio-cache.lock")) {
             return false;
-        };
-        let Ok(held) = lock.metadata() else {
-            return false;
-        };
-        if !regular_file(&on_disk) || !regular_file(&held) {
-            return false;
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            if (on_disk.dev(), on_disk.ino()) != (held.dev(), held.ino()) {
-                return false;
-            }
         }
         self.directory_id.is_some() && directory_id(&self.directory) == self.directory_id
     }
@@ -941,7 +928,7 @@ fn lock_cache_directory(directory: &Path) -> Result<fs::File, String> {
         lock.set_permissions(fs::Permissions::from_mode(0o600))
             .map_err(|error| error.to_string())?;
     }
-    if directory_id(directory) != Some(identity) {
+    if directory_id(directory) != Some(identity) || !file_is_current(&lock, &path) {
         return Err("audio cache directory changed".into());
     }
     Ok(lock)

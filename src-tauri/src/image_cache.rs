@@ -2,7 +2,7 @@
 //! blocking workers. A request keeps its generation through fetch.
 
 use crate::cache_files::{
-    directory_id, open_regular_file, open_writable_regular_file, regular_file,
+    directory_id, file_is_current, open_regular_file, open_writable_regular_file, regular_file,
 };
 use crate::image_fetch::MAX_IMAGE_BYTES;
 use serde::Serialize;
@@ -55,6 +55,13 @@ struct Root {
     _lock: fs::File,
 }
 
+impl Root {
+    fn is_current(&self) -> bool {
+        directory_id(&self.directory) == Some(self.identity)
+            && file_is_current(&self._lock, &self.directory.join(".imgcache.lock"))
+    }
+}
+
 struct PendingImage {
     file: Option<tempfile::NamedTempFile>,
     path: PathBuf,
@@ -63,6 +70,9 @@ struct PendingImage {
 
 impl PendingImage {
     fn new(root: Arc<Root>) -> Result<Self, String> {
+        if !root.is_current() {
+            return Err("Artwork cache ownership changed".into());
+        }
         let prefix = format!(".imgcache.{}.", uuid::Uuid::new_v4());
         let file = tempfile::Builder::new()
             .prefix(&prefix)
@@ -79,6 +89,9 @@ impl PendingImage {
     }
 
     fn persist(mut self, path: &Path) -> Result<(), String> {
+        if !self.root.is_current() {
+            return Err("Artwork cache ownership changed".into());
+        }
         self.file
             .take()
             .expect("pending image writer")
@@ -93,7 +106,7 @@ impl Drop for PendingImage {
         // Close the file before unlinking, including on platforms that disallow
         // deletion of an open writer. A moved root leaves an owned crash orphan.
         drop(self.file.take());
-        if directory_id(&self.root.directory) == Some(self.root.identity) {
+        if self.root.is_current() {
             let _ = fs::remove_file(&self.path);
         }
     }
@@ -178,8 +191,8 @@ impl ImageCache {
             }
         }
         let root = root.as_ref().map_err(Clone::clone)?.clone();
-        if directory_id(&root.directory) != Some(root.identity) {
-            return Err("Artwork cache directory was moved or redirected".into());
+        if !root.is_current() {
+            return Err("Artwork cache directory or lock ownership changed".into());
         }
         Ok(root)
     }
@@ -436,7 +449,7 @@ fn open_root(directory: PathBuf) -> Result<Root, String> {
     }
     lock.try_lock()
         .map_err(|error| format!("Cannot lock the artwork cache: {error}"))?;
-    if directory_id(&directory) != Some(identity) {
+    if directory_id(&directory) != Some(identity) || !file_is_current(&lock, &path) {
         return Err("Artwork cache directory changed".into());
     }
     Ok(Root {
@@ -497,7 +510,7 @@ fn clear_legacy(current: &Path, kind: &str) -> Result<(), String> {
                     .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
         };
         if owned {
-            if directory_id(&root.directory) != Some(root.identity) {
+            if !root.is_current() {
                 return Err("Old artwork cache directory changed".into());
             }
             remove_owned_file(&entry.path())?;
@@ -771,6 +784,43 @@ mod tests {
             fs::read(outside.join("library_metadata_42_thumb.img")).unwrap(),
             b"keep"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replacing_the_lock_retires_tickets_and_preserves_reused_pending_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = ImageCache::new(directory.path().into());
+        let ticket = cache.ticket();
+        cache.store(&ticket, &key(1), b"old image").unwrap();
+        let mut replacement = None;
+        let mut reused = None;
+        assert!(cache
+            .store_with_before_publish(&ticket, &key(1), b"obsolete image", |temporary| {
+                fs::remove_file(directory.path().join(".imgcache.lock")).unwrap();
+                let fresh = ImageCache::new(directory.path().into());
+                fresh
+                    .store(&fresh.ticket(), &key(1), b"replacement image")
+                    .unwrap();
+                // Reuse the retired writer pathname after new-owner orphan cleanup.
+                fs::write(temporary, b"replacement temporary data").unwrap();
+                reused = Some(temporary.to_owned());
+                replacement = Some(fresh);
+            })
+            .is_err());
+        let replacement = replacement.unwrap();
+        assert_eq!(
+            fs::read(reused.unwrap()).unwrap(),
+            b"replacement temporary data"
+        );
+        assert_eq!(
+            replacement.read(&replacement.ticket(), &key(1)).unwrap(),
+            b"replacement image"
+        );
+        assert!(cache.read(&ticket, &key(1)).is_none());
+        assert!(cache.stats().is_err());
+        assert!(cache.clear().is_err());
+        assert!(cache.store(&ticket, &key(2), b"obsolete").is_err());
     }
 
     #[cfg(unix)]

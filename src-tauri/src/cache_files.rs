@@ -17,6 +17,60 @@ pub(crate) fn regular_file(metadata: &fs::Metadata) -> bool {
     true
 }
 
+/// Identity of a private regular file, including Windows volume/file IDs.
+pub(crate) fn file_id(file: &fs::File) -> Option<(u64, u64)> {
+    let metadata = file.metadata().ok()?;
+    if !regular_file(&metadata) {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some((metadata.dev(), metadata.ino()))
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+        let info = windows_file_information(file).ok()?;
+        if info.nNumberOfLinks != 1 || info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return None;
+        }
+        Some((
+            u64::from(info.dwVolumeSerialNumber),
+            (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+        ))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        None
+    }
+}
+
+/// Check a held lock against its reusable pathname without modifying permissions.
+pub(crate) fn file_is_current(file: &fs::File, path: &Path) -> bool {
+    let Some(held) = file_id(file) else {
+        return false;
+    };
+    if !fs::symlink_metadata(path).is_ok_and(|metadata| regular_file(&metadata)) {
+        return false;
+    }
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    options
+        .open(path)
+        .is_ok_and(|current| file_id(&current) == Some(held))
+}
+
 pub(crate) fn directory_id(path: &Path) -> Option<(u64, u64)> {
     let metadata = fs::symlink_metadata(path).ok()?;
     if !metadata.file_type().is_dir() {
