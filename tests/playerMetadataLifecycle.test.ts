@@ -66,6 +66,8 @@ const original = {
   clearPreload: engine.clearPreload,
   pause: engine.pause,
   resume: engine.resume,
+  seek: engine.seek,
+  seekTo: engine.seekTo,
 }
 let audioCallbacks: AudioEngineCallbacks
 let playbackId = 0
@@ -79,6 +81,8 @@ engine.preloadNext = mock(async () => {})
 engine.clearPreload = mock(() => {})
 engine.pause = mock(() => {})
 engine.resume = mock(() => {})
+engine.seek = mock(() => {})
+engine.seekTo = mock(() => {})
 const state = () => usePlayerStore.getState()
 function source(id: string, extra: Partial<MusicTrack> = {}) {
   return {
@@ -127,6 +131,8 @@ afterEach(() => {
   ;(engine.clearPreload as any).mockClear()
   ;(engine.pause as any).mockClear()
   ;(engine.resume as any).mockClear()
+  ;(engine.seek as any).mockClear()
+  ;(engine.seekTo as any).mockClear()
   state().setRadioMinQueue(5)
 })
 
@@ -916,4 +922,119 @@ test("unknown playback totals continue server-clamped short pages until empty", 
   expect(offsets).toEqual([0, 1, 2])
   expect(state().playlistTotalCount).toBe(2)
   expect(state().queue.map(item => item.id)).toEqual(["1", "2"])
+})
+
+
+const { usePodcastStore } = await import("../src/backends/podcast/store")
+const { episodesToTracks } = await import("../src/backends/podcast/mappers")
+function podcastTrack(feed: string, guid: string) {
+  return episodesToTracks([{ guid, title: guid, duration_secs: 300, audio_url: `https://episodes.test/${feed}/${guid}.mp3`, description: "", pub_date: "", audio_type: "audio/mpeg", audio_size: 0, episode_number: null, season_number: null, artwork_url: null }], feed, feed, "Author", "")[0]
+}
+async function selectPodcast(track: MusicTrack) {
+  await state().initAudioEvents()
+  await state().playTrack(track, [track])
+  return { playback_id: ++playbackId, rating_key: (engine.play as any).mock.calls.at(-1)[1], duration_ms: track.duration }
+}
+
+test("podcast progress persists at bounded cadence and pause/accepted seek/end without Plex submissions", async () => {
+  const now = Date.now
+  let clock = 1000
+  Date.now = () => clock
+  const podcasts = usePodcastStore.getState()
+  const save = podcasts.setEpisodeProgress
+  const saved: number[] = []
+  usePodcastStore.setState({ listenProgress: {}, completedEpisodes: {}, setEpisodeProgress(feed, guid, seconds) { saved.push(seconds); save(feed, guid, seconds) } })
+  try {
+    const p = provider("podcast-connected")
+    useProviderStore.getState().setProvider(p)
+    const event = await selectPodcast(podcastTrack("cadence", "episode"))
+    audioCallbacks.onTrackStarted(event)
+    for (let i = 1; i < 50; i++) audioCallbacks.onPosition(i * 100, 300000, event.playback_id)
+    expect(saved).toEqual([])
+    clock += 5000
+    audioCallbacks.onPosition(5000, 300000, event.playback_id)
+    expect(saved).toEqual([5])
+    for (let i = 51; i <= 60; i++) audioCallbacks.onPosition(i * 100, 300000, event.playback_id)
+    expect(saved).toEqual([5])
+    state().pause()
+    expect(saved.at(-1)).toBe(6)
+    audioCallbacks.onPosition(6150, 300000, event.playback_id)
+    const afterTail = saved.length
+    for (let i = 0; i < 20; i++) audioCallbacks.onPosition(6150, 300000, event.playback_id)
+    expect(saved.length).toBe(afterTail)
+    state().seekTo(90000)
+    expect(saved.at(-1)).toBe(6.15)
+    audioCallbacks.onPosition(6200, 300000, event.playback_id) // pre-seek packet
+    expect(saved.at(-1)).toBe(6.15)
+    audioCallbacks.onPosition(90000, 300000, event.playback_id)
+    expect(saved.at(-1)).toBe(90)
+    audioCallbacks.onTrackEnded({ ...event, position_ms: 300000, listened_ms: 10000, reason: "natural" })
+    expect(saved.at(-1)).toBe(300)
+    expect(usePodcastStore.getState().isEpisodeCompleted("cadence", "episode")).toBe(true)
+    audioCallbacks.onTrackEnded({ ...event, position_ms: 1000, listened_ms: 1000, reason: "stopped" })
+    expect(saved.at(-1)).toBe(300)
+    expect((p.reportProgress as any).mock.calls.length).toBe(0)
+    expect((p.markPlayed as any).mock.calls.length).toBe(0)
+    expect((p.onTrackStart as any).mock.calls.length).toBe(0)
+  } finally { Date.now = now; usePodcastStore.setState({ setEpisodeProgress: save }) }
+})
+
+test("podcasts restore only at native start and retain outgoing original feed identities", async () => {
+  const podcasts = usePodcastStore.getState()
+  podcasts.setEpisodeProgress("original", "same-guid", 120)
+  const old = await selectPodcast(podcastTrack("original", "same-guid"))
+  expect((engine.seekTo as any).mock.calls.length).toBe(0)
+  audioCallbacks.onTrackStarted(old)
+  expect((engine.seekTo as any).mock.calls).toEqual([[120000]])
+  audioCallbacks.onPosition(10, 300000, old.playback_id)
+  expect(podcasts.getEpisodeProgress("original", "same-guid")).toBe(120)
+  audioCallbacks.onPosition(120500, 300000, old.playback_id)
+  const current = await selectPodcast(podcastTrack("replacement", "same-guid"))
+  audioCallbacks.onTrackStarted(current)
+  audioCallbacks.onTrackEnded({ ...old, position_ms: 130000, listened_ms: 500, reason: "skipped" })
+  expect(podcasts.getEpisodeProgress("original", "same-guid")).toBe(130)
+  expect(podcasts.getEpisodeProgress("replacement", "same-guid")).toBe(0)
+  audioCallbacks.onPosition(170000, 300000, old.playback_id)
+  expect(state().positionMs).toBe(0)
+  expect(podcasts.isEpisodeCompleted("original", "same-guid")).toBe(false)
+})
+
+test("completed podcasts restart at zero and an explicit buffering seek supersedes stored progress", async () => {
+  const podcasts = usePodcastStore.getState()
+  podcasts.setEpisodeProgress("finished", "episode", 300)
+  podcasts.markEpisodeCompleted("finished", "episode")
+  const finished = await selectPodcast(podcastTrack("finished", "episode"))
+  audioCallbacks.onTrackStarted(finished)
+  expect((engine.seekTo as any).mock.calls.length).toBe(0)
+  podcasts.setEpisodeProgress("buffering", "episode", 120)
+  const buffering = await selectPodcast(podcastTrack("buffering", "episode"))
+  state().seekTo(40000)
+  audioCallbacks.onTrackStarted(buffering)
+  expect((engine.seekTo as any).mock.calls.at(-1)).toEqual([40000])
+})
+
+test("shutdown retains podcast native ending position before clearing renderer records", async () => {
+  const prepare = engine.prepareShutdown
+  const event = await selectPodcast(podcastTrack("shutdown", "episode"))
+  audioCallbacks.onTrackStarted(event)
+  audioCallbacks.onPosition(15000, 300000, event.playback_id)
+  let attempts = 0
+  engine.prepareShutdown = async () => {
+    if (++attempts === 1) throw new Error("local retention failed")
+    return [
+      { ...event, playback_id: 999999, position_ms: 300000, listened_ms: 10000, reason: "natural" },
+      { ...event, position_ms: 15150, listened_ms: 10000, reason: "stopped" },
+    ]
+  }
+  try {
+    await expect(preparePlaybackShutdown()).rejects.toThrow("local retention failed")
+    await preparePlaybackShutdown()
+    expect(usePodcastStore.getState().getEpisodeProgress("shutdown", "episode")).toBe(15.15)
+    expect(usePodcastStore.getState().isEpisodeCompleted("shutdown", "episode")).toBe(false)
+    state().resume()
+    for (let turn = 0; turn < 5; turn++) await settle()
+    expect((engine.seekTo as any).mock.calls.length).toBe(0)
+    audioCallbacks.onTrackStarted({ ...event, playback_id: ++playbackId, rating_key: (engine.play as any).mock.calls.at(-1)[1] })
+    expect((engine.seekTo as any).mock.calls.at(-1)).toEqual([15150])
+  } finally { engine.prepareShutdown = prepare }
 })

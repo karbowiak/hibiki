@@ -40,6 +40,8 @@ const TOP_CHART_TTL_MS = 60 * 60_000 // 1 hour
 // In-flight dedup maps (module-level, not persisted)
 // ---------------------------------------------------------------------------
 
+let searchRevision = 0
+
 const inflightFeeds = new Map<string, Promise<PodcastDetail | null>>()
 const inflightTopCharts = new Map<string, Promise<PodcastTopChart[]>>()
 
@@ -128,7 +130,6 @@ export const usePodcastStore = create<PodcastState>()(
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err)
             console.error("Failed to fetch podcast feed:", msg)
-            set({ lastError: `Failed to load podcast feed: ${msg}` })
             throw err
           } finally {
             inflightFeeds.delete(feedUrl)
@@ -160,7 +161,6 @@ export const usePodcastStore = create<PodcastState>()(
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err)
             console.error("Failed to fetch top podcasts:", msg)
-            set({ lastError: `Failed to load podcasts: ${msg}` })
             throw err
           } finally {
             inflightTopCharts.delete(key)
@@ -172,21 +172,23 @@ export const usePodcastStore = create<PodcastState>()(
       },
 
       searchPodcasts: async (query) => {
+        const revision = ++searchRevision
         if (!query.trim()) {
-          set({ searchResults: [], isSearching: false })
+          set({ searchResults: [], isSearching: false, lastError: null })
           return
         }
-        set({ isSearching: true })
+        set({ searchResults: [], isSearching: true, lastError: null })
         try {
           const results = await podcastSearch(query, 20)
-          set({ searchResults: results, isSearching: false })
+          if (revision === searchRevision) set({ searchResults: results, isSearching: false })
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
+          if (revision !== searchRevision) return
           set({ searchResults: [], isSearching: false, lastError: `Search failed: ${msg}` })
         }
       },
 
-      clearSearch: () => set({ searchResults: [], isSearching: false }),
+      clearSearch: () => { ++searchRevision; set({ searchResults: [], isSearching: false, lastError: null }) },
 
       clearError: () => set({ lastError: null }),
 

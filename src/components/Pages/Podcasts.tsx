@@ -4,6 +4,8 @@ import { useShallow } from "zustand/react/shallow"
 import { usePodcastStore } from "../../backends/podcast/store"
 import { podcastGetCategories, podcastLookup } from "../../backends/podcast/api"
 import type { PodcastCategory, PodcastSearchResult, PodcastTopChart } from "../../backends/podcast/api"
+import { ArtworkImage } from "../shared/ArtworkImage"
+import { buildExternalImageUrl } from "../../lib/imageUrl"
 import { ScrollRow } from "../ScrollRow"
 
 // ---------------------------------------------------------------------------
@@ -26,30 +28,38 @@ function PodcastCard({
   scrollItem?: boolean
 }) {
   const [, navigate] = useLocation()
+  const [lookupError, setLookupError] = useState(false)
+  const lookupRevision = useRef(0)
+  useEffect(() => { setLookupError(false); return () => { ++lookupRevision.current } }, [feedUrl, itunesId])
 
   const handleClick = useCallback(async () => {
     if (feedUrl) {
       navigate(`/podcast/${btoa(feedUrl)}`)
       return
     }
+    const revision = ++lookupRevision.current
+    setLookupError(false)
     // Top chart items: look up the feed URL from iTunes ID
     if (itunesId) {
-      const result = await podcastLookup(itunesId)
-      if (result?.feed_url) {
-        navigate(`/podcast/${btoa(result.feed_url)}`)
-      }
+      try {
+        const result = await podcastLookup(itunesId)
+        if (revision !== lookupRevision.current) return
+        if (result?.feed_url) navigate(`/podcast/${btoa(result.feed_url)}`)
+        else setLookupError(true)
+      } catch { if (revision === lookupRevision.current) setLookupError(true) }
     }
   }, [feedUrl, itunesId, navigate])
 
+  const artwork = buildExternalImageUrl(artworkUrl)
   return (
     <div
-      onClick={handleClick}
+      onClick={() => void handleClick()}
       className="group flex-shrink-0 cursor-pointer no-underline"
       style={scrollItem ? { width: "var(--card-size, 160px)" } : undefined}
     >
       <div className="aspect-square w-full overflow-hidden rounded-lg bg-white/5 shadow-lg transition-shadow group-hover:shadow-xl">
-        {artworkUrl ? (
-          <img src={artworkUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+        {artwork ? (
+          <ArtworkImage src={artwork} alt="" className="h-full w-full object-cover" loading="lazy" />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-3xl text-gray-500">
             <svg viewBox="0 0 24 24" width="48" height="48" fill="currentColor">
@@ -60,6 +70,7 @@ function PodcastCard({
       </div>
       <p className="mt-2 truncate text-sm font-medium text-[color:var(--text-primary)]">{title}</p>
       <p className="truncate text-xs text-gray-400">{author}</p>
+      {lookupError && <p role="alert" className="text-xs text-red-300">Could not open podcast. Click to retry.</p>}
     </div>
   )
 }
@@ -104,6 +115,7 @@ export function PodcastsPage() {
     })))
 
   const [query, setQuery] = useState("")
+  const [searchQueued, setSearchQueued] = useState(false)
   const [categories, setCategories] = useState<PodcastCategory[]>([])
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const [topPodcasts, setTopPodcasts] = useState<PodcastTopChart[]>([])
@@ -115,14 +127,18 @@ export function PodcastsPage() {
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null)
   // Stale request guard — incremented on each category selection, checked on completion
   const categoryRequestId = useRef(0)
+  const topRequestId = useRef(0)
 
   const loadTopPodcasts = useCallback(() => {
+    const requestId = ++topRequestId.current
     setIsLoadingTop(true)
     setTopError(false)
     getTopChart(undefined, 25).then(results => {
+      if (topRequestId.current !== requestId) return
       setTopPodcasts(results)
       setIsLoadingTop(false)
     }).catch(() => {
+      if (topRequestId.current !== requestId) return
       setIsLoadingTop(false)
       setTopError(true)
     })
@@ -130,32 +146,46 @@ export function PodcastsPage() {
 
   // Load categories + top podcasts on mount
   useEffect(() => {
-    podcastGetCategories().then(setCategories).catch(() => {})
+    let current = true
+    void podcastGetCategories().then(results => { if (current) setCategories(results) }).catch(() => {})
     loadTopPodcasts()
-  }, [loadTopPodcasts])
+    return () => {
+      current = false
+      ++topRequestId.current
+      ++categoryRequestId.current
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+      clearSearch()
+    }
+  }, [loadTopPodcasts, clearSearch])
 
   // Debounced search
   const handleSearch = useCallback((value: string) => {
     setQuery(value)
+    setSearchQueued(!!value.trim())
+    clearSearch() // Retire the old query before the new debounce can fire.
     if (debounceRef.current) clearTimeout(debounceRef.current)
     if (!value.trim()) {
       clearSearch()
       return
     }
     debounceRef.current = setTimeout(() => {
-      searchPodcasts(value)
+      setSearchQueued(false)
+      void searchPodcasts(value)
     }, 400)
   }, [searchPodcasts, clearSearch])
 
   // Category selection with stale request guard
   const handleCategory = useCallback((catName: string) => {
     if (selectedCategory === catName) {
+      ++categoryRequestId.current
+      setIsLoadingCategory(false)
       setSelectedCategory(null)
       setCategoryPodcasts([])
       setCategoryError(false)
       return
     }
     setSelectedCategory(catName)
+    setCategoryPodcasts([])
     setIsLoadingCategory(true)
     setCategoryError(false)
     const reqId = ++categoryRequestId.current
@@ -234,9 +264,9 @@ export function PodcastsPage() {
       {isSearchMode ? (
         <div>
           <h2 className="mb-4 text-xl font-bold">
-            {isSearching ? "Searching..." : `Results for "${query}"`}
+            {isSearching || searchQueued ? "Searching..." : `Results for "${query}"`}
           </h2>
-          {!isSearching && searchResults.length === 0 && (
+          {!isSearching && !searchQueued && searchResults.length === 0 && (
             <p className="text-gray-400">No podcasts found.</p>
           )}
           <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-6">

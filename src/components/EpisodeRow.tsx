@@ -1,3 +1,5 @@
+import { ArtworkImage } from "./shared/ArtworkImage"
+import { buildExternalImageUrl } from "../lib/imageUrl"
 import clsx from "clsx"
 import type { PodcastEpisode } from "../backends/podcast/api"
 
@@ -29,7 +31,7 @@ function formatDate(dateStr: string): string {
 }
 
 export function EpisodeRow({ episode, podcastArtworkUrl, isPlaying, progress, isCompleted, onPlay }: EpisodeRowProps) {
-  const thumb = episode.artwork_url || podcastArtworkUrl
+  const thumb = buildExternalImageUrl(episode.artwork_url || podcastArtworkUrl)
   const duration = formatDuration(episode.duration_secs)
   const date = formatDate(episode.pub_date)
 
@@ -40,9 +42,10 @@ export function EpisodeRow({ episode, podcastArtworkUrl, isPlaying, progress, is
     )}>
       {/* Artwork + play button */}
       <div className="relative h-14 w-14 flex-shrink-0 overflow-hidden rounded-lg bg-white/5">
-        {thumb && <img src={thumb} alt="" className="h-full w-full object-cover" loading="lazy" />}
+        {thumb && <ArtworkImage src={thumb} alt="" className="h-full w-full object-cover" loading="lazy" />}
         <button
           onClick={onPlay}
+          aria-label={`${isPlaying ? "Pause" : "Play"} ${episode.title}`}
           className={clsx(
             "absolute inset-0 flex items-center justify-center transition-opacity",
             isPlaying ? "bg-black/40 opacity-100" : "bg-black/40 opacity-0 group-hover:opacity-100"

@@ -19,6 +19,7 @@ import { useAnnouncerStore } from "./announcerStore"
 import { useVisualizerStore } from "./visualizerStore"
 import { useRadioStreamStore } from "./radioStreamStore"
 import { radioSetVolume } from "../lib/radioAudio"
+import { usePodcastStore } from "../backends/podcast/store"
 import { useLyricsStore } from "./lyricsStore"
 
 type RadioType = 'track' | 'artist' | 'album' | 'playlist'
@@ -183,6 +184,9 @@ let _playGeneration = 0
 // Skipping cancels a pending station/playlist selection without stopping audio.
 let _queueGeneration = 0
 let _queueContextGeneration = 0
+/** Read-only fence for external asynchronous playback fallbacks. */
+export function capturePlaybackSelectionVersion(): number { return _queueGeneration }
+
 function beginQueueSelection(): number {
   _radioRefillRequest = null
   return ++_queueGeneration
@@ -214,13 +218,49 @@ const TIMELINE_REPORT_INTERVAL_MS = 10_000
 // non-fatal and must not surface as Unhandled Promise Rejections.
 const _reportProgress = (trackId: string, state: string, positionMs: number, duration: number) => {
   const provider = getProvider()
-  if (provider) fireAndForget(provider.reportProgress(trackId, positionMs, state, duration))
+  const current = usePlayerStore.getState().currentTrack
+  if (provider && (!current || !_isPodcastTrack(current))) fireAndForget(provider.reportProgress(trackId, positionMs, state, duration))
 }
 
 // Each native play retains its own metadata and provider across outgoing overlaps.
-const _playbackJournal = new PlaybackJournal<{ track: MusicTrack; provider: MusicProvider | null; positionMs: number }>()
+interface PlaybackRecord {
+  track: MusicTrack
+  provider: MusicProvider | null
+  positionMs: number
+  podcastSavedAt: number
+  podcastResumeTarget: number | null
+}
+const _playbackJournal = new PlaybackJournal<PlaybackRecord>()
+const PODCAST_PROGRESS_INTERVAL_MS = 5000
+function podcastIdentity(track: MusicTrack): { feedUrl: string; guid: string } | null {
+  const data = track._providerData as Record<string, unknown> | undefined
+  return data?.isPodcast === true && typeof data.feedUrl === "string" && !!data.feedUrl
+    && typeof data.episodeGuid === "string" && !!data.episodeGuid
+    ? { feedUrl: data.feedUrl, guid: data.episodeGuid } : null
+}
+function savePodcastProgress(record: PlaybackRecord | null, positionMs: number, force = false, completed = false): void {
+  if (!record || !Number.isFinite(positionMs) || positionMs < 0) return
+  const identity = podcastIdentity(record.track)
+  const elapsed = Date.now() - record.podcastSavedAt
+  if (!identity || (!force && elapsed >= 0 && elapsed < PODCAST_PROGRESS_INTERVAL_MS)) return
+  record.podcastSavedAt = Date.now()
+  const podcasts = usePodcastStore.getState()
+  if (podcasts.getEpisodeProgress(identity.feedUrl, identity.guid) !== positionMs / 1000) {
+    podcasts.setEpisodeProgress(identity.feedUrl, identity.guid, positionMs / 1000)
+  }
+  if (completed) podcasts.markEpisodeCompleted(identity.feedUrl, identity.guid)
+}
+function podcastResumePosition(track: MusicTrack): number {
+  const identity = podcastIdentity(track)
+  if (!identity) return 0
+  const podcasts = usePodcastStore.getState()
+  if (podcasts.isEpisodeCompleted(identity.feedUrl, identity.guid)) return 0
+  const position = podcasts.getEpisodeProgress(identity.feedUrl, identity.guid) * 1000
+  return Number.isFinite(position) && position > 0 && (track.duration <= 0 || position < track.duration) ? position : 0
+}
 let _pendingSelectedTrackId: string | null = null
 let _shutdownResumePosition: number | null = null
+let _podcastRequestedSeek: { generation: number; trackId: string; positionMs: number } | null = null
 
 function playbackLabels(track: MusicTrack) {
   return { artist: track.artistName ?? "", track: track.title, album: track.albumName ?? "", album_artist: track.artistName ?? "" }
@@ -228,16 +268,20 @@ function playbackLabels(track: MusicTrack) {
 
 /** Freeze renderer advancement; native stop acknowledges both audible decks. */
 export async function preparePlaybackShutdown(): Promise<void> {
+  savePodcastProgress(_playbackJournal.current(), _playbackJournal.current()?.positionMs ?? 0, true)
   _playbackDesired = false
   ++_playGeneration
   if (_gaplessTimeoutId !== null) { clearTimeout(_gaplessTimeoutId); _gaplessTimeoutId = null }
   useRadioStreamStore.getState().stopStream()
   _shutdownResumePosition = usePlayerStore.getState().positionMs
   usePlayerStore.setState({ isPlaying: false, isBuffering: false, transitionInfo: null })
-  try {
-    const endings = await engine.prepareShutdown()
-    for (const ending of endings) _playbackJournal.finish(ending)
-  } finally { _playbackJournal.clear() }
+  // Failure leaves captured occurrences available for a later native proof retry.
+  const endings = await engine.prepareShutdown()
+  for (const ending of endings) {
+    const record = _playbackJournal.finish(ending)
+    if (record) savePodcastProgress(record.value, ending.position_ms, true, ending.reason === "natural")
+  }
+  _playbackJournal.clear()
 }
 
 // ---------------------------------------------------------------------------
@@ -779,7 +823,10 @@ async function _startPlayback(track: MusicTrack, index: number, get: () => Playe
   if (get().isInternetRadioActive) {
     useRadioStreamStore.getState().stopStream()
   }
+  const outgoing = _playbackJournal.current()
+  savePodcastProgress(outgoing, outgoing?.positionMs ?? 0, true)
   _shutdownResumePosition = null
+  _podcastRequestedSeek = null
   const gen = ++_playGeneration
   _pendingSelectedTrackId = track.id
   _playbackDesired = true
@@ -1107,6 +1154,8 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   stop: () => {
+    const audible = _playbackJournal.current()
+    savePodcastProgress(audible, audible?.positionMs ?? 0, true)
     beginQueueSelection()
     replaceQueueContext()
     _djGeneratedKeys.clear()
@@ -1157,11 +1206,13 @@ export const usePlayerStore = create<PlayerState>()(
 
   pause: () => {
     _playbackDesired = false
+    const current = _playbackJournal.current()
+    savePodcastProgress(current, current?.positionMs ?? 0, true)
     engine.pause()
     set({ isPlaying: false })
     const audible = _playbackJournal.current()
     if (audible?.provider && audible.provider === getProvider()) {
-      fireAndForget(audible.provider.reportProgress(audible.track.id, audible.positionMs, "paused", audible.track.duration))
+      if (!_isPodcastTrack(audible.track)) fireAndForget(audible.provider.reportProgress(audible.track.id, audible.positionMs, "paused", audible.track.duration))
       if (audible.provider.setNowPlayingState) fireAndForget(audible.provider.setNowPlayingState("paused", audible.positionMs))
     }
   },
@@ -1174,7 +1225,7 @@ export const usePlayerStore = create<PlayerState>()(
       _shutdownResumePosition = null
       const generation = _playGeneration + 1
       fireAndForget(playAtIndex(state.queueIndex, get, set).then(() => {
-        if (generation === _playGeneration && position > 0) engine.seekTo(position)
+        if (generation === _playGeneration && position > 0 && !_isPodcastTrack(state.currentTrack!)) engine.seekTo(position)
       }))
       return
     }
@@ -1193,7 +1244,7 @@ export const usePlayerStore = create<PlayerState>()(
     set({ isPlaying: true })
     const audible = _playbackJournal.current()
     if (audible?.provider && audible.provider === getProvider()) {
-      fireAndForget(audible.provider.reportProgress(audible.track.id, audible.positionMs, "playing", audible.track.duration))
+      if (!_isPodcastTrack(audible.track)) fireAndForget(audible.provider.reportProgress(audible.track.id, audible.positionMs, "playing", audible.track.duration))
       if (audible.provider.setNowPlayingState) fireAndForget(audible.provider.setNowPlayingState("playing", audible.positionMs))
     }
   },
@@ -1249,12 +1300,21 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   seekTo: (ms: number) => {
+    const selected = get().currentTrack
+    if (selected && _isPodcastTrack(selected)) {
+      if (!Number.isFinite(ms) || ms < 0) return
+      if (selected.duration > 0) ms = Math.min(ms, selected.duration)
+      if (_pendingSelectedTrackId !== null) _podcastRequestedSeek = { generation: _playGeneration, trackId: selected.id, positionMs: ms }
+    }
     engine.seek(ms)
     set({ positionMs: ms })
     const { currentTrack } = get()
     if (currentTrack && _pendingSelectedTrackId === null) {
       const audible = _playbackJournal.current()
-      if (audible) audible.positionMs = ms
+      if (audible) {
+        if (podcastIdentity(audible.track)) audible.podcastResumeTarget = ms
+        else audible.positionMs = ms
+      }
       _reportProgress(currentTrack.id, get().isPlaying ? "playing" : "paused", ms, currentTrack.duration)
     }
   },
@@ -1383,8 +1443,14 @@ export const usePlayerStore = create<PlayerState>()(
       onPosition(positionMs, durationMs, playbackId) {
         if (playbackId !== _playbackJournal.currentId || _pendingSelectedTrackId !== null) return
         const audible = _playbackJournal.current()
-        if (!audible || audible.provider !== getProvider()) return
+        if (!audible || (!_isPodcastTrack(audible.track) && audible.provider !== getProvider())) return
+        const seekAcknowledged = audible.podcastResumeTarget !== null
+        if (seekAcknowledged) {
+          if (Math.abs(positionMs - audible.podcastResumeTarget!) > 1000) return
+          audible.podcastResumeTarget = null
+        }
         audible.positionMs = positionMs
+        savePodcastProgress(audible, positionMs, seekAcknowledged || !get().isPlaying)
         const { currentTrack, queue, queueIndex, repeat, isRadioMode, isPlaying, radioMinQueue } = get()
         set({ positionMs })
 
@@ -1425,6 +1491,7 @@ export const usePlayerStore = create<PlayerState>()(
         const record = _playbackJournal.finish(event)
         if (!record) return
         const { track } = record.value
+        savePodcastProgress(record.value, event.position_ms, true, event.reason === "natural")
         const { currentTrack, repeat, queueIndex } = get()
         // Native history retains actual listened frames and submits all final
         // reports through one durable, account-bound outbox.
@@ -1462,7 +1529,11 @@ export const usePlayerStore = create<PlayerState>()(
         if (!selected) return
         const track = event.duration_ms > 0 ? { ...selected, duration: event.duration_ms } : selected
         const provider = getProvider()
-        if (!_playbackJournal.start(event, { track, provider, positionMs: 0 })) return
+        const requestedSeek = _podcastRequestedSeek
+        const resumePosition = requestedSeek?.generation === _playGeneration && requestedSeek.trackId === track.id
+          ? requestedSeek.positionMs : podcastResumePosition(track)
+        _podcastRequestedSeek = null
+        if (!_playbackJournal.start(event, { track, provider, positionMs: resumePosition, podcastSavedAt: Date.now(), podcastResumeTarget: resumePosition > 0 ? resumePosition : null })) return
         if (_gaplessTimeoutId !== null) { clearTimeout(_gaplessTimeoutId); _gaplessTimeoutId = null }
         const automatic = _pendingSelectedTrackId === null
         _pendingSelectedTrackId = null
@@ -1472,6 +1543,10 @@ export const usePlayerStore = create<PlayerState>()(
           queue: s.queue.map((item, i) => i === index ? { ...item, duration: track.duration } : item),
         }))
         _onTrackAudiblyStarted(track, provider, event.playback_id)
+        if (resumePosition > 0) {
+          set({ positionMs: resumePosition })
+          engine.seekTo(resumePosition)
+        }
         const { queue, repeat, isRadioMode, radioMinQueue, playlistKey, playlistLoadedCount, playlistTotalCount } = get()
         const nextIndex = index
 
@@ -1491,6 +1566,8 @@ export const usePlayerStore = create<PlayerState>()(
       },
 
       onControlError(message) {
+        const audible = _playbackJournal.current()
+        if (audible) audible.podcastResumeTarget = null
         set({ playerError: message })
         setTimeout(() => { if (get().playerError === message) set({ playerError: null }) }, 6000)
       },

@@ -2,14 +2,19 @@ import { useEffect, useState, useMemo } from "react"
 import { useShallow } from "zustand/react/shallow"
 import { usePodcastStore } from "../../backends/podcast/store"
 import { usePlayerStore } from "../../stores/playerStore"
-import { episodesToTracks } from "../../backends/podcast/mappers"
+import { episodeProgressKey, episodesToTracks } from "../../backends/podcast/mappers"
 import { EpisodeRow } from "../EpisodeRow"
+import { ArtworkImage } from "../shared/ArtworkImage"
+import { buildExternalImageUrl } from "../../lib/imageUrl"
 import { UltraBlur } from "../UltraBlur"
 import type { PodcastDetail, PodcastEpisode } from "../../backends/podcast/api"
 
 export function PodcastDetailPage({ feedUrl }: { feedUrl: string }) {
   const { getFeed, subscribe, unsubscribe, isSubscribed, getEpisodeProgress, isEpisodeCompleted } =
     usePodcastStore(useShallow(s => ({
+      subscriptions: s.subscriptions,
+      listenProgress: s.listenProgress,
+      completedEpisodes: s.completedEpisodes,
       getFeed: s.getFeed,
       subscribe: s.subscribe,
       unsubscribe: s.unsubscribe,
@@ -18,25 +23,32 @@ export function PodcastDetailPage({ feedUrl }: { feedUrl: string }) {
       isEpisodeCompleted: s.isEpisodeCompleted,
     })))
 
-  const { playTrack, currentTrack } = usePlayerStore(useShallow(s => ({
+  const { playTrack, currentTrack, isPlaying, pause, resume } = usePlayerStore(useShallow(s => ({
     playTrack: s.playTrack,
     currentTrack: s.currentTrack,
+    isPlaying: s.isPlaying,
+    pause: s.pause,
+    resume: s.resume,
   })))
 
-  const [podcast, setPodcast] = useState<PodcastDetail | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
+  const [result, setResult] = useState<{ feedUrl: string; podcast: PodcastDetail | null; loading: boolean }>({ feedUrl, podcast: null, loading: true })
+  const [retry, setRetry] = useState(0)
+  const podcast = result.feedUrl === feedUrl ? result.podcast : null
+  const isLoading = result.feedUrl !== feedUrl || result.loading
   const [descExpanded, setDescExpanded] = useState(false)
   const subscribed = isSubscribed(feedUrl)
 
   useEffect(() => {
-    setIsLoading(true)
-    setPodcast(null)
+    let current = true
+    setResult({ feedUrl, podcast: null, loading: true })
     setDescExpanded(false)
-    getFeed(feedUrl).then(detail => {
-      setPodcast(detail)
-      setIsLoading(false)
+    void getFeed(feedUrl).then(detail => {
+      if (current) setResult({ feedUrl, podcast: detail, loading: false })
+    }).catch(() => {
+      if (current) setResult({ feedUrl, podcast: null, loading: false })
     })
-  }, [feedUrl, getFeed])
+    return () => { current = false }
+  }, [feedUrl, getFeed, retry])
 
   // Map episodes to MusicTrack for playback
   const episodeTracks = useMemo(() => {
@@ -53,12 +65,16 @@ export function PodcastDetailPage({ feedUrl }: { feedUrl: string }) {
   const handlePlayEpisode = (ep: PodcastEpisode, index: number) => {
     const track = episodeTracks[index]
     if (!track) return
-    playTrack(track, episodeTracks, podcast?.title ?? "Podcast", `/podcast/${btoa(feedUrl)}`)
+    if (currentTrack?.id === track.id) {
+      if (isPlaying) pause(); else resume()
+      return
+    }
+    void playTrack(track, episodeTracks, podcast?.title ?? "Podcast", `/podcast/${btoa(feedUrl)}`)
   }
 
   const handlePlayAll = () => {
     if (episodeTracks.length === 0) return
-    playTrack(episodeTracks[0], episodeTracks, podcast?.title ?? "Podcast", `/podcast/${btoa(feedUrl)}`)
+    void playTrack(episodeTracks[0], episodeTracks, podcast?.title ?? "Podcast", `/podcast/${btoa(feedUrl)}`)
   }
 
   const handleSubscribe = () => {
@@ -85,24 +101,26 @@ export function PodcastDetailPage({ feedUrl }: { feedUrl: string }) {
 
   if (!podcast) {
     return (
-      <div className="flex h-full items-center justify-center">
+      <div className="flex h-full items-center justify-center gap-3" role="alert">
         <p className="text-gray-400">Failed to load podcast feed.</p>
+        <button onClick={() => setRetry(value => value + 1)}>Retry</button>
       </div>
     )
   }
 
+  const artwork = buildExternalImageUrl(podcast.artwork_url)
   const playableEpisodes = podcast.episodes.filter(ep => ep.audio_url)
 
   return (
     <div>
       {/* Hero section */}
       <div className="relative overflow-hidden">
-        <UltraBlur src={podcast.artwork_url} />
+        <UltraBlur src={artwork} />
         <div className="relative z-10 flex gap-8 p-8 pb-6">
           {/* Artwork */}
           <div className="h-56 w-56 flex-shrink-0 overflow-hidden rounded-xl bg-white/5 shadow-2xl">
-            {podcast.artwork_url ? (
-              <img src={podcast.artwork_url} alt="" className="h-full w-full object-cover" />
+            {artwork ? (
+              <ArtworkImage loading="eager" src={artwork} alt="" className="h-full w-full object-cover" />
             ) : (
               <div className="flex h-full w-full items-center justify-center text-gray-500">
                 <svg viewBox="0 0 24 24" width="64" height="64" fill="currentColor">
@@ -181,17 +199,17 @@ export function PodcastDetailPage({ feedUrl }: { feedUrl: string }) {
         <div className="divide-y divide-white/5">
           {playableEpisodes.map((ep, i) => {
             const trackId = episodeTracks[i]?.id
-            const isPlaying = trackId != null && currentTrack?.id === trackId
-            const progressSecs = getEpisodeProgress(feedUrl, ep.guid)
+            const episodePlaying = trackId != null && currentTrack?.id === trackId && isPlaying
+            const progressSecs = getEpisodeProgress(feedUrl, episodeProgressKey(ep))
             const progress = ep.duration_secs > 0 ? progressSecs / ep.duration_secs : 0
-            const completed = isEpisodeCompleted(feedUrl, ep.guid)
+            const completed = isEpisodeCompleted(feedUrl, episodeProgressKey(ep))
 
             return (
               <EpisodeRow
-                key={ep.guid || i}
+                key={trackId ?? i}
                 episode={ep}
                 podcastArtworkUrl={podcast.artwork_url}
-                isPlaying={isPlaying}
+                isPlaying={episodePlaying}
                 progress={progress}
                 isCompleted={completed}
                 onPlay={() => handlePlayEpisode(ep, i)}

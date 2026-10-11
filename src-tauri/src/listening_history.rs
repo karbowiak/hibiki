@@ -1,7 +1,7 @@
 //! Actual native listens, retained locally before remote reporting or webview teardown.
 use crate::audio_engine::event::{EngineEvent, TrackEndReason};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -106,6 +106,8 @@ struct Started {
 struct Journal {
     started: HashMap<u64, Started>,
     completed: HashMap<u64, Completed>,
+    completed_order: VecDeque<u64>,
+    recent_ends: VecDeque<PlaybackEnd>,
     acknowledged: HashSet<u64>,
 }
 pub enum HistoryEvent {
@@ -166,8 +168,7 @@ impl NativeHistory {
                         }
                         HistoryEvent::Started(_, _, _, _) => {}
                         HistoryEvent::Barrier(reply) => {
-                            let _ = reply
-                                .send(history.retain_pending(&app).and_then(|_| history.pending()));
+                            let _ = reply.send(history.barrier(|| history.retain_pending(&app)));
                         }
                     }
                 }
@@ -192,6 +193,9 @@ impl NativeHistory {
                 binding: start.binding.clone(),
                 labels: start.labels.clone(),
             };
+            if !journal.completed.contains_key(&end.playback_id) {
+                journal.completed_order.push_back(end.playback_id);
+            }
             journal.completed.insert(end.playback_id, completed);
         }
     }
@@ -202,7 +206,11 @@ impl NativeHistory {
                 .journal
                 .lock()
                 .map_err(|_| "Listening history unavailable")?;
-            journal.completed.values().cloned().collect::<Vec<_>>()
+            journal
+                .completed_order
+                .iter()
+                .filter_map(|id| journal.completed.get(id).cloned())
+                .collect::<Vec<_>>()
         };
         let db = app.state::<crate::db::DbState>();
         let mut conn = db.0.lock().map_err(|_| "Listening database unavailable")?;
@@ -226,12 +234,36 @@ impl NativeHistory {
             .map(|record| record.end.clone())
             .collect())
     }
+    fn barrier(
+        &self,
+        retain: impl FnOnce() -> Result<(), String>,
+    ) -> Result<Vec<PlaybackEnd>, String> {
+        retain()?;
+        self.shutdown_proofs()
+    }
+    fn shutdown_proofs(&self) -> Result<Vec<PlaybackEnd>, String> {
+        let journal = self
+            .journal
+            .lock()
+            .map_err(|_| "Listening history unavailable")?;
+        Ok(journal.recent_ends.iter().cloned().collect())
+    }
     pub fn acknowledge(&self, id: u64) {
         let mut journal = self
             .journal
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        journal.completed.remove(&id);
+        if let Some(completed) = journal.completed.remove(&id) {
+            journal.recent_ends.push_back(completed.end);
+            while journal.recent_ends.len() > 64 {
+                journal.recent_ends.pop_front();
+            }
+        }
+        if journal.completed_order.front() == Some(&id) {
+            journal.completed_order.pop_front();
+        } else {
+            journal.completed_order.retain(|pending| *pending != id);
+        }
         journal.started.remove(&id);
         journal.acknowledged.insert(id);
     }
@@ -702,6 +734,77 @@ mod tests {
             labels: Some(labels()),
         }
     }
+    #[test]
+    fn acknowledged_public_shutdown_proofs_are_bounded_separate_and_arrival_ordered() {
+        let history = NativeHistory::new();
+        for id in 1..=70 {
+            history.journal.lock().unwrap().started.insert(
+                id,
+                Started {
+                    started_at: 1234,
+                    binding: Binding::default(),
+                    labels: None,
+                },
+            );
+            let mut event = ended(id, 1000);
+            if let EngineEvent::TrackEnded { reason, .. } = &mut event {
+                *reason = if id == 69 {
+                    TrackEndReason::Natural
+                } else {
+                    TrackEndReason::Stopped
+                };
+            }
+            history.observe_end(&event);
+            history.acknowledge(id);
+            history.observe_end(&event); // duplicate never resurrects submissions/proofs
+            history.acknowledge(id);
+        }
+        assert!(history.pending().unwrap().is_empty());
+        let proofs = history.barrier(|| Ok(())).unwrap();
+        assert_eq!(proofs.len(), 64);
+        assert_eq!(proofs.first().unwrap().playback_id, 7);
+        assert_eq!(proofs.last().unwrap().playback_id, 70);
+        assert_eq!(proofs[62].reason, TrackEndReason::Natural);
+        assert_eq!(proofs[63].reason, TrackEndReason::Stopped);
+        assert!(proofs
+            .windows(2)
+            .all(|pair| pair[0].playback_id < pair[1].playback_id));
+    }
+
+    #[test]
+    fn local_retention_failure_cannot_release_recent_shutdown_proofs() {
+        let history = NativeHistory::new();
+        let record = completed(71, 100_000);
+        history.journal.lock().unwrap().started.insert(
+            71,
+            Started {
+                started_at: record.started_at,
+                binding: record.binding.clone(),
+                labels: record.labels.clone(),
+            },
+        );
+        history.observe_end(&ended(71, 100_000));
+        let db = crate::db::DbState::open_in_memory().unwrap();
+        let mut conn = db.0.lock().unwrap();
+        conn.execute_batch("CREATE TRIGGER reject_history BEFORE INSERT ON kv BEGIN SELECT RAISE(ABORT,'synthetic retention failure'); END").unwrap();
+        assert!(history
+            .barrier(|| retain(&mut conn, &history.session, &record, &labels()))
+            .is_err());
+        assert_eq!(history.pending().unwrap().len(), 1);
+        assert!(history.shutdown_proofs().unwrap().is_empty());
+        conn.execute_batch("DROP TRIGGER reject_history").unwrap();
+        let proofs = history
+            .barrier(|| {
+                retain(&mut conn, &history.session, &record, &labels())?;
+                history.acknowledge(71);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(proofs.len(), 1);
+        assert_eq!(proofs[0].playback_id, 71);
+        assert!(history.pending().unwrap().is_empty());
+    }
+
     #[test]
     fn native_journal_deduplicates_outgoing_and_shutdown_ends_by_playback_identity() {
         let history = NativeHistory::new();

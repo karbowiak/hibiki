@@ -5,16 +5,13 @@
  * through the existing audio engine and player store.
  */
 
+import { buildExternalImageUrl } from "../../lib/imageUrl"
 import type { MusicTrack } from "../../types/music"
 import type { PodcastEpisode } from "./api"
 
-/** Simple string hash for generating stable numeric-like IDs. */
-function hashStr(s: string): string {
-  let h = 0
-  for (let i = 0; i < s.length; i++) {
-    h = ((h << 5) - h + s.charCodeAt(i)) | 0
-  }
-  return Math.abs(h).toString(36)
+/** Keep existing GUID progress keys; missing GUIDs use the actual enclosure. */
+export function episodeProgressKey(episode: PodcastEpisode): string {
+  return episode.guid || (episode.audio_url ? `audio:${episode.audio_url}` : `episode:${JSON.stringify([episode.title, episode.pub_date])}`)
 }
 
 /** Map a podcast episode to a MusicTrack for playback. */
@@ -23,9 +20,10 @@ export function episodeToTrack(
   podcastTitle: string,
   podcastAuthor: string,
   podcastArtworkUrl: string,
+  feedUrl = "",
 ): MusicTrack {
   return {
-    id: `pod-${hashStr(episode.guid || episode.title)}`,
+    id: `pod-${JSON.stringify([feedUrl, episode.guid ? ["guid", episode.guid] : episode.audio_url ? ["enclosure", episode.audio_url] : ["metadata", episode.title, episode.pub_date]])}`,
     title: episode.title,
     trackNumber: episode.episode_number ?? 0,
     duration: episode.duration_secs * 1000, // ms
@@ -36,8 +34,8 @@ export function episodeToTrack(
     artistName: podcastAuthor,
     year: 0,
     playCount: 0,
-    thumbUrl: episode.artwork_url ?? podcastArtworkUrl ?? null,
-    albumThumbUrl: podcastArtworkUrl ?? null,
+    thumbUrl: buildExternalImageUrl(episode.artwork_url || podcastArtworkUrl),
+    albumThumbUrl: buildExternalImageUrl(podcastArtworkUrl),
     artistThumbUrl: null,
     summary: episode.description || null,
     userRating: null,
@@ -55,8 +53,8 @@ export function episodeToTrack(
     peak: null,
     loudness: null,
     _providerData: {
-      feedUrl: "",  // Set by caller
-      episodeGuid: episode.guid,
+      feedUrl,
+      episodeGuid: episodeProgressKey(episode),
       isPodcast: true,
     },
   }
@@ -72,13 +70,7 @@ export function episodesToTracks(
 ): MusicTrack[] {
   return episodes
     .filter(ep => ep.audio_url) // only episodes with audio
-    .map(ep => {
-      const track = episodeToTrack(ep, podcastTitle, podcastAuthor, podcastArtworkUrl)
-      if (track._providerData && typeof track._providerData === "object") {
-        ;(track._providerData as Record<string, unknown>).feedUrl = feedUrl
-      }
-      return track
-    })
+    .map(ep => episodeToTrack(ep, podcastTitle, podcastAuthor, podcastArtworkUrl, feedUrl))
 }
 
 /** Check if a MusicTrack is a podcast episode. */
