@@ -117,9 +117,13 @@ function artifactPlan(manifest, release, repo, tag) {
   if (release.tag_name !== tag || !release.draft)
     fail("Artifact checks require the matching draft release")
   const assets = new Map()
+  const assetsById = new Map()
   for (const asset of release.assets) {
     if (assets.has(asset.name)) fail(`Duplicate release asset ${asset.name}`)
+    if (!Number.isSafeInteger(asset.id) || asset.id <= 0 || assetsById.has(asset.id))
+      fail(`Invalid or duplicate release asset ID for ${asset.name}`)
     assets.set(asset.name, asset)
+    assetsById.set(asset.id, asset)
   }
   const required = (name) => {
     const asset = assets.get(name)
@@ -136,8 +140,8 @@ function artifactPlan(manifest, release, repo, tag) {
   required(`Hibiki_${version}_aarch64.dmg`)
   required(`Hibiki_${version}_x64.dmg`)
   const expected = {
-    "darwin-aarch64-app": "Hibiki_aarch64.app.tar.gz",
-    "darwin-x86_64-app": "Hibiki_x64.app.tar.gz",
+    "darwin-aarch64-app": `Hibiki_${version}_aarch64.app.tar.gz`,
+    "darwin-x86_64-app": `Hibiki_${version}_x64.app.tar.gz`,
     "linux-x86_64-appimage": `Hibiki_${version}_amd64.AppImage`,
     "linux-x86_64-deb": `Hibiki_${version}_amd64.deb`,
     "linux-x86_64-rpm": `Hibiki-${version}-1.x86_64.rpm`,
@@ -168,19 +172,32 @@ function artifactPlan(manifest, release, repo, tag) {
     )
       fail(`Incomplete updater entry ${platform}`)
     const url = new URL(entry.url)
-    const prefix = `/${repo.owner}/${repo.repo}/releases/download/${tag}/`
-    if (
-      url.protocol !== "https:" ||
-      url.hostname !== "github.com" ||
-      url.username ||
-      url.password ||
-      url.search ||
-      url.hash ||
-      !url.pathname.startsWith(prefix)
-    )
+    if (url.protocol !== "https:" || url.port || url.username || url.password || url.search || url.hash)
       fail(`Updater URL for ${platform} must refer to this release`)
-    const name = decodeURIComponent(url.pathname.slice(prefix.length))
-    if (expected[platform] && name !== expected[platform])
+    const prefix = `/${repo.owner}/${repo.repo}/releases/download/${tag}/`
+    let name
+    if (url.hostname === "github.com" && url.pathname.startsWith(prefix)) {
+      name = decodeURIComponent(url.pathname.slice(prefix.length))
+    } else if (url.hostname === "api.github.com") {
+      // Tauri action v1 emits GitHub API URLs. The immutable asset ID must
+      // belong to this exact tag's release; checking the host alone is unsafe.
+      const apiPrefix = `/repos/${repo.owner}/${repo.repo}/releases/assets/`
+      const id = url.pathname.startsWith(apiPrefix) ? url.pathname.slice(apiPrefix.length) : ""
+      if (!/^[1-9][0-9]*$/.test(id) || !Number.isSafeInteger(Number(id)))
+        fail(`Updater URL for ${platform} must refer to this release`)
+      name = assetsById.get(Number(id))?.name
+      if (!name) fail(`Updater asset for ${platform} does not belong to this release`)
+    } else {
+      fail(`Updater URL for ${platform} must refer to this release`)
+    }
+    // v0.5.1 used Tauri's historical unversioned macOS updater archives.
+    // Current tauri-action v1 uploads versioned names; never accept another
+    // release version's archive or a legacy name for a new release.
+    const legacy = version === "0.5.1" && {
+      "darwin-aarch64-app": "Hibiki_aarch64.app.tar.gz",
+      "darwin-x86_64-app": "Hibiki_x64.app.tar.gz",
+    }[platform]
+    if (expected[platform] && name !== expected[platform] && name !== legacy)
       fail(`Wrong artifact for ${platform}`)
     if (
       aliases[platform] &&

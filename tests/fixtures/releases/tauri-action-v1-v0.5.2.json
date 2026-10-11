@@ -1,0 +1,167 @@
+{
+  "source": "Release workflow 38180564683; actual Tauri action v1 v0.5.2 uploaded metadata. Public signatures replaced by placeholders; cryptographic verification uses signed synthetic fixtures separately.",
+  "repo": {
+    "owner": "karbowiak",
+    "repo": "hibiki"
+  },
+  "release": {
+    "id": 409960870,
+    "tag_name": "v0.5.2",
+    "draft": true,
+    "assets": [
+      {
+        "id": 631988459,
+        "name": "Hibiki-0.5.2-1.x86_64.rpm",
+        "size": 17891087,
+        "state": "uploaded"
+      },
+      {
+        "id": 631988514,
+        "name": "Hibiki-0.5.2-1.x86_64.rpm.sig",
+        "size": 432,
+        "state": "uploaded"
+      },
+      {
+        "id": 631983613,
+        "name": "Hibiki_0.5.2_aarch64.app.tar.gz",
+        "size": 15725364,
+        "state": "uploaded"
+      },
+      {
+        "id": 631983649,
+        "name": "Hibiki_0.5.2_aarch64.app.tar.gz.sig",
+        "size": 424,
+        "state": "uploaded"
+      },
+      {
+        "id": 631983580,
+        "name": "Hibiki_0.5.2_aarch64.dmg",
+        "size": 15423163,
+        "state": "uploaded"
+      },
+      {
+        "id": 631988525,
+        "name": "Hibiki_0.5.2_amd64.AppImage",
+        "size": 96885240,
+        "state": "uploaded"
+      },
+      {
+        "id": 631988651,
+        "name": "Hibiki_0.5.2_amd64.AppImage.sig",
+        "size": 436,
+        "state": "uploaded"
+      },
+      {
+        "id": 631988417,
+        "name": "Hibiki_0.5.2_amd64.deb",
+        "size": 17890476,
+        "state": "uploaded"
+      },
+      {
+        "id": 631988451,
+        "name": "Hibiki_0.5.2_amd64.deb.sig",
+        "size": 428,
+        "state": "uploaded"
+      },
+      {
+        "id": 631987252,
+        "name": "Hibiki_0.5.2_x64-setup.exe",
+        "size": 12107328,
+        "state": "uploaded"
+      },
+      {
+        "id": 631987273,
+        "name": "Hibiki_0.5.2_x64-setup.exe.sig",
+        "size": 436,
+        "state": "uploaded"
+      },
+      {
+        "id": 631984236,
+        "name": "Hibiki_0.5.2_x64.app.tar.gz",
+        "size": 16067707,
+        "state": "uploaded"
+      },
+      {
+        "id": 631984278,
+        "name": "Hibiki_0.5.2_x64.app.tar.gz.sig",
+        "size": 424,
+        "state": "uploaded"
+      },
+      {
+        "id": 631984196,
+        "name": "Hibiki_0.5.2_x64.dmg",
+        "size": 15873057,
+        "state": "uploaded"
+      },
+      {
+        "id": 631987217,
+        "name": "Hibiki_0.5.2_x64_en-US.msi",
+        "size": 15577088,
+        "state": "uploaded"
+      },
+      {
+        "id": 631987245,
+        "name": "Hibiki_0.5.2_x64_en-US.msi.sig",
+        "size": 436,
+        "state": "uploaded"
+      },
+      {
+        "id": 631988715,
+        "name": "latest.json",
+        "size": 6413,
+        "state": "uploaded"
+      }
+    ]
+  },
+  "manifest": {
+    "version": "0.5.2",
+    "notes": "",
+    "pub_date": "2026-10-11T22:37:24.819Z",
+    "platforms": {
+      "darwin-aarch64": {
+        "signature": "fixture-signature-placeholder",
+        "url": "https://api.github.com/repos/karbowiak/hibiki/releases/assets/631983613"
+      },
+      "darwin-aarch64-app": {
+        "signature": "fixture-signature-placeholder",
+        "url": "https://api.github.com/repos/karbowiak/hibiki/releases/assets/631983613"
+      },
+      "darwin-x86_64": {
+        "signature": "fixture-signature-placeholder",
+        "url": "https://api.github.com/repos/karbowiak/hibiki/releases/assets/631984236"
+      },
+      "darwin-x86_64-app": {
+        "signature": "fixture-signature-placeholder",
+        "url": "https://api.github.com/repos/karbowiak/hibiki/releases/assets/631984236"
+      },
+      "windows-x86_64": {
+        "signature": "fixture-signature-placeholder",
+        "url": "https://api.github.com/repos/karbowiak/hibiki/releases/assets/631987217"
+      },
+      "windows-x86_64-msi": {
+        "signature": "fixture-signature-placeholder",
+        "url": "https://api.github.com/repos/karbowiak/hibiki/releases/assets/631987217"
+      },
+      "windows-x86_64-nsis": {
+        "signature": "fixture-signature-placeholder",
+        "url": "https://api.github.com/repos/karbowiak/hibiki/releases/assets/631987252"
+      },
+      "linux-x86_64": {
+        "signature": "fixture-signature-placeholder",
+        "url": "https://api.github.com/repos/karbowiak/hibiki/releases/assets/631988525"
+      },
+      "linux-x86_64-appimage": {
+        "signature": "fixture-signature-placeholder",
+        "url": "https://api.github.com/repos/karbowiak/hibiki/releases/assets/631988525"
+      },
+      "linux-x86_64-deb": {
+        "signature": "fixture-signature-placeholder",
+        "url": "https://api.github.com/repos/karbowiak/hibiki/releases/assets/631988417"
+      },
+      "linux-x86_64-rpm": {
+        "signature": "fixture-signature-placeholder",
+        "url": "https://api.github.com/repos/karbowiak/hibiki/releases/assets/631988459"
+      }
+    }
+  }
+}

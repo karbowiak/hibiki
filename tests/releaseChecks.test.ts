@@ -37,7 +37,8 @@ function signed(bytes: Buffer) {
   ).toString("base64")
 }
 
-function fixture() {
+function fixture(version = "0.5.2", legacyMacArchives = false) {
+  const releaseTag = `v${version}`
   const bodies = new Map<number, Buffer>()
   const assets: any[] = []
   function asset(name: string, bytes: Buffer) {
@@ -51,16 +52,16 @@ function fixture() {
     bodies.set(result.id, bytes)
     return result
   }
-  asset("Hibiki_0.5.2_aarch64.dmg", Buffer.from("arm dmg"))
-  asset("Hibiki_0.5.2_x64.dmg", Buffer.from("intel dmg"))
+  asset(`Hibiki_${version}_aarch64.dmg`, Buffer.from("arm dmg"))
+  asset(`Hibiki_${version}_x64.dmg`, Buffer.from("intel dmg"))
   const entries = {
-    "darwin-aarch64-app": "Hibiki_aarch64.app.tar.gz",
-    "darwin-x86_64-app": "Hibiki_x64.app.tar.gz",
-    "linux-x86_64-appimage": "Hibiki_0.5.2_amd64.AppImage",
-    "linux-x86_64-deb": "Hibiki_0.5.2_amd64.deb",
-    "linux-x86_64-rpm": "Hibiki-0.5.2-1.x86_64.rpm",
-    "windows-x86_64-msi": "Hibiki_0.5.2_x64_en-US.msi",
-    "windows-x86_64-nsis": "Hibiki_0.5.2_x64-setup.exe",
+    "darwin-aarch64-app": legacyMacArchives ? "Hibiki_aarch64.app.tar.gz" : `Hibiki_${version}_aarch64.app.tar.gz`,
+    "darwin-x86_64-app": legacyMacArchives ? "Hibiki_x64.app.tar.gz" : `Hibiki_${version}_x64.app.tar.gz`,
+    "linux-x86_64-appimage": `Hibiki_${version}_amd64.AppImage`,
+    "linux-x86_64-deb": `Hibiki_${version}_amd64.deb`,
+    "linux-x86_64-rpm": `Hibiki-${version}-1.x86_64.rpm`,
+    "windows-x86_64-msi": `Hibiki_${version}_x64_en-US.msi`,
+    "windows-x86_64-nsis": `Hibiki_${version}_x64-setup.exe`,
   }
   const platforms: Record<string, any> = {}
   for (const [platform, name] of Object.entries(entries)) {
@@ -69,7 +70,7 @@ function fixture() {
     asset(name, bytes)
     asset(`${name}.sig`, Buffer.from(signature))
     platforms[platform] = {
-      url: `https://github.com/owner/repo/releases/download/${tag}/${name}`,
+      url: `https://github.com/owner/repo/releases/download/${releaseTag}/${name}`,
       signature,
     }
   }
@@ -80,9 +81,9 @@ function fixture() {
     "windows-x86_64": "windows-x86_64-msi",
   }))
     platforms[alias] = { ...platforms[target] }
-  const manifest = { version: "0.5.2", platforms }
+  const manifest = { version, platforms }
   const json = asset("latest.json", Buffer.from(JSON.stringify(manifest)))
-  const release = { id: 99, tag_name: tag, draft: true, assets }
+  const release = { id: 99, tag_name: releaseTag, draft: true, assets }
   const github = {
     rest: { repos: { getRelease: async () => ({ data: release }) } },
   }
@@ -281,4 +282,62 @@ test("truncated downloads fail, and redirect requests never forward GitHub autho
   expect(response.ok).toBe(true)
   expect(headers[0].Authorization).toBe("Bearer synthetic-token")
   expect(headers[1].Authorization).toBeUndefined()
+})
+
+test("current versioned macOS archives retain all seven cryptographic installer checks", async () => {
+  const f = fixture("0.5.3")
+  expect(await assertArtifacts(f.github, repo, "v0.5.3", 99, key, f.download)).toBe(7)
+  expect(f.downloaded).toContain("Hibiki_0.5.3_aarch64.app.tar.gz")
+  expect(f.downloaded).toContain("Hibiki_0.5.3_x64.app.tar.gz")
+  for (const version of ["0.5.1", "0.5.2", "0.5.4"]) {
+    const mismatched = fixture("0.5.3")
+    mismatched.manifest.platforms["darwin-aarch64-app"].url =
+      mismatched.manifest.platforms["darwin-aarch64-app"].url.replace("Hibiki_0.5.3_", `Hibiki_${version}_`)
+    expect(() => artifactPlan(mismatched.manifest, mismatched.release, repo, "v0.5.3")).toThrow("Wrong artifact")
+  }
+})
+
+test("unversioned macOS archives are retained only for the verified legacy v0.5.1 format", async () => {
+  const legacy = fixture("0.5.1", true)
+  expect(await assertArtifacts(legacy.github, repo, "v0.5.1", 99, key, legacy.download)).toBe(7)
+  for (const version of ["0.5.2", "0.5.3"]) {
+    const obsolete = fixture(version, true)
+    expect(() => artifactPlan(obsolete.manifest, obsolete.release, repo, `v${version}`)).toThrow("Wrong artifact")
+  }
+})
+
+test("actual Tauri action v1 v0.5.2 matrix metadata maps to all seven installers", () => {
+  const current = JSON.parse(readFileSync(new URL("./fixtures/releases/tauri-action-v1-v0.5.2.json", import.meta.url), "utf8"))
+  const plan = artifactPlan(current.manifest, current.release, current.repo, "v0.5.2")
+  expect(plan).toHaveLength(7)
+  expect(plan.map((entry: any) => entry.artifact.name).sort()).toEqual([
+    "Hibiki_0.5.2_aarch64.app.tar.gz", "Hibiki_0.5.2_x64.app.tar.gz",
+    "Hibiki_0.5.2_amd64.AppImage", "Hibiki_0.5.2_amd64.deb", "Hibiki-0.5.2-1.x86_64.rpm",
+    "Hibiki_0.5.2_x64_en-US.msi", "Hibiki_0.5.2_x64-setup.exe",
+  ].sort())
+})
+
+test("GitHub API updater URLs are bound to the exact release's signed installer IDs", async () => {
+  const f = fixture("0.5.3")
+  for (const entry of Object.values(f.manifest.platforms)) {
+    const name = entry.url.split("/").at(-1)
+    const asset = f.release.assets.find(asset => asset.name === name)!
+    entry.url = `https://api.github.com/repos/owner/repo/releases/assets/${asset.id}`
+  }
+  f.update()
+  expect(await assertArtifacts(f.github, repo, "v0.5.3", 99, key, f.download)).toBe(7)
+  for (const url of [
+    "https://api.github.com/repos/another/repo/releases/assets/3",
+    "https://api.github.com/repos/owner/another/releases/assets/3",
+    "https://api.github.com/repos/owner/repo/releases/assets/999999",
+    "https://api.github.com/repos/owner/repo/releases/assets/1", // DMG, not updater archive
+    "https://api.github.com/repos/owner/repo/releases/assets/03",
+    "https://api.github.com/repos/owner/repo/releases/assets/3?download=1",
+    "https://api.github.com:8443/repos/owner/repo/releases/assets/3",
+    `https://api.github.com/repos/owner/repo/releases/assets/${f.release.assets.find(asset => asset.name === "Hibiki_0.5.3_x64.app.tar.gz")!.id}`,
+  ]) {
+    const bad = structuredClone(f.manifest)
+    bad.platforms["darwin-aarch64-app"].url = url
+    expect(() => artifactPlan(bad, f.release, repo, "v0.5.3")).toThrow()
+  }
 })
