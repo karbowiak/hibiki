@@ -1,6 +1,7 @@
 //! Recoverable CPAL output. Device streams stay on their owning thread.
 
 pub mod device_render;
+pub mod channelmap;
 pub(super) mod format;
 pub mod mixer;
 pub mod owner;

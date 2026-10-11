@@ -41,6 +41,7 @@ use self::deck::decode;
 use self::event::EngineEvent;
 use self::output::owner::OutputThread;
 use self::output::resample::StreamingResampler;
+use self::output::channelmap::StereoDownmix;
 use self::output::CpalDriver;
 use self::request::PlaybackRequest;
 use self::types::{DeckId, EngineState, TrackMeta};
@@ -944,10 +945,23 @@ fn spawn_background_decode(
         .name(format!("audio-bgdec-{}", rating_key))
         .spawn(move || {
             let batch_size = ((source_rate as usize * source_channels as usize) / 2).min(262144);
-            let out_channels = if source_channels == 1 && device_channels >= 2 {
-                2
-            } else {
-                source_channels
+            let out_channels = device_channels;
+            let downmix = match StereoDownmix::new(decoder.channel_layout) {
+                Ok(downmix) if out_channels == 2 => downmix,
+                _ => {
+                    let _ = send_sample_batch(
+                        &sample_tx,
+                        &request,
+                        SampleBatch {
+                            rating_key,
+                            generation,
+                            samples: Vec::new(),
+                            fully_decoded: false,
+                            error: Some("Unsupported engine mixing format".into()),
+                        },
+                    );
+                    return;
+                }
             };
             let ahead_limit = (device_sample_rate as u64 * 20)
                 .min(32 * 1024 * 1024 / (4 * out_channels.max(1) as u64));
@@ -1027,12 +1041,28 @@ fn spawn_background_decode(
                         if !request.is_current() {
                             return;
                         }
-                        let mut samples = batch;
+                        let mut samples = match downmix.process(batch) {
+                            Ok(samples) => samples,
+                            Err(error) => {
+                                let _ = send_sample_batch(
+                                    &sample_tx,
+                                    &request,
+                                    SampleBatch {
+                                        rating_key,
+                                        generation: current_gen,
+                                        samples: Vec::new(),
+                                        fully_decoded: false,
+                                        error: Some(error),
+                                    },
+                                );
+                                return;
+                            }
+                        };
 
                         if source_rate != device_sample_rate {
                             if decoder.resampler.is_none() {
                                 match StreamingResampler::new(
-                                    source_channels,
+                                    out_channels,
                                     source_rate,
                                     device_sample_rate,
                                 ) {
@@ -1078,15 +1108,6 @@ fn spawn_background_decode(
                         }
                         if samples.is_empty() {
                             continue;
-                        }
-
-                        if source_channels == 1 && device_channels >= 2 {
-                            let mut stereo = Vec::with_capacity(samples.len() * 2);
-                            for &s in &samples {
-                                stereo.push(s);
-                                stereo.push(s);
-                            }
-                            samples = stereo;
                         }
 
                         produced_frames += (samples.len() / out_channels.max(1) as usize) as u64;
@@ -1270,23 +1291,16 @@ fn decode_initial_batch(
         "initial decode batch ready"
     );
 
+    if device_channels != 2 {
+        return Err("Unsupported engine mixing format".into());
+    }
+    samples = StereoDownmix::new(setup.channel_layout)?.process(samples)?;
+    let out_channels = device_channels;
     if source_rate != device_rate {
-        let mut resampler = StreamingResampler::new(source_channels, source_rate, device_rate)?;
+        let mut resampler = StreamingResampler::new(out_channels, source_rate, device_rate)?;
         samples = resampler.process(&samples, setup.finished)?;
         setup.resampler = Some(resampler);
     }
-
-    let out_channels = if source_channels == 1 && device_channels >= 2 {
-        let mut stereo = Vec::with_capacity(samples.len() * 2);
-        for &s in &samples {
-            stereo.push(s);
-            stereo.push(s);
-        }
-        samples = stereo;
-        2
-    } else {
-        source_channels
-    };
 
     setup.output_frames_decoded = (samples.len() / out_channels.max(1) as usize) as u64;
     Ok(IncrementalDecodeResult {
@@ -1449,6 +1463,140 @@ mod control_tests {
         epoch.store(2, Ordering::SeqCst);
         worker.join().unwrap();
         assert!(started.elapsed() < Duration::from_millis(500));
+    }
+
+    #[test]
+    fn equal_channel_counts_keep_distinct_center_and_lfe_assignments_from_the_file() {
+        use symphonia::core::audio::Channels;
+        for extra in [Channels::FRONT_CENTRE, Channels::LFE1] {
+            let layout = Channels::FRONT_LEFT | Channels::FRONT_RIGHT | extra;
+            let source = decode::tests::generate_layout_wav(48000, layout, 128, |_, channel| {
+                if channel == extra {
+                    0.25
+                } else {
+                    0.0
+                }
+            });
+            let mut decoder = decode::probe_audio(source).unwrap();
+            assert_eq!(decoder.channel_layout, layout);
+            let result = decode_initial_batch(&mut decoder, 48000, 2).unwrap();
+            assert_eq!(result.channels, 2);
+            assert_eq!(result.source_channels, 3);
+            assert_eq!(result.initial_samples.len(), 256);
+            let expected = if extra == Channels::FRONT_CENTRE {
+                0.25 * std::f32::consts::FRAC_1_SQRT_2
+            } else {
+                0.0
+            };
+            assert!(result
+                .initial_samples
+                .iter()
+                .all(|sample| (*sample - expected).abs() < 1e-6));
+        }
+    }
+
+    #[test]
+    fn surround_content_survives_initial_decode_background_src_and_seeking() {
+        use symphonia::core::audio::Channels;
+        let layout = Channels::FRONT_LEFT
+            | Channels::FRONT_RIGHT
+            | Channels::FRONT_CENTRE
+            | Channels::LFE1
+            | Channels::REAR_LEFT
+            | Channels::REAR_RIGHT;
+        let source = decode::tests::generate_layout_wav(44100, layout, 44100 * 3, |frame, channel| {
+            let frequency = match channel {
+                Channels::FRONT_CENTRE => 750.0,
+                Channels::REAR_LEFT => 250.0,
+                Channels::REAR_RIGHT => 500.0,
+                Channels::LFE1 => 80.0,
+                _ => return 0.0,
+            };
+            (frame as f32 * frequency * std::f32::consts::TAU / 44100.0).sin() * 0.1
+        });
+        let mut full = decode::probe_audio(source.clone()).unwrap();
+        let raw = decode::decode_all(&mut full).unwrap();
+        let stereo: Vec<_> = raw
+            .chunks_exact(6)
+            .flat_map(|frame| {
+                [
+                    frame[0] + (frame[2] + frame[4]) * std::f32::consts::FRAC_1_SQRT_2,
+                    frame[1] + (frame[2] + frame[5]) * std::f32::consts::FRAC_1_SQRT_2,
+                ]
+            })
+            .collect();
+        let expected = StreamingResampler::new(2, 44100, 48000)
+            .unwrap()
+            .process(&stereo, true)
+            .unwrap();
+        let mut decoder = decode::probe_audio(source).unwrap();
+        let initial = decode_initial_batch(&mut decoder, 48000, 2).unwrap();
+        assert_eq!(initial.channels, 2);
+        let mut combined = initial.initial_samples;
+        let epoch = Arc::new(std::sync::atomic::AtomicU64::new(1));
+        let request = PlaybackRequest::new(
+            1,
+            epoch.clone(),
+            Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        );
+        let (sample_tx, samples) = crossbeam_channel::unbounded();
+        let (seek_tx, seek_rx) = crossbeam_channel::unbounded();
+        let worker = spawn_background_decode(
+            decoder,
+            42,
+            44100,
+            6,
+            DeckId::A,
+            1,
+            sample_tx,
+            Arc::new(SharedAtomics::new()),
+            48000,
+            2,
+            request,
+            seek_rx,
+        )
+        .unwrap();
+        loop {
+            let batch = samples.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(batch.error.is_none());
+            combined.extend(batch.samples);
+            if batch.fully_decoded {
+                break;
+            }
+        }
+        assert_eq!(combined.len(), 48000 * 2 * 3);
+        assert!(combined.iter().any(|sample| sample.abs() > 0.1));
+        assert!(combined
+            .iter()
+            .zip(&expected)
+            .all(|(actual, expected)| (*actual - *expected).abs() < 1e-6));
+        seek_tx
+            .send(SeekRequest {
+                position_ms: 500,
+                generation: 2,
+            })
+            .unwrap();
+        let mut after_seek = Vec::new();
+        loop {
+            let batch = samples.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_eq!(batch.generation, 2);
+            assert!(batch.error.is_none());
+            after_seek.extend(batch.samples);
+            if batch.fully_decoded {
+                break;
+            }
+        }
+        let expected_seek = StreamingResampler::new(2, 44100, 48000)
+            .unwrap()
+            .process(&stereo[22050 * 2..], true)
+            .unwrap();
+        assert_eq!(after_seek.len(), 48000 * 2 * 5 / 2);
+        assert!(after_seek
+            .iter()
+            .zip(&expected_seek)
+            .all(|(actual, expected)| (*actual - *expected).abs() < 1e-6));
+        epoch.store(2, Ordering::SeqCst);
+        worker.join().unwrap();
     }
 
     #[test]

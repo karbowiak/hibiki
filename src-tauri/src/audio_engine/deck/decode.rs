@@ -7,7 +7,7 @@
 
 use anyhow::{Context, Result};
 use once_cell::sync::Lazy;
-use symphonia::core::audio::SampleBuffer;
+use symphonia::core::audio::{Channels, SampleBuffer};
 use symphonia::core::codecs::{self, CodecRegistry, DecoderOptions, CODEC_TYPE_NULL};
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
@@ -43,6 +43,7 @@ pub struct DecoderSetup {
     pub track_id: u32,
     pub sample_rate: u32,
     pub channels: u16,
+    pub channel_layout: Channels,
     /// Reusable sample buffer (avoids per-packet allocation).
     sample_buf: Option<SampleBuffer<f32>>,
     /// Whether we've reached end of stream.
@@ -102,11 +103,11 @@ pub fn probe_from_source(mss: MediaSourceStream, ext: Option<&str>) -> Result<De
         .codec_params
         .sample_rate
         .context("no sample rate in codec params")?;
-    let channels = track
+    let channel_layout = track
         .codec_params
         .channels
-        .map(|c| c.count() as u16)
-        .unwrap_or(2);
+        .unwrap_or(Channels::FRONT_LEFT | Channels::FRONT_RIGHT);
+    let channels = channel_layout.count() as u16;
     anyhow::ensure!(
         (8000..=768000).contains(&sample_rate) && (1..=32).contains(&channels),
         "unsupported audio sample rate or channel count"
@@ -136,6 +137,7 @@ pub fn probe_from_source(mss: MediaSourceStream, ext: Option<&str>) -> Result<De
         track_id,
         sample_rate,
         channels,
+        channel_layout,
         sample_buf: None,
         finished: false,
         aborted: false,
@@ -238,9 +240,10 @@ pub fn decode_batch(setup: &mut DecoderSetup, max_samples: usize) -> Result<Vec<
             );
             setup.sample_rate = spec.rate;
             setup.channels = spec.channels.count() as u16;
+            setup.channel_layout = spec.channels;
         } else {
             anyhow::ensure!(
-                spec.rate == setup.sample_rate && spec.channels.count() == setup.channels as usize,
+                spec.rate == setup.sample_rate && spec.channels == setup.channel_layout,
                 "audio format changed during decoding"
             );
         }
@@ -342,6 +345,43 @@ pub(crate) mod tests {
             }
         }
         buf
+    }
+
+    pub(crate) fn generate_layout_wav(
+        sample_rate: u32,
+        layout: Channels,
+        frames: usize,
+        sample: impl Fn(usize, Channels) -> f32,
+    ) -> Vec<u8> {
+        let channels: Vec<_> = layout.iter().collect();
+        let count = channels.len() as u16;
+        let data_size = (frames * channels.len() * 2) as u32;
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(60 + data_size).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&40u32.to_le_bytes());
+        wav.extend_from_slice(&0xfffeu16.to_le_bytes()); // WAVE_FORMAT_EXTENSIBLE
+        wav.extend_from_slice(&count.to_le_bytes());
+        wav.extend_from_slice(&sample_rate.to_le_bytes());
+        wav.extend_from_slice(&(sample_rate * count as u32 * 2).to_le_bytes());
+        wav.extend_from_slice(&(count * 2).to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(&22u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(&layout.bits().to_le_bytes());
+        wav.extend_from_slice(&[
+            1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71,
+        ]);
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_size.to_le_bytes());
+        for frame in 0..frames {
+            for &channel in &channels {
+                let value = (sample(frame, channel) * 32768.0).clamp(-32768.0, 32767.0) as i16;
+                wav.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        wav
     }
 
     #[test]
