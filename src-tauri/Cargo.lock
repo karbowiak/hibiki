@@ -1314,15 +1314,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fdk-aac"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7bb67e142688083cb9afb63f2424203fc98c4e7afb494bf912b60b55513b177e"
-dependencies = [
- "fdk-aac-sys",
-]
-
-[[package]]
 name = "fdk-aac-sys"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1920,6 +1911,7 @@ dependencies = [
  "cpal",
  "crossbeam-channel",
  "ebur128",
+ "fdk-aac-sys",
  "futures",
  "md-5",
  "once_cell",
@@ -1938,7 +1930,6 @@ dependencies = [
  "sha2",
  "souvlaki",
  "symphonia",
- "symphonia-adapter-fdk-aac",
  "tauri",
  "tauri-build",
  "tauri-plugin-notification",
@@ -4649,17 +4640,6 @@ dependencies = [
  "symphonia-format-ogg",
  "symphonia-format-riff",
  "symphonia-metadata",
-]
-
-[[package]]
-name = "symphonia-adapter-fdk-aac"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82194865c2b438a75a2b40a12495d5d1a6c3cb2bb36671f9921ab44756ee77d2"
-dependencies = [
- "fdk-aac",
- "log",
- "symphonia-core",
 ]
 
 [[package]]

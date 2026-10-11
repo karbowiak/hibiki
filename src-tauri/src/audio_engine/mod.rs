@@ -1113,10 +1113,15 @@ fn spawn_background_decode(
                     continue;
                 }
 
-                match decode::decode_batch(&mut decoder, batch_size) {
+                match decode::decode_batch_interruptible(&mut decoder, batch_size, || {
+                    !request.is_current() || !seek_rx.is_empty()
+                }) {
                     Ok(batch) => {
                         if !request.is_current() {
                             return;
+                        }
+                        if !seek_rx.is_empty() {
+                            continue;
                         }
                         let mut samples = match downmix.process(batch) {
                             Ok(samples) => samples,

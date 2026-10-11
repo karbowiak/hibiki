@@ -12,7 +12,7 @@ use symphonia::core::codecs::{self, CodecRegistry, DecoderOptions, CODEC_TYPE_NU
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
+use symphonia::core::probe::{Hint, Probe};
 use tracing::{debug, warn};
 
 /// Custom codec registry with all symphonia built-in codecs plus external adapters
@@ -23,8 +23,15 @@ static CODEC_REGISTRY: Lazy<CodecRegistry> = Lazy::new(|| {
     symphonia::default::register_enabled_codecs(&mut registry);
     // Register external adapters
     registry.register_all::<super::opus::OpusDecoder>();
-    registry.register_all::<symphonia_adapter_fdk_aac::AacDecoder>();
+    registry.register_all::<super::aac::AacDecoder>();
     registry
+});
+
+static AUDIO_PROBE: Lazy<Probe> = Lazy::new(|| {
+    let mut probe = Probe::default();
+    symphonia::default::register_enabled_formats(&mut probe);
+    probe.register_all::<super::adts::AdtsReader>();
+    probe
 });
 
 use super::streaming::StreamingReader;
@@ -50,6 +57,8 @@ pub struct DecoderSetup {
     pub had_decode_errors: bool,
     time_base: Option<symphonia::core::units::TimeBase>,
     seek_skip_samples: usize,
+    seek_skip_seconds: Option<f64>,
+    aac_seek_from_start: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     stream_buffer: Option<std::sync::Arc<super::streaming::SharedBuffer>>,
 }
 
@@ -83,7 +92,7 @@ pub fn probe_from_source(mss: MediaSourceStream, ext: Option<&str>) -> Result<De
         ..Default::default()
     };
 
-    let probed = symphonia::default::get_probe()
+    let probed = AUDIO_PROBE
         .format(&hint, mss, &format_opts, &MetadataOptions::default())
         .context("failed to probe audio format")?;
 
@@ -112,9 +121,23 @@ pub fn probe_from_source(mss: MediaSourceStream, ext: Option<&str>) -> Result<De
     let track_id = track.id;
     let time_base = track.codec_params.time_base;
 
-    let decoder = CODEC_REGISTRY
-        .make(&track.codec_params, &DecoderOptions::default())
-        .context("failed to create decoder")?;
+    let (decoder, aac_seek_from_start): (Box<dyn codecs::Decoder>, _) =
+        if track.codec_params.codec == codecs::CODEC_TYPE_AAC {
+            let decoder = <super::aac::AacDecoder as codecs::Decoder>::try_new(
+                &track.codec_params,
+                &DecoderOptions::default(),
+            )
+            .context("failed to create AAC decoder")?;
+            let policy = decoder.seek_policy();
+            (Box::new(decoder), Some(policy))
+        } else {
+            (
+                CODEC_REGISTRY
+                    .make(&track.codec_params, &DecoderOptions::default())
+                    .context("failed to create decoder")?,
+                None,
+            )
+        };
     let sample_rate = decoder.codec_params().sample_rate.unwrap_or(sample_rate);
     let channel_layout = decoder.codec_params().channels.unwrap_or(channel_layout);
     let channels = channel_layout.count() as u16;
@@ -143,6 +166,8 @@ pub fn probe_from_source(mss: MediaSourceStream, ext: Option<&str>) -> Result<De
         had_decode_errors: false,
         time_base,
         seek_skip_samples: 0,
+        seek_skip_seconds: None,
+        aac_seek_from_start,
         stream_buffer: None,
     })
 }
@@ -152,18 +177,29 @@ pub fn probe_from_source(mss: MediaSourceStream, ext: Option<&str>) -> Result<De
 pub fn seek_to_ms(setup: &mut DecoderSetup, position_ms: u64) -> Result<()> {
     use symphonia::core::formats::{SeekMode, SeekTo};
     use symphonia::core::units::Time;
-    // The FDK adapter's reset() is a no-op. Reopen AAC so overlap/filterbank
-    // history and pending transport data cannot cross a seek. Build it before
-    // moving the reader, leaving the current decoder intact if setup fails.
-    let replacement = if setup.decoder.codec_params().codec == codecs::CODEC_TYPE_AAC {
-        Some(CODEC_REGISTRY.make(setup.decoder.codec_params(), &DecoderOptions::default())?)
-    } else {
-        None
-    };
-    // RFC 7845 requires at least 80 ms of Opus pre-roll after a discontinuity.
-    // Use 160 ms for prediction convergence, then discard it on the worker
-    // before publishing the requested PCM position.
-    let seek_position_ms = if setup.decoder.codec_params().codec == codecs::CODEC_TYPE_OPUS {
+    // Learn in-band SBR/PS headers before a cold AAC seek. reset() retains
+    // that configuration while retiring old PCM and transport input.
+    if setup.decoder.codec_params().codec == codecs::CODEC_TYPE_AAC && setup.sample_buf.is_none() {
+        anyhow::ensure!(
+            !decode_batch(setup, 16384)?.is_empty(),
+            "AAC has no decodable initialization packets"
+        );
+    }
+    // AAC overlap/SBR filters and Opus prediction need previous packets after
+    // reset. Decode 160 ms of history on the worker and discard it before
+    // publishing PCM. This also exceeds Opus's mandatory 80 ms preroll.
+    let seek_position_ms = if setup
+        .aac_seek_from_start
+        .as_ref()
+        .is_some_and(|policy| policy.load(std::sync::atomic::Ordering::Acquire))
+    {
+        // Parametric stereo can depend on earlier delta-coded parameters.
+        // Rebuild its state instead of returning an incorrect stereo mix.
+        0
+    } else if matches!(
+        setup.decoder.codec_params().codec,
+        codecs::CODEC_TYPE_OPUS | codecs::CODEC_TYPE_AAC
+    ) {
         position_ms.saturating_sub(160)
     } else {
         position_ms
@@ -178,11 +214,7 @@ pub fn seek_to_ms(setup: &mut DecoderSetup, position_ms: u64) -> Result<()> {
             track_id: Some(setup.track_id),
         },
     )?;
-    if let Some(decoder) = replacement {
-        setup.decoder = decoder;
-    } else {
-        setup.decoder.reset();
-    }
+    setup.decoder.reset();
     setup.finished = false;
     setup.aborted = false;
     setup.had_decode_errors = false;
@@ -190,19 +222,17 @@ pub fn seek_to_ms(setup: &mut DecoderSetup, position_ms: u64) -> Result<()> {
         resampler.reset();
     }
     let delta = seeked.required_ts.saturating_sub(seeked.actual_ts);
-    let frames = if let Some(base) = setup.time_base {
+    let delta_seconds = if let Some(base) = setup.time_base {
         let time = base.calc_time(delta);
-        ((time.seconds as f64 + time.frac) * setup.sample_rate as f64).round() as usize
+        time.seconds as f64 + time.frac
     } else {
-        delta as usize
+        delta as f64 / f64::from(setup.sample_rate)
     };
-    let preroll_frames = position_ms
-        .saturating_sub(seek_position_ms)
-        .saturating_mul(u64::from(setup.sample_rate))
-        / 1000;
-    setup.seek_skip_samples = frames
-        .saturating_add(preroll_frames as usize)
-        .saturating_mul(setup.channels as usize);
+    // In-band HE-AAC can reveal SBR's doubled rate and PS's stereo output only
+    // on the first decoded packet. Convert time into PCM at that actual format.
+    setup.seek_skip_samples = 0;
+    setup.seek_skip_seconds =
+        Some(delta_seconds + position_ms.saturating_sub(seek_position_ms) as f64 / 1000.0);
     Ok(())
 }
 
@@ -211,6 +241,16 @@ pub fn seek_to_ms(setup: &mut DecoderSetup, position_ms: u64) -> Result<()> {
 /// Returns the decoded samples. An empty Vec means the stream ended.
 /// Call repeatedly until `setup.finished` is true.
 pub fn decode_batch(setup: &mut DecoderSetup, max_samples: usize) -> Result<Vec<f32>> {
+    decode_batch_interruptible(setup, max_samples, || false)
+}
+
+/// Check ownership and newer seeks between packets, including discarded preroll.
+/// Interruption returns no samples and leaves the decoder available for a new seek.
+pub fn decode_batch_interruptible(
+    setup: &mut DecoderSetup,
+    max_samples: usize,
+    mut interrupted: impl FnMut() -> bool,
+) -> Result<Vec<f32>> {
     if setup.finished {
         return Ok(Vec::new());
     }
@@ -218,6 +258,9 @@ pub fn decode_batch(setup: &mut DecoderSetup, max_samples: usize) -> Result<Vec<
     let mut batch = Vec::with_capacity(max_samples);
 
     loop {
+        if interrupted() {
+            return Ok(Vec::new());
+        }
         if batch.len() >= max_samples {
             break;
         }
@@ -288,6 +331,10 @@ pub fn decode_batch(setup: &mut DecoderSetup, max_samples: usize) -> Result<Vec<
         }
         buf.copy_interleaved_ref(decoded);
 
+        if let Some(seconds) = setup.seek_skip_seconds.take() {
+            setup.seek_skip_samples = ((seconds * f64::from(spec.rate)).round() as usize)
+                .saturating_mul(spec.channels.count());
+        }
         let skip = setup.seek_skip_samples.min(buf.samples().len());
         setup.seek_skip_samples -= skip;
         batch.extend_from_slice(&buf.samples()[skip..]);
@@ -621,6 +668,139 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn aac_surround_decodes_all_channels_in_named_speaker_order() {
+        let file = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/audio/aac-surround.m4a"
+        ));
+        let mut setup = probe_audio(file.to_vec()).unwrap();
+        let samples = decode_all(&mut setup).unwrap();
+        assert_eq!(setup.channels, 6);
+        assert!(!setup.aborted && !setup.had_decode_errors);
+        let frequencies = [211.0_f64, 307.0, 401.0, 79.0, 503.0, 607.0];
+        for channel in 0..6 {
+            let strengths: Vec<_> = frequencies
+                .iter()
+                .map(|&frequency| {
+                    let mut re = 0.0;
+                    let mut im = 0.0;
+                    for frame in 4800..52800 {
+                        let phase = 2.0 * std::f64::consts::PI * frequency * frame as f64 / 48000.0;
+                        let value = f64::from(samples[frame * 6 + channel]);
+                        re += value * phase.cos();
+                        im += value * phase.sin();
+                    }
+                    re.hypot(im) / 24000.0
+                })
+                .collect();
+            assert!(
+                strengths[channel] > 0.05,
+                "AAC speaker {channel} is missing"
+            );
+            assert!(
+                strengths
+                    .iter()
+                    .enumerate()
+                    .all(|(index, &value)| index == channel || value < strengths[channel] * 0.2),
+                "AAC speaker {channel} is reordered"
+            );
+        }
+    }
+
+    #[test]
+    fn aac_adts_files_are_probed_and_decoded() {
+        let file = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/audio/aac-lc-stereo.aac"
+        ));
+        let mut setup = probe_audio(file.to_vec()).unwrap();
+        let samples = decode_all(&mut setup).unwrap();
+        assert_eq!(setup.channels, 2);
+        assert_eq!(setup.sample_rate, 48000);
+        assert!(!setup.aborted && !setup.had_decode_errors);
+        assert!(samples.len() > 48000 * 2);
+        assert!(samples.iter().any(|&value| value.abs() > 0.1));
+    }
+
+    #[test]
+    fn aac_seeking_before_and_after_decoding_matches_the_linear_audio_position() {
+        let adts: [&[u8]; 3] = [
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/audio/aac-lc-stereo.aac"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/audio/he-aac-stereo.aac"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/audio/he-aac-v2-stereo.aac"
+            )),
+        ];
+        let changing: &[u8] = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/audio/he-aac-v2-changing-stereo.m4a"
+        ));
+        for (index, data) in aac_fixtures()
+            .into_iter()
+            .chain(adts)
+            .chain([changing])
+            .enumerate()
+        {
+            let mut linear = probe_audio(data.to_vec()).unwrap();
+            let reference = decode_all(&mut linear).unwrap();
+            assert_eq!(linear.sample_rate, 48000);
+            assert_eq!(linear.channels, 2);
+            for already_decoded in [false, true] {
+                let mut setup = probe_audio(data.to_vec()).unwrap();
+                if already_decoded {
+                    decode_batch(&mut setup, 16384).unwrap();
+                }
+                for position in [333, 720, 1250, 0] {
+                    seek_to_ms(&mut setup, position).unwrap();
+                    let actual = decode_batch(&mut setup, 4096).unwrap();
+                    assert!(!actual.is_empty() && !setup.aborted && !setup.had_decode_errors);
+                    let offset = (position * 48000 / 1000 * 2) as usize;
+                    let expected = &reference[offset..offset + actual.len()];
+                    let error = actual
+                        .iter()
+                        .zip(expected)
+                        .map(|(a, b)| (a - b).abs())
+                        .sum::<f32>()
+                        / actual.len() as f32;
+                    assert!(error < 1e-3, "AAC fixture {index}, seek {position}, prior decoding {already_decoded}: mean error {error}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn long_parametric_stereo_preroll_can_be_interrupted_and_replaced_by_a_new_seek() {
+        let data = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/audio/he-aac-v2-changing-stereo.m4a"
+        ));
+        let mut linear = probe_audio(data.to_vec()).unwrap();
+        let reference = decode_all(&mut linear).unwrap();
+        let mut setup = probe_audio(data.to_vec()).unwrap();
+        seek_to_ms(&mut setup, 2500).unwrap();
+        let mut checks = 0;
+        let discarded = decode_batch_interruptible(&mut setup, 4096, || {
+            checks += 1;
+            checks == 3
+        })
+        .unwrap();
+        assert_eq!(checks, 3);
+        assert!(discarded.is_empty() && !setup.finished && !setup.aborted);
+        assert!(setup.seek_skip_samples > 48000 * 2);
+        seek_to_ms(&mut setup, 333).unwrap();
+        let actual = decode_batch(&mut setup, 4096).unwrap();
+        let expected = &reference[15984 * 2..15984 * 2 + actual.len()];
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn opus_surround_preserves_named_channel_order_and_duration() {
         let mut setup = probe_audio(opus_fixture(true)).unwrap();
         let samples = decode_all(&mut setup).unwrap();
@@ -757,7 +937,28 @@ pub(crate) mod tests {
     fn major_formats_start_from_a_prefix_and_keep_the_complete_decoded_tail() {
         use super::super::streaming::{SharedBuffer, StreamingReader};
         use std::sync::mpsc;
-        let fixtures: [(&str, &[u8]); 4] = [
+        let fixtures: [(&str, &[u8]); 7] = [
+            (
+                "aac",
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/audio/he-aac-stereo.aac"
+                )),
+            ),
+            (
+                "aac",
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/audio/he-aac-v2-stereo.aac"
+                )),
+            ),
+            (
+                "aac",
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/audio/aac-lc-stereo.aac"
+                )),
+            ),
             (
                 "flac",
                 include_bytes!(concat!(
