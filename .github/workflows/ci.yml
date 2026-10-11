@@ -85,6 +85,10 @@ jobs:
           PI_SECRET: ${{ secrets.PI_SECRET }}
         run: bun run test:unit
 
+      - name: Run patched container reader regressions
+        working-directory: src-tauri
+        run: cargo test --locked -p symphonia-format-ogg -p symphonia-format-isomp4
+
       - name: Build Linux AppImage
         if: runner.os == 'Linux'
         env:

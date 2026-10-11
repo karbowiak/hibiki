@@ -2,4 +2,5 @@
 
 pub mod decode;
 pub mod manager;
+mod opus;
 pub mod streaming;

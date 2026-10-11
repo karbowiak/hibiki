@@ -22,7 +22,7 @@ static CODEC_REGISTRY: Lazy<CodecRegistry> = Lazy::new(|| {
     // Register symphonia's built-in codecs
     symphonia::default::register_enabled_codecs(&mut registry);
     // Register external adapters
-    registry.register_all::<symphonia_adapter_libopus::OpusDecoder>();
+    registry.register_all::<super::opus::OpusDecoder>();
     registry.register_all::<symphonia_adapter_fdk_aac::AacDecoder>();
     registry
 });
@@ -115,6 +115,9 @@ pub fn probe_from_source(mss: MediaSourceStream, ext: Option<&str>) -> Result<De
     let decoder = CODEC_REGISTRY
         .make(&track.codec_params, &DecoderOptions::default())
         .context("failed to create decoder")?;
+    let sample_rate = decoder.codec_params().sample_rate.unwrap_or(sample_rate);
+    let channel_layout = decoder.codec_params().channels.unwrap_or(channel_layout);
+    let channels = channel_layout.count() as u16;
 
     let codec_name = codec_type_name(track.codec_params.codec);
     debug!(
@@ -157,10 +160,21 @@ pub fn seek_to_ms(setup: &mut DecoderSetup, position_ms: u64) -> Result<()> {
     } else {
         None
     };
+    // RFC 7845 requires at least 80 ms of Opus pre-roll after a discontinuity.
+    // Use 160 ms for prediction convergence, then discard it on the worker
+    // before publishing the requested PCM position.
+    let seek_position_ms = if setup.decoder.codec_params().codec == codecs::CODEC_TYPE_OPUS {
+        position_ms.saturating_sub(160)
+    } else {
+        position_ms
+    };
     let seeked = setup.format.seek(
         SeekMode::Accurate,
         SeekTo::Time {
-            time: Time::new(position_ms / 1000, (position_ms % 1000) as f64 / 1000.0),
+            time: Time::new(
+                seek_position_ms / 1000,
+                (seek_position_ms % 1000) as f64 / 1000.0,
+            ),
             track_id: Some(setup.track_id),
         },
     )?;
@@ -182,7 +196,13 @@ pub fn seek_to_ms(setup: &mut DecoderSetup, position_ms: u64) -> Result<()> {
     } else {
         delta as usize
     };
-    setup.seek_skip_samples = frames.saturating_mul(setup.channels as usize);
+    let preroll_frames = position_ms
+        .saturating_sub(seek_position_ms)
+        .saturating_mul(u64::from(setup.sample_rate))
+        / 1000;
+    setup.seek_skip_samples = frames
+        .saturating_add(preroll_frames as usize)
+        .saturating_mul(setup.channels as usize);
     Ok(())
 }
 
@@ -519,6 +539,303 @@ pub(crate) mod tests {
             let expected = decode_batch(&mut fresh, 4096).unwrap();
             seek_to_ms(&mut used, 0).unwrap();
             assert_eq!(decode_batch(&mut used, 4096).unwrap(), expected);
+        }
+    }
+
+    fn opus_fixture(surround: bool) -> Vec<u8> {
+        if surround {
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/audio/opus-surround.ogg"
+            ))
+            .to_vec()
+        } else {
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/audio/opus-stereo.ogg"
+            ))
+            .to_vec()
+        }
+    }
+
+    fn set_ogg_opus_header_field(data: &mut [u8], field: usize, value: [u8; 2]) {
+        let header_size = 27 + usize::from(data[26]);
+        assert_eq!(&data[header_size..header_size + 8], b"OpusHead");
+        data[header_size + field..header_size + field + 2].copy_from_slice(&value);
+        let page_size = header_size
+            + data[27..header_size]
+                .iter()
+                .map(|&n| usize::from(n))
+                .sum::<usize>();
+        data[22..26].fill(0);
+        let mut crc = 0_u32;
+        for &byte in &data[..page_size] {
+            crc ^= u32::from(byte) << 24;
+            for _ in 0..8 {
+                crc = (crc << 1)
+                    ^ if crc & 0x8000_0000 != 0 {
+                        0x04c1_1db7
+                    } else {
+                        0
+                    };
+            }
+        }
+        data[22..26].copy_from_slice(&crc.to_le_bytes());
+    }
+
+    #[test]
+    fn opus_stereo_keeps_the_complete_gapless_duration() {
+        let mut setup = probe_audio(opus_fixture(false)).unwrap();
+        let samples = decode_all(&mut setup).unwrap();
+        assert_eq!(setup.sample_rate, 48000);
+        assert_eq!(setup.channels, 2);
+        assert!(!setup.aborted && !setup.had_decode_errors);
+        assert_eq!(
+            samples.len(),
+            72000 * 2,
+            "Opus pre-skip must be applied exactly once"
+        );
+    }
+
+    #[test]
+    fn opus_header_output_gain_is_applied_to_pcm() {
+        let data = opus_fixture(false);
+        let mut setup = probe_audio(data.clone()).unwrap();
+        let original = decode_all(&mut setup).unwrap();
+        let mut gained = data;
+        set_ogg_opus_header_field(&mut gained, 16, (6_i16 * 256).to_le_bytes());
+        let mut setup = probe_audio(gained).unwrap();
+        let actual = decode_all(&mut setup).unwrap();
+        assert_eq!(actual.len(), original.len());
+        let gain = 10_f32.powf(6.0 / 20.0);
+        let error = original
+            .iter()
+            .zip(&actual)
+            .map(|(&a, &b)| f64::from((a * gain - b).abs()))
+            .sum::<f64>()
+            / original.len() as f64;
+        assert!(
+            error < 1e-5,
+            "Opus header gain was not honored: mean error {error}"
+        );
+    }
+
+    #[test]
+    fn opus_surround_preserves_named_channel_order_and_duration() {
+        let mut setup = probe_audio(opus_fixture(true)).unwrap();
+        let samples = decode_all(&mut setup).unwrap();
+        assert_eq!(setup.channels, 6);
+        assert_eq!(samples.len(), 72000 * 6);
+        assert!(!setup.aborted && !setup.had_decode_errors);
+        let frequencies = [211.0_f64, 307.0, 401.0, 79.0, 503.0, 607.0];
+        for channel in 0..6 {
+            let strengths: Vec<_> = frequencies
+                .iter()
+                .map(|&frequency| {
+                    let mut re = 0.0;
+                    let mut im = 0.0;
+                    for frame in 4800..52800 {
+                        let phase = 2.0 * std::f64::consts::PI * frequency * frame as f64 / 48000.0;
+                        let value = f64::from(samples[frame * 6 + channel]);
+                        re += value * phase.cos();
+                        im += value * phase.sin();
+                    }
+                    re.hypot(im) / 24000.0
+                })
+                .collect();
+            assert!(
+                strengths[channel] > 0.05,
+                "surround channel {channel} is missing"
+            );
+            assert!(
+                strengths
+                    .iter()
+                    .enumerate()
+                    .all(|(index, &value)| index == channel || value < strengths[channel] * 0.2),
+                "surround channel {channel} was reordered"
+            );
+        }
+    }
+
+    #[test]
+    fn opus_single_audio_page_trims_initial_delay_and_final_padding() {
+        let data = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/audio/opus-mono-short.ogg"
+        ));
+        let mut setup = probe_audio(data.to_vec()).unwrap();
+        let samples = decode_all(&mut setup).unwrap();
+        assert_eq!(setup.channels, 1);
+        assert_eq!(samples.len(), 12000);
+        assert!(!setup.aborted && !setup.had_decode_errors);
+    }
+
+    #[test]
+    fn opus_pre_skip_can_span_multiple_packets() {
+        let data = opus_fixture(false);
+        let header = 27 + usize::from(data[26]);
+        let original_skip = u16::from_le_bytes([data[header + 10], data[header + 11]]);
+        let mut setup = probe_audio(data.clone()).unwrap();
+        let original = decode_all(&mut setup).unwrap();
+        let mut cropped = data;
+        set_ogg_opus_header_field(&mut cropped, 10, 2400_u16.to_le_bytes());
+        let mut setup = probe_audio(cropped).unwrap();
+        let actual = decode_all(&mut setup).unwrap();
+        assert_eq!(actual, original[(2400 - usize::from(original_skip)) * 2..]);
+    }
+
+    #[test]
+    fn opus_starts_from_a_buffered_page_and_can_seek_before_and_after_download_completion() {
+        use super::super::streaming::{SharedBuffer, StreamingReader};
+        use std::sync::mpsc;
+        let data = opus_fixture(true);
+        let mut prefix = 0;
+        for _ in 0..3 {
+            let segments = usize::from(data[prefix + 26]);
+            prefix += 27
+                + segments
+                + data[prefix + 27..prefix + 27 + segments]
+                    .iter()
+                    .map(|&n| usize::from(n))
+                    .sum::<usize>();
+        }
+        assert!(prefix < data.len());
+        let buffer = SharedBuffer::new(None).unwrap();
+        buffer.set_content_length(data.len() as u64);
+        buffer.push(&data[..prefix]).unwrap();
+        let source = buffer.clone();
+        let (send, receive) = mpsc::channel();
+        let decode = std::thread::spawn(move || {
+            let mut setup = probe_stream(StreamingReader::new(source), Some("ogg")).unwrap();
+            let first = decode_batch(&mut setup, 6144).unwrap();
+            assert!(!first.is_empty());
+            seek_to_ms(&mut setup, 50).unwrap();
+            assert!(!decode_batch(&mut setup, 6144).unwrap().is_empty());
+            send.send(setup).unwrap();
+        });
+        let result = receive.recv_timeout(std::time::Duration::from_secs(2));
+        if result.is_err() {
+            buffer.abort();
+        }
+        decode.join().unwrap();
+        let mut setup = result.expect("Opus preparation must not wait for the complete download");
+        buffer.push(&data[prefix..]).unwrap();
+        buffer.finish();
+        seek_to_ms(&mut setup, 0).unwrap();
+        let streamed = decode_all(&mut setup).unwrap();
+        let mut cached = probe_audio(data).unwrap();
+        assert_eq!(streamed, decode_all(&mut cached).unwrap());
+        assert_eq!(streamed.len(), 72000 * 6);
+    }
+
+    #[test]
+    fn opus_seeks_match_linear_playback_at_the_requested_pcm_position() {
+        for surround in [false, true] {
+            let data = opus_fixture(surround);
+            let mut setup = probe_audio(data).unwrap();
+            let original = decode_all(&mut setup).unwrap();
+            for position in [333, 720, 1250, 0] {
+                seek_to_ms(&mut setup, position).unwrap();
+                let actual = decode_batch(&mut setup, 4096).unwrap();
+                let start = position as usize * 48 * setup.channels as usize;
+                let expected = &original[start..start + actual.len()];
+                let error = actual
+                    .iter()
+                    .zip(expected)
+                    .map(|(&a, &b)| f64::from((a - b).abs()))
+                    .sum::<f64>()
+                    / actual.len() as f64;
+                assert!(
+                    error < 1e-3,
+                    "Opus seek {position} differed from the requested PCM position: {error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn major_formats_start_from_a_prefix_and_keep_the_complete_decoded_tail() {
+        use super::super::streaming::{SharedBuffer, StreamingReader};
+        use std::sync::mpsc;
+        let fixtures: [(&str, &[u8]); 4] = [
+            (
+                "flac",
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/audio/flac-stereo.flac"
+                )),
+            ),
+            (
+                "mp3",
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/audio/mp3-stereo.mp3"
+                )),
+            ),
+            (
+                "m4a",
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/audio/aac-lc-faststart.m4a"
+                )),
+            ),
+            (
+                "ogg",
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/audio/vorbis-stereo.ogg"
+                )),
+            ),
+        ];
+        for (extension, data) in fixtures {
+            for content_length in [Some(data.len() as u64), None] {
+                let prefix = if extension == "ogg" {
+                    let mut end = 0;
+                    for _ in 0..3 {
+                        let segments = usize::from(data[end + 26]);
+                        end += 27
+                            + segments
+                            + data[end + 27..end + 27 + segments]
+                                .iter()
+                                .map(|&n| usize::from(n))
+                                .sum::<usize>();
+                    }
+                    end
+                } else {
+                    data.len() * 3 / 4
+                };
+                assert!(prefix < data.len());
+                let buffer = SharedBuffer::new(content_length).unwrap();
+                buffer.push(&data[..prefix]).unwrap();
+                let source = buffer.clone();
+                let extension = extension.to_owned();
+                let (send, receive) = mpsc::channel();
+                let decode = std::thread::spawn(move || {
+                    let mut setup = probe_stream(StreamingReader::new(source), Some(&extension))
+                        .unwrap_or_else(|error| panic!("{extension} probe: {error:?}"));
+                    let first = decode_batch(&mut setup, 4096).unwrap();
+                    assert!(!first.is_empty());
+                    send.send((setup, first)).unwrap();
+                });
+                let result = receive.recv_timeout(std::time::Duration::from_secs(2));
+                if result.is_err() {
+                    buffer.abort();
+                }
+                decode.join().unwrap();
+                let (mut setup, mut streamed) =
+                    result.expect("Format preparation waited for the complete download");
+                buffer.push(&data[prefix..]).unwrap();
+                buffer.finish();
+                streamed.extend(decode_all(&mut setup).unwrap());
+                let mut cached = probe_audio(data.to_vec()).unwrap();
+                let expected = decode_all(&mut cached).unwrap();
+                assert_eq!(
+                    streamed.len(),
+                    expected.len(),
+                    "streaming dropped or retained padding"
+                );
+                assert!(streamed.iter().zip(&expected).all(|(a, b)| a == b));
+            }
         }
     }
 

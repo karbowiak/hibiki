@@ -15,6 +15,7 @@ use symphonia::core::io::MediaSource;
 struct Inner {
     file: std::fs::File,
     downloaded_len: u64,
+    prefix: [u8; 4],
     done: bool,
     /// True when the download was aborted due to an error (not a clean finish).
     /// The reader returns `ConnectionAborted` instead of normal EOF so the
@@ -44,6 +45,7 @@ impl SharedBuffer {
             inner: Mutex::new(Inner {
                 file,
                 downloaded_len: 0,
+                prefix: [0; 4],
                 done: false,
                 aborted: false,
                 content_length,
@@ -71,6 +73,10 @@ impl SharedBuffer {
             self.condvar.notify_all();
             return Err(error);
         }
+        let prefix_start = inner.downloaded_len.min(4) as usize;
+        let prefix_count = chunk.len().min(4 - prefix_start);
+        inner.prefix[prefix_start..prefix_start + prefix_count]
+            .copy_from_slice(&chunk[..prefix_count]);
         inner.downloaded_len += chunk.len() as u64;
         self.condvar.notify_all();
         Ok(())
@@ -222,9 +228,17 @@ impl MediaSource for StreamingReader {
 
     fn byte_len(&self) -> Option<u64> {
         let inner = self.buffer.inner.lock().unwrap();
-        inner
-            .content_length
-            .or_else(|| inner.done.then_some(inner.downloaded_len))
+        // Ogg's optional tail probe blocks first playback until the complete
+        // download arrives. MP4 needs its declared extent for box indexing, so
+        // defer only Ogg tail probing. Explicit byte seeks still retain the
+        // announced HTTP size and can wait for the requested data.
+        if inner.done {
+            Some(inner.downloaded_len)
+        } else if &inner.prefix == b"OggS" {
+            None
+        } else {
+            inner.content_length
+        }
     }
 }
 

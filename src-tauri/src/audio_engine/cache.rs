@@ -18,7 +18,9 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 /// Default max cache size: 5 GB.
-const GAIN_ANALYSIS_VERSION: u8 = 1;
+// Opus now applies its header output gain and handles multistream speaker maps.
+// Recompute derived loudness while keeping the encoded media cache intact.
+const GAIN_ANALYSIS_VERSION: u8 = 2;
 const DEFAULT_MAX_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
@@ -387,6 +389,24 @@ mod tests {
         assert_eq!(std::fs::read(file).unwrap(), b"cached audio stays intact");
         restored.set_computed_gain(&key, -6.0);
         assert_eq!(restored.get_computed_gain(&key), Some(-6.0));
+    }
+
+    #[test]
+    fn analysis_from_the_previous_opus_decoder_is_recomputed_but_encoded_bytes_remain() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = AudioCache::new(dir.path().into(), None);
+        let key = cache_key("https://test.invalid/opus.ogg");
+        let mut writer = cache.begin_write(&key, "ogg").unwrap();
+        writer.write_chunk(b"encoded source is preserved").unwrap();
+        writer.finish(&cache).unwrap();
+        cache.set_computed_gain(&key, 6.0);
+        let path = dir.path().join("index.json");
+        let mut saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        saved["entries"][&key]["gain_analysis_version"] = serde_json::json!(1);
+        std::fs::write(path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let restored = AudioCache::new(dir.path().into(), None);
+        assert_eq!(restored.get_computed_gain(&key), None);
+        assert_eq!(std::fs::read(restored.lookup(&key).unwrap()).unwrap(), b"encoded source is preserved");
     }
 
     use super::*;
