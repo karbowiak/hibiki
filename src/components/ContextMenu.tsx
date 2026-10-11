@@ -9,6 +9,7 @@ import { useUIStore } from "../stores/uiStore"
 import { useDebugStore } from "../stores/debugStore"
 import { useDebugPanelStore } from "../stores/debugPanelStore"
 import { useProviderStore } from "../stores/providerStore"
+import { useProviderMutationOwner } from "../hooks/useProviderMutationOwner"
 import { useCapability } from "../hooks/useCapability"
 import { StarRating } from "./shared/StarRating"
 import {
@@ -44,6 +45,7 @@ interface PlaylistSectionProps {
 function PlaylistSection({ itemIds, close, onNewPlaylist }: PlaylistSectionProps) {
   const playlists = useLibraryStore(s => s.playlists).filter(p => !p.smart)
   const provider = useProviderStore(s => s.provider)
+  const captureOwner = useProviderMutationOwner(provider)
   const recentIds = getRecentPlaylistIds()
 
   const recentPlaylists = recentIds
@@ -54,12 +56,16 @@ function PlaylistSection({ itemIds, close, onNewPlaylist }: PlaylistSectionProps
     .filter(p => !recentIds.includes(p.id))
 
   async function addTo(playlist: MusicPlaylist) {
-    if (!provider || useProviderStore.getState().provider !== provider) return
-    try { await provider.addToPlaylist(playlist.id, itemIds) } catch { return }
-    if (useProviderStore.getState().provider !== provider) return
+    const current = captureOwner(), generation = useContextMenuStore.getState().generation
+    if (!provider || !current()) return
+    try { await provider.addToPlaylist(playlist.id, itemIds) } catch {
+      if (current() && useContextMenuStore.getState().generation === generation) useLibraryStore.setState({ error: "Unable to update the playlist. Please try again." })
+      return
+    }
+    if (!current()) return
     recordRecentPlaylist(playlist.id, provider)
     useLibraryStore.getState().invalidatePlaylistItems(playlist.id)
-    close()
+    if (useContextMenuStore.getState().open && useContextMenuStore.getState().generation === generation) close()
   }
 
   return (
@@ -164,10 +170,11 @@ function InlineDeleteConfirm({ title, onConfirm, onCancel }: {
 // ---------------------------------------------------------------------------
 
 export function ContextMenu() {
-  const { open: isOpen, x, y, type, data, playlistId: ctxPlaylistId, close } = useContextMenuStore()
+  const { open: isOpen, x, y, type, data, playlistId: ctxPlaylistId, ownerProvider, generation, close } = useContextMenuStore()
   const debugEnabled = useDebugStore(s => s.debugEnabled)
   const showDebugPanel = useDebugPanelStore(s => s.show)
   const provider = useProviderStore(s => s.provider)
+  const captureOwner = useProviderMutationOwner(provider)
   const hasRadio = useCapability("radio")
   const hasRatings = useCapability("ratings")
   const { playTrack, playFromUri, playRadio, addNext, addToQueue } = usePlayerStore(useShallow(s => ({
@@ -193,7 +200,7 @@ export function ContextMenu() {
       setRenaming(false)
       setConfirming(false)
     }
-  }, [isOpen])
+  }, [isOpen, generation])
 
   // Close on Escape
   useEffect(() => {
@@ -216,9 +223,12 @@ export function ContextMenu() {
     const left = Math.max(8, Math.min(x, window.innerWidth - rect.width - 8))
     const top = Math.max(8, Math.min(y, window.innerHeight - rect.height - 8))
     setMenuPos({ left, top })
-  }, [isOpen, x, y, renaming, confirming])
+  }, [isOpen, x, y, renaming, confirming, generation])
 
-  if (!isOpen || !type || !data) return null
+  if (!isOpen || !type || !data || ownerProvider !== provider) return null
+
+  const currentMenu = () => useContextMenuStore.getState().open && useContextMenuStore.getState().generation === generation
+  const failed = (current: () => boolean) => { if (current() && useContextMenuStore.getState().generation === generation) useLibraryStore.setState({ error: "Unable to update the playlist. Please try again." }) }
 
   const playlist = type === "playlist" ? (data as MusicPlaylist) : null
   const track = type === "track" ? (data as MusicTrack) : null
@@ -260,7 +270,8 @@ export function ContextMenu() {
       addNext([track])
       close()
     } else if (album && provider) {
-      void provider.getAlbumTracks(album.id).then(tracks => { addNext(tracks); close() })
+      const current = captureOwner()
+      void provider.getAlbumTracks(album.id).then(tracks => { if (current() && currentMenu()) { addNext(tracks); close() } }).catch(() => failed(() => current() && currentMenu()))
     }
   }
 
@@ -269,10 +280,12 @@ export function ContextMenu() {
       addToQueue([track])
       close()
     } else if (album && provider) {
+      const current = captureOwner()
       void provider.getAlbumTracks(album.id).then(tracks => {
+        if (!current() || !currentMenu()) return
         addToQueue(tracks)
         close()
-      })
+      }).catch(() => failed(() => current() && currentMenu()))
     } else if (artist && provider?.buildItemUri) {
       const uri = provider.buildItemUri(artist.providerKey ?? `/library/metadata/${artist.id}`)
       void playFromUri(uri, true, artist.title, `/artist/${artist.id}`)
@@ -304,9 +317,10 @@ export function ContextMenu() {
 
   function doRemoveFromPlaylist() {
     if (!track || !ctxPlaylistId || !provider || !track.playlistItemId) return
+    const current = captureOwner()
     void provider.removeFromPlaylist(ctxPlaylistId, [track.playlistItemId]).then(() => {
-      useLibraryStore.getState().invalidatePlaylistItems(ctxPlaylistId)
-    })
+      if (current()) useLibraryStore.getState().invalidatePlaylistItems(ctxPlaylistId)
+    }).catch(() => failed(current))
     close()
   }
 
@@ -362,22 +376,25 @@ export function ContextMenu() {
 
     function doRenamePlaylist(newName: string) {
       if (!provider) return
+      const current = captureOwner()
       void provider.editPlaylist(playlist!.id, newName).then(() => {
-        useLibraryStore.getState().renamePlaylist(playlist!.id, newName)
-      })
+        if (current()) useLibraryStore.getState().renamePlaylist(playlist!.id, newName)
+      }).catch(() => failed(current))
       close()
     }
 
     function doDeletePlaylist() {
       if (!provider) return
+      const current = captureOwner()
       void provider.deletePlaylist(playlist!.id).then(() => {
+        if (!current()) return
         useLibraryStore.getState().removePlaylist(playlist!.id)
         // Navigate away if currently viewing this playlist
-        if (window.location.hash.includes(`/playlist/${playlist!.id}`) ||
-            window.location.pathname.includes(`/playlist/${playlist!.id}`)) {
+        if (window.location.hash.slice(1).split("?")[0] === href ||
+            window.location.pathname === href) {
           navigate("/")
         }
-      })
+      }).catch(() => failed(current))
       close()
     }
 
@@ -455,13 +472,15 @@ export function ContextMenu() {
 
         {/* Rating */}
         {hasRatings && <StarRating
+          key={generation}
           itemId={itemId}
+          itemType={type === "album" ? "album" : type === "artist" ? "artist" : "track"}
           userRating={userRating}
           enableLove={type === "track"}
           artist={artistName}
           track={itemTitle}
           size={14}
-          onRated={close}
+          onRated={() => { if (currentMenu()) close() }}
         />}
 
         {/* Remove from playlist — when in a playlist context and track has playlistItemId */}

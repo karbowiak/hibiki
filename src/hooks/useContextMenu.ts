@@ -1,4 +1,5 @@
 import { useCallback } from "react"
+import { useProviderStore } from "../stores/providerStore"
 import { useContextMenuStore, type ContextMenuType } from "../stores/contextMenuStore"
 import type { MusicTrack, MusicAlbum, MusicArtist, MusicPlaylist } from "../types/music"
 
@@ -12,6 +13,7 @@ type ContextMenuData = MusicTrack | MusicAlbum | MusicArtist | MusicPlaylist
  * - `isTarget(id)` — true if this id's row should be highlighted
  */
 export function useContextMenu() {
+  const provider = useProviderStore(s => s.provider)
   const show = useContextMenuStore(s => s.show)
   const open = useContextMenuStore(s => s.open)
   const targetId = useContextMenuStore(s => (s.data as any)?.id ?? null)
@@ -21,9 +23,10 @@ export function useContextMenu() {
       (e: React.MouseEvent) => {
         e.preventDefault()
         e.stopPropagation()
+        if (useProviderStore.getState().provider !== provider) return
         show(e.clientX, e.clientY, type, data, playlistId)
       },
-    [show],
+    [show, provider],
   )
 
   const isTarget = useCallback(

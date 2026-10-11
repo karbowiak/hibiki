@@ -1,12 +1,14 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { lastfmLoveTrack } from "../../metadata/lastfm/api"
 import { useLastfmStore } from "../../metadata/lastfm/authStore"
 import { useLibraryStore } from "../../stores/libraryStore"
 import { useProviderStore } from "../../stores/providerStore"
+import { useProviderMutationOwner } from "../../hooks/useProviderMutationOwner"
 import { useCapability } from "../../hooks/useCapability"
 
 interface StarRatingProps {
   itemId: string
+  itemType?: "track" | "album" | "artist"
   userRating: number | null
   artist: string
   track: string
@@ -15,29 +17,48 @@ interface StarRatingProps {
   onRated?: () => void  // called after rating; ContextMenu uses to close menu
 }
 
-export function StarRating({ itemId, userRating, artist, track, size = 12, enableLove = true, onRated }: StarRatingProps) {
+export function StarRating({ itemId, itemType = "track", userRating, artist, track, size = 12, enableLove = true, onRated }: StarRatingProps) {
   const hasRatings = useCapability("ratings")
-  if (!hasRatings) return null
+  const provider = useProviderStore(s => s.provider)
+  const captureOwner = useProviderMutationOwner(provider)
+  const request = useRef(0)
+  const pending = useRef(false)
+  const [saving, setSaving] = useState(false)
   const loveThreshold = useLastfmStore(s => s.loveThreshold)
   const [local, setLocal] = useState<number | null | undefined>(undefined)
   const [hoverStar, setHoverStar] = useState(0)
   const display = local !== undefined ? local : userRating
   const filled = Math.round((display ?? 0) / 2)
 
+  useEffect(() => { ++request.current; pending.current = false; setSaving(false); setLocal(undefined); setHoverStar(0) }, [provider, itemId, itemType])
+
   const inMenu = !!onRated
 
   function rate(value: number | null) {
+    if (pending.current) return
+    const owned = captureOwner(), sequence = ++request.current
+    const current = () => owned() && sequence === request.current
+    if (!provider || !current()) return
+    pending.current = true
+    setSaving(true)
     setLocal(value)
-    const provider = useProviderStore.getState().provider
-    if (!provider) return
     void provider.rate(itemId, value).then(() => {
-      useLibraryStore.getState().onItemRated(itemId, "track", value)
-    }).catch(() => setLocal(undefined))
-    if (enableLove && artist && track) {
-      void lastfmLoveTrack(artist, track, (value ?? 0) >= loveThreshold).catch(() => {})
-    }
-    onRated?.()
+      if (!current()) return
+      useLibraryStore.getState().onItemRated(itemId, itemType, value)
+      if (enableLove && artist && track) {
+        void lastfmLoveTrack(artist, track, (value ?? 0) >= loveThreshold).catch(() => {})
+      }
+      onRated?.()
+    }).catch(() => {
+      if (!current()) return
+      setLocal(undefined)
+      useLibraryStore.setState({ error: "Unable to save the rating. Please try again." })
+    }).finally(() => {
+      if (sequence === request.current) { pending.current = false; if (owned()) setSaving(false) }
+    })
   }
+
+  if (!hasRatings) return null
 
   // When hovering, show the hovered level; otherwise show the persisted rating
   const visual = hoverStar > 0 ? hoverStar : filled
@@ -45,6 +66,7 @@ export function StarRating({ itemId, userRating, artist, track, size = 12, enabl
   return (
     <div
       className={`flex items-center ${inMenu ? "gap-1 px-3 py-2" : "gap-0.5"}`}
+      aria-busy={saving}
       onClick={e => e.stopPropagation()}
       onMouseLeave={() => setHoverStar(0)}
     >
@@ -52,6 +74,7 @@ export function StarRating({ itemId, userRating, artist, track, size = 12, enabl
       {[1, 2, 3, 4, 5].map(star => (
         <button
           key={star}
+          disabled={saving}
           title={`${inMenu ? "" : "Rate "}${star} star${star > 1 ? "s" : ""}`}
           className={`transition-colors ${
             visual >= star
@@ -72,6 +95,7 @@ export function StarRating({ itemId, userRating, artist, track, size = 12, enabl
       {inMenu && filled > 0 && (
         <button
           title="Clear rating"
+          disabled={saving}
           onClick={e => { e.stopPropagation(); rate(null) }}
           className="ml-1 text-white/25 hover:text-white/60 text-xs"
         >✕</button>

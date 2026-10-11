@@ -22,6 +22,7 @@ import { usePlayerStore } from "../stores/playerStore"
 import { useUIStore } from "../stores/uiStore"
 import { useResizable } from "../hooks/useResizable"
 import { IS_MACOS } from "../lib/platform"
+import { useProviderMutationOwner } from "../hooks/useProviderMutationOwner"
 import { useContextMenu } from "../hooks/useContextMenu"
 import { useCapability } from "../hooks/useCapability"
 import { useProviderStore } from "../stores/providerStore"
@@ -146,13 +147,19 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
   const isArtExpanded = useUIStore(s => s.isArtExpanded)
   const { handler: ctxMenu } = useContextMenu()
   const provider = useProviderStore(s => s.provider)
+  const captureOwner = useProviderMutationOwner(provider)
 
   // Handle media drops (tracks, albums, artists) from the pointer-based drag system
   useEffect(() => {
+    let active = true
+    const current = () => active && useProviderStore.getState().provider === provider
     async function onDrop(e: Event) {
       const { payload, targetPlaylistId } = (e as CustomEvent).detail
-      if (!targetPlaylistId || !provider) return
+      const owned = captureOwner()
+      const currentRequest = () => current() && owned()
+      if (!targetPlaylistId || !provider || !currentRequest()) return
 
+      let accepted = false
       try {
         // Pass IDs directly — Plex resolves album/artist URIs to their tracks server-side.
         // For tracks, add one at a time since the PUT endpoint can silently ignore
@@ -160,19 +167,26 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
         const itemIds: string[] = payload.ids
         if (payload.type === "track" && itemIds.length > 1) {
           for (const id of itemIds) {
+            if (!currentRequest()) return
             await provider.addToPlaylist(targetPlaylistId, [id])
+            accepted = true
           }
         } else if (itemIds.length > 0) {
           await provider.addToPlaylist(targetPlaylistId, itemIds)
+          accepted = true
         }
+        if (!currentRequest()) return
         useLibraryStore.getState().invalidatePlaylistItems(targetPlaylistId)
       } catch (err) {
-        console.error("[SideBar] addToPlaylist failed:", err)
+        if (currentRequest()) {
+          if (accepted) useLibraryStore.getState().invalidatePlaylistItems(targetPlaylistId)
+          useLibraryStore.setState({ error: "Unable to add items to the playlist. Please try again." })
+        }
       }
     }
     window.addEventListener("plexify-media-drop", onDrop)
-    return () => window.removeEventListener("plexify-media-drop", onDrop)
-  }, [provider])
+    return () => { active = false; window.removeEventListener("plexify-media-drop", onDrop) }
+  }, [provider, captureOwner])
 
   const { width, onMouseDown } = useResizable({
     key: "plex-sidebar-width",
