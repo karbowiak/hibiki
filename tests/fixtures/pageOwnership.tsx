@@ -94,7 +94,65 @@ async function unmount() {
   }
 }
 try {
-  if (scenario === "library-provider") {
+  if (scenario.startsWith("collection-")) {
+    const kind = scenario.split("-")[1]!
+    const field = kind === "hubs" ? "hubs" : "recentlyAdded"
+    const timestamp = `_${field}FetchedAt`
+    const action = kind === "hubs" ? "fetchHubs" : "fetchRecentlyAdded"
+    const pending: { owner: any; reply: ReturnType<typeof deferred<void>> }[] =
+      []
+    library.setState({
+      [field]: [],
+      [timestamp]: null,
+      [action]: () => {
+        const reply = deferred<void>()
+        pending.push({ owner: useProviderStore.getState().provider, reply })
+        return reply.promise
+      },
+    } as any)
+    mock.module("../../src/components/Pages/Home", () => ({
+      getMediaInfo: () => null,
+      makeDragPayload: () => null,
+    }))
+    const { HubPage } = await import("../../src/components/Pages/HubPage")
+    const { RecentlyAddedPage } =
+      await import("../../src/components/Pages/RecentlyAddedPage")
+    await act(async () =>
+      root.render(
+        kind === "hubs" ? <HubPage hubId="missing" /> : <RecentlyAddedPage />
+      )
+    )
+    assert.equal(pending.length, 1)
+    assert.ok(document.querySelector('[role="status"]'))
+    const emptyMessage =
+      kind === "hubs" ? "Hub not found" : "Nothing recently added"
+    assert.ok(!document.body.textContent?.includes(emptyMessage))
+    if (scenario.endsWith("provider")) {
+      const second = provider()
+      await act(async () => useProviderStore.getState().setProvider(second))
+      assert.equal(pending.length, 2)
+      assert.equal(pending[1]!.owner, second)
+      await act(async () => pending[0]!.reply.reject(new Error("retired")))
+      assert.ok(document.querySelector('[role="status"]'))
+      assert.ok(!document.querySelector('[role="alert"]'))
+    } else {
+      await act(async () => pending[0]!.reply.resolve())
+      assert.ok(document.querySelector('[role="alert"]'))
+      assert.ok(!document.body.textContent?.includes(emptyMessage))
+      await act(async () =>
+        document
+          .querySelector<HTMLButtonElement>('[role="alert"] button')!
+          .click()
+      )
+      assert.equal(pending.length, 2)
+    }
+    await act(async () => {
+      library.setState({ [timestamp]: 1 } as any)
+      pending[1]!.reply.resolve()
+    })
+    assert.ok(document.body.textContent?.includes(emptyMessage))
+    assert.ok(!document.querySelector('[role="alert"]'))
+  } else if (scenario === "library-provider") {
     const owners: any[] = []
     library.setState({
       playlists: [],

@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test"
 import { resolve } from "node:path"
 for (const scenario of [
+  "collection-hubs-provider",
+  "collection-recent-provider",
+  "collection-hubs-error",
+  "collection-recent-error",
   "library-provider",
   "liked-tracks-provider",
   "liked-artists-provider",
