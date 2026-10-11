@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useLayoutEffect, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 import clsx from "clsx"
 import { ScrollRow } from "../ScrollRow"
@@ -9,8 +9,6 @@ import {
   radiobrowserCountries,
   radiobrowserTags,
   type RadioStation,
-  type RadioCountry,
-  type RadioTag,
 } from "../../lib/radiobrowser"
 
 // ---------------------------------------------------------------------------
@@ -245,6 +243,49 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "genre", label: "By Genre" },
 ]
 
+/** Public lookups are cached only after a response accepted by its active view. */
+function useRadioResource<T>(key: string | null, load: (key: string) => Promise<T>, delay = 0) {
+  const cache = useRef(new Map<string, T>())
+  const loader = useRef(load)
+  const currentKey = useRef(key)
+  loader.current = load
+  currentKey.current = key
+  const [attempt, setAttempt] = useState(0)
+  const [state, setState] = useState<{ key: string | null; status: "loading" | "ready" | "error"; data?: T }>({ key: null, status: "loading" })
+  useLayoutEffect(() => {
+    let active = true
+    const current = () => active && currentKey.current === key
+    if (!key) return () => { active = false }
+    if (cache.current.has(key)) {
+      setState({ key, status: "ready", data: cache.current.get(key) })
+      return () => { active = false }
+    }
+    setState({ key, status: "loading" })
+    const run = async () => {
+      try {
+        const data = await loader.current(key)
+        if (!current()) return
+        cache.current.set(key, data)
+        while (cache.current.size > 32) cache.current.delete(cache.current.keys().next().value!)
+        setState({ key, status: "ready", data })
+      } catch {
+        if (current()) setState({ key, status: "error" })
+      }
+    }
+    const timer = delay ? setTimeout(() => { void run() }, delay) : null
+    if (!delay) void run()
+    return () => { active = false; if (timer !== null) clearTimeout(timer) }
+  }, [key, attempt, delay])
+  return {
+    status: state.key === key ? state.status : cache.current.has(key ?? "") ? "ready" : "loading",
+    data: state.key === key ? state.data : cache.current.get(key ?? ""),
+    retry: () => { if (key) cache.current.delete(key); setAttempt(value => value + 1) },
+  }
+}
+function RadioLoadError({ message, retry }: { message: string; retry: () => void }) {
+  return <div role="alert" className="mb-4 text-sm text-red-400"><p>{message}</p><button onClick={retry} className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white">Try again</button></div>
+}
+
 // ---------------------------------------------------------------------------
 // Main Page
 // ---------------------------------------------------------------------------
@@ -252,99 +293,31 @@ const TABS: { key: Tab; label: string }[] = [
 export function InternetRadioPage() {
   const [tab, setTab] = useState<Tab>("featured")
   const [searchQuery, setSearchQuery] = useState("")
-  const [searchResults, setSearchResults] = useState<RadioStation[]>([])
-  const [isSearching, setIsSearching] = useState(false)
-
-  // Featured data
-  const [topVoted, setTopVoted] = useState<RadioStation[]>([])
-  const [topClicked, setTopClicked] = useState<RadioStation[]>([])
-  const [trending, setTrending] = useState<RadioStation[]>([])
-  const [featuredLoading, setFeaturedLoading] = useState(true)
-
-  // Country data
-  const [countries, setCountries] = useState<RadioCountry[]>([])
   const [selectedCountry, setSelectedCountry] = useState<string | null>(null)
-  const [countryStations, setCountryStations] = useState<RadioStation[]>([])
-  const [countryLoading, setCountryLoading] = useState(false)
-
-  // Genre data
-  const [tags, setTags] = useState<RadioTag[]>([])
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
-  const [tagStations, setTagStations] = useState<RadioStation[]>([])
-  const [tagLoading, setTagLoading] = useState(false)
+  const showSearch = searchQuery.trim().length > 0
+  const search = useRadioResource(showSearch ? searchQuery.trim() : null, name => radiobrowserSearch({ name, limit: 30 }), 400)
+  const featured = useRadioResource(!showSearch && tab === "featured" ? "featured" : null, () => Promise.all([
+    radiobrowserTopStations("topvote", 15), radiobrowserTopStations("topclick", 15), radiobrowserTopStations("lastclick", 15),
+  ]))
+  const countryIndex = useRadioResource(!showSearch && tab === "country" ? "countries" : null, () => radiobrowserCountries())
+  const tagIndex = useRadioResource(!showSearch && tab === "genre" ? "tags" : null, () => radiobrowserTags(100))
+  const country = useRadioResource(!showSearch && tab === "country" ? selectedCountry : null, name => radiobrowserSearch({ country: name, limit: 50, order: "votes" }))
+  const genre = useRadioResource(!showSearch && tab === "genre" ? selectedTag : null, tag => radiobrowserSearch({ tag, limit: 50, order: "votes" }))
+  const searchResults = search.data ?? []
+  const isSearching = search.status === "loading"
+  const [topVoted, topClicked, trending] = featured.data ?? [[], [], []]
+  const featuredLoading = featured.status === "loading"
+  const countries = countryIndex.data ?? []
+  const tags = tagIndex.data ?? []
+  const countryStations = country.data ?? []
+  const tagStations = genre.data ?? []
+  const countryLoading = country.status === "loading"
+  const tagLoading = genre.status === "loading"
 
   const { favorites, recentStations, clearRecent } = useRadioStreamStore(
     useShallow(s => ({ favorites: s.favorites, recentStations: s.recentStations, clearRecent: s.clearRecent }))
   )
-
-  // Fetch featured data on mount
-  useEffect(() => {
-    let cancelled = false
-    setFeaturedLoading(true)
-    Promise.all([
-      radiobrowserTopStations("topvote", 15),
-      radiobrowserTopStations("topclick", 15),
-      radiobrowserTopStations("lastclick", 15),
-    ]).then(([voted, clicked, trend]) => {
-      if (cancelled) return
-      setTopVoted(voted)
-      setTopClicked(clicked)
-      setTrending(trend)
-      setFeaturedLoading(false)
-    }).catch(() => setFeaturedLoading(false))
-    return () => { cancelled = true }
-  }, [])
-
-  // Debounced search
-  useEffect(() => {
-    if (!searchQuery.trim()) {
-      setSearchResults([])
-      setIsSearching(false)
-      return
-    }
-    setIsSearching(true)
-    const timer = setTimeout(() => {
-      radiobrowserSearch({ name: searchQuery.trim(), limit: 30 })
-        .then(setSearchResults)
-        .catch(() => setSearchResults([]))
-        .finally(() => setIsSearching(false))
-    }, 400)
-    return () => clearTimeout(timer)
-  }, [searchQuery])
-
-  // Fetch countries on tab switch
-  useEffect(() => {
-    if (tab !== "country" || countries.length > 0) return
-    radiobrowserCountries().then(setCountries).catch(() => {})
-  }, [tab])
-
-  // Fetch tags on tab switch
-  useEffect(() => {
-    if (tab !== "genre" || tags.length > 0) return
-    radiobrowserTags(100).then(setTags).catch(() => {})
-  }, [tab])
-
-  // Fetch stations for selected country
-  useEffect(() => {
-    if (!selectedCountry) return
-    setCountryLoading(true)
-    radiobrowserSearch({ country: selectedCountry, limit: 50, order: "votes" })
-      .then(setCountryStations)
-      .catch(() => setCountryStations([]))
-      .finally(() => setCountryLoading(false))
-  }, [selectedCountry])
-
-  // Fetch stations for selected tag
-  useEffect(() => {
-    if (!selectedTag) return
-    setTagLoading(true)
-    radiobrowserSearch({ tag: selectedTag, limit: 50, order: "votes" })
-      .then(setTagStations)
-      .catch(() => setTagStations([]))
-      .finally(() => setTagLoading(false))
-  }, [selectedTag])
-
-  const showSearch = searchQuery.trim().length > 0
 
   return (
     <div className="p-8">
@@ -374,11 +347,13 @@ export function InternetRadioPage() {
           type="text"
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
+          aria-label="Search radio stations"
           placeholder="Search radio stations..."
           className="w-full rounded-lg bg-white/10 py-2.5 pl-10 pr-4 text-sm text-[color:var(--text-primary)] placeholder-white/40 outline-none focus:bg-white/15 transition-colors"
         />
         {searchQuery && (
           <button
+            aria-label="Clear radio search"
             onClick={() => setSearchQuery("")}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/70"
           >
@@ -395,7 +370,8 @@ export function InternetRadioPage() {
           <h2 className="mb-4 text-lg font-bold text-white">
             {isSearching ? "Searching..." : `Results for "${searchQuery}"`}
           </h2>
-          {!isSearching && searchResults.length === 0 && (
+          {search.status === "error" && <RadioLoadError message="Could not search radio stations." retry={search.retry} />}
+          {!isSearching && search.status !== "error" && searchResults.length === 0 && (
             <p className="text-sm text-white/40">No stations found. Try a different search term.</p>
           )}
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -428,9 +404,11 @@ export function InternetRadioPage() {
           {/* Tab content */}
           {tab === "featured" && (
             <div>
+              {featured.status === "error" ? <RadioLoadError message="Could not load featured stations." retry={featured.retry} /> : <>
               <StationRow title="Top Voted" stations={topVoted} loading={featuredLoading} restoreKey="radio-top-voted" />
               <StationRow title="Most Popular" stations={topClicked} loading={featuredLoading} restoreKey="radio-most-popular" />
               <StationRow title="Trending Now" stations={trending} loading={featuredLoading} restoreKey="radio-trending" />
+              </>}
             </div>
           )}
 
@@ -486,7 +464,7 @@ export function InternetRadioPage() {
               {selectedCountry ? (
                 <>
                   <button
-                    onClick={() => { setSelectedCountry(null); setCountryStations([]) }}
+                    onClick={() => { setSelectedCountry(null) }}
                     className="mb-4 flex items-center gap-1.5 text-sm text-white/50 hover:text-white transition-colors"
                   >
                     <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
@@ -501,13 +479,13 @@ export function InternetRadioPage() {
                         <div key={i} className="h-20 animate-pulse rounded-lg bg-app-surface/50" />
                       ))}
                     </div>
-                  ) : (
+                  ) : country.status === "error" ? <RadioLoadError message="Could not load stations for this country." retry={country.retry} /> : countryStations.length === 0 ? <p className="text-sm text-white/40">No stations found for this country.</p> : (
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
                       {countryStations.map(s => <StationCard key={s.uuid} station={s} />)}
                     </div>
                   )}
                 </>
-              ) : (
+              ) : countryIndex.status === "loading" ? <p role="status" className="text-sm text-white/40">Loading countries…</p> : countryIndex.status === "error" ? <RadioLoadError message="Could not load countries." retry={countryIndex.retry} /> : countries.length === 0 ? <p className="text-sm text-white/40">No countries available.</p> : (
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
                   {countries.slice(0, 60).map(c => (
                     <button
@@ -532,7 +510,7 @@ export function InternetRadioPage() {
               {selectedTag ? (
                 <>
                   <button
-                    onClick={() => { setSelectedTag(null); setTagStations([]) }}
+                    onClick={() => { setSelectedTag(null) }}
                     className="mb-4 flex items-center gap-1.5 text-sm text-white/50 hover:text-white transition-colors"
                   >
                     <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
@@ -547,13 +525,13 @@ export function InternetRadioPage() {
                         <div key={i} className="h-20 animate-pulse rounded-lg bg-app-surface/50" />
                       ))}
                     </div>
-                  ) : (
+                  ) : genre.status === "error" ? <RadioLoadError message="Could not load stations for this genre." retry={genre.retry} /> : tagStations.length === 0 ? <p className="text-sm text-white/40">No stations found for this genre.</p> : (
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
                       {tagStations.map(s => <StationCard key={s.uuid} station={s} />)}
                     </div>
                   )}
                 </>
-              ) : (
+              ) : tagIndex.status === "loading" ? <p role="status" className="text-sm text-white/40">Loading genres…</p> : tagIndex.status === "error" ? <RadioLoadError message="Could not load genres." retry={tagIndex.retry} /> : tags.length === 0 ? <p className="text-sm text-white/40">No genres available.</p> : (
                 <div className="flex flex-wrap gap-2">
                   {tags.map(t => (
                     <button

@@ -1,7 +1,7 @@
 import { ArtworkImage } from "../shared/ArtworkImage"
-import { useEffect, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useLocation } from "wouter"
-import { usePlayerStore } from "../../stores/playerStore"
+import { capturePlaybackSelectionVersion, usePlayerStore } from "../../stores/playerStore"
 import { useProviderStore } from "../../stores/providerStore"
 import { useCapability } from "../../hooks/useCapability"
 import type { MusicItem } from "../../types/music"
@@ -16,53 +16,88 @@ const PLACEHOLDER_TYPES = new Set(["artist-mix", "album-mix"])
 export function RadioPage({ stationType }: Props) {
   const [, navigate] = useLocation()
   const hasRadio = useCapability("radio")
+  const provider = useProviderStore(s => s.provider)
   const playFromUri = usePlayerStore(s => s.playFromUri)
   const currentTrack = usePlayerStore(s => s.currentTrack)
-  const isPlaying = usePlayerStore(s => s.isPlaying)
 
   const [stationItem, setStationItem] = useState<MusicItem | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
 
-  if (!hasRadio) { navigate("/"); return null }
-
-  const decoded = decodeURIComponent(stationType)
+  const [loadError, setLoadError] = useState(false)
+  const [attempt, setAttempt] = useState(0)
+  const viewRef = useRef<{ active: boolean } | null>(null)
+  // Page decodes the raw route segment once. Provider identifiers are opaque.
+  const decoded = stationType
   const isPlaceholder = PLACEHOLDER_TYPES.has(decoded)
 
   useEffect(() => {
-    if (isPlaceholder) {
-      setLoading(false)
-      return
-    }
-    const provider = useProviderStore.getState().provider
+    if (!hasRadio) navigate("/")
+  }, [hasRadio, navigate])
+
+  useLayoutEffect(() => {
+    const view = { active: true }
+    viewRef.current = view
+    const current = () => view.active && useProviderStore.getState().provider === provider
+    const selection = capturePlaybackSelectionVersion()
+    setStationItem(null)
+    setNotFound(false)
+    setLoadError(false)
+    setLoading(false)
+    if (!hasRadio || isPlaceholder) return () => { view.active = false }
     if (!provider?.getSectionStations) {
-      setLoading(false)
-      return
+      setNotFound(true)
+      return () => { view.active = false }
     }
-    provider.getSectionStations()
-      .then(hubs => {
-        const items = hubs.flatMap(h => h.items)
-        const match = items.find(item => {
-          return (item.guid === `tv.plex://station/${decoded}` ||
-            (item.providerKey && item.providerKey.includes(decoded)))
-        })
-        if (match && provider.buildRadioUri && match.providerKey) {
-          setStationItem(match)
-          void playFromUri(provider.buildRadioUri(match.providerKey))
-        } else {
-          setNotFound(true)
+    setLoading(true)
+    void (async () => {
+      try {
+        const hubs = await provider.getSectionStations!()
+        if (!current()) return
+        const match = hubs.flatMap(hub => hub.items).find(item =>
+          item.guid === `tv.plex://station/${decoded}` || (item.providerKey && item.providerKey.includes(decoded)))
+        const uri = match?.providerKey ? provider.buildRadioUri?.(match.providerKey) : null
+        if (!match || !uri) { setNotFound(true); return }
+        setStationItem(match)
+        // Explicit playback elsewhere supersedes this pending route autoplay.
+        if (capturePlaybackSelectionVersion() === selection) {
+          const playback = playFromUri(uri)
+          const acceptedSelection = capturePlaybackSelectionVersion()
+          void playback.catch(() => {
+            if (current() && capturePlaybackSelectionVersion() === acceptedSelection) setLoadError(true)
+          })
         }
-      })
-      .catch(() => setNotFound(true))
-      .finally(() => setLoading(false))
-  }, [decoded])
+      } catch {
+        if (current()) setLoadError(true)
+      } finally {
+        if (current()) setLoading(false)
+      }
+    })()
+    return () => { view.active = false }
+  }, [decoded, provider, hasRadio, isPlaceholder, attempt, playFromUri])
 
   const handlePlay = () => {
-    if (!stationItem?.providerKey) return
-    const provider = useProviderStore.getState().provider
-    if (!provider?.buildRadioUri) return
-    void playFromUri(provider.buildRadioUri(stationItem.providerKey))
+    if (!stationItem?.providerKey || useProviderStore.getState().provider !== provider) return
+    try {
+      const uri = provider?.buildRadioUri?.(stationItem.providerKey)
+      if (!uri) return
+      const view = viewRef.current
+      setLoadError(false)
+      const playback = playFromUri(uri)
+      const acceptedSelection = capturePlaybackSelectionVersion()
+      void playback.catch(() => {
+        if (view?.active && useProviderStore.getState().provider === provider && capturePlaybackSelectionVersion() === acceptedSelection) setLoadError(true)
+      })
+    } catch { setLoadError(true) }
   }
+
+  if (!hasRadio) return null
+  if (loadError) return (
+    <div role="alert" className="p-8 text-sm text-red-400">
+      <p>Could not load this station.</p>
+      <button onClick={() => setAttempt(value => value + 1)} className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white">Try again</button>
+    </div>
+  )
 
   // Placeholder state
   if (isPlaceholder) {
@@ -91,7 +126,7 @@ export function RadioPage({ stationType }: Props) {
   // Loading state
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-24">
+      <div role="status" aria-label="Loading station" className="flex items-center justify-center py-24">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white" />
       </div>
     )
@@ -137,21 +172,10 @@ export function RadioPage({ stationType }: Props) {
         onClick={handlePlay}
         className="mb-12 flex items-center gap-3 rounded-full bg-accent px-8 py-3 text-sm font-bold text-black hover:brightness-110 transition-colors"
       >
-        {isPlaying ? (
-          <>
-            <svg height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M2.7 1a.7.7 0 0 0-.7.7v12.6a.7.7 0 0 0 .7.7h2.6a.7.7 0 0 0 .7-.7V1.7a.7.7 0 0 0-.7-.7H2.7zm8 0a.7.7 0 0 0-.7.7v12.6a.7.7 0 0 0 .7.7h2.6a.7.7 0 0 0 .7-.7V1.7a.7.7 0 0 0-.7-.7h-2.6z" />
-            </svg>
-            Now Playing
-          </>
-        ) : (
-          <>
-            <svg height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M3 1.713a.7.7 0 0 1 1.05-.607l10.89 6.288a.7.7 0 0 1 0 1.212L4.05 14.894A.7.7 0 0 1 3 14.288V1.713z" />
-            </svg>
-            Play Station
-          </>
-        )}
+        <svg height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M3 1.713a.7.7 0 0 1 1.05-.607l10.89 6.288a.7.7 0 0 1 0 1.212L4.05 14.894A.7.7 0 0 1 3 14.288V1.713z" />
+        </svg>
+        Play Station
       </button>
 
       {/* Now playing */}
