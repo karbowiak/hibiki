@@ -8,6 +8,7 @@ use crate::image_fetch::MAX_IMAGE_BYTES;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -23,6 +24,19 @@ pub struct ImageCacheState(pub Arc<ImageCache>);
 pub struct Ticket {
     owner: Arc<()>,
     generation: u64,
+}
+
+impl PartialEq for Ticket {
+    fn eq(&self, other: &Self) -> bool {
+        self.generation == other.generation && Arc::ptr_eq(&self.owner, &other.owner)
+    }
+}
+impl Eq for Ticket {}
+impl Hash for Ticket {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Arc::as_ptr(&self.owner).hash(state);
+        self.generation.hash(state);
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

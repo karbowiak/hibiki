@@ -177,6 +177,16 @@ impl PlexState {
         self.checked_client(context, &current).cloned()
     }
 
+    pub(crate) async fn image_context(&self) -> crate::image_protocol::ImageContext {
+        let client = self.0.lock().await;
+        crate::image_protocol::ImageContext::new(self.1.load(Ordering::SeqCst), client.clone())
+    }
+
+    pub(crate) async fn image_context_is_current(&self, context: &crate::image_protocol::ImageContext) -> bool {
+        let client = self.0.lock().await;
+        context.matches(self.1.load(Ordering::SeqCst), client.as_ref())
+    }
+
     async fn publish(&self, revision: u64, client: PlexClient) -> Result<(), String> {
         let mut current = self.0.lock().await;
         if !self.is_current(revision) {
@@ -2388,6 +2398,24 @@ mod connection_tests {
         client.machine_identifier = "test-server".into();
         client.library_scope = client.cache_scope_for_library(library, None);
         client
+    }
+
+    #[tokio::test]
+    async fn image_snapshots_retire_on_library_changes_and_same_origin_reconnection() {
+        let state = PlexState::new();
+        let revision = state.begin_connection().await;
+        state.publish(revision, scoped_client("https://server.test", "dummy-old", 1)).await.unwrap();
+        let original = state.image_context().await;
+        assert!(state.image_context_is_current(&original).await);
+        state.0.lock().await.as_mut().unwrap().library_scope = "changed-library".into();
+        assert!(!state.image_context_is_current(&original).await);
+        let changed = state.image_context().await;
+        let next = state.begin_connection().await;
+        assert!(!state.image_context_is_current(&changed).await);
+        state.publish(next, scoped_client("https://server.test", "dummy-new", 1)).await.unwrap();
+        assert!(!state.image_context_is_current(&original).await);
+        assert!(state.image_context_is_current(&state.image_context().await).await);
+        assert_eq!(original.client.unwrap().token, "dummy-old");
     }
 
     #[tokio::test]

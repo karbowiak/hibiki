@@ -10,6 +10,7 @@ mod deezer;
 mod genius;
 mod image_cache;
 mod image_fetch;
+mod image_protocol;
 mod itunes;
 mod itunes_throttle;
 mod lastfm;
@@ -51,8 +52,8 @@ use tauri_plugin_window_state::{StateFlags, WindowExt};
 // ---------------------------------------------------------------------------
 
 /// Dedicated Tokio runtime for image fetching — isolated from Tauri's runtime.
-/// Uses up to 8 workers so many concurrent cache-miss images can be fetched
-/// without blocking each other or Tauri's main thread pool.
+/// The request queue separately bounds active resolutions and admission; runtime
+/// worker threads alone do not limit concurrent asynchronous network work.
 static IMGCACHE_RT: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
     let threads = std::thread::available_parallelism()
         .map(|n| n.get().min(8))
@@ -64,6 +65,8 @@ static IMGCACHE_RT: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
         .build()
         .expect("Failed to create image-cache async runtime")
 });
+
+static IMAGE_WORK: Lazy<image_protocol::WorkQueue> = Lazy::new(image_protocol::WorkQueue::default);
 
 /// Attempt metadata fallback — search Deezer/iTunes for an image URL by entity name.
 async fn metadata_fallback_url(
@@ -106,50 +109,70 @@ async fn metadata_fallback_url(
 /// Returns `Some(bytes)` on success, `None` on failure (no image found).
 async fn resolve_image(
     app: &tauri::AppHandle,
-    entity_type: &str,
-    entity_id: &str,
-    src: &str,
-    name: &str,
-    artist: &str,
-    requested_scope: &str,
+    request: &image_protocol::ImageRequest,
+    context: &image_protocol::ImageContext,
     cache: std::sync::Arc<image_cache::ImageCache>,
     ticket: image_cache::Ticket,
 ) -> Option<Vec<u8>> {
-    use tauri::Manager;
-
-    // Need at least a src URL or a name for fallback
-    if src.is_empty() && name.is_empty() {
+    let image_protocol::ImageRequest {
+        kind: entity_type,
+        id: entity_id,
+        src,
+        name,
+        artist,
+        scope: requested_scope,
+    } = request;
+    let state = app.state::<commands::PlexState>();
+    let requires_connection = request.requires_connection(context);
+    if (requires_connection && !state.image_context_is_current(context).await)
+        || !image_fetch::scope_matches(context.client.as_ref(), requested_scope)
+    {
         return None;
     }
-
-    let client = app.state::<commands::PlexState>().0.lock().await.clone();
-    if !image_fetch::scope_matches(client.as_ref(), requested_scope) { return None; }
-    let scope = client.as_ref().map(|client| client.library_scope.as_str()).unwrap_or_default();
-    let cache_key = image_fetch::cache_key(scope, entity_type, entity_id, src, name, artist);
+    let scope = context.cache_scope();
+    let cache_key = request.cache_key(context);
     if let Some(bytes) = image_cache::read(cache.clone(), ticket.clone(), cache_key.clone()).await {
         return Some(bytes);
     }
 
     // Try fetching from src URL
     if !src.is_empty() {
-        if let Some(request) = image_fetch::request(client.as_ref(), src) {
+        if let Some(request) = image_fetch::request(context.client.as_ref(), src) {
             if let Some(bytes) = image_fetch::fetch(request).await {
-                return Some(image_cache::store(cache.clone(), ticket.clone(), cache_key.clone(), bytes).await);
+                if requires_connection && !state.image_context_is_current(context).await {
+                    return None;
+                }
+                return Some(
+                    image_cache::store(cache.clone(), ticket.clone(), cache_key.clone(), bytes)
+                        .await,
+                );
             }
         }
     }
 
     // Metadata fallback: only for entity types with names
-    if !name.is_empty() && matches!(entity_type, "artist" | "album" | "track") {
+    if !state.image_context_is_current(context).await {
+        return None;
+    }
+    if !name.is_empty() && matches!(entity_type.as_str(), "artist" | "album" | "track") {
         if let Some(fallback_url) = metadata_fallback_url(entity_type, name, artist).await {
-            let fb_cache_key = image_fetch::cache_key(scope, entity_type, entity_id, &fallback_url, name, artist);
-            if let Some(bytes) = image_cache::read(cache.clone(), ticket.clone(), fb_cache_key.clone()).await {
+            let fb_cache_key =
+                image_fetch::cache_key(scope, entity_type, entity_id, &fallback_url, name, artist);
+            if let Some(bytes) =
+                image_cache::read(cache.clone(), ticket.clone(), fb_cache_key.clone()).await
+            {
                 return Some(bytes);
             }
             // Fetch fallback URL
             if let Some(request) = image_fetch::request(None, &fallback_url) {
                 if let Some(bytes) = image_fetch::fetch(request).await {
-                    return Some(image_cache::store(cache.clone(), ticket.clone(), fb_cache_key, bytes).await);
+                    if requires_connection && !state.image_context_is_current(context).await {
+                        return None;
+                    }
+                    return Some(
+                        image_cache::store(cache.clone(), ticket.clone(), fb_cache_key, bytes)
+                            .await,
+                    );
                 }
             }
         }
@@ -248,45 +271,43 @@ pub fn run() {
         // image://localhost/{entity_type}/{entity_id}?src=...&name=...&artist=...
         // image://localhost/ext/img?src=...  (one-off external, no fallback)
         .register_asynchronous_uri_scheme_protocol("image", |ctx, request, responder| {
+            let uri = request.uri();
+            let parsed = match image_protocol::ImageRequest::parse(
+                request.method().as_str(), uri.path(), uri.query().unwrap_or(""), request.body().len(),
+            ) {
+                Ok(parsed) => parsed,
+                Err(status) => { responder.respond(image_protocol::error_response(status)); return; }
+            };
+            let Some(admission) = IMAGE_WORK.try_admit() else {
+                responder.respond(image_protocol::error_response(503));
+                return;
+            };
             let app = ctx.app_handle().clone();
             let cache = app.state::<image_cache::ImageCacheState>().0.clone();
+            // Capture before waiting for a worker so Clear retires queued work, too.
             let ticket = cache.ticket();
-            let uri = request.uri();
-            let raw_path = uri.path().trim_start_matches('/').to_string();
-            let query = uri.query().unwrap_or("").to_string();
-
             IMGCACHE_RT.spawn(async move {
-                // Parse query params
-                let params: std::collections::HashMap<String, String> =
-                    url::form_urlencoded::parse(query.as_bytes())
-                        .map(|(k, v)| (k.into_owned(), v.into_owned()))
-                        .collect();
-                let src = params.get("src").cloned().unwrap_or_default();
-                let name = params.get("name").cloned().unwrap_or_default();
-                let artist = params.get("artist").cloned().unwrap_or_default();
-                let scope = params.get("scope").cloned().unwrap_or_default();
-
-                // Parse path → entity_type / entity_id
-                // Paths: "artist/548757", "album/123", "ext/img", etc.
-                let parts: Vec<&str> = raw_path.splitn(2, '/').collect();
-                let entity_type = parts.first().copied().unwrap_or("");
-                let entity_id = if parts.len() > 1 { parts[1] } else { "" };
-
-                // Resolve the image — result is Some(bytes) on success, None on failure.
-                let result = resolve_image(&app, entity_type, entity_id, &src, &name, &artist, &scope, cache, ticket).await;
-
-                responder.respond(match result {
+                let context = app.state::<commands::PlexState>().image_context().await;
+                if !image_fetch::scope_matches(context.client.as_ref(), &parsed.scope) {
+                    responder.respond(image_protocol::error_response(404));
+                    return;
+                }
+                let key = image_protocol::WorkKey::new(&parsed, &context, ticket.clone());
+                let requires_connection = parsed.requires_connection(&context);
+                let request_app = app.clone();
+                let request_context = context.clone();
+                let result = admission.resolve(key, move || async move {
+                    resolve_image(&request_app, &parsed, &request_context, cache, ticket).await
+                }).await;
+                let current = !requires_connection || app.state::<commands::PlexState>().image_context_is_current(&context).await;
+                responder.respond(match result.filter(|_| current) {
                     Some(bytes) => tauri::http::Response::builder()
                         .header("Content-Type", "image/jpeg")
                         .header("Cache-Control", "max-age=604800")
                         .header("Access-Control-Allow-Origin", "*")
-                        .body(bytes)
+                        .body((*bytes).clone())
                         .unwrap(),
-                    None => tauri::http::Response::builder()
-                        .status(if src.is_empty() && name.is_empty() { 400 } else { 404 })
-                        .header("Access-Control-Allow-Origin", "*")
-                        .body(vec![])
-                        .unwrap(),
+                    None => image_protocol::error_response(404),
                 });
             });
         })

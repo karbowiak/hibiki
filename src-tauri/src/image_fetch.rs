@@ -56,7 +56,12 @@ pub fn scope_matches(client: Option<&PlexClient>, requested: &str) -> bool {
 }
 
 pub async fn fetch(request: reqwest::RequestBuilder) -> Option<Vec<u8>> {
-    let mut response = request.send().await.ok()?;
+    // Artwork must not inherit the audio client's long streaming deadline.
+    let mut response = request
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .ok()?;
     if !response.status().is_success()
         || response
             .content_length()
