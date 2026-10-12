@@ -28,6 +28,10 @@ jobs:
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: xvfb-run bun scripts/check-library-layout.ts
+      - name: Check personalized search discovery and keyboard navigation
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run bun run test:search-discovery
       - name: Check notification interactions and layouts
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { resolve } from "node:path"
 for (const scenario of [
+  "discovery",
   "reachability",
   "filters-reset",
   "playback",

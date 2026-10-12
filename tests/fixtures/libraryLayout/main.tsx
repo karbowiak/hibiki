@@ -21,6 +21,7 @@ import { activateMetadataCache } from "../../../src/stores/metadataCache.ts"
 import { useDeezerMetadataStore } from "../../../src/metadata/deezer/store.ts"
 import { useItunesMetadataStore } from "../../../src/metadata/apple/store.ts"
 import { useLastfmMetadataStore } from "../../../src/metadata/lastfm/store.ts"
+import { useSearchStore } from "../../../src/stores/searchStore.ts"
 import "../../../src/styles.css"
 ;(window as any).visualFixtureReady = false
 async function setup() {
@@ -28,6 +29,7 @@ async function setup() {
   const params = new URLSearchParams(location.search)
   const actualPlayer = params.get("player") === "1"
   const notifications = params.get("notifications") === "1"
+  const discovery = params.get("discovery") === "1"
   let callback = 0
   w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} }
   w.__TAURI_INTERNALS__ = {
@@ -147,6 +149,7 @@ async function setup() {
       djModes: true,
       lyrics: true,
       ratings: true,
+      ...(discovery ? { mixTracks: true, stations: true } : {}),
     },
     getArtist: async () => artist,
     getArtistAlbums: async () => albums,
@@ -159,7 +162,8 @@ async function setup() {
     getLikedAlbums: async () => albums,
     getLikedArtists: async () => [artist],
     getPlaylists: async () => playlists,
-    search: async () => [],
+    search: async () =>
+      discovery ? [artist, album, ...tracks.slice(0, 3)] : [],
     getMixTracks: async () => tracks,
     getPlaylistItems: async () => ({ items: tracks, total: tracks.length }),
     buildItemUri: (key: string) => "synthetic://" + key,
@@ -244,6 +248,59 @@ async function setup() {
     })
   }
   setHome(5)
+  if (discovery) {
+    const recentArtists = Array.from({ length: 6 }, (_, index) => ({
+      ...artist,
+      id: `recent-artist-${index}`,
+      title: index === 0 ? artist.title : `Recent artist ${index + 1}`,
+    }))
+    const mixes = playlists.slice(0, 7).map((playlist, index) => ({
+      ...playlist,
+      id: "0", // Real Plex hub mixes deliberately share this placeholder ID.
+      title: `Discovery artist ${index + 1} Mix`,
+      providerKey: `discovery-mix-${index}`,
+    }))
+    const discoveryHubs = [
+      {
+        identifier: "music.recent.played.fixture",
+        title: "Recently Played Music",
+        items: recentArtists,
+      },
+      {
+        identifier: "music.mixes.fixture",
+        title: "Mixes For You",
+        items: mixes,
+      },
+      {
+        identifier: "music.recent.artist.fixture",
+        title: "More by the Midnight Ensemble",
+        items: albums.slice(0, 6),
+      },
+      {
+        identifier: "music.vault.fixture",
+        title: "Haven't played in 11 months",
+        items: [
+          { ...artist, id: "rediscovery-artist", title: "Rediscovery artist" },
+        ],
+      },
+      {
+        identifier: "music.recent.added.fixture",
+        title: "Recently Added",
+        items: albums.slice(8),
+      },
+    ]
+    useLibraryStore.setState({ hubs: discoveryHubs as any })
+    w.fixtureSearch = {
+      query: (query: string) => useSearchStore.getState().search(query),
+      clear: () => useSearchStore.getState().clear(),
+      connected: (connected: boolean) =>
+        useProviderStore.setState({
+          provider: connected ? (provider as any) : null,
+        }),
+      theme: (theme: "dark" | "light") => setTheme(theme),
+    }
+    history.pushState({}, "", "/search")
+  }
   w.setFixtureHome = (
     count: number,
     compact = false,

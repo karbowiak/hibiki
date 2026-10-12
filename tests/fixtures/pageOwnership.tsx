@@ -633,6 +633,7 @@ try {
     assert.equal(calls, 2)
     assert.equal(useSearchStore.getState().query, "New")
   } else if (scenario === "search-errors") {
+    mock.module("../../src/components/Pages/SearchDiscovery", () => ({ SearchDiscovery: () => null }))
     mock.module("../../src/stores/playerStore", () => ({
       usePlayerStore: player,
       prefetchTrackAudio() {},

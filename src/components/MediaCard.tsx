@@ -124,6 +124,7 @@ function MediaCardInner({ title, desc, thumb, thumbFallback, scrollItem, large, 
     return (
       <Link
         href={href}
+        onClick={onClick}
         draggable={false}
         style={scrollStyle}
         onMouseEnter={prefetch}

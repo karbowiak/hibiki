@@ -12,6 +12,7 @@ import { prefetchArtist, prefetchAlbum } from "../../stores/metadataCache"
 import { usePlayerStore } from "../../stores/playerStore"
 import { useContextMenu } from "../../hooks/useContextMenu"
 import { makeDragPayload } from "./Home"
+import { SearchDiscovery } from "./SearchDiscovery"
 import { TrackTable } from "../shared/TrackTable"
 import { useCapability } from "../../hooks/useCapability"
 import type { ColId } from "../../hooks/useColumnPicker"
@@ -195,7 +196,7 @@ export function Search() {
               : error
                 ? "Search could not be completed."
                 : `${total} ${total === 1 ? "result" : "results"} in your library`
-            : "Find artists, albums, tracks, and playlists in your library."}
+            : "Pick up where you left off, or find your next favorite."}
         </p>
       </header>
       {showResults ? (
@@ -372,7 +373,7 @@ export function Search() {
           })}
         </div>
       ) : (
-        <div className="py-8">
+        <div className="space-y-4">
           {historyError && (
             <p role="alert" className="mb-3 text-sm text-red-400">
               {historyError}
@@ -412,10 +413,11 @@ export function Search() {
               </div>
             </>
           ) : (
-            <div className="py-12 text-center text-sm text-[var(--text-muted)]">
+            <div className="text-sm text-[var(--text-muted)]">
               Type something to search your library.
             </div>
           )}
+          <SearchDiscovery />
         </div>
       )}
     </div>

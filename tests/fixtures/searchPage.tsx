@@ -32,11 +32,32 @@ const search = create(() => ({
     search.setState({ query: q, results: [], isSearching: false, error: null })
   },
 }))
+const library = create(() => ({ hubs: [] as any[] }))
+const providers = create(() => ({ provider: null as any }))
+let selection = 0
+const selectedMixes: any[] = []
+mock.module("../../src/stores/libraryStore", () => ({
+  useLibraryStore: library,
+}))
+mock.module("../../src/stores/providerStore", () => ({
+  useProviderStore: providers,
+}))
+mock.module("../../src/hooks/useMixThumbnails", () => ({
+  mixThumbnailKey: (item: any) => item.providerKey,
+  mixTitleToArtistName: (title: string) => title.replace(/ Mix$/, ""),
+  useMixThumbnails: () => ({}),
+}))
+mock.module("../../src/components/Pages/Mix", () => ({
+  selectMix: (item: any) => selectedMixes.push(item),
+  shuffleTracks: (items: any[]) => items,
+}))
 const player = create(() => ({
   currentTrack: null,
   playTrack: async (...args: any[]) => {
     plays.push(args)
   },
+  playFromUri: async () => {},
+  playPlaylist: async () => {},
   addToQueue: (tracks: any[]) => queues.push(tracks),
   playRadio: async (...args: any[]) => {
     radios.push(args)
@@ -46,6 +67,7 @@ let hasRadio = false
 mock.module("../../src/stores/index", () => ({ useSearchStore: search }))
 mock.module("../../src/stores/playerStore", () => ({
   usePlayerStore: player,
+  capturePlaybackSelectionVersion: () => selection,
   prefetchTrackAudio: (track: any) => prefetches.push(["track", track.id]),
 }))
 mock.module("../../src/stores/metadataCache", () => ({
@@ -77,6 +99,20 @@ mock.module("../../src/hooks/useTrackDrag", () => ({
   }),
 }))
 mock.module("../../src/components/Pages/Home", () => ({
+  getMediaInfo: (item: any) => ({
+    title: item.title,
+    desc: item.artistName || item.type,
+    thumb: item.thumbUrl,
+    isArtist: item.type === "artist",
+    href:
+      item.type === "track"
+        ? `/album/${item.albumId}`
+        : `/${item.type}/${item.id}`,
+    id: item.id,
+    itemType: item.type,
+    artistName: item.type === "artist" ? item.title : item.artistName,
+    albumName: item.type === "album" ? item.title : item.albumName,
+  }),
   makeDragPayload: (item: any) => ({
     type: item.type,
     ids: [item.id],
@@ -90,7 +126,14 @@ const { Search } = await import("../../src/components/Pages/Search")
 const { TrackTable } = await import("../../src/components/shared/TrackTable")
 const navigations: string[] = []
 const location = () =>
-  ["/search", (path: string) => navigations.push(path)] as const
+  [
+    "/search",
+    (path: string) => {
+      if (path === "/mix")
+        assert.ok(selectedMixes.length, "mix selected before route")
+      navigations.push(path)
+    },
+  ] as const
 const artist = (index: number) => ({
   type: "artist",
   id: `artist-${index}`,
@@ -303,6 +346,164 @@ try {
         ["artist", "artist-0"],
         ["album", "album-0"],
       ])
+    } else if (scenario === "discovery") {
+      let resolveMix!: (tracks: any[]) => void
+      const provider = {
+        cacheScope: "synthetic-account-a",
+        capabilities: { mixTracks: true, stations: true },
+        search: async () => [],
+        getMixTracks: async () =>
+          new Promise<any[]>((resolve) => {
+            resolveMix = resolve
+          }),
+      }
+      await act(() => {
+        providers.setState({ provider })
+        library.setState({
+          hubs: [
+            {
+              identifier: "music.recent.played.5",
+              title: "Recent",
+              items: [artist(0)],
+            },
+            {
+              identifier: "music.mixes.5",
+              title: "Mixes",
+              items: Array.from({ length: 7 }, (_, i) => ({
+                ...playlist,
+                id: "0",
+                providerKey: `mix-${i}`,
+                title: `Personal ${i} Mix`,
+              })),
+            },
+            {
+              identifier: "music.recent.artist.5",
+              title: "More by Original Artist",
+              items: [album(0)],
+            },
+          ],
+        })
+      })
+      await update({ query: "", results: [] })
+      assert.equal(
+        document.querySelectorAll('[aria-label="Made for you"] a').length,
+        6
+      )
+      assert.ok(
+        document.querySelector('[aria-label="More by Original Artist"]')
+      )
+      const mixLink = document.querySelector<HTMLAnchorElement>(
+        '[aria-label="Made for you"] a'
+      )!
+      mixLink.focus()
+      assert.equal(document.activeElement, mixLink)
+      await act(() =>
+        mixLink.dispatchEvent(
+          new dom.window.MouseEvent("click", {
+            bubbles: true,
+            cancelable: true,
+            detail: 0,
+          })
+        )
+      )
+      assert.equal(selectedMixes[0].providerKey, "mix-0")
+      assert.equal(navigations.at(-1), "/mix")
+      const recent = document.querySelector<HTMLAnchorElement>(
+        '[aria-label="Jump back in"] a'
+      )!
+      assert.equal(recent.getAttribute("href"), "/artist/artist-0")
+      await act(() =>
+        recent.dispatchEvent(
+          new dom.window.MouseEvent("mouseover", { bubbles: true })
+        )
+      )
+      assert.deepEqual(prefetches.at(-1), ["artist", "artist-0"])
+      const play = document.querySelector<HTMLButtonElement>(
+        '[aria-label="Made for you"] button'
+      )!
+      await click(play)
+      await update({ query: "New query" })
+      await act(async () => {
+        resolveMix([track(0)])
+        await settle()
+      })
+      assert.equal(
+        plays.length,
+        0,
+        "query transition retires unresolved mix playback"
+      )
+      await update({ query: "" })
+      await click(
+        document.querySelector<HTMLButtonElement>(
+          '[aria-label="Made for you"] button'
+        )!
+      )
+      await act(async () => {
+        selection++
+        resolveMix([track(0)])
+        await settle()
+      })
+      assert.equal(
+        plays.length,
+        0,
+        "explicit player selection retires mix lookup"
+      )
+      await click(
+        document.querySelector<HTMLButtonElement>(
+          '[aria-label="Made for you"] button'
+        )!
+      )
+      await act(async () => {
+        resolveMix([track(0), track(1)])
+        await settle()
+      })
+      assert.equal(plays.length, 1)
+      assert.equal(plays[0][1].length, 2)
+      const delayedMix = provider.getMixTracks
+      provider.getMixTracks = async () => {
+        throw new Error("private synthetic transport detail")
+      }
+      await click(
+        document.querySelector<HTMLButtonElement>(
+          '[aria-label="Made for you"] button'
+        )!
+      )
+      await act(async () => {
+        await settle()
+      })
+      assert.ok(
+        document
+          .querySelector('[role="alert"]')!
+          .textContent!.includes("Could not play this mix")
+      )
+      assert.ok(!document.body.textContent!.includes("private synthetic"))
+      provider.getMixTracks = delayedMix
+      await click(
+        document.querySelector<HTMLButtonElement>(
+          '[aria-label="Made for you"] button'
+        )!
+      )
+      await act(() => {
+        providers.setState({ provider: null })
+        library.setState({ hubs: [] })
+      })
+      await act(async () => {
+        resolveMix([track(0)])
+        await settle()
+      })
+      assert.equal(
+        plays.length,
+        1,
+        "departed account cannot start mix playback"
+      )
+      assert.equal(document.querySelector('[role="alert"]'), null)
+
+      assert.equal(document.querySelector('[aria-label="Made for you"]'), null)
+      assert.ok(
+        document.body.textContent!.includes("Connect your music library")
+      )
+      assert.ok(document.querySelector('a[href="/library"]'))
+      assert.ok(document.querySelector('a[href="/stations"]'))
     } else if (scenario === "states-history") {
       await update({ results: [], isSearching: true })
       assert.ok(document.querySelector('[role="status"]'))

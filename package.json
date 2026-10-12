@@ -14,6 +14,7 @@
     "test:frontend": "bun test tests",
     "test:unit": "cd src-tauri && cargo test --locked --all-features --bin hibiki -- --skip integration_tests",
     "test:renderer": "bun scripts/check-renderer.ts",
+    "test:search-discovery": "bun scripts/check-search-discovery.ts",
     "test:notifications": "bun scripts/check-notifications.ts"
   },
   "dependencies": {
