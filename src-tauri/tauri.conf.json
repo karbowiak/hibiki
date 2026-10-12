@@ -7,7 +7,8 @@
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "bun run build",
-    "frontendDist": "../dist"
+    "frontendDist": "../dist",
+    "beforeBundleCommand": "bun scripts/prepare-linux-metadata.ts"
   },
   "app": {
     "macOSPrivateApi": true,
@@ -86,7 +87,24 @@
         "installerIcon": "./icons/icon.ico"
       }
     },
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "linux": {
+      "appimage": {
+        "files": {
+          "/usr/share/metainfo/app.hibiki.client.metainfo.xml": "../.tmp/linux-metadata/app.hibiki.client.metainfo.xml"
+        }
+      },
+      "deb": {
+        "files": {
+          "/usr/share/metainfo/app.hibiki.client.metainfo.xml": "../.tmp/linux-metadata/app.hibiki.client.metainfo.xml"
+        }
+      },
+      "rpm": {
+        "files": {
+          "/usr/share/metainfo/app.hibiki.client.metainfo.xml": "../.tmp/linux-metadata/app.hibiki.client.metainfo.xml"
+        }
+      }
+    }
   },
   "plugins": {
     "updater": {

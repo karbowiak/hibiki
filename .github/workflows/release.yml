@@ -131,7 +131,9 @@ jobs:
             libssl-dev \
             pkg-config \
             cmake \
-            desktop-file-utils
+            desktop-file-utils \
+            appstream \
+            zsync
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -177,6 +179,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          LDAI_UPDATE_INFORMATION: ${{ runner.os == 'Linux' && 'gh-releases-zsync|karbowiak|hibiki|latest|Hibiki_*_amd64.AppImage.zsync' || '' }}
           PI_KEY: ${{ secrets.PI_KEY }}
           PI_SECRET: ${{ secrets.PI_SECRET }}
         with:
@@ -188,7 +191,20 @@ jobs:
 
       - name: Validate relocated AppImage metadata
         if: runner.os == 'Linux'
-        run: python3 scripts/check-appimage.py src-tauri/target/release/bundle/appimage/*.AppImage
+        run: python3 scripts/check-appimage.py --prepare-zsync src-tauri/target/release/bundle/appimage/*.AppImage
+
+      - name: Upload verified AppImageUpdate companion
+        if: runner.os == 'Linux'
+        uses: actions/github-script@v9
+        env:
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+          RELEASE_TAG: ${{ needs.create-release.outputs.tag }}
+        with:
+          script: |
+            const { uploadCompanion } = require('./scripts/appimage-release.cjs')
+            const tag = process.env.RELEASE_TAG
+            const image = `src-tauri/target/release/bundle/appimage/Hibiki_${tag.slice(1)}_amd64.AppImage`
+            await uploadCompanion(github, context.repo, Number(process.env.RELEASE_ID), tag, image)
 
   publish-release:
     runs-on: ubuntu-latest
@@ -216,6 +232,24 @@ jobs:
             const count = await assertArtifacts(github, context.repo, process.env.RELEASE_TAG,
               Number(process.env.RELEASE_ID), config.plugins.updater.pubkey)
             core.info(`Verified all updater platforms and ${count} signed installer artifacts.`)
+
+      - name: Install AppImage metadata validators
+        run: sudo apt-get update && sudo apt-get install -y appstream desktop-file-utils zsync
+
+      - name: Download the signed AppImage and update companion
+        uses: actions/github-script@v9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+          RELEASE_TAG: ${{ needs.create-release.outputs.tag }}
+        with:
+          script: |
+            const { downloadUpdateArtifacts } = require('./scripts/appimage-release.cjs')
+            await downloadUpdateArtifacts(github, context.repo, Number(process.env.RELEASE_ID),
+              process.env.RELEASE_TAG, '.tmp/appimage-release-check')
+
+      - name: Require published-byte AppStream and AppImageUpdate integrity
+        run: python3 scripts/check-appimage.py .tmp/appimage-release-check/*.AppImage
 
       - name: Publish release
         uses: actions/github-script@v9

@@ -1,3 +1,5 @@
+# Hibiki
+
 <p align="center">
   <img src="src-tauri/icons/128x128@2x.png" alt="Hibiki icon" width="128" />
   <br />
@@ -124,7 +126,7 @@ Grab the latest release for your platform from the [Releases page](https://githu
 | **Windows** | `.exe` (NSIS installer) | Run the installer and follow the prompts |
 | **macOS (Apple Silicon)** | `.dmg` (aarch64) | Drag Hibiki into Applications |
 | **macOS (Intel)** | `.dmg` (x86_64) | Drag Hibiki into Applications |
-| **Linux** | `.AppImage` / `.deb` | See below |
+| **Linux** | `.AppImage` / `.deb` / `.rpm` | See below |
 
 ### macOS — Security Warning
 
@@ -277,14 +279,18 @@ On Linux, install browser system dependencies with `playwright install --with-de
 
 Production CSP blocks inline and remote scripts, frames, objects, injected base URLs, and form submissions. MilkDrop's bundled preset compiler requires `unsafe-eval`; inline styles support the current dynamic UI styling. HTTP(S) artwork and streams and WS(S) Plex notifications remain supported, and Circular fonts use the existing `encore.scdn.co` origin. Development CSP additionally permits the Vite React refresh preamble; the WebSocket rules also support local hot reload. Tauri's automatic script nonce/hash handling remains enabled.
 
-On Linux, CI builds an unsigned debug AppImage and validates its extracted metadata. Release builds run the same check before publishing:
+On Linux, CI builds a debug AppImage and validates its relocated desktop entry, icons, AppStream metadata, embedded update channel, and `.zsync` companion. Release builds validate the same properties again from the uploaded draft assets before publication:
 
 ```bash
-# Requires python3 and desktop-file-utils; extraction does not need FUSE.
-python3 scripts/check-appimage.py src-tauri/target/release/bundle/appimage/*.AppImage
+# Requires appstream, desktop-file-utils and zsync from your distribution.
+python3 scripts/check-appimage.py --prepare-zsync src-tauri/target/release/bundle/appimage/*.AppImage
 ```
 
-Tauri CLI 2.12.1 includes the upstream fix for the absolute `.DirIcon` and desktop-file symlinks reported by the [AppImage catalog](https://github.com/AppImage/appimage.github.io/pull/7937#issuecomment-5898500737). The check extracts each image into a new temporary directory and rejects missing icons or links to the build machine. After a fixed release is available, the catalog PR needs a `/retest` comment.
+The Linux before-bundle hook generates `app.hibiki.client.metainfo.xml` with the package version, source commit date, MIT license, `Hibiki.desktop` launchable and repository screenshots. Tauri includes it in AppImage, DEB and RPM packages. `appstreamcli validate --no-net` is mandatory for AppImages.
+
+AppImage bundling embeds `gh-releases-zsync|karbowiak|hibiki|latest|Hibiki_*_amd64.AppImage.zsync` before Tauri signs the installer. The companion is generated from the final installer without changing its bytes, uploaded with it, and checked against the complete SHA-1 and every rolling/MD4 block checksum. AppImageUpdate's delta-update metadata supplements the application's cryptographically verified Tauri updater; it does not replace updater signatures.
+
+Tauri CLI 2.12.1 also fixes the absolute icon and desktop symlinks reported by the [AppImage catalogue](https://github.com/AppImage/appimage.github.io/pull/7937). The catalogue entry is merged; the new metadata and update companions become available there after a future release includes these packaging changes.
 
 Release tags must point to a commit with successful CI from a push to `main`. If CI is still running, wait for it to pass and retry the release workflow with the existing tag. Packaging uses that exact commit, and a changed tag or newer failed CI run blocks publication. Existing drafts can be resumed; published versions cannot be rebuilt, even when a stale draft shares their tag.
 

@@ -81,7 +81,9 @@ jobs:
             libssl-dev \
             pkg-config \
             cmake \
-            desktop-file-utils
+            desktop-file-utils \
+            appstream \
+            zsync
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -121,10 +123,11 @@ jobs:
       - name: Build Linux AppImage
         if: runner.os == 'Linux'
         env:
+          LDAI_UPDATE_INFORMATION: gh-releases-zsync|karbowiak|hibiki|latest|Hibiki_*_amd64.AppImage.zsync
           PI_KEY: ${{ secrets.PI_KEY }}
           PI_SECRET: ${{ secrets.PI_SECRET }}
         run: bun run tauri build --debug --bundles appimage --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Validate relocated AppImage metadata
         if: runner.os == 'Linux'
-        run: python3 scripts/check-appimage.py src-tauri/target/debug/bundle/appimage/*.AppImage
+        run: python3 scripts/check-appimage.py --prepare-zsync src-tauri/target/debug/bundle/appimage/*.AppImage
