@@ -117,7 +117,8 @@ export function useArtistArtwork(
   artistName: string | null,
   plexThumb: string | null,
   artistId?: string | null,
-  failedUrls: readonly string[] = []
+  failedUrls: readonly string[] = [],
+  allowFetch = true
 ): ArtworkResolution {
   const { priority, preference, scope, revise } = useArtworkOrder(
     "artist",
@@ -143,6 +144,7 @@ export function useArtistArtwork(
   // Gate on hydration to avoid firing fetches before IndexedDB data loads.
   useEffect(() => {
     if (
+      !allowFetch ||
       !deezerHydrated ||
       !artistName ||
       deezerEntry !== undefined ||
@@ -151,6 +153,7 @@ export function useArtistArtwork(
       return
     void getDeezerArtist(artistName)
   }, [
+    allowFetch,
     priority,
     plexThumb,
     deezerHydrated,
@@ -228,7 +231,8 @@ export function useAlbumArtwork(
   albumName: string | null,
   plexThumb: string | null,
   albumId?: string | null,
-  failedUrls: readonly string[] = []
+  failedUrls: readonly string[] = [],
+  allowFetch = true
 ): ArtworkResolution {
   const { priority, preference, scope, revise } = useArtworkOrder(
     "album",
@@ -308,7 +312,7 @@ export function useAlbumArtwork(
   // Gate on hydration to avoid firing fetches before IndexedDB data loads.
   // An available lower-priority image must not prevent an upgrade.
   useEffect(() => {
-    if (!artistName || !albumName) return
+    if (!allowFetch || !artistName || !albumName) return
     if (
       deezerHydrated &&
       (deezerEntry === undefined || deezerInvalid) &&
@@ -325,6 +329,7 @@ export function useAlbumArtwork(
     )
       void getItunesAlbum(artistName, albumName)
   }, [
+    allowFetch,
     priority,
     artistName,
     albumName,
