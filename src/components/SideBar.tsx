@@ -101,11 +101,12 @@ function SortablePlaylistItem({ playlist, location, playPlaylist, ctxMenu, justD
     >
       <Link
         href={href}
+        aria-current={location === href ? "page" : undefined}
         onClick={e => { if (justDragged.current) { e.preventDefault(); e.stopPropagation() } }}
         onContextMenu={ctxMenu("playlist", playlist)}
         className={clsx(
-          "group flex cursor-default items-center gap-3 rounded-md px-1 py-[5px] no-underline hover:bg-accent-tint hover:no-underline transition-all duration-200",
-          location !== href ? "text-[color:var(--text-secondary)]" : "text-[color:var(--text-primary)]",
+          "group flex cursor-default items-center gap-3 rounded-md px-1 py-[5px] no-underline hover:bg-accent-tint hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent transition-colors duration-200",
+          location !== href ? "text-[color:var(--text-secondary)]" : "bg-accent-tint-strong text-[color:var(--text-primary)]",
           isHovered && isDropTarget && "ring-2 ring-accent/60 bg-accent/10",
           dropFlash === "success" && "ring-2 ring-green-500/60 bg-green-500/10",
           dropFlash === "error" && "ring-2 ring-red-500/60 bg-red-500/10",
@@ -122,7 +123,7 @@ function SortablePlaylistItem({ playlist, location, playPlaylist, ctxMenu, justD
               void playPlaylist(playlist.id, playlist.trackCount, playlist.title, href)
             }}
             title={`Play ${playlist.title}`}
-            className="absolute inset-0 flex items-center justify-center bg-overlay-medium opacity-0 group-hover:opacity-100 transition-opacity"
+            className="absolute inset-0 flex items-center justify-center border-0 bg-overlay-medium opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent transition-opacity"
           >
             <svg viewBox="0 0 16 16" width="16" height="16" fill="white">
               <polygon points="3,2 13,8 3,14" />
@@ -256,10 +257,10 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
             : location === i.href
           return (
             <li key={`${i.href}-${index}`}>
-              <div className="flex items-center">
+              <div className={clsx("flex items-center rounded", isActive && "bg-accent-tint-strong")}>
                 <Link
                   href={i.href}
-                  aria-current={isActive ? "page" : undefined}
+                  aria-current={location === i.href ? "page" : undefined}
                   onClick={() => {
                     if (i.href === "/library" && !libraryExpanded) {
                       setLibraryExpanded(true)
@@ -267,25 +268,28 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
                     }
                   }}
                   className={clsx(
-                    "flex h-10 flex-1 cursor-pointer items-center gap-4 rounded no-underline transition-colors duration-300 hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:bg-accent-tint hover:no-underline",
+                    "flex h-10 min-w-0 flex-1 cursor-pointer items-center gap-4 rounded no-underline transition-colors duration-200 hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:bg-accent-tint hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
                     !isActive
                       ? "fill-[var(--text-secondary)] text-[var(--text-secondary)]"
-                      : "fill-accent text-accent border-l-[3px] border-accent -ml-[3px]"
+                      : "fill-accent text-accent"
                   )}
                 >
-                  <svg height="24" width="24" viewBox="0 0 24 24">
+                  <svg height="24" width="24" viewBox="0 0 24 24" className="shrink-0">
                     {!isActive ? i.icon : i.iconActive}
                   </svg>
-                  <span>{i.title}</span>
+                  <span className="truncate">{i.title}</span>
                 </Link>
                 {i.href === "/library" && (
                   <button
+                    aria-label={libraryExpanded ? "Collapse library" : "Expand library"}
+                    aria-expanded={libraryExpanded}
+                    aria-controls="sidebar-library-links"
                     onClick={() => setLibraryExpanded(prev => {
                       const next = !prev
                       try { localStorage.setItem(LIBRARY_EXPANDED_KEY, String(next)) } catch {}
                       return next
                     })}
-                    className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-accent-tint transition-colors"
+                    className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded border-0 bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-accent-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent transition-colors"
                   >
                     <svg
                       width="16" height="16" viewBox="0 0 16 16" fill="currentColor"
@@ -297,15 +301,16 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
                 )}
               </div>
               {i.href === "/library" && libraryExpanded && (
-                <ul className="ml-8 mt-0.5 mb-0.5 space-y-0.5 text-sm font-normal">
+                <ul id="sidebar-library-links" className="ml-8 mt-0.5 mb-0.5 space-y-0.5 text-sm font-normal">
                   {librarySubLinks.map(sub => (
                     <li key={sub.href}>
                       <Link
                         href={sub.href}
+                        aria-current={location === sub.href ? "page" : undefined}
                         className={clsx(
-                          "flex h-8 items-center rounded px-2 no-underline transition-colors duration-200 hover:bg-accent-tint hover:text-[var(--text-primary)] hover:no-underline",
+                          "flex h-8 items-center rounded px-2 no-underline transition-colors duration-200 hover:bg-accent-tint hover:text-[var(--text-primary)] hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
                           location === sub.href
-                            ? "text-accent"
+                            ? "bg-accent-tint-strong text-accent"
                             : "text-[var(--text-secondary)]"
                         )}
                       >
@@ -323,7 +328,7 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
       <div className="flex-shrink-0 pb-1 pt-8 text-sm font-semibold">
         <button
           onClick={onCreatePlaylist}
-          className="flex h-10 w-full cursor-pointer items-center gap-4 rounded fill-[var(--text-secondary)] text-[var(--text-secondary)] transition-colors duration-300 hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:bg-accent-tint"
+          className="group flex h-10 w-full cursor-pointer items-center gap-4 rounded border-0 bg-transparent fill-[var(--text-secondary)] text-[var(--text-secondary)] transition-colors duration-200 hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:bg-accent-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
         >
           <span className="flex h-6 w-6 items-center justify-center rounded-sm bg-accent/20 text-accent group-hover:bg-accent/40 transition-colors">
             <svg viewBox="0 0 16 16" width="12" height="12" xmlns="http://www.w3.org/2000/svg">

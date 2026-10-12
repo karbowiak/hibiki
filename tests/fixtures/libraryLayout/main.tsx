@@ -1,6 +1,15 @@
 import React from "react"
 import { createRoot } from "react-dom/client"
 import { Page } from "../../../src/components/Page.tsx"
+import { useAccentStore } from "../../../src/stores/accentStore.ts"
+import { useUIStore } from "../../../src/stores/uiStore.ts"
+import { Player } from "../../../src/components/Player.tsx"
+import { engine } from "../../../src/audio/RustAudioEngine.ts"
+import { useEqStore } from "../../../src/stores/eqStore.ts"
+import { useAudioSettingsStore } from "../../../src/stores/audioSettingsStore.ts"
+import { useDeviceStore } from "../../../src/stores/deviceStore.ts"
+import { useCompactStore } from "../../../src/stores/compactStore.ts"
+import { setTheme } from "../../../src/stores/themeStore.ts"
 import { SideBar } from "../../../src/components/SideBar.tsx"
 import { useLibraryStore } from "../../../src/stores/libraryStore.ts"
 import { useProviderStore } from "../../../src/stores/providerStore.ts"
@@ -14,9 +23,20 @@ import "../../../src/styles.css"
 ;(window as any).visualFixtureReady = false
 async function setup() {
   const w = window as any
+  const params = new URLSearchParams(location.search)
+  const actualPlayer = params.get("player") === "1"
+  let callback = 0
+  w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} }
   w.__TAURI_INTERNALS__ = {
+    metadata: {
+      currentWindow: { label: "main" },
+      currentWebview: { label: "main" },
+    },
+    transformCallback: () => ++callback,
+    unregisterCallback: () => {},
     invoke: async (command: string) => {
-      if (command === "plugin:app|version") return "0.5.1"
+      if (command === "plugin:app|version") return "0.5.3"
+      if (command === "plugin:window|is_minimized") return false
       if (command === "audio_get_waveform") return []
       if (command === "get_image_cache_info")
         return { files: 0, bytes: 0, max_files: 4096, max_bytes: 536870912 }
@@ -121,6 +141,8 @@ async function setup() {
       tags: true,
       playlists: true,
       playlistCreate: true,
+      djModes: true,
+      lyrics: true,
       ratings: true,
     },
     getArtist: async () => artist,
@@ -135,6 +157,8 @@ async function setup() {
     getLikedArtists: async () => [artist],
     getPlaylists: async () => playlists,
     search: async () => [],
+    getMixTracks: async () => tracks,
+    getPlaylistItems: async () => ({ items: tracks, total: tracks.length }),
     buildItemUri: (key: string) => "synthetic://" + key,
     disconnect: async () => {},
   }
@@ -148,13 +172,39 @@ async function setup() {
     likedArtists: [artist],
     _playlistsFetchedAt: Date.now(),
   })
+  const noop = () => {}
+  engine.setVisualizerEnabled = noop
+  useEqStore.setState({ syncToEngine: noop })
+  useAudioSettingsStore.setState({ syncToEngine: async () => {} })
+  useDeviceStore.setState({ initDeviceTracking: noop, dispose: noop })
   usePlayerStore.setState({
     playTrack: async () => {},
     playFromUri: async () => {},
     playPlaylist: async () => {},
     playRadio: async () => {},
     addToQueue: () => {},
-    currentTrack: null,
+    currentTrack: actualPlayer ? tracks[0] : null,
+    queue: tracks,
+    isPlaying: false,
+    isInternetRadioActive: false,
+    volume: 0,
+    positionMs: 42000,
+    contextName:
+      "A very long synthetic playlist context used to check footer alignment",
+    contextHref: "/playlist/fixture-playlist-0",
+    lyricsLines: [{ time: 0, text: "Synthetic lyric" }],
+    waveformLevels: Array.from({ length: 120 }, () => 0.3),
+    initAudioEvents: async () => noop,
+    pause: noop,
+    resume: noop,
+    next: noop,
+    prev: noop,
+    stop: noop,
+    seekTo: noop,
+    setVolume: noop,
+    toggleMute: noop,
+    toggleShuffle: noop,
+    cycleRepeat: noop,
   })
   useMetadataSourceStore.setState({ priority: ["plex"] })
   for (const store of [
@@ -167,6 +217,49 @@ async function setup() {
       getAlbum: async () => null,
       _hasHydrated: true,
     })
+  const setHome = (count: number) => {
+    const mixes = playlists.slice(0, count).map((playlist, index) => ({
+      ...playlist,
+      id: `fixture-mix-${index}`,
+      title: `Fixture artist ${index + 1} Mix`,
+      providerKey: `synthetic-mix-${index}`,
+    }))
+    useLibraryStore.setState({
+      recentlyAdded: albums.slice(0, 8),
+      hubs: [
+        {
+          identifier: "music.mixes.fixture",
+          title: "Mixes for You",
+          items: mixes,
+        },
+        {
+          identifier: "music.fixture.recommended",
+          title: "Recommended for Your Library",
+          items: albums.slice(0, 8),
+        },
+      ],
+    })
+  }
+  setHome(5)
+  w.setFixtureHome = (
+    count: number,
+    compact = false,
+    theme = "dark",
+    activeModes = false,
+    expandedArt = false
+  ) => {
+    setHome(count)
+    useAccentStore.getState().setAccent("#d4a574")
+    useUIStore.setState({ isArtExpanded: expandedArt })
+    usePlayerStore.setState({
+      djMode: activeModes ? "anno" : null,
+      isRadioMode: activeModes,
+    })
+    useCompactStore.getState().setCompact(compact)
+    setTheme(theme as "dark" | "light")
+    history.pushState({}, "", "/")
+    dispatchEvent(new PopStateEvent("popstate"))
+  }
   document.getElementById("root")!.style.display = "none"
   const host = document.createElement("div")
   host.id = "layout-fixture"
@@ -189,18 +282,20 @@ async function setup() {
           React.createElement(Page)
         )
       ),
-      React.createElement(
-        "div",
-        {
-          style: {
-            height: "88px",
-            background: "#161616",
-            flexShrink: 0,
-            padding: "20px",
-          },
-        },
-        "Synthetic player area — playback disabled"
-      )
+      actualPlayer
+        ? React.createElement(Player)
+        : React.createElement(
+            "div",
+            {
+              style: {
+                height: "88px",
+                background: "#161616",
+                flexShrink: 0,
+                padding: "20px",
+              },
+            },
+            "Synthetic player area — playback disabled"
+          )
     )
   )
   ;(window as any).setFixtureSidebarWidth = (width: number) => {
@@ -209,6 +304,11 @@ async function setup() {
     )
     if (!sidebar) throw new Error("Fixture sidebar missing")
     sidebar.style.width = `${width}px`
+    window.dispatchEvent(
+      new CustomEvent("resizable-change", {
+        detail: { key: "plex-sidebar-width", width },
+      })
+    )
   }
   ;(window as any).visualFixtureReady = true
 }

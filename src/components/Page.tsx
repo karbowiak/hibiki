@@ -69,6 +69,7 @@ export function Page() {
 
   const bgClass = bg[baseLoc as keyof typeof bg] || bg["home"]
   const hasPadding = !NO_PADDING_ROUTES.has(baseLoc)
+  const isHome = baseLoc === "" || baseLoc === "index.html"
 
   // Restore scroll before the browser paints (no flash at position 0).
   // The content is already committed to the DOM when useLayoutEffect runs,
@@ -91,7 +92,10 @@ export function Page() {
         className={clsx(
           "flex-1 overflow-auto border-[var(--border)] transition-colors scrollbar scrollbar-track-transparent scrollbar-thumb-[var(--scrollbar-thumb)] scrollbar-track-rounded-lg scrollbar-w-3 hover:scrollbar-thumb-[var(--scrollbar-thumb-hover)]"
         )}
-        style={hasPadding ? { padding: "var(--spacing-topbar)" } : undefined}
+        style={hasPadding ? {
+          paddingInline: "var(--spacing-topbar)",
+          paddingBlock: isHome ? "calc(var(--spacing-topbar) * 0.75)" : "var(--spacing-topbar)",
+        } : undefined}
       >
         <Route path="/" key="home">
           <Home />

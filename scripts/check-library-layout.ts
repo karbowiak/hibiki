@@ -17,6 +17,7 @@ const routes = [
   "/artist/fixture-artist",
   "/album/fixture-album",
 ]
+const allGeometryFailures: string[] = []
 const originalPlatform = process.env.TAURI_ENV_PLATFORM
 process.env.TAURI_ENV_PLATFORM = "darwin"
 let server: ReturnType<typeof Bun.serve> | undefined
@@ -78,11 +79,13 @@ try {
       await page.waitForFunction(
         () => (window as any).visualFixtureReady === true
       )
-      for (const [width, sidebar] of [
-        [1440, 240],
-        [800, 240],
-        [800, 320],
-      ] as const) {
+      for (const [width, sidebar] of process.env.HIBIKI_LAYOUT_SCOPE === "home"
+        ? []
+        : ([
+            [1440, 240],
+            [800, 240],
+            [800, 320],
+          ] as const)) {
         await page.setViewportSize({ width, height: width === 800 ? 600 : 900 })
         await page.evaluate(
           (value) => (window as any).setFixtureSidebarWidth(value),
@@ -228,14 +231,307 @@ try {
           }
         }
       }
+      const geometryFailures: string[] = []
+      await page.goto(
+        `${origin}/tests/fixtures/libraryLayout/index.html?player=1`
+      )
+      await page.waitForFunction(
+        () => (window as any).visualFixtureReady === true
+      )
+      for (const scenario of [
+        { width: 1920, count: 5, compact: false, theme: "dark" },
+        { width: 1920, count: 6, compact: false, theme: "dark" },
+        { width: 1920, count: 5, compact: true, theme: "dark" },
+        {
+          width: 1920,
+          count: 6,
+          compact: false,
+          theme: "dark",
+          activeModes: true,
+        },
+        {
+          width: 1920,
+          count: 5,
+          compact: false,
+          theme: "dark",
+          expandedArt: true,
+        },
+        { width: 1440, count: 5, compact: false, theme: "dark" },
+        {
+          width: 1440,
+          count: 6,
+          compact: false,
+          theme: "dark",
+          activeModes: true,
+        },
+        { width: 1321, count: 5, compact: false, theme: "dark" },
+        {
+          width: 1321,
+          count: 6,
+          compact: false,
+          theme: "dark",
+          activeModes: true,
+        },
+        { width: 1100, count: 5, compact: false, theme: "dark" },
+        {
+          width: 1100,
+          count: 5,
+          compact: false,
+          theme: "dark",
+          activeModes: true,
+        },
+        { width: 800, count: 5, compact: false, theme: "dark" },
+        {
+          width: 800,
+          count: 6,
+          compact: true,
+          theme: "light",
+          activeModes: true,
+        },
+        {
+          width: 800,
+          count: 5,
+          compact: true,
+          theme: "light",
+          activeModes: true,
+          expandedArt: true,
+        },
+      ]) {
+        const slug = `home-player-${scenario.width}-${scenario.count}-${scenario.compact ? "compact" : "normal"}-${scenario.theme}-${scenario.activeModes ? "active-modes" : "plain"}-${scenario.expandedArt ? "expanded" : "small-art"}`
+        await page.setViewportSize({
+          width: scenario.width,
+          height: scenario.width === 800 ? 650 : 1080,
+        })
+        await page.evaluate(
+          ({ count, compact, theme, activeModes, expandedArt }) => {
+            ;(window as any).setFixtureSidebarWidth(240)
+            ;(window as any).setFixtureHome(
+              count,
+              compact,
+              theme,
+              activeModes,
+              expandedArt
+            )
+          },
+          scenario
+        )
+        await page.waitForFunction(
+          () =>
+            document.querySelector(
+              '#layout-fixture main a[href="/stations"]'
+            ) !== null
+        )
+        await page.waitForTimeout(300)
+        const metrics = await page.evaluate(() => {
+          const host = document.querySelector<HTMLElement>("#layout-fixture")!
+          const main = host.querySelector<HTMLElement>("main")!
+          const scroller = main.querySelector<HTMLElement>(".overflow-auto")!
+          const title = main.querySelector<HTMLElement>('a[href="/stations"]')!
+          const row =
+            title.closest("h2")?.parentElement?.parentElement ??
+            title.parentElement!.parentElement!
+          const cards = [
+            ...row.querySelectorAll<HTMLElement>(".cursor-pointer"),
+          ].filter((element) => element.querySelector("img"))
+          const footer = host.querySelector<HTMLElement>(".player-body")!
+          const bounds = (element: Element) => {
+            const rect = element.getBoundingClientRect()
+            return {
+              left: rect.left,
+              right: rect.right,
+              top: rect.top,
+              bottom: rect.bottom,
+              width: rect.width,
+              height: rect.height,
+              centerY: (rect.top + rect.bottom) / 2,
+            }
+          }
+          const track = footer.querySelector<HTMLElement>(".player-track")!
+          const groups = [
+            track,
+            footer.querySelector<HTMLElement>(".player-center-content")!,
+            footer.querySelector<HTMLElement>(".player-tools")!,
+          ].map(bounds)
+          const buttons = [
+            ...footer.querySelectorAll<HTMLElement>(
+              'button,input[type="range"],[role="slider"]'
+            ),
+          ].filter((element) => {
+            const rect = element.getBoundingClientRect()
+            if (
+              !rect.width ||
+              !rect.height ||
+              getComputedStyle(element).visibility === "hidden"
+            )
+              return false
+            let parent: HTMLElement | null = element
+            while (parent && parent !== footer) {
+              // A transparent seek input is an intentional click target.
+              if (
+                Number(getComputedStyle(parent).opacity) < 0.99 &&
+                parent.tagName !== "INPUT"
+              )
+                return false
+              parent = parent.parentElement
+            }
+            return true
+          })
+          const overlaps: string[] = []
+          for (let i = 0; i < buttons.length; i++) {
+            for (let j = i + 1; j < buttons.length; j++) {
+              const a = buttons[i],
+                b = buttons[j]
+              if (a.contains(b) || b.contains(a)) continue
+              const ar = a.getBoundingClientRect(),
+                br = b.getBoundingClientRect()
+              if (
+                Math.min(ar.right, br.right) - Math.max(ar.left, br.left) > 1 &&
+                Math.min(ar.bottom, br.bottom) - Math.max(ar.top, br.top) > 1
+              )
+                overlaps.push(
+                  `${a.getAttribute("aria-label") ?? a.getAttribute("title") ?? a.tagName} / ${b.getAttribute("aria-label") ?? b.getAttribute("title") ?? b.tagName}`
+                )
+            }
+          }
+          const nav = host.querySelector<HTMLElement>(
+            'nav[aria-label="Main navigation"]'
+          )!
+          const active = nav.querySelector<HTMLElement>(
+            'a[aria-current="page"]'
+          )!
+          return {
+            mixCount: cards.length,
+            mixLeft: bounds(cards[0]).left,
+            titleLeft: bounds(title).left,
+            mainOverflow: scroller.scrollWidth - scroller.clientWidth,
+            documentOverflow: document.documentElement.scrollWidth - innerWidth,
+            footer: bounds(footer),
+            groups,
+            overlaps,
+            blockedTargets: buttons
+              .filter((button) => {
+                const r = button.getBoundingClientRect()
+                const hit = document.elementFromPoint(
+                  r.left + r.width / 2,
+                  r.top + r.height / 2
+                )
+                return !hit || !button.contains(hit)
+              })
+              .map(
+                (button) =>
+                  button.getAttribute("aria-label") ??
+                  button.getAttribute("title") ??
+                  button.tagName
+              ),
+            offscreenTargets: buttons
+              .filter((button) => {
+                const r = bounds(button)
+                return (
+                  r.left < 0 ||
+                  r.right > innerWidth + 1 ||
+                  r.top < bounds(footer).top - 1 ||
+                  r.bottom > innerHeight + 1
+                )
+              })
+              .map(
+                (button) =>
+                  button.getAttribute("aria-label") ??
+                  button.getAttribute("title") ??
+                  button.tagName
+              ),
+            trackOverflow: track.scrollWidth - track.clientWidth,
+            labels: [...track.querySelectorAll("h6,p")].map(bounds),
+            activeHref: active?.getAttribute("href"),
+            active: active ? bounds(active) : null,
+            nav: bounds(nav),
+          }
+        })
+        // Save the actual failing view as well as passing views for useful diagnosis.
+        await page.screenshot({
+          path: join(artifactDir, `${name}-${slug}.png`),
+        })
+        console.log(`${name}/${slug}: ${JSON.stringify(metrics)}`)
+        try {
+          assert.equal(
+            metrics.mixCount,
+            scenario.count,
+            `${name}/${slug}: missing mix cards`
+          )
+          assert.ok(
+            Math.abs(metrics.mixLeft - metrics.titleLeft) <= 1,
+            `${name}/${slug}: short mixes centered away from title (${metrics.mixLeft - metrics.titleLeft}px)`
+          )
+          assert.ok(
+            metrics.mainOverflow <= 1 && metrics.documentOverflow <= 1,
+            `${name}/${slug}: horizontal overflow`
+          )
+          if (scenario.width >= 1400) {
+            for (const group of metrics.groups) {
+              assert.ok(
+                Math.abs(group.centerY - metrics.footer.centerY) <= 2,
+                `${name}/${slug}: complete player group not vertically centered (${group.centerY - metrics.footer.centerY}px)`
+              )
+            }
+          }
+          assert.deepEqual(
+            metrics.overlaps,
+            [],
+            `${name}/${slug}: overlapping player click targets`
+          )
+          assert.deepEqual(
+            metrics.blockedTargets,
+            [],
+            `${name}/${slug}: player controls covered or not hit-testable`
+          )
+          assert.deepEqual(
+            metrics.offscreenTargets,
+            [],
+            `${name}/${slug}: clipped player click targets`
+          )
+          assert.ok(
+            metrics.trackOverflow <= 1,
+            `${name}/${slug}: long player information escapes its group`
+          )
+          assert.ok(
+            metrics.labels.every(
+              (label) =>
+                label.width >= 60 &&
+                label.left >= metrics.groups[0].left - 1 &&
+                label.right <= metrics.groups[0].right + 1
+            ),
+            `${name}/${slug}: collapsed or escaping long labels`
+          )
+          assert.equal(
+            metrics.activeHref,
+            "/",
+            `${name}/${slug}: Home navigation not active`
+          )
+          assert.ok(
+            metrics.active &&
+              metrics.active.left >= metrics.nav.left &&
+              metrics.active.right <= metrics.nav.right + 1,
+            `${name}/${slug}: active sidebar item escapes navigation`
+          )
+        } catch (error) {
+          if (process.env.HIBIKI_LAYOUT_REPORT !== "1") throw error
+          geometryFailures.push(String(error))
+        }
+      }
+      console.log(
+        `${name}: geometry failures ${JSON.stringify(geometryFailures)}`
+      )
+      allGeometryFailures.push(...geometryFailures)
+      if (process.env.HIBIKI_LAYOUT_REPORT !== "1")
+        assert.deepEqual(geometryFailures, [], `${name}: geometry failures`)
       assert.deepEqual(errors, [], `${name}: page errors`)
       console.log(
-        `${name}: four real library routes fit desktop/800px and wider sidebar; focused Play controls visible`
+        `${name}: library routes/focus and real Home/Player geometry checked`
       )
     } finally {
       await browser.close()
     }
   }
+  assert.deepEqual(allGeometryFailures, [], "Home/Player geometry failures")
 } finally {
   if (originalPlatform === undefined) delete process.env.TAURI_ENV_PLATFORM
   else process.env.TAURI_ENV_PLATFORM = originalPlatform

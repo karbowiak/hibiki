@@ -164,7 +164,7 @@ function RadioPlayerBar() {
             </div>
 
             {/* Center: play/pause + LIVE indicator */}
-            <div className="flex w-[40%] max-w-[45.125rem] flex-col items-center px-4 pt-2">
+            <div className="flex w-[40%] max-w-[45.125rem] flex-col items-center px-4">
               <div className="flex items-center gap-x-3">
                 {/* Play/Pause */}
                 <button
@@ -519,10 +519,10 @@ export function Player() {
 
   return (
     <div className="relative z-20 border-t border-[var(--border)] bg-app-card">
-      {/* Expanded album art — fixed to bottom-left corner, overlaps sidebar area */}
+      {/* Expanded album art sits above the player, within the sidebar area. */}
       {isArtExpanded && thumbUrl && (
         <div
-          className="group/expanded fixed bottom-0 left-0 z-30"
+          className="group/expanded absolute bottom-full left-0 z-30"
           style={{ width: sidebarWidth, height: sidebarWidth }}
         >
           <Link
@@ -579,18 +579,15 @@ export function Player() {
             {/* Left: current track info */}
             <div
               className="player-track group/left min-w-[11.25rem] transition-all duration-300"
-              style={isArtExpanded && thumbUrl
-                ? { width: `calc(30% + ${sidebarWidth - 80}px)`, paddingLeft: sidebarWidth }
-                : { width: "30%" }
-              }
+              style={{ width: "30%" }}
               onContextMenu={currentTrack ? ctxMenu("track", currentTrack) : undefined}
               onPointerDown={currentTrack ? (e: React.PointerEvent) => trackDrag.onPointerDown(e, { type: "track", ids: [currentTrack.id], label: currentTrack.title, tracks: [currentTrack] }) : undefined}
               onPointerMove={currentTrack ? trackDrag.onPointerMove : undefined}
               onPointerUp={currentTrack ? trackDrag.onPointerUp : undefined}
             >
-              <div className="flex items-center">
-                <div className="mr-3 flex items-center">
-                  <div className={`group/art relative mr-3 h-14 w-14 flex-shrink-0 ${isArtExpanded && thumbUrl ? "hidden" : ""}`}>
+              <div className="flex min-w-0 items-center">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className={`group/art relative h-14 w-14 flex-shrink-0 ${isArtExpanded && thumbUrl ? "hidden" : ""}`}>
                     {/* Album art — click navigates to album */}
                     <Link
                       href={albumId ? `/album/${albumId}` : "#"}
@@ -627,7 +624,7 @@ export function Player() {
                       </div>
                     )}
                   </div>
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <h6 className="line-clamp-1 text-sm font-medium text-white">
                       {albumId ? (
                         <Link href={`/album/${albumId}`} className="hover:underline">
@@ -679,7 +676,7 @@ export function Player() {
                             const rect = threeDotRef.current?.getBoundingClientRect()
                             if (rect) showContextMenu(rect.left, rect.bottom + 4, "track", currentTrack)
                           }}
-                          className="flex-shrink-0 flex h-5 w-5 items-center justify-center rounded text-white/30 hover:text-white/70 transition-colors opacity-0 group-hover/left:opacity-100"
+                          className="flex-shrink-0 flex h-5 w-5 items-center justify-center rounded text-white/30 hover:text-white/70 transition-colors opacity-0 group-hover/left:opacity-100 group-focus-within/left:opacity-100"
                           title="More options"
                         >
                           <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
@@ -695,7 +692,7 @@ export function Player() {
 
             {/* Center: controls + progress — absolutely centered, never shifts */}
             <div className="player-center absolute inset-x-0 top-0 flex h-full items-center justify-center z-10 pointer-events-none px-4">
-            <div className="player-center-content flex w-[40%] max-w-[45.125rem] flex-col items-center pt-2">
+            <div className="player-center-content flex w-[38%] max-w-[45.125rem] flex-col items-center">
               <div className="grid grid-cols-[1fr_auto_1fr] items-center w-full" role="group" aria-label="Playback controls">
                 {/* Left wing: radio, shuffle */}
                 <div className="flex items-center justify-end gap-x-1.5">
@@ -860,7 +857,7 @@ export function Player() {
             </div>
 
             {/* Right: DJ, lyrics, sleep, visualization, queue and volume */}
-            <div className="player-tools flex w-[30%] min-w-[11.25rem] items-center justify-end gap-1" role="group" aria-label="Player tools">
+            <div className="player-tools flex w-[30%] min-w-[11.25rem] flex-wrap items-center justify-end gap-1" role="group" aria-label="Player tools">
               <div className="player-tools-buttons flex flex-shrink-0 items-center gap-1">
                 {/* Guest DJ — icon only when inactive, icon+name pill when active */}
                 {hasDjModes && <PlayerPopover

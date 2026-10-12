@@ -706,8 +706,8 @@ body {
 }
 
 .player-tools {
-  /* Align tools with the transport row and keep them clear of the seek target. */
-  margin-bottom: 28px;
+  /* Keep each tool section together; wrap volume below it when space is tight. */
+  align-content: center;
 }
 
 /* Give tools their own row when they would crowd the centered transport. */

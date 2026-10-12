@@ -81,7 +81,7 @@ function MediaCardInner({ title, desc, thumb, thumbFallback, scrollItem, large, 
 
   const cardContent = (
     <>
-      <div className="relative mb-3">
+      <div className="relative mb-2">
         {displayThumb ? (
           <ArtworkImage
             onFailure={onImageFailure}

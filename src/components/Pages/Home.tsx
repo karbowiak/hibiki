@@ -221,10 +221,10 @@ export function Home() {
   }
 
   return (
-    <div className="space-y-8 pb-8">
+    <div className="space-y-6 pb-4">
       {playError && <p role="alert" className="text-sm text-red-400">Could not play these items. Please try again.</p>}
       {mixesItems.length > 0 && (
-        <ScrollRow title={mixesTitle} titleHref="/stations" restoreKey="home-mixes" centerItems>
+        <ScrollRow title={mixesTitle} titleHref="/stations" restoreKey="home-mixes">
           {mixesItems.map((item, idx) => {
             if (item.type !== "playlist") return null
             const thumb = mixThumbs[mixThumbnailKey(item)] ?? item.thumbUrl
