@@ -181,7 +181,13 @@ try {
       ScrollRow: ({ children }: any) => <div>{children}</div>,
     }))
     const { Library } = await import("../../src/components/Pages/Library")
-    await act(async () => root.render(<Library />))
+    await act(async () =>
+      root.render(
+        <Router hook={() => ["/library", () => {}]}>
+          <Library />
+        </Router>
+      )
+    )
     assert.equal(owners.length, 3)
     const second = provider()
     await act(async () => useProviderStore.getState().setProvider(second))
@@ -669,6 +675,90 @@ try {
     await runTimers()
     assert.equal(calls, 2)
     assert.equal(useSearchStore.getState().query, "New")
+    await act(() => useSearchStore.getState().clear())
+    await act(() =>
+      window.dispatchEvent(new dom.window.Event("plexify:search-focus"))
+    )
+    const searchInput = document.querySelector<HTMLInputElement>("input")!
+    assert.equal(document.activeElement, searchInput)
+    assert.equal(searchInput.getAttribute("aria-expanded"), "true")
+    assert.ok(
+      document.querySelector('[role="group"][aria-label="Quick actions"]')
+    )
+    await act(() =>
+      searchInput.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "ArrowDown",
+          bubbles: true,
+          cancelable: true,
+        })
+      )
+    )
+    const selectedId = searchInput.getAttribute("aria-activedescendant")!
+    assert.ok(
+      document.getElementById(selectedId)?.getAttribute("aria-selected") ===
+        "true"
+    )
+    await act(() =>
+      searchInput.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        })
+      )
+    )
+    assert.equal(navigation.at(-1), "/library")
+    assert.equal(
+      calls,
+      2,
+      "opening and choosing quick actions does not run a library search"
+    )
+    await act(() =>
+      window.dispatchEvent(new dom.window.Event("plexify:search-focus"))
+    )
+    await act(() =>
+      searchInput.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "ArrowDown",
+          bubbles: true,
+          cancelable: true,
+        })
+      )
+    )
+    assert.ok(searchInput.getAttribute("aria-activedescendant"))
+    await act(() =>
+      library.setState({
+        hubs: [
+          {
+            identifier: "music.recent.played.5",
+            items: [
+              {
+                type: "artist",
+                id: "cached",
+                title: "Cached Artist",
+                thumbUrl: "image://synthetic/cached",
+              },
+            ],
+          },
+        ],
+      } as any)
+    )
+    assert.equal(
+      searchInput.getAttribute("aria-activedescendant"),
+      null,
+      "new cached suggestions retire the old keyboard selection"
+    )
+    await act(() =>
+      useProviderStore
+        .getState()
+        .setProvider({ capabilities: {}, search: async () => [] } as any)
+    )
+    assert.equal(
+      searchInput.getAttribute("aria-expanded"),
+      "false",
+      "account changes retire the old suggestion panel"
+    )
   } else if (scenario === "search-errors") {
     mock.module("../../src/components/Pages/SearchDiscovery", () => ({
       SearchDiscovery: () => null,

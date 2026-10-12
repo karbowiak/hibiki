@@ -79,49 +79,31 @@ function MediaCardInner({ title, desc, thumb, thumbFallback, scrollItem, large, 
     onPointerUp: trackDrag.onPointerUp,
   } : undefined
 
+  const initials = title.trim().split(/\s+/).slice(0, 2).map(word => Array.from(word)[0] ?? "").join("").toLocaleUpperCase()
   const cardContent = (
     <>
-      <div className="relative mb-2">
+      <div className="media-card__art aspect-square">
         {displayThumb ? (
-          <ArtworkImage
-            onFailure={onImageFailure}
-            src={displayThumb}
-            alt={title}
-            draggable={false}
-            loading="lazy"
-            className="aspect-square w-full rounded-lg object-cover"
-          />
+          <ArtworkImage onFailure={onImageFailure} src={displayThumb} alt={title} draggable={false} loading="lazy" className="media-card__image" />
         ) : (
-          <div
-            className="aspect-square w-full rounded-lg bg-app-surface"
-          />
-        )}
-        {onPlay && (
-          <div className="absolute inset-0 flex items-end justify-end p-2 pointer-events-none opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 focus-within:opacity-100 focus-within:translate-y-0 transition-all duration-200">
-            <button
-              onClick={e => { e.preventDefault(); e.stopPropagation(); onPlay(e) }}
-              aria-label={`Play ${title}`}
-              type="button"
-              className="pointer-events-auto relative z-20 flex h-10 w-10 items-center justify-center rounded-full bg-accent text-black shadow-lg hover:scale-105 hover:brightness-110 active:scale-95 focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none transition-all"
-            >
-              <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-                <polygon points="3,2 13,8 3,14" />
-              </svg>
-            </button>
-          </div>
+          <div className="media-card__fallback" aria-hidden="true"><span>{initials}</span></div>
         )}
       </div>
-      <div className="truncate text-sm font-semibold text-[var(--text-primary)]">{title}</div>
-      <div className="mt-1 truncate text-xs text-[var(--text-secondary)]">{desc}</div>
+      <div className="media-card__gradient" aria-hidden="true" />
+      <div className={clsx("media-card__caption", onPlay && "media-card__caption--play")}>
+        <div className="media-card__title" title={title}>{title}</div>
+        <div className="media-card__meta" title={desc}>{desc}</div>
+      </div>
+      {onPlay && (
+        <button type="button" onClick={e => { e.preventDefault(); e.stopPropagation(); onPlay(e) }} aria-label={`Play ${title}`} className="media-card__play">
+          <svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><polygon points="3,2 13,8 3,14" /></svg>
+        </button>
+      )}
     </>
   )
 
-  const cardClass = clsx(
-    "group relative cursor-pointer rounded-md bg-app-card p-3 transition-colors hover:bg-hl-card",
-    scrollItem && "flex-shrink-0"
-  )
-
-  const primaryClass = "absolute inset-0 z-10 rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+  const cardClass = clsx("media-card group", scrollItem && "flex-shrink-0")
+  const primaryClass = "media-card__primary"
   return (
     <div
       style={scrollStyle}

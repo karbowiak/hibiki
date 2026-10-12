@@ -125,7 +125,7 @@ try {
             getComputedStyle(tile).color ===
               (light ? "rgb(13, 13, 13)" : "rgb(255, 255, 255)") &&
             getComputedStyle(card).backgroundColor ===
-              (light ? "rgb(255, 255, 255)" : "rgb(24, 24, 24)")
+              (light ? "rgb(228, 228, 228)" : "rgb(40, 40, 40)")
           )
         }, theme === "light")
         await page.screenshot({

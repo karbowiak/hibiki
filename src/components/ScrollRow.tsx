@@ -26,9 +26,23 @@ export function ScrollRow({ title, titleHref, children, restoreKey, onPlayAll, o
 
     const ro = new ResizeObserver(check)
     ro.observe(el)
+    // Appearance changes resize cards without necessarily resizing the rail.
+    // Retire removed targets so repeated provider/metadata updates stay bounded.
+    const observedCards = new Set<Element>()
+    const observeCards = () => {
+      const cards = new Set(Array.from(el.children))
+      for (const card of observedCards) {
+        if (!cards.has(card)) { ro.unobserve(card); observedCards.delete(card) }
+      }
+      for (const card of cards) {
+        if (!observedCards.has(card)) { ro.observe(card); observedCards.add(card) }
+      }
+      check()
+    }
+    observeCards()
 
     // Re-check when children are added/removed (e.g. lazy-loaded stations)
-    const mo = new MutationObserver(check)
+    const mo = new MutationObserver(observeCards)
     mo.observe(el, { childList: true, subtree: true })
 
     return () => { ro.disconnect(); mo.disconnect() }
@@ -41,29 +55,30 @@ export function ScrollRow({ title, titleHref, children, restoreKey, onPlayAll, o
   const showButtons = expanded || overflows
 
   return (
-    <div>
-      <div className="mb-3 flex items-center gap-2">
+    <section className="media-row">
+      <div className="media-row__header">
         {titleHref ? (
-          <h2 className="min-w-0 text-xl font-bold">
+          <h2 className="media-row__heading">
             <Link
               href={titleHref}
-              className="hover:underline decoration-white/40 underline-offset-4 flex items-center gap-2 group"
+              className="media-row__title-link group"
             >
               <span className="truncate">{title}</span>
               <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"
-                   className="text-white/30 group-hover:text-white/60 transition-colors flex-shrink-0">
+                   aria-hidden="true" className="media-row__title-arrow">
                 <path d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06z"/>
               </svg>
             </Link>
           </h2>
         ) : (
-          <h2 className="min-w-0 truncate text-xl font-bold">{title}</h2>
+          <h2 className="media-row__heading truncate">{title}</h2>
         )}
         {onPlayAll && (
           <button
             onClick={onPlayAll}
             aria-label="Play all"
-            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-accent/20 text-accent/70 transition-all hover:bg-accent/30 hover:text-accent active:scale-95"
+            type="button"
+            className="media-row__button media-row__button--action"
           >
             <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
               <path d="M8 5v14l11-7z"/>
@@ -74,7 +89,8 @@ export function ScrollRow({ title, titleHref, children, restoreKey, onPlayAll, o
           <button
             onClick={onShuffleAll}
             aria-label="Shuffle all"
-            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-accent/20 text-accent/70 transition-all hover:bg-accent/30 hover:text-accent active:scale-95"
+            type="button"
+            className="media-row__button media-row__button--action"
           >
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="16 3 21 3 21 8"/>
@@ -85,13 +101,14 @@ export function ScrollRow({ title, titleHref, children, restoreKey, onPlayAll, o
             </svg>
           </button>
         )}
-        <div className="grow" />
+        <div className="media-row__rule" aria-hidden="true" />
         {!expanded && overflows && (
           <>
             <button
               onClick={() => scroll("left")}
               aria-label="Scroll left"
-              className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-app-surface text-white/70 transition-colors hover:bg-hl-card hover:text-white active:scale-95"
+              type="button"
+              className="media-row__button"
             >
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="15 18 9 12 15 6" />
@@ -100,7 +117,8 @@ export function ScrollRow({ title, titleHref, children, restoreKey, onPlayAll, o
             <button
               onClick={() => scroll("right")}
               aria-label="Scroll right"
-              className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-app-surface text-white/70 transition-colors hover:bg-hl-card hover:text-white active:scale-95"
+              type="button"
+              className="media-row__button"
             >
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="9 18 15 12 9 6" />
@@ -113,7 +131,8 @@ export function ScrollRow({ title, titleHref, children, restoreKey, onPlayAll, o
             onClick={() => setExpanded(e => !e)}
             aria-label={expanded ? "Collapse" : "Expand"}
             aria-expanded={expanded}
-            className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full transition-colors active:scale-95 ${expanded ? "bg-accent/20 text-accent" : "bg-app-surface text-white/70 hover:bg-hl-card hover:text-white"}`}
+            type="button"
+            className={`media-row__button ${expanded ? "media-row__button--active" : ""}`}
           >
             <svg
               viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
@@ -139,6 +158,6 @@ export function ScrollRow({ title, titleHref, children, restoreKey, onPlayAll, o
           {children}
         </div>
       )}
-    </div>
+    </section>
   )
 }

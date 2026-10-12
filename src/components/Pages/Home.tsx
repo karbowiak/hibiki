@@ -21,6 +21,10 @@ import { makeOnPlay } from "../../lib/mediaPlay"
 import { ScrollRow } from "../ScrollRow"
 import { MediaCard } from "../MediaCard"
 import { selectMix, shuffleTracks } from "./Mix"
+import { Link } from "wouter"
+import { useArtworkTone } from "../../hooks/useArtworkTone"
+import { useAlbumImage } from "../../hooks/useMediaImage"
+import "../../styles/discovery.css"
 import { PageLoading } from "../shared/PageLoading"
 
 function getItemYear(item: MusicItem): number {
@@ -162,6 +166,14 @@ export function Home() {
     [latestReleases]
   )
 
+  const featuredAlbum = latestReleaseItems[0]
+  const featuredArtwork = useAlbumImage(
+    featuredAlbum?.artistName ?? null,
+    featuredAlbum?.title ?? null,
+    featuredAlbum?.thumbUrl ?? null,
+    featuredAlbum?.id
+  )
+  const artworkTone = useArtworkTone(featuredArtwork)
   const { mixesItems, mixesTitle } = useMemo(() => {
     const mh = hubs.filter((h) => h.identifier?.startsWith("music.mixes"))
     return {
@@ -237,7 +249,35 @@ export function Home() {
   }
 
   return (
-    <div className="space-y-6 pb-4">
+    <div className="discovery-page space-y-6 pb-4" style={artworkTone}>
+      <header className="discovery-head">
+        <div>
+          <p className="discovery-eyebrow">
+            Your music ·{" "}
+            {new Date().toLocaleDateString(undefined, { weekday: "long" })}
+          </p>
+          <h1 className="discovery-title">
+            {new Date().getHours() < 12
+              ? "Good morning"
+              : new Date().getHours() < 18
+                ? "Good afternoon"
+                : "Good evening"}
+          </h1>
+          <p className="discovery-subtitle">
+            A familiar favorite, a new release, or something made for you.
+          </p>
+        </div>
+        <div className="discovery-tools">
+          <Link href="/library" className="discovery-pill">
+            Your Library <span aria-hidden="true">↗</span>
+          </Link>
+          {provider?.capabilities.stations && (
+            <Link href="/stations" className="discovery-pill">
+              Explore Stations
+            </Link>
+          )}
+        </div>
+      </header>
       {playError && <p role="alert" className="text-sm text-red-400">Could not play these items. Please try again.</p>}
       {mixesItems.length > 0 && (
         <ScrollRow title={mixesTitle} titleHref="/stations" restoreKey="home-mixes">

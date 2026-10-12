@@ -1,3 +1,5 @@
+import "../styles/discovery.css"
+import { getRecentSearches } from "../lib/recentSearches"
 import { useProviderStore } from "../stores/providerStore"
 import { useLocation } from "wouter"
 import { useEffect, useId, useRef, useState } from "react"
@@ -11,7 +13,11 @@ import {
 import { metadataBackends } from "../metadata"
 import { clearImageCache } from "../lib/imageCache"
 import { ActivityIndicator } from "./ActivityIndicator"
-import { SearchDropdown, buildSearchItems } from "./SearchDropdown"
+import {
+  SearchDropdown,
+  buildSearchItems,
+  buildSearchLandingItems,
+} from "./SearchDropdown"
 import { IS_MACOS } from "../lib/platform"
 import { NotificationCenter } from "./NotificationCenter"
 
@@ -52,7 +58,17 @@ export function TopBar() {
   const searchId = useId()
   const results = useSearchStore((s) => s.results)
   const isSearching = useSearchStore((s) => s.isSearching)
-  const rowCount = results.length ? buildSearchItems(results).length + 1 : 0
+  const hubs = useLibraryStore((s) => s.hubs)
+  const landingItems = buildSearchLandingItems(
+    hubs ?? [],
+    showDropdown && !localQuery.trim() ? getRecentSearches() : [],
+    !!provider?.capabilities.stations
+  )
+  const rowCount = !localQuery.trim()
+    ? landingItems.length + 1
+    : results.length
+      ? buildSearchItems(results).length + 1
+      : 0
   const inputRef = useRef<HTMLInputElement>(null)
 
   // Debounced search — fires regardless of current route
@@ -79,6 +95,15 @@ export function TopBar() {
     setQuery(localQuery)
   }, [localQuery])
 
+  // Retire keyboard selection when its suggestion/account context changes.
+  useEffect(() => {
+    setShowDropdown(false)
+    setActiveIndex(-1)
+  }, [provider])
+  useEffect(() => {
+    if (!localQuery.trim()) setActiveIndex(-1)
+  }, [hubs])
+
   // Close dropdown on route change
   useEffect(() => {
     setShowDropdown(false)
@@ -89,6 +114,8 @@ export function TopBar() {
   useEffect(() => {
     function onSearchFocus() {
       inputRef.current?.focus()
+      if (location !== "/search") setShowDropdown(true)
+      setActiveIndex(-1)
     }
     function onRefresh() {
       void handleRefresh()
@@ -99,7 +126,7 @@ export function TopBar() {
       window.removeEventListener("plexify:search-focus", onSearchFocus)
       window.removeEventListener("plexify:refresh", onRefresh)
     }
-  }, [musicSectionId, isRefreshing])
+  }, [musicSectionId, isRefreshing, location])
 
   const handleRefresh = async () => {
     if (!musicSectionId || isRefreshing) return
@@ -116,8 +143,7 @@ export function TopBar() {
   }
 
   const handleInputFocus = () => {
-    if (location !== "/search" && localQuery.trim().length > 0)
-      setShowDropdown(true)
+    if (location !== "/search") setShowDropdown(true)
     setActiveIndex(-1)
   }
 
@@ -154,7 +180,7 @@ export function TopBar() {
 
   const handleQueryChange = (value: string) => {
     setLocalQuery(value)
-    setShowDropdown(location !== "/search" && value.trim().length > 0)
+    setShowDropdown(location !== "/search")
     setActiveIndex(-1)
   }
 
@@ -205,11 +231,11 @@ export function TopBar() {
         </button>
 
         {/* Search input — always visible, wired to store */}
-        <div className="relative w-[364px] min-w-0 max-w-full shrink text-sm text-black">
+        <div className="relative w-[364px] min-w-0 max-w-full shrink text-sm text-[var(--text-primary)]">
           <svg
             height="16"
             width="16"
-            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 fill-[#121212]"
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 fill-[var(--text-secondary)]"
             viewBox="0 0 24 24"
           >
             <path d="M10.533 1.279c-5.18 0-9.407 4.14-9.407 9.279s4.226 9.279 9.407 9.279c2.234 0 4.29-.77 5.907-2.058l4.353 4.353a1 1 0 1 0 1.414-1.414l-4.344-4.344a9.157 9.157 0 0 0 2.077-5.816c0-5.14-4.226-9.28-9.407-9.28zm-7.407 9.279c0-4.006 3.302-7.28 7.407-7.28s7.407 3.274 7.407 7.28-3.302 7.279-7.407 7.279-7.407-3.273-7.407-7.28z" />
@@ -235,7 +261,7 @@ export function TopBar() {
             onBlur={handleInputBlur}
             onKeyDown={handleInputKeyDown}
             placeholder="What do you want to listen to?"
-            className="h-[40px] w-full min-w-0 rounded-full bg-white pl-10 pr-9 text-black focus:outline-none"
+            className="discovery-search-input h-[40px] w-full min-w-0 rounded-full pl-10 pr-9 focus:outline-none"
           />
           {localQuery && (
             <button
@@ -249,7 +275,7 @@ export function TopBar() {
                 inputRef.current?.focus()
                 setShowDropdown(false)
               }}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[#121212]/40 hover:text-[#121212]"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
             >
               <svg
                 height="12"
@@ -263,6 +289,7 @@ export function TopBar() {
           )}
           {showDropdown && (
             <SearchDropdown
+              landingItems={landingItems}
               id={searchId}
               activeIndex={activeIndex}
               onActiveIndexChange={setActiveIndex}

@@ -1,3 +1,5 @@
+import { Link } from "wouter"
+import "../../styles/discovery.css"
 import { useEffect, useMemo, useState } from "react"
 import { useShallow } from "zustand/shallow"
 import { useSearchStore } from "../../stores"
@@ -185,8 +187,15 @@ export function Search() {
 
   return (
     <div className="min-w-0 pb-12 text-[var(--text-primary)]">
-      <header className="mb-6">
-        <h1 className="break-words text-3xl font-bold">
+      <header className={showResults ? "mb-6" : "discovery-command-head mb-6"}>
+        {!showResults && (
+          <p className="discovery-eyebrow">Find your next favorite</p>
+        )}
+        <h1
+          className={
+            showResults ? "break-words text-3xl font-bold" : "discovery-title"
+          }
+        >
           {showResults ? `Results for “${query.trim()}”` : "Search"}
         </h1>
         <p className="mt-2 text-sm text-[var(--text-secondary)]">
@@ -374,6 +383,17 @@ export function Search() {
         </div>
       ) : (
         <div className="space-y-4">
+          <nav aria-label="Search quick actions" className="discovery-tools">
+            <Link href="/library" className="discovery-pill">
+              Browse Library
+            </Link>
+            <Link href="/collection/tracks" className="discovery-pill">
+              Liked Songs
+            </Link>
+            <Link href="/collection/playlists" className="discovery-pill">
+              Your Playlists
+            </Link>
+          </nav>
           {historyError && (
             <p role="alert" className="mb-3 text-sm text-red-400">
               {historyError}

@@ -1,4 +1,6 @@
 @import "@fontsource-variable/inter";
+@import "./styles/media.css";
+@import "./styles/detailMedia.css";
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/montserrat";
 @import "@fontsource-variable/nunito";

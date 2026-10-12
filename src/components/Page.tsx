@@ -1,5 +1,7 @@
 import { Link, Route, useLocation, useRouter } from "wouter"
-import { createContext, useContext, useLayoutEffect, useRef, RefObject } from "react"
+import { useLayoutEffect, useRef } from "react"
+import { ScrollContainerContext } from "../lib/scrollContainer"
+export { ScrollContainerContext, useScrollContainer } from "../lib/scrollContainer"
 import { Playlist } from "./Pages/Playlist"
 import { Home } from "./Pages/Home"
 import { Library } from "./Pages/Library"
@@ -34,8 +36,6 @@ const verticalScrollPositions = new Map<string, number>()
  * Pass the ref OBJECT (not ref.current) so children can read .current
  * inside their useEffect hooks after the DOM has been committed.
  */
-export const ScrollContainerContext = createContext<RefObject<HTMLDivElement | null> | null>(null)
-export const useScrollContainer = () => useContext(ScrollContainerContext)
 
 
 const bg = {

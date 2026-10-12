@@ -126,6 +126,11 @@ try {
             route
           )
           await page.locator("main h1").waitFor()
+          await page
+            .locator("#layout-fixture main .overflow-auto")
+            .evaluate((element) => {
+              element.scrollTop = 0
+            })
           await page.waitForTimeout(350) // CSS palette/layout transitions must settle.
           const metrics = await page.evaluate(() => {
             const main = document.querySelector<HTMLElement>(
@@ -197,6 +202,65 @@ try {
             path: join(artifacts, `${slug}-${route.split("/")[1]}.png`),
           })
           if (route.startsWith("/artist") || route.startsWith("/album")) {
+            const sharp = page.locator(".media-backdrop__sharp")
+            assert.equal(
+              await sharp
+                .locator("img")
+                .evaluate((element) => getComputedStyle(element).filter),
+              "none",
+              `${slug}/${route}: hero artwork must remain sharp`
+            )
+            await page.waitForFunction(
+              () =>
+                getComputedStyle(
+                  document.querySelector(".media-backdrop__sharp")!
+                ).position === "fixed"
+            )
+            const geometry = () =>
+              page.evaluate(() => {
+                const hero = document
+                  .querySelector(".media-detail-hero")!
+                  .getBoundingClientRect()
+                const band = document.querySelector<HTMLElement>(
+                  ".media-backdrop__sharp"
+                )!
+                const rect = band.getBoundingClientRect()
+                const clip =
+                  parseFloat(band.style.clipPath.split(" ")[2] ?? "0") || 0
+                const area = document
+                  .querySelector<HTMLElement>(
+                    "#layout-fixture main .overflow-auto"
+                  )!
+                  .getBoundingClientRect()
+                const ambient = document
+                  .querySelector(".media-backdrop__ambient")!
+                  .getBoundingClientRect()
+                return {
+                  seam: rect.bottom - clip - hero.bottom,
+                  left: rect.left - area.left,
+                  width: rect.width - area.width,
+                  ambientTop: ambient.top - area.top,
+                  ambientHeight: ambient.height - area.height,
+                }
+              })
+            for (const amount of [0, 120]) {
+              await page
+                .locator("#layout-fixture main .overflow-auto")
+                .evaluate((element, value) => {
+                  element.scrollTop = value
+                }, amount)
+              await page.waitForTimeout(100)
+              const aligned = await geometry()
+              assert.ok(
+                Object.values(aligned).every((value) => Math.abs(value) <= 1),
+                `${slug}/${route}: artwork crop/seam is not aligned ${JSON.stringify(aligned)}`
+              )
+            }
+            await page
+              .locator("#layout-fixture main .overflow-auto")
+              .evaluate((element) => {
+                element.scrollTop = 0
+              })
             await page.evaluate(() =>
               (window as any).fixtureAppearance.resetInteractions()
             )

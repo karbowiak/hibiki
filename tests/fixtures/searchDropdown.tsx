@@ -40,9 +40,16 @@ mock.module("wouter", () => ({
 }))
 mock.module("../../src/components/shared/ArtworkImage", () => ({
   ArtworkImage: () => null,
+  useArtworkFailures: () => ({ failures: [], onFailure() {} }),
+}))
+mock.module("../../src/hooks/useMediaImage", () => ({
+  useArtistImage: (_name: any, thumb: any) => thumb,
+  useAlbumImage: (_artist: any, _album: any, thumb: any) => thumb,
 }))
 const { createRoot } = await import("react-dom/client")
-const { SearchDropdown } = await import("../../src/components/SearchDropdown")
+const { SearchDropdown, buildSearchLandingItems } =
+  await import("../../src/components/SearchDropdown")
+let landingItems: ReturnType<typeof buildSearchLandingItems> = []
 let closed = 0
 let select: (index: number) => void
 function Harness() {
@@ -51,6 +58,7 @@ function Harness() {
   return (
     <SearchDropdown
       id="search-results"
+      landingItems={landingItems}
       activeIndex={index}
       onActiveIndexChange={setIndex}
       onClose={() => closed++}
@@ -124,4 +132,79 @@ assert.match(
   /No results/
 )
 assert.equal(document.querySelectorAll('[role="option"]').length, 0)
+state.query = ""
+landingItems = buildSearchLandingItems(
+  [
+    {
+      identifier: "music.recent.played.5",
+      items: [{ type: "artist", id: "return", title: "Return Artist" }],
+    } as any,
+  ],
+  ["Previous", "Previous"],
+  false
+)
+await act(async () => {
+  select(0)
+  root.render(<Harness />)
+})
+assert.deepEqual(
+  [...document.querySelectorAll('[role="group"]')].map((x) =>
+    x.getAttribute("aria-label")
+  ),
+  ["Quick actions", "Recent searches", "Jump back in"]
+)
+assert.equal(document.querySelectorAll('[role="option"]').length, 6)
+assert.ok(!document.body.textContent!.includes("Stations"))
+await act(async () =>
+  input.dispatchEvent(
+    new dom.window.KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    })
+  )
+)
+assert.equal(navigated.at(-1), "/library")
+const searches: string[] = []
+state.search = (query: string) => searches.push(query)
+await act(async () => select(3))
+await act(async () =>
+  input.dispatchEvent(
+    new dom.window.KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    })
+  )
+)
+assert.deepEqual(searches, ["Previous"])
+assert.equal(navigated.at(-1), "/search")
+await act(async () => select(4))
+await act(async () =>
+  input.dispatchEvent(
+    new dom.window.KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    })
+  )
+)
+assert.equal(navigated.at(-1), "/artist/return")
+const richer = buildSearchLandingItems(
+  [
+    {
+      identifier: "music.recent.played.5",
+      items: Array.from({ length: 10 }, (_, i) => ({
+        type: "artist",
+        id: `${i}`,
+        title: `Artist ${i}`,
+      })),
+    } as any,
+  ],
+  Array.from({ length: 10 }, (_, i) => `Query ${i}`),
+  true
+)
+assert.equal(richer.filter((row) => row.kind === "action").length, 4)
+assert.equal(richer.filter((row) => row.kind === "recent").length, 4)
+assert.equal(richer.filter((row) => row.kind === "music").length, 3)
 await act(async () => root.unmount())

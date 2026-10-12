@@ -70,6 +70,12 @@ mock.module("../../src/components/shared/ArtworkSourcePicker", () => ({
   ArtworkSourcePicker: () => null,
 }))
 mock.module("../../src/components/UltraBlur", () => ({ UltraBlur: () => null }))
+mock.module("../../src/components/shared/MediaBackdrop", () => ({
+  MediaBackdrop: () => null,
+}))
+mock.module("../../src/hooks/useArtworkTone", () => ({
+  useArtworkTone: () => undefined,
+}))
 mock.module("../../src/components/HeroRating", () => ({
   HeroRating: () => null,
 }))

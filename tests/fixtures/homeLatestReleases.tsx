@@ -15,7 +15,7 @@ const imported = { ...latest, id: "imported", title: "Old Import", type: "album"
 const tracks = [{ id: "track", title: "Track" }]
 const played: string[] = [], contexts: string[] = [], prefetched: string[] = [], albumCalls: string[] = []
 let selection: any[] = []
-const provider = { cacheScope: "scope-a", async getAlbumTracks(id: string) { albumCalls.push(id); return tracks } }
+const provider = { capabilities: {}, cacheScope: "scope-a", async getAlbumTracks(id: string) { albumCalls.push(id); return tracks } }
 const library = { latestReleases: [latest], recentlyAdded: [imported], hubs: [] }
 mock.module("../../src/stores", () => ({
   useLibraryStore: (selector: any) => selector(library),
@@ -30,6 +30,8 @@ mock.module("../../src/lib/mediaPlay", () => ({ makeOnPlay: (item: any) => () =>
 mock.module("../../src/components/Pages/Mix", () => ({ selectMix() {}, shuffleTracks: (items: any[]) => items }))
 mock.module("../../src/components/ScrollRow", () => ({ ScrollRow: ({ title, titleHref, onPlayAll, children }: any) => <section data-shelf={title}><h2>{titleHref ? <a href={titleHref}>{title}</a> : title}</h2>{onPlayAll && <button onClick={onPlayAll}>Play all {title}</button>}{children}</section> }))
 mock.module("../../src/components/MediaCard", () => ({ MediaCard: (props: any) => <button data-card={props.title} data-href={props.href} data-thumb={props.thumb} data-drag={JSON.stringify(props.dragPayload)} onClick={props.onPlay} onContextMenu={props.onContextMenu} onMouseOver={props.prefetch}>{props.title}</button> }))
+mock.module("../../src/hooks/useArtworkTone", () => ({ useArtworkTone: () => undefined }))
+mock.module("../../src/hooks/useMediaImage", () => ({ useAlbumImage: (_artist: any, _title: any, thumb: any) => thumb }))
 const { createRoot } = await import("react-dom/client")
 const { Home } = await import("../../src/components/Pages/Home")
 const root = createRoot(document.getElementById("root")!)

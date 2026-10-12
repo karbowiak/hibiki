@@ -19,7 +19,8 @@ import type {
 } from "../../types/music"
 import { MediaCard } from "../MediaCard"
 import { ScrollRow } from "../ScrollRow"
-import { UltraBlur } from "../UltraBlur"
+import { MediaBackdrop } from "../shared/MediaBackdrop"
+import { useArtworkTone } from "../../hooks/useArtworkTone"
 import {
   getCachedAlbum,
   prefetchAlbum,
@@ -91,6 +92,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
   const [showImageModal, setShowImageModal] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const menuBtnRef = useRef<HTMLButtonElement>(null)
+  const heroRef = useRef<HTMLDivElement>(null)
   const debugEnabled = useDebugStore((s) => s.debugEnabled)
   const showDebugPanel = useDebugPanelStore((s) => s.show)
 
@@ -195,6 +197,8 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     failures
   )
 
+  const artworkTone = useArtworkTone(thumbUrl ?? album?.artistThumbUrl ?? null)
+
   if (isLoading) return <PageLoading message="Loading album…" />
   if (!album)
     return (
@@ -282,12 +286,17 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     album.reviews && album.reviews.length > 0 ? album.reviews[0] : null
 
   return (
-    <div className="pb-12">
+    <div className="media-detail-page pb-12" style={artworkTone}>
+      <MediaBackdrop
+        src={thumbUrl ?? parentThumbUrl}
+        heroRef={heroRef}
+        onFailure={onFailure}
+      />
       {/* Header */}
-      <div className="hero-overlay relative flex min-h-72 flex-row items-end overflow-hidden rounded-t-lg p-8 transition-[min-height] duration-500">
-        {/* UltraBlur background — album art first, artist art as fallback */}
-        <UltraBlur src={thumbUrl ?? parentThumbUrl} />
-
+      <div
+        ref={heroRef}
+        className="media-detail-hero hero-overlay relative flex items-end"
+      >
         <div className="relative z-10 flex w-full flex-wrap items-end gap-6">
           {/* Album art — click to open modal */}
           <div className="flex flex-shrink-0 flex-col items-start gap-2">
@@ -324,10 +333,8 @@ export function AlbumPage({ albumId }: { albumId: string }) {
 
           {/* Info column — no fixed height so hero grows with expanded description */}
           <div className="flex min-w-0 flex-[1_1_20rem] flex-col gap-2 pb-2">
-            <div className="text-xs font-semibold uppercase tracking-widest text-gray-300">
-              {formatLabel}
-            </div>
-            <h1 className="select-text break-words text-4xl font-black leading-tight text-white">
+            <div className="media-detail-eyebrow">{formatLabel}</div>
+            <h1 className="media-detail-title select-text break-words">
               {album.title}
             </h1>
 
@@ -426,7 +433,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
               </div>
             )}
           </div>
-          <div className="relative z-20 ml-auto flex shrink-0 items-center gap-3">
+          <div className="relative z-20 flex w-full flex-wrap items-center gap-2 pt-3">
             {/* Play */}
             <button
               onClick={() =>
@@ -441,7 +448,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
               }
               disabled={tracks.length === 0}
               title="Play"
-              className="flex h-14 w-14 items-center justify-center rounded-full border border-white/10 bg-black/30 text-accent backdrop-blur-sm transition-all hover:scale-105 hover:bg-black/45 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+              className="media-primary"
             >
               <svg
                 viewBox="0 0 16 16"
@@ -451,6 +458,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
               >
                 <polygon points="3,2 13,8 3,14" />
               </svg>
+              <span>Play</span>
             </button>
             {/* Shuffle */}
             <button
@@ -467,7 +475,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
               }}
               disabled={tracks.length === 0}
               title="Shuffle"
-              className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/30 text-accent backdrop-blur-sm transition-all hover:scale-105 hover:bg-black/45 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+              className="media-secondary"
             >
               <svg
                 role="img"
@@ -479,13 +487,14 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                 <path d="M13.151.922a.75.75 0 1 0-1.06 1.06L13.109 3H11.16a3.75 3.75 0 0 0-2.873 1.34l-6.173 7.356A2.25 2.25 0 0 1 .39 12.5H0V14h.391a3.75 3.75 0 0 0 2.873-1.34l6.173-7.356a2.25 2.25 0 0 1 1.724-.804h1.947l-1.017 1.018a.75.75 0 0 0 1.06 1.06L15.98 3.75 13.15.922zM.391 3.5H0V2h.391c1.109 0 2.16.49 2.873 1.34L4.89 5.277l-.979 1.167-1.796-2.14A2.25 2.25 0 0 0 .39 3.5z" />
                 <path d="m7.5 10.723.98-1.167.957 1.14a2.25 2.25 0 0 0 1.724.804h1.947l-1.017-1.018a.75.75 0 1 1 1.06-1.06l2.829 2.828-2.829 2.828a.75.75 0 1 1-1.06-1.06L13.109 13H11.16a3.75 3.75 0 0 1-2.873-1.34l-.787-.938z" />
               </svg>
+              <span>Shuffle</span>
             </button>
             {/* Album Radio */}
             {hasRadio && (
               <button
                 onClick={() => void playRadio(albumId, "album")}
                 title="Album Radio — continuous sonically-similar music"
-                className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/30 text-accent backdrop-blur-sm transition-all hover:scale-105 hover:bg-black/45 active:scale-95"
+                className="media-secondary"
               >
                 <svg
                   viewBox="0 0 16 16"
@@ -495,6 +504,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                 >
                   <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6A3 3 0 0 0 8 5zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
                 </svg>
+                <span>Radio</span>
               </button>
             )}
             {/* Three-dot menu */}
@@ -702,6 +712,31 @@ export function AlbumPage({ albumId }: { albumId: string }) {
         </div>
       </div>
 
+      <dl className="media-ledger" aria-label="Album overview">
+        {album.year > 0 && (
+          <div>
+            <dt>Released</dt>
+            <dd>{album.year}</dd>
+          </div>
+        )}
+        <div>
+          <dt>Tracks</dt>
+          <dd>{tracks.length}</dd>
+        </div>
+        <div>
+          <dt>Runtime</dt>
+          <dd>{formatTotalDuration(tracks)}</dd>
+        </div>
+        {tracks[0]?.codec && (
+          <div>
+            <dt>Quality</dt>
+            <dd>
+              {tracks[0].codec.toUpperCase()}
+              {tracks[0].bitrate ? ` · ${tracks[0].bitrate} kbps` : ""}
+            </dd>
+          </div>
+        )}
+      </dl>
       {/* Track list */}
       <div className="px-8">
         {error && (
@@ -728,7 +763,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                 return (
                   <tr
                     key={track.id}
-                    className={`group cursor-pointer rounded focus-within:bg-hl-row ${isActive || isContextTarget ? "bg-hl-row" : "hover:bg-hl-row"}`}
+                    className={`media-track-row group cursor-pointer rounded focus-within:bg-hl-row ${isActive || isContextTarget ? "bg-hl-row" : "hover:bg-hl-row"}`}
                     onClick={() =>
                       void playTrack(
                         track,

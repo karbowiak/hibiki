@@ -1,3 +1,13 @@
+import { Link } from "wouter"
+import { useArtworkTone } from "../../hooks/useArtworkTone"
+import { useAlbumImage } from "../../hooks/useMediaImage"
+import {
+  IconHeart,
+  IconPlaylist,
+  IconDisc,
+  IconMicrophone,
+} from "@tabler/icons-react"
+import "../../styles/discovery.css"
 import { useProviderStore } from "../../stores/providerStore"
 import { useEffect, useMemo } from "react"
 import { useLibraryStore } from "../../stores"
@@ -15,6 +25,14 @@ export function Library() {
   const fetchLikedAlbums = useLibraryStore((s) => s.fetchLikedAlbums)
   const fetchLikedArtists = useLibraryStore((s) => s.fetchLikedArtists)
   const provider = useProviderStore((s) => s.provider)
+  const featuredAlbum = likedAlbums[0]
+  const featuredArtwork = useAlbumImage(
+    featuredAlbum?.artistName ?? null,
+    featuredAlbum?.title ?? null,
+    featuredAlbum?.thumbUrl ?? null,
+    featuredAlbum?.id
+  )
+  const artworkTone = useArtworkTone(featuredArtwork)
   const pageRefreshKey = useUIStore((s) => s.pageRefreshKey)
 
   useEffect(() => {
@@ -39,8 +57,86 @@ export function Library() {
   )
 
   return (
-    <div className="space-y-8">
-      <h1 className="text-2xl font-bold">Your Library</h1>
+    <div className="discovery-page space-y-8" style={artworkTone}>
+      <header className="discovery-head">
+        <div>
+          <p className="discovery-eyebrow">Collected by you</p>
+          <h1 className="discovery-title">Your Library</h1>
+          <p className="discovery-subtitle">
+            Your playlists, rated favorites, and the music you keep coming back
+            to.
+          </p>
+        </div>
+        <Link href="/search" className="discovery-pill">
+          Find something in your library <span aria-hidden="true">↗</span>
+        </Link>
+      </header>
+      <nav aria-label="Library collections" className="discovery-overview">
+        {[
+          {
+            href: "/collection/tracks",
+            title: "Liked Songs",
+            desc: "Your rated tracks",
+            icon: IconHeart,
+          },
+          {
+            href: "/collection/albums",
+            title: "Liked Albums",
+            desc: "Releases worth keeping close",
+            icon: IconDisc,
+          },
+          {
+            href: "/collection/artists",
+            title: "Liked Artists",
+            desc: "The artists you return to",
+            icon: IconMicrophone,
+          },
+          {
+            href: "/collection/playlists",
+            title: "Playlists",
+            desc: "Collections for every mood",
+            icon: IconPlaylist,
+          },
+        ].map(({ href, title, desc, icon: Icon }) => (
+          <Link key={href} href={href} className="discovery-overview-card">
+            <span className="discovery-overview-icon">
+              <Icon size={20} aria-hidden="true" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <strong>{title}</strong>
+              <small>{desc}</small>
+            </span>
+            <span aria-hidden="true" className="text-[var(--text-muted)]">
+              ↗
+            </span>
+          </Link>
+        ))}
+      </nav>
+      {(playlists.length > 0 ||
+        likedTracks.length > 0 ||
+        likedAlbums.length > 0 ||
+        likedArtists.length > 0) && (
+        <dl className="discovery-ledger" aria-label="Your library at a glance">
+          {[
+            ["Playlists", playlists.length],
+            ["Liked songs", likedTracks.length],
+            ["Liked albums", likedAlbums.length],
+            ["Liked artists", likedArtists.length],
+          ]
+            .filter(([, count]) => Number(count) > 0)
+            .map(([label, count]) => (
+              <div key={label}>
+                <dt>{label}</dt>
+                <dd>{Number(count).toLocaleString()}</dd>
+              </div>
+            ))}
+        </dl>
+      )}
+      {!provider && (
+        <p className="text-sm text-[var(--text-secondary)]">
+          Connect your music library in Settings to load your collections.
+        </p>
+      )}
 
       {playlists.length > 0 && (
         <ScrollRow
@@ -73,6 +169,8 @@ export function Library() {
               title={track.title}
               desc={track.artistName}
               thumb={track.thumbUrl}
+              artistName={track.artistName}
+              albumName={track.albumName}
               href={track.albumId ? `/album/${track.albumId}` : undefined}
               dragPayload={{
                 type: "track",
@@ -98,6 +196,8 @@ export function Library() {
               title={album.title}
               desc={album.artistName ?? ""}
               thumb={album.thumbUrl}
+              artistName={album.artistName}
+              albumName={album.title}
               href={`/album/${album.id}`}
               dragPayload={{
                 type: "album",
@@ -122,6 +222,7 @@ export function Library() {
               title={artist.title}
               desc=""
               thumb={artist.thumbUrl}
+              artistName={artist.title}
               isArtist
               href={`/artist/${artist.id}`}
               dragPayload={{

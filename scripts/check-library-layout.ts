@@ -336,7 +336,7 @@ try {
             title.closest("h2")?.parentElement?.parentElement ??
             title.parentElement!.parentElement!
           const cards = [
-            ...row.querySelectorAll<HTMLElement>(".cursor-pointer"),
+            ...row.querySelectorAll<HTMLElement>(".media-card"),
           ].filter((element) => element.querySelector("img"))
           const footer = host.querySelector<HTMLElement>(".player-body")!
           const bounds = (element: Element) => {

@@ -19,7 +19,8 @@ import type {
 } from "../../types/music"
 import { MediaCard } from "../MediaCard"
 import { ScrollRow } from "../ScrollRow"
-import { UltraBlur } from "../UltraBlur"
+import { MediaBackdrop } from "../shared/MediaBackdrop"
+import { useArtworkTone } from "../../hooks/useArtworkTone"
 import {
   getCachedArtist,
   prefetchAlbum,
@@ -152,6 +153,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
   const [showHeroModal, setShowHeroModal] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const menuBtnRef = useRef<HTMLButtonElement>(null)
+  const heroRef = useRef<HTMLDivElement>(null)
   const debugEnabled = useDebugStore((s) => s.debugEnabled)
   const showDebugPanel = useDebugPanelStore((s) => s.show)
 
@@ -250,7 +252,8 @@ export function ArtistPage({ artistId }: { artistId: string }) {
     artistId,
     failures
   )
-  const heroBgPos = useFocalPoint(artUrl)
+  const heroBgPos = useFocalPoint(artUrl ?? thumbUrl)
+  const artworkTone = useArtworkTone(artUrl ?? thumbUrl)
 
   // Map from lowercase artist name → library artist for "Fans Also Like" linking.
   // Covers both Plex-similar and sonically-similar artists that are in the library.
@@ -406,33 +409,18 @@ export function ArtistPage({ artistId }: { artistId: string }) {
   const heroTags = mergedTags.slice(0, 8)
 
   return (
-    <div>
+    <div className="media-detail-page" style={artworkTone}>
+      <MediaBackdrop
+        src={artUrl ?? thumbUrl}
+        heroRef={heroRef}
+        position={heroBgPos}
+        onFailure={onFailure}
+      />
       {/* ── Hero ── */}
       <div
-        className="hero-overlay relative flex min-h-80 items-end bg-cover p-8 transition-[min-height] duration-500 ease-in-out"
-        style={
-          artUrl
-            ? {
-                backgroundImage: `url(${artUrl})`,
-                backgroundPosition: heroBgPos,
-              }
-            : undefined
-        }
+        ref={heroRef}
+        className="media-detail-hero hero-overlay relative flex items-end"
       >
-        {artUrl && (
-          <ArtworkImage
-            src={artUrl}
-            onFailure={onFailure}
-            loading="eager"
-            alt=""
-            className="hidden"
-          />
-        )}
-        {/* UltraBlur fallback when there's no wide banner art */}
-        {!artUrl && <UltraBlur src={thumbUrl} />}
-
-        <div className="absolute inset-0 bg-gradient-to-t from-[#121212] via-black/55 to-black/20" />
-
         {/* Expand hero image — top-right, only when a banner image exists */}
         {artUrl && (
           <button
@@ -485,10 +473,8 @@ export function ArtistPage({ artistId }: { artistId: string }) {
 
           {/* Info column — no fixed height, flows naturally */}
           <div className="flex min-w-0 flex-[1_1_20rem] flex-col gap-2">
-            <div className="text-xs font-semibold uppercase tracking-widest text-gray-300">
-              Artist
-            </div>
-            <h1 className="select-text break-words text-5xl font-black leading-none text-white">
+            <div className="media-detail-eyebrow">Artist</div>
+            <h1 className="media-detail-title select-text break-words">
               {artist.title}
             </h1>
 
@@ -577,7 +563,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
               </div>
             )}
           </div>
-          <div className="relative z-20 ml-auto flex shrink-0 items-center gap-3">
+          <div className="relative z-20 flex w-full flex-wrap items-center gap-2 pt-3">
             {/* Play */}
             <button
               onClick={() =>
@@ -591,7 +577,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
               }
               disabled={!artistUri}
               title="Play"
-              className="flex h-14 w-14 items-center justify-center rounded-full border border-white/10 bg-black/30 text-accent backdrop-blur-sm transition-all hover:scale-105 hover:bg-black/45 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+              className="media-primary"
             >
               <svg
                 viewBox="0 0 16 16"
@@ -601,6 +587,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
               >
                 <polygon points="3,2 13,8 3,14" />
               </svg>
+              <span>Play</span>
             </button>
             {/* Shuffle */}
             <button
@@ -615,7 +602,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
               }
               disabled={!artistUri}
               title="Shuffle play"
-              className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/30 text-accent backdrop-blur-sm transition-all hover:scale-105 hover:bg-black/45 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+              className="media-secondary"
             >
               <svg
                 viewBox="0 0 16 16"
@@ -625,13 +612,14 @@ export function ArtistPage({ artistId }: { artistId: string }) {
               >
                 <path d="M13.151.922a.75.75 0 1 0-1.06 1.06L13.109 3H11.16a3.75 3.75 0 0 0-2.873 1.34l-6.173 7.356A2.25 2.25 0 0 1 .39 12.5H0V14h.391a3.75 3.75 0 0 0 2.873-1.34l6.173-7.356A2.25 2.25 0 0 1 11.16 4.5h1.949l-1.018 1.018a.75.75 0 0 0 1.06 1.06L15.98 3.75 13.15.922zM.391 3.5H0V2h.391c1.109 0 2.16.49 2.873 1.34L4.89 5.277l-.979 1.167-1.796-2.14A2.25 2.25 0 0 0 .39 3.5zm9.831 8.17l.979 1.167.28.334A3.75 3.75 0 0 0 14.36 14.5h1.64V13h-1.64a2.25 2.25 0 0 1-1.726-.83l-.28-.335-1.733-2.063-.979 1.167 1.18 1.731z" />
               </svg>
+              <span>Shuffle</span>
             </button>
             {/* Artist Radio */}
             {hasRadio && (
               <button
                 onClick={() => void playRadio(artistId, "artist", artist.title)}
                 title="Artist Radio — continuous sonically-similar music"
-                className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/30 text-accent backdrop-blur-sm transition-all hover:scale-105 hover:bg-black/45 active:scale-95"
+                className="media-secondary"
               >
                 <svg
                   viewBox="0 0 16 16"
@@ -641,6 +629,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                 >
                   <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6A3 3 0 0 0 8 5zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
                 </svg>
+                <span>Radio</span>
               </button>
             )}
             {/* Three-dot menu */}
@@ -793,6 +782,22 @@ export function ArtistPage({ artistId }: { artistId: string }) {
         </div>
       </div>
 
+      <dl className="media-ledger" aria-label="Artist overview">
+        <div>
+          <dt>Albums</dt>
+          <dd>{fullAlbums.length}</dd>
+        </div>
+        <div>
+          <dt>Singles &amp; EPs</dt>
+          <dd>{singles.length}</dd>
+        </div>
+        {lastfmData?.listeners != null && (
+          <div>
+            <dt>Listeners</dt>
+            <dd>{lastfmData.listeners.toLocaleString()}</dd>
+          </div>
+        )}
+      </dl>
       <div className="flex flex-col gap-10 p-8">
         {error && (
           <PageRecovery
@@ -804,8 +809,8 @@ export function ArtistPage({ artistId }: { artistId: string }) {
         {/* ── Popular Tracks ── */}
         {popularTracks.length > 0 && (
           <section>
-            <div className="mb-4 flex items-center gap-3">
-              <h2 className="text-2xl font-bold">Popular Tracks</h2>
+            <div className="mb-4 flex flex-wrap items-center gap-3">
+              <h2 className="media-section-heading">Popular Tracks</h2>
               <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                 <button
                   onClick={() =>
@@ -870,7 +875,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                     }
                     onMouseEnter={() => prefetchTrackAudio(track)}
                     onContextMenu={ctxMenu("track", track)}
-                    className={`group flex cursor-pointer flex-wrap items-center gap-3 rounded-md px-3 py-1.5 focus-within:bg-hl-menu ${isActive || isContextTarget ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
+                    className={`media-track-row group flex cursor-pointer flex-wrap items-center gap-3 rounded-md px-3 py-1.5 focus-within:bg-hl-menu ${isActive || isContextTarget ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
                     onPointerDown={(e) =>
                       trackDrag.onPointerDown(e, {
                         type: "track",
@@ -1194,7 +1199,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
         {/* ── Last.fm Similar Artists ── */}
         {lastfmData && lastfmData.similar.length > 0 && (
           <section>
-            <h2 className="mb-4 text-xl font-bold">
+            <h2 className="media-section-heading mb-4">
               {priority[0] === "lastfm" ? "Similar Artists" : "Fans Also Like"}
               <span className="ml-2 text-xs font-normal text-[color:var(--text-muted)]">
                 via Last.fm

@@ -1,0 +1,191 @@
+.discovery-page {
+  min-width: 0;
+  color: var(--text-primary);
+}
+.discovery-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1.25rem;
+  padding: 1rem 0 1.5rem;
+}
+.discovery-eyebrow {
+  margin-bottom: 0.65rem;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+.discovery-title {
+  margin: 0;
+  font-size: clamp(1.9rem, 3.8vw, 3.4rem);
+  line-height: 1.12;
+  letter-spacing: -0.045em;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.discovery-subtitle {
+  margin-top: 0.65rem;
+  max-width: 38rem;
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+.discovery-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+.discovery-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.6rem 0.95rem;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  text-decoration: none;
+  background: var(--bg-surface);
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.discovery-pill:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+.discovery-pill:focus-visible,
+.discovery-overview-card:focus-visible {
+  outline: 2px solid var(--artwork-primary, var(--accent));
+  outline-offset: 3px;
+}
+.discovery-ledger {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  padding: 1rem 0;
+  margin-bottom: 1.5rem;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.discovery-ledger > div {
+  min-width: 7rem;
+}
+.discovery-ledger dt {
+  font-size: 0.67rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-secondary);
+}
+.discovery-ledger dd {
+  margin-top: 0.35rem;
+  color: var(--text-primary);
+  font-size: 1.35rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.discovery-overview {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 0.85rem;
+}
+.discovery-overview-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  overflow: hidden;
+  min-width: 0;
+  padding: 1.2rem;
+  border: 1px solid var(--border);
+  border-radius: 0.85rem;
+  background:
+    linear-gradient(
+      125deg,
+      rgb(var(--artwork-primary-rgb, var(--accent-rgb)) / 0.08),
+      transparent 80%
+    ),
+    var(--bg-surface);
+  text-decoration: none;
+}
+.discovery-overview-card:hover {
+  background-color: var(--bg-surface-hover);
+}
+.discovery-overview-icon {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex-shrink: 0;
+  border-radius: 0.7rem;
+  color: var(--artwork-primary, var(--accent));
+  background: rgb(var(--artwork-primary-rgb, var(--accent-rgb)) / 0.1);
+}
+.discovery-overview-card strong {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.discovery-overview-card small {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+.discovery-command-head {
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  padding: 1.4rem;
+  background:
+    linear-gradient(
+      120deg,
+      rgb(var(--artwork-primary-rgb, var(--accent-rgb)) / 0.06),
+      transparent 80%
+    ),
+    var(--bg-surface);
+}
+.discovery-command-head .discovery-title {
+  font-size: clamp(1.7rem, 3.2vw, 2.6rem);
+}
+.discovery-search-input {
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+.discovery-search-input::placeholder {
+  color: var(--text-secondary);
+}
+.discovery-search-input:focus {
+  border-color: var(--artwork-primary, var(--accent));
+  box-shadow: 0 0 0 2px rgb(var(--accent-rgb) / 0.12);
+}
+.discovery-search-popup {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+.discovery-search-caption {
+  padding: 0.8rem 1rem 0.45rem;
+  color: var(--text-secondary);
+  font-size: 0.65rem;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+.discovery-search-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.7rem 1rem;
+  border-top: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 0.65rem;
+}
+.discovery-search-hints kbd {
+  color: var(--text-secondary);
+  font: inherit;
+}
