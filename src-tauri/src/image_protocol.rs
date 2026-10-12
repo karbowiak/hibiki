@@ -71,6 +71,22 @@ impl ImageRequest {
         Ok(request)
     }
 
+    /// Only our two platform protocol origins can identify a selected image.
+    pub fn explicit_uri(uri: &str) -> Result<Self, String> {
+        if uri.len() > MAX_URI_BYTES { return Err("Invalid image address".into()); }
+        let url = url::Url::parse(uri).map_err(|_| "Invalid image address")?;
+        let origin = (url.scheme() == "image" && url.host_str() == Some("localhost"))
+            || (matches!(url.scheme(), "http" | "https") && url.host_str() == Some("image.localhost"));
+        if !origin || !url.username().is_empty() || url.password().is_some()
+            || url.port().is_some() || url.fragment().is_some() {
+            return Err("Invalid image address".into());
+        }
+        let request = Self::parse("GET", url.path(), url.query().unwrap_or(""), 0)
+            .map_err(|_| "Invalid image address")?;
+        if request.src.is_empty() { return Err("Select an image source before refreshing".into()); }
+        Ok(request)
+    }
+
     pub fn cache_key(&self, context: &ImageContext) -> String {
         image_fetch::cache_key(
             context.cache_scope(),
@@ -121,6 +137,9 @@ pub async fn cached_artwork(
     {
         return Some(bytes);
     }
+    // Legacy entity tuples cannot prove which source supplied their pixels.
+    // Refetch explicit sources instead of reimporting a pre-refresh snapshot.
+    if !request.src.is_empty() { return None; }
     let legacy = request.legacy_cache_key(context);
     if legacy == key {
         return None;
@@ -233,6 +252,14 @@ impl WorkQueue {
 }
 
 impl Admission {
+    /// Refreshes share the ordinary admission/worker limits but never coalesce
+    /// with a cache-hit request, since they must perform a fresh network fetch.
+    pub async fn run<F, Fut, T>(self, operation: F) -> Option<T>
+    where F: FnOnce() -> Fut, Fut: Future<Output = T> {
+        let _worker = self.pool.workers.clone().acquire_owned().await.ok()?;
+        Some(operation().await)
+    }
+
     pub async fn resolve<F, Fut>(self, key: WorkKey, operation: F) -> Artwork
     where
         F: FnOnce() -> Fut + Send + 'static,
@@ -300,7 +327,42 @@ mod tests {
     use std::time::Duration;
 
     #[tokio::test]
-    async fn views_share_source_bytes_and_migrate_old_cache_entries_before_network() {
+    async fn fresh_refresh_work_shares_admission_and_worker_limits() {
+        let queue = WorkQueue::new(2, 1);
+        let first = queue.try_admit().unwrap();
+        let second = queue.try_admit().unwrap();
+        assert!(queue.try_admit().is_none());
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let first_job = tokio::spawn(first.run(move || async move {
+            started_tx.send(()).unwrap(); release_rx.await.unwrap();
+        }));
+        started_rx.await.unwrap();
+        assert_eq!(queue.pool.workers.available_permits(), 0);
+        let second_started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed = second_started.clone();
+        let second_job = tokio::spawn(second.run(move || async move { observed.store(true, std::sync::atomic::Ordering::Release); }));
+        tokio::task::yield_now().await;
+        assert!(!second_started.load(std::sync::atomic::Ordering::Acquire));
+        release_tx.send(()).unwrap();
+        first_job.await.unwrap().unwrap(); second_job.await.unwrap().unwrap();
+        assert!(second_started.load(std::sync::atomic::Ordering::Acquire));
+        assert!(queue.try_admit().is_some());
+    }
+
+    #[test]
+    fn refresh_addresses_require_an_explicit_source_and_our_protocol_origin() {
+        for base in ["image://localhost", "http://image.localhost", "https://image.localhost"] {
+            let uri = format!("{base}/ext/img?src=https%3A%2F%2Fcdn.test%2Fcover.png&revision=runtime&scope=current");
+            assert_eq!(ImageRequest::explicit_uri(&uri).unwrap().scope, "current");
+        }
+        for uri in ["https://foreign.test/ext/img?src=https://cdn.test/a", "image://private@localhost/ext/img?src=https://cdn.test/a", "image://localhost:90/ext/img?src=https://cdn.test/a", "image://localhost/album/1?name=Album", "image://localhost/ext/img?src=a&src=b", "image://localhost/ext/img?src=a#fragment"] {
+            assert!(ImageRequest::explicit_uri(uri).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn views_share_canonical_source_bytes_without_promoting_legacy_snapshots() {
         let directory = tempfile::tempdir().unwrap();
         let cache = Arc::new(ImageCache::new(directory.path().into()));
         let context = ImageContext::new(1, None);
@@ -310,10 +372,9 @@ mod tests {
         cache
             .store(&ticket, &first.legacy_cache_key(&context), &png)
             .unwrap();
-        assert_eq!(
-            cached_artwork(&first, &context, cache.clone(), ticket.clone()).await,
-            Some(png.clone())
-        );
+        assert!(cached_artwork(&first, &context, cache.clone(), ticket.clone()).await.is_none());
+        cache.store(&ticket, &first.cache_key(&context), &png).unwrap();
+        assert_eq!(cached_artwork(&first, &context, cache.clone(), ticket.clone()).await, Some(png.clone()));
         let mut second = request(2);
         second.kind = "album".into();
         second.name = "Another view of the same source".into();

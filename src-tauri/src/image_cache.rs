@@ -13,7 +13,7 @@ use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::SystemTime;
 
 pub const MAX_CACHE_BYTES: u64 = 512 * 1024 * 1024;
@@ -64,11 +64,17 @@ pub struct ImageCacheState(pub Arc<ImageCache>);
 pub struct Ticket {
     owner: Arc<()>,
     generation: u64,
+    key_owner: Option<(String, Arc<()>)>,
 }
 
 impl PartialEq for Ticket {
     fn eq(&self, other: &Self) -> bool {
         self.generation == other.generation && Arc::ptr_eq(&self.owner, &other.owner)
+            && match (&self.key_owner, &other.key_owner) {
+                (None, None) => true,
+                (Some((a, owner_a)), Some((b, owner_b))) => a == b && Arc::ptr_eq(owner_a, owner_b),
+                _ => false,
+            }
     }
 }
 impl Eq for Ticket {}
@@ -76,6 +82,7 @@ impl Hash for Ticket {
     fn hash<H: Hasher>(&self, state: &mut H) {
         Arc::as_ptr(&self.owner).hash(state);
         self.generation.hash(state);
+        if let Some((key, owner)) = &self.key_owner { key.hash(state); Arc::as_ptr(owner).hash(state); }
     }
 }
 
@@ -183,6 +190,7 @@ pub struct ImageCache {
     index: Mutex<Index>,
     owner: Arc<()>,
     generation: AtomicU64,
+    key_owners: Mutex<HashMap<String, Weak<()>>>,
     max_bytes: u64,
     max_files: usize,
 }
@@ -217,6 +225,7 @@ impl ImageCache {
             index: Mutex::new(Index::default()),
             owner: Arc::new(()),
             generation: AtomicU64::new(0),
+            key_owners: Mutex::new(HashMap::new()),
             max_bytes,
             max_files,
         }
@@ -226,12 +235,55 @@ impl ImageCache {
         Ticket {
             owner: self.owner.clone(),
             generation: self.generation.load(Ordering::Acquire),
+            key_owner: None,
         }
     }
 
     fn accepts(&self, ticket: &Ticket) -> bool {
         Arc::ptr_eq(&self.owner, &ticket.owner)
             && ticket.generation == self.generation.load(Ordering::Acquire)
+            && ticket.key_owner.as_ref().is_none_or(|(key, owner)| {
+                self.key_owners.lock().ok().and_then(|owners| owners.get(key).and_then(Weak::upgrade))
+                    .is_some_and(|current| Arc::ptr_eq(&current, owner))
+            })
+    }
+
+    /// Capture source ownership before any queued read, download or publication.
+    pub fn bind_key(&self, ticket: &Ticket, key: &str) -> Result<Ticket, String> {
+        if !owned_image(key) || !self.accepts(ticket) { return Err("Artwork request was retired".into()); }
+        if ticket.key_owner.as_ref().is_some_and(|(bound, _)| bound == key) { return Ok(ticket.clone()); }
+        let mut owners = self.key_owners.lock().map_err(|_| "Artwork ownership is unavailable")?;
+        owners.retain(|_, owner| owner.strong_count() > 0);
+        if owners.len() >= 2048 && !owners.contains_key(key) { return Err("Too many pending artwork sources".into()); }
+        let owner = owners.get(key).and_then(Weak::upgrade).unwrap_or_else(|| Arc::new(()));
+        owners.insert(key.to_owned(), Arc::downgrade(&owner));
+        let mut bound = ticket.clone();
+        bound.key_owner = Some((key.to_owned(), owner));
+        Ok(bound)
+    }
+
+    /// Replace one source without evicting unrelated images. Publication and
+    /// source retirement share the index lock with every ordinary writer.
+    pub fn refresh(&self, ticket: &Ticket, key: &str, bytes: &[u8]) -> Result<(), String> {
+        if ticket.key_owner.as_ref().is_none_or(|(bound, _)| bound != key)
+            || !owned_image(key) || bytes.is_empty() || bytes.len() > MAX_IMAGE_BYTES {
+            return Err("Invalid artwork refresh".into());
+        }
+        let proof = Proof::of(bytes).ok_or("Invalid artwork refresh")?;
+        let mut index = self.index.lock().map_err(|_| "Artwork cache is unavailable")?;
+        let root = self.root()?;
+        self.load(&mut index)?;
+        if !self.accepts(ticket) { return Err("Artwork request was retired".into()); }
+        if index.bytes.saturating_add(index.proof_bytes).saturating_add(bytes.len() as u64) > self.max_bytes
+            || (!index.entries.contains_key(key) && index.entries.len() >= self.max_files) {
+            return Err("Not enough artwork cache space to refresh this image".into());
+        }
+        self.publish(&mut index, &root, ticket, key, bytes, Some(proof), |_| {})?;
+        let owner = Arc::new(());
+        self.key_owners.lock().map_err(|_| "Artwork ownership is unavailable")?.insert(key.to_owned(), Arc::downgrade(&owner));
+        // Proof persistence is optional and must not evict unrelated images.
+        // The next validated read can save it using normal cache policy.
+        Ok(())
     }
 
     fn root(&self) -> Result<Arc<Root>, String> {
@@ -930,6 +982,52 @@ mod tests {
 
     fn key(id: u64) -> String {
         format!("v2_{id:064x}.img")
+    }
+
+    #[tokio::test]
+    async fn selected_refresh_retires_only_old_source_writers_and_survives_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("images");
+        let cache = Arc::new(ImageCache::new(path.clone()));
+        let base = cache.ticket();
+        let old = cache.bind_key(&base, &key(1)).unwrap();
+        let unrelated = cache.bind_key(&base, &key(2)).unwrap();
+        let png = crate::image_content::test_png();
+        cache.store(&old, &key(1), b"old").unwrap();
+        cache.refresh(&old, &key(1), &png).unwrap();
+        assert!(cache.store(&old, &key(1), b"late old response").is_err());
+        cache.store(&unrelated, &key(2), b"unrelated").unwrap();
+        let fresh = cache.bind_key(&base, &key(1)).unwrap();
+        assert_eq!(read_validated(cache.clone(), fresh.clone(), key(1)).await, Some(png.clone()));
+        assert_eq!(cache.read_with_proof(&unrelated, &key(2)).unwrap().0, b"unrelated");
+        drop(fresh); drop(unrelated); drop(old); drop(base); drop(cache);
+        let restored = Arc::new(ImageCache::new(path));
+        let ticket = restored.bind_key(&restored.ticket(), &key(1)).unwrap();
+        assert_eq!(read_validated(restored.clone(), ticket, key(1)).await, Some(png));
+    }
+
+    #[test]
+    fn refresh_failure_preserves_existing_pixels_and_other_images_without_eviction() {
+        let directory = tempfile::tempdir().unwrap();
+        let png = crate::image_content::test_png();
+        let cache = ImageCache::with_limits(directory.path().join("images"), png.len() as u64 + 6, 2);
+        let base = cache.ticket();
+        let source = cache.bind_key(&base, &key(1)).unwrap();
+        cache.store(&source, &key(1), b"old").unwrap();
+        cache.store(&base, &key(2), b"keep").unwrap();
+        assert!(cache.refresh(&source, &key(1), &png).is_err());
+        assert_eq!(cache.read_with_proof(&source, &key(1)).unwrap().0, b"old");
+        assert_eq!(cache.read_with_proof(&base, &key(2)).unwrap().0, b"keep");
+        assert!(cache.refresh(&source, &key(1), b"invalid").is_err());
+        cache.store(&source, &key(1), b"still owns").unwrap();
+    }
+
+    #[test]
+    fn source_owner_registry_prunes_finished_requests() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = ImageCache::new(directory.path().join("images"));
+        for id in 0..5000 { drop(cache.bind_key(&cache.ticket(), &key(id)).unwrap()); }
+        assert!(cache.key_owners.lock().unwrap().len() <= 1);
     }
 
     #[test]

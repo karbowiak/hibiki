@@ -21,3 +21,8 @@ export function clearImageCache(): Promise<ImageCacheInfo> {
 export function getImageCacheInfo(): Promise<ImageCacheInfo> {
   return invoke("get_image_cache_info")
 }
+
+/** Refresh only this explicitly selected source; old pixels survive failures. */
+export function refreshImage(uri: string): Promise<{ revision: string }> {
+  return invoke("refresh_image", { uri })
+}

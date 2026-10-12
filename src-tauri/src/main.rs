@@ -175,6 +175,7 @@ async fn resolve_image(
         if let Some(fallback_url) = metadata_fallback_url(entity_type, name, artist).await {
             let fb_cache_key =
                 image_fetch::cache_key(scope, entity_type, entity_id, &fallback_url, name, artist);
+            let ticket = cache.bind_key(&ticket, &fb_cache_key).ok()?;
             if let Some(bytes) =
                 image_cache::read_validated(cache.clone(), ticket.clone(), fb_cache_key.clone())
                     .await
@@ -313,6 +314,10 @@ pub fn run() {
                     responder.respond(image_protocol::error_response(404));
                     return;
                 }
+                let ticket = match cache.bind_key(&ticket, &parsed.cache_key(&context)) {
+                    Ok(ticket) => ticket,
+                    Err(_) => { responder.respond(image_protocol::error_response(503)); return; }
+                };
                 let key = image_protocol::WorkKey::new(&parsed, &context, ticket.clone());
                 let requires_connection = parsed.requires_connection(&context);
                 let request_app = app.clone();
@@ -408,6 +413,7 @@ pub fn run() {
             commands::save_settings,
             // Cache
             commands::clear_image_cache,
+            commands::refresh_image,
             commands::get_image_cache_info,
             // Plex.tv OAuth
             commands::plex_auth_start,

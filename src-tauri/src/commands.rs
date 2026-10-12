@@ -7,6 +7,7 @@
 use tauri::State;
 use tokio::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use crate::mediasession::{MediaSessionState, MediaUpdate};
 use crate::plex::lyrics::LyricLine;
@@ -21,7 +22,7 @@ use crate::plex::{
 // ---------------------------------------------------------------------------
 
 /// Shared Plex client state managed by Tauri.
-pub struct PlexState(pub Mutex<Option<PlexClient>>, AtomicU64);
+pub struct PlexState(pub Arc<Mutex<Option<PlexClient>>>, Arc<AtomicU64>);
 
 /// Identifies the account/server/library that originated a provider request.
 #[derive(Clone, serde::Deserialize)]
@@ -33,7 +34,7 @@ pub struct PlexRequestContext {
 
 impl PlexState {
     pub fn new() -> Self {
-        PlexState(Mutex::new(None), AtomicU64::new(0))
+        PlexState(Arc::new(Mutex::new(None)), Arc::new(AtomicU64::new(0)))
     }
 
     async fn reset_with_audio_revocation(
@@ -1416,6 +1417,59 @@ pub async fn set_now_playing_state(
 // Image cache management
 // ---------------------------------------------------------------------------
 
+#[derive(serde::Serialize)]
+pub struct ImageRefreshResult { pub revision: String }
+
+/// Refresh exactly the validated selected source; failures retain its old image.
+#[tauri::command]
+pub async fn refresh_image(
+    uri: String,
+    state: tauri::State<'_, PlexState>,
+    images: tauri::State<'_, crate::image_cache::ImageCacheState>,
+) -> Result<ImageRefreshResult, String> {
+    state.refresh_selected_image(&uri, images.0.clone(), &crate::IMAGE_WORK).await
+}
+
+impl PlexState {
+    async fn publish_image<F>(&self, context: &crate::image_protocol::ImageContext, operation: F) -> Result<(), String>
+    where F: FnOnce() -> Result<(), String> + Send + 'static {
+        let connection = self.0.clone();
+        let revision = self.1.clone();
+        let context = context.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            // Owned by the blocking task even if its caller is canceled. Lock
+            // connection before cache index; network fetch never holds either.
+            let current = connection.blocking_lock();
+            if !context.matches(revision.load(Ordering::SeqCst), current.as_ref()) {
+                return Err("The library changed. Try again.".into());
+            }
+            operation().map_err(|_| "Could not save the refreshed image. Check cache storage and try again.".into())
+        }).await.map_err(|_| "Could not refresh this image. Try again.")?
+    }
+
+    async fn refresh_selected_image(
+        &self, uri: &str, cache: std::sync::Arc<crate::image_cache::ImageCache>,
+        work: &crate::image_protocol::WorkQueue,
+    ) -> Result<ImageRefreshResult, String> {
+        // Capture before the first await: Clear also retires requests blocked
+        // on connection capture, not only those already fetching or queued.
+        let base_ticket = cache.ticket();
+        let request = crate::image_protocol::ImageRequest::explicit_uri(uri)?;
+        let context = self.image_context().await;
+        let source = crate::image_fetch::scoped_request(context.client.as_ref(), &request.scope, &request.src)
+            .ok_or("This image source is unavailable for the current library")?;
+        let admission = work.try_admit().ok_or("Too many artwork requests. Try again.")?;
+        let key = request.cache_key(&context);
+        let ticket = cache.bind_key(&base_ticket, &key).map_err(|_| "Artwork cache is unavailable")?;
+        admission.run(|| async {
+            if !self.image_context_is_current(&context).await { return Err("The library changed. Try again.".into()); }
+            let bytes = crate::image_fetch::fetch(source.header(reqwest::header::CACHE_CONTROL, "no-cache")).await.ok_or("Could not refresh this image. Try again.")?;
+            self.publish_image(&context, move || cache.refresh(&ticket, &key, &bytes)).await?;
+            Ok(ImageRefreshResult { revision: uuid::Uuid::new_v4().to_string() })
+        }).await.ok_or("Artwork service is unavailable")?
+    }
+}
+
 /// Clear completes before acknowledgement; old downloads cannot refill the cache.
 #[tauri::command]
 pub async fn clear_image_cache(
@@ -2426,6 +2480,132 @@ mod connection_tests {
         client.machine_identifier = "test-server".into();
         client.library_scope = client.cache_scope_for_library(library, None);
         client
+    }
+
+    #[tokio::test]
+    async fn clear_retires_refresh_waiting_for_its_initial_connection_snapshot_without_network() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let source = format!("http://{}/image.png", listener.local_addr().unwrap());
+        let mut uri = url::Url::parse("image://localhost/ext/img").unwrap();
+        uri.query_pairs_mut().append_pair("src", &source);
+        let state = PlexState::new();
+        let directory = tempfile::tempdir().unwrap();
+        let cache = Arc::new(crate::image_cache::ImageCache::new(directory.path().join("images")));
+        let work = crate::image_protocol::WorkQueue::default();
+        let guard = state.0.lock().await;
+        let mut refresh = Box::pin(state.refresh_selected_image(uri.as_str(), cache.clone(), &work));
+        assert!(futures::poll!(&mut refresh).is_pending());
+        assert_eq!(cache.clear().unwrap().files, 0);
+        drop(guard);
+        assert!(refresh.await.is_err());
+        let mut incoming = Box::pin(listener.accept());
+        assert!(futures::poll!(&mut incoming).is_pending(), "retired refresh must never open a connection");
+        assert_eq!(cache.stats().unwrap().files, 0);
+    }
+
+    #[tokio::test]
+    async fn canceled_refresh_callers_cannot_release_blocking_publication_ownership() {
+        struct Completion(Option<tokio::sync::oneshot::Sender<()>>);
+        impl Drop for Completion {
+            fn drop(&mut self) { if let Some(sender) = self.0.take() { let _ = sender.send(()); } }
+        }
+        for change in [false, true] {
+            let state = PlexState::new();
+            let context = state.image_context().await;
+            let guard = state.0.lock().await;
+            let (sender, mut completed) = tokio::sync::oneshot::channel();
+            let completion = Completion(Some(sender));
+            let published = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let observed = published.clone();
+            let mut future = Box::pin(state.publish_image(&context, move || {
+                let _completion = completion;
+                observed.store(true, Ordering::Release); Ok(())
+            }));
+            assert!(futures::poll!(&mut future).is_pending());
+            drop(future); // Simulate closing the picker/webview during publication.
+            assert!(matches!(completed.try_recv(), Err(tokio::sync::oneshot::error::TryRecvError::Empty)));
+            if change { state.1.fetch_add(1, Ordering::SeqCst); }
+            drop(guard);
+            completed.await.unwrap();
+            assert_eq!(published.load(Ordering::Acquire), !change);
+        }
+    }
+
+    #[tokio::test]
+    async fn selected_image_refresh_fetches_current_scope_and_preserves_cache_on_failures() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use std::sync::Arc;
+        for scenario in ["success", "status", "invalid", "scope", "disconnect"] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}/proxy", listener.local_addr().unwrap());
+            let state = Arc::new(PlexState::new());
+            let revision = state.begin_connection().await;
+            let client = scoped_client(&base, "offline-token", 1);
+            let scope = client.library_scope.clone();
+            state.publish(revision, client).await.unwrap();
+            let source = format!("{base}/library/metadata/42/thumb?width=600");
+            let mut uri = url::Url::parse("image://localhost/ext/img").unwrap();
+            uri.query_pairs_mut().append_pair("src", &source).append_pair("scope", &scope).append_pair("revision", "previous");
+            let request = crate::image_protocol::ImageRequest::explicit_uri(uri.as_str()).unwrap();
+            let context = state.image_context().await;
+            let key = request.cache_key(&context);
+            let directory = tempfile::tempdir().unwrap();
+            let cache = Arc::new(crate::image_cache::ImageCache::new(directory.path().join("images")));
+            let old_ticket = cache.bind_key(&cache.ticket(), &key).unwrap();
+            cache.store(&old_ticket, &key, b"old pixels").unwrap();
+            let server_state = state.clone();
+            let png = crate::image_content::test_png();
+            let fresh = png.clone();
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                loop {
+                    let mut buffer = [0; 4096];
+                    let count = socket.read(&mut buffer).await.unwrap();
+                    bytes.extend_from_slice(&buffer[..count]);
+                    if count == 0 || bytes.windows(4).any(|w| w == b"\r\n\r\n") { break; }
+                }
+                let request_text = String::from_utf8(bytes).unwrap();
+                assert!(request_text.to_ascii_lowercase().contains("cache-control: no-cache\r\n"));
+                let target = request_text.split_whitespace().nth(1).unwrap();
+                assert_eq!(target, "/proxy/library/metadata/42/thumb?width=600");
+                if scenario == "scope" { server_state.0.lock().await.as_mut().unwrap().library_scope = "replacement".into(); }
+                if scenario == "disconnect" { server_state.reset(None).await.unwrap(); }
+                let body = if scenario == "invalid" { b"<html>not image</html>".to_vec() } else { png };
+                let status = if scenario == "status" { "500 Internal Server Error" } else { "200 OK" };
+                socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+                socket.write_all(&body).await.unwrap();
+            });
+            let result = state.refresh_selected_image(uri.as_str(), cache.clone(), &crate::image_protocol::WorkQueue::default()).await;
+            server.await.unwrap();
+            if scenario == "success" {
+                assert!(!result.unwrap().revision.is_empty());
+                assert!(cache.store(&old_ticket, &key, b"old late writer").is_err());
+                let bound = cache.bind_key(&cache.ticket(), &key).unwrap();
+                assert_eq!(crate::image_cache::read_validated(cache.clone(), bound, key.clone()).await, Some(fresh));
+            } else {
+                let error = result.err().unwrap();
+                assert!(!error.contains("offline-token") && !error.contains(&base));
+                // Failed refresh neither deletes pixels nor retires their owner.
+                cache.store(&old_ticket, &key, b"still owns old pixels").unwrap();
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn selected_image_refresh_rejects_wrong_scope_and_authenticated_nonartwork_routes() {
+        let state = PlexState::new();
+        let revision = state.begin_connection().await;
+        let client = scoped_client("https://server.test/proxy", "offline-token", 1);
+        let scope = client.library_scope.clone();
+        state.publish(revision, client).await.unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let cache = std::sync::Arc::new(crate::image_cache::ImageCache::new(directory.path().into()));
+        for (path, requested) in [("/library/metadata/42/thumb", "old-scope"), ("/:/scrobble?key=42", scope.as_str())] {
+            let mut uri = url::Url::parse("image://localhost/ext/img").unwrap();
+            uri.query_pairs_mut().append_pair("src", &format!("https://server.test/proxy{path}")).append_pair("scope", requested);
+            assert!(state.refresh_selected_image(uri.as_str(), cache.clone(), &crate::image_protocol::WorkQueue::default()).await.is_err());
+        }
     }
 
     #[tokio::test]
