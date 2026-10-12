@@ -131,6 +131,7 @@ jobs:
             libssl-dev \
             pkg-config \
             cmake \
+            file \
             desktop-file-utils \
             appstream \
             zsync

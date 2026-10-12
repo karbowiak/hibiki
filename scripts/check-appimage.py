@@ -136,9 +136,9 @@ def check_appimage(path: Path, updates: bool = True, prepare_zsync: bool = False
     path = path.resolve(strict=True)
     if path.stat().st_size > MAX_APPIMAGE_BYTES:
         raise ValueError("AppImage exceeds the installer size limit")
-    match = re.fullmatch(r"Hibiki_(\d+\.\d+\.\d+)_amd64\.AppImage", path.name)
-    if not match:
-        raise ValueError("Unexpected Hibiki AppImage filename")
+    match = re.fullmatch(r"Hibiki_(\d+\.\d+\.\d+)_(amd64|aarch64)\.AppImage", path.name)
+    if not match or (updates and match.group(2) != "amd64"):
+        raise ValueError("Unexpected Hibiki AppImage filename or updater architecture")
     version = match.group(1)
     if updates:
         result = subprocess.run([str(path), "--appimage-updateinformation"], check=True, capture_output=True, text=True, timeout=30)
@@ -169,7 +169,8 @@ def main() -> None:
             check_appimage(path, not args.no_updates, args.prepare_zsync)
         except (OSError, ValueError, ET.ParseError, subprocess.SubprocessError) as error:
             parser.exit(1, f"{path.name}: {error}\n")
-        print(f"{path.name}: AppDir, AppStream and update metadata OK")
+        checks = "AppDir and AppStream metadata OK (update checks skipped)" if args.no_updates else "AppDir, AppStream and update metadata OK"
+        print(f"{path.name}: {checks}")
 
 
 if __name__ == "__main__":
