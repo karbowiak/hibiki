@@ -1,6 +1,6 @@
 import "../../styles/media-detail-controls.css"
 import { ArtworkImage, useArtworkFailures } from "../shared/ArtworkImage"
-import { useArtistImage } from "../../hooks/useMediaImage"
+import { useArtistImage, useArtistBackground } from "../../hooks/useMediaImage"
 import { useLayoutEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { Link, useLocation } from "wouter"
@@ -43,6 +43,8 @@ import { useDebugStore } from "../../stores/debugStore"
 import { useDebugPanelStore } from "../../stores/debugPanelStore"
 import { useCapability } from "../../hooks/useCapability"
 import { useTrackDrag } from "../../hooks/useTrackDrag"
+import { useMetadataSnapshot } from "../../hooks/useMetadataSnapshot"
+import { MetadataEditDialog } from "../shared/MetadataEditDialog"
 
 function dedupe<T extends { id: string }>(items: T[]): T[] {
   const seen = new Set<string>()
@@ -152,6 +154,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
   const [showImageModal, setShowImageModal] = useState(false)
   const [showHeroModal, setShowHeroModal] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
   const menuBtnRef = useRef<HTMLButtonElement>(null)
   const heroRef = useRef<HTMLDivElement>(null)
   const debugEnabled = useDebugStore((s) => s.debugEnabled)
@@ -181,6 +184,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
     setError(null)
     setBioExpanded(false)
     setShowImageModal(false)
+    setEditOpen(false)
     setShowHeroModal(false)
 
     // Seed ALL state from persistent cache — avoids loading flash AND layout shift.
@@ -240,7 +244,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
   const { failures, onFailure } = useArtworkFailures(
     JSON.stringify([artistId, artist?.title, artist?.thumbUrl, artist?.artUrl])
   )
-  const artUrl = useArtistImage(
+  const artUrl = useArtistBackground(
     artist?.title ?? null,
     artist?.artUrl ?? null,
     artistId,
@@ -310,6 +314,17 @@ export function ArtistPage({ artistId }: { artistId: string }) {
     }
     return { albumHubs, displayAlbums: da, displaySingles: ds, genres: g }
   }, [relatedHubs, fullAlbums, singles, shouldDedup])
+  const sharedMetadata = useMetadataSnapshot(
+    artist && provider?.cacheScope
+      ? {
+          kind: "artist",
+          entityId: artist.id,
+          artist: artist.title,
+          scope: provider.cacheScope,
+        }
+      : null,
+    artist ? { ...artist, genres } : null
+  )
 
   // Count how many duplicate albums were merged (for the hero badge)
   const dedupStats = useMemo(() => {
@@ -339,7 +354,8 @@ export function ArtistPage({ artistId }: { artistId: string }) {
     return `deduplicated: ${parts.join(", ")}`
   }, [fullAlbums, singles, relatedHubs])
 
-  if (isLoading) return <PageLoading message="Loading artist…" variant="artist" />
+  if (isLoading)
+    return <PageLoading message="Loading artist…" variant="artist" />
   if (!artist)
     return (
       <div className="p-6">
@@ -370,34 +386,17 @@ export function ArtistPage({ artistId }: { artistId: string }) {
 
   // Bio: pick from the highest-priority source that has text.
   // Only Plex and Last.fm have artist bios; Deezer and Apple are skipped.
-  let displayBio: string | undefined
-  for (const src of priority) {
-    if (src === "lastfm" && lastfmData?.bio) {
-      displayBio = lastfmData.bio
-      break
-    }
-    if (src === "plex" && artist.summary) {
-      displayBio = artist.summary
-      break
-    }
-  }
+  const displayBio = sharedMetadata.resolveField("biography")?.value
 
-  // Merge tags in priority order; Plex genres always valid; external tags filtered.
-  const tagsBySource: Record<string, string[]> = {
-    plex: genres,
-    lastfm: (lastfmData?.tags ?? []).filter((t) =>
-      plexTagSet.has(t.toLowerCase())
-    ),
-    deezer: [], // artist info has no genre tags
-    apple:
-      itunesData?.genre && plexTagSet.has(itunesData.genre.toLowerCase())
-        ? [itunesData.genre]
-        : [],
-  }
+  // Enrichment choices retain only tags that can open a real library collection.
+  const resolvedGenres = sharedMetadata.resolveField("genres")
+  const resolvedTags = sharedMetadata.resolveField("tags")
   const seenTags = new Set<string>()
   const mergedTags: string[] = []
-  for (const src of priority) {
-    for (const tag of tagsBySource[src] ?? []) {
+  for (const resolved of [resolvedGenres, resolvedTags]) {
+    for (const tag of resolved?.value ?? []) {
+      if (resolved.source !== "plex" && !plexTagSet.has(tag.toLowerCase()))
+        continue
       const key = tag.toLowerCase()
       if (!seenTags.has(key)) {
         seenTags.add(key)
@@ -409,6 +408,17 @@ export function ArtistPage({ artistId }: { artistId: string }) {
 
   return (
     <div className="media-detail-page">
+      {editOpen && (
+        <MetadataEditDialog
+          key={`${provider?.cacheScope}:artist:${artist.id}`}
+          kind="artist"
+          item={{ ...artist, genres }}
+          artworkUrl={thumbUrl}
+          backgroundUrl={artUrl ?? thumbUrl}
+          onClose={() => setEditOpen(false)}
+          onSaved={() => setLoadAttempt((value) => value + 1)}
+        />
+      )}
       <MediaBackdrop
         src={artUrl ?? thumbUrl}
         heroRef={heroRef}
@@ -670,6 +680,16 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                         }}
                       >
                         {/* Queue */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMenuOpen(false)
+                            setEditOpen(true)
+                          }}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                        >
+                          Edit metadata and sources…
+                        </button>
                         <button
                           onClick={() => {
                             addToQueue(popularTracks)

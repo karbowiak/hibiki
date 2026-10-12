@@ -121,6 +121,8 @@ struct MBUrl {
 
 #[derive(Debug, Deserialize, Default)]
 struct MBReleaseGroupSearchItem {
+    #[serde(default, rename = "artist-credit")]
+    artist_credit: Vec<MBArtistCredit>,
     id: String,
     title: String,
     #[serde(default)]
@@ -194,10 +196,12 @@ pub struct MusicBrainzArtistInfo {
     pub tags: Vec<String>,
     pub begin_date: Option<String>,
     pub wikipedia_url: Option<String>,
+    pub wikidata_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
 pub struct MusicBrainzAlbumInfo {
+    pub artist: String,
     pub mbid: String,
     pub title: String,
     pub release_type: Option<String>,
@@ -240,13 +244,9 @@ pub async fn get_artist_info(artist: &str) -> Result<Option<MusicBrainzArtistInf
         return Ok(None);
     }
 
-    // Prefer exact case-insensitive name match; fall back to highest score
-    let best = search_resp
-        .artists
-        .iter()
-        .find(|a| a.name.to_lowercase() == artist.to_lowercase())
-        .or_else(|| search_resp.artists.first())
-        .unwrap();
+    let mut matches = search_resp.artists.iter().filter(|a| a.name.trim().to_lowercase() == artist.trim().to_lowercase());
+    let Some(best) = matches.next() else { return Ok(None); };
+    if matches.any(|other| other.id != best.id) { return Ok(None); }
 
     let mbid = &best.id;
 
@@ -262,12 +262,18 @@ pub async fn get_artist_info(artist: &str) -> Result<Option<MusicBrainzArtistInf
         .await
         .context("Failed to parse MusicBrainz artist detail")?;
 
+    if detail.id != *mbid || detail.name.trim().to_lowercase() != artist.trim().to_lowercase() { return Ok(None); }
+
     let wikipedia_url = detail
         .relations
         .iter()
         .find(|r| r.rel_type == "wikipedia")
         .and_then(|r| r.url.as_ref())
         .map(|u| u.resource.clone());
+
+    let wikidata_url = detail.relations.iter()
+        .find(|r| r.rel_type == "wikidata")
+        .and_then(|r| r.url.as_ref()).map(|u| u.resource.clone());
 
     let mut tags: Vec<String> = detail
         .tags
@@ -286,7 +292,19 @@ pub async fn get_artist_info(artist: &str) -> Result<Option<MusicBrainzArtistInf
         tags,
         begin_date: detail.life_span.and_then(|ls| ls.begin),
         wikipedia_url,
+        wikidata_url,
     }))
+}
+
+fn matched_release_group<'a>(groups: &'a [MBReleaseGroupSearchItem], artist: &str, album: &str) -> Option<&'a MBReleaseGroupSearchItem> {
+    // Exact single-artist credit only. Multiple matching release groups are
+    // genuinely ambiguous (editions/homonyms); never choose search rank.
+    let mut matches = groups.iter().filter(|group| group.title.trim().to_lowercase() == album.trim().to_lowercase()
+        && group.artist_credit.len() == 1
+        && group.artist_credit[0].artist.name.trim().to_lowercase() == artist.trim().to_lowercase());
+    let first = matches.next()?;
+    if matches.any(|other| other.id != first.id) { return None; }
+    Some(first)
 }
 
 /// Search for an album (release group) by artist and album name.
@@ -312,12 +330,9 @@ pub async fn get_album_info(artist: &str, album: &str) -> Result<Option<MusicBra
         return Ok(None);
     }
 
-    let best = search_resp
-        .release_groups
-        .iter()
-        .find(|rg| rg.title.to_lowercase() == album.to_lowercase())
-        .or_else(|| search_resp.release_groups.first())
-        .unwrap();
+    let Some(best) = matched_release_group(&search_resp.release_groups, artist, album) else {
+        return Ok(None);
+    };
 
     let mut tags: Vec<String> = best
         .tags
@@ -329,6 +344,7 @@ pub async fn get_album_info(artist: &str, album: &str) -> Result<Option<MusicBra
     tags.dedup();
 
     Ok(Some(MusicBrainzAlbumInfo {
+        artist: best.artist_credit[0].artist.name.clone(),
         mbid: best.id.clone(),
         title: best.title.clone(),
         release_type: best.primary_type.clone(),
@@ -428,6 +444,21 @@ mod tests {
 
     async fn yield_tasks() {
         for _ in 0..8 { tokio::task::yield_now().await; }
+    }
+
+    #[test]
+    fn release_group_selection_requires_one_exact_artist_credit_and_title() {
+        fn group(id: &str, artist: &str, title: &str) -> MBReleaseGroupSearchItem {
+            serde_json::from_value(serde_json::json!({"id":id,"title":title,"artist-credit":[{"artist":{"name":artist}}]})).unwrap()
+        }
+        let matches = vec![group("wrong", "Other", "Album"),group("right", "Artist", "Album")];
+        assert_eq!(matched_release_group(&matches,"artist","album").unwrap().id,"right");
+        assert!(matched_release_group(&matches,"Artist","Album Deluxe").is_none());
+        assert!(matched_release_group(&[group("a","Artist","Album"),group("b","Artist","Album")],"Artist","Album").is_none());
+        let no_credit: MBReleaseGroupSearchItem = serde_json::from_value(serde_json::json!({"id":"a","title":"Album"})).unwrap();
+        assert!(matched_release_group(&[no_credit],"Artist","Album").is_none());
+        let multiple: MBReleaseGroupSearchItem = serde_json::from_value(serde_json::json!({"id":"a","title":"Album","artist-credit":[{"artist":{"name":"Artist"}},{"artist":{"name":"Guest"}}]})).unwrap();
+        assert!(matched_release_group(&[multiple],"Artist","Album").is_none());
     }
 
     #[tokio::test(start_paused = true)]

@@ -1,6 +1,6 @@
 import "../../styles/media-detail-controls.css"
 import { ArtworkImage, useArtworkFailures } from "../shared/ArtworkImage"
-import { useAlbumImage } from "../../hooks/useMediaImage"
+import { useAlbumImage, useAlbumBackground } from "../../hooks/useMediaImage"
 import { useLayoutEffect, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { Link, useLocation } from "wouter"
@@ -40,6 +40,8 @@ import { useDebugStore } from "../../stores/debugStore"
 import { useDebugPanelStore } from "../../stores/debugPanelStore"
 import { useCapability } from "../../hooks/useCapability"
 import { useTrackDrag } from "../../hooks/useTrackDrag"
+import { useMetadataSnapshot } from "../../hooks/useMetadataSnapshot"
+import { MetadataEditDialog } from "../shared/MetadataEditDialog"
 
 function TagChip({
   tag,
@@ -91,6 +93,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
   const [descExpanded, setDescExpanded] = useState(false)
   const [showImageModal, setShowImageModal] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
   const menuBtnRef = useRef<HTMLButtonElement>(null)
   const heroRef = useRef<HTMLDivElement>(null)
   const debugEnabled = useDebugStore((s) => s.debugEnabled)
@@ -112,6 +115,18 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     deezer: deezerData,
     itunes: itunesData,
   } = useAlbumEnrichment(album?.artistName ?? null, album?.title ?? null)
+  const sharedMetadata = useMetadataSnapshot(
+    album && provider?.cacheScope
+      ? {
+          kind: "album",
+          entityId: album.id,
+          artist: album.artistName,
+          title: album.title,
+          scope: provider.cacheScope,
+        }
+      : null,
+    album
+  )
 
   useLayoutEffect(() => {
     let active = true
@@ -120,6 +135,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     setError(null)
     setDescExpanded(false)
     setShowImageModal(false)
+    setEditOpen(false)
 
     // Seed ALL state from persistent cache — avoids loading flash.
     const freshCache = getCachedAlbum(albumId)
@@ -196,6 +212,13 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     albumId,
     failures
   )
+  const backgroundUrl = useAlbumBackground(
+    album?.artistName ?? null,
+    album?.title ?? null,
+    album?.artUrl ?? null,
+    albumId,
+    failures
+  )
 
   if (isLoading) return <PageLoading message="Loading album…" variant="album" />
   if (!album)
@@ -226,40 +249,18 @@ export function AlbumPage({ albumId }: { albumId: string }) {
 
   const formatLabel = album.format ?? "Album"
 
-  const plexTags = [...album.genres, ...album.styles, ...album.moods]
-
   // Bio: pick from the highest-priority source that has text.
   // Only Plex and Last.fm have album bios/wiki; Deezer and Apple are skipped.
-  let displayWiki: string | undefined
-  for (const src of priority) {
-    if (src === "lastfm" && lastfmData?.wiki) {
-      displayWiki = lastfmData.wiki
-      break
-    }
-    if (src === "plex" && album.summary) {
-      displayWiki = album.summary
-      break
-    }
-  }
+  const displayWiki = sharedMetadata.resolveField("summary")?.value
 
-  // Merge tags in priority order; Plex tags always valid; external tags filtered.
-  const tagsBySource: Record<string, string[]> = {
-    plex: plexTags,
-    lastfm: (lastfmData?.tags ?? []).filter((t) =>
-      plexTagSet.has(t.toLowerCase())
-    ),
-    deezer: (deezerData?.genres ?? []).filter((g) =>
-      plexTagSet.has(g.toLowerCase())
-    ),
-    apple:
-      itunesData?.genre && plexTagSet.has(itunesData.genre.toLowerCase())
-        ? [itunesData.genre]
-        : [],
-  }
+  const resolvedGenres = sharedMetadata.resolveField("genres")
+  const resolvedTags = sharedMetadata.resolveField("tags")
   const seenTagKeys = new Set<string>()
   const allTags: string[] = []
-  for (const src of priority) {
-    for (const tag of tagsBySource[src] ?? []) {
+  for (const resolved of [resolvedGenres, resolvedTags]) {
+    for (const tag of resolved?.value ?? []) {
+      if (resolved.source !== "plex" && !plexTagSet.has(tag.toLowerCase()))
+        continue
       const key = tag.toLowerCase()
       if (!seenTagKeys.has(key)) {
         seenTagKeys.add(key)
@@ -267,14 +268,9 @@ export function AlbumPage({ albumId }: { albumId: string }) {
       }
     }
   }
-  // Use Deezer label as fallback when Plex has none.
-  // Deezer returns the literal string "[no label]" for unlabelled releases — filter that out.
-  const deezerLabel =
-    deezerData?.label && deezerData.label !== "[no label]"
-      ? deezerData.label
-      : null
   const displayLabel =
-    album.labels.length > 0 ? album.labels.join(", ") : deezerLabel
+    sharedMetadata.resolveField("label")?.value ??
+    (album.labels.length ? album.labels.join(", ") : null)
 
   // Show all non-empty hubs (sonically similar, more by artist, etc.)
   const nonEmptyHubs = relatedHubs.filter(
@@ -285,8 +281,19 @@ export function AlbumPage({ albumId }: { albumId: string }) {
 
   return (
     <div className="media-detail-page pb-12">
+      {editOpen && (
+        <MetadataEditDialog
+          key={`${provider?.cacheScope}:album:${album.id}`}
+          kind="album"
+          item={album}
+          artworkUrl={thumbUrl}
+          backgroundUrl={backgroundUrl ?? thumbUrl ?? parentThumbUrl}
+          onClose={() => setEditOpen(false)}
+          onSaved={() => setLoadAttempt((value) => value + 1)}
+        />
+      )}
       <MediaBackdrop
-        src={thumbUrl ?? parentThumbUrl}
+        src={backgroundUrl ?? thumbUrl ?? parentThumbUrl}
         heroRef={heroRef}
         onFailure={onFailure}
       />
@@ -544,6 +551,16 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                         }}
                       >
                         {/* Queue */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMenuOpen(false)
+                            setEditOpen(true)
+                          }}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                        >
+                          Edit metadata and sources…
+                        </button>
                         <button
                           onClick={() => {
                             addNext(tracks)

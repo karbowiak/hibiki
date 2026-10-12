@@ -49,6 +49,13 @@ mock.module("../../src/metadata/apple/store", () => ({
 }))
 mock.module("../../src/stores/metadataSourceStore", () => ({
   useMetadataSourceStore: priority,
+  SOURCE_LABELS: {
+    plex: "Plex",
+    deezer: "Deezer",
+    lastfm: "Last.fm",
+    apple: "Apple Music",
+    musicbrainz: "MusicBrainz",
+  },
 }))
 mock.module("../../src/stores/index", () => ({
   usePlayerStore: player,
@@ -61,6 +68,7 @@ mock.module("../../src/stores/playerStore", () => ({
   capturePlaybackSelectionVersion: () => selection,
 }))
 mock.module("../../src/stores/metadataCache", () => ({
+  invalidateMetadataItem() {},
   getCachedArtist: () => null,
   prefetchAlbum() {},
   prefetchArtist() {},

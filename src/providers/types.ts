@@ -15,10 +15,20 @@ import type {
   PagedResult,
 } from "../types/music"
 
+export interface LibraryMetadataPatch {
+  title?: string
+  summary?: string
+  sortTitle?: string
+  releaseDate?: string
+}
+export type LibraryMetadataExpected = Partial<Record<keyof LibraryMetadataPatch, string | null>>
+
 export interface ProviderCapabilities {
   search: boolean
   playlists: boolean
   playlistEdit: boolean
+  /** Transport availability; actual server edit permission is checked on Save. */
+  metadataEdit?: boolean
   ratings: boolean
   radio: boolean
   sonicSimilarity: boolean
@@ -97,6 +107,7 @@ export interface MusicProvider {
   getTrack(id: string): Promise<MusicTrack>
   getAlbum(id: string): Promise<MusicAlbum>
   getArtist(id: string): Promise<MusicArtist>
+  editMetadata?(kind: "artist" | "album", itemId: string, patch: LibraryMetadataPatch, expected: LibraryMetadataExpected): Promise<void>
   getAlbumTracks(albumId: string): Promise<MusicTrack[]>
   getArtistAlbums(artistId: string, formatFilter?: string): Promise<MusicAlbum[]>
   getArtistPopularTracks(artistId: string, limit?: number): Promise<MusicTrack[]>

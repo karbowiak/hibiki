@@ -13,8 +13,16 @@ import {
   useArtworkPreferenceStore,
   type ArtworkKind,
   type ArtworkSource,
+  type ArtworkRole,
 } from "../../stores/artworkPreferenceStore"
 import { useDeezerMetadataStore } from "../../metadata/deezer/store"
+import { useHeyaArtworkStore } from "../../metadata/heya/artworkStore"
+import { useFanartMetadataStore } from "../../metadata/fanart/store"
+import {
+  useFanartServiceStore,
+  useHeyaServiceStore,
+} from "../../metadata/services/store"
+import { useCoverArtArchiveMetadataStore } from "../../metadata/coverartarchive/store"
 import { useItunesMetadataStore } from "../../metadata/apple/store"
 import { ArtworkImage, useArtworkFailures } from "./ArtworkImage"
 
@@ -22,12 +30,18 @@ const labels: Record<ArtworkSource, string> = {
   plex: "Plex",
   deezer: "Deezer",
   apple: "Apple Music",
+  coverartarchive: "Cover Art Archive",
+  fanart: "Fanart.tv",
+  heya: "Heya Metadata",
 }
 export interface ArtworkSourcePickerProps {
   kind: ArtworkKind
   artistName: string
   albumName?: string | null
   plexThumb: string | null
+  /** Independent Plex background/art URI; never substitute the poster implicitly. */
+  plexArt?: string | null
+  role?: ArtworkRole
   entityId?: string | null
   className?: string
   label?: string
@@ -46,8 +60,12 @@ export function artworkStatus(info: ArtworkResolution): string {
     ? `${labels[info.source]} · ${info.preference ? "Selected source" : "Automatic"}`
     : "No artwork available"
 }
-export function ArtworkSourcePicker(props: ArtworkSourcePickerProps) {
+function useArtworkSourceResolution(props: ArtworkSourcePickerProps) {
+  const heyaRevision = useHeyaServiceStore((s) => s.status?.revision)
+  const fanartRevision = useFanartServiceStore((s) => s.status?.revision)
   const provider = useProviderStore((s) => s.provider)
+  const scope = useProviderStore((s) => s.provider?.cacheScope)
+  const session = useProviderStore((s) => s.provider?.playbackSession)
   const refreshImage =
     props.refreshImage ??
     (isTauri()
@@ -57,28 +75,97 @@ export function ArtworkSourcePicker(props: ArtworkSourcePickerProps) {
     provider?.cacheScope,
     props.kind,
     props.artistName,
-    props.albumName
+    props.albumName,
+    props.role ?? "poster"
   )
-  const [openFor, setOpenFor] = useState<string | null>(null)
   const [refresh, setRefresh] = useState(0)
   const { failures, onFailure } = useArtworkFailures(
-    JSON.stringify([key, props.plexThumb, refresh])
+    JSON.stringify([
+      key,
+      props.role === "background" ? props.plexArt : props.plexThumb,
+      refresh,
+    ])
   )
+  const plexImage =
+    props.role === "background" ? (props.plexArt ?? null) : props.plexThumb
   const artist = useArtistArtwork(
     props.kind === "artist" ? props.artistName : null,
-    props.kind === "artist" ? props.plexThumb : null,
+    props.kind === "artist" ? plexImage : null,
     props.entityId,
-    failures
+    failures,
+    true,
+    props.role ?? "poster"
   )
   const album = useAlbumArtwork(
     props.kind === "album" ? props.artistName : null,
     props.kind === "album" ? (props.albumName ?? null) : null,
-    props.kind === "album" ? props.plexThumb : null,
+    props.kind === "album" ? plexImage : null,
     props.entityId,
-    failures
+    failures,
+    true,
+    props.role ?? "poster"
   )
   const info = props.kind === "artist" ? artist : album
-  const open = !!key && openFor === key
+  const identity = useRef({ provider, scope, session, serial: 0 })
+  if (
+    identity.current.provider !== provider ||
+    identity.current.scope !== scope ||
+    identity.current.session !== session
+  ) {
+    identity.current = {
+      provider,
+      scope,
+      session,
+      serial: identity.current.serial + 1,
+    }
+  }
+  return {
+    preferenceKey: key,
+    info,
+    onFailure,
+    onRefresh: () => setRefresh((x) => x + 1),
+    refreshImage,
+    ownerKey: JSON.stringify([
+      key,
+      identity.current.serial,
+      props.entityId,
+      plexImage,
+      fanartRevision,
+      heyaRevision,
+    ]),
+  }
+}
+
+/** Inline artwork choices: the containing editor owns its dialog and focus. */
+export function ArtworkSourcePanel(props: ArtworkSourcePickerProps) {
+  const resolution = useArtworkSourceResolution(props)
+  if (!resolution.preferenceKey)
+    return (
+      <p role="status" className="text-sm text-[var(--text-secondary)]">
+        Connect an account-scoped library to choose artwork for this item.
+      </p>
+    )
+  return (
+    <ArtworkSourcePanelContent
+      key={resolution.ownerKey}
+      {...props}
+      {...resolution}
+      preferenceKey={resolution.preferenceKey}
+    />
+  )
+}
+
+export function ArtworkSourcePicker(props: ArtworkSourcePickerProps) {
+  const {
+    preferenceKey: key,
+    info,
+    onFailure,
+    onRefresh,
+    refreshImage,
+    ownerKey,
+  } = useArtworkSourceResolution(props)
+  const [openFor, setOpenFor] = useState<string | null>(null)
+  const open = !!key && openFor === ownerKey
   return (
     <>
       <button
@@ -89,7 +176,7 @@ export function ArtworkSourcePicker(props: ArtworkSourcePickerProps) {
         disabled={!key}
         onClick={(event) => {
           event.currentTarget.focus({ preventScroll: true })
-          setOpenFor(key)
+          setOpenFor(ownerKey)
         }}
         className={
           props.className ??
@@ -122,7 +209,7 @@ export function ArtworkSourcePicker(props: ArtworkSourcePickerProps) {
           preferenceKey={key}
           info={info}
           onFailure={onFailure}
-          onRefresh={() => setRefresh((x) => x + 1)}
+          onRefresh={onRefresh}
           onClose={() => setOpenFor(null)}
         />
       )}
@@ -146,53 +233,6 @@ function SourceDialog({
   const id = useId()
   const dialog = useRef<HTMLDialogElement>(null)
   const close = useRef<HTMLButtonElement>(null)
-  const [busy, setBusy] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
-  const active = useRef(true)
-  const owner = useRef(useProviderStore.getState().provider)
-  const ownerScope = useRef(owner.current?.cacheScope)
-  const current = () =>
-    active.current &&
-    useProviderStore.getState().provider === owner.current &&
-    owner.current?.cacheScope === ownerScope.current
-  const deezerHydrated = useDeezerMetadataStore((s) => s._hasHydrated)
-  const appleHydrated = useItunesMetadataStore((s) => s._hasHydrated)
-  const sources: ArtworkSource[] =
-    props.kind === "artist" ? ["plex", "deezer"] : ["plex", "deezer", "apple"]
-  const load = async (source: ArtworkSource, force = false) => {
-    if (source === "plex") return null
-    const store =
-      source === "deezer"
-        ? useDeezerMetadataStore.getState()
-        : useItunesMetadataStore.getState()
-    if (props.kind === "artist") {
-      if (force) store.invalidateArtist(props.artistName)
-      return store.getArtist(props.artistName)
-    }
-    if (!props.albumName) return null
-    if (force) store.invalidateAlbum(props.artistName, props.albumName)
-    return store.getAlbum(props.artistName, props.albumName)
-  }
-  useEffect(() => {
-    active.current = true
-    setBusy(true)
-    if (!deezerHydrated || (props.kind === "album" && !appleHydrated))
-      return () => {
-        active.current = false
-      }
-    void Promise.allSettled(
-      sources
-        .filter((s) =>
-          s === "deezer" ? deezerHydrated : s === "apple" && appleHydrated
-        )
-        .map((s) => load(s))
-    ).then(() => {
-      if (current()) setBusy(false)
-    })
-    return () => {
-      active.current = false
-    }
-  }, [deezerHydrated, appleHydrated])
   useLayoutEffect(() => {
     const element = dialog.current!
     const previous = document.activeElement as HTMLElement | null
@@ -236,10 +276,6 @@ function SourceDialog({
       if (previous?.isConnected) previous.focus({ preventScroll: true })
     }
   }, [])
-  const choose = (source: ArtworkSource | null) => {
-    useArtworkPreferenceStore.getState().setChoice(preferenceKey, source)
-    setMessage(null)
-  }
   return createPortal(
     <dialog
       ref={dialog}
@@ -297,6 +333,170 @@ function SourceDialog({
           Close
         </button>
       </div>
+      <ArtworkSourcePanelContent
+        {...props}
+        className={undefined}
+        preferenceKey={preferenceKey}
+        info={info}
+        onFailure={onFailure}
+        onRefresh={onRefresh}
+      />
+    </dialog>,
+    document.body
+  )
+}
+
+type ArtworkSourcePanelContentProps = ArtworkSourcePickerProps & {
+  preferenceKey: string
+  info: ArtworkResolution
+  onFailure: (url: string) => void
+  onRefresh: () => void
+}
+function ArtworkSourcePanelContent({
+  preferenceKey,
+  info,
+  onFailure,
+  onRefresh,
+  ...props
+}: ArtworkSourcePanelContentProps) {
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+  const active = useRef(true)
+  const refreshing = useRef(false)
+  const owner = useRef(useProviderStore.getState().provider)
+  const ownerScope = useRef(owner.current?.cacheScope)
+  const ownerSession = useRef(owner.current?.playbackSession)
+  const heyaServiceRevision = useRef(
+    useHeyaServiceStore.getState().status?.revision
+  )
+  const serviceRevision = useRef(
+    useFanartServiceStore.getState().status?.revision
+  )
+  const current = () =>
+    active.current &&
+    useProviderStore.getState().provider === owner.current &&
+    owner.current?.cacheScope === ownerScope.current &&
+    owner.current?.playbackSession === ownerSession.current &&
+    useFanartServiceStore.getState().status?.revision ===
+      serviceRevision.current &&
+    useHeyaServiceStore.getState().status?.revision ===
+      heyaServiceRevision.current
+  const deezerHydrated = useDeezerMetadataStore((s) => s._hasHydrated)
+  const appleHydrated = useItunesMetadataStore((s) => s._hasHydrated)
+  const caaHydrated = useCoverArtArchiveMetadataStore((s) => s._hasHydrated)
+  const heyaStatus = useHeyaServiceStore((s) => s.status)
+  const heyaHydrated = useHeyaArtworkStore((s) => s._hasHydrated)
+  useEffect(() => {
+    if (!heyaStatus) void useHeyaServiceStore.getState().load()
+  }, [heyaStatus])
+  const fanartStatus = useFanartServiceStore((s) => s.status)
+  const fanartHydrated = useFanartMetadataStore((s) => s._hasHydrated)
+  useEffect(() => {
+    if (!fanartStatus) void useFanartServiceStore.getState().load()
+  }, [fanartStatus])
+  const sources: ArtworkSource[] = (
+    props.kind === "artist"
+      ? ["plex", "deezer", "fanart", "heya"]
+      : ["plex", "deezer", "apple", "coverartarchive", "fanart", "heya"]
+  ).filter((source) =>
+    source === "fanart"
+      ? !!fanartStatus?.configured && fanartStatus.enabled
+      : source === "heya"
+        ? !!heyaStatus?.configured && heyaStatus.enabled
+        : true
+  ) as ArtworkSource[]
+  const load = async (source: ArtworkSource, force = false) => {
+    if (source === "plex") return null
+    if (source === "heya" && (!heyaStatus?.enabled || !heyaStatus.configured))
+      return null
+    if (
+      source === "fanart" &&
+      (!fanartStatus?.enabled || !fanartStatus.configured)
+    )
+      return null
+    const store =
+      source === "heya"
+        ? useHeyaArtworkStore.getState()
+        : source === "fanart"
+          ? useFanartMetadataStore.getState()
+          : source === "deezer"
+            ? useDeezerMetadataStore.getState()
+            : source === "coverartarchive"
+              ? useCoverArtArchiveMetadataStore.getState()
+              : useItunesMetadataStore.getState()
+    if (props.kind === "artist") {
+      if (force) store.invalidateArtist(props.artistName)
+      return store.getArtist(props.artistName)
+    }
+    if (!props.albumName) return null
+    if (force) store.invalidateAlbum(props.artistName, props.albumName)
+    return store.getAlbum(props.artistName, props.albumName)
+  }
+  useEffect(() => {
+    active.current = true
+    setBusy(true)
+    if (
+      !deezerHydrated ||
+      (props.kind === "album" && (!appleHydrated || !caaHydrated))
+    )
+      return () => {
+        active.current = false
+      }
+    void Promise.allSettled(
+      sources
+        .filter((s) =>
+          s === "deezer"
+            ? deezerHydrated
+            : s === "apple"
+              ? appleHydrated
+              : s === "coverartarchive"
+                ? caaHydrated
+                : s === "heya"
+                  ? heyaHydrated &&
+                    !!heyaStatus?.configured &&
+                    heyaStatus.enabled
+                  : s === "fanart" &&
+                    fanartHydrated &&
+                    !!fanartStatus?.configured &&
+                    fanartStatus.enabled
+        )
+        .map((s) => load(s))
+    ).then(() => {
+      if (current()) setBusy(false)
+    })
+    return () => {
+      active.current = false
+    }
+  }, [
+    deezerHydrated,
+    appleHydrated,
+    caaHydrated,
+    fanartHydrated,
+    fanartStatus,
+    heyaStatus,
+    heyaHydrated,
+  ])
+  const selectedCandidate = useArtworkPreferenceStore(
+    (s) => s.candidateChoices[preferenceKey]
+  )
+  const choose = (source: ArtworkSource | null, id?: string) => {
+    if (!current()) return
+    if (source && id && id !== "default")
+      useArtworkPreferenceStore
+        .getState()
+        .setCandidate(preferenceKey, source, id)
+    else useArtworkPreferenceStore.getState().setChoice(preferenceKey, source)
+    setMessage(null)
+  }
+  return (
+    <div className={props.className}>
+      {props.role === "background" && (
+        <p className="mb-3 text-sm text-[var(--text-secondary)]">
+          Plex and Fanart.tv background art are separate from posters. Artist
+          images and album covers can also be reused as a background; those
+          choices are labeled as reused covers.
+        </p>
+      )}
       <p role="status" className="mb-4 text-sm text-[var(--text-secondary)]">
         {artworkStatus(info)}
       </p>
@@ -308,40 +508,78 @@ function SourceDialog({
       >
         <span className="font-semibold">Automatic</span>
         <span className="mt-1 block text-sm text-[var(--text-secondary)]">
-          Follow your global artwork source order.
+          {props.role === "background"
+            ? "Prefer Plex background art, then reuse available covers. Poster choices stay separate."
+            : "Follow your global artwork source order."}
         </span>
       </button>
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(130px,1fr))] gap-4">
-        {sources.map((source) => (
-          <button
-            type="button"
-            key={source}
-            aria-label={`Use ${labels[source]} artwork`}
-            aria-pressed={info.preference === source}
-            onClick={() => choose(source)}
-            className={`rounded-lg border p-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${info.preference === source ? "border-accent bg-accent-tint" : "border-[var(--border)] bg-app-surface hover:bg-app-surface-hover"}`}
-          >
-            <div className="mb-3 aspect-square overflow-hidden rounded-md bg-app-bg">
-              {info.candidates[source] ? (
-                <ArtworkImage
-                  src={info.candidates[source]!}
-                  alt={`${labels[source]} artwork preview`}
-                  onFailure={onFailure}
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <div className="flex h-full items-center justify-center p-2 text-center text-sm text-[var(--text-muted)]">
-                  {busy && source !== "plex"
-                    ? "Checking artwork…"
-                    : "No matching artwork"}
-                </div>
+      <div
+        className={`grid gap-2 ${props.role === "background" ? "grid-cols-[repeat(auto-fill,minmax(150px,200px))]" : "grid-cols-[repeat(auto-fill,minmax(104px,132px))]"}`}
+      >
+        {sources.flatMap((source) =>
+          (info.images[source]?.length
+            ? info.images[source]!
+            : [{ id: "default", url: "" }]
+          ).map((image, imageIndex) => (
+            <button
+              type="button"
+              key={`${source}:${image.id}`}
+              disabled={source === "heya" && !image.url}
+              aria-label={
+                props.role === "background"
+                  ? `Use ${labels[source]} ${["plex", "fanart", "heya"].includes(source) ? "background" : props.kind === "artist" ? "artist image as background" : "album cover as background"}${image.id === "default" ? "" : ` ${image.label ?? imageIndex + 1}`}`
+                  : `Use ${labels[source]} artwork${image.id === "default" ? "" : ` ${image.label ?? imageIndex + 1}`}`
+              }
+              aria-pressed={
+                info.preference === source &&
+                (selectedCandidate?.source === source
+                  ? selectedCandidate.id === image.id
+                  : imageIndex === 0)
+              }
+              onClick={() => choose(source, image.id)}
+              className={`rounded-lg border p-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${info.preference === source && (selectedCandidate?.source === source ? selectedCandidate.id === image.id : imageIndex === 0) ? "border-accent bg-accent-tint" : "border-[var(--border)] bg-app-surface hover:bg-app-surface-hover"}`}
+            >
+              <div
+                className={`mb-2 ${props.role === "background" ? "aspect-video" : "aspect-square"} overflow-hidden rounded-md bg-app-bg`}
+              >
+                {image.url ? (
+                  <ArtworkImage
+                    src={image.url}
+                    alt={`${labels[source]} artwork preview`}
+                    onFailure={onFailure}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-full items-center justify-center p-2 text-center text-sm text-[var(--text-muted)]">
+                    {busy && source !== "plex"
+                      ? "Checking artwork…"
+                      : source === "heya"
+                        ? !heyaStatus?.configured || !heyaStatus.enabled
+                          ? "Configure HeyaMetadata in Settings"
+                          : "No matching artwork"
+                        : source === "fanart" &&
+                            (!fanartStatus?.configured || !fanartStatus.enabled)
+                          ? "Configure Fanart.tv in Settings"
+                          : "No matching artwork"}
+                  </div>
+                )}
+              </div>
+              <span className="block text-sm font-semibold">
+                {labels[source]}
+              </span>
+              {image.url && image.url === info.url && (
+                <span className="mt-1 block text-xs font-medium text-accent">
+                  Current image
+                </span>
               )}
-            </div>
-            <span className="block text-sm font-semibold">
-              {labels[source]}
-            </span>
-          </button>
-        ))}
+              {image.label && (
+                <span className="mt-1 block text-xs text-[var(--text-secondary)]">
+                  {image.label}
+                </span>
+              )}
+            </button>
+          ))
+        )}
       </div>
       <p className="mt-4 text-sm text-[var(--text-secondary)]">
         This choice applies to this item in your current library. Other
@@ -353,7 +591,14 @@ function SourceDialog({
           disabled={busy || !info.preference || info.preference === "plex"}
           onClick={() => {
             const source = info.preference
-            if (!source || source === "plex") return
+            if (
+              !source ||
+              source === "plex" ||
+              !current() ||
+              refreshing.current
+            )
+              return
+            refreshing.current = true
             setBusy(true)
             setMessage(null)
             void load(source, true)
@@ -374,6 +619,7 @@ function SourceDialog({
                   )
               })
               .finally(() => {
+                refreshing.current = false
                 if (current()) setBusy(false)
               })
           }}
@@ -402,7 +648,8 @@ function SourceDialog({
           onClick={() => {
             const source = info.preference ?? info.source
             const url = source ? info.refreshTargets[source] : null
-            if (!source || !url || !current()) return
+            if (!source || !url || !current() || refreshing.current) return
+            refreshing.current = true
             setBusy(true)
             setMessage(null)
             void props.refreshImage!(source, url)
@@ -414,7 +661,8 @@ function SourceDialog({
                       .rememberRevision(
                         ownerScope.current,
                         url,
-                        result.revision
+                        result.revision,
+                        props.role ?? "poster"
                       )
                   onRefresh()
                   setMessage("Image refreshed.")
@@ -425,6 +673,7 @@ function SourceDialog({
                   setMessage("Could not refresh this image. Please try again.")
               })
               .finally(() => {
+                refreshing.current = false
                 if (current()) setBusy(false)
               })
           }}
@@ -437,7 +686,6 @@ function SourceDialog({
           {message}
         </p>
       )}
-    </dialog>,
-    document.body
+    </div>
   )
 }

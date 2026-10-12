@@ -45,6 +45,8 @@ mock.module("../../src/stores/playerStore", () => ({ prefetchTrackAudio() {} }))
 mock.module("../../src/hooks/useMediaImage", () => ({
   useArtistImage: () => null,
   useAlbumImage: () => null,
+  useArtistBackground: () => null,
+  useAlbumBackground: () => null,
 }))
 mock.module("../../src/hooks/useMetadataEnrichment", () => ({
   useArtistEnrichment: () => ({}),
@@ -68,6 +70,7 @@ mock.module("../../src/components/shared/ArtworkImage", () => ({
 }))
 mock.module("../../src/components/shared/ArtworkSourcePicker", () => ({
   ArtworkSourcePicker: () => null,
+  ArtworkSourcePanel: () => null,
 }))
 mock.module("../../src/components/UltraBlur", () => ({ UltraBlur: () => null }))
 mock.module("../../src/components/shared/MediaBackdrop", () => ({
@@ -117,6 +120,7 @@ const load = (id: string) => {
   return reply.promise
 }
 mock.module("../../src/stores/metadataCache", () => ({
+  invalidateMetadataItem() {},
   getCachedArtist: (id: string) => cache.get(cacheKey(id)),
   getCachedAlbum: (id: string) => cache.get(cacheKey(id)),
   loadArtistPage: load,

@@ -4,6 +4,31 @@ import type { MusicProvider } from "../src/providers/types"
 import type { MusicAlbum, MusicArtist } from "../src/types/music"
 import { deferred, settle } from "./helpers/radioAudioFakes"
 
+test("an album edit retires old requests and related artist cards while keeping unrelated cached pages", async () => {
+  const stale = deferred<MusicAlbum>(), fresh = deferred<MusicAlbum>()
+  let reads = 0
+  const h = harness({
+    getArtistAlbums: async (id) => id === "affected" ? [album("changed")] : [],
+    getAlbum: async (id) => id !== "changed" ? album(id) : ++reads === 1 ? album(id) : reads === 2 ? stale.promise : fresh.promise,
+  })
+  await h.activate()
+  await h.cache.loadArtist("affected")
+  const otherArtist = await h.cache.loadArtist("other")
+  await h.cache.loadAlbum("changed")
+  const otherAlbum = await h.cache.loadAlbum("keep")
+  const old = h.cache.loadAlbum("changed", { force: true }).catch(error => error)
+  h.cache.invalidate("album", "changed")
+  expect(h.cache.getArtist("affected")).toBeUndefined()
+  expect(h.cache.getArtist("other")).toBe(otherArtist)
+  expect(h.cache.getAlbum("keep")).toBe(otherAlbum)
+  const latest = h.cache.loadAlbum("changed")
+  stale.resolve(album("changed", "Stale"))
+  expect(await old).toBeInstanceOf(MetadataRequestSuperseded)
+  fresh.resolve(album("changed", "Saved"))
+  expect((await latest).album.title).toBe("Saved")
+  expect(h.cache.getAlbum("changed")?.album.title).toBe("Saved")
+})
+
 const artist = (id: string, title = id) => ({ id, title }) as MusicArtist
 const album = (id: string, title = id) =>
   ({ id, title, artistName: "Artist", format: null, year: 2026, trackCount: 1 }) as MusicAlbum

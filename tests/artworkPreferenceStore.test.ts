@@ -31,6 +31,7 @@ function harness(saved: Record<string, unknown> = {}) {
     barrier,
     create: () => createArtworkPreferenceStore(persistenceMiddleware(service)),
     saved: () => JSON.parse(value).state.choices,
+    savedState: () => JSON.parse(value).state,
     delay: () => {
       delayed = true
     },
@@ -149,4 +150,63 @@ test("image revisions are bounded, source-specific, account-scoped and never per
   for (let i = 0; i < 520; i++)
     store.getState().rememberRevision("a", `${url}&item=${i}`, `r-${i}`)
   expect(Object.keys(store.getState().revisions).length).toBe(512)
+})
+
+test("poster keys remain compatible while background intent and refresh revisions stay independent", async () => {
+  const poster = artworkPreferenceKey("a", "album", "Artist", "Album")!
+  const background = artworkPreferenceKey(
+    "a",
+    "album",
+    "Artist",
+    "Album",
+    "background"
+  )!
+  expect(poster).toBe(JSON.stringify(["a", "album", "artist", "album"]))
+  expect(background).not.toBe(poster)
+  const h = harness({ [poster]: "apple", [background]: "plex" }),
+    store = h.create()
+  await settle()
+  expect(store.getState().choices).toEqual({
+    [poster]: "apple",
+    [background]: "plex",
+  })
+  store.getState().setChoice(background, "deezer")
+  await h.service.flush()
+  expect(h.saved()).toEqual({ [poster]: "apple", [background]: "deezer" })
+  const url =
+    "image://localhost/ext/img?src=https%3A%2F%2Fsynthetic.test%2Fcover&scope=a&revision=existing"
+  store.getState().rememberRevision("a", url, "poster-only")
+  expect(
+    store.getState().revisions[artworkRevisionKey("a", url, "background")!]
+  ).toBeUndefined()
+  store.getState().rememberRevision("a", url, "background-only", "background")
+  expect(store.getState().revisions[artworkRevisionKey("a", url)!]).toBe(
+    "poster-only"
+  )
+  expect(
+    store.getState().revisions[artworkRevisionKey("a", url, "background")!]
+  ).toBe("background-only")
+  expect(applyArtworkRevision(url, undefined)).toBe(url)
+})
+
+test("late legacy hydration preserves individual candidate intent and source Automatic clears it durably", async () => {
+  const key = artworkPreferenceKey("a", "album", "Artist", "Album")!
+  const h = harness({ [key]: "apple" })
+  h.delay()
+  const store = h.create()
+  store.getState().setCandidate(key, "fanart", "verified-poster-2")
+  h.barrier.resolve(
+    JSON.stringify({ state: { choices: { [key]: "apple" } }, version: 0 })
+  )
+  await settle()
+  await h.service.flush()
+  expect(store.getState().choices[key]).toBe("fanart")
+  expect(h.savedState().candidateChoices[key]).toEqual({
+    source: "fanart",
+    id: "verified-poster-2",
+  })
+  store.getState().setChoice(key, null)
+  await settle()
+  await h.service.flush()
+  expect(h.savedState().candidateChoices[key]).toBeNull()
 })

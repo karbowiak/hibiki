@@ -818,6 +818,35 @@ pub async fn delete_playlist(
         .map_err(|e| format!("{:#}", e))
 }
 
+/// Explicit artist/album edits: verify the preview and retain scoped ownership
+/// at mutation dispatch. Server permissions remain the server's decision.
+#[tauri::command]
+pub async fn edit_library_metadata(
+    context: PlexRequestContext,
+    section_id: i64,
+    item_id: i64,
+    kind: crate::plex::metadata_edit::MetadataEditKind,
+    patch: crate::plex::metadata_edit::MetadataEditPatch,
+    expected: crate::plex::metadata_edit::MetadataEditExpected,
+    state: State<'_, PlexState>,
+) -> Result<(), String> {
+    state.edit_metadata_owned(&context, section_id, item_id, kind, &patch, &expected).await
+}
+impl PlexState {
+    async fn edit_metadata_owned(&self, context: &PlexRequestContext, section_id: i64, item_id: i64,
+        kind: crate::plex::metadata_edit::MetadataEditKind,
+        patch: &crate::plex::metadata_edit::MetadataEditPatch,
+        expected: &crate::plex::metadata_edit::MetadataEditExpected) -> Result<(), String> {
+        let client = self.client_for(context).await?;
+        let prepared = client.prepare_metadata_edit(section_id, item_id, kind, patch, expected).await.map_err(|error| error.to_string())?;
+        let guard = self.0.lock().await;
+        let current = self.checked_client(context, &guard)?;
+        let result = current.save_metadata_edit(prepared).await.map_err(|error| error.to_string());
+        self.checked_client(context, &guard)?;
+        result
+    }
+}
+
 /// Edit playlist metadata (title, summary).
 #[tauri::command]
 pub async fn edit_playlist(
@@ -1423,15 +1452,30 @@ pub struct ImageRefreshResult { pub revision: String }
 /// Refresh exactly the validated selected source; failures retain its old image.
 #[tauri::command]
 pub async fn refresh_image(
+    app: tauri::AppHandle,
     uri: String,
     state: tauri::State<'_, PlexState>,
     images: tauri::State<'_, crate::image_cache::ImageCacheState>,
 ) -> Result<ImageRefreshResult, String> {
+    let request = crate::image_protocol::ImageRequest::explicit_uri(&uri)?;
+    if crate::metadata_services::is_heya_image(&request.src) {
+        let base_ticket = images.0.ticket();
+        let context = state.image_context().await;
+        if !crate::image_fetch::scope_matches(context.client.as_ref(), &request.scope) {
+            return Err("This image source is unavailable for the current library".into());
+        }
+        let admission = crate::IMAGE_WORK.try_admit().ok_or("Too many artwork requests. Try again.")?;
+        return admission.run(||async {
+            crate::metadata_services::resolve_heya_image(&app,&request.src,&context,images.0.clone(),base_ticket,true).await?;
+            if !state.image_context_is_current(&context).await {return Err("The library changed. Try again.".into());}
+            Ok(ImageRefreshResult{revision:uuid::Uuid::new_v4().to_string()})
+        }).await.ok_or("Artwork service is unavailable")?;
+    }
     state.refresh_selected_image(&uri, images.0.clone(), &crate::IMAGE_WORK).await
 }
 
 impl PlexState {
-    async fn publish_image<F>(&self, context: &crate::image_protocol::ImageContext, operation: F) -> Result<(), String>
+    pub(crate) async fn publish_image<F>(&self, context: &crate::image_protocol::ImageContext, operation: F) -> Result<(), String>
     where F: FnOnce() -> Result<(), String> + Send + 'static {
         let connection = self.0.clone();
         let revision = self.1.clone();
@@ -3148,5 +3192,45 @@ mod connection_tests {
             .publish(current, client("dummy-retired"))
             .await
             .is_err());
+    }
+}
+
+#[cfg(test)]
+mod metadata_edit_ownership_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn metadata_edit_stale_preflight_never_dispatches_a_put() {
+        for change_scope in [false, true] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            let (seen_tx, seen_rx) = tokio::sync::oneshot::channel();
+            let (release_tx, release_rx) = std::sync::mpsc::channel();
+            let server = std::thread::spawn(move || {
+                let mut seen_tx = Some(seen_tx);
+                for number in 0..2 {
+                    let (mut stream, _) = listener.accept().unwrap(); stream.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+                    let mut bytes = Vec::new(); let mut buffer = [0;4096];
+                    while !bytes.windows(4).any(|part| part == b"\r\n\r\n") { let count = stream.read(&mut buffer).unwrap(); if count == 0 { break; } bytes.extend_from_slice(&buffer[..count]); }
+                    assert!(bytes.starts_with(b"GET "));
+                    if number == 1 { seen_tx.take().unwrap().send(()).unwrap(); release_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(); }
+                    let body = if number == 0 { serde_json::json!({"MediaContainer":{"Directory":[{"key":5,"type":"artist","uuid":"synthetic"}]}}) } else { serde_json::json!({"MediaContainer":{"Metadata":[{"ratingKey":42,"librarySectionID":5,"type":"artist","title":"Old"}]}}) }.to_string();
+                    write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+                }
+            });
+            let mut client = PlexClient::new(PlexClientConfig {base_url:base,token:"synthetic-token".into(),..Default::default()}).unwrap();
+            client.library_scope=client.cache_scope_for_library(5,None);
+            let context = PlexRequestContext { connection_revision:0,cache_scope:client.library_scope.clone() };
+            let state = Arc::new(PlexState::new()); *state.0.lock().await=Some(client);
+            let task_state=state.clone();
+            let job=tokio::spawn(async move {task_state.edit_metadata_owned(&context,5,42,crate::plex::metadata_edit::MetadataEditKind::Artist,
+                &crate::plex::metadata_edit::MetadataEditPatch {title:Some("New".into()),..Default::default()},
+                &std::collections::BTreeMap::from([("title".into(),Some("Old".into()))])).await});
+            seen_rx.await.unwrap();
+            if change_scope {state.0.lock().await.as_mut().unwrap().library_scope="replacement-library".into();}
+            else {state.1.fetch_add(1,Ordering::SeqCst);}
+            release_tx.send(()).unwrap();
+            assert!(job.await.unwrap().unwrap_err().contains("superseded")); server.join().unwrap();
+        }
     }
 }

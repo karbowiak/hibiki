@@ -9,6 +9,7 @@ function savedDataLabel(key: string): string {
     "radio-stream-v1": "radio favorites and history",
     "podcast-store-v1": "podcast subscriptions and progress",
     "metadata-source-priority-v1": "metadata preferences",
+    "metadata-source-selections-v1": "metadata source choices",
     "plex-audio-settings-v1": "audio preferences",
     "plex-player-prefs": "playback preferences",
     "plex-lyrics-offsets": "lyrics timing",

@@ -32,6 +32,7 @@ interface CreateMetadataStoreOpts<ArtistT, AlbumT> {
   negativeTtl?: number
   evictionTtl?: number
   guard?: () => boolean
+  validateArtist?: (data: ArtistT, artist: string) => boolean
   validateAlbum?: (data: AlbumT, artist: string, album: string) => boolean
   validateCachedAlbum?: (data: AlbumT, key: string) => boolean
 }
@@ -47,6 +48,7 @@ export function createMetadataStore<ArtistT, AlbumT>(
     albumTtl = DEFAULT_TTL_MS,
     negativeTtl = DEFAULT_TTL_MS,
     guard,
+    validateArtist,
     validateAlbum,
     validateCachedAlbum,
   } = opts
@@ -72,12 +74,29 @@ export function createMetadataStore<ArtistT, AlbumT>(
           if (guard && !guard()) return null
           const key = artist.toLowerCase()
           const cached = get().artists[key]
-          if (cached) {
+          if (
+            cached &&
+            cached.data !== null &&
+            validateArtist &&
+            !validateArtist(cached.data, artist)
+          ) {
+            set((state) => {
+              const { [key]: _invalid, ...artists } = state.artists
+              return { artists }
+            })
+          } else if (cached) {
             const ttl = cached.data === null ? negativeTtl : artistTtl
             if (Date.now() - cached.cachedAt < ttl) return cached.data
           }
           const existing = inflightArtists.get(key)
-          if (existing) return existing
+          if (existing) {
+            const data = await existing
+            return data !== null &&
+              validateArtist &&
+              !validateArtist(data, artist)
+              ? null
+              : data
+          }
           const generation = artistVersions.get(key) ?? 0,
             requestEpoch = epoch
           set((s) => ({
@@ -89,6 +108,12 @@ export function createMetadataStore<ArtistT, AlbumT>(
               if (
                 requestEpoch !== epoch ||
                 generation !== (artistVersions.get(key) ?? 0)
+              )
+                return null
+              if (
+                data !== null &&
+                validateArtist &&
+                !validateArtist(data, artist)
               )
                 return null
               set((s) => ({

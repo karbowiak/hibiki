@@ -1,3 +1,6 @@
+import { useState } from "react"
+import { PlaylistCopyDialog } from "../PlaylistSync/PlaylistCopyDialog"
+import { PlaylistCopyReceipts } from "../PlaylistSync/PlaylistCopyReceipts"
 import { MediaCard } from "../MediaCard"
 import { useShallow } from "zustand/react/shallow"
 import { useLibraryStore } from "../../stores"
@@ -6,6 +9,7 @@ import { useContextMenu } from "../../hooks/useContextMenu"
 import { MediaGrid } from "../shared/MediaGrid"
 
 export function Playlists() {
+  const [copyView, setCopyView] = useState<"import" | "receipts" | null>(null)
   const playlists = useLibraryStore(s => s.playlists)
   const playPlaylist = usePlayerStore(useShallow(s => s.playPlaylist))
   const { handler: ctxMenu } = useContextMenu()
@@ -37,6 +41,12 @@ export function Playlists() {
         </div>
       </div>
 
+      <div className="mb-5 flex flex-wrap gap-2 px-8">
+        <button type="button" className="media-secondary" onClick={() => setCopyView("import")}>Import a copy from ListenBrainz</button>
+        <button type="button" className="media-secondary" onClick={() => setCopyView("receipts")}>Review copies</button>
+      </div>
+      {copyView === "import" && <PlaylistCopyDialog mode="import" onClose={() => setCopyView(null)} onCreated={() => useLibraryStore.getState().fetchPlaylists({ force: true })}/>}
+      {copyView === "receipts" && <PlaylistCopyReceipts onClose={() => setCopyView(null)}/>}
       {/* Playlist grid */}
       <div className="px-8 pt-2">
         {count === 0 ? (

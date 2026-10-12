@@ -19,8 +19,13 @@ mod itunes_throttle;
 mod lastfm;
 mod listenbrainz;
 mod listening_history;
+mod playlist_sync;
+mod soulsync;
 mod mediasession;
 mod musicbrainz;
+mod public_metadata;
+mod metadata_service_settings;
+mod metadata_services;
 mod plex;
 mod plextv;
 mod podcast;
@@ -134,6 +139,9 @@ async fn resolve_image(
     {
         return None;
     }
+    if metadata_services::is_heya_image(src) {
+        return metadata_services::resolve_heya_image(app,src,context,cache,ticket,false).await.ok();
+    }
     let source_request = if src.is_empty() {
         None
     } else {
@@ -229,6 +237,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .manage(PlexState::new())
+        .manage(std::sync::Arc::new(soulsync::SoulSyncState::default()))
+        .manage(std::sync::Arc::new(metadata_services::MetadataServicesState::default()))
         .manage(shutdown::ShutdownState::default())
         .manage(listening_history::ReportingState::default())
         .setup(|app| {
@@ -381,6 +391,10 @@ pub fn run() {
             commands::move_playlist_item,
             commands::delete_playlist,
             commands::edit_playlist,
+            commands::edit_library_metadata,
+            soulsync::soulsync_status,
+            soulsync::soulsync_configure,
+            soulsync::soulsync_artist,
             // Play queue
             commands::create_play_queue,
             commands::get_play_queue,
@@ -487,10 +501,20 @@ pub fn run() {
             commands::genius_search,
             commands::genius_get_lyrics,
             // MusicBrainz integration
+            metadata_services::metadata_service_status,
+            metadata_services::metadata_service_configure,
+            metadata_services::fanart_get_artist,
+            metadata_services::heya_get_metadata,
+            public_metadata::wikidata_get_artist,
+            public_metadata::coverartarchive_get_album,
             commands::musicbrainz_get_artist_info,
             commands::musicbrainz_get_album_info,
             commands::musicbrainz_lookup_recording,
             // ListenBrainz integration
+            playlist_sync::playlist_sync_listenbrainz_account,
+            playlist_sync::playlist_sync_listenbrainz_list,
+            playlist_sync::playlist_sync_listenbrainz_read,
+            playlist_sync::playlist_sync_listenbrainz_create,
             commands::listenbrainz_save_token,
             commands::listenbrainz_disconnect,
             commands::listenbrainz_set_enabled,

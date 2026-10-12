@@ -47,3 +47,25 @@ Radio follow-up: the native dev app now loads all three featured shelves, and an
 Validation: 620 frontend tests; both TypeScript projects and production build. Chromium and WebKit checks held real component responses to review dark/light skeletons and loading-to-content hero geometry, verified reduced motion and no fake usable controls, and dragged an actual media card onto the sidebar playlist using pointer capture and hit testing. Search discovery checks passed in both browsers. Native review confirmed homepage mix, Jump back in and Stations menus; Home was restored without invoking playback or playlist mutations. The ignored local roadmap now includes the AppImage AppStream/screenshot and update-information follow-ups.
 
 - [x] Keep toolbar dropdowns above all page content with separate sibling stacking contexts, and constrain search suggestions to the area above the playbar. Verified the original overlap and corrected dropdown in the native app; Chromium/WebKit hit tests passed on Home, Library, Album and Playlist at wide/narrow sizes, light/dark themes and with background artwork enabled/disabled. Ten focused search/keyboard tests and the production build passed.
+
+## Metadata editor and source expansion
+
+The artist/album/playlist editor uses a sharp artwork header, a compact left
+navigation and responsive identity/description panels. Artist and album artwork
+has indented Poster and Background entries with independent choices and small
+candidate tiles. The dialog keeps its own artwork palette, including readable
+selection text, and isolates keyboard shortcuts and focus from the underlying
+page. Plex changes have a dedicated Current/After review before Save; conflicts
+and unconfirmed writes require reloading current values.
+
+The shared metadata interface now exposes source capabilities, identity evidence
+and field provenance. Existing Plex, Deezer, Apple, Last.fm and MusicBrainz data
+share it with Wikidata, Cover Art Archive and optional SoulSync, Fanart.tv and
+HeyaMetadata connections. Source preferences belong to the current library and
+item; saved image choices retain only source/candidate IDs. The metadata guide
+records supported fields and limitations.
+
+ListenBrainz playlist integration currently offers explicitly reviewed private
+copies in either direction, with duplicate/order preservation and local recovery
+receipts. Continuous synchronization and conflict reconciliation remain roadmap
+work; Last.fm's retired playlist API is not presented as an available sync source.

@@ -20,7 +20,7 @@ export const deezerMetadataBackend: MetadataBackendDefinition = {
   description: "Artist images, album covers, genres, and fan counts via public API.",
   icon: DeezerIcon,
   capabilities: {
-    artistBio: true,
+    artistBio: false,
     artistImages: true,
     albumCovers: true,
     genres: true,

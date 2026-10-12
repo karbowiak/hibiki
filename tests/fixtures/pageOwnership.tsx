@@ -45,6 +45,7 @@ mock.module("../../src/stores/index.ts", () => ({
 mock.module("../../src/stores/metadataCache", () => ({
   prefetchAlbum() {},
   prefetchArtist() {},
+  invalidateMetadataItem() {},
 }))
 mock.module("../../src/components/MediaCard", () => ({
   MediaCard: ({ title }: any) => <a>{title}</a>,

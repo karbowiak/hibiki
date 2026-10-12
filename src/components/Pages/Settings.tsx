@@ -1,3 +1,5 @@
+import { MetadataServiceSettings } from "../Settings/MetadataServiceSettings"
+import { SoulSyncSettings } from "../Settings/SoulSyncSettings"
 import { useArtworkAppearanceStore } from "../../stores/artworkAppearanceStore"
 import React, { useState, useEffect, useRef, useMemo } from "react"
 import { useLocation } from "wouter"
@@ -911,6 +913,7 @@ const CAPABILITY_LABELS: Record<keyof ProviderCapabilities, string> = {
   search: "Search",
   playlists: "Playlists",
   playlistEdit: "Edit Playlists",
+  metadataEdit: "Edit Library Metadata",
   ratings: "Ratings",
   radio: "Radio",
   sonicSimilarity: "Sonic Similarity",
@@ -946,6 +949,10 @@ const METADATA_CAPABILITY_LABELS: Record<keyof MetadataCapabilities, string> = {
 }
 
 const SOURCE_ICONS: Record<MetadataSource, React.ReactNode> = {
+  fanart: <span aria-hidden="true">F</span>,
+  heya: <span aria-hidden="true">H</span>,
+  wikidata: <span aria-hidden="true">W</span>,
+  coverartarchive: <span aria-hidden="true">CAA</span>,
   plex: (
     <svg height="18" width="18" viewBox="0 0 24 24" fill="currentColor" className="text-yellow-400">
       <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z" />
@@ -1075,6 +1082,9 @@ function MetadataListView({ setSection }: { setSection: (s: Section) => void }) 
   return (
     <div className="max-w-2xl space-y-6">
 
+      <SoulSyncSettings />
+      <MetadataServiceSettings service="fanart" />
+      <MetadataServiceSettings service="heya" />
       {/* Metadata Source Priority */}
       <SettingCard title="Metadata Source Priority" description="Drag to reorder. Higher sources take precedence for bios, images, genres, and tags. Artist, album, and track names always come from Plex.">
         <div

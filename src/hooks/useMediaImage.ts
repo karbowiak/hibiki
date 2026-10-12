@@ -14,12 +14,12 @@
  * new objects) to avoid the infinite-loop issue documented in MEMORY.md.
  */
 
+import { useHeyaArtwork } from "./useHeyaArtwork"
+import { useFanartArtwork } from "./useFanartArtwork"
 import { useEffect, useMemo } from "react"
-import {
-  useMetadataSourceStore,
-  type MetadataSource,
-} from "../stores/metadataSourceStore"
+import { useMetadataSourceStore } from "../stores/metadataSourceStore"
 import { useDeezerMetadataStore } from "../metadata/deezer/store"
+import { useCoverArtArchiveMetadataStore } from "../metadata/coverartarchive/store"
 import { useItunesMetadataStore } from "../metadata/apple/store"
 import { buildImageUrl } from "../lib/imageUrl"
 import { useProviderStore } from "../stores/providerStore"
@@ -29,7 +29,12 @@ import {
   applyArtworkRevision,
   useArtworkPreferenceStore,
   type ArtworkSource,
+  type ArtworkRole,
 } from "../stores/artworkPreferenceStore"
+import {
+  resolveArtworkCandidates,
+  type ArtworkCandidate,
+} from "../lib/artworkCandidates"
 import { albumMatches } from "../metadata/albumMatch"
 
 export interface ArtworkResolution {
@@ -38,6 +43,7 @@ export interface ArtworkResolution {
   preference: ArtworkSource | null
   fallback: boolean
   pending: boolean
+  images: Partial<Record<ArtworkSource, readonly ArtworkCandidate[]>>
   candidates: Partial<Record<ArtworkSource, string | null>>
   /** Valid identity/source URLs remain refreshable even after image-load failure. */
   refreshTargets: Partial<Record<ArtworkSource, string | null>>
@@ -45,56 +51,84 @@ export interface ArtworkResolution {
 function useArtworkOrder(
   kind: "artist" | "album",
   artist: string | null,
-  album?: string | null
+  album?: string | null,
+  role: ArtworkRole = "poster"
 ) {
   const global = useMetadataSourceStore((s) => s.priority)
   const scope = useProviderStore((s) => s.provider?.cacheScope)
-  const key = artworkPreferenceKey(scope, kind, artist, album)
+  const key = artworkPreferenceKey(scope, kind, artist, album, role)
   const preference = useArtworkPreferenceStore((s) =>
     key ? (s.choices[key] ?? null) : null
+  )
+  const automatic = useMemo(
+    () =>
+      role === "background"
+        ? ["plex" as const, ...global.filter((source) => source !== "plex")]
+        : global,
+    [global, role]
   )
   const priority = useMemo(
     () =>
       preference
-        ? [preference, ...global.filter((s) => s !== preference)]
-        : global,
-    [global, preference]
+        ? [preference, ...automatic.filter((s) => s !== preference)]
+        : automatic,
+    [automatic, preference]
   )
   const revisions = useArtworkPreferenceStore((s) => s.revisions)
   const revise = (url: string | null) => {
-    const key = artworkRevisionKey(scope, url)
+    const key = artworkRevisionKey(scope, url, role)
     return applyArtworkRevision(url, key ? revisions[key] : undefined)
   }
-  return { priority, preference, scope, revise }
+  const savedCandidate = useArtworkPreferenceStore((s) =>
+    key ? s.candidateChoices[key] : null
+  )
+  return { priority, preference, scope, revise, savedCandidate }
 }
 function resolution(
-  priority: MetadataSource[],
+  priority: readonly string[],
   preference: ArtworkSource | null,
   candidates: ArtworkResolution["candidates"],
   pending: boolean,
-  refreshTargets: ArtworkResolution["refreshTargets"] = candidates
+  refreshTargets: ArtworkResolution["refreshTargets"] = candidates,
+  savedCandidate?: { source: ArtworkSource; id: string } | null,
+  extraImages: ArtworkResolution["images"] = {},
+  failedUrls: readonly string[] = []
 ): ArtworkResolution {
-  const source = priority.find(
-    (s) =>
-      ["plex", "deezer", "apple"].includes(s) && candidates[s as ArtworkSource]
-  ) as ArtworkSource | undefined
-  const actual = source ?? (candidates.plex ? "plex" : null)
-  return {
-    url: actual ? (candidates[actual] ?? null) : null,
-    source: actual,
+  const images = {
+    ...Object.fromEntries(
+      Object.entries(refreshTargets).map(([source, url]) => [
+        source,
+        url ? [{ id: "default", url }] : [],
+      ])
+    ),
+    ...extraImages,
+  }
+  const selected = resolveArtworkCandidates(
+    images,
+    [...priority, ...(!priority.includes("plex") ? ["plex"] : [])],
     preference,
-    fallback: !!preference && actual !== preference,
+    savedCandidate,
+    failedUrls
+  )
+  return {
+    ...selected,
+    preference,
     pending,
-    candidates,
-    refreshTargets,
+    images,
+    candidates: Object.fromEntries(
+      Object.entries(selected.refreshTargets).map(([source, url]) => [
+        source,
+        url && !failedUrls.includes(url) ? url : null,
+      ])
+    ),
   }
 }
 
 /** Fetch a source only when it can improve the currently available artwork. */
 function shouldWarmSource(
-  priority: MetadataSource[],
-  source: MetadataSource,
-  available: Partial<Record<MetadataSource, string | null>>
+  priority: readonly string[],
+  source: string,
+  available: Partial<Record<string, string | null>>
 ): boolean {
   const rank = priority.indexOf(source)
   return (
@@ -118,12 +152,12 @@ export function useArtistArtwork(
   plexThumb: string | null,
   artistId?: string | null,
   failedUrls: readonly string[] = [],
-  allowFetch = true
+  allowFetch = true,
+  role: ArtworkRole = "poster"
 ): ArtworkResolution {
-  const { priority, preference, scope, revise } = useArtworkOrder(
-    "artist",
-    artistName
-  )
+  const { priority, preference, scope, revise, savedCandidate } =
+    useArtworkOrder("artist", artistName, undefined, role)
+
   plexThumb = revise(plexThumb)
   const plexTarget = plexThumb
   if (plexThumb && failedUrls.includes(plexThumb)) plexThumb = null
@@ -139,28 +173,6 @@ export function useArtistArtwork(
   )
   const getDeezerArtist = useDeezerMetadataStore((s) => s.getArtist)
   const deezerHydrated = useDeezerMetadataStore((s) => s._hasHydrated)
-
-  // Warm the Deezer cache when this artist hasn't been fetched yet.
-  // Gate on hydration to avoid firing fetches before IndexedDB data loads.
-  useEffect(() => {
-    if (
-      !allowFetch ||
-      !deezerHydrated ||
-      !artistName ||
-      deezerEntry !== undefined ||
-      !shouldWarmSource(priority, "deezer", { plex: plexThumb })
-    )
-      return
-    void getDeezerArtist(artistName)
-  }, [
-    allowFetch,
-    priority,
-    plexThumb,
-    deezerHydrated,
-    artistName,
-    deezerEntry !== undefined,
-    getDeezerArtist,
-  ])
 
   const rawDeezerUrl = deezerEntry?.data?.image_url ?? null
   const deezerUrl =
@@ -180,6 +192,63 @@ export function useArtistArtwork(
       ? rawDeezerUrl
       : null
 
+  const fanart = useFanartArtwork(
+    "artist",
+    artistName,
+    null,
+    artistId,
+    role,
+    scope,
+    revise,
+    allowFetch &&
+      shouldWarmSource(priority, "fanart", {
+        plex: plexThumb,
+        deezer: deezerUrl,
+      })
+  )
+  const heya = useHeyaArtwork(
+    "artist",
+    artistName,
+    null,
+    artistId,
+    role,
+    scope,
+    revise,
+    allowFetch &&
+      shouldWarmSource(priority, "heya", {
+        plex: plexThumb,
+        fanart: fanart.images[0]?.url ?? null,
+        deezer: deezerUrl,
+      })
+  )
+  // Warm the Deezer cache when this artist hasn't been fetched yet.
+  // Gate on hydration to avoid firing fetches before IndexedDB data loads.
+  useEffect(() => {
+    if (
+      !allowFetch ||
+      !deezerHydrated ||
+      !artistName ||
+      deezerEntry !== undefined ||
+      !shouldWarmSource(priority, "deezer", {
+        plex: plexThumb,
+        fanart: fanart.images[0]?.url ?? null,
+        heya: heya.images[0]?.url ?? null,
+      })
+    )
+      return
+    void getDeezerArtist(artistName)
+  }, [
+    allowFetch,
+    priority,
+    plexThumb,
+    deezerHydrated,
+    artistName,
+    deezerEntry !== undefined,
+    getDeezerArtist,
+    fanart.images[0]?.url,
+    heya.images[0]?.url,
+  ])
+
   return resolution(
     priority,
     preference,
@@ -198,7 +267,9 @@ export function useArtistArtwork(
           )
         : null,
     },
-    preference === "deezer" && (!deezerHydrated || deezerPending),
+    (preference === "deezer" && (!deezerHydrated || deezerPending)) ||
+      (preference === "fanart" && fanart.pending) ||
+      (preference === "heya" && heya.pending),
     {
       plex: plexTarget,
       deezer: rawDeezerUrl
@@ -213,7 +284,10 @@ export function useArtistArtwork(
             )
           )
         : null,
-    }
+    },
+    savedCandidate,
+    { fanart: fanart.images, heya: heya.images },
+    failedUrls
   )
 }
 
@@ -232,13 +306,12 @@ export function useAlbumArtwork(
   plexThumb: string | null,
   albumId?: string | null,
   failedUrls: readonly string[] = [],
-  allowFetch = true
+  allowFetch = true,
+  role: ArtworkRole = "poster"
 ): ArtworkResolution {
-  const { priority, preference, scope, revise } = useArtworkOrder(
-    "album",
-    artistName,
-    albumName
-  )
+  const { priority, preference, scope, revise, savedCandidate } =
+    useArtworkOrder("album", artistName, albumName, role)
+
   plexThumb = revise(plexThumb)
   const plexTarget = plexThumb
   if (plexThumb && failedUrls.includes(plexThumb)) plexThumb = null
@@ -254,6 +327,31 @@ export function useAlbumArtwork(
   const itunesEntry = useItunesMetadataStore((s) =>
     key ? s.albums[key] : undefined
   )
+  const caaEntry = useCoverArtArchiveMetadataStore((s) =>
+    key ? s.albums[key] : undefined
+  )
+  const caaHydrated = useCoverArtArchiveMetadataStore((s) => s._hasHydrated)
+  const caaPending = useCoverArtArchiveMetadataStore(
+    (s) => !!s._loadingAlbums[key]
+  )
+  const getCaaAlbum = useCoverArtArchiveMetadataStore((s) => s.getAlbum)
+  const caaInvalid =
+    !!caaEntry?.data &&
+    !albumMatches(caaEntry.data, artistName ?? "", albumName ?? "")
+  const rawCaaUrl = !caaInvalid ? (caaEntry?.data?.cover_url ?? null) : null
+  const caaTarget = rawCaaUrl
+    ? revise(
+        buildImageUrl(
+          "album",
+          albumId ?? key,
+          rawCaaUrl,
+          albumName,
+          artistName,
+          scope
+        )
+      )
+    : null
+  const caaUrl = caaTarget && !failedUrls.includes(caaTarget) ? caaTarget : null
   const deezerPending = useDeezerMetadataStore((s) => !!s._loadingAlbums?.[key])
   const applePending = useItunesMetadataStore((s) => !!s._loadingAlbums?.[key])
   const getDeezerAlbum = useDeezerMetadataStore((s) => s.getAlbum)
@@ -308,6 +406,39 @@ export function useAlbumArtwork(
       ? rawAppleUrl
       : null
 
+  const fanart = useFanartArtwork(
+    "album",
+    artistName,
+    albumName,
+    albumId,
+    role,
+    scope,
+    revise,
+    allowFetch &&
+      shouldWarmSource(priority, "fanart", {
+        plex: plexThumb,
+        deezer: deezerUrl,
+        apple: appleUrl,
+        coverartarchive: caaUrl,
+      })
+  )
+  const heya = useHeyaArtwork(
+    "album",
+    artistName,
+    albumName,
+    albumId,
+    role,
+    scope,
+    revise,
+    allowFetch &&
+      shouldWarmSource(priority, "heya", {
+        plex: plexThumb,
+        fanart: fanart.images[0]?.url ?? null,
+        deezer: deezerUrl,
+        apple: appleUrl,
+        coverartarchive: caaUrl,
+      })
+  )
   // Warm caches when entries are missing.
   // Gate on hydration to avoid firing fetches before IndexedDB data loads.
   // An available lower-priority image must not prevent an upgrade.
@@ -316,7 +447,13 @@ export function useAlbumArtwork(
     if (
       deezerHydrated &&
       (deezerEntry === undefined || deezerInvalid) &&
-      shouldWarmSource(priority, "deezer", { plex: plexThumb, apple: appleUrl })
+      shouldWarmSource(priority, "deezer", {
+        plex: plexThumb,
+        fanart: fanart.images[0]?.url ?? null,
+        heya: heya.images[0]?.url ?? null,
+        apple: appleUrl,
+        coverartarchive: caaUrl,
+      })
     )
       void getDeezerAlbum(artistName, albumName)
     if (
@@ -324,10 +461,25 @@ export function useAlbumArtwork(
       (itunesEntry === undefined || appleInvalid) &&
       shouldWarmSource(priority, "apple", {
         plex: plexThumb,
+        fanart: fanart.images[0]?.url ?? null,
+        heya: heya.images[0]?.url ?? null,
         deezer: deezerUrl,
+        coverartarchive: caaUrl,
       })
     )
       void getItunesAlbum(artistName, albumName)
+    if (
+      caaHydrated &&
+      (caaEntry === undefined || caaInvalid) &&
+      shouldWarmSource(priority, "coverartarchive", {
+        plex: plexThumb,
+        fanart: fanart.images[0]?.url ?? null,
+        heya: heya.images[0]?.url ?? null,
+        deezer: deezerUrl,
+        apple: appleUrl,
+      })
+    )
+      void getCaaAlbum(artistName, albumName)
   }, [
     allowFetch,
     priority,
@@ -344,6 +496,13 @@ export function useAlbumArtwork(
     appleInvalid,
     getDeezerAlbum,
     getItunesAlbum,
+    fanart.images[0]?.url,
+    heya.images[0]?.url,
+    caaHydrated,
+    caaEntry !== undefined,
+    caaInvalid,
+    caaUrl,
+    getCaaAlbum,
   ])
 
   return resolution(
@@ -351,6 +510,7 @@ export function useAlbumArtwork(
     preference,
     {
       plex: plexThumb,
+      coverartarchive: caaUrl,
       deezer: deezerUrl
         ? revise(
             buildImageUrl(
@@ -377,9 +537,13 @@ export function useAlbumArtwork(
         : null,
     },
     (preference === "deezer" && (!deezerHydrated || deezerPending)) ||
-      (preference === "apple" && (!itunesHydrated || applePending)),
+      (preference === "apple" && (!itunesHydrated || applePending)) ||
+      (preference === "coverartarchive" && (!caaHydrated || caaPending)) ||
+      (preference === "fanart" && fanart.pending) ||
+      (preference === "heya" && heya.pending),
     {
       plex: plexTarget,
+      coverartarchive: caaTarget,
       deezer: rawDeezerUrl
         ? revise(
             buildImageUrl(
@@ -404,7 +568,10 @@ export function useAlbumArtwork(
             )
           )
         : null,
-    }
+    },
+    savedCandidate,
+    { fanart: fanart.images, heya: heya.images },
+    failedUrls
   )
 }
 
@@ -418,4 +585,51 @@ export function useAlbumImage(
   ...args: Parameters<typeof useAlbumArtwork>
 ): string | null {
   return useAlbumArtwork(...args).url
+}
+
+/** Backgrounds use Plex art, independently of saved poster choices.
+ * Deezer/Apple candidates are expressly reused covers, never provider fanart. */
+export function useArtistBackgroundArtwork(
+  artistName: string | null,
+  plexArt: string | null,
+  artistId?: string | null,
+  failedUrls: readonly string[] = [],
+  allowFetch = true
+): ArtworkResolution {
+  return useArtistArtwork(
+    artistName,
+    plexArt,
+    artistId,
+    failedUrls,
+    allowFetch,
+    "background"
+  )
+}
+export function useAlbumBackgroundArtwork(
+  artistName: string | null,
+  albumName: string | null,
+  plexArt: string | null,
+  albumId?: string | null,
+  failedUrls: readonly string[] = [],
+  allowFetch = true
+): ArtworkResolution {
+  return useAlbumArtwork(
+    artistName,
+    albumName,
+    plexArt,
+    albumId,
+    failedUrls,
+    allowFetch,
+    "background"
+  )
+}
+export function useArtistBackground(
+  ...args: Parameters<typeof useArtistBackgroundArtwork>
+): string | null {
+  return useArtistBackgroundArtwork(...args).url
+}
+export function useAlbumBackground(
+  ...args: Parameters<typeof useAlbumBackgroundArtwork>
+): string | null {
+  return useAlbumBackgroundArtwork(...args).url
 }

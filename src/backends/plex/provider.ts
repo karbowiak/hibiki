@@ -1,3 +1,4 @@
+import type { LibraryMetadataPatch, LibraryMetadataExpected } from "../../providers/types"
 /**
  * PlexProvider — wraps lib/plex.ts calls behind the MusicProvider interface.
  *
@@ -43,6 +44,7 @@ export class PlexProvider implements MusicProvider {
     search: true,
     playlists: true,
     playlistEdit: true,
+    metadataEdit: true,
     ratings: true,
     radio: true,
     sonicSimilarity: true,
@@ -274,6 +276,11 @@ export class PlexProvider implements MusicProvider {
 
   async deletePlaylist(playlistId: string): Promise<void> {
     await this.api.deletePlaylist(Number(playlistId))
+  }
+
+  async editMetadata(kind: "artist" | "album", itemId: string, patch: LibraryMetadataPatch, expected: LibraryMetadataExpected): Promise<void> {
+    if (!/^[1-9]\d*$/.test(itemId) || !Number.isSafeInteger(Number(itemId))) throw new Error("Invalid Plex item ID")
+    await this.api.editLibraryMetadata(this.requireSection(), Number(itemId), kind, patch, expected)
   }
 
   async editPlaylist(playlistId: string, title?: string, summary?: string): Promise<void> {

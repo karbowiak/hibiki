@@ -27,7 +27,7 @@ if (scenario === "hydration") for (const key of ["deezer-metadata-v1", "itunes-m
 mock.module("idb-keyval", () => ({ get: async (key: string) => values.get(key), update: async (key: string, transform: (value: unknown) => string) => { values.set(key, transform(values.get(key))) }, set: async (key: string, value: string) => { values.set(key, value) }, del: async (key: string) => { values.delete(key) } }))
 const calls: string[] = []
 let notFound = false
-mock.module("@tauri-apps/api/core", () => ({ convertFileSrc: (src: string) => src, invoke: async (command: string, args: any) => { calls.push(`${command}:${args.artist}:${args.album}`); return notFound ? null : scenario === "getter" ? wrongArtist : correct } }))
+mock.module("@tauri-apps/api/core", () => ({ isTauri: () => false, convertFileSrc: (src: string) => src, invoke: async (command: string, args: any) => { calls.push(`${command}:${args.artist}:${args.album}`); return notFound ? null : scenario === "getter" ? wrongArtist : correct } }))
 const priority = create(() => ({ priority: ["deezer", "apple", "plex"] as string[] }))
 mock.module("../../src/stores/metadataSourceStore", () => ({ useMetadataSourceStore: priority }))
 const { useDeezerMetadataStore } = await import("../../src/metadata/deezer/store")

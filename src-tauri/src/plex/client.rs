@@ -119,6 +119,7 @@ pub struct PlexClient {
     /// overhead per fetch, fully reliable.
     media_client: reqwest::Client,
     artwork_client: reqwest::Client,
+    metadata_mutation_client: reqwest::Client,
     /// Serializes media fetches process-wide. Plex has a bug (at least on the
     /// versions we've tested against) where two concurrent large-body downloads
     /// from the same client cause one in-flight transfer to be killed mid-body
@@ -226,6 +227,18 @@ impl PlexClient {
             .build()
             .context("Failed to build media HTTP client")?;
 
+        // Explicit catalog edits must never retry an ambiguous accepted write or
+        // follow a redirect to another endpoint.
+        let metadata_mutation_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(20))
+            .retry(reqwest::retry::never())
+            .redirect(reqwest::redirect::Policy::none())
+            .danger_accept_invalid_certs(config.accept_invalid_certs)
+            .danger_accept_invalid_hostnames(config.accept_invalid_certs)
+            .default_headers(default_headers.clone())
+            .build()
+            .context("Failed to build metadata mutation HTTP client")?;
+
         let artwork_client = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(5))
             .timeout(std::time::Duration::from_secs(15))
@@ -250,6 +263,7 @@ impl PlexClient {
             client,
             media_client,
             artwork_client,
+            metadata_mutation_client,
             fetch_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
         })
     }
@@ -431,6 +445,16 @@ impl PlexClient {
             .context("Failed to parse JSON response")?;
 
         Ok(wrapper.container)
+    }
+
+    /// One explicit metadata write. Do not replay an unknown outcome.
+    pub(crate) async fn put_metadata_params_once(&self, path: &str, params: &[(&str, &str)]) -> Result<()> {
+        let response = self.metadata_mutation_client.put(self.build_url(path))
+            .header("X-Plex-Token", token_header(&self.token))
+            .header("Accept", "application/json").query(params).send().await
+            .map_err(|error| error.without_url()).context("Metadata save request failed")?;
+        if !response.status().is_success() { anyhow::bail!("Metadata save HTTP {}", response.status()); }
+        Ok(())
     }
 
     /// Perform a PUT request with query parameters and no body, ignoring the response body.

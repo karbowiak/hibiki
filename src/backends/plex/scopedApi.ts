@@ -1,3 +1,4 @@
+import type { LibraryMetadataPatch, LibraryMetadataExpected } from "../../providers/types"
 /** Plex library RPCs retain their originating native connection and library. */
 import { invoke as nativeInvoke } from "@tauri-apps/api/core"
 import type {
@@ -353,6 +354,11 @@ export function createPlexApi(
   /** Delete a playlist by its rating key. */
   function deletePlaylist(playlistId: number): Promise<void> {
     return invoke("delete_playlist", { playlistId })
+  }
+
+  function editLibraryMetadata(sectionId: number, itemId: number, kind: "artist" | "album", patch: LibraryMetadataPatch, expected: LibraryMetadataExpected): Promise<void> {
+    if (!Number.isSafeInteger(sectionId) || sectionId <= 0 || !Number.isSafeInteger(itemId) || itemId <= 0) return Promise.reject(new Error("Invalid Plex library or item ID"))
+    return invoke("edit_library_metadata", { sectionId, itemId, kind, patch: { ...patch }, expected: { ...expected } })
   }
 
   /** Edit playlist metadata (title and/or summary). */
@@ -719,6 +725,7 @@ export function createPlexApi(
     movePlaylistItem,
     deletePlaylist,
     editPlaylist,
+    editLibraryMetadata,
     createPlayQueue,
     getPlayQueue,
     addToPlayQueue,

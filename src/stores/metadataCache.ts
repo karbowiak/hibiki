@@ -18,6 +18,7 @@ export const isMetadataCacheCurrent = metadata.current
 export const activateMetadataCache = metadata.activate
 export const disconnectMetadataCache = metadata.disconnect
 export const clearMetadataCache = metadata.clear
+export const invalidateMetadataItem = metadata.invalidate
 export const getMetadataCacheStats = metadata.stats
 export const prefetchArtist = metadata.prefetchArtist
 export const prefetchAlbum = metadata.prefetchAlbum

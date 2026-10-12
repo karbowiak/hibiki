@@ -269,6 +269,30 @@ export function createMetadataCache({
     getAlbum,
     loadArtist,
     loadAlbum,
+    invalidate: (kind: "artist" | "album", id: string) => {
+      if (!capture()) return
+      persistence.cancelHydration()
+      if (kind === "artist") {
+        artistRequests.delete(id)
+        delete artists[id]
+        // Album cards retain their artist name; discard those derived entries.
+        for (const [key, entry] of Object.entries(albums)) {
+          if (entry.album.artistId === id) {
+            albumRequests.delete(key)
+            delete albums[key]
+          }
+        }
+      } else {
+        albumRequests.delete(id)
+        delete albums[id]
+        // Any in-flight artist response may contain the edited album.
+        artistRequests.clear()
+        for (const [key, entry] of Object.entries(artists)) {
+          if ([...entry.albums, ...entry.singles].some(album => album.id === id)) delete artists[key]
+        }
+      }
+      save()
+    },
     activate: async (next: MusicProvider) => {
       const loading = persistence.activate(next.cacheScope ?? null)
       retire()

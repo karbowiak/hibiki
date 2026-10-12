@@ -69,12 +69,18 @@
 ### Metadata & Integrations
 - **Last.fm** — scrobble, now-playing, love/unlove, metadata augment or replace mode
 - **Deezer** — artist images, album covers, genres, fan counts
-- **iTunes** — image fallback
+- **Apple / iTunes** — genres, release dates and album artwork
+- **MusicBrainz, Wikidata and Cover Art Archive** — verified identities, artist information and approved album covers
+- **Fanart.tv, HeyaMetadata and SoulSync** — optional configured enrichment sources
+- Artist, album and playlist editors with source attribution, independent poster/background choices, and reviewed Plex metadata changes
+- Reviewed ListenBrainz playlist copy import/export, preserving order and duplicate occurrences
 - Synced lyrics display with adjustable offset
+
+See [metadata and editing](src/metadata/README.md) for source capabilities and [playlist copies](src/playlistSync/README.md) for matching and recovery behavior.
 
 ### Image Caching
 - Custom `image://` URI scheme with on-disk cache
-- Multi-provider fallback: Plex → Deezer → iTunes
+- Source priorities and per-item choices, with separate poster and background artwork
 
 ### Appearance
 - 9 accent colors + custom hex picker with color picker

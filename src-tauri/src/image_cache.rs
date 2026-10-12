@@ -597,7 +597,7 @@ impl ImageCache {
         self.save_proofs(&mut index, &root, ticket, Some(key))
     }
 
-    fn store_verified(&self, ticket: &Ticket, key: &str, bytes: &[u8]) -> Result<(), String> {
+    pub(crate) fn store_verified(&self, ticket: &Ticket, key: &str, bytes: &[u8]) -> Result<(), String> {
         let Some(proof) = Proof::of(bytes) else {
             return self.store(ticket, key, bytes);
         };

@@ -22,6 +22,13 @@ const { useMetadataSourceStore } =
 const { useArtworkPreferenceStore, artworkPreferenceKey } =
   await import("../../src/stores/artworkPreferenceStore")
 const { useProviderStore } = await import("../../src/stores/providerStore")
+const { useCoverArtArchiveMetadataStore } =
+  await import("../../src/metadata/coverartarchive/store")
+useCoverArtArchiveMetadataStore.setState({
+  _hasHydrated: true,
+  albums: {},
+  getAlbum: async () => null,
+})
 await settle()
 useProviderStore.setState({
   provider: { cacheScope: "synthetic-account-a" } as any,

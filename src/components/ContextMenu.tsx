@@ -174,6 +174,7 @@ export function ContextMenu() {
   const debugEnabled = useDebugStore(s => s.debugEnabled)
   const showDebugPanel = useDebugPanelStore(s => s.show)
   const provider = useProviderStore(s => s.provider)
+  const extraActions = useContextMenuStore(s => s.extraActions) ?? []
   const captureOwner = useProviderMutationOwner(provider)
   const hasRadio = useCapability("radio")
   const hasRatings = useCapability("ratings")
@@ -269,9 +270,7 @@ export function ContextMenu() {
     && useProviderStore.getState().provider === provider && provider?.cacheScope === ownerScope
   const failed = (current: () => boolean) => { if (current() && useContextMenuStore.getState().generation === generation) useLibraryStore.setState({ error: "Unable to update the playlist. Please try again." }) }
 
-  if (type === "actions") {
-    const actionData = data as ContextActionsData
-    async function invokeAction(action: ContextAction) {
+  async function invokeAction(action: ContextAction) {
       if (!currentMenu() || pendingAction.current) return
       const request = Symbol("context action")
       pendingAction.current = request
@@ -285,6 +284,8 @@ export function ContextMenu() {
         if (pendingAction.current === request) pendingAction.current = null
       }
     }
+  if (type === "actions") {
+    const actionData = data as ContextActionsData
     return <>
       <div className="fixed inset-0 z-[9998]" onClick={close} onContextMenu={e => { e.preventDefault(); close() }} />
       <div ref={menuRef} role="dialog" aria-modal="true" aria-label={`${data.title} actions`} style={{ left: menuPos.left, top: menuPos.top }} className="fixed z-[9999] w-60 rounded-lg border border-[var(--border)] bg-app-card shadow-2xl py-1 text-sm select-none">
@@ -506,6 +507,8 @@ export function ContextMenu() {
                 void playRadio(playlist.id, "playlist")
                 close()
               }} />}
+              {extraActions.length > 0 && <><Divider />{extraActions.map(action => <Item key={action.label} icon={IconShare} label={action.label} onClick={() => { void invokeAction(action) }} />)}</>}
+              {actionsError && <p role="alert" className="px-3 py-2 text-sm text-[var(--text-primary)]">{actionsError}</p>}
               <Divider />
               {hasPlaylists && isEditable && <Item icon={IconEdit} label="Rename" onClick={() => setRenaming(true)} />}
               {hasPlaylists && <Item icon={IconDelete} label="Delete" onClick={() => setConfirming(true)} danger />}

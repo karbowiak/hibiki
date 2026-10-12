@@ -123,6 +123,7 @@ export function plexAlbumToMusicAlbum(a: Album, img: ImgResolver): MusicAlbum {
     trackCount: a.leaf_count,
     studio: a.studio ?? null,
     thumbUrl: resolveImg(img, a.thumb, "album", albumId, a.title, a.parent_title),
+    artUrl: resolveImg(img, a.art, "album", albumId, a.title, a.parent_title),
     artistThumbUrl: resolveImg(img, a.parent_thumb, "artist", artistId ?? albumId, a.parent_title),
     summary: a.summary ?? null,
     userRating: a.user_rating ?? null,

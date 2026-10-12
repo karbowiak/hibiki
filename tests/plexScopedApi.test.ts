@@ -212,3 +212,18 @@ test("latest-release RPC and album mapper preserve scoped ownership and release 
   await provider.disconnect()
   await expect(late).rejects.toThrow("superseded")
 })
+
+test("library metadata edits retain context, baseline fields and positive scoped IDs", async () => {
+  const calls: any[] = []
+  const api = createPlexApi(context(), async (command, args) => { calls.push({command,args}); return undefined as any })
+  await api.editLibraryMetadata(5, 42, "album", {title:"New",releaseDate:"2024-02-29"}, {title:"Old",releaseDate:null})
+  expect(calls).toEqual([{command:"edit_library_metadata",args:{sectionId:5,itemId:42,kind:"album",patch:{title:"New",releaseDate:"2024-02-29"},expected:{title:"Old",releaseDate:null},context:context()}}])
+  await expect(api.editLibraryMetadata(-1,42,"artist",{title:"New"},{title:"Old"})).rejects.toThrow("Invalid Plex")
+  expect(calls).toHaveLength(1)
+  let owned = true
+  const barrier=deferred<void>()
+  const stale=createPlexApi(context(),async()=>{await barrier.promise;return undefined as any},()=>owned)
+  const request=stale.editLibraryMetadata(5,42,"artist",{summary:"New"},{summary:null})
+  owned=false;barrier.resolve()
+  await expect(request).rejects.toThrow("superseded")
+})

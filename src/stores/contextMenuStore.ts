@@ -22,7 +22,8 @@ interface ContextMenuState {
   data: ContextMenuData | null
   /** When non-null, the context menu was opened from within a playlist view */
   playlistId: string | null
-  show: (x: number, y: number, type: MediaContextMenuType, data: MediaContextMenuData, playlistId?: string | null) => void
+  extraActions: readonly ContextAction[]
+  show: (x: number, y: number, type: MediaContextMenuType, data: MediaContextMenuData, playlistId?: string | null, extraActions?: readonly ContextAction[]) => void
   showActions: (x: number, y: number, data: ContextActionsData) => void
   close: () => void
 }
@@ -37,10 +38,11 @@ export const useContextMenuStore = create<ContextMenuState>((set) => ({
   type: null,
   data: null,
   playlistId: null,
+  extraActions: [],
 
-  show: (x, y, type, data, playlistId) => set(state => ({ open: true, ownerProvider: useProviderStore.getState().provider, ownerScope: useProviderStore.getState().provider?.cacheScope, generation: state.generation + 1, x, y, type, data, playlistId: playlistId ?? null })),
-  showActions: (x, y, data) => set(state => ({ open: true, ownerProvider: useProviderStore.getState().provider, ownerScope: useProviderStore.getState().provider?.cacheScope, generation: state.generation + 1, x, y, type: "actions", data, playlistId: null })),
-  close: () => set(state => ({ open: false, ...(state.type === "actions" ? { type: null, data: null } : {}) })),
+  show: (x, y, type, data, playlistId, extraActions = []) => set(state => ({ open: true, ownerProvider: useProviderStore.getState().provider, ownerScope: useProviderStore.getState().provider?.cacheScope, generation: state.generation + 1, x, y, type, data, playlistId: playlistId ?? null, extraActions: [...extraActions] })),
+  showActions: (x, y, data) => set(state => ({ open: true, ownerProvider: useProviderStore.getState().provider, ownerScope: useProviderStore.getState().provider?.cacheScope, generation: state.generation + 1, x, y, type: "actions", data, playlistId: null, extraActions: [] })),
+  close: () => set(state => ({ open: false, extraActions: [], ...(state.type === "actions" ? { type: null, data: null } : {}) })),
 }))
 
 useProviderStore.subscribe(state => {

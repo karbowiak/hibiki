@@ -36,6 +36,7 @@ pub mod collection;
 pub mod discovery;
 pub mod history;
 pub mod library;
+pub mod metadata_edit;
 pub mod models;
 pub mod playlist;
 pub mod playqueue;

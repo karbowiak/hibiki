@@ -138,6 +138,7 @@ export interface Album {
   viewed_leaf_count: number
   studio: string | null
   thumb: string | null
+  art?: string | null
   summary: string | null
   user_rating: number | null
   added_at: string | null

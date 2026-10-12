@@ -723,6 +723,10 @@ pub struct Album {
     #[serde(default)]
     pub thumb: Option<String>,
 
+    /// Plex background art, independently of the album poster/thumb.
+    #[serde(default)]
+    pub art: Option<String>,
+
     /// Summary/description
     #[serde(default)]
     pub summary: Option<String>,
@@ -1544,4 +1548,15 @@ mod tests {
             other => panic!("expected PlexMedia::Playlist, got {:?}", other),
         }
     }
+    #[test]
+    fn album_poster_and_background_are_independent_fields() {
+        let album: super::Album = serde_json::from_str(r#"{"ratingKey":"123","title":"Album","thumb":"/library/metadata/123/thumb/1","art":"/library/metadata/123/art/2"}"#).unwrap();
+        assert_eq!(album.thumb.as_deref(), Some("/library/metadata/123/thumb/1"));
+        assert_eq!(album.art.as_deref(), Some("/library/metadata/123/art/2"));
+        let saved = serde_json::to_value(&album).unwrap();
+        assert_eq!(saved["art"], "/library/metadata/123/art/2");
+        let legacy: super::Album = serde_json::from_str(r#"{"ratingKey":"123","thumb":"/library/metadata/123/thumb/1"}"#).unwrap();
+        assert!(legacy.art.is_none());
+    }
+
 }

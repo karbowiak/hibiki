@@ -15,9 +15,11 @@ export interface MusicBrainzArtistInfo {
   tags: string[]
   begin_date: string | null
   wikipedia_url: string | null
+  wikidata_url?: string | null
 }
 
 export interface MusicBrainzAlbumInfo {
+  artist?: string
   mbid: string
   title: string
   release_type: string | null
@@ -26,11 +28,16 @@ export interface MusicBrainzAlbumInfo {
 }
 
 /** Search for an artist by name. Returns the best match or null if not found. */
-export const musicbrainzGetArtistInfo = (artist: string): Promise<MusicBrainzArtistInfo | null> =>
+export const musicbrainzGetArtistInfo = (
+  artist: string
+): Promise<MusicBrainzArtistInfo | null> =>
   invoke("musicbrainz_get_artist_info", { artist })
 
 /** Search for an album by artist + title. Returns the best match or null if not found. */
-export const musicbrainzGetAlbumInfo = (artist: string, album: string): Promise<MusicBrainzAlbumInfo | null> =>
+export const musicbrainzGetAlbumInfo = (
+  artist: string,
+  album: string
+): Promise<MusicBrainzAlbumInfo | null> =>
   invoke("musicbrainz_get_album_info", { artist, album })
 
 export interface MusicBrainzRecordingMbids {
@@ -41,5 +48,9 @@ export interface MusicBrainzRecordingMbids {
 }
 
 /** Look up MBIDs for a recording by artist + track + album. Used for ListenBrainz submissions. */
-export const musicbrainzLookupRecording = (artist: string, track: string, album: string): Promise<MusicBrainzRecordingMbids | null> =>
+export const musicbrainzLookupRecording = (
+  artist: string,
+  track: string,
+  album: string
+): Promise<MusicBrainzRecordingMbids | null> =>
   invoke("musicbrainz_lookup_recording", { artist, track, album })

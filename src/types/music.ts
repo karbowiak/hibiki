@@ -79,6 +79,7 @@ export interface MusicAlbum {
   trackCount: number
   studio: string | null
   thumbUrl: string | null
+  artUrl?: string | null // Plex background art, separate from the album poster
   artistThumbUrl: string | null
   summary: string | null
   userRating: number | null
