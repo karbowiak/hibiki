@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { build } from "vite"
 import { chromium, webkit } from "playwright"
+import { artworkContrast } from "../src/lib/artworkTone"
 
 // Real components and stores, disposable preferences and playback, no account I/O.
 const root = resolve(import.meta.dir, "..")
@@ -202,7 +203,9 @@ try {
             path: join(artifacts, `${slug}-${route.split("/")[1]}.png`),
           })
           if (route.startsWith("/artist") || route.startsWith("/album")) {
-            const sharp = page.locator(".media-backdrop__sharp")
+            const sharp = page.locator(
+              ".app-artwork-frame:not(.app-artwork-frame--retiring) .app-artwork-sharp"
+            )
             assert.equal(
               await sharp
                 .locator("img")
@@ -210,37 +213,28 @@ try {
               "none",
               `${slug}/${route}: hero artwork must remain sharp`
             )
-            await page.waitForFunction(
-              () =>
-                getComputedStyle(
-                  document.querySelector(".media-backdrop__sharp")!
-                ).position === "fixed"
-            )
             const geometry = () =>
               page.evaluate(() => {
                 const hero = document
                   .querySelector(".media-detail-hero")!
                   .getBoundingClientRect()
                 const band = document.querySelector<HTMLElement>(
-                  ".media-backdrop__sharp"
+                  ".app-artwork-frame:not(.app-artwork-frame--retiring) .app-artwork-sharp"
                 )!
                 const rect = band.getBoundingClientRect()
                 const clip =
                   parseFloat(band.style.clipPath.split(" ")[2] ?? "0") || 0
-                const area = document
-                  .querySelector<HTMLElement>(
-                    "#layout-fixture main .overflow-auto"
+                const ambient = document
+                  .querySelector(
+                    ".app-artwork-frame:not(.app-artwork-frame--retiring) .app-artwork-ambient"
                   )!
                   .getBoundingClientRect()
-                const ambient = document
-                  .querySelector(".media-backdrop__ambient")!
-                  .getBoundingClientRect()
                 return {
-                  seam: rect.bottom - clip - hero.bottom,
-                  left: rect.left - area.left,
-                  width: rect.width - area.width,
-                  ambientTop: ambient.top - area.top,
-                  ambientHeight: ambient.height - area.height,
+                  seam: rect.bottom - clip - Math.min(innerHeight, hero.bottom),
+                  left: rect.left,
+                  width: rect.width - innerWidth,
+                  ambientTop: ambient.top,
+                  ambientHeight: ambient.height - innerHeight,
                 }
               })
             for (const amount of [0, 120]) {
@@ -436,9 +430,176 @@ try {
           `${name}/${panel}: closed controls accessible`
         )
       }
+      // Real shell: stable pool, full-window pixels, palette contrast and image transitions.
+      await page.evaluate(() => {
+        ;(window as any).fixtureAppearance.panel(null)
+        ;(window as any).fixtureAppearance.apply({})
+        ;(window as any).fixtureAppearance.route("/search")
+      })
+      const active = page.locator(
+        ".app-artwork-frame:not(.app-artwork-frame--retiring)"
+      )
+      await active.waitFor()
+      await page.waitForTimeout(700)
+      const firstSource = await active
+        .locator("img")
+        .first()
+        .getAttribute("src")
+      await page
+        .getByRole("combobox", { name: "Search your music library" })
+        .fill("synthetic")
+      await page.waitForTimeout(300)
+      assert.equal(
+        await active.locator("img").first().getAttribute("src"),
+        firstSource,
+        `${name}: typing rotates artwork`
+      )
+      await page
+        .getByRole("combobox", { name: "Search your music library" })
+        .fill("")
+      for (const settings of [
+        { theme: "dark" },
+        { theme: "light" },
+        { theme: "dark", custom: true },
+      ]) {
+        await page.evaluate(
+          (value) => (window as any).fixtureAppearance.apply(value),
+          settings
+        )
+        await page.waitForTimeout(550)
+        const colors = await page.evaluate(() => {
+          const shell =
+            document.querySelector<HTMLElement>(".app-artwork-shell")!
+          const style = getComputedStyle(shell)
+          const rgb = (value: string) => {
+            const canvas = document.createElement("canvas")
+            canvas.width = canvas.height = 1
+            const context = canvas.getContext("2d")!
+            context.fillStyle = value
+            context.fillRect(0, 0, 1, 1)
+            return Array.from(context.getImageData(0, 0, 1, 1).data).slice(0, 3)
+          }
+          const play = document.querySelector<HTMLElement>(
+            ".app-playbar .shell-control-primary"
+          )!
+          const ps = getComputedStyle(play)
+          return {
+            text: rgb(style.getPropertyValue("--artwork-accent-text")),
+            base: rgb(style.getPropertyValue("--bg-base")),
+            ink: rgb(ps.color),
+            primary: rgb(ps.backgroundColor),
+            bars: [
+              ...document.querySelectorAll<HTMLElement>(
+                ".shell-artwork-surface"
+              ),
+            ].map((e) => getComputedStyle(e).backgroundColor),
+            rect: document
+              .querySelector(".app-artwork-background")!
+              .getBoundingClientRect()
+              .toJSON(),
+          }
+        })
+        assert.ok(
+          artworkContrast(colors.text as any, colors.base as any) >= 6.99,
+          `${name}: artwork text lacks contrast`
+        )
+        assert.ok(
+          artworkContrast(colors.ink as any, colors.primary as any) >= 4.5,
+          `${name}: play button lacks contrast`
+        )
+        assert.equal(
+          new Set(colors.bars).size,
+          1,
+          `${name}: shell tints differ`
+        )
+        assert.ok(
+          colors.rect.width === 1440 &&
+            colors.rect.height === 900 &&
+            colors.rect.x === 0 &&
+            colors.rect.y === 0,
+          `${name}: backdrop excludes part of the app`
+        )
+      }
+      await page.evaluate(() =>
+        (window as any).fixtureArtwork.replace("replacement.svg")
+      )
+      await page.waitForFunction(() =>
+        document
+          .querySelector<HTMLImageElement>(
+            ".app-artwork-frame:not(.app-artwork-frame--retiring) img"
+          )
+          ?.src.includes("replacement.svg")
+      )
+      const layers = await page.evaluate(() =>
+        [...document.querySelectorAll<HTMLElement>(".app-artwork-frame")].map(
+          (e) => ({
+            old: e.classList.contains("app-artwork-frame--retiring"),
+            opacity: Number(getComputedStyle(e).opacity),
+            animation: getComputedStyle(e).animationName,
+          })
+        )
+      )
+      assert.equal(
+        layers.length,
+        2,
+        `${name}: prior artwork disappears before image fade`
+      )
+      assert.equal(
+        layers.find((e) => e.old)?.opacity,
+        1,
+        `${name}: transition fades through empty background`
+      )
+      assert.equal(layers.find((e) => !e.old)?.animation, "artwork-fade-in")
+      await page.waitForTimeout(700)
+      assert.equal(await page.locator(".app-artwork-frame").count(), 1)
+      await page.screenshot({
+        path: join(artifacts, `${name}-artwork-shell.png`),
+      })
+      const seek = page.getByRole("slider", { name: "Seek", exact: true })
+      await page.evaluate(() =>
+        (window as any).fixtureAppearance.resetInteractions()
+      )
+      await seek.focus()
+      await page.keyboard.press("ArrowRight")
+      assert.equal(
+        (
+          await page.evaluate(() =>
+            (window as any).fixtureAppearance.interactions()
+          )
+        ).at(-1)?.action,
+        "seek",
+        `${name}: waveform changes broke keyboard seeking`
+      )
+      await page.evaluate(() =>
+        (window as any).fixtureAppearance.apply({ background: false })
+      )
+      assert.equal(await page.locator(".app-artwork-frame").count(), 0)
+      const opaque = await page
+        .locator(".app-playbar")
+        .evaluate((e) => getComputedStyle(e).backgroundColor)
+      assert.ok(
+        !opaque.includes("rgba") && !opaque.includes("0.76"),
+        `${name}: disabled background leaves transparent playbar`
+      )
+      await page.evaluate(() =>
+        (window as any).fixtureAppearance.apply({ background: true })
+      )
+      await active.waitFor()
+      await page.evaluate(() => (window as any).fixtureArtwork.retire())
+      assert.equal(
+        await page.locator(".app-artwork-frame").count(),
+        0,
+        `${name}: old account image remains visible`
+      )
+      assert.equal(
+        await page
+          .locator(".app-artwork-shell")
+          .getAttribute("data-artwork-colors"),
+        "off"
+      )
       assert.deepEqual(errors, [], `${name}: application errors`)
       console.log(
-        `${name}: appearance, detail keyboard actions, artwork modal, pinned panels, resizing and lyric states passed`
+        `${name}: appearance, full-window artwork, palette contrast, fades, seeking, detail actions and panels passed`
       )
     } finally {
       await browser.close()

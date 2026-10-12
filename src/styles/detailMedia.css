@@ -2,62 +2,16 @@
   position: relative;
   isolation: isolate;
 }
-.media-detail-page > :not(.media-backdrop) {
+.media-detail-page > * {
   position: relative;
   z-index: 1;
-}
-.media-backdrop {
-  pointer-events: none;
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-}
-.media-backdrop__ambient {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  background: var(--bg-base);
-}
-.media-backdrop__pixels {
-  position: absolute;
-  inset: 0;
-  filter: blur(28px) saturate(1.25);
-}
-.media-backdrop__wash {
-  position: absolute;
-  inset: 0;
-  background: var(--bg-base);
-  opacity: 0.76;
-}
-[data-theme="light"] .media-backdrop__wash {
-  opacity: 0.92;
-}
-.media-backdrop__sharp {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 28rem;
-  overflow: hidden;
-}
-.media-backdrop__sharp-image {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.media-backdrop__grade {
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(90deg, rgb(0 0 0 / 0.55), rgb(0 0 0 / 0.12)),
-    linear-gradient(0deg, rgb(0 0 0 / 0.72), rgb(0 0 0 / 0.06) 75%);
 }
 .media-detail-page .media-detail-hero {
   min-height: clamp(21rem, 44vh, 34rem);
   padding: clamp(1.5rem, 3vw, 3rem);
   display: flex;
   align-items: flex-end;
-  background: transparent;
+  background: #101010;
   border-radius: 0;
 }
 .media-detail-title {
@@ -69,7 +23,7 @@
   text-shadow: 0 2px 20px rgb(0 0 0 / 0.35);
 }
 .media-detail-eyebrow {
-  color: var(--artwork-secondary, #ddd);
+  color: var(--artwork-hero-secondary, #ddd);
   font-size: 0.6875rem;
   font-weight: 650;
   letter-spacing: 0.16em;

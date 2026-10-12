@@ -1,15 +1,51 @@
 import { create } from "zustand"
-import { booleanPreference } from "./scalarPreference"
-const preference = booleanPreference("plex-artwork-colors", true)
-export const useArtworkAppearanceStore = create<{
+import { booleanPreference, createScalarPreference } from "./scalarPreference"
+const colors = booleanPreference("plex-artwork-colors", true)
+const background = booleanPreference("plex-background-artwork", true)
+export const INTERFACE_OPACITY_MIN = 0.45
+export const INTERFACE_OPACITY_MAX = 1
+export const INTERFACE_OPACITY_DEFAULT = 0.76
+function normalizeOpacity(value: number) {
+  return Number.isFinite(value)
+    ? Math.max(INTERFACE_OPACITY_MIN, Math.min(INTERFACE_OPACITY_MAX, value))
+    : INTERFACE_OPACITY_DEFAULT
+}
+const opacity = createScalarPreference(
+  "plex-interface-opacity",
+  INTERFACE_OPACITY_DEFAULT,
+  (raw) => {
+    if (!raw.trim() || !Number.isFinite(Number(raw)))
+      throw new Error("Invalid interface opacity")
+    return normalizeOpacity(Number(raw))
+  },
+  (value) => String(value)
+)
+export interface ArtworkAppearanceState {
   artworkColorsEnabled: boolean
   setArtworkColorsEnabled: (value: boolean) => void
-}>(() => ({
-  artworkColorsEnabled: preference.snapshot(),
-  setArtworkColorsEnabled: (value) => preference.set(value),
+  backgroundArtworkEnabled: boolean
+  setBackgroundArtworkEnabled: (value: boolean) => void
+  interfaceOpacity: number
+  setInterfaceOpacity: (value: number) => void
+}
+export const useArtworkAppearanceStore = create<ArtworkAppearanceState>(() => ({
+  artworkColorsEnabled: colors.snapshot(),
+  setArtworkColorsEnabled: (value) => colors.set(value),
+  backgroundArtworkEnabled: background.snapshot(),
+  setBackgroundArtworkEnabled: (value) => background.set(value),
+  interfaceOpacity: opacity.snapshot(),
+  setInterfaceOpacity: (value) => opacity.set(normalizeOpacity(value)),
 }))
-preference.subscribe(() =>
+colors.subscribe(() =>
   useArtworkAppearanceStore.setState({
-    artworkColorsEnabled: preference.snapshot(),
+    artworkColorsEnabled: colors.snapshot(),
   })
+)
+background.subscribe(() =>
+  useArtworkAppearanceStore.setState({
+    backgroundArtworkEnabled: background.snapshot(),
+  })
+)
+opacity.subscribe(() =>
+  useArtworkAppearanceStore.setState({ interfaceOpacity: opacity.snapshot() })
 )

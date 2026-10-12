@@ -3,6 +3,7 @@ import { isTauri } from "@tauri-apps/api/core"
 import { useLocation } from "wouter"
 import { SideBar } from "./components/SideBar"
 import { Page } from "./components/Page"
+import { ArtworkShell } from "./components/ArtworkShell"
 import "./App.css"
 import { TailwindIndicator } from "./components/tailwind-indicator"
 import { Player } from "./components/Player"
@@ -118,7 +119,7 @@ function DesktopApp() {
         - Top row: sidebar + page content (flex-1, takes all space above the player)
         - Bottom: Player — always visible, never overlaps content
       */}
-      <div className="flex h-screen flex-col overflow-hidden text-white">
+      <ArtworkShell>
         {IS_WINDOWS && <WindowTitleBar />}
         {/* Sidebar + main content + optional pinned queue */}
         <div className="relative z-0 flex min-h-0 flex-1 flex-row overflow-hidden">
@@ -135,7 +136,7 @@ function DesktopApp() {
 
         {/* Player sits at the bottom as a natural flex item — no overlap */}
         <Player />
-      </div>
+      </ArtworkShell>
 
       <TailwindIndicator />
       <NotificationToasts />

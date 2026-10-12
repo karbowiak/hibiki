@@ -1,3 +1,4 @@
+import { useArtworkAppearanceStore } from "../stores/artworkAppearanceStore"
 import "../styles/discovery.css"
 import { getRecentSearches } from "../lib/recentSearches"
 import { useProviderStore } from "../stores/providerStore"
@@ -22,6 +23,7 @@ import { IS_MACOS } from "../lib/platform"
 import { NotificationCenter } from "./NotificationCenter"
 
 export function TopBar() {
+  const backgroundArtworkEnabled = useArtworkAppearanceStore(state => state.backgroundArtworkEnabled)
   const provider = useProviderStore((s) => s.provider)
   const [location, navigate] = useLocation()
   const { search, clear, setQuery, query } = useSearchStore(
@@ -185,11 +187,13 @@ export function TopBar() {
   }
 
   return (
-    // pt-8 gives 32px of clearance for the macOS traffic-light buttons
+    // macOS keeps its 32px traffic-light clearance within the tinted toolbar.
     <div
       data-tauri-drag-region
+      data-shell-transparency={backgroundArtworkEnabled ? "enabled" : undefined}
+      data-shell-platform={IS_MACOS ? "mac" : undefined}
       data-app-toolbar
-      className={`mb-3 flex flex-row flex-wrap items-center gap-2 ${IS_MACOS ? "pt-8" : "pt-2"}`}
+      className="app-topbar shell-artwork-surface shell-artwork-toolbar flex flex-row flex-wrap items-center"
       style={{ paddingInline: "var(--spacing-topbar)" }}
     >
       <div
@@ -200,7 +204,7 @@ export function TopBar() {
         <button
           onClick={() => window.history.back()}
           aria-label="Go back"
-          className="h-fit rounded-full bg-app-surface p-2 transition-colors hover:bg-app-surface-hover"
+          className="shell-control-secondary h-fit rounded-full bg-app-surface p-2 transition-colors hover:bg-app-surface-hover"
         >
           <svg
             role="img"
@@ -217,7 +221,7 @@ export function TopBar() {
         <button
           onClick={() => window.history.forward()}
           aria-label="Go forward"
-          className="h-fit rounded-full bg-app-surface p-2 transition-colors hover:bg-app-surface-hover"
+          className="shell-control-secondary h-fit rounded-full bg-app-surface p-2 transition-colors hover:bg-app-surface-hover"
         >
           <svg
             role="img"
@@ -308,7 +312,7 @@ export function TopBar() {
           onClick={() => void handleRefresh()}
           disabled={isRefreshing || !isConnected}
           title="Refresh library (⌘R)"
-          className="flex h-8 w-8 items-center justify-center rounded-full bg-app-surface transition-colors hover:bg-app-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
+          className="shell-control-secondary flex h-8 w-8 items-center justify-center rounded-full bg-app-surface transition-colors hover:bg-app-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
         >
           <svg
             height="15"
@@ -329,7 +333,8 @@ export function TopBar() {
               ? window.history.back()
               : navigate("/settings")
           }
-          className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+          aria-pressed={location.startsWith("/settings")}
+          className={`shell-control-secondary flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
             location.startsWith("/settings")
               ? "border border-accent/30 bg-accent/15 hover:bg-accent/25"
               : "bg-app-surface hover:bg-app-surface-hover"

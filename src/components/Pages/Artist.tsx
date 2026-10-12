@@ -20,7 +20,6 @@ import type {
 import { MediaCard } from "../MediaCard"
 import { ScrollRow } from "../ScrollRow"
 import { MediaBackdrop } from "../shared/MediaBackdrop"
-import { useArtworkTone } from "../../hooks/useArtworkTone"
 import {
   getCachedArtist,
   prefetchAlbum,
@@ -253,7 +252,6 @@ export function ArtistPage({ artistId }: { artistId: string }) {
     failures
   )
   const heroBgPos = useFocalPoint(artUrl ?? thumbUrl)
-  const artworkTone = useArtworkTone(artUrl ?? thumbUrl)
 
   // Map from lowercase artist name → library artist for "Fans Also Like" linking.
   // Covers both Plex-similar and sonically-similar artists that are in the library.
@@ -409,7 +407,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
   const heroTags = mergedTags.slice(0, 8)
 
   return (
-    <div className="media-detail-page" style={artworkTone}>
+    <div className="media-detail-page">
       <MediaBackdrop
         src={artUrl ?? thumbUrl}
         heroRef={heroRef}
@@ -507,7 +505,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                     {displayBio}
                   </p>
                 </div>
-                <span className="mt-1 flex items-center gap-1 text-xs text-gray-500 transition-colors hover:text-gray-300">
+                <span className="mt-1 flex items-center gap-1 text-xs text-white/80 transition-colors hover:text-white">
                   <svg
                     viewBox="0 0 16 16"
                     width="12"
@@ -532,7 +530,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
 
             {/* Metadata stats row */}
             {(lastfmData || deezerData || dedupStats) && (
-              <div className="mt-0.5 flex items-center gap-3 text-xs text-gray-500">
+              <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-white/80">
                 {lastfmData && lastfmData.listeners > 0 && (
                   <span>{lastfmData.listeners.toLocaleString()} listeners</span>
                 )}
@@ -543,21 +541,21 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                 )}
                 {lastfmData &&
                   (lastfmData.listeners > 0 || lastfmData.play_count > 0) && (
-                    <span className="text-gray-600">· Last.fm</span>
+                    <span className="text-white/80">· Last.fm</span>
                   )}
                 {deezerData && deezerData.fans > 0 && (
                   <>
-                    {lastfmData && <span className="text-gray-700">·</span>}
+                    {lastfmData && <span className="text-white/60">·</span>}
                     <span>{deezerData.fans.toLocaleString()} fans</span>
-                    <span className="text-gray-600">· Deezer</span>
+                    <span className="text-white/80">· Deezer</span>
                   </>
                 )}
                 {dedupStats && (
                   <>
                     {(lastfmData || deezerData) && (
-                      <span className="text-gray-700">·</span>
+                      <span className="text-white/60">·</span>
                     )}
-                    <span className="italic text-gray-600">{dedupStats}</span>
+                    <span className="italic text-white/80">{dedupStats}</span>
                   </>
                 )}
               </div>

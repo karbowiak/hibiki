@@ -1,3 +1,5 @@
+import "../styles/shellArtwork.css"
+import { useArtworkAppearanceStore } from "../stores/artworkAppearanceStore"
 import { ArtworkImage } from "./shared/ArtworkImage"
 import { Link, useLocation } from "wouter"
 import { useMemo, useRef, useState, useCallback, useEffect } from "react"
@@ -141,6 +143,7 @@ function SortablePlaylistItem({ playlist, location, playPlaylist, ctxMenu, justD
 // ---------------------------------------------------------------------------
 
 export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) {
+  const backgroundArtworkEnabled = useArtworkAppearanceStore(state => state.backgroundArtworkEnabled)
   const [location] = useLocation()
   const hasStations = useCapability("stations")
   const playlists = useLibraryStore(s => s.playlists)
@@ -244,7 +247,7 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
   }
 
   return (
-    <nav role="navigation" aria-label="Main navigation" className="relative flex h-full flex-shrink-0 flex-col bg-app-bg" style={{ width, padding: "var(--spacing-sidebar)", ...(IS_MACOS && { paddingTop: "max(var(--spacing-sidebar), 28px)" }) }}>
+    <nav role="navigation" aria-label="Main navigation" data-shell-transparency={backgroundArtworkEnabled ? "enabled" : undefined} className="app-sidebar shell-artwork-surface relative flex h-full flex-shrink-0 flex-col bg-app-bg" style={{ width, padding: "var(--spacing-sidebar)", ...(IS_MACOS && { paddingTop: "max(var(--spacing-sidebar), 28px)" }) }}>
       {/* Resize handle */}
       <div
         className="absolute right-0 top-0 bottom-0 w-1 cursor-ew-resize z-10 hover:bg-white/10 transition-colors"
@@ -257,7 +260,7 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
             : location === i.href
           return (
             <li key={`${i.href}-${index}`}>
-              <div className={clsx("flex items-center rounded", isActive && "bg-accent-tint-strong")}>
+              <div className={clsx("flex items-center rounded", isActive && "shell-nav-active bg-accent-tint-strong")}>
                 <Link
                   href={i.href}
                   aria-current={location === i.href ? "page" : undefined}
@@ -268,7 +271,7 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
                     }
                   }}
                   className={clsx(
-                    "flex h-10 min-w-0 flex-1 cursor-pointer items-center gap-3 rounded px-3 no-underline transition-colors duration-200 hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:bg-accent-tint hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
+                    "shell-nav-link flex h-10 min-w-0 flex-1 cursor-pointer items-center gap-3 rounded px-3 no-underline transition-colors duration-200 hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:bg-accent-tint hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
                     !isActive
                       ? "fill-[var(--text-secondary)] text-[var(--text-secondary)]"
                       : "fill-accent text-accent"
@@ -308,9 +311,9 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
                         href={sub.href}
                         aria-current={location === sub.href ? "page" : undefined}
                         className={clsx(
-                          "flex h-8 items-center rounded px-2 no-underline transition-colors duration-200 hover:bg-accent-tint hover:text-[var(--text-primary)] hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
+                          "shell-nav-link flex h-8 items-center rounded px-2 no-underline transition-colors duration-200 hover:bg-accent-tint hover:text-[var(--text-primary)] hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
                           location === sub.href
-                            ? "bg-accent-tint-strong text-accent"
+                            ? "shell-nav-active bg-accent-tint-strong text-accent"
                             : "text-[var(--text-secondary)]"
                         )}
                       >
@@ -328,9 +331,9 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
       <div className="flex-shrink-0 pb-1 pt-8 text-sm font-semibold">
         <button
           onClick={onCreatePlaylist}
-          className="group flex h-10 w-full cursor-pointer items-center gap-3 rounded border-0 bg-transparent px-3 fill-[var(--text-secondary)] text-[var(--text-secondary)] transition-colors duration-200 hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:bg-accent-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
+          className="shell-control-secondary group flex h-10 w-full cursor-pointer items-center gap-3 rounded border-0 bg-transparent px-3 fill-[var(--text-secondary)] text-[var(--text-secondary)] transition-colors duration-200 hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:bg-accent-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
         >
-          <span className="flex h-6 w-6 items-center justify-center rounded-sm bg-accent/20 text-accent group-hover:bg-accent/40 transition-colors">
+          <span className="shell-icon-tile flex h-6 w-6 items-center justify-center rounded-sm bg-accent/20 text-accent group-hover:bg-accent/40 transition-colors">
             <svg viewBox="0 0 16 16" width="12" height="12" xmlns="http://www.w3.org/2000/svg">
               <path d="M14 7H9V2H7v5H2v2h5v5h2V9h5z" fill="currentColor"></path>
               <path fill="none" d="M0 0h16v16H0z"></path>

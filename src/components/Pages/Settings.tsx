@@ -242,7 +242,7 @@ function SettingCard({
 // ---------------------------------------------------------------------------
 
 function AppearanceSection() {
-  const { artworkColorsEnabled, setArtworkColorsEnabled } = useArtworkAppearanceStore()
+  const { artworkColorsEnabled, setArtworkColorsEnabled, backgroundArtworkEnabled, setBackgroundArtworkEnabled, interfaceOpacity, setInterfaceOpacity } = useArtworkAppearanceStore()
   const { accent, setAccent } = useAccentStore()
   const [custom, setCustom] = useState(accent)
   const [theme, setThemeState] = useState(getTheme)
@@ -437,8 +437,18 @@ function AppearanceSection() {
         <Toggle label="Compact Mode" value={compact} onChange={setCompact} />
       </SettingCard>
 
-      <SettingCard title="Artwork colors" description="Use colors from artist and album artwork for their buttons. Your global accent and custom interface colors stay unchanged.">
+      <SettingCard title="Artwork colors" description="Use artwork colors for buttons across Hibiki. Your saved global accent and custom interface colors stay unchanged.">
         <Toggle label="Artwork colors" value={artworkColorsEnabled} onChange={setArtworkColorsEnabled} />
+      </SettingCard>
+
+      <SettingCard title="Background artwork" description="Let artwork show softly behind the app. Without artwork, or when reduced transparency is enabled, the interface stays opaque.">
+        <Toggle label="Background artwork" value={backgroundArtworkEnabled} onChange={setBackgroundArtworkEnabled} />
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <label htmlFor="interface-opacity" className="text-sm text-[color:var(--text-secondary)]">Interface opacity</label>
+          <input id="interface-opacity" type="range" min={0.45} max={1} step={0.01} value={interfaceOpacity} disabled={!backgroundArtworkEnabled} onChange={event => setInterfaceOpacity(Number(event.target.value))} className="range-styled min-w-0 flex-1 accent-[var(--accent)] disabled:opacity-40" />
+          <output htmlFor="interface-opacity" className="text-xs tabular-nums text-[color:var(--text-secondary)]">{Math.round(interfaceOpacity * 100)}%</output>
+        </div>
+        <p className="mt-2 text-xs text-[color:var(--text-muted)]">More transparent ← → More opaque. A readability floor keeps text clear.</p>
       </SettingCard>
 
       {/* Highlight Intensity */}

@@ -83,7 +83,7 @@ export function Page() {
   return (
     // Pass the ref object (stable identity) — children read .current in their effects.
     <ScrollContainerContext.Provider value={scrollRef}>
-    <div className={clsx("flex h-full flex-col", bgClass)}>
+    <div className={clsx("app-page flex h-full flex-col", bgClass)}>
       <TopBar />
 
       <div

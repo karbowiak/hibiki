@@ -1,6 +1,4 @@
 import { Link } from "wouter"
-import { useArtworkTone } from "../../hooks/useArtworkTone"
-import { useAlbumImage } from "../../hooks/useMediaImage"
 import {
   IconHeart,
   IconPlaylist,
@@ -25,14 +23,6 @@ export function Library() {
   const fetchLikedAlbums = useLibraryStore((s) => s.fetchLikedAlbums)
   const fetchLikedArtists = useLibraryStore((s) => s.fetchLikedArtists)
   const provider = useProviderStore((s) => s.provider)
-  const featuredAlbum = likedAlbums[0]
-  const featuredArtwork = useAlbumImage(
-    featuredAlbum?.artistName ?? null,
-    featuredAlbum?.title ?? null,
-    featuredAlbum?.thumbUrl ?? null,
-    featuredAlbum?.id
-  )
-  const artworkTone = useArtworkTone(featuredArtwork)
   const pageRefreshKey = useUIStore((s) => s.pageRefreshKey)
 
   useEffect(() => {
@@ -57,7 +47,7 @@ export function Library() {
   )
 
   return (
-    <div className="discovery-page space-y-8" style={artworkTone}>
+    <div className="discovery-page space-y-8">
       <header className="discovery-head">
         <div>
           <p className="discovery-eyebrow">Collected by you</p>

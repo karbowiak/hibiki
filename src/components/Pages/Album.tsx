@@ -20,7 +20,6 @@ import type {
 import { MediaCard } from "../MediaCard"
 import { ScrollRow } from "../ScrollRow"
 import { MediaBackdrop } from "../shared/MediaBackdrop"
-import { useArtworkTone } from "../../hooks/useArtworkTone"
 import {
   getCachedAlbum,
   prefetchAlbum,
@@ -197,7 +196,6 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     failures
   )
 
-  const artworkTone = useArtworkTone(thumbUrl ?? album?.artistThumbUrl ?? null)
 
   if (isLoading) return <PageLoading message="Loading album…" />
   if (!album)
@@ -286,7 +284,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     album.reviews && album.reviews.length > 0 ? album.reviews[0] : null
 
   return (
-    <div className="media-detail-page pb-12" style={artworkTone}>
+    <div className="media-detail-page pb-12">
       <MediaBackdrop
         src={thumbUrl ?? parentThumbUrl}
         heroRef={heroRef}

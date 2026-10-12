@@ -1,3 +1,4 @@
+import { useArtworkAppearanceStore } from "../stores/artworkAppearanceStore"
 import { ArtworkImage } from "./shared/ArtworkImage"
 import { useEffect, useRef, useState } from "react"
 import { Link } from "wouter"
@@ -47,6 +48,7 @@ function countryFlag(code: string): string {
 }
 
 function RadioPlayerBar() {
+  const backgroundArtworkEnabled = useArtworkAppearanceStore(state => state.backgroundArtworkEnabled)
   const volumeSliderRef = useRef<HTMLDivElement>(null)
   const volumeTooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [volumeTooltipVisible, setVolumeTooltipVisible] = useState(false)
@@ -116,8 +118,8 @@ function RadioPlayerBar() {
     .filter(Boolean).join(" ")
 
   return (
-    <div data-player-bar className="relative border-t border-[var(--border)] bg-app-card">
-      <div className="flex h-fit w-screen min-w-[620px] flex-col overflow-clip bg-app-card">
+    <div data-player-bar data-shell-transparency={backgroundArtworkEnabled ? "enabled" : undefined} className="app-playbar shell-artwork-surface shell-artwork-player relative border-t border-[var(--border)] bg-app-card">
+      <div className="shell-artwork-player-inner flex h-fit w-screen min-w-[620px] flex-col overflow-clip bg-app-card">
         <div style={{ height: "var(--player-height)" }}>
           <div className="flex h-full items-center justify-between" style={{ paddingInline: "var(--spacing-player)" }}>
 
@@ -163,7 +165,7 @@ function RadioPlayerBar() {
                 {/* Play/Pause */}
                 <button
                   onClick={isStreamPlaying ? pauseStream : resumeStream}
-                  className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--text-primary)] text-[var(--bg-base)] hover:scale-[1.06]"
+                  className="shell-control-primary flex h-8 w-8 items-center justify-center rounded-full bg-[var(--text-primary)] text-[var(--bg-base)] hover:scale-[1.06]"
                 >
                   {isStreamPlaying ? (
                     <svg aria-hidden="true" focusable="false" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
@@ -253,6 +255,7 @@ function RadioPlayerBar() {
 }
 
 export function Player() {
+  const backgroundArtworkEnabled = useArtworkAppearanceStore(state => state.backgroundArtworkEnabled)
   useEasterEggs()
   const vinylSpin = useEasterEggStore(s => s.vinylSpin)
   const { handler: ctxMenu } = useContextMenu()
@@ -510,7 +513,7 @@ export function Player() {
   if (isInternetRadioActive) return <RadioPlayerBar />
 
   return (
-    <div data-player-bar className="relative z-20 border-t border-[var(--border)] bg-app-card">
+    <div data-player-bar data-shell-transparency={backgroundArtworkEnabled ? "enabled" : undefined} className="app-playbar shell-artwork-surface shell-artwork-player relative z-20 border-t border-[var(--border)] bg-app-card">
       {/* Expanded album art sits above the player, within the sidebar area. */}
       {isArtExpanded && thumbUrl && (
         <div
@@ -558,7 +561,7 @@ export function Player() {
       )}
 
       {fullscreenOpen && <VisualizerFullscreen />}
-      <div className="flex h-fit w-screen min-w-[620px] flex-col overflow-clip bg-app-card">
+      <div className="shell-artwork-player-inner flex h-fit w-screen min-w-[620px] flex-col overflow-clip bg-app-card">
         <div className="player-body">
           <div className="player-layout relative flex h-full items-center justify-between" style={{ paddingInline: "var(--spacing-player)" }}>
 
@@ -723,7 +726,7 @@ export function Player() {
                   disabled={!currentTrack}
                   onClick={prev}
                   aria-label="Previous track"
-                  className="flex h-8 w-8 items-center justify-center text-white text-opacity-70 hover:text-opacity-100 disabled:opacity-30 disabled:cursor-default"
+                  className="shell-control-secondary flex h-8 w-8 items-center justify-center rounded-full text-white text-opacity-70 hover:text-opacity-100 disabled:opacity-30 disabled:cursor-default"
                 >
                   <svg role="img" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
                     <path d="M3.3 1a.7.7 0 0 1 .7.7v5.15l9.95-5.744a.7.7 0 0 1 1.05.606v12.575a.7.7 0 0 1-1.05.607L4 9.149V14.3a.7.7 0 0 1-.7.7H1.7a.7.7 0 0 1-.7-.7V1.7a.7.7 0 0 1 .7-.7h1.6z" />
@@ -736,7 +739,7 @@ export function Player() {
                   disabled={!currentTrack}
                   aria-label={isPlaying ? "Pause" : "Play"}
                   title={isPlaying ? "Pause (hold to stop)" : "Play (hold to stop)"}
-                  className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--text-primary)] text-[var(--bg-base)] enabled:hover:scale-[1.06] select-none disabled:opacity-30 disabled:cursor-default"
+                  className="shell-control-primary flex h-8 w-8 items-center justify-center rounded-full bg-[var(--text-primary)] text-[var(--bg-base)] enabled:hover:scale-[1.06] select-none disabled:opacity-30 disabled:cursor-default"
                 >
                   {isBuffering ? (
                     <svg className="animate-spin" height="16" width="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
@@ -759,7 +762,7 @@ export function Player() {
                   disabled={!currentTrack}
                   onClick={next}
                   aria-label="Next track"
-                  className="flex h-8 w-8 items-center justify-center text-white text-opacity-70 hover:text-opacity-100 disabled:opacity-30 disabled:cursor-default"
+                  className="shell-control-secondary flex h-8 w-8 items-center justify-center rounded-full text-white text-opacity-70 hover:text-opacity-100 disabled:opacity-30 disabled:cursor-default"
                 >
                   <svg role="img" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
                     <path d="M12.7 1a.7.7 0 0 0-.7.7v5.15L2.05 1.107A.7.7 0 0 0 1 1.712v12.575a.7.7 0 0 0 1.05.607L12 9.149V14.3a.7.7 0 0 0 .7.7h1.6a.7.7 0 0 0 .7-.7V1.7a.7.7 0 0 0-.7-.7h-1.6z" />

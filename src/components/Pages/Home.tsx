@@ -22,8 +22,6 @@ import { ScrollRow } from "../ScrollRow"
 import { MediaCard } from "../MediaCard"
 import { selectMix, shuffleTracks } from "./Mix"
 import { Link } from "wouter"
-import { useArtworkTone } from "../../hooks/useArtworkTone"
-import { useAlbumImage } from "../../hooks/useMediaImage"
 import "../../styles/discovery.css"
 import { PageLoading } from "../shared/PageLoading"
 
@@ -166,14 +164,6 @@ export function Home() {
     [latestReleases]
   )
 
-  const featuredAlbum = latestReleaseItems[0]
-  const featuredArtwork = useAlbumImage(
-    featuredAlbum?.artistName ?? null,
-    featuredAlbum?.title ?? null,
-    featuredAlbum?.thumbUrl ?? null,
-    featuredAlbum?.id
-  )
-  const artworkTone = useArtworkTone(featuredArtwork)
   const { mixesItems, mixesTitle } = useMemo(() => {
     const mh = hubs.filter((h) => h.identifier?.startsWith("music.mixes"))
     return {
@@ -249,7 +239,7 @@ export function Home() {
   }
 
   return (
-    <div className="discovery-page space-y-6 pb-4" style={artworkTone}>
+    <div className="discovery-page space-y-6 pb-4">
       <header className="discovery-head">
         <div>
           <p className="discovery-eyebrow">

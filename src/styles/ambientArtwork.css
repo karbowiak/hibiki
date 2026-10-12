@@ -1,0 +1,111 @@
+.app-artwork-shell {
+  position: relative;
+  isolation: isolate;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+.app-artwork-background,
+.app-artwork-frame {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.app-artwork-background {
+  z-index: 0;
+}
+.app-artwork-content {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.app-artwork-staging {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.app-artwork-ambient,
+.app-artwork-pixels,
+.app-artwork-wash,
+.app-artwork-grade {
+  position: absolute;
+  inset: 0;
+}
+.app-artwork-pixels {
+  filter: blur(28px) saturate(1.25);
+}
+.app-artwork-wash {
+  background: var(--bg-base);
+  opacity: 0.76;
+}
+[data-theme="light"] .app-artwork-wash {
+  opacity: 0.92;
+}
+.app-artwork-sharp {
+  position: absolute;
+  inset: 0 0 auto;
+  overflow: hidden;
+}
+.app-artwork-grade {
+  background:
+    linear-gradient(90deg, rgb(0 0 0 / 0.65), rgb(0 0 0 / 0.15)),
+    linear-gradient(0deg, rgb(0 0 0 / 0.7), transparent 80%);
+}
+.app-artwork-frame {
+  animation: artwork-fade-in 550ms ease both;
+}
+.app-artwork-frame--retiring {
+  animation: none;
+}
+.app-artwork-shell[data-artwork-background="ready"] .app-page {
+  background-color: transparent;
+  background-image: none;
+}
+.app-artwork-shell[data-artwork-background="ready"]
+  .media-detail-page
+  .media-detail-hero {
+  background: transparent;
+}
+@keyframes artwork-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-artwork-frame {
+    animation: none;
+  }
+  .app-artwork-frame--retiring {
+    visibility: hidden;
+  }
+}
+
+/* Existing accent controls follow the active image, while small text keeps contrast. */
+.app-artwork-shell[data-artwork-colors="on"] .text-accent {
+  color: var(--artwork-accent-text);
+}
+.app-artwork-shell[data-artwork-colors="on"] .fill-accent {
+  fill: var(--artwork-accent-text);
+}
+.app-artwork-shell[data-artwork-colors="on"] .bg-accent {
+  color: var(--artwork-ink);
+}
+.app-artwork-shell[data-artwork-colors="on"] .hero-overlay {
+  --artwork-accent-text: var(--artwork-hero-primary);
+}
+
+[data-theme="light"]
+  .app-artwork-shell[data-artwork-colors="on"]
+  .bg-accent.text-black {
+  color: var(--artwork-ink) !important;
+}

@@ -131,7 +131,7 @@
   transition: color 140ms ease, background 140ms ease;
 }
 .media-row__button:hover { color: var(--text-primary); background: var(--bg-surface-hover); }
-.media-row__button--action, .media-row__button--active { color: var(--accent); }
+.media-row__button--action, .media-row__button--active { color: var(--artwork-accent-text, var(--accent)); }
 .media-row__button:active { transform: scale(0.95); }
 .media-row__button:focus-visible, .media-row__title-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) {

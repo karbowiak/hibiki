@@ -1,5 +1,7 @@
 import React from "react"
 import { createRoot } from "react-dom/client"
+import { ArtworkShell } from "../../../src/components/ArtworkShell.tsx"
+import { useArtworkAppearanceStore } from "../../../src/stores/artworkAppearanceStore.ts"
 import { Page } from "../../../src/components/Page.tsx"
 import { NotificationToasts } from "../../../src/components/NotificationCenter.tsx"
 import { useNotificationCenterStore } from "../../../src/stores/notificationCenterStore.ts"
@@ -221,7 +223,11 @@ async function setup() {
         text: "Synthetic lyric with a long line that wraps in a narrow panel",
       },
     ],
-    waveformLevels: Array.from({ length: 120 }, () => 0.3),
+    waveformLevels: Array.from({ length: 120 }, (_, i) => ({
+      start: i * 1541,
+      end: (i + 1) * 1541,
+      loudness: -28 + Math.sin(i * 0.17) * 17,
+    })),
     initAudioEvents: async () => noop,
     pause: noop,
     resume: noop,
@@ -279,7 +285,17 @@ async function setup() {
       theme = "dark",
       custom = false,
       textSize = 16,
+      background = true,
+      opacity = 0.76,
+      artworkColors = true,
     }) => {
+      useArtworkAppearanceStore
+        .getState()
+        .setBackgroundArtworkEnabled(background)
+      useArtworkAppearanceStore.getState().setInterfaceOpacity(opacity)
+      useArtworkAppearanceStore
+        .getState()
+        .setArtworkColorsEnabled(artworkColors)
       setFont(font)
       useCardSizeStore.getState().setCardSize(cardSize)
       useCompactStore.getState().setCompact(compact)
@@ -333,6 +349,31 @@ async function setup() {
                   },
                 ],
       }),
+  }
+  w.fixtureArtwork = {
+    replace: (name: string) => {
+      const src = location.origin + "/synthetic-artwork/" + name
+      const library = useLibraryStore.getState()
+      const update = (item: any) => ({
+        ...item,
+        thumbUrl: src,
+        artUrl: src,
+        albumThumbUrl: src,
+      })
+      useLibraryStore.setState({
+        likedArtists: library.likedArtists?.map(update) ?? [],
+        likedAlbums: library.likedAlbums?.map(update) ?? [],
+        recentlyAdded: library.recentlyAdded.map(update),
+        latestReleases: library.latestReleases.map(update),
+        likedTracks: library.likedTracks?.map(update) ?? [],
+        playlists: library.playlists.map(update),
+        hubs: library.hubs.map((hub) => ({
+          ...hub,
+          items: hub.items.map(update),
+        })),
+      })
+    },
+    retire: () => useProviderStore.getState().clearProvider(),
   }
   if (discovery) {
     const recentArtists = Array.from({ length: 6 }, (_, index) => ({
@@ -476,7 +517,7 @@ async function setup() {
   document.body.append(host)
   createRoot(host).render(
     React.createElement(
-      React.Fragment,
+      ArtworkShell,
       null,
       React.createElement(
         "div",
