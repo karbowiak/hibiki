@@ -268,7 +268,7 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
                     }
                   }}
                   className={clsx(
-                    "flex h-10 min-w-0 flex-1 cursor-pointer items-center gap-4 rounded no-underline transition-colors duration-200 hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:bg-accent-tint hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
+                    "flex h-10 min-w-0 flex-1 cursor-pointer items-center gap-3 rounded px-3 no-underline transition-colors duration-200 hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:bg-accent-tint hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
                     !isActive
                       ? "fill-[var(--text-secondary)] text-[var(--text-secondary)]"
                       : "fill-accent text-accent"
@@ -301,7 +301,7 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
                 )}
               </div>
               {i.href === "/library" && libraryExpanded && (
-                <ul id="sidebar-library-links" className="ml-8 mt-0.5 mb-0.5 space-y-0.5 text-sm font-normal">
+                <ul id="sidebar-library-links" className="ml-10 mt-0.5 mb-0.5 space-y-0.5 text-sm font-normal">
                   {librarySubLinks.map(sub => (
                     <li key={sub.href}>
                       <Link
@@ -328,7 +328,7 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
       <div className="flex-shrink-0 pb-1 pt-8 text-sm font-semibold">
         <button
           onClick={onCreatePlaylist}
-          className="group flex h-10 w-full cursor-pointer items-center gap-4 rounded border-0 bg-transparent fill-[var(--text-secondary)] text-[var(--text-secondary)] transition-colors duration-200 hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:bg-accent-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
+          className="group flex h-10 w-full cursor-pointer items-center gap-3 rounded border-0 bg-transparent px-3 fill-[var(--text-secondary)] text-[var(--text-secondary)] transition-colors duration-200 hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:bg-accent-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
         >
           <span className="flex h-6 w-6 items-center justify-center rounded-sm bg-accent/20 text-accent group-hover:bg-accent/40 transition-colors">
             <svg viewBox="0 0 16 16" width="12" height="12" xmlns="http://www.w3.org/2000/svg">
