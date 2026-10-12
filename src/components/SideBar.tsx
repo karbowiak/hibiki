@@ -75,14 +75,19 @@ function SortablePlaylistItem({ playlist, location, playPlaylist, ctxMenu, justD
   // Listen for media-drop custom events targeted at this playlist
   useEffect(() => {
     if (!isDropTarget) return
+    let flashTimer: ReturnType<typeof setTimeout> | null = null
     function onDrop(e: Event) {
-      const { targetPlaylistId } = (e as CustomEvent).detail
+      const { targetPlaylistId, success } = (e as CustomEvent).detail
       if (targetPlaylistId !== playlist.id) return
-      setDropFlash("success")
-      setTimeout(() => setDropFlash(null), 1000)
+      setDropFlash(success ? "success" : "error")
+      if (flashTimer) clearTimeout(flashTimer)
+      flashTimer = setTimeout(() => setDropFlash(null), 1000)
     }
-    window.addEventListener("plexify-media-drop", onDrop)
-    return () => window.removeEventListener("plexify-media-drop", onDrop)
+    window.addEventListener("plexify-playlist-drop-result", onDrop)
+    return () => {
+      window.removeEventListener("plexify-playlist-drop-result", onDrop)
+      if (flashTimer) clearTimeout(flashTimer)
+    }
   }, [isDropTarget, playlist.id])
 
   const style: React.CSSProperties = {
@@ -159,12 +164,31 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
   // Handle media drops (tracks, albums, artists) from the pointer-based drag system
   useEffect(() => {
     let active = true
-    const current = () => active && useProviderStore.getState().provider === provider
+    const current = () =>
+      active && useProviderStore.getState().provider === provider
     async function onDrop(e: Event) {
-      const { payload, targetPlaylistId } = (e as CustomEvent).detail
+      const {
+        payload,
+        targetPlaylistId,
+        provider: sourceProvider,
+        scope,
+      } = (e as CustomEvent).detail
       const owned = captureOwner()
-      const currentRequest = () => current() && owned()
+      const capturedScope = provider?.cacheScope
+      const currentRequest = () =>
+        current() && owned() && provider?.cacheScope === capturedScope
       if (!targetPlaylistId || !provider || !currentRequest()) return
+      if (
+        sourceProvider !== undefined &&
+        (sourceProvider !== provider || scope !== capturedScope)
+      )
+        return
+      if (
+        !useLibraryStore
+          .getState()
+          .playlists.some((p) => p.id === targetPlaylistId && !p.smart)
+      )
+        return
 
       let accepted = false
       try {
@@ -184,15 +208,31 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
         }
         if (!currentRequest()) return
         useLibraryStore.getState().invalidatePlaylistItems(targetPlaylistId)
+        window.dispatchEvent(
+          new window.CustomEvent("plexify-playlist-drop-result", {
+            detail: { targetPlaylistId, success: true },
+          })
+        )
       } catch (err) {
         if (currentRequest()) {
-          if (accepted) useLibraryStore.getState().invalidatePlaylistItems(targetPlaylistId)
-          useLibraryStore.setState({ error: "Unable to add items to the playlist. Please try again." })
+          if (accepted)
+            useLibraryStore.getState().invalidatePlaylistItems(targetPlaylistId)
+          window.dispatchEvent(
+            new window.CustomEvent("plexify-playlist-drop-result", {
+              detail: { targetPlaylistId, success: false },
+            })
+          )
+          useLibraryStore.setState({
+            error: "Unable to add items to the playlist. Please try again.",
+          })
         }
       }
     }
     window.addEventListener("plexify-media-drop", onDrop)
-    return () => { active = false; window.removeEventListener("plexify-media-drop", onDrop) }
+    return () => {
+      active = false
+      window.removeEventListener("plexify-media-drop", onDrop)
+    }
   }, [provider, captureOwner])
 
   const { width, onMouseDown } = useResizable({

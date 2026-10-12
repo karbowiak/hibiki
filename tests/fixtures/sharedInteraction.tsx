@@ -8,6 +8,7 @@ Object.assign(globalThis, { window: dom.window, document: dom.window.document, l
 globalThis.requestAnimationFrame = cb => setTimeout(() => cb(0), 0) as any
 globalThis.cancelAnimationFrame = handle => clearTimeout(handle)
 dom.window.HTMLElement.prototype.scrollIntoView = () => {}
+;(document as any).elementsFromPoint = () => []
 dom.window.HTMLElement.prototype.setPointerCapture = () => {}
 dom.window.HTMLElement.prototype.releasePointerCapture = () => {}
 const noop = () => {}
@@ -21,7 +22,7 @@ const ui = create<any>(set => ({ isQueueOpen: true, isQueuePinned: false, isLyri
 mock.module("../../src/stores/uiStore", () => ({ useUIStore: ui }))
 mock.module("../../src/hooks/useResizable", () => ({ useResizable: () => ({ width: 320, onMouseDown: noop, isDragging: false }) }))
 mock.module("../../src/hooks/useCapability", () => ({ useCapability: () => true }))
-mock.module("../../src/hooks/useContextMenu", () => ({ useContextMenu: () => ({ handler: () => noop, isTarget: () => false }) }))
+mock.module("../../src/hooks/useContextMenu", () => ({ useContextMenu: () => ({ handler: () => noop, actionsHandler: () => noop, isTarget: () => false }) }))
 mock.module("../../src/hooks/useMediaImage", () => ({ useArtistImage: () => null, useAlbumImage: () => null }))
 mock.module("../../src/components/shared/ArtworkImage", () => ({ ArtworkImage: () => null, useArtworkFailures: () => ({ failures: [], onFailure: noop }) }))
 mock.module("../../src/hooks/useColumnPicker", () => ({ ColumnPicker: () => null }))
