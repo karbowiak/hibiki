@@ -13,6 +13,7 @@ for (const scenario of [
   "liked-artists-error",
   "liked-albums-error",
   "tag-route",
+  "tag-recovery",
   "tag-provider",
   "tag-pagination",
   "tag-offset",

@@ -1,3 +1,6 @@
+import { useLocation } from "wouter"
+import { PageRecovery } from "../shared/PageRecovery"
+import { PageLoading } from "../shared/PageLoading"
 import { useLibraryCollection } from "../../hooks/useLikedCollection"
 import { useShallow } from "zustand/react/shallow"
 import { useLibraryStore, usePlayerStore } from "../../stores"
@@ -9,6 +12,7 @@ import { MediaGrid } from "../shared/MediaGrid"
 import { getMediaInfo, makeDragPayload } from "./Home"
 
 export function HubPage({ hubId }: { hubId: string }) {
+  const [, navigate] = useLocation()
   const { hubs } = useLibraryStore(useShallow((s) => ({ hubs: s.hubs })))
   const { status, retry } = useLibraryCollection("hubs")
   const provider = useProviderStore((s) => s.provider)
@@ -22,30 +26,33 @@ export function HubPage({ hubId }: { hubId: string }) {
 
   const hub = hubs.find((h) => h.identifier === hubId)
 
-  if (!hub && status !== "ready") {
+  if (!hub) {
     return (
       <div className="p-8">
-        {status === "loading" ? (
-          <p role="status" className="text-sm text-gray-400">
-            Loading this hub…
-          </p>
+        {!provider ? (
+          <PageRecovery
+            kind="empty"
+            title="Connect your library"
+            description="Choose a music server in Settings to browse recommendations."
+            onOpenSettings={() => navigate("/settings")}
+          />
+        ) : status === "loading" ? (
+          <PageLoading message="Loading this hub…" variant="shelves" />
         ) : (
-          <div role="alert" className="text-sm text-red-400">
-            <p>Could not load this hub.</p>
-            <button
-              onClick={retry}
-              className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white"
-            >
-              Try again
-            </button>
-          </div>
+          <PageRecovery
+            kind={status === "error" ? "error" : "empty"}
+            title={
+              status === "error"
+                ? "Could not load this hub."
+                : "This collection is unavailable"
+            }
+            description="Refresh the library or return to browse another collection."
+            onRetry={retry}
+            onReturnLibrary={() => navigate("/library")}
+          />
         )}
       </div>
     )
-  }
-
-  if (!hub) {
-    return <div className="text-sm text-gray-400">Hub not found.</div>
   }
 
   const isAnniversary = hub.identifier.includes("anniversary")

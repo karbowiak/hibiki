@@ -27,6 +27,7 @@ function LyricsOffsetBar({ hidden }: { hidden?: boolean }) {
       </span>
       <input
         type="range"
+        aria-label="Lyrics timing offset"
         min={-15000}
         max={15000}
         step={100}
@@ -37,7 +38,8 @@ function LyricsOffsetBar({ hidden }: { hidden?: boolean }) {
       <button
         onClick={resetOffset}
         onDoubleClick={resetOffset}
-        title="Reset offset (double-click)"
+        title="Reset lyrics timing offset"
+        aria-label="Reset lyrics timing offset"
         className={`shrink-0 text-xs tabular-nums transition-colors ${
           offsetMs !== 0
             ? "text-[color:var(--text-secondary)] hover:text-[color:var(--text-primary)] cursor-pointer"
@@ -133,8 +135,8 @@ function LyricsSourceSelector() {
 
 /** Shared lyrics body used both in the standalone panel and the queue's Lyrics tab. */
 export function LyricsContent() {
-  const { lyricsLines, positionMs } = usePlayerStore(
-    useShallow(s => ({ lyricsLines: s.lyricsLines, positionMs: s.positionMs }))
+  const { lyricsLines, positionMs, currentTrack } = usePlayerStore(
+    useShallow(s => ({ lyricsLines: s.lyricsLines, positionMs: s.positionMs, currentTrack: s.currentTrack }))
   )
   const offsetMs = useLyricsOffsetStore(s => s.offsetMs)
   const activeSource = useLyricsStore(s => {
@@ -189,13 +191,15 @@ export function LyricsContent() {
     <>
       <LyricsSourceSelector />
       <div className="flex-1 overflow-y-auto px-6 py-4 lyrics-scroll scrollbar scrollbar-w-1 scrollbar-track-transparent scrollbar-thumb-[var(--bg-surface)] hover:scrollbar-thumb-[var(--bg-surface-hover)]">
-        {!lyricsLines ? (
+        {!currentTrack ? (
+          <div className="flex items-center justify-center h-full px-3"><p role="status" className="text-[color:var(--text-secondary)] text-sm text-center">Play a track to see its lyrics</p></div>
+        ) : !lyricsLines ? (
           <div className="flex items-center justify-center h-full">
-            <p className="text-[color:var(--text-muted)] text-sm text-center">Loading lyrics…</p>
+            <p role="status" className="text-[color:var(--text-secondary)] text-sm text-center">Loading lyrics…</p>
           </div>
         ) : lyricsLines.length === 0 ? (
           <div className="flex items-center justify-center h-full">
-            <p className="text-[color:var(--text-muted)] text-sm text-center">No lyrics available</p>
+            <p role="status" className="text-[color:var(--text-secondary)] text-sm text-center">No lyrics available</p>
           </div>
         ) : (
           <div className="flex flex-col gap-2">
@@ -205,15 +209,17 @@ export function LyricsContent() {
               return (
                 <button
                   key={i}
+                  disabled={!isSynced}
+                  aria-label={isSynced ? `Seek to ${line.text}` : undefined}
                   ref={isActive ? activeRef : undefined}
                   type="button"
-                  className={`-mx-2 rounded-lg px-2 text-left text-2xl font-bold transition-all duration-300 select-text ${
+                  className={`-mx-2 rounded-lg px-2 text-left text-2xl font-bold transition-all duration-300 select-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
                     isSynced ? "cursor-pointer" : "cursor-default"
                   } ${
                     isActive
                       ? "text-accent"
                       : isSynced
-                        ? "text-[color:var(--text-muted)]/40 hover:text-[color:var(--text-muted)]/60 hover:bg-[var(--accent-tint-hover)]"
+                        ? "text-[color:var(--text-secondary)] hover:text-[color:var(--text-primary)] hover:bg-[var(--accent-tint-hover)]"
                         : "text-[color:var(--text-secondary)]"
                   }`}
                   style={isActive ? { filter: "drop-shadow(0 0 8px rgb(var(--accent-rgb) / 0.15))" } : undefined}

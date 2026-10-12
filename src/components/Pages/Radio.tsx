@@ -1,3 +1,5 @@
+import { PageRecovery } from "../shared/PageRecovery"
+import { PageLoading } from "../shared/PageLoading"
 import { ArtworkImage } from "../shared/ArtworkImage"
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useLocation } from "wouter"
@@ -92,12 +94,17 @@ export function RadioPage({ stationType }: Props) {
   }
 
   if (!hasRadio) return null
-  if (loadError) return (
-    <div role="alert" className="p-8 text-sm text-red-400">
-      <p>Could not load this station.</p>
-      <button onClick={() => setAttempt(value => value + 1)} className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white">Try again</button>
-    </div>
-  )
+  if (loadError && !stationItem)
+    return (
+      <div className="p-8">
+        <PageRecovery
+          title="Could not load this station."
+          description="The music server may be temporarily unavailable. Try again or choose another station."
+          onRetry={() => setAttempt((value) => value + 1)}
+          onReturnLibrary={() => navigate("/library")}
+        />
+      </div>
+    )
 
   // Placeholder state
   if (isPlaceholder) {
@@ -124,28 +131,19 @@ export function RadioPage({ stationType }: Props) {
   }
 
   // Loading state
-  if (loading) {
+  if (loading) return <PageLoading message="Loading station…" />
+  if (notFound || !stationItem)
     return (
-      <div role="status" aria-label="Loading station" className="flex items-center justify-center py-24">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+      <div className="p-8">
+        <PageRecovery
+          kind="empty"
+          title="Station unavailable"
+          description="This station is not available in your selected library."
+          onRetry={() => setAttempt((value) => value + 1)}
+          onReturnLibrary={() => navigate("/library")}
+        />
       </div>
     )
-  }
-
-  // Not found on this server
-  if (notFound || !stationItem) {
-    return (
-      <div className="flex flex-col items-center justify-center py-24 text-center">
-        <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-white/5">
-          <svg height="32" width="32" viewBox="0 0 24 24" fill="currentColor" className="text-white/30">
-            <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6zm-2 16a2 2 0 1 1 0-4 2 2 0 0 1 0 4z" />
-          </svg>
-        </div>
-        <h1 className="mb-2 text-xl font-bold">Station unavailable</h1>
-        <p className="text-sm text-white/50">This station isn't available on your server.</p>
-      </div>
-    )
-  }
 
   const thumb = stationItem.thumbUrl ?? null
 
@@ -153,6 +151,7 @@ export function RadioPage({ stationType }: Props) {
 
   return (
     <div className="flex flex-col items-center py-16 text-center">
+      {loadError && <PageRecovery title="Could not play this station." description="The station remains available. Try starting playback again." onRetry={handlePlay} />}
       {/* Station art / icon */}
       <div className="mb-6 h-40 w-40 overflow-hidden rounded-xl shadow-2xl flex items-center justify-center bg-gradient-to-br from-[#2d1b4e] to-[#1a3a5c]">
         {thumb ? (

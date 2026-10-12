@@ -74,12 +74,12 @@ function PlayedRow({ thumb, title, artist, durationMs, isGuestDj, isRadio, onJum
       )}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5 min-w-0">
-          <span className="truncate text-sm text-white">{title}</span>
+          <button type="button" onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onJump() }} aria-label={`Play ${title}`} className="truncate text-left text-sm text-[var(--text-primary)] rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">{title}</button>
           <TrackBadges isGuestDj={isGuestDj} isRadio={isRadio} />
         </div>
-        <div className="truncate text-xs text-gray-500">{artist}</div>
+        <div className="truncate text-xs text-[var(--text-muted)]">{artist}</div>
       </div>
-      <span className="flex-shrink-0 text-xs tabular-nums text-gray-500">{formatMs(durationMs)}</span>
+      <span className="flex-shrink-0 text-xs tabular-nums text-[var(--text-muted)]">{formatMs(durationMs)}</span>
     </div>
   )
 }
@@ -104,9 +104,9 @@ function NowPlayingRow({ thumb, title, artist, durationMs, isGuestDj, isRadio }:
           <span className="truncate text-sm text-accent font-medium">{title}</span>
           <TrackBadges isGuestDj={isGuestDj} isRadio={isRadio} />
         </div>
-        <div className="truncate text-xs text-gray-500">{artist}</div>
+        <div className="truncate text-xs text-[var(--text-muted)]">{artist}</div>
       </div>
-      <span className="flex-shrink-0 text-xs tabular-nums text-gray-500">{formatMs(durationMs)}</span>
+      <span className="flex-shrink-0 text-xs tabular-nums text-[var(--text-muted)]">{formatMs(durationMs)}</span>
     </div>
   )
 }
@@ -142,8 +142,11 @@ function SortableUpcomingItem({ id, index, thumb, title, artist, durationMs, isG
       onClick={() => { if (wasDragging.current) { wasDragging.current = false; return } onJump() }}
       {...attributes}
       {...listeners}
+      role="group"
+      aria-label={title}
+      tabIndex={-1}
     >
-      <span className="w-5 flex-shrink-0 text-center text-xs text-gray-500 tabular-nums">
+      <span className="w-5 flex-shrink-0 text-center text-xs text-[var(--text-muted)] tabular-nums">
         {index + 1}
       </span>
 
@@ -155,18 +158,21 @@ function SortableUpcomingItem({ id, index, thumb, title, artist, durationMs, isG
 
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5 min-w-0">
-          <span className="truncate text-sm text-white">{title}</span>
+          <button type="button" onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onJump() }} aria-label={`Play ${title}`} className="truncate text-left text-sm text-[var(--text-primary)] rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">{title}</button>
           <TrackBadges isGuestDj={isGuestDj} isRadio={isRadio} />
         </div>
-        <div className="truncate text-xs text-gray-500">{artist}</div>
+        <div className="truncate text-xs text-[var(--text-muted)]">{artist}</div>
       </div>
 
-      <span className="flex-shrink-0 text-xs tabular-nums text-gray-500">{formatMs(durationMs)}</span>
+      <span className="flex-shrink-0 text-xs tabular-nums text-[var(--text-muted)]">{formatMs(durationMs)}</span>
 
       <button
-        className="flex-shrink-0 text-gray-600 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity p-0.5"
+        className="flex-shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)] opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent transition-opacity p-0.5"
         onClick={e => { e.stopPropagation(); onRemove() }}
-        aria-label="Remove from queue"
+        type="button"
+        onPointerDown={e => e.stopPropagation()}
+        onKeyDown={e => e.stopPropagation()}
+        aria-label={`Remove ${title} from queue`}
       >
         <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
           <path d="M2.47 2.47a.75.75 0 0 1 1.06 0L8 6.94l4.47-4.47a.75.75 0 1 1 1.06 1.06L9.06 8l4.47 4.47a.75.75 0 1 1-1.06 1.06L8 9.06l-4.47 4.47a.75.75 0 0 1-1.06-1.06L6.94 8 2.47 3.53a.75.75 0 0 1 0-1.06z" />
@@ -183,7 +189,7 @@ function SortableUpcomingItem({ id, index, thumb, title, artist, durationMs, isG
 function SectionHeader({ label, right }: { label: string; right?: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between px-3 pt-3 pb-1">
-      <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-gray-500">{label}</span>
+      <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-[var(--text-muted)]">{label}</span>
       {right}
     </div>
   )
@@ -195,7 +201,7 @@ function SectionHeader({ label, right }: { label: string; right?: React.ReactNod
 
 function IndicatorRow({ icon, text }: { icon: React.ReactNode; text: string }) {
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-gray-500">
+    <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-[var(--text-muted)]">
       {icon}
       <span>{text}</span>
     </div>
@@ -425,7 +431,7 @@ export function QueuePanel() {
   }, [queueIndex, isQueueOpen, queueActiveTab])
 
   const list = queue.length === 0 ? (
-    <div className="flex flex-1 items-center justify-center text-sm text-gray-500">
+    <div className="flex flex-1 items-center justify-center text-sm text-[var(--text-muted)]">
       Queue is empty
     </div>
   ) : (
@@ -477,7 +483,7 @@ export function QueuePanel() {
             right={
               <button
                 onClick={clearUpcoming}
-                className="text-[0.65rem] font-semibold uppercase tracking-wider text-gray-500 hover:text-white transition-colors"
+                className="text-[0.65rem] font-semibold uppercase tracking-wider text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
               >
                 Clear
               </button>

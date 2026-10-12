@@ -104,47 +104,17 @@ function TrackRowCells({
   return (
     <>
       <td className="p-2 text-center w-8">
-        {compact ? (
-          <button
-            type="button"
-            aria-label={`Play ${track.title}`}
-            onClick={(e) => {
-              e.stopPropagation()
-              onPlay(track, tracks)
-            }}
-            className={`flex h-7 w-7 items-center justify-center rounded-full hover:bg-hl-menu focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${isActive ? "text-accent" : "text-[var(--text-secondary)]"}`}
-          >
-            <svg
-              viewBox="0 0 16 16"
-              width="12"
-              height="12"
-              fill="currentColor"
-              aria-hidden="true"
-            >
-              <polygon points="3,2 13,8 3,14" />
-            </svg>
-          </button>
-        ) : isActive ? (
-          <>
-            <span className="group-hover:hidden flex items-center justify-center text-accent">
-              <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
-                <rect x="1" y="3" width="3" height="10" rx="1"/><rect x="6" y="1" width="3" height="12" rx="1"/><rect x="11" y="5" width="3" height="8" rx="1"/>
-              </svg>
-            </span>
-            <span className="hidden group-hover:flex items-center justify-center text-accent">
-              <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><polygon points="3,2 13,8 3,14" /></svg>
-            </span>
-          </>
-        ) : (
-          <>
-            <span className="group-hover:hidden">{idx + 1}</span>
-            <span className="hidden group-hover:flex items-center justify-center">
-              <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
-                <polygon points="3,2 13,8 3,14" />
-              </svg>
-            </span>
-          </>
-        )}
+        <button
+          type="button"
+          aria-label={`Play ${track.title}`}
+          onPointerDown={e => e.stopPropagation()}
+          aria-current={isActive ? "true" : undefined}
+          onClick={e => { e.stopPropagation(); onPlay(track, tracks) }}
+          className={`group/play flex h-7 w-7 items-center justify-center rounded-full hover:bg-hl-menu focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${isActive ? "text-accent" : "text-[var(--text-secondary)]"}`}
+        >
+          {!compact && <span aria-hidden="true" className="group-hover:hidden group-focus-within:hidden">{isActive ? <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><rect x="1" y="3" width="3" height="10" rx="1"/><rect x="6" y="1" width="3" height="12" rx="1"/><rect x="11" y="5" width="3" height="8" rx="1"/></svg> : idx + 1}</span>}
+          <svg aria-hidden="true" className={compact ? "" : "hidden group-hover:block group-focus-within:block"} viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><polygon points="3,2 13,8 3,14" /></svg>
+        </button>
       </td>
 
       <td className="p-2">
@@ -155,26 +125,26 @@ function TrackRowCells({
             <div className="h-10 w-10 rounded-sm flex-shrink-0 bg-app-surface" />
           )}
           <div className={compact ? "min-w-0 flex-1" : "min-w-0"}>
-            <div className={`truncate ${isActive ? "text-accent" : compact ? "text-[var(--text-primary)]" : "text-white"}`}>{track.title}</div>
+            <div className={`truncate ${isActive ? "text-accent" : "text-[var(--text-primary)]"}`}>{track.title}</div>
             <div className={`flex items-center gap-2 min-w-0 ${compact ? "flex-wrap" : ""}`}>
               {!visibleCols.has("artist") && (
                 <div className="truncate shrink min-w-0">
                   {track.artistId ? (
                     <Link
                       href={`/artist/${track.artistId}`}
-                      className="text-gray-500 hover:text-white hover:underline transition-colors"
+                      className="text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:underline transition-colors"
                       onClick={e => e.stopPropagation()}
                     >
                       {track.artistName}
                     </Link>
                   ) : (
-                    <span className="text-gray-500">{track.artistName}</span>
+                    <span className="text-[var(--text-muted)]">{track.artistName}</span>
                   )}
                 </div>
               )}
-              <div className={`flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ${compact ? "group-focus-within:opacity-100" : ""}`}>
+              <div className={`flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 group-focus-within:opacity-100`}>
                 <button
-                  className="flex items-center gap-0.5 text-xs text-gray-400 hover:text-white transition-colors px-1 py-0.5 rounded hover:bg-hl-menu"
+                  className="flex items-center gap-0.5 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors px-1 py-0.5 rounded hover:bg-hl-menu"
                   title="Add to Queue"
                   onClick={e => { e.stopPropagation(); onAddToQueue([track]) }}
                 >
@@ -185,7 +155,7 @@ function TrackRowCells({
                 </button>
                 {showRadio && (
                 <button
-                  className="flex items-center gap-0.5 text-xs text-gray-400 hover:text-white transition-colors px-1 py-0.5 rounded hover:bg-hl-menu"
+                  className="flex items-center gap-0.5 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors px-1 py-0.5 rounded hover:bg-hl-menu"
                   title="Track Radio"
                   onClick={e => { e.stopPropagation(); void onPlayRadio(track.id, "track") }}
                 >
@@ -212,7 +182,7 @@ function TrackRowCells({
           {track.artistId ? (
             <Link
               href={`/artist/${track.artistId}`}
-              className="hover:text-white hover:underline transition-colors"
+              className="hover:text-[var(--text-primary)] hover:underline transition-colors"
               onClick={e => e.stopPropagation()}
             >
               {track.artistName}
@@ -228,7 +198,7 @@ function TrackRowCells({
           {track.albumId ? (
             <Link
               href={`/album/${track.albumId}`}
-              className="hover:text-white hover:underline transition-colors"
+              className="hover:text-[var(--text-primary)] hover:underline transition-colors"
               onClick={e => e.stopPropagation()}
             >
               {track.albumName}
@@ -433,7 +403,7 @@ export function TrackTable({
       {/* Toolbar row: search + column picker */}
       {!compact && <div className="flex items-center justify-between pb-1">
         <div className="relative">
-          <svg className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
+          <svg className="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--text-muted)] pointer-events-none" viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
             <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85zm-5.242.156a5 5 0 1 1 0-10 5 5 0 0 1 0 10z" />
           </svg>
           <input
@@ -451,7 +421,7 @@ export function TrackTable({
       {reorderEnabled ? (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={tracks.map((_, i) => String(i))} strategy={verticalListSortingStrategy}>
-            <table className="w-full text-sm text-gray-400">
+            <table className="w-full text-sm text-[var(--text-secondary)]">
               <thead className="border-b border-white/10">
                 <tr>
                   <th
@@ -497,7 +467,7 @@ export function TrackTable({
           </SortableContext>
         </DndContext>
       ) : (
-        <table className={compact ? "w-full table-fixed text-sm text-[var(--text-secondary)]" : "w-full text-sm text-gray-400"}>
+        <table className={compact ? "w-full table-fixed text-sm text-[var(--text-secondary)]" : "w-full text-sm text-[var(--text-secondary)]"}>
           {compact && <colgroup><col style={{ width: 44 }} /><col />{[...visibleCols].map(id => <col key={id} style={{ width: "30%" }} />)}<col style={{ width: 76 }} /></colgroup>}
           <thead className="border-b border-white/10">
             <tr>
@@ -548,7 +518,7 @@ export function TrackTable({
       {sentinel && spacerHeight > 0 && (
         <div style={{ height: `${spacerHeight}px` }} className="relative">
           {isFetchingMore && (
-            <div className="flex items-center justify-center gap-2 pt-4 text-sm text-gray-500">
+            <div className="flex items-center justify-center gap-2 pt-4 text-sm text-[var(--text-muted)]">
               <svg className="animate-spin h-4 w-4 text-white/30" viewBox="0 0 24 24" fill="none">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
@@ -561,7 +531,7 @@ export function TrackTable({
 
       {/* Empty state */}
       {tracks.length === 0 && !isLoading && (
-        <div className="py-12 text-center text-sm text-gray-500">
+        <div className="py-12 text-center text-sm text-[var(--text-muted)]">
           {emptyMessage}
         </div>
       )}

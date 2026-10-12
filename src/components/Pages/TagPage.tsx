@@ -1,3 +1,5 @@
+import { PageRecovery } from "../shared/PageRecovery"
+import { PageLoading } from "../shared/PageLoading"
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useLocation } from "wouter"
 import { usePlayerStore, useUIStore } from "../../stores"
@@ -50,6 +52,12 @@ export function TagPage({
     offset: number
   } | null>(null)
 
+  const resourceRef = useRef<{
+    provider: typeof provider
+    tagType: string
+    tagName: string
+  } | null>(null)
+
   useEffect(() => {
     if (!hasTags) navigate("/")
   }, [hasTags, navigate])
@@ -59,8 +67,15 @@ export function TagPage({
     sessionRef.current = session
     const current = () =>
       session.active && useProviderStore.getState().provider === provider
-    setAlbums([])
-    setTotalCount(0)
+    const sameResource =
+      resourceRef.current?.provider === provider &&
+      resourceRef.current?.tagType === tagType &&
+      resourceRef.current?.tagName === tagName
+    resourceRef.current = { provider, tagType, tagName }
+    if (!sameResource) {
+      setAlbums([])
+      setTotalCount(0)
+    }
     setHasMore(false)
     setIsLoadingMore(false)
     setPageError(null)
@@ -191,21 +206,16 @@ export function TagPage({
         )}
       </div>
 
-      {isLoading && (
-        <div role="status" className="text-sm text-gray-400">
-          Loading…
-        </div>
+      {isLoading && albums.length === 0 && (
+        <PageLoading message="Loading albums…" variant="shelves" />
       )}
       {error && (
-        <div role="alert" className="text-sm text-red-400">
-          <p>Could not load albums: {error}</p>
-          <button
-            onClick={() => setRetry((value) => value + 1)}
-            className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white"
-          >
-            Try again
-          </button>
-        </div>
+        <PageRecovery
+          title="Could not load albums."
+          description="Your library may be temporarily unavailable. Try again when the connection is ready."
+          onRetry={() => setRetry((value) => value + 1)}
+          onOpenSettings={() => navigate("/settings")}
+        />
       )}
       {!isLoading && !error && albums.length === 0 && (
         <div className="text-sm text-gray-400">
@@ -234,9 +244,11 @@ export function TagPage({
       )}
 
       {pageError && (
-        <p role="alert" className="mt-4 text-sm text-red-400">
-          Could not load more albums: {pageError}
-        </p>
+        <PageRecovery
+          title="Could not load more albums."
+          description="The albums already loaded are still available."
+          onRetry={() => loadMore()}
+        />
       )}
       {hasMore && (
         <button

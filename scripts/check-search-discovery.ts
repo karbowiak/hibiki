@@ -119,8 +119,8 @@ try {
             'section[aria-label="Jump back in"] a'
           )!
           const card = document.querySelector(
-            'section[aria-label="Made for you"] a > div'
-          )!
+            'section[aria-label="Made for you"] a'
+          )!.parentElement!
           return (
             getComputedStyle(tile).color ===
               (light ? "rgb(13, 13, 13)" : "rgb(255, 255, 255)") &&

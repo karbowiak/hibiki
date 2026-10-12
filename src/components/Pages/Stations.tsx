@@ -72,7 +72,7 @@ function StationIcon() {
 // ---------------------------------------------------------------------------
 
 
-function RecentMixCard({ mix, sectionUuid, sectionId, playFromUri }: {
+export function RecentMixCard({ mix, sectionUuid, sectionId, playFromUri }: {
   mix: RecentMix
   sectionUuid: string
   sectionId: number
@@ -91,9 +91,11 @@ function RecentMixCard({ mix, sectionUuid, sectionId, playFromUri }: {
   const emptyCells = Math.max(0, 4 - thumbs.length)
 
   return (
-    <div
+    <button
+      type="button"
+      aria-label={`Play ${label} mix`}
       onClick={() => void playFromUri(uri, true)}
-      className="cursor-pointer rounded-xl bg-white/5 p-3 hover:bg-hl-menu transition-colors active:scale-[0.97]"
+      className="text-left w-full cursor-pointer rounded-xl bg-app-card focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent p-3 hover:bg-hl-menu transition-colors active:scale-[0.97]"
     >
       <div className="mb-3 aspect-square overflow-hidden rounded-lg grid grid-cols-2 gap-px bg-black/20">
         {thumbs.map((t, i) => t ? (
@@ -106,12 +108,12 @@ function RecentMixCard({ mix, sectionUuid, sectionId, playFromUri }: {
         ))}
       </div>
       <div className="truncate text-sm font-semibold">{label}</div>
-      <div className="mt-0.5 flex items-center gap-1 text-xs text-white/40">
+      <div className="mt-0.5 flex items-center gap-1 text-xs text-[var(--text-secondary)]">
         <span className="capitalize">{mix.tabType} Mix</span>
         <span>·</span>
         <span>{formatTimeAgo(mix.createdAt)}</span>
       </div>
-    </div>
+    </button>
   )
 }
 

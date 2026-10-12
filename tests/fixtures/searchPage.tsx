@@ -226,9 +226,9 @@ try {
       "existing callers' radio default must remain unchanged"
     )
     assert.equal(
-      document.querySelector('button[aria-label^="Play "]'),
-      null,
-      "compact UI must be opt-in"
+      document.querySelector('button[aria-label^="Play "] span')?.textContent,
+      "1",
+      "default rows retain their number while exposing keyboard playback"
     )
   } else {
     await mount()

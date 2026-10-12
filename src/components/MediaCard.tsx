@@ -97,11 +97,12 @@ function MediaCardInner({ title, desc, thumb, thumbFallback, scrollItem, large, 
           />
         )}
         {onPlay && (
-          <div className="absolute inset-0 flex items-end justify-end p-2 opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 focus-within:opacity-100 focus-within:translate-y-0 transition-all duration-200">
+          <div className="absolute inset-0 flex items-end justify-end p-2 pointer-events-none opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 focus-within:opacity-100 focus-within:translate-y-0 transition-all duration-200">
             <button
               onClick={e => { e.preventDefault(); e.stopPropagation(); onPlay(e) }}
               aria-label={`Play ${title}`}
-              className="flex h-10 w-10 items-center justify-center rounded-full bg-accent text-black shadow-lg hover:scale-105 hover:brightness-110 active:scale-95 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none transition-all"
+              type="button"
+              className="pointer-events-auto relative z-20 flex h-10 w-10 items-center justify-center rounded-full bg-accent text-black shadow-lg hover:scale-105 hover:brightness-110 active:scale-95 focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none transition-all"
             >
               <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
                 <polygon points="3,2 13,8 3,14" />
@@ -110,60 +111,31 @@ function MediaCardInner({ title, desc, thumb, thumbFallback, scrollItem, large, 
           </div>
         )}
       </div>
-      <div className="truncate text-sm font-semibold text-white">{title}</div>
-      <div className="mt-1 truncate text-xs text-neutral-400">{desc}</div>
+      <div className="truncate text-sm font-semibold text-[var(--text-primary)]">{title}</div>
+      <div className="mt-1 truncate text-xs text-[var(--text-secondary)]">{desc}</div>
     </>
   )
 
   const cardClass = clsx(
-    "group cursor-pointer rounded-md bg-app-card p-3 transition-colors hover:bg-hl-card",
+    "group relative cursor-pointer rounded-md bg-app-card p-3 transition-colors hover:bg-hl-card",
     scrollItem && "flex-shrink-0"
   )
 
-  if (href) {
-    return (
-      <Link
-        href={href}
-        onClick={onClick}
-        draggable={false}
-        style={scrollStyle}
-        onMouseEnter={prefetch}
-        onContextMenu={onContextMenu}
-        className={clsx("no-underline hover:no-underline", scrollItem && "flex-shrink-0")}
-        {...dragHandlers}
-      >
-        <div className={cardClass}>
-          {cardContent}
-        </div>
-      </Link>
-    )
-  }
-
-  if (onClick) {
-    return (
-      <div
-        onClick={onClick}
-        onMouseEnter={prefetch}
-        onContextMenu={onContextMenu}
-        style={scrollStyle}
-        className={clsx(scrollItem && "flex-shrink-0")}
-        {...dragHandlers}
-      >
-        <div className={cardClass}>
-          {cardContent}
-        </div>
-      </div>
-    )
-  }
-
+  const primaryClass = "absolute inset-0 z-10 rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
   return (
     <div
-      onMouseEnter={prefetch}
-      onContextMenu={onContextMenu}
       style={scrollStyle}
+      onMouseEnter={prefetch}
+      onFocus={prefetch}
+      onContextMenu={onContextMenu}
       className={cardClass}
-      {...dragHandlers}
+      {...(!href && !onClick ? dragHandlers : undefined)}
     >
+      {href ? (
+        <Link href={href} onClick={onClick} aria-label={title} draggable={false} className={primaryClass} {...dragHandlers} />
+      ) : onClick ? (
+        <button type="button" onClick={onClick} aria-label={title} className={primaryClass} {...dragHandlers} />
+      ) : null}
       {cardContent}
     </div>
   )

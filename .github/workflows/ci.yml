@@ -36,6 +36,10 @@ jobs:
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: xvfb-run bun run test:notifications
+      - name: Check appearance settings and detail interactions
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run bun run test:appearance
       - name: Upload renderer layout failure screenshots
         if: failure()
         uses: actions/upload-artifact@v7
@@ -44,6 +48,8 @@ jobs:
           path: |
             .tmp/library-layout-checks/*.png
             .tmp/notification-checks/*.png
+            .tmp/search-discovery-checks/*.png
+            .tmp/appearance-checks/*.png
           include-hidden-files: true
           retention-days: 7
           if-no-files-found: ignore

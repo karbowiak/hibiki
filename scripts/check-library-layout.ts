@@ -148,7 +148,7 @@ try {
           if (slug === "playlists" || slug === "artist") {
             const selector =
               slug === "playlists"
-                ? '#layout-fixture main a[href^="/playlist/"] button'
+                ? '#layout-fixture main .group:has(> a[href^="/playlist/"]) button[aria-label^="Play "]'
                 : '#layout-fixture main button[aria-label^="Play "]'
             // Reach the control through keyboard navigation. Programmatic focus
             // after Tab can inherit a different focus-visible modality in WebKit.
@@ -187,7 +187,12 @@ try {
                       return false
                     current = current.parentElement
                   }
-                  return getComputedStyle(element).boxShadow.includes("2px")
+                  const style = getComputedStyle(element)
+                  return (
+                    style.boxShadow.includes("2px") ||
+                    (style.outlineStyle !== "none" &&
+                      parseFloat(style.outlineWidth) >= 2)
+                  )
                 },
                 selector,
                 { timeout: 3000 }

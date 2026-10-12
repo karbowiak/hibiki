@@ -22,6 +22,11 @@ import { useDeezerMetadataStore } from "../../../src/metadata/deezer/store.ts"
 import { useItunesMetadataStore } from "../../../src/metadata/apple/store.ts"
 import { useLastfmMetadataStore } from "../../../src/metadata/lastfm/store.ts"
 import { useSearchStore } from "../../../src/stores/searchStore.ts"
+import { setFont } from "../../../src/stores/fontStore.ts"
+import { useCardSizeStore } from "../../../src/stores/cardSizeStore.ts"
+import { useCustomColorStore } from "../../../src/stores/customColorStore.ts"
+import { QueuePanel } from "../../../src/components/QueuePanel.tsx"
+import LyricsPanel from "../../../src/components/LyricsPanel.tsx"
 import "../../../src/styles.css"
 ;(window as any).visualFixtureReady = false
 async function setup() {
@@ -30,6 +35,7 @@ async function setup() {
   const actualPlayer = params.get("player") === "1"
   const notifications = params.get("notifications") === "1"
   const discovery = params.get("discovery") === "1"
+  const appearance = params.get("appearance") === "1"
   let callback = 0
   w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} }
   w.__TAURI_INTERNALS__ = {
@@ -46,6 +52,7 @@ async function setup() {
       if (command === "get_image_cache_info")
         return { files: 0, bytes: 0, max_files: 4096, max_bytes: 536870912 }
       if (command === "get_media_ramps") return null
+      if (command === "refresh_image") return { revision: "synthetic-refresh" }
       if (command === "plugin:event|listen") return 1
       if (command === "plugin:event|unlisten") return null
       throw Error("Synthetic unsupported IPC: " + command)
@@ -180,16 +187,24 @@ async function setup() {
     _playlistsFetchedAt: Date.now(),
   })
   const noop = () => {}
+  const interactions: { action: string; id?: string; position?: number }[] = []
   engine.setVisualizerEnabled = noop
   useEqStore.setState({ syncToEngine: noop })
   useAudioSettingsStore.setState({ syncToEngine: async () => {} })
   useDeviceStore.setState({ initDeviceTracking: noop, dispose: noop })
   usePlayerStore.setState({
-    playTrack: async () => {},
+    playTrack: async (track) => {
+      interactions.push({ action: "play", id: track.id })
+    },
     playFromUri: async () => {},
     playPlaylist: async () => {},
     playRadio: async () => {},
-    addToQueue: () => {},
+    addToQueue: (items) => {
+      interactions.push({ action: "queue", id: items[0]?.id })
+    },
+    jumpToQueueItem: (index) => {
+      interactions.push({ action: "jump", id: tracks[index]?.id })
+    },
     currentTrack: actualPlayer ? tracks[0] : null,
     queue: tracks,
     isPlaying: false,
@@ -199,7 +214,13 @@ async function setup() {
     contextName:
       "A very long synthetic playlist context used to check footer alignment",
     contextHref: "/playlist/fixture-playlist-0",
-    lyricsLines: [{ time: 0, text: "Synthetic lyric" }],
+    lyricsLines: [
+      {
+        startMs: 0,
+        endMs: 100000,
+        text: "Synthetic lyric with a long line that wraps in a narrow panel",
+      },
+    ],
     waveformLevels: Array.from({ length: 120 }, () => 0.3),
     initAudioEvents: async () => noop,
     pause: noop,
@@ -207,7 +228,9 @@ async function setup() {
     next: noop,
     prev: noop,
     stop: noop,
-    seekTo: noop,
+    seekTo: (position) => {
+      interactions.push({ action: "seek", position })
+    },
     setVolume: noop,
     toggleMute: noop,
     toggleShuffle: noop,
@@ -248,6 +271,69 @@ async function setup() {
     })
   }
   setHome(5)
+  w.fixtureAppearance = {
+    apply: ({
+      font = "circular",
+      cardSize = 160,
+      compact = false,
+      theme = "dark",
+      custom = false,
+      textSize = 16,
+    }) => {
+      setFont(font)
+      useCardSizeStore.getState().setCardSize(cardSize)
+      useCompactStore.getState().setCompact(compact)
+      setTheme(theme)
+      const colors = useCustomColorStore.getState()
+      colors.resetAll()
+      if (custom) {
+        for (const [key, value] of Object.entries({
+          "bg-base": "#162530",
+          "bg-elevated": "#203747",
+          "bg-surface": "#284455",
+          "bg-surface-hover": "#35596e",
+          "text-primary": "#e6f5ff",
+          "text-secondary": "#bddeef",
+          "text-muted": "#94bfd4",
+          border: "#51758b",
+        }))
+          colors.setOverride(key as any, value)
+        colors.setEnabled(true)
+      }
+      document.documentElement.style.fontSize = `${textSize}px`
+    },
+    route: (path: string) => {
+      history.pushState({}, "", path)
+      dispatchEvent(new PopStateEvent("popstate"))
+    },
+    interactions: () => interactions,
+    resetInteractions: () => {
+      interactions.length = 0
+    },
+    panel: (panel: "queue" | "lyrics" | null, pinned = false) =>
+      useUIStore.setState({
+        isQueueOpen: panel === "queue",
+        isQueuePinned: panel === "queue" && pinned,
+        isLyricsOpen: panel === "lyrics",
+        isLyricsPinned: panel === "lyrics" && pinned,
+      }),
+    lyrics: (mode: "idle" | "loading" | "empty" | "ready") =>
+      usePlayerStore.setState({
+        currentTrack: mode === "idle" ? null : tracks[0],
+        lyricsLines:
+          mode === "loading"
+            ? null
+            : mode === "empty"
+              ? []
+              : [
+                  {
+                    startMs: 0,
+                    endMs: 100000,
+                    text: "Synthetic lyric with a long line that wraps in a narrow panel",
+                  },
+                ],
+      }),
+  }
   if (discovery) {
     const recentArtists = Array.from({ length: 6 }, (_, index) => ({
       ...artist,
@@ -403,7 +489,9 @@ async function setup() {
           "main",
           { className: "min-w-0 flex-1", role: "main" },
           React.createElement(Page)
-        )
+        ),
+        appearance ? React.createElement(QueuePanel) : null,
+        appearance ? React.createElement(LyricsPanel) : null
       ),
       notifications ? React.createElement(NotificationToasts) : null,
       actualPlayer

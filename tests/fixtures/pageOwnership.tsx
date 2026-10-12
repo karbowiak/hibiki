@@ -119,13 +119,21 @@ try {
       await import("../../src/components/Pages/RecentlyAddedPage")
     await act(async () =>
       root.render(
-        kind === "hubs" ? <HubPage hubId="missing" /> : <RecentlyAddedPage />
+        <Router hook={location}>
+          {kind === "hubs" ? (
+            <HubPage hubId="missing" />
+          ) : (
+            <RecentlyAddedPage />
+          )}
+        </Router>
       )
     )
     assert.equal(pending.length, 1)
     assert.ok(document.querySelector('[role="status"]'))
     const emptyMessage =
-      kind === "hubs" ? "Hub not found" : "Nothing recently added"
+      kind === "hubs"
+        ? "This collection is unavailable"
+        : "Nothing recently added"
     assert.ok(!document.body.textContent?.includes(emptyMessage))
     if (scenario.endsWith("provider")) {
       const second = provider()
@@ -315,6 +323,32 @@ try {
       assert.ok(document.body.textContent!.includes("Current"))
       assert.ok(!document.body.textContent!.includes("Obsolete"))
       assert.equal(document.querySelectorAll("[role=alert]").length, 0)
+    } else if (scenario === "tag-recovery") {
+      await act(async () =>
+        requests[0].reply.reject(
+          new Error("https://private.test?token=secret-placeholder")
+        )
+      )
+      assert.ok(document.body.textContent!.includes("Could not load albums"))
+      assert.ok(!document.body.textContent!.includes("secret-placeholder"))
+      await act(async () =>
+        document
+          .querySelector<HTMLButtonElement>('[role="alert"] button')!
+          .click()
+      )
+      await reply(1, [album("Recovered")])
+      assert.ok(document.body.textContent!.includes("Recovered"))
+      assert.equal(document.querySelector('[role="alert"]'), null)
+      await act(async () => ui.setState({ pageRefreshKey: 1 }))
+      assert.ok(
+        document.body.textContent!.includes("Recovered"),
+        "background refresh retains usable albums"
+      )
+      await act(async () =>
+        requests[2].reply.reject(new Error("private-refresh-error"))
+      )
+      assert.ok(document.body.textContent!.includes("Recovered"))
+      assert.ok(!document.body.textContent!.includes("private-refresh-error"))
     } else if (scenario === "tag-provider") {
       await act(() => useProviderStore.getState().setProvider(provider()))
       assert.equal(requests.length, 2)
@@ -335,13 +369,16 @@ try {
         "same-frame observer events must not double-fetch"
       )
       await act(async () =>
-        requests[1].reply.reject(new Error("Temporary failure"))
+        requests[1].reply.reject(
+          new Error("https://private.test?token=secret-placeholder")
+        )
       )
       assert.ok(
         document
           .querySelector("[role=alert]")!
-          .textContent!.includes("Temporary failure")
+          .textContent!.includes("Could not load more albums")
       )
+      assert.ok(!document.body.textContent!.includes("secret-placeholder"))
       assert.ok(document.body.textContent!.includes("Initial"))
       const retry = [...document.querySelectorAll("button")].find((button) =>
         button.textContent?.includes("Try loading")
@@ -633,7 +670,9 @@ try {
     assert.equal(calls, 2)
     assert.equal(useSearchStore.getState().query, "New")
   } else if (scenario === "search-errors") {
-    mock.module("../../src/components/Pages/SearchDiscovery", () => ({ SearchDiscovery: () => null }))
+    mock.module("../../src/components/Pages/SearchDiscovery", () => ({
+      SearchDiscovery: () => null,
+    }))
     mock.module("../../src/stores/playerStore", () => ({
       usePlayerStore: player,
       prefetchTrackAudio() {},
