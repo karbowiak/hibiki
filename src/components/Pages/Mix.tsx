@@ -279,12 +279,12 @@ export function MixPage() {
       {/* Header */}
       <div className="relative flex flex-row items-end p-8 overflow-hidden rounded-t-lg hero-overlay">
         <UltraBlur src={displayThumb} />
-        <div className="relative z-10 flex flex-row items-end w-full gap-0">
+        <div className="relative z-10 flex w-full flex-wrap items-end gap-6">
           {/* Cover art */}
           {displayThumb ? (
-            <ArtworkImage loading="eager" src={displayThumb} alt="" className="w-60 h-60 rounded-md shadow-2xl object-cover flex-shrink-0" />
+            <ArtworkImage loading="eager" src={displayThumb} alt="" className="w-44 h-44 rounded-md shadow-2xl object-cover flex-shrink-0" />
           ) : (
-            <div className="w-60 h-60 rounded-md bg-app-surface shadow-2xl flex-shrink-0 flex items-center justify-center">
+            <div className="w-44 h-44 rounded-md bg-app-surface shadow-2xl flex-shrink-0 flex items-center justify-center">
               <svg height="64" width="64" viewBox="0 0 24 24" fill="currentColor" className="text-white/20">
                 <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6zm-2 16a2 2 0 1 1 0-4 2 2 0 0 1 0 4z" />
               </svg>
@@ -292,17 +292,17 @@ export function MixPage() {
           )}
 
           {/* Info */}
-          <div className="pl-6 flex flex-col justify-between flex-1 h-60 min-w-0">
+          <div className="flex min-h-44 min-w-0 flex-[1_1_280px] flex-col justify-between gap-4">
             <div className="min-w-0">
               <p className="text-xs font-semibold uppercase tracking-widest text-white/50 mb-1">Mix for You</p>
-              <div className="text-[76px] font-black leading-none drop-shadow truncate">
+              <h1 className="break-words text-[clamp(1.75rem,3.2vw,3rem)] font-bold leading-tight tracking-tight drop-shadow">
                 {mixItem.title}
-              </div>
+              </h1>
               {/* Artist list */}
               {isLoading && artists.length === 0 ? (
                 <div className="mt-2 h-4 w-2/3 rounded bg-white/10 animate-pulse" />
               ) : artists.length > 0 ? (
-                <p className="mt-2 text-sm text-white/60 truncate">
+                <p className="mt-2 break-words text-sm text-white/60">
                   {artists.map((a, i) => (
                     <span key={a.title}>
                       {i > 0 && <span className="mx-1.5 text-white/30">·</span>}
@@ -322,11 +322,11 @@ export function MixPage() {
             </div>
 
             {/* Stats + controls */}
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-4">
               <p className="text-sm text-gray-400">
                 {isLoading
                   ? "Loading…"
-                  : `${tracks.length} ${tracks.length === 1 ? "song" : "songs"}${totalMs > 0 ? ` · ${formatTotalMs(totalMs)}` : ""}`
+                  : `${tracks.length.toLocaleString()} ${tracks.length === 1 ? "song" : "songs"}${totalMs > 0 ? ` · ${formatTotalMs(totalMs)}` : ""}`
                 }
               </p>
 

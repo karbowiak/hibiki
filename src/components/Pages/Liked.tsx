@@ -145,28 +145,28 @@ export function Liked() {
   return (
     <div className="pb-12">
       {/* Header */}
-      <div className="flex flex-row items-end p-8">
-        <div className="flex h-60 w-60 flex-shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-accent/70 to-accent/20 shadow-2xl">
-          <svg viewBox="0 0 24 24" width="80" height="80" fill="white">
+      <div className="flex flex-wrap items-center gap-5 px-8 py-6">
+        <div className="flex h-32 w-32 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-accent/70 to-accent/20 shadow-lg">
+          <svg aria-hidden="true" viewBox="0 0 24 24" width="56" height="56" fill="white">
             <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
           </svg>
         </div>
 
         {/* Info column */}
-        <div className="flex h-60 min-w-0 flex-1 flex-col justify-between pl-6">
+        <div className="flex min-w-0 flex-[1_1_14rem] flex-col gap-3">
           <div>
-            <div className="whitespace-nowrap text-[76px] font-black leading-none">
+            <h1 className="break-words text-[clamp(1.75rem,3.2vw,3rem)] font-bold leading-tight tracking-tight">
               Liked
-            </div>
+            </h1>
             <p className="mt-2 max-w-xl select-text text-sm text-gray-400">
               All your rated tracks, in one convenient place.
             </p>
           </div>
 
           {/* Bottom row: stats + buttons */}
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <p className="text-sm text-gray-400">
-              {count} {count === 1 ? "song" : "songs"}
+              {count.toLocaleString()} {count === 1 ? "song" : "songs"}
               {totalMs > 0 && <> · {formatTotalMs(totalMs)}</>}
             </p>
             <div className="flex items-center gap-3">

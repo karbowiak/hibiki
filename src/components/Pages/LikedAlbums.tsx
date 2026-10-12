@@ -54,24 +54,24 @@ export function LikedAlbums() {
   return (
     <div className="pb-12">
       {/* Header */}
-      <div className="flex flex-row items-end p-8">
-        <div className="flex h-60 w-60 flex-shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-green-700 to-teal-500 shadow-2xl">
-          <svg viewBox="0 0 24 24" width="80" height="80" fill="white">
+      <div className="flex flex-wrap items-center gap-5 px-8 py-6">
+        <div className="flex h-32 w-32 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-green-700 to-teal-500 shadow-lg">
+          <svg aria-hidden="true" viewBox="0 0 24 24" width="56" height="56" fill="white">
             <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
           </svg>
         </div>
 
-        <div className="flex h-60 min-w-0 flex-1 flex-col justify-between pl-6">
+        <div className="flex min-w-0 flex-[1_1_14rem] flex-col gap-3">
           <div>
-            <div className="whitespace-nowrap text-[76px] font-black leading-none">
+            <h1 className="break-words text-[clamp(1.75rem,3.2vw,3rem)] font-bold leading-tight tracking-tight">
               Liked Albums
-            </div>
+            </h1>
             <p className="mt-2 max-w-xl select-text text-sm text-gray-400">
               Albums you've rated in Plex, all in one place.
             </p>
           </div>
           <p className="text-sm text-gray-400">
-            {count} {count === 1 ? "album" : "albums"}
+            {count.toLocaleString()} {count === 1 ? "album" : "albums"}
           </p>
         </div>
       </div>
