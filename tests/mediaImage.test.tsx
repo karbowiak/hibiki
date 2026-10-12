@@ -52,11 +52,11 @@ test("available Plex art avoids lower-priority artwork requests", async () => {
   expect(requests).toEqual([])
 })
 test("moving Apple above available Plex and Deezer art requests an upgrade", async () => {
-  useDeezerMetadataStore.setState({ albums: { "artist::album": { data: { cover_url: "https://fixture/deezer" } as any, cachedAt: Date.now() } } })
+  useDeezerMetadataStore.setState({ albums: { "artist::album": { data: { artist: "Artist", title: "Album", cover_url: "https://fixture/deezer" } as any, cachedAt: Date.now() } } })
   await render()
   await act(() => useMetadataSourceStore.setState({ priority: ["apple", "plex", "deezer"] }))
   expect(requests).toEqual(["apple-album:Artist"])
-  await act(() => useItunesMetadataStore.setState({ albums: { "artist::album": { data: { cover_url: "https://fixture/apple" } as any, cachedAt: Date.now() } } }))
+  await act(() => useItunesMetadataStore.setState({ albums: { "artist::album": { data: { artist: "Artist", title: "Album", cover_url: "https://fixture/apple" } as any, cachedAt: Date.now() } } }))
   expect(document.querySelector("output")!.textContent).toContain("fixture%2Fapple")
 })
 test("Deezer above Plex requests both album and artist upgrades", async () => {
@@ -74,7 +74,7 @@ test("missing artwork permits fallback requests and hydration gates them", async
 })
 test("changing entity does not display the previous entity's external image", async () => {
   useMetadataSourceStore.setState({ priority: ["apple", "deezer", "plex"] })
-  useItunesMetadataStore.setState({ albums: { "artist::album": { data: { cover_url: "https://fixture/old" } as any, cachedAt: Date.now() } } })
+  useItunesMetadataStore.setState({ albums: { "artist::album": { data: { artist: "Artist", title: "Album", cover_url: "https://fixture/old" } as any, cachedAt: Date.now() } } })
   await render()
   expect(document.querySelector("output")!.textContent).toContain("fixture%2Fold")
   await render({ artist: "Other", plex: "new-plex" })
@@ -86,7 +86,7 @@ test("failed Plex artwork enables the next preferred provider, then skips a fail
   useMetadataSourceStore.setState({ priority: ["plex", "apple", "deezer"] })
   await render({ failures: ["plex-art"] })
   expect(requests).toContain("apple-album:Artist")
-  await act(() => useItunesMetadataStore.setState({ albums: { "artist::album": { data: { cover_url: "https://fixture/apple" } as any, cachedAt: Date.now() } } }))
+  await act(() => useItunesMetadataStore.setState({ albums: { "artist::album": { data: { artist: "Artist", title: "Album", cover_url: "https://fixture/apple" } as any, cachedAt: Date.now() } } }))
   const appleUrl = JSON.parse(document.querySelector("output")!.textContent!).album
   expect(appleUrl).toContain("fixture%2Fapple")
   await render({ failures: ["plex-art", appleUrl] })

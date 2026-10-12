@@ -11,6 +11,7 @@ mod genius;
 mod http_response;
 mod image_cache;
 mod image_content;
+mod metadata_match;
 mod image_fetch;
 mod image_protocol;
 mod itunes;

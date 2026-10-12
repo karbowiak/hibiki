@@ -12,9 +12,12 @@
 import { deezerSearchArtist, deezerSearchAlbum } from "./api"
 import type { DeezerArtistInfo, DeezerAlbumInfo } from "./api"
 import { createMetadataStore } from "../../stores/createMetadataStore"
+import { albumMatches, albumMatchesCacheKey } from "../albumMatch"
 
 export const useDeezerMetadataStore = createMetadataStore<DeezerArtistInfo, DeezerAlbumInfo>({
   storeName: "deezer-metadata-v1",
   fetchArtist: deezerSearchArtist,
   fetchAlbum: deezerSearchAlbum,
+  validateAlbum: albumMatches,
+  validateCachedAlbum: albumMatchesCacheKey,
 })

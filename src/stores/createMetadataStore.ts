@@ -28,6 +28,8 @@ interface CreateMetadataStoreOpts<ArtistT, AlbumT> {
   negativeTtl?: number
   evictionTtl?: number
   guard?: () => boolean
+  validateAlbum?: (data: AlbumT, artist: string, album: string) => boolean
+  validateCachedAlbum?: (data: AlbumT, key: string) => boolean
 }
 
 export function createMetadataStore<ArtistT, AlbumT>(
@@ -41,6 +43,8 @@ export function createMetadataStore<ArtistT, AlbumT>(
     albumTtl = DEFAULT_TTL_MS,
     negativeTtl = DEFAULT_TTL_MS,
     guard,
+    validateAlbum,
+    validateCachedAlbum,
   } = opts
 
   const evictionTtl = opts.evictionTtl ?? Math.max(artistTtl, albumTtl) * 1.5
@@ -84,15 +88,29 @@ export function createMetadataStore<ArtistT, AlbumT>(
           if (guard && !guard()) return null
           const key = `${artist.toLowerCase()}::${album.toLowerCase()}`
           const cached = get().albums[key]
-          if (cached) {
+          if (cached && cached.data !== null && validateAlbum && !validateAlbum(cached.data, artist, album)) {
+            // Retire only this unrelated legacy positive, leaving every other
+            // cached artist/album and its original TTL intact.
+            set(state => {
+              const { [key]: _unrelated, ...albums } = state.albums
+              return { albums }
+            })
+          } else if (cached) {
             const ttl = cached.data === null ? negativeTtl : albumTtl
             if (Date.now() - cached.cachedAt < ttl) return cached.data
           }
           const existing = inflightAlbums.get(key)
-          if (existing) return existing
+          if (existing) {
+            const data = await existing
+            return data !== null && validateAlbum && !validateAlbum(data, artist, album) ? null : data
+          }
           const promise = (async () => {
             try {
-              const data = await fetchAlbum(artist, album)
+              const fetched = await fetchAlbum(artist, album)
+              // An unrelated positive is not evidence that this album is
+              // absent. Reject it without creating a long-lived negative TTL.
+              if (fetched !== null && validateAlbum && !validateAlbum(fetched, artist, album)) return null
+              const data = fetched
               set((s) => ({ albums: { ...s.albums, [key]: { data, cachedAt: Date.now() } } }))
               return data
             } catch {
@@ -122,6 +140,8 @@ export function createMetadataStore<ArtistT, AlbumT>(
           if (state) {
             state.artists = evictStaleEntries(state.artists, evictionTtl)
             state.albums = evictStaleEntries(state.albums, evictionTtl)
+            if (validateCachedAlbum) state.albums = Object.fromEntries(
+              Object.entries(state.albums).filter(([key, entry]) => entry.data === null || validateCachedAlbum(entry.data, key)))
           }
           store.setState({ _hasHydrated: true })
         },

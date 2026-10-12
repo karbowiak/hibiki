@@ -197,22 +197,7 @@ pub async fn search_album(artist: &str, album: &str) -> Result<Option<DeezerAlbu
         return Ok(None);
     }
 
-    // Best match: exact artist + album title, then just artist match, then first.
-    let best = search_resp
-        .data
-        .iter()
-        .find(|a| {
-            a.artist.name.to_lowercase() == artist.to_lowercase()
-                && a.title.to_lowercase() == album.to_lowercase()
-        })
-        .or_else(|| {
-            search_resp
-                .data
-                .iter()
-                .find(|a| a.artist.name.to_lowercase() == artist.to_lowercase())
-        })
-        .or_else(|| search_resp.data.first())
-        .unwrap();
+    let Some(best) = matching_album(&search_resp.data, artist, album) else { return Ok(None); };
 
     let album_id = best.id;
 
@@ -228,7 +213,21 @@ pub async fn search_album(artist: &str, album: &str) -> Result<Option<DeezerAlbu
         .await
         .context("Failed to parse Deezer album detail")?;
 
-    Ok(Some(DeezerAlbumInfo {
+    Ok(album_info(detail, artist, album))
+}
+
+fn matching_album<'a>(items: &'a [DeezerAlbumSearchItem], artist: &str, album: &str) -> Option<&'a DeezerAlbumSearchItem> {
+    items.iter().find(|candidate| crate::metadata_match::album_matches(artist, album, &candidate.artist.name, &candidate.title))
+}
+
+fn album_info(detail: DeezerAlbumDetail, artist: &str, album: &str) -> Option<DeezerAlbumInfo> {
+    // A matching search entry does not guarantee the detail still names the
+    // requested album; never publish unrelated cover art or enrichment fields.
+    if !crate::metadata_match::album_matches(artist, album, &detail.artist.name, &detail.title) {
+        return None;
+    }
+
+    Some(DeezerAlbumInfo {
         title: detail.title,
         artist: detail.artist.name,
         cover_url: clean_image(detail.cover_xl),
@@ -237,5 +236,45 @@ pub async fn search_album(artist: &str, album: &str) -> Result<Option<DeezerAlbu
         release_date: detail.release_date,
         label: detail.label,
         deezer_url: detail.link,
-    }))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn album_search_rejects_wrong_artist_or_title_and_selects_only_the_matching_identity() {
+        let items: Vec<DeezerAlbumSearchItem> = serde_json::from_value(serde_json::json!([
+            {"id":1,"title":"100 Silly Sing Along Songs for Kids","artist":{"name":"Various Artists"}},
+            {"id":2,"title":"Greed","artist":{"name":"Godsmack"}},
+            {"id":3,"title":"Body Rock","artist":{"name":"Justin Bieber"}},
+            {"id":4,"title":"Different Album","artist":{"name":"Yoshiko"}},
+            {"id":5,"title":"Bumble Bee","artist":{"name":"Other Artist"}},
+            {"id":77,"title":"Bumble Bee - Single","artist":{"name":"YOSHIKO"}}
+        ])).unwrap();
+        assert!(matching_album(&items[..5], "Yoshiko", "Bumble Bee").is_none());
+        assert_eq!(matching_album(&items, " Yoshiko ", "Bumble  Bee").unwrap().id, 77);
+        assert!(matching_album(&items, "Yoshiko", "Greed").is_none());
+        assert!(matching_album(&items, "Yoshiko", "Body Rock").is_none());
+    }
+
+    #[test]
+    fn matched_album_detail_is_rechecked_and_preserves_valid_enrichment_fields() {
+        let detail = |artist: &str, title: &str| serde_json::from_value::<DeezerAlbumDetail>(serde_json::json!({
+            "artist":{"name":artist},"title":title,"cover_xl":"https://covers.test/correct.jpg",
+            "genres":{"data":[{"name":"Electronic"}]},"fans":42,"release_date":"2026-01-01",
+            "label":"Correct label","link":"https://www.deezer.com/album/77"
+        })).unwrap();
+        assert!(album_info(detail("Godsmack", "Bumble Bee"), "Yoshiko", "Bumble Bee").is_none());
+        assert!(album_info(detail("Yoshiko", "Other Album"), "Yoshiko", "Bumble Bee").is_none());
+        let info = album_info(detail("Yoshiko", "Bumble Bee - Single"), "Yoshiko", "Bumble Bee").unwrap();
+        assert_eq!(info.artist, "Yoshiko");
+        assert_eq!(info.title, "Bumble Bee - Single");
+        assert_eq!(info.cover_url.as_deref(), Some("https://covers.test/correct.jpg"));
+        assert_eq!(info.genres, ["Electronic"]);
+        assert_eq!(info.fans, 42);
+        assert_eq!(info.release_date, "2026-01-01");
+        assert_eq!(info.label, "Correct label");
+    }
 }

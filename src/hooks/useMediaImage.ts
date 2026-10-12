@@ -19,6 +19,7 @@ import { useMetadataSourceStore, type MetadataSource } from "../stores/metadataS
 import { useDeezerMetadataStore } from "../metadata/deezer/store"
 import { useItunesMetadataStore } from "../metadata/apple/store"
 import { buildImageUrl } from "../lib/imageUrl"
+import { albumMatches } from "../metadata/albumMatch"
 
 /** Fetch a source only when it can improve the currently available artwork. */
 function shouldWarmSource(
@@ -109,9 +110,13 @@ export function useAlbumImage(
   const deezerHydrated = useDeezerMetadataStore(s => s._hasHydrated)
   const itunesHydrated = useItunesMetadataStore(s => s._hasHydrated)
 
-  const rawDeezerUrl = deezerEntry?.data?.cover_url ?? null
+  const deezerInvalid = !!deezerEntry && deezerEntry.data !== null
+    && !albumMatches(deezerEntry.data, artistName ?? "", albumName ?? "")
+  const appleInvalid = !!itunesEntry && itunesEntry.data !== null
+    && !albumMatches(itunesEntry.data, artistName ?? "", albumName ?? "")
+  const rawDeezerUrl = !deezerInvalid ? deezerEntry?.data?.cover_url ?? null : null
   const deezerUrl = rawDeezerUrl && !failedUrls.includes(buildImageUrl("album", albumId ?? key, rawDeezerUrl, albumName, artistName) ?? "") ? rawDeezerUrl : null
-  const rawAppleUrl = itunesEntry?.data?.cover_url ?? null
+  const rawAppleUrl = !appleInvalid ? itunesEntry?.data?.cover_url ?? null : null
   const appleUrl = rawAppleUrl && !failedUrls.includes(buildImageUrl("album", albumId ?? key, rawAppleUrl, albumName, artistName) ?? "") ? rawAppleUrl : null
 
   // Warm caches when entries are missing.
@@ -119,11 +124,11 @@ export function useAlbumImage(
   // An available lower-priority image must not prevent an upgrade.
   useEffect(() => {
     if (!artistName || !albumName) return
-    if (deezerHydrated && deezerEntry === undefined
+    if (deezerHydrated && (deezerEntry === undefined || deezerInvalid)
       && shouldWarmSource(priority, "deezer", { plex: plexThumb, apple: appleUrl })) void getDeezerAlbum(artistName, albumName)
-    if (itunesHydrated && itunesEntry === undefined
+    if (itunesHydrated && (itunesEntry === undefined || appleInvalid)
       && shouldWarmSource(priority, "apple", { plex: plexThumb, deezer: deezerUrl })) void getItunesAlbum(artistName, albumName)
-  }, [priority, artistName, albumName, plexThumb, deezerUrl, appleUrl, deezerHydrated, itunesHydrated, deezerEntry !== undefined, itunesEntry !== undefined, getDeezerAlbum, getItunesAlbum])
+  }, [priority, artistName, albumName, plexThumb, deezerUrl, appleUrl, deezerHydrated, itunesHydrated, deezerEntry !== undefined, itunesEntry !== undefined, deezerInvalid, appleInvalid, getDeezerAlbum, getItunesAlbum])
 
   for (const source of priority) {
     if (source === "plex"   && plexThumb) return plexThumb

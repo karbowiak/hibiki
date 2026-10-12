@@ -173,27 +173,15 @@ pub async fn search_album(artist: &str, album: &str) -> Result<Option<ItunesAlbu
     .await
     .context("Failed to parse iTunes album search response")?;
 
-    if resp.results.is_empty() {
-        return Ok(None);
-    }
+    Ok(album_info(resp, artist, album))
+}
 
-    // Best match: exact artist + title → exact artist only → first result.
-    let best = resp
-        .results
-        .iter()
-        .find(|a| {
-            a.artist_name.to_lowercase() == artist.to_lowercase()
-                && a.collection_name.to_lowercase() == album.to_lowercase()
-        })
-        .or_else(|| {
-            resp.results
-                .iter()
-                .find(|a| a.artist_name.to_lowercase() == artist.to_lowercase())
-        })
-        .or_else(|| resp.results.first())
-        .unwrap();
+fn album_info(resp: ItunesResponse<ItunesAlbumResult>, artist: &str, album: &str) -> Option<ItunesAlbumInfo> {
+    let best = resp.results.iter().find(|candidate| {
+        crate::metadata_match::album_matches(artist, album, &candidate.artist_name, &candidate.collection_name)
+    })?;
 
-    Ok(Some(ItunesAlbumInfo {
+    Some(ItunesAlbumInfo {
         title: best.collection_name.clone(),
         artist: best.artist_name.clone(),
         cover_url: scale_artwork(&best.artwork_url100),
@@ -201,5 +189,38 @@ pub async fn search_album(artist: &str, album: &str) -> Result<Option<ItunesAlbu
         release_date: parse_date(&best.release_date),
         track_count: best.track_count,
         apple_music_url: best.collection_view_url.clone(),
-    }))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn album_results_cannot_fall_back_to_another_artist_or_album() {
+        let response = |include_match: bool| {
+            let mut items = vec![
+                serde_json::json!({"artistName":"Various Artists","collectionName":"100 Silly Sing Along Songs for Kids"}),
+                serde_json::json!({"artistName":"Godsmack","collectionName":"Greed"}),
+                serde_json::json!({"artistName":"Justin Bieber","collectionName":"Body Rock"}),
+                serde_json::json!({"artistName":"Yoshiko","collectionName":"Other Album"}),
+                serde_json::json!({"artistName":"Other Artist","collectionName":"Bumble Bee"}),
+            ];
+            if include_match { items.push(serde_json::json!({"artistName":"YOSHIKO","collectionName":"Bumble Bee - Single",
+                "artworkUrl100":"https://covers.test/100x100bb.jpg", "primaryGenreName":"Electronic",
+                "releaseDate":"2026-01-01T00:00:00Z","trackCount":1,"collectionViewUrl":"https://music.apple.com/album/77"})); }
+            serde_json::from_value::<ItunesResponse<ItunesAlbumResult>>(serde_json::json!({"results":items})).unwrap()
+        };
+        assert!(album_info(response(false), "Yoshiko", "Bumble Bee").is_none());
+        assert!(album_info(response(false), "Yoshiko", "Greed").is_none());
+        assert!(album_info(response(false), "Yoshiko", "Body Rock").is_none());
+        let info = album_info(response(true), " Yoshiko ", "Bumble  Bee").unwrap();
+        assert_eq!(info.artist, "YOSHIKO");
+        assert_eq!(info.title, "Bumble Bee - Single");
+        assert_eq!(info.genre, "Electronic");
+        assert_eq!(info.release_date, "2026-01-01");
+        assert_eq!(info.track_count, 1);
+        assert_eq!(info.apple_music_url, "https://music.apple.com/album/77");
+        assert_eq!(info.cover_url.as_deref(), Some("https://covers.test/1000x1000bb.jpg"));
+    }
 }

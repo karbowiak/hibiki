@@ -13,6 +13,7 @@
 import { itunesSearchArtist, itunesSearchAlbum } from "./api"
 import type { ItunesArtistInfo, ItunesAlbumInfo } from "./api"
 import { createMetadataStore } from "../../stores/createMetadataStore"
+import { albumMatches, albumMatchesCacheKey } from "../albumMatch"
 
 const DAY = 24 * 60 * 60_000
 
@@ -20,6 +21,8 @@ export const useItunesMetadataStore = createMetadataStore<ItunesArtistInfo, Itun
   storeName: "itunes-metadata-v2",
   fetchArtist: itunesSearchArtist,
   fetchAlbum: itunesSearchAlbum,
+  validateAlbum: albumMatches,
+  validateCachedAlbum: albumMatchesCacheKey,
   artistTtl: 30 * DAY,   // 30 days — artist data rarely changes
   albumTtl: 90 * DAY,    // 90 days — album metadata is immutable once released
   negativeTtl: 7 * DAY,  // 7 days — retry "not found" after a week
