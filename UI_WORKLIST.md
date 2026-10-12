@@ -34,6 +34,8 @@ Validation: 611 frontend tests; both TypeScript projects and production build; C
 
 The ignored local `TODO.md` records metadata-provider expansion, optional SoulSync, Plex metadata editing and playlist synchronization. It also records a native radio-directory lookup failure seen during final review: direct public HTTP requests succeeded, so the native client error still needs diagnosis. This batch is committed locally without pushing or releasing.
 
+Radio follow-up: the native dev app now loads all three featured shelves, and an explicitly ignored, read-only Rust probe passed their concurrent requests using the application's client. The earlier failure has not been reproduced. Directory error panels now explain known IPC, TLS, timeout, rate-limit and parse failures without echoing upstream content or credential-bearing URLs. All 17 error/ownership/retry checks passed. Transport changes remain deferred pending evidence from a recurrence.
+
 ## Loading and interaction finishing pass
 
 - [x] Match artist, album, playlist and podcast skeletons to the actual hero/cover, overview and content layouts.

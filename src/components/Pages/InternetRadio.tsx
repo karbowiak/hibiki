@@ -1,4 +1,5 @@
 import { buildExternalImageUrl } from "../../lib/imageUrl"
+import { radioDirectoryErrorHint } from "../../lib/radioDirectoryError"
 import { AudioBrowseCard } from "../shared/AudioBrowseCard"
 import { MediaCardSkeleton, MediaShelfSkeleton } from "../shared/Skeleton"
 import { MediaGrid } from "../shared/MediaGrid"
@@ -102,7 +103,9 @@ function StationRow({
   if (loading) {
     return (
       <div className="mb-8">
-        <span role="status" className="sr-only">Loading {title.toLowerCase()} stations…</span>
+        <span role="status" className="sr-only">
+          Loading {title.toLowerCase()} stations…
+        </span>
         <MediaShelfSkeleton title={title} />
       </div>
     )
@@ -148,6 +151,7 @@ function useRadioResource<T>(
     key: string | null
     status: "loading" | "ready" | "error"
     data?: T
+    errorHint?: string
   }>({ key: null, status: "loading" })
   useLayoutEffect(() => {
     let active = true
@@ -171,8 +175,13 @@ function useRadioResource<T>(
         while (cache.current.size > 32)
           cache.current.delete(cache.current.keys().next().value!)
         setState({ key, status: "ready", data })
-      } catch {
-        if (current()) setState({ key, status: "error" })
+      } catch (error) {
+        if (current())
+          setState({
+            key,
+            status: "error",
+            errorHint: radioDirectoryErrorHint(error),
+          })
       }
     }
     const timer = delay
@@ -194,6 +203,7 @@ function useRadioResource<T>(
           ? "ready"
           : "loading",
     data: state.key === key ? state.data : cache.current.get(key ?? ""),
+    errorHint: state.key === key ? state.errorHint : undefined,
     retry: () => {
       if (key) cache.current.delete(key)
       setAttempt((value) => value + 1)
@@ -203,13 +213,20 @@ function useRadioResource<T>(
 function RadioLoadError({
   message,
   retry,
+  hint,
 }: {
   message: string
   retry: () => void
+  hint?: string
 }) {
   return (
     <div role="alert" className="mb-4 text-sm text-red-400">
       <p>{message}</p>
+      {hint && (
+        <p className="mt-1 text-xs text-[color:var(--text-secondary)]">
+          {hint}
+        </p>
+      )}
       <button
         onClick={retry}
         className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white"
@@ -345,6 +362,7 @@ export function InternetRadioPage() {
             <RadioLoadError
               message="Could not search radio stations."
               retry={search.retry}
+              hint={search.errorHint}
             />
           )}
           {!isSearching &&
@@ -355,7 +373,11 @@ export function InternetRadioPage() {
               </p>
             )}
           <MediaGrid>
-            {isSearching && searchResults.length === 0 && Array.from({ length: 8 }, (_, i) => <MediaCardSkeleton key={i} />)}
+            {isSearching &&
+              searchResults.length === 0 &&
+              Array.from({ length: 8 }, (_, i) => (
+                <MediaCardSkeleton key={i} />
+              ))}
             {searchResults.map((s) => (
               <StationCard key={s.uuid} station={s} />
             ))}
@@ -394,6 +416,7 @@ export function InternetRadioPage() {
                 <RadioLoadError
                   message="Could not load featured stations."
                   retry={featured.retry}
+                  hint={featured.errorHint}
                 />
               ) : (
                 <>
@@ -528,6 +551,7 @@ export function InternetRadioPage() {
                     <RadioLoadError
                       message="Could not load stations for this country."
                       retry={country.retry}
+                      hint={country.errorHint}
                     />
                   ) : countryStations.length === 0 ? (
                     <p className="text-sm text-[color:var(--text-muted)]">
@@ -552,6 +576,7 @@ export function InternetRadioPage() {
                 <RadioLoadError
                   message="Could not load countries."
                   retry={countryIndex.retry}
+                  hint={countryIndex.errorHint}
                 />
               ) : countries.length === 0 ? (
                 <p className="text-sm text-[color:var(--text-muted)]">
@@ -614,6 +639,7 @@ export function InternetRadioPage() {
                     <RadioLoadError
                       message="Could not load stations for this genre."
                       retry={genre.retry}
+                      hint={genre.errorHint}
                     />
                   ) : tagStations.length === 0 ? (
                     <p className="text-sm text-[color:var(--text-muted)]">
@@ -638,6 +664,7 @@ export function InternetRadioPage() {
                 <RadioLoadError
                   message="Could not load genres."
                   retry={tagIndex.retry}
+                  hint={tagIndex.errorHint}
                 />
               ) : tags.length === 0 ? (
                 <p className="text-sm text-[color:var(--text-muted)]">

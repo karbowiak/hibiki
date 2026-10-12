@@ -304,3 +304,27 @@ pub async fn register_click(uuid: &str) -> Result<()> {
         .await.map_err(|error| error.without_url());
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Explicit, read-only probe of the same native client used by the app.
+    #[tokio::test]
+    #[ignore = "Calls the public Radio Browser directory; run explicitly when diagnosing native requests"]
+    async fn live_directory_probe() {
+        let mut failures = Vec::new();
+        let (voted, clicked, recent) = tokio::join!(
+            top_stations("topvote", 15),
+            top_stations("topclick", 15),
+            top_stations("lastclick", 15)
+        );
+        for (category, result) in [("topvote", voted), ("topclick", clicked), ("lastclick", recent)] {
+            match result {
+                Ok(stations) => println!("{category}: {} stations", stations.len()),
+                Err(error) => failures.push(format!("{category}: {error:#}")),
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+}
