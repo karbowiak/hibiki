@@ -339,7 +339,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
     return `deduplicated: ${parts.join(", ")}`
   }, [fullAlbums, singles, relatedHubs])
 
-  if (isLoading) return <PageLoading message="Loading artist…" />
+  if (isLoading) return <PageLoading message="Loading artist…" variant="artist" />
   if (!artist)
     return (
       <div className="p-6">

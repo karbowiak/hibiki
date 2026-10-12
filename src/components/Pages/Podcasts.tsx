@@ -1,4 +1,5 @@
 import { AudioBrowseCard } from "../shared/AudioBrowseCard"
+import { MediaCardSkeleton } from "../shared/Skeleton"
 import { MediaGrid } from "../shared/MediaGrid"
 import { useEffect, useRef, useState, useCallback } from "react"
 import { useLocation } from "wouter"
@@ -347,6 +348,7 @@ export function PodcastsPage() {
             </p>
           )}
           <MediaGrid>
+            {(isSearching || searchQueued) && searchResults.length === 0 && Array.from({ length: 8 }, (_, i) => <MediaCardSkeleton key={i} />)}
             {searchResults.map((p: PodcastSearchResult) => (
               <PodcastCard
                 key={p.id}
@@ -393,15 +395,7 @@ export function PodcastsPage() {
               <ScrollRow title="Top Podcasts" restoreKey="podcast-top">
                 {isLoadingTop
                   ? Array.from({ length: 8 }).map((_, i) => (
-                      <div
-                        key={i}
-                        className="flex-shrink-0 motion-safe:animate-pulse"
-                        style={{ width: "var(--card-size, 160px)" }}
-                      >
-                        <div className="aspect-square w-full rounded-lg bg-app-surface" />
-                        <div className="mt-2 h-3 w-3/4 rounded bg-white/5" />
-                        <div className="mt-1 h-2.5 w-1/2 rounded bg-white/5" />
-                      </div>
+                      <MediaCardSkeleton key={i} scrollItem />
                     ))
                   : topPodcasts.map((p: PodcastTopChart, idx: number) => (
                       <PodcastCard
@@ -454,11 +448,7 @@ export function PodcastsPage() {
               ) : isLoadingCategory ? (
                 <MediaGrid>
                   {Array.from({ length: 12 }).map((_, i) => (
-                    <div key={i} className="motion-safe:animate-pulse">
-                      <div className="aspect-square w-full rounded-lg bg-app-surface" />
-                      <div className="mt-2 h-3 w-3/4 rounded bg-white/5" />
-                      <div className="mt-1 h-2.5 w-1/2 rounded bg-white/5" />
-                    </div>
+                    <MediaCardSkeleton key={i} />
                   ))}
                 </MediaGrid>
               ) : categoryPodcasts.length === 0 ? (

@@ -44,7 +44,7 @@ export function RecentlyAddedPage() {
       ) : recentlyAdded.length === 0 && status === "loading" ? (
         <PageLoading
           message="Loading recently added items…"
-          variant="shelves"
+          variant="grid"
         />
       ) : recentlyAdded.length === 0 && status === "error" ? (
         <PageRecovery

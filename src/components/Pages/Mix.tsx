@@ -1,6 +1,7 @@
 import { mixThumbnailKey, useMixThumbnails } from "../../hooks/useMixThumbnails"
 import type { MusicProvider } from "../../providers/types"
 import { ArtworkImage } from "../shared/ArtworkImage"
+import { Skeleton } from "../shared/Skeleton"
 import {
   useEffect,
   useLayoutEffect,
@@ -300,7 +301,7 @@ export function MixPage() {
               </h1>
               {/* Artist list */}
               {isLoading && artists.length === 0 ? (
-                <div className="mt-2 h-4 w-2/3 rounded bg-white/10 animate-pulse" />
+                <Skeleton className="mt-2 h-4 w-2/3" />
               ) : artists.length > 0 ? (
                 <p className="mt-2 break-words text-sm text-white/60">
                   {artists.map((a, i) => (

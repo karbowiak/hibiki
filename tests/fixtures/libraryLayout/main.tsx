@@ -23,7 +23,7 @@ import { useLibraryStore } from "../../../src/stores/libraryStore.ts"
 import { useProviderStore } from "../../../src/stores/providerStore.ts"
 import { usePlayerStore } from "../../../src/stores/playerStore.ts"
 import { useMetadataSourceStore } from "../../../src/stores/metadataSourceStore.ts"
-import { activateMetadataCache } from "../../../src/stores/metadataCache.ts"
+import { activateMetadataCache, clearMetadataCache } from "../../../src/stores/metadataCache.ts"
 import { useDeezerMetadataStore } from "../../../src/metadata/deezer/store.ts"
 import { useItunesMetadataStore } from "../../../src/metadata/apple/store.ts"
 import { useLastfmMetadataStore } from "../../../src/metadata/lastfm/store.ts"
@@ -43,6 +43,8 @@ async function setup() {
   const discovery = params.get("discovery") === "1"
   const appearance = params.get("appearance") === "1"
   let callback = 0
+  let loadingGate = Promise.resolve()
+  let releaseLoading: (() => void) | null = null
   w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} }
   w.__TAURI_INTERNALS__ = {
     metadata: {
@@ -52,6 +54,7 @@ async function setup() {
     transformCallback: () => ++callback,
     unregisterCallback: () => {},
     invoke: async (command: string) => {
+      if (command.startsWith("radiobrowser_") || command.startsWith("podcast_")) await loadingGate
       if (
         command === "radiobrowser_top_stations" ||
         command === "radiobrowser_search"
@@ -247,12 +250,12 @@ async function setup() {
       ratings: true,
       ...(discovery ? { mixTracks: true, stations: true } : {}),
     },
-    getArtist: async () => artist,
+    getArtist: async () => { await loadingGate; return artist },
     getArtistAlbums: async () => albums,
     getArtistPopularTracks: async () => tracks,
     getArtistSimilar: async () => [artist],
     getRelatedHubs: async () => [],
-    getAlbum: async () => album,
+    getAlbum: async () => { await loadingGate; return album },
     getAlbumTracks: async () => tracks,
     getLikedTracks: async () => tracks,
     getLikedAlbums: async () => albums,
@@ -261,7 +264,8 @@ async function setup() {
     search: async () =>
       discovery ? [artist, album, ...tracks.slice(0, 3)] : [],
     getMixTracks: async () => tracks,
-    getPlaylistItems: async () => ({ items: tracks, total: tracks.length }),
+    getPlaylistItems: async () => { await loadingGate; return { items: tracks, total: tracks.length } },
+    addToPlaylist: async (id: string, ids: string[]) => { playlistDrops.push({ id, ids }) },
     buildItemUri: (key: string) => "synthetic://" + key,
     disconnect: async () => {},
   }
@@ -277,6 +281,18 @@ async function setup() {
   })
   const noop = () => {}
   const interactions: { action: string; id?: string; position?: number }[] = []
+  const playlistDrops: { id: string; ids: string[] }[] = []
+  w.fixturePlaylistDrops = () => playlistDrops
+  w.fixtureLoading = {
+    hold: async () => {
+      releaseLoading?.()
+      loadingGate = new Promise<void>(resolve => { releaseLoading = resolve })
+      await clearMetadataCache()
+      usePodcastStore.setState({ feedCache: {}, topChartCache: {} })
+      useLibraryStore.setState({ playlistItemsCache: {}, playlistIsFullyLoaded: {} })
+    },
+    release: () => { releaseLoading?.(); releaseLoading = null; loadingGate = Promise.resolve() },
+  }
   engine.setVisualizerEnabled = noop
   useEqStore.setState({ syncToEngine: noop })
   useAudioSettingsStore.setState({ syncToEngine: async () => {} })

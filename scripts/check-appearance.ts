@@ -481,6 +481,69 @@ try {
           `${name}/${panel}: closed controls accessible`
         )
       }
+      // Hold actual provider/feed responses to inspect initial loading shapes.
+      for (const width of [1440, 800]) {
+        await page.setViewportSize({ width, height: 850 })
+        await page.evaluate(value => {
+          ;(window as any).fixtureAppearance.apply({ theme: value === 800 ? "light" : "dark", cardSize: value === 800 ? 220 : 160 })
+          ;(window as any).setFixtureSidebarWidth(240)
+        }, width)
+        for (const [path, kind] of [
+          ["/artist/fixture-artist", "artist"],
+          ["/album/fixture-album", "album"],
+          [podcastFeedPath("https://synthetic.invalid/music.xml")!, "podcast"],
+          ["/podcasts", "cards"],
+          ["/internet-radio", "cards"],
+          ["/playlist/fixture-playlist-0", "table"],
+        ]) {
+          await page.evaluate(() => (window as any).fixtureAppearance.route("/search"))
+          await page.locator("main h1").waitFor()
+          await page.evaluate(() => (window as any).fixtureLoading.hold())
+          await page.evaluate(value => (window as any).fixtureAppearance.route(value), path)
+          const placeholder = page.locator("main .skeleton-shimmer").first()
+          await placeholder.waitFor()
+          await page.waitForTimeout(350)
+          const before = await page.locator("main").evaluate(main => {
+            const scroller = main.querySelector<HTMLElement>(".overflow-auto")!
+            const hero = main.querySelector<HTMLElement>(".media-detail-hero")?.getBoundingClientRect()
+            return { overflow: scroller.scrollWidth - scroller.clientWidth, heroWidth: hero?.width, heroLeft: hero?.left, fakeControls: main.querySelectorAll("[data-page-loading] button, [data-page-loading] a").length }
+          })
+          assert.ok(before.overflow <= 1, `${name}/${width}/${kind}: loading page overflows`)
+          assert.equal(before.fakeControls, 0, `${name}/${width}/${kind}: skeleton has usable fake controls`)
+          await page.emulateMedia({ reducedMotion: "reduce" })
+          assert.equal(await placeholder.evaluate(element => getComputedStyle(element, "::after").animationName), "none", `${name}/${kind}: loading ignores reduced motion`)
+          await page.emulateMedia({ reducedMotion: "no-preference" })
+          await page.screenshot({ path: join(artifacts, `${name}-${width}-loading-${kind}-${path.split("/")[1]}.png`) })
+          await page.evaluate(() => (window as any).fixtureLoading.release())
+          await page.locator("main .skeleton-shimmer").first().waitFor({ state: "detached" })
+          if (before.heroWidth) {
+            const after = await page.locator("main .media-detail-hero").evaluate(element => element.getBoundingClientRect().toJSON())
+            assert.equal(after.width, before.heroWidth, `${name}/${kind}: hero width jumps on load`)
+            assert.equal(after.left, before.heroLeft, `${name}/${kind}: hero gutter jumps on load`)
+          }
+        }
+      }
+      // Real pointer capture and hit testing must deliver one drop without playback/navigation.
+      await page.setViewportSize({ width: 1440, height: 850 })
+      await page.evaluate(() => {
+        ;(window as any).fixtureAppearance.apply({})
+        ;(window as any).fixtureAppearance.route("/search")
+        ;(window as any).fixtureAppearance.resetInteractions()
+      })
+      const source = page.locator('section[aria-label="Jump back in"] .media-card__primary').first()
+      const dropTarget = page.locator('[data-playlist-drop-target="fixture-playlist-0"] > a')
+      await source.waitFor()
+      const sourceBox = await source.boundingBox(), dropBox = await dropTarget.boundingBox()
+      assert.ok(sourceBox && dropBox, `${name}: source or playlist drop target missing`)
+      await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2)
+      await page.mouse.down()
+      await page.mouse.move(dropBox.x + dropBox.width / 2, dropBox.y + dropBox.height / 2)
+      await page.mouse.up()
+      await page.waitForFunction(() => (window as any).fixturePlaylistDrops().length === 1)
+      assert.deepEqual(await page.evaluate(() => (window as any).fixturePlaylistDrops()[0]), { id: "fixture-playlist-0", ids: ["recent-artist-0"] }, `${name}: pointer drop did not preserve the source identity`)
+      assert.equal(await page.locator("main h1").innerText(), "Search", `${name}: drop navigated instead of adding`)
+      assert.equal((await page.evaluate(() => (window as any).fixtureAppearance.interactions())).length, 0, `${name}: drag caused playback`)
+      await page.setViewportSize({ width: 1440, height: 900 })
       // Real shell: stable pool, full-window pixels, palette contrast and image transitions.
       await page.evaluate(() => {
         ;(window as any).fixtureAppearance.panel(null)

@@ -72,6 +72,7 @@ mock.module("../../src/components/shared/ArtworkSourcePicker", () => ({
 mock.module("../../src/components/UltraBlur", () => ({ UltraBlur: () => null }))
 mock.module("../../src/components/shared/MediaBackdrop", () => ({
   MediaBackdrop: () => null,
+  AmbientHeroBackdrop: () => null,
 }))
 mock.module("../../src/hooks/useArtworkTone", () => ({
   useArtworkTone: () => undefined,

@@ -1,5 +1,6 @@
 import { buildExternalImageUrl } from "../../lib/imageUrl"
 import { AudioBrowseCard } from "../shared/AudioBrowseCard"
+import { MediaCardSkeleton, MediaShelfSkeleton } from "../shared/Skeleton"
 import { MediaGrid } from "../shared/MediaGrid"
 import { useLayoutEffect, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
@@ -101,19 +102,8 @@ function StationRow({
   if (loading) {
     return (
       <div className="mb-8">
-        <h2 className="media-row__heading mb-3">{title}</h2>
-        <div className="flex gap-3">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div
-              key={i}
-              className="flex-shrink-0 rounded-md bg-white/5 motion-safe:animate-pulse"
-              style={{
-                width: "var(--card-size, 160px)",
-                aspectRatio: "1",
-              }}
-            />
-          ))}
-        </div>
+        <span role="status" className="sr-only">Loading {title.toLowerCase()} stations…</span>
+        <MediaShelfSkeleton title={title} />
       </div>
     )
   }
@@ -365,6 +355,7 @@ export function InternetRadioPage() {
               </p>
             )}
           <MediaGrid>
+            {isSearching && searchResults.length === 0 && Array.from({ length: 8 }, (_, i) => <MediaCardSkeleton key={i} />)}
             {searchResults.map((s) => (
               <StationCard key={s.uuid} station={s} />
             ))}
@@ -530,10 +521,7 @@ export function InternetRadioPage() {
                   {countryLoading ? (
                     <MediaGrid>
                       {Array.from({ length: 6 }).map((_, i) => (
-                        <div
-                          key={i}
-                          className="bg-app-surface/50 h-20 rounded-lg motion-safe:animate-pulse"
-                        />
+                        <MediaCardSkeleton key={i} />
                       ))}
                     </MediaGrid>
                   ) : country.status === "error" ? (
@@ -619,10 +607,7 @@ export function InternetRadioPage() {
                   {tagLoading ? (
                     <MediaGrid>
                       {Array.from({ length: 6 }).map((_, i) => (
-                        <div
-                          key={i}
-                          className="bg-app-surface/50 h-20 rounded-lg motion-safe:animate-pulse"
-                        />
+                        <MediaCardSkeleton key={i} />
                       ))}
                     </MediaGrid>
                   ) : genre.status === "error" ? (

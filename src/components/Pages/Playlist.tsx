@@ -312,7 +312,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
   }
 
   if (!currentPlaylist) {
-    return <PageLoading message="Loading playlist…" />
+    return <PageLoading message="Loading playlist…" variant="playlist" />
   }
 
   const thumbUrl = currentPlaylist.thumbUrl

@@ -7,6 +7,7 @@ for (const scenario of [
   "thumbnail-identity",
   "thumbnail-coalescing",
   "home-source",
+  "home-menu",
   "home-playback",
   "home-playback-hub",
   "home-playback-latest",

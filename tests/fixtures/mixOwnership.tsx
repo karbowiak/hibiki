@@ -52,7 +52,7 @@ mock.module("../../src/stores/metadataCache", () => ({
   prefetchAlbum() {},
 }))
 mock.module("../../src/hooks/useContextMenu", () => ({
-  useContextMenu: () => ({ handler: () => () => {} }),
+  useContextMenu: () => ({ handler: () => () => {}, actionsHandler: () => () => {} }),
 }))
 mock.module("../../src/hooks/useColumnPicker", () => ({
   ALL_COLUMNS: [],
@@ -74,10 +74,11 @@ mock.module("../../src/components/shared/TrackTable", () => ({
   ),
 }))
 mock.module("../../src/components/MediaCard", () => ({
-  MediaCard: ({ title, thumb, onPlay }: any) => (
+  MediaCard: ({ title, thumb, onPlay, contextActions }: any) => (
     <div data-card={title} data-thumb={thumb ?? ""}>
       {title}
       <button onClick={onPlay}>Play {title}</button>
+      {contextActions?.map((action: any) => <button key={action.label} onClick={action.run}>Menu {action.label}</button>)}
     </div>
   ),
 }))
@@ -317,7 +318,17 @@ try {
         </Router>
       )
     )
-    if (scenario.endsWith("source")) {
+    if (scenario.endsWith("menu")) {
+      assert.equal(document.body.textContent!.includes("Menu Delete"), false)
+      await act(async () => button("Menu Open mix").click())
+      assert.ok(navigation.includes("/mix"))
+      await act(async () => button("Menu Play mix").click())
+      assert.equal(get("tracks").length, 1)
+      assert.equal(get("tracks")[0]!.key, "first", "mix provider key, never placeholder playlist ID")
+      await act(async () => useProviderStore.getState().setProvider(provider()))
+      await settle(get("tracks")[0]!, [track("retired mix")])
+      assert.equal(plays.length, 0)
+    } else if (scenario.endsWith("source")) {
       await settle(get("search")[0]!, [artist()])
       assert.ok(
         document

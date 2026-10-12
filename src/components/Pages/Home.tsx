@@ -215,7 +215,7 @@ export function Home() {
         ? "Loading your library…"
         : "Not connected. Go to Settings to connect."
     if (isConnecting || isConnected) {
-      return <PageLoading message={message} variant="shelves" />
+      return <PageLoading message={message} variant="home" />
     }
     return (
       <div className="mx-auto max-w-lg space-y-3 rounded-xl border border-[var(--border)] bg-app-card px-6 py-8 text-center">
@@ -271,26 +271,29 @@ export function Home() {
       {playError && <p role="alert" className="text-sm text-red-400">Could not play these items. Please try again.</p>}
       {mixesItems.length > 0 && (
         <ScrollRow title={mixesTitle} titleHref="/stations" restoreKey="home-mixes">
-          {mixesItems.map((item, idx) => {
+          {mixesItems.map((item) => {
             if (item.type !== "playlist") return null
             const thumb = mixThumbs[mixThumbnailKey(item)] ?? item.thumbUrl
+            const openMix = () => { selectMix(item); navigate("/mix") }
+            const playMix = () => {
+              const mixKey = item.providerKey
+              if (!mixKey || !provider?.getMixTracks) return
+              playResolved(async () => shuffleTracks(await provider.getMixTracks!(mixKey), item.title), item.title, "/mix", false)
+            }
             return (
               <MediaCard
-                key={`${item.id}-${idx}`}
+                key={mixThumbnailKey(item)}
                 title={item.title}
                 desc="Mix for You"
                 thumb={thumb}
                 isArtist
                 artistName={mixTitleToArtistName(item.title)}
-                onClick={() => {
-                  selectMix(item as MusicPlaylist)
-                  navigate("/mix")
-                }}
-                onPlay={() => {
-                  const mixKey = item.providerKey as string | undefined
-                  if (!mixKey || !provider?.getMixTracks) return
-                  playResolved(async () => shuffleTracks(await provider.getMixTracks!(mixKey), item.title), item.title, "/mix", false)
-                }}
+                onClick={openMix}
+                onPlay={playMix}
+                contextActions={[
+                  { label: "Open mix", run: openMix },
+                  ...(provider?.getMixTracks && item.providerKey ? [{ label: "Play mix", run: playMix }] : []),
+                ]}
                 scrollItem
                 large
               />

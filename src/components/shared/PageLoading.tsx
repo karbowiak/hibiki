@@ -1,61 +1,162 @@
+import { useRef } from "react"
+import { AmbientHeroBackdrop } from "./MediaBackdrop"
+import { MediaGrid } from "./MediaGrid"
+import { MediaCardSkeleton, MediaShelfSkeleton, Skeleton } from "./Skeleton"
+import "../../styles/detailMedia.css"
+import "../../styles/media-detail-controls.css"
+import "../../styles/discovery.css"
+import "../../styles/broadcast.css"
+
 type Props = {
   message: string
-  variant?: "detail" | "shelves"
+  variant?:
+    | "detail"
+    | "artist"
+    | "album"
+    | "playlist"
+    | "podcast"
+    | "home"
+    | "shelves"
+    | "grid"
 }
 
-/** Keep the page's shape visible while its first request is in flight. */
-export function PageLoading({ message, variant = "detail" }: Props) {
+function LoadingRows({ artwork = false }: { artwork?: boolean }) {
   return (
-    <div className="space-y-6 px-8 py-6">
-      <div role="status" className="flex items-center gap-2 text-sm text-[color:var(--text-secondary)]">
-        <span aria-hidden="true" className="h-2 w-2 rounded-full bg-accent motion-safe:animate-pulse" />
+    <div className="skeleton-track-list">
+      {Array.from({ length: 6 }, (_, i) => (
+        <div className="skeleton-track-row" key={i}>
+          <Skeleton
+            className={artwork ? "skeleton-track-art" : "skeleton-track-number"}
+          />
+          <div className="skeleton-track-info">
+            <Skeleton
+              className="skeleton-track-title"
+              style={{ width: String(45 + (i % 3) * 12) + "%" }}
+            />
+            <Skeleton className="skeleton-track-meta" />
+          </div>
+          <Skeleton className="skeleton-track-duration" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** Reserve the real hero, ledger and tile shapes while the first request loads. */
+export function PageLoading({ message, variant = "detail" }: Props) {
+  const heroRef = useRef<HTMLDivElement>(null)
+  const detail = ["detail", "artist", "album", "playlist"].includes(variant)
+  const kind = variant === "detail" ? "album" : variant
+  return (
+    <div
+      data-page-loading={kind}
+      className={
+        "page-loading " +
+        (detail
+          ? "media-detail-page " +
+            (kind === "playlist" ? "playlist-detail-page" : "")
+          : kind === "podcast"
+            ? "broadcast-detail"
+            : "")
+      }
+    >
+      <span role="status" className="sr-only">
         {message}
-      </div>
-      <div aria-hidden="true" className="space-y-6 motion-safe:animate-pulse">
-        {variant === "detail" ? (
-          <>
-            <div className="flex items-end gap-6 rounded-xl bg-app-card p-5">
-              <div className="h-36 w-36 shrink-0 rounded-lg bg-app-surface" />
-              <div className="min-w-0 flex-1 space-y-4 py-1">
-                <div className="h-3 w-16 rounded bg-app-surface" />
-                <div className="h-8 w-3/4 max-w-md rounded bg-app-surface" />
-                <div className="h-3 w-full max-w-xs rounded bg-app-surface" />
-                <div className="flex gap-2">
-                  <div className="h-9 w-9 rounded-full bg-app-surface" />
-                  <div className="h-9 w-9 rounded-full bg-app-surface" />
+      </span>
+      {detail ? (
+        <>
+          <AmbientHeroBackdrop heroRef={heroRef} />
+          <div
+            ref={heroRef}
+            aria-hidden="true"
+            className="media-detail-hero hero-overlay skeleton-detail-hero"
+          >
+            <div
+              className={
+                "skeleton-detail-content skeleton-detail-content--" + kind
+              }
+            >
+              <Skeleton
+                className={
+                  "skeleton-detail-cover skeleton-detail-cover--" + kind
+                }
+              />
+              <div className="skeleton-detail-info">
+                <Skeleton className="skeleton-detail-eyebrow" />
+                <Skeleton className="skeleton-detail-title" />
+                <Skeleton className="skeleton-detail-meta" />
+                {kind !== "playlist" && (
+                  <Skeleton className="skeleton-detail-meta skeleton-detail-meta--short" />
+                )}
+                <div className="skeleton-detail-actions">
+                  <Skeleton className="skeleton-action" />
+                  <Skeleton className="skeleton-action" />
+                  <Skeleton className="skeleton-action" />
                 </div>
               </div>
             </div>
-            <div className="space-y-2">
-              {Array.from({ length: 6 }, (_, index) => (
-                <div key={index} className="flex h-12 items-center gap-4 rounded-md px-3">
-                  <div className="h-8 w-8 shrink-0 rounded bg-app-surface" />
-                  <div className="min-w-0 flex-1 space-y-2">
-                    <div className="h-3 w-2/5 max-w-xs rounded bg-app-surface" />
-                    <div className="h-2 w-1/4 max-w-40 rounded bg-app-surface" />
-                  </div>
-                  <div className="h-3 w-8 rounded bg-app-surface" />
-                </div>
-              ))}
-            </div>
-          </>
-        ) : (
-          Array.from({ length: 2 }, (_, row) => (
-            <div key={row} className="space-y-4 overflow-hidden">
-              <div className="h-5 w-40 rounded bg-app-surface" />
-              <div className="flex gap-3">
-                {Array.from({ length: 7 }, (_, index) => (
-                  <div key={index} className="w-36 shrink-0 space-y-3 rounded-lg bg-app-card p-3">
-                    <div className="aspect-square rounded-md bg-app-surface" />
-                    <div className="h-3 w-4/5 rounded bg-app-surface" />
-                    <div className="h-2 w-3/5 rounded bg-app-surface" />
-                  </div>
-                ))}
+          </div>
+          <div aria-hidden="true" className="media-ledger skeleton-ledger">
+            {Array.from({ length: kind === "album" ? 4 : 2 }, (_, i) => (
+              <div key={i}>
+                <Skeleton className="skeleton-ledger-label" />
+                <Skeleton className="skeleton-ledger-value" />
               </div>
+            ))}
+          </div>
+          <div aria-hidden="true" className="skeleton-detail-body">
+            <Skeleton className="skeleton-section-title" />
+            <LoadingRows artwork={kind === "playlist"} />
+            {kind === "artist" && <MediaShelfSkeleton />}
+          </div>
+        </>
+      ) : kind === "podcast" ? (
+        <div aria-hidden="true">
+          <div className="broadcast-detail__hero">
+            <Skeleton className="broadcast-detail__cover" />
+            <div className="broadcast-detail__info skeleton-podcast-info">
+              <Skeleton className="skeleton-detail-eyebrow" />
+              <Skeleton className="skeleton-detail-title" />
+              <Skeleton className="skeleton-detail-meta" />
+              <Skeleton className="skeleton-detail-meta" />
+              <div className="skeleton-detail-actions">
+                <Skeleton className="skeleton-action skeleton-action--round" />
+                <Skeleton className="skeleton-action" />
+              </div>
+              <Skeleton className="skeleton-detail-meta skeleton-detail-meta--short" />
             </div>
-          ))
-        )}
-      </div>
+          </div>
+          <div className="broadcast-episodes">
+            <Skeleton className="skeleton-section-title" />
+            <LoadingRows artwork />
+          </div>
+        </div>
+      ) : kind === "grid" ? (
+        <MediaGrid>
+          {Array.from({ length: 12 }, (_, i) => (
+            <MediaCardSkeleton key={i} />
+          ))}
+        </MediaGrid>
+      ) : (
+        <div aria-hidden="true" className="skeleton-browse">
+          {kind === "home" && (
+            <header className="discovery-head">
+              <div className="skeleton-home-info">
+                <Skeleton className="skeleton-detail-eyebrow" />
+                <Skeleton className="skeleton-home-title" />
+                <Skeleton className="skeleton-home-subtitle" />
+              </div>
+              <div className="discovery-tools">
+                <Skeleton className="skeleton-action" />
+                <Skeleton className="skeleton-action" />
+              </div>
+            </header>
+          )}
+          <MediaShelfSkeleton large={kind === "home"} />
+          <MediaShelfSkeleton />
+          <MediaShelfSkeleton />
+        </div>
+      )}
     </div>
   )
 }

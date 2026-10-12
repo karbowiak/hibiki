@@ -25,6 +25,8 @@ const player = create<any>((set) => ({ currentTrack: null, isPlaying: false, pla
 mock.module("../../src/stores/playerStore", () => ({ usePlayerStore: player }))
 mock.module("../../src/components/ScrollRow", () => ({ ScrollRow: ({ title, children }: any) => <section><h2>{title}</h2>{children}</section> }))
 mock.module("../../src/components/UltraBlur", () => ({ UltraBlur: () => null }))
+// Lifecycle assertions do not mount a routed artwork shell.
+mock.module("../../src/components/shared/MediaBackdrop", () => ({ AmbientHeroBackdrop: () => null }))
 const reportError = console.error
 console.error = (...args) => {
   if (typeof args[0] === "string" && /Failed to fetch (podcast feed|top podcasts):/.test(args[0])) return

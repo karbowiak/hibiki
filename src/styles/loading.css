@@ -1,0 +1,246 @@
+.skeleton-block {
+  --skeleton-ink: var(--text-primary);
+  position: relative;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--skeleton-ink) 9%, transparent);
+  border-radius: 0.3rem;
+}
+.skeleton-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 15%,
+    color-mix(in srgb, var(--skeleton-ink) 7%, transparent) 50%,
+    transparent 85%
+  );
+  transform: translateX(-100%);
+  animation: skeleton-shimmer 2.4s ease-in-out infinite;
+}
+@keyframes skeleton-shimmer {
+  0%,
+  15% {
+    transform: translateX(-100%);
+  }
+  85%,
+  100% {
+    transform: translateX(100%);
+  }
+}
+.page-loading {
+  min-width: 0;
+}
+.page-loading > .sr-only {
+  position: absolute;
+}
+.skeleton-detail-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1.5rem;
+  width: 100%;
+}
+.skeleton-detail-content .skeleton-block {
+  background: color-mix(in srgb, var(--bg-surface) 88%, var(--text-primary));
+}
+.skeleton-detail-content--playlist {
+  gap: 1.25rem;
+}
+.skeleton-detail-cover {
+  flex-shrink: 0;
+  border-radius: 0.5rem;
+}
+.skeleton-detail-cover--artist {
+  width: 9rem;
+  height: 9rem;
+}
+.skeleton-detail-cover--album {
+  width: 13rem;
+  height: 13rem;
+}
+.skeleton-detail-cover--playlist {
+  width: 11rem;
+  height: 11rem;
+}
+.skeleton-detail-info {
+  min-width: 0;
+  flex: 1 1 20rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+.skeleton-detail-content--playlist .skeleton-detail-info {
+  flex-basis: 16rem;
+  min-height: 11rem;
+  justify-content: space-between;
+}
+.skeleton-detail-eyebrow {
+  height: 0.7rem;
+  width: 6rem;
+  margin-bottom: 0.15rem;
+}
+.skeleton-detail-title {
+  width: 85%;
+  max-width: 35rem;
+  height: clamp(2.1rem, 4.2vw, 4.2rem);
+}
+.skeleton-detail-meta {
+  width: 72%;
+  max-width: 27rem;
+  height: 0.85rem;
+}
+.skeleton-detail-meta--short {
+  width: 45%;
+  max-width: 17rem;
+}
+.skeleton-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.6rem;
+}
+.skeleton-action {
+  width: 6rem;
+  height: 2.6rem;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.skeleton-action--round {
+  width: 3rem;
+  height: 3rem;
+}
+.skeleton-ledger-label {
+  height: 0.7rem;
+  width: 4rem;
+}
+.skeleton-ledger-value {
+  height: 0.9rem;
+  width: 3rem;
+  margin-top: 0.3rem;
+}
+.skeleton-detail-body {
+  min-width: 0;
+  padding: 1.25rem 2rem 2rem;
+}
+.skeleton-section-title {
+  height: 0.8rem;
+  width: 9rem;
+  margin-bottom: 1rem;
+}
+.skeleton-track-row {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  min-height: 3.5rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.skeleton-track-art {
+  width: 2.5rem;
+  height: 2.5rem;
+  flex-shrink: 0;
+}
+.skeleton-track-number {
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-inline: 0.4rem;
+  flex-shrink: 0;
+}
+.skeleton-track-info {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.skeleton-track-title {
+  max-width: 24rem;
+  height: 0.8rem;
+}
+.skeleton-track-meta {
+  width: 30%;
+  max-width: 14rem;
+  height: 0.65rem;
+}
+.skeleton-track-duration {
+  width: 2.5rem;
+  height: 0.75rem;
+  flex-shrink: 0;
+}
+.skeleton-detail-body > .skeleton-shelf {
+  margin-top: 2.5rem;
+}
+.skeleton-podcast-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+.skeleton-browse {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+.skeleton-home-info {
+  min-width: 0;
+  flex: 1 1 18rem;
+}
+.skeleton-home-title {
+  height: clamp(2.1rem, 4.3vw, 3.8rem);
+  width: min(90%, 24rem);
+  margin-block: 0.65rem;
+}
+.skeleton-home-subtitle {
+  height: 0.9rem;
+  width: min(90%, 32rem);
+}
+.skeleton-shelf {
+  min-width: 0;
+}
+.skeleton-shelf-title {
+  height: 0.75rem;
+  width: 9rem;
+}
+.skeleton-shelf-controls {
+  display: flex;
+  gap: 0.6rem;
+}
+.skeleton-shelf-control {
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 1px solid var(--border-subtle);
+}
+.skeleton-shelf-rail {
+  display: flex;
+  gap: 0.75rem;
+  overflow: hidden;
+  padding-bottom: 0.25rem;
+}
+.media-card-skeleton {
+  border-radius: 0.65rem;
+}
+.media-card-skeleton:hover {
+  border-color: var(--border-subtle);
+  box-shadow: none;
+}
+.media-card-skeleton .media-card__caption .skeleton-block {
+  --skeleton-ink: #fff;
+  background: color-mix(in srgb, #fff 18%, transparent);
+}
+.skeleton-card-title {
+  width: 78%;
+  height: 0.8rem;
+}
+.skeleton-card-meta {
+  width: 55%;
+  height: 0.6rem;
+  margin-top: 0.35rem;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-shimmer::after {
+    animation: none;
+    display: none;
+  }
+}

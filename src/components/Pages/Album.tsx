@@ -197,7 +197,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     failures
   )
 
-  if (isLoading) return <PageLoading message="Loading album…" />
+  if (isLoading) return <PageLoading message="Loading album…" variant="album" />
   if (!album)
     return (
       <div className="p-6">

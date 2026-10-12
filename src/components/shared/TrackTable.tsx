@@ -1,4 +1,5 @@
 import { ArtworkImage } from "./ArtworkImage"
+import { Skeleton } from "./Skeleton"
 import { useRef, useEffect, useCallback } from "react"
 import { Link } from "wouter"
 import {
@@ -266,21 +267,21 @@ function TrackTableBody({
   showRadio: boolean
 }) {
   const skeletons = isLoading && loadedCount === 0 && Array.from({ length: 8 }).map((_, i) => (
-    <tr key={i} className="animate-pulse">
-      <td className="p-2 w-8"><div className="h-3 w-3 rounded bg-white/10 mx-auto" /></td>
+    <tr key={i} aria-hidden="true">
+      <td className="p-2 w-8"><Skeleton className="h-3 w-3 mx-auto" /></td>
       <td className="p-2">
         <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-sm bg-white/10 flex-shrink-0" />
-          <div className="space-y-1.5 flex-1">
-            <div className="h-3 rounded bg-white/10 w-2/3" />
-            <div className="h-2.5 rounded bg-white/10 w-1/3" />
+          <Skeleton className="h-10 w-10 rounded-sm flex-shrink-0" />
+          <div className="min-w-0 space-y-1.5 flex-1">
+            <Skeleton className="h-3 w-2/3" />
+            <Skeleton className="h-2.5 w-1/3" />
           </div>
         </div>
       </td>
       {[...visibleCols].map(id => (
-        <td key={id} className="p-2"><div className="h-3 rounded bg-white/10 w-3/4" /></td>
+        <td key={id} className="p-2"><Skeleton className="h-3 w-3/4" /></td>
       ))}
-      <td className="p-2 text-right"><div className="h-3 rounded bg-white/10 w-10 ml-auto" /></td>
+      <td className="p-2 text-right"><Skeleton className="h-3 w-10 ml-auto" /></td>
     </tr>
   ))
 

@@ -207,7 +207,7 @@ export function TagPage({
       </div>
 
       {isLoading && albums.length === 0 && (
-        <PageLoading message="Loading albums…" variant="shelves" />
+        <PageLoading message="Loading albums…" variant="grid" />
       )}
       {error && (
         <PageRecovery

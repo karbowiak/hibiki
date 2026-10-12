@@ -33,3 +33,13 @@ Validation: 606 frontend tests; both TypeScript projects and production build; C
 Validation: 611 frontend tests; both TypeScript projects and production build; Chromium and WebKit appearance and real-card context menus across dark/light/custom palettes, fonts, sizes and narrow windows. Shell, library/player geometry, search discovery, notifications and renderer/CSP checks passed in both browsers. Native review covered the small ❤️ Tracks playlist hero, independent playback colors, library shortcuts, shared context menus and podcast/radio layouts. No playback-engine or Rust changes.
 
 The ignored local `TODO.md` records metadata-provider expansion, optional SoulSync, Plex metadata editing and playlist synchronization. It also records a native radio-directory lookup failure seen during final review: direct public HTTP requests succeeded, so the native client error still needs diagnosis. This batch is committed locally without pushing or releasing.
+
+## Loading and interaction finishing pass
+
+- [x] Match artist, album, playlist and podcast skeletons to the actual hero/cover, overview and content layouts.
+- [x] Share theme-aware square tile, shelf and song-row skeletons across browsing pages, with subtle shimmer and reduced-motion support.
+- [x] Add contextual actions to generated homepage mixes, Stations and Search discovery without inventing library playlist identities.
+- [x] Give Jump back in the shared square artwork cards, including media menus and drag sources.
+- [x] Fix initial-movement and release-coordinate drag hit testing; cancel retired/cancelled drags and show drop success only after the playlist request succeeds.
+
+Validation: 620 frontend tests; both TypeScript projects and production build. Chromium and WebKit checks held real component responses to review dark/light skeletons and loading-to-content hero geometry, verified reduced motion and no fake usable controls, and dragged an actual media card onto the sidebar playlist using pointer capture and hit testing. Search discovery checks passed in both browsers. Native review confirmed homepage mix, Jump back in and Stations menus; Home was restored without invoking playback or playlist mutations. The ignored local roadmap now includes the AppImage AppStream/screenshot and update-information follow-ups.

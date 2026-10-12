@@ -126,7 +126,7 @@ export function PodcastDetailPage({ feedUrl }: { feedUrl: string }) {
     }
   }
 
-  if (isLoading) return <PageLoading message="Loading podcast…" />
+  if (isLoading) return <PageLoading message="Loading podcast…" variant="podcast" />
   if (!podcast)
     return (
       <div className="broadcast-detail">

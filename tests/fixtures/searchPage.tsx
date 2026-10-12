@@ -84,6 +84,7 @@ mock.module("../../src/hooks/useMediaImage", () => ({
 }))
 mock.module("../../src/hooks/useContextMenu", () => ({
   useContextMenu: () => ({
+    actionsHandler: () => (e: any) => e.preventDefault(),
     handler: (type: string, item: any) => (e: any) => {
       e.preventDefault()
       contexts.push([type, item.id])

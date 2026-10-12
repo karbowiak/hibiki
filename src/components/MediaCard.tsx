@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react"
+import { useContextMenuStore, type ContextAction } from "../stores/contextMenuStore"
 import { ArtworkImage, useArtworkFailures } from "./shared/ArtworkImage"
 import { Link } from "wouter"
 import clsx from "clsx"
@@ -28,6 +30,8 @@ interface MediaCardProps {
   onContextMenu?: (e: React.MouseEvent) => void
   /** Actual provider media only; synthetic stations and public feeds omit it. */
   contextItem?: MusicItem
+  /** Ephemeral actions for generated mixes/stations, without library IDs. */
+  contextActions?: readonly ContextAction[]
   /** When provided, enables dragging this card to playlists/queue. */
   dragPayload?: DragPayload
   /** Artist name — enables priority-aware image resolution from external sources. */
@@ -70,9 +74,14 @@ export function MediaCard(props: MediaCardProps) {
   return <MediaCardInner {...props} />
 }
 
-function MediaCardInner({ title, desc, thumb, thumbFallback, scrollItem, large, href, onClick, prefetch, onPlay, onContextMenu, dragPayload, onImageFailure, contextItem }: MediaCardProps) {
-  const { handler } = useContextMenu()
-  const contextHandler = onContextMenu ?? (contextItem ? handler(contextItem.type, contextItem) : undefined)
+function MediaCardInner({ title, desc, thumb, thumbFallback, scrollItem, large, href, onClick, prefetch, onPlay, onContextMenu, dragPayload, onImageFailure, contextItem, contextActions }: MediaCardProps) {
+  const { handler, actionsHandler } = useContextMenu()
+  const menuOwner = useRef({})
+  useEffect(() => () => {
+    const menu = useContextMenuStore.getState()
+    if (menu.type === "actions" && menu.data && "owner" in menu.data && menu.data.owner === menuOwner.current) menu.close()
+  }, [title, href])
+  const contextHandler = onContextMenu ?? (contextItem ? handler(contextItem.type, contextItem) : contextActions?.length ? actionsHandler({ title, owner: menuOwner.current, actions: contextActions }) : undefined)
   const displayThumb = thumb || thumbFallback || null
   const trackDrag = useTrackDrag()
   const scrollStyle = scrollItem

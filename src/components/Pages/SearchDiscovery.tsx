@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react"
-import { Link } from "wouter"
+import { Link, useLocation } from "wouter"
 import { useShallow } from "zustand/shallow"
 import { useLibraryStore } from "../../stores/libraryStore"
 import { useProviderStore } from "../../stores/providerStore"
@@ -17,8 +17,7 @@ import {
 import { useContextMenu } from "../../hooks/useContextMenu"
 import { prefetchAlbum, prefetchArtist } from "../../stores/metadataCache"
 import type { MusicItem, MusicPlaylist } from "../../types/music"
-import { useArtistImage, useAlbumImage } from "../../hooks/useMediaImage"
-import { ArtworkImage, useArtworkFailures } from "../shared/ArtworkImage"
+import { MediaGrid } from "../shared/MediaGrid"
 import { MediaCard } from "../MediaCard"
 import { getMediaInfo, makeDragPayload } from "./Home"
 import { selectMix, shuffleTracks } from "./Mix"
@@ -31,64 +30,15 @@ function RecentTile({
   onPlay?: () => void
 }) {
   const info = getMediaInfo(item)!
-  const { failures, onFailure } = useArtworkFailures(
-    JSON.stringify([item.type, item.id, info.thumb])
-  )
-  const artist = useArtistImage(
-    info.isArtist ? (info.artistName ?? null) : null,
-    info.isArtist ? info.thumb : null,
-    undefined,
-    failures
-  )
-  const album = useAlbumImage(
-    !info.isArtist ? (info.artistName ?? null) : null,
-    !info.isArtist ? (info.albumName ?? null) : null,
-    !info.isArtist ? info.thumb : null,
-    undefined,
-    failures
-  )
-  const thumb = info.isArtist ? artist : info.albumName ? album : info.thumb
-  const content = (
-    <>
-      <div className="h-16 w-16 shrink-0 overflow-hidden rounded-md bg-app-surface">
-        {thumb && (
-          <ArtworkImage
-            src={thumb}
-            alt=""
-            loading="lazy"
-            onFailure={onFailure}
-            className="h-full w-full object-cover"
-          />
-        )}
-      </div>
-      <div className="min-w-0">
-        <span className="block truncate font-semibold">{info.title}</span>
-        <span className="block truncate text-sm text-[var(--text-secondary)]">
-          {info.desc}
-        </span>
-      </div>
-    </>
-  )
-  const className =
-    "flex min-w-0 items-center gap-3 rounded-lg bg-app-surface/50 p-2 text-left transition-colors hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-  const prefetch =
-    info.itemType === "artist"
-      ? () => prefetchArtist(info.id)
-      : info.itemType === "album"
-        ? () => prefetchAlbum(info.id)
-        : undefined
-  return info.href ? (
-    <Link href={info.href} onMouseEnter={prefetch} className={className}>
-      {content}
-    </Link>
-  ) : (
-    <button type="button" onClick={onPlay} className={className}>
-      {content}
-    </button>
-  )
+  return <MediaCard title={info.title} desc={info.desc} thumb={info.thumb}
+    isArtist={info.isArtist} artistName={info.artistName} albumName={info.albumName}
+    href={info.href ?? undefined} onClick={!info.href ? onPlay : undefined}
+    onPlay={onPlay} contextItem={item} dragPayload={makeDragPayload(item)}
+    prefetch={info.itemType === "artist" ? () => prefetchArtist(info.id) : info.itemType === "album" ? () => prefetchAlbum(info.id) : undefined} />
 }
 
 export function SearchDiscovery() {
+  const [, navigate] = useLocation()
   const hubs = useLibraryStore((s) => s.hubs)
   const provider = useProviderStore((s) => s.provider)
   const playback = usePlayerStore(
@@ -200,6 +150,10 @@ export function SearchDiscovery() {
               : undefined
         }
         onContextMenu={mix ? undefined : context(item.type, item)}
+        contextActions={mix && item.type === "playlist" ? [
+          { label: "Open mix", run: () => { if (currentProvider()) { selectMix(item); navigate("/mix") } } },
+          ...(provider?.getMixTracks && item.providerKey ? [{ label: "Play mix", run: () => playMix(item) }] : []),
+        ] : undefined}
         dragPayload={makeDragPayload(item)}
         scrollItem
       />
@@ -244,7 +198,7 @@ export function SearchDiscovery() {
       {selected.recent.length > 0 && (
         <section aria-label="Jump back in">
           <h2 className="mb-3 text-xl font-semibold">Jump back in</h2>
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,230px),1fr))] gap-3">
+          <MediaGrid gap={3}>
             {selected.recent.map((item) => (
               <RecentTile
                 key={`${item.type}:${item.id}`}
@@ -252,7 +206,7 @@ export function SearchDiscovery() {
                 onPlay={makeOnPlay(item, { ...playback, provider })}
               />
             ))}
-          </div>
+          </MediaGrid>
         </section>
       )}
       {selected.mixes.length > 0 && row("Made for you", selected.mixes, true)}

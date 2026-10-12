@@ -1,4 +1,7 @@
+import { useContextMenu } from "../../hooks/useContextMenu"
+import { useContextMenuStore } from "../../stores/contextMenuStore"
 import { ArtworkImage } from "../shared/ArtworkImage"
+import { MediaShelfSkeleton } from "../shared/Skeleton"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useLocation } from "wouter"
 import { useShallow } from "zustand/react/shallow"
@@ -56,6 +59,24 @@ const STATION_BG_COLORS = [
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Callback-only tiles never pretend generated stations are library playlists. */
+function ActionTile({ title, actionLabel, onClick, children, ...props }: Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "onClick" | "title"> & { title: string; actionLabel: string; onClick: () => void | Promise<void> }) {
+  const owner = useRef({})
+  const { actionsHandler } = useContextMenu()
+  useEffect(() => () => {
+    const menu = useContextMenuStore.getState()
+    if (menu.type === "actions" && menu.data && "owner" in menu.data && menu.data.owner === owner.current) menu.close()
+  }, [title])
+  return <button {...props} type="button" title={title} onClick={onClick}
+    onContextMenu={actionsHandler({ title, owner: owner.current, actions: [{ label: actionLabel, run: onClick }] })}
+    onKeyDown={e => {
+      if (e.repeat || e.nativeEvent.isComposing || e.altKey || e.ctrlKey || e.metaKey) return
+      if (e.key !== "ContextMenu" && !(e.key === "F10" && e.shiftKey)) return
+      e.preventDefault(); e.stopPropagation()
+      e.currentTarget.dispatchEvent(new window.MouseEvent("contextmenu", { bubbles: true, cancelable: true }))
+    }}>{children}</button>
+}
+
 function StationIcon() {
   return (
     <svg
@@ -91,10 +112,10 @@ export function RecentMixCard({ mix, sectionUuid, sectionId, playFromUri }: {
   const emptyCells = Math.max(0, 4 - thumbs.length)
 
   return (
-    <button
-      type="button"
+    <ActionTile
+      title={label} actionLabel="Play mix"
       aria-label={`Play ${label} mix`}
-      onClick={() => void playFromUri(uri, true)}
+      onClick={() => playFromUri(uri, true)}
       className="text-left w-full cursor-pointer rounded-xl bg-app-card focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent p-3 hover:bg-hl-menu transition-colors active:scale-[0.97]"
     >
       <div className="mb-3 aspect-square overflow-hidden rounded-lg grid grid-cols-2 gap-px bg-black/20">
@@ -113,7 +134,7 @@ export function RecentMixCard({ mix, sectionUuid, sectionId, playFromUri }: {
         <span>·</span>
         <span>{formatTimeAgo(mix.createdAt)}</span>
       </div>
-    </button>
+    </ActionTile>
   )
 }
 
@@ -483,11 +504,12 @@ function TagGridMixBuilder({
       )}
       <MediaGrid gap={3}>
         {filtered.map((tag, idx) => (
-          <div
+          <ActionTile
             key={tag.tag}
+            actionLabel={`Play ${tabType} mix`}
             onClick={() => handleTagClick(tag)}
             className={clsx(
-              "relative aspect-square cursor-pointer overflow-hidden rounded-lg select-none",
+              "relative aspect-square cursor-pointer overflow-hidden rounded-lg select-none text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent",
               "hover:brightness-110 transition-[filter]",
               lastPlayed === tag.tag && "ring-2 ring-accent",
               colorPalette[idx % colorPalette.length]
@@ -500,7 +522,7 @@ function TagGridMixBuilder({
                 {tag.count.toLocaleString()}
               </span>
             )}
-          </div>
+          </ActionTile>
         ))}
       </MediaGrid>
     </div>
@@ -664,13 +686,13 @@ export function StationsPage() {
       {/* Mixes for You */}
       {mixesItems.length > 0 && (
         <ScrollRow title={mixesTitle} restoreKey="stations-mixes">
-          {mixesItems.map((item, idx) => {
+          {mixesItems.map((item) => {
             if (item.type !== "playlist") return null
             const thumb =
               mixThumbs[mixThumbnailKey(item)] ?? item.thumbUrl ?? null
             return (
               <MediaCard
-                key={`${item.id}-${idx}`}
+                key={mixThumbnailKey(item)}
                 title={item.title}
                 desc="Mix for You"
                 thumb={thumb}
@@ -681,6 +703,10 @@ export function StationsPage() {
                   navigate("/mix")
                 }}
                 onPlay={() => playMix(item)}
+                contextActions={[
+                  { label: "Open mix", run: () => { selectMix(item); navigate("/mix") } },
+                  ...(provider?.getMixTracks && item.providerKey ? [{ label: "Play mix", run: () => { playMix(item) } }] : []),
+                ]}
                 scrollItem
                 large
               />
@@ -693,7 +719,7 @@ export function StationsPage() {
       <div>
         <div className="mb-4 text-2xl font-bold">Stations</div>
         {!stationsLoaded && (
-          <div role="status" className="text-sm text-white/40">Loading stations…</div>
+          <div><span role="status" className="sr-only">Loading stations…</span><MediaShelfSkeleton /></div>
         )}
         {stationError && (
           <div role="alert" className="text-sm text-red-400">
@@ -707,16 +733,17 @@ export function StationsPage() {
         {stations.length > 0 && (
           <MediaGrid gap={3}>
             {stations.map((item, idx) => (
-              <div
+              <ActionTile
                 key={item.providerKey ?? item.id}
+                actionLabel="Play station"
                 onClick={() => handleStationClick(item)}
-                className="relative aspect-square cursor-pointer overflow-hidden rounded-lg select-none hover:brightness-110 transition-[filter]"
+                className="relative aspect-square cursor-pointer overflow-hidden rounded-lg select-none text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent hover:brightness-110 transition-[filter]"
                 style={{ background: STATION_BG_COLORS[idx % STATION_BG_COLORS.length] }}
                 title={item.title}
               >
                 <span className="line-clamp-2 p-3 text-sm font-bold leading-snug">{item.title}</span>
                 <StationIcon />
-              </div>
+              </ActionTile>
             ))}
           </MediaGrid>
         )}
