@@ -12,6 +12,11 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
+    // Native codegen HTML and test artifacts must not reload the music player.
+    // Tauri manages Rust changes independently of the frontend dev server.
+    watch: {
+      ignored: ["**/src-tauri/**", "**/.tmp/**"],
+    },
   },
   // to make use of `TAURI_DEBUG` and other env variables
   // https://tauri.studio/v1/api/config#buildconfig.beforedevcommand

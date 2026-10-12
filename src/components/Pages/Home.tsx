@@ -21,6 +21,7 @@ import { makeOnPlay } from "../../lib/mediaPlay"
 import { ScrollRow } from "../ScrollRow"
 import { MediaCard } from "../MediaCard"
 import { selectMix, shuffleTracks } from "./Mix"
+import { PageLoading } from "../shared/PageLoading"
 
 function getItemYear(item: MusicItem): number {
   if (item.type === "album") return item.year
@@ -211,9 +212,19 @@ export function Home() {
       : isConnected
         ? "Loading your library…"
         : "Not connected. Go to Settings to connect."
+    if (isConnecting || isConnected) {
+      return <PageLoading message={message} variant="shelves" />
+    }
     return (
-      <div className="space-y-8">
-        <div className="text-sm text-gray-400">{message}</div>
+      <div className="mx-auto max-w-lg space-y-3 rounded-xl border border-[var(--border)] bg-app-card px-6 py-8 text-center">
+        <h1 className="text-xl font-semibold">Connect your music library</h1>
+        <p className="text-sm text-[color:var(--text-secondary)]">{message}</p>
+        <button
+          onClick={() => navigate("/settings")}
+          className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-black"
+        >
+          Open Settings
+        </button>
       </div>
     )
   }

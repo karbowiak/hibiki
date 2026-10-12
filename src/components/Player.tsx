@@ -11,7 +11,7 @@ import { useAudioSettingsStore } from "../stores/audioSettingsStore"
 import { useVisualizerStore } from "../stores/visualizerStore"
 import { engine } from "../audio/RustAudioEngine"
 import { formatMs } from "../lib/formatters"
-import { IconBlockquote, IconZzz, IconActivity, IconMaximize, IconAdjustments, IconPlaylist, IconVolume, IconVolume2, IconVolumeOff, IconHeadphones } from "@tabler/icons-react"
+import { IconBlockquote, IconZzz, IconActivity, IconMaximize, IconAdjustments, IconPlaylist, IconVolume, IconVolume2, IconVolumeOff, IconHeadphones, IconMusic } from "@tabler/icons-react"
 import { useCapability } from "../hooks/useCapability"
 import { useLongPress } from "../hooks/useLongPress"
 import EqPanel from "./EqPanel"
@@ -481,6 +481,7 @@ export function Player() {
 
   const artistId = currentTrack?.artistId
   const albumId = currentTrack?.albumId
+  const ArtworkContainer = albumId ? Link : "div"
 
   const progressPct = currentTrack?.duration
     ? (positionMs / currentTrack.duration) * 100
@@ -516,8 +517,8 @@ export function Player() {
           className="group/expanded absolute bottom-full left-0 z-30"
           style={{ width: sidebarWidth, height: sidebarWidth }}
         >
-          <Link
-            href={albumId ? `/album/${albumId}` : "#"}
+          <ArtworkContainer
+            href={albumId ? `/album/${albumId}` : undefined}
             className={`block h-full w-full overflow-hidden ${albumId ? "cursor-pointer" : "cursor-default"} ${vinylSpin ? "rounded-full" : "rounded-md"}`}
             style={vinylSpin ? {
               animation: "vinyl-spin 3s linear infinite",
@@ -526,7 +527,7 @@ export function Player() {
             onClick={e => { if (!albumId) e.preventDefault() }}
           >
             <ArtworkImage loading="eager" src={thumbUrl} alt={currentTrack?.albumName ?? ""} className="h-full w-full object-cover" />
-          </Link>
+          </ArtworkContainer>
           {/* Hover overlay buttons — bottom-right */}
           <div className="pointer-events-none absolute inset-0 flex items-end justify-end gap-1 opacity-0 transition-opacity group-hover/expanded:opacity-100 group-focus-within/expanded:opacity-100 p-1.5">
             <button
@@ -574,8 +575,8 @@ export function Player() {
                 <div className="flex min-w-0 items-center gap-3">
                   <div className={`group/art relative h-14 w-14 flex-shrink-0 ${isArtExpanded && thumbUrl ? "hidden" : ""}`}>
                     {/* Album art — click navigates to album */}
-                    <Link
-                      href={albumId ? `/album/${albumId}` : "#"}
+                    <ArtworkContainer
+                      href={albumId ? `/album/${albumId}` : undefined}
                       className={`block h-full w-full overflow-hidden ${albumId ? "cursor-pointer" : "cursor-default"} ${vinylSpin ? "rounded-full" : "rounded-md"}`}
                       style={vinylSpin ? {
                         animation: "vinyl-spin 3s linear infinite",
@@ -586,9 +587,11 @@ export function Player() {
                       {thumbUrl ? (
                         <ArtworkImage loading="eager" src={thumbUrl} alt="" className="h-full w-full object-cover" />
                       ) : (
-                        <div className="h-full w-full bg-app-surface" />
+                        <div className="flex h-full w-full items-center justify-center bg-app-surface text-white/40">
+                          <IconMusic size={24} stroke={1.4} aria-hidden="true" />
+                        </div>
                       )}
-                    </Link>
+                    </ArtworkContainer>
                     {/* Hover overlay buttons — bottom-right */}
                     {thumbUrl && (
                       <div className="pointer-events-none absolute inset-0 flex items-end justify-end gap-0.5 opacity-0 transition-opacity group-hover/art:opacity-100 group-focus-within/art:opacity-100 p-0.5">
@@ -615,14 +618,14 @@ export function Player() {
                         <Link href={`/album/${albumId}`} className="hover:underline">
                           {currentTrack?.title ?? ""}
                         </Link>
-                      ) : (currentTrack?.title ?? "")}
+                      ) : (currentTrack?.title ?? "Nothing playing")}
                     </h6>
                     <p className="truncate text-[0.688rem] text-white/60 mt-0.5">
                       {artistId ? (
                         <Link href={`/artist/${artistId}`} className="hover:text-white hover:underline transition-colors">
                           {currentTrack?.artistName ?? ""}
                         </Link>
-                      ) : (currentTrack?.artistName ?? "")}
+                      ) : (currentTrack ? currentTrack.artistName ?? "" : "Choose music from your library")}
                       {showAlbumInSubtitle && (
                         <>
                           <span className="mx-1 text-white/30">·</span>
@@ -717,9 +720,10 @@ export function Player() {
                 <div className="flex items-center gap-x-1.5 px-1.5">
                 {/* Prev */}
                 <button
+                  disabled={!currentTrack}
                   onClick={prev}
                   aria-label="Previous track"
-                  className="flex h-8 w-8 items-center justify-center text-white text-opacity-70 hover:text-opacity-100"
+                  className="flex h-8 w-8 items-center justify-center text-white text-opacity-70 hover:text-opacity-100 disabled:opacity-30 disabled:cursor-default"
                 >
                   <svg role="img" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
                     <path d="M3.3 1a.7.7 0 0 1 .7.7v5.15l9.95-5.744a.7.7 0 0 1 1.05.606v12.575a.7.7 0 0 1-1.05.607L4 9.149V14.3a.7.7 0 0 1-.7.7H1.7a.7.7 0 0 1-.7-.7V1.7a.7.7 0 0 1 .7-.7h1.6z" />
@@ -729,9 +733,10 @@ export function Player() {
                 {/* Play/Pause — long-press to stop & clear queue */}
                 <button
                   {...playPauseLongPress}
+                  disabled={!currentTrack}
                   aria-label={isPlaying ? "Pause" : "Play"}
                   title={isPlaying ? "Pause (hold to stop)" : "Play (hold to stop)"}
-                  className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--text-primary)] text-[var(--bg-base)] hover:scale-[1.06] select-none"
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--text-primary)] text-[var(--bg-base)] enabled:hover:scale-[1.06] select-none disabled:opacity-30 disabled:cursor-default"
                 >
                   {isBuffering ? (
                     <svg className="animate-spin" height="16" width="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
@@ -751,9 +756,10 @@ export function Player() {
 
                 {/* Next */}
                 <button
+                  disabled={!currentTrack}
                   onClick={next}
                   aria-label="Next track"
-                  className="flex h-8 w-8 items-center justify-center text-white text-opacity-70 hover:text-opacity-100"
+                  className="flex h-8 w-8 items-center justify-center text-white text-opacity-70 hover:text-opacity-100 disabled:opacity-30 disabled:cursor-default"
                 >
                   <svg role="img" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
                     <path d="M12.7 1a.7.7 0 0 0-.7.7v5.15L2.05 1.107A.7.7 0 0 0 1 1.712v12.575a.7.7 0 0 0 1.05.607L12 9.149V14.3a.7.7 0 0 0 .7.7h1.6a.7.7 0 0 0 .7-.7V1.7a.7.7 0 0 0-.7-.7h-1.6z" />
@@ -806,13 +812,15 @@ export function Player() {
                     : positionMs)}
                 </div>
                 <div
-                  className="relative flex-1 h-7 cursor-pointer select-none"
+                  className={`relative flex-1 h-7 select-none ${currentTrack ? "cursor-pointer" : "cursor-default opacity-40"}`}
                   onMouseMove={e => {
+                    if (!currentTrack) return
                     const rect = e.currentTarget.getBoundingClientRect()
                     setSeekHoverPct(Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100)))
                   }}
                   onMouseLeave={() => setSeekHoverPct(null)}
                   onClick={e => {
+                    if (!currentTrack) return
                     const rect = e.currentTarget.getBoundingClientRect()
                     const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
                     seekTo((currentTrack?.duration ?? 0) * pct)
@@ -826,6 +834,7 @@ export function Player() {
                   />
                   <input
                     type="range"
+                    disabled={!currentTrack}
                     min={0}
                     max={currentTrack?.duration ?? 0}
                     value={positionMs}

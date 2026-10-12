@@ -1,5 +1,5 @@
 import { ArtworkImage } from "./shared/ArtworkImage"
-import { useEffect } from "react"
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react"
 import { useLocation } from "wouter"
 import { useShallow } from "zustand/react/shallow"
 import { useSearchStore } from "../stores"
@@ -12,6 +12,7 @@ import type {
 } from "../types/music"
 
 interface Props {
+  id?: string
   activeIndex: number
   onActiveIndexChange: (index: number) => void
   onClose: () => void
@@ -22,7 +23,7 @@ type DropdownItem =
   | { kind: "album"; item: MusicAlbum & { type: "album" }; href: string }
   | { kind: "track"; item: MusicTrack & { type: "track" } }
 
-function buildItems(results: MusicItem[]): DropdownItem[] {
+export function buildSearchItems(results: MusicItem[]): DropdownItem[] {
   const artists: DropdownItem[] = []
   const albums: DropdownItem[] = []
   const tracks: DropdownItem[] = []
@@ -52,10 +53,13 @@ function buildItems(results: MusicItem[]): DropdownItem[] {
 }
 
 export function SearchDropdown({
+  id: suppliedId,
   activeIndex,
   onActiveIndexChange,
   onClose,
 }: Props) {
+  const generatedId = useId()
+  const id = suppliedId ?? generatedId
   const [, navigate] = useLocation()
   const { results, query, error, isSearching, search } = useSearchStore(
     useShallow((s) => ({
@@ -68,7 +72,7 @@ export function SearchDropdown({
   )
   const playTrack = usePlayerStore((s) => s.playTrack)
 
-  const items = buildItems(results)
+  const items = buildSearchItems(results)
   const totalRows = items.length + 1 // +1 for "See all results"
 
   // Keep activeIndex clamped to valid range
@@ -109,164 +113,163 @@ export function SearchDropdown({
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [activeIndex, items])
 
-  if (results.length === 0) {
-    if (!query.trim()) return null
-    return (
-      <div
-        onKeyDown={(event) => event.stopPropagation()}
-        className="absolute left-0 top-full z-50 mt-1 w-[420px] rounded-xl bg-app-surface p-4 shadow-2xl"
-      >
-        {isSearching ? (
-          <p role="status" className="text-sm text-gray-400">
-            Searching…
-          </p>
-        ) : error ? (
-          <div role="alert" className="text-sm text-red-400">
+  const popupRef = useRef<HTMLDivElement>(null)
+  const [maxHeight, setMaxHeight] = useState(360)
+  useLayoutEffect(() => {
+    const update = () => {
+      const top = popupRef.current?.getBoundingClientRect().top ?? 80
+      setMaxHeight(Math.max(48, window.innerHeight - top - 12))
+    }
+    update()
+    window.addEventListener("resize", update)
+    window.addEventListener("scroll", update, true)
+    return () => {
+      window.removeEventListener("resize", update)
+      window.removeEventListener("scroll", update, true)
+    }
+  }, [])
+  useLayoutEffect(() => {
+    const popup = popupRef.current
+    const option = popup?.querySelector<HTMLElement>(
+      `[data-search-index="${activeIndex}"]`
+    )
+    if (!popup || !option) return
+    const footer = popup.querySelector<HTMLElement>("[data-search-footer]")
+    if (footer?.contains(option)) return
+    const bounds = popup.getBoundingClientRect()
+    const visibleBottom = Math.min(
+      bounds.bottom,
+      footer?.getBoundingClientRect().top ?? bounds.bottom
+    )
+    const row = option.getBoundingClientRect()
+    if (row.top < bounds.top) popup.scrollTop -= bounds.top - row.top
+    else if (row.bottom > visibleBottom)
+      popup.scrollTop += row.bottom - visibleBottom
+  }, [activeIndex, results])
+
+  if (!query.trim()) return null
+  return (
+    <div
+      ref={popupRef}
+      id={id}
+      role="listbox"
+      aria-label="Music search results"
+      aria-busy={isSearching}
+      onKeyDown={(event) => event.stopPropagation()}
+      style={{ maxHeight: Math.min(480, maxHeight) }}
+      className="absolute left-0 top-full z-50 mt-2 w-full max-w-[calc(100vw-24px)] overflow-y-auto overscroll-contain rounded-xl border border-[var(--border)] bg-app-card py-1 text-white shadow-2xl"
+    >
+      {isSearching && (
+        <p role="status" className="px-3 py-3 text-sm text-white/60">
+          Searching…
+        </p>
+      )}
+      {results.length === 0 ? (
+        error ? (
+          <div role="alert" className="p-3 text-sm text-red-400">
             <p>Search failed: {error}</p>
             <button
+              type="button"
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => void search(query)}
-              className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white"
+              className="mt-2 rounded-md bg-app-surface px-3 py-2 text-white"
             >
               Try again
             </button>
           </div>
         ) : (
-          <p className="text-sm text-gray-400">No results for "{query}".</p>
-        )}
-      </div>
-    )
-  }
-
-  return (
-    <div
-      onKeyDown={(event) => event.stopPropagation()}
-      className="absolute left-0 top-full z-50 mt-1 w-[420px] overflow-hidden rounded-xl bg-app-surface shadow-2xl"
-    >
-      {items.map((row, idx) => {
-        const isActive = idx === activeIndex
-        if (row.kind === "artist") {
-          const thumb = row.item.thumbUrl
-          return (
-            <div
-              key={row.item.id}
-              className={`flex cursor-pointer items-center gap-3 px-3 py-2 ${isActive ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
-              onMouseEnter={() => onActiveIndexChange(idx)}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => activateItem(idx)}
-            >
-              {thumb ? (
-                <ArtworkImage
-                  loading="eager"
-                  src={thumb}
-                  alt=""
-                  className="h-9 w-9 flex-shrink-0 rounded-md object-cover"
-                />
-              ) : (
-                <div className="h-9 w-9 flex-shrink-0 rounded-md bg-white/10" />
-              )}
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium text-white">
-                  {row.item.title}
-                </div>
-              </div>
-              <span className="flex-shrink-0 text-xs text-white/40">
-                Artist
-              </span>
-            </div>
+          !isSearching && (
+            <p role="status" className="px-3 py-3 text-sm text-white/60">
+              No results for “{query}”.
+            </p>
           )
-        }
-
-        if (row.kind === "album") {
-          const thumb = row.item.thumbUrl
-          return (
-            <div
-              key={row.item.id}
-              className={`flex cursor-pointer items-center gap-3 px-3 py-2 ${isActive ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
-              onMouseEnter={() => onActiveIndexChange(idx)}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => activateItem(idx)}
-            >
-              {thumb ? (
-                <ArtworkImage
-                  loading="eager"
-                  src={thumb}
-                  alt=""
-                  className="h-9 w-9 flex-shrink-0 rounded object-cover"
-                />
-              ) : (
-                <div className="h-9 w-9 flex-shrink-0 rounded bg-white/10" />
-              )}
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium text-white">
-                  {row.item.title}
-                </div>
-                <div className="truncate text-xs text-white/50">
-                  {row.item.artistName}
-                </div>
-              </div>
-              <span className="flex-shrink-0 text-xs text-white/40">Album</span>
-            </div>
-          )
-        }
-
-        // track
-        const thumb = row.item.thumbUrl
-        return (
-          <div
-            key={row.item.id}
-            className={`flex cursor-pointer items-center gap-3 px-3 py-2 ${isActive ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
-            onMouseEnter={() => onActiveIndexChange(idx)}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => activateItem(idx)}
-          >
-            {thumb ? (
-              <ArtworkImage
-                loading="eager"
-                src={thumb}
-                alt=""
-                className="h-9 w-9 flex-shrink-0 rounded object-cover"
-              />
-            ) : (
-              <div className="h-9 w-9 flex-shrink-0 rounded bg-white/10" />
-            )}
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-medium text-white">
-                {row.item.title}
-              </div>
-              <div className="truncate text-xs text-white/50">
-                {row.item.artistName} · {row.item.albumName}
-              </div>
-            </div>
-            <span className="flex-shrink-0 text-xs text-white/40">Track</span>
-          </div>
         )
-      })}
-
-      {/* See all results row */}
-      <div
-        className={`flex cursor-pointer items-center gap-2 border-t border-white/10 px-3 py-2.5 ${activeIndex === items.length ? "bg-hl-menu" : "hover:bg-hl-row"}`}
-        onMouseEnter={() => onActiveIndexChange(items.length)}
-        onMouseDown={(e) => e.preventDefault()}
-        onClick={() => {
-          navigate("/search")
-          onClose()
-        }}
-      >
-        <svg
-          height="14"
-          width="14"
-          viewBox="0 0 24 24"
-          fill="currentColor"
-          className="flex-shrink-0 text-white/50"
-        >
-          <path d="M10.533 1.279c-5.18 0-9.407 4.14-9.407 9.279s4.226 9.279 9.407 9.279c2.234 0 4.29-.77 5.907-2.058l4.353 4.353a1 1 0 1 0 1.414-1.414l-4.344-4.344a9.157 9.157 0 0 0 2.077-5.816c0-5.14-4.226-9.28-9.407-9.28zm-7.407 9.279c0-4.006 3.302-7.28 7.407-7.28s7.407 3.274 7.407 7.28-3.302 7.279-7.407 7.279-7.407-3.273-7.407-7.28z" />
-        </svg>
-        <span className="text-sm text-white/70">
-          See all results for{" "}
-          <span className="font-semibold text-white">"{query}"</span>
-        </span>
-      </div>
+      ) : (
+        <>
+          {(["artist", "album", "track"] as const).map((kind) => {
+            const rows = items
+              .map((row, index) => ({ row, index }))
+              .filter(({ row }) => row.kind === kind)
+            if (!rows.length) return null
+            const label =
+              kind === "artist"
+                ? "Artists"
+                : kind === "album"
+                  ? "Albums"
+                  : "Tracks"
+            return (
+              <div
+                key={kind}
+                role="group"
+                aria-label={label}
+                className="border-b border-[var(--border)] pb-1 last:border-b-0"
+              >
+                <div
+                  aria-hidden="true"
+                  className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-white/50"
+                >
+                  {label}
+                </div>
+                {rows.map(({ row, index }) => (
+                  <div
+                    key={`${kind}:${row.item.id}`}
+                    id={`${id}-option-${index}`}
+                    role="option"
+                    aria-selected={index === activeIndex}
+                    data-search-index={index}
+                    className={`flex cursor-pointer items-center gap-3 px-3 py-2 ${index === activeIndex ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
+                    onMouseEnter={() => onActiveIndexChange(index)}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => activateItem(index)}
+                  >
+                    {row.item.thumbUrl ? (
+                      <ArtworkImage
+                        loading="eager"
+                        src={row.item.thumbUrl}
+                        alt=""
+                        className="h-9 w-9 shrink-0 rounded-md object-cover"
+                      />
+                    ) : (
+                      <div className="h-9 w-9 shrink-0 rounded-md bg-app-surface" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium">
+                        {row.item.title}
+                      </div>
+                      {row.kind !== "artist" && (
+                        <div className="truncate text-xs text-white/60">
+                          {row.item.artistName}
+                          {row.kind === "track" && row.item.albumName
+                            ? ` · ${row.item.albumName}`
+                            : ""}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+          })}
+          <div
+            data-search-footer
+            className="sticky bottom-0 z-10 border-t border-[var(--border)] bg-app-card"
+          >
+            <div
+              id={`${id}-option-${items.length}`}
+              role="option"
+              aria-selected={activeIndex === items.length}
+              data-search-index={items.length}
+              onMouseEnter={() => onActiveIndexChange(items.length)}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => activateItem(items.length)}
+              className={`cursor-pointer px-3 py-3 text-sm ${activeIndex === items.length ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
+            >
+              See all results for{" "}
+              <span className="font-semibold">“{query}”</span>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }

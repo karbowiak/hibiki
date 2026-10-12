@@ -635,6 +635,7 @@ try {
   } else if (scenario === "search-errors") {
     mock.module("../../src/stores/playerStore", () => ({
       usePlayerStore: player,
+      prefetchTrackAudio() {},
     }))
     mock.module("../../src/hooks/useContextMenu", () => ({
       useContextMenu: () => ({ handler: () => () => {} }),

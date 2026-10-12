@@ -19,6 +19,8 @@ import { UltraBlur } from "../UltraBlur"
 import { useScrollContainer } from "../Page"
 import { ALL_COLUMNS, usePlaylistColumns } from "../../hooks/useColumnPicker"
 import { TrackTable } from "../shared/TrackTable"
+import { PageLoading } from "../shared/PageLoading"
+import { usePlaylistPagination } from "../../hooks/usePlaylistPagination"
 
 const PLAYLIST_COLUMNS = ALL_COLUMNS
 
@@ -205,32 +207,10 @@ export function Playlist({ playlistId }: { playlistId: string }) {
     }
   }, [playlistId, pageRefreshKey, provider])
 
-  useEffect(() => {
-    // Don't attach while a fetch is in progress — re-attaches when it completes,
-    // which gives an immediate check for an already-near-bottom sentinel.
-    if (isFullyLoaded || isFetchingMore) return
-    const scrollEl = scrollContainerRef?.current
-    if (!scrollEl) return
-
-    function check() {
-      const sentinel = sentinelRef.current
-      if (!scrollEl || !sentinel) return
-      // Compare the sentinel's position to the scroll container's visible bottom.
-      // Using getBoundingClientRect avoids the spacer inflating scrollHeight.
-      const sentinelTop = sentinel.getBoundingClientRect().top
-      const containerBottom = scrollEl.getBoundingClientRect().bottom
-      if (sentinelTop <= containerBottom + 400) {
-        void fetchMorePlaylistItems(playlistId)
-      }
-    }
-
-    scrollEl.addEventListener("scroll", check, { passive: true })
-    // Immediate check: handles the case where the initial 50 rows already
-    // fill less than the viewport height (sentinel already visible on mount).
-    check()
-
-    return () => scrollEl.removeEventListener("scroll", check)
-  }, [playlistId, isLoading, isFetchingMore, isFullyLoaded])
+  const pageError = useLibraryStore(s => s.playlistPageErrors?.[playlistId] ?? null)
+  const loadNextPage = useCallback(() => { void fetchMorePlaylistItems(playlistId) }, [playlistId, fetchMorePlaylistItems])
+  usePlaylistPagination({ playlistId, scrollContainer: scrollContainerRef, sentinel: sentinelRef,
+    isLoading, isFetchingMore, isFullyLoaded, filterQuery, blocked: !!pageError, onLoadMore: loadNextPage })
 
   // Reorder is only available for non-smart playlists in default sort order with no filter
   const canReorder =
@@ -317,14 +297,14 @@ export function Playlist({ playlistId }: { playlistId: string }) {
   }
 
   if (!currentPlaylist) {
-    return <div className="p-8 text-gray-400">Loading…</div>
+    return <PageLoading message="Loading playlist…" />
   }
 
   const thumbUrl = currentPlaylist.thumbUrl
 
   const loadedCount = currentPlaylistItems.length
   const totalCount = currentPlaylist.trackCount
-  const displayCount = isFullyLoaded ? loadedCount : totalCount
+  const displayCount = isFullyLoaded ? loadedCount : Math.max(totalCount, loadedCount)
   const totalMs = currentPlaylistItems.reduce((sum, t) => sum + t.duration, 0)
 
   // URI for server-side play queue — enables full-playlist shuffle regardless of loaded count.
@@ -343,27 +323,27 @@ export function Playlist({ playlistId }: { playlistId: string }) {
   return (
     <div className="pb-12">
       {/* Header */}
-      <div className="hero-overlay relative flex flex-row items-end overflow-hidden rounded-t-lg p-8">
+      <div className="hero-overlay relative flex flex-row items-end overflow-hidden rounded-t-lg px-8 py-6">
         <UltraBlur src={thumbUrl} />
-        <div className="relative z-10 flex w-full flex-row items-end gap-0">
+        <div className="relative z-10 flex w-full flex-wrap items-end gap-5">
           {/* Cover art */}
           {thumbUrl ? (
             <ArtworkImage
               loading="eager"
               src={thumbUrl}
               alt=""
-              className="h-60 w-60 flex-shrink-0 rounded-md object-cover shadow-2xl"
+              className="h-44 w-44 flex-shrink-0 rounded-lg object-cover shadow-xl"
             />
           ) : (
-            <div className="h-60 w-60 flex-shrink-0 rounded-md bg-app-surface shadow-2xl" />
+            <div className="h-44 w-44 flex-shrink-0 rounded-lg bg-app-surface shadow-xl" />
           )}
 
           {/* Info column */}
-          <div className="flex h-60 min-w-0 flex-1 flex-col justify-between pl-6">
+          <div className="flex min-h-44 min-w-0 flex-[1_1_16rem] flex-col justify-between gap-4">
             <div className="min-w-0">
-              <div className="truncate text-[76px] font-black leading-none drop-shadow">
+              <h1 className="break-words text-[clamp(1.75rem,3.2vw,3rem)] font-bold leading-tight tracking-tight drop-shadow">
                 {currentPlaylist.title}
-              </div>
+              </h1>
               {currentPlaylist.summary && (
                 <RichText
                   html={currentPlaylist.summary}
@@ -373,15 +353,16 @@ export function Playlist({ playlistId }: { playlistId: string }) {
             </div>
 
             {/* Bottom row: stats + play/shuffle buttons */}
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
               <p className="text-sm text-gray-400">
-                {displayCount} {displayCount === 1 ? "song" : "songs"}
-                {totalMs > 0 && <> · {formatTotalMs(totalMs)}</>}
+                {displayCount.toLocaleString()} {displayCount === 1 ? "song" : "songs"}
+                {totalMs > 0 && (
+                  <> · {formatTotalMs(totalMs)}{!isFullyLoaded && " so far"}</>
+                )}
                 {!isFullyLoaded &&
-                  loadedCount > 0 &&
-                  loadedCount < totalCount && (
+                  loadedCount > 0 && (
                     <span className="ml-1 text-white/30">
-                      ({loadedCount} loaded)
+                      ({loadedCount.toLocaleString()} loaded)
                     </span>
                   )}
               </p>
@@ -520,7 +501,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
         defaultResetTitle="Restore playlist order"
         isLoading={isLoading}
         loadedCount={loadedCount}
-        emptyMessage="This playlist is empty."
+        emptyMessage={debouncedQuery ? isFullyLoaded ? "No songs match this filter." : "No matches in loaded songs. Load more songs or clear the filter." : "This playlist is empty."}
         sentinel={sentinelRef}
         spacerHeight={spacerHeight}
         isFetchingMore={isFetchingMore}
@@ -528,6 +509,18 @@ export function Playlist({ playlistId }: { playlistId: string }) {
         playlistId={currentPlaylist.smart ? undefined : playlistId}
         onReorder={canReorder ? handleReorder : undefined}
       />
+      {!isFullyLoaded && loadedCount > 0 && <div className="mx-8 mt-4 flex flex-wrap items-center gap-3">
+        {pageError && <p role="alert" className="w-full text-sm text-red-400">{pageError}</p>}
+        <button type="button" disabled={isFetchingMore || isLoading}
+          onClick={() => void fetchMorePlaylistItems(playlistId, { force: true })}
+          className="rounded-full bg-app-surface px-4 py-2 text-sm text-[var(--text-primary)] hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50">
+          {isFetchingMore ? "Loading more…" : pageError ? "Retry loading more" : "Load more songs"}
+        </button>
+        {pageError && <button type="button" onClick={() => invalidatePlaylistItems(playlistId)}
+          className="rounded-full border border-white/20 px-4 py-2 text-sm text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Reload playlist</button>}
+        {filterQuery && <span className="text-xs text-[var(--text-secondary)]">Filter applies to loaded songs; loading more is optional.</span>}
+      </div>}
+
     </div>
   )
 }

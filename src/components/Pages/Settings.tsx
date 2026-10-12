@@ -103,14 +103,16 @@ const NAV: { id: Section; label: string; icon: React.ReactNode }[] = [
 // Shared components
 // ---------------------------------------------------------------------------
 
-function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void }) {
   return (
     <button
+      type="button"
       role="switch"
+      aria-label={label}
       aria-checked={value}
       onClick={() => onChange(!value)}
       className={clsx(
-        "relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out focus:outline-none",
+        "relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent",
         value ? "bg-accent" : "bg-white/20"
       )}
     >
@@ -125,12 +127,14 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
 }
 
 function PillGroup<T>({
+  label,
   options,
   value,
   onChange,
   getLabel,
   isActive,
 }: {
+  label: string
   options: readonly T[]
   value: T
   onChange: (v: T) => void
@@ -139,13 +143,15 @@ function PillGroup<T>({
 }) {
   const check = isActive ?? ((a: T, b: T) => a === b)
   return (
-    <div className="flex gap-2 flex-wrap">
+    <div role="group" aria-label={label} className="flex gap-2 flex-wrap">
       {options.map((opt, i) => (
         <button
           key={i}
+          type="button"
+          aria-pressed={check(opt, value)}
           onClick={() => onChange(opt)}
           className={clsx(
-            "rounded-full px-4 py-1.5 text-sm transition-colors",
+            "rounded-full px-4 py-1.5 text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
             check(opt, value)
               ? "bg-accent text-black font-semibold"
               : "bg-white/10 text-white hover:bg-white/20"
@@ -261,6 +267,7 @@ function AppearanceSection() {
       {/* Theme */}
       <SettingCard title="Theme" description="Choose between dark, light, or follow your system preference.">
         <PillGroup
+          label="Theme"
           options={["dark", "light", "system"] as const}
           value={theme}
           onChange={setTheme}
@@ -425,7 +432,7 @@ function AppearanceSection() {
 
       {/* Compact Mode */}
       <SettingCard title="Compact Mode" description="Reduce spacing across the sidebar, top bar, and player for a denser layout.">
-        <Toggle value={compact} onChange={setCompact} />
+        <Toggle label="Compact Mode" value={compact} onChange={setCompact} />
       </SettingCard>
 
       {/* Highlight Intensity */}
@@ -437,7 +444,7 @@ function AppearanceSection() {
       {/* Custom Colors */}
       <SettingCard title="Custom Colors" description="Override individual semantic colors for a fully custom look.">
         <div className="flex items-center justify-between mb-3">
-          <Toggle value={customColorsEnabled} onChange={setCustomColorsEnabled} />
+          <Toggle label="Custom Colors" value={customColorsEnabled} onChange={setCustomColorsEnabled} />
           {customColorsEnabled && Object.keys(overrides).length > 0 && (
             <button
               onClick={resetCustomColors}
@@ -815,7 +822,7 @@ function GeneralSection() {
             description="Show an OS notification when a new track starts playing."
             inline
           >
-            <Toggle value={notificationsEnabled} onChange={setNotificationsEnabled} />
+            <Toggle label="Track Notifications" value={notificationsEnabled} onChange={setNotificationsEnabled} />
           </SettingRow>
 
           <div className="border-t border-white/[0.06]" />
@@ -830,7 +837,7 @@ function GeneralSection() {
               aria-label="System alerts"
               aria-checked={warningNotificationsEnabled}
               disabled={requestingNotificationPermission}
-              className={clsx("relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50", warningNotificationsEnabled ? "bg-accent" : "bg-white/20")}
+              className={clsx("relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent disabled:opacity-50", warningNotificationsEnabled ? "bg-accent" : "bg-white/20")}
               onClick={() => {
                 if (notificationPermissionRequest.current) return
                 const enabling = !warningNotificationsEnabled
@@ -852,7 +859,7 @@ function GeneralSection() {
             description="Merge duplicate albums on artist pages and pick the best quality version for playback."
             inline
           >
-            <Toggle value={deduplicateAlbums} onChange={setDeduplicateAlbums} />
+            <Toggle label="Album Deduplication" value={deduplicateAlbums} onChange={setDeduplicateAlbums} />
           </SettingRow>
 
           <div className="border-t border-white/[0.06]" />
@@ -862,7 +869,7 @@ function GeneralSection() {
             description="Shows raw Plex IDs, file paths, and stream data in track info and right-click menus."
             inline
           >
-            <Toggle value={debugEnabled} onChange={setDebugEnabled} />
+            <Toggle label="Debug Mode" value={debugEnabled} onChange={setDebugEnabled} />
           </SettingRow>
         </div>
       </SettingCard>
@@ -955,7 +962,7 @@ const SOURCE_ICONS: Record<MetadataSource, React.ReactNode> = {
 function CapabilityGrid({ caps, labels }: { caps: { [k: string]: boolean }; labels: { [k: string]: string } }) {
   const entries = Object.entries(labels)
   return (
-    <div className="grid grid-cols-3 gap-2">
+    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
       {entries.map(([key, label]) => {
         const supported = caps[key as keyof typeof caps]
         return (
@@ -975,14 +982,17 @@ function CapabilityGrid({ caps, labels }: { caps: { [k: string]: boolean }; labe
   )
 }
 
+function SupportedFeatures({ children }: { children: React.ReactNode }) {
+  return <details className="rounded-xl border border-[var(--border)] bg-app-card">
+    <summary className="cursor-pointer rounded-xl px-4 py-3 text-sm font-medium text-white/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">Supported features</summary>
+    <div className="border-t border-[var(--border)] p-4">{children}</div>
+  </details>
+}
+
 function PlexSection() {
   return (
     <div className="max-w-2xl space-y-6">
       {/* Plex connection settings */}
-      <div>
-        <h3 className="text-xs font-bold uppercase tracking-widest text-white/25 mb-4">Capabilities</h3>
-        <CapabilityGrid caps={plexBackend.capabilities as unknown as { [k: string]: boolean }} labels={CAPABILITY_LABELS} />
-      </div>
       <div>
         <h3 className="text-xs font-bold uppercase tracking-widest text-white/25 mb-4">Settings</h3>
         <plexBackend.SettingsComponent />
@@ -992,6 +1002,9 @@ function PlexSection() {
       <SettingCard title="Image Cache" description="Artwork fetched from Plex and external metadata sources is saved to disk.">
         <ImageCacheControls />
       </SettingCard>
+      <SupportedFeatures>
+        <CapabilityGrid caps={plexBackend.capabilities as unknown as { [k: string]: boolean }} labels={CAPABILITY_LABELS} />
+      </SupportedFeatures>
     </div>
   )
 }
@@ -1155,17 +1168,14 @@ function MetadataSubPage({ backendId, goBack }: { backendId: string; goBack: () 
         </div>
       </div>
 
-      {/* Capabilities */}
-      <div>
-        <h3 className="text-xs font-bold uppercase tracking-widest text-white/25 mb-4">Capabilities</h3>
-        <CapabilityGrid caps={metaBackend.capabilities as unknown as { [k: string]: boolean }} labels={METADATA_CAPABILITY_LABELS} />
-      </div>
-
       {/* Settings */}
       <div>
         <h3 className="text-xs font-bold uppercase tracking-widest text-white/25 mb-4">Settings</h3>
         <Settings />
       </div>
+      <SupportedFeatures>
+        <CapabilityGrid caps={metaBackend.capabilities as unknown as { [k: string]: boolean }} labels={METADATA_CAPABILITY_LABELS} />
+      </SupportedFeatures>
     </div>
   )
 }
@@ -1516,16 +1526,16 @@ function EasterEggsSection() {
       <SettingCard title="Easter Eggs" description="Hidden features unlocked by the secret code. Toggle them on and off as you please.">
         <div className="space-y-4">
           <SettingRow label="Rainbow Mode" description="Cycles the accent colour through the rainbow spectrum and adds rainbow gradients to the waveform and volume slider." inline>
-            <Toggle value={rainbow} onChange={toggleRainbow} />
+            <Toggle label="Rainbow Mode" value={rainbow} onChange={toggleRainbow} />
           </SettingRow>
           <SettingRow label="Party Mode" description="Flashes the app border on each beat when music is playing." inline>
-            <Toggle value={partyMode} onChange={togglePartyMode} />
+            <Toggle label="Party Mode" value={partyMode} onChange={togglePartyMode} />
           </SettingRow>
           <SettingRow label="Vinyl Spin" description="Makes the album art in the player spin like a vinyl record." inline>
-            <Toggle value={vinylSpin} onChange={toggleVinylSpin} />
+            <Toggle label="Vinyl Spin" value={vinylSpin} onChange={toggleVinylSpin} />
           </SettingRow>
           <SettingRow label="Vaporwave" description="A E S T H E T I C mode. Purple/pink palette with CRT scanlines. Overrides rainbow accent when active." inline>
-            <Toggle value={vaporwave} onChange={toggleVaporwave} />
+            <Toggle label="Vaporwave" value={vaporwave} onChange={toggleVaporwave} />
           </SettingRow>
         </div>
       </SettingCard>
@@ -1572,15 +1582,16 @@ export function SettingsPage({ section: sectionProp }: { section?: string }) {
   return (
     <div className="flex h-full">
       {/* Inner sidebar */}
-      <aside className="w-52 flex-shrink-0 border-r border-white/5 p-6 pt-8">
+      <aside className="w-40 flex-shrink-0 border-r border-white/5 p-3 pt-8 lg:w-52 lg:p-6">
         <p className="mb-4 text-[11px] font-bold uppercase tracking-widest text-white/25">Settings</p>
-        <nav>
+        <nav aria-label="Settings sections">
           <ul className="space-y-0.5">
             {navItems.map(item => {
               const active = section === item.id || (item.id === "metadata" && section.startsWith("metadata/"))
               return (
                 <li key={item.id}>
                   <button
+                    aria-current={active ? "page" : undefined}
                     onClick={() => setSection(item.id)}
                     className={clsx(
                       "relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
@@ -1606,7 +1617,7 @@ export function SettingsPage({ section: sectionProp }: { section?: string }) {
       </aside>
 
       {/* Content */}
-      <main className="flex-1 overflow-auto p-10 pt-8">
+      <main className="min-w-0 flex-1 overflow-auto p-4 pt-8 lg:p-10">
         {!section.startsWith("metadata/") && (
           <h1 className="mb-8 text-2xl font-bold">
             {navItems.find(n => n.id === section)?.label}

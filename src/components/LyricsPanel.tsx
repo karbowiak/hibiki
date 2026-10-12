@@ -325,6 +325,8 @@ export default function LyricsPanel() {
   if (isLyricsPinned) {
     return (
       <div
+        aria-hidden={!isLyricsOpen}
+        inert={!isLyricsOpen}
         className={`flex-shrink-0 overflow-hidden ${isResizing ? "" : "transition-[width] duration-300 ease-in-out"}`}
         style={{ width: isLyricsOpen ? lyricsWidth : 0 }}
       >
@@ -356,6 +358,8 @@ export default function LyricsPanel() {
         />
       )}
       <div
+        aria-hidden={!isLyricsOpen}
+        inert={!isLyricsOpen}
         className={`fixed right-0 top-0 bottom-24 z-50 w-80 flex flex-col bg-app-bg border-l border-[var(--border)] shadow-2xl rounded-l-2xl overflow-hidden transition-transform duration-300 ease-in-out ${
           isLyricsOpen ? "translate-x-0" : "translate-x-full"
         }`}

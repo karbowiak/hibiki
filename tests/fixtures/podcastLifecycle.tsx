@@ -107,9 +107,23 @@ if (scenario === "detail-route") {
   await render(<Router><PodcastsPage /></Router>)
   await complete(requests.find(request => request.command === "podcast_get_categories")!, [])
   await complete(requests.find(request => request.command === "podcast_get_top")!, [{ itunes_id: 1, name: "Lookup", artist_name: "Author", artwork_url: "", feed_url: "" }])
-  await click([...document.querySelectorAll("p")].find(node => node.textContent === "Lookup")!)
+  assert.equal(document.querySelector('input[aria-label="Search podcasts"]')?.tagName, "INPUT")
+  const card = document.querySelector<HTMLButtonElement>('button[aria-label="Open podcast Lookup"]')!
+  assert.equal(card.type, "button")
+  card.focus()
+  assert.equal(document.activeElement, card)
+  // Native buttons convert Enter/Space activation to click without pointer handlers.
+  await act(async () => { card.click(); await flush() })
   await complete(requests.at(-1)!, new Error("offline"), true)
   assert(document.body.textContent?.includes("Could not open podcast"))
+  await act(async () => usePodcastStore.setState({ lastError: "Fixture podcast error" }))
+  const dismiss = document.querySelector<HTMLButtonElement>('button[aria-label="Dismiss podcast error"]')!
+  assert(dismiss)
+  dismiss.focus()
+  assert.equal(document.activeElement, dismiss)
+  await act(async () => { dismiss.click(); await flush() })
+  assert.equal(state().lastError, null)
+  assert(!document.body.textContent?.includes("Fixture podcast error"))
  } else if (scenario === "search-unmount") {
   await render(<Router><PodcastsPage /></Router>)
   await complete(requests.find(request => request.command === "podcast_get_categories")!, [])

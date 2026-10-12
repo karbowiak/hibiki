@@ -16,24 +16,24 @@ export function Playlists() {
   return (
     <div className="pb-12">
       {/* Header */}
-      <div className="flex flex-wrap items-end gap-6 p-8">
-        <div className="flex w-60 h-60 flex-shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-indigo-700 to-purple-500 shadow-2xl">
-          <svg viewBox="0 0 24 24" width="80" height="80" fill="white">
+      <div className="flex flex-wrap items-center gap-5 px-8 py-6">
+        <div className="flex h-32 w-32 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-700 to-purple-500 shadow-lg">
+          <svg aria-hidden="true" viewBox="0 0 24 24" width="56" height="56" fill="white">
             <path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z" />
           </svg>
         </div>
 
-        <div className="flex min-w-0 flex-[1_1_20rem] flex-col justify-between gap-4 self-stretch">
+        <div className="flex min-w-0 flex-[1_1_14rem] flex-col gap-3">
           <div>
-            <div className="break-words text-[76px] font-black leading-none">
+            <h1 className="break-words text-[clamp(1.75rem,3.2vw,3rem)] font-bold leading-tight tracking-tight">
               Playlists
-            </div>
+            </h1>
             <p className="mt-2 max-w-xl select-text text-sm text-gray-400">
               All your playlists in one place.
             </p>
           </div>
           <p className="text-sm text-gray-400">
-            {count} {count === 1 ? "playlist" : "playlists"}
+            {count.toLocaleString()} {count === 1 ? "playlist" : "playlists"}
           </p>
         </div>
       </div>
@@ -77,9 +77,10 @@ export function Playlists() {
                         void playPlaylist(pl.id, pl.trackCount, pl.title, href)
                       }}
                       title={`Play ${pl.title}`}
-                      className="absolute inset-0 flex items-center justify-center bg-overlay-medium opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none transition-opacity"
+                      aria-label={`Play ${pl.title}`}
+                      className="absolute bottom-2 right-2 flex h-10 w-10 items-center justify-center rounded-full bg-accent text-black shadow-lg opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 group-focus-within:opacity-100 group-focus-within:translate-y-0 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none transition-all hover:scale-105"
                     >
-                      <svg viewBox="0 0 16 16" width="24" height="24" fill="white">
+                      <svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
                         <polygon points="3,2 13,8 3,14" />
                       </svg>
                     </button>
@@ -89,7 +90,7 @@ export function Playlists() {
                       {pl.title}
                     </div>
                     <div className="truncate text-xs text-gray-400">
-                      {pl.trackCount} {pl.trackCount === 1 ? "song" : "songs"}
+                      {pl.trackCount.toLocaleString()} {pl.trackCount === 1 ? "song" : "songs"}
                     </div>
                   </div>
                 </Link>

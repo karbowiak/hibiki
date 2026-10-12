@@ -52,6 +52,10 @@ export interface TrackTableProps {
   playlistId?: string | null
   /** When set, enables drag-to-reorder within the table. Called with (fromIndex, toIndex). */
   onReorder?: (fromIndex: number, toIndex: number) => void
+  /** Compact search results omit a second search toolbar and Cmd/Ctrl+K handler. */
+  compact?: boolean
+  /** Search follows the current provider's radio capability; existing callers keep their controls. */
+  showRadio?: boolean
 }
 
 function SortableTrackRow({ id, children, className, onClick, onMouseEnter, onContextMenu }: {
@@ -90,17 +94,37 @@ function SortableTrackRow({ id, children, className, onClick, onMouseEnter, onCo
 }
 
 function TrackRowCells({
-  track, idx, visibleCols, currentTrackId, showInlineRating, onPlay, onAddToQueue, onPlayRadio, tracks,
+  track, idx, visibleCols, currentTrackId, showInlineRating, onPlay, onAddToQueue, onPlayRadio, tracks, compact, showRadio,
 }: {
   track: MusicTrack; idx: number; visibleCols: Set<ColId>; currentTrackId?: string | null
   showInlineRating: boolean; onPlay: TrackTableProps["onPlay"]; onAddToQueue: TrackTableProps["onAddToQueue"]
-  onPlayRadio: TrackTableProps["onPlayRadio"]; tracks: MusicTrack[]
+  onPlayRadio: TrackTableProps["onPlayRadio"]; tracks: MusicTrack[]; compact: boolean; showRadio: boolean
 }) {
   const isActive = currentTrackId === track.id
   return (
     <>
       <td className="p-2 text-center w-8">
-        {isActive ? (
+        {compact ? (
+          <button
+            type="button"
+            aria-label={`Play ${track.title}`}
+            onClick={(e) => {
+              e.stopPropagation()
+              onPlay(track, tracks)
+            }}
+            className={`flex h-7 w-7 items-center justify-center rounded-full hover:bg-hl-menu focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${isActive ? "text-accent" : "text-[var(--text-secondary)]"}`}
+          >
+            <svg
+              viewBox="0 0 16 16"
+              width="12"
+              height="12"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <polygon points="3,2 13,8 3,14" />
+            </svg>
+          </button>
+        ) : isActive ? (
           <>
             <span className="group-hover:hidden flex items-center justify-center text-accent">
               <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
@@ -130,9 +154,9 @@ function TrackRowCells({
           ) : (
             <div className="h-10 w-10 rounded-sm flex-shrink-0 bg-app-surface" />
           )}
-          <div className="min-w-0">
-            <div className={`truncate ${isActive ? "text-accent" : "text-white"}`}>{track.title}</div>
-            <div className="flex items-center gap-2 min-w-0">
+          <div className={compact ? "min-w-0 flex-1" : "min-w-0"}>
+            <div className={`truncate ${isActive ? "text-accent" : compact ? "text-[var(--text-primary)]" : "text-white"}`}>{track.title}</div>
+            <div className={`flex items-center gap-2 min-w-0 ${compact ? "flex-wrap" : ""}`}>
               {!visibleCols.has("artist") && (
                 <div className="truncate shrink min-w-0">
                   {track.artistId ? (
@@ -148,7 +172,7 @@ function TrackRowCells({
                   )}
                 </div>
               )}
-              <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+              <div className={`flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ${compact ? "group-focus-within:opacity-100" : ""}`}>
                 <button
                   className="flex items-center gap-0.5 text-xs text-gray-400 hover:text-white transition-colors px-1 py-0.5 rounded hover:bg-hl-menu"
                   title="Add to Queue"
@@ -159,6 +183,7 @@ function TrackRowCells({
                   </svg>
                   Queue
                 </button>
+                {showRadio && (
                 <button
                   className="flex items-center gap-0.5 text-xs text-gray-400 hover:text-white transition-colors px-1 py-0.5 rounded hover:bg-hl-menu"
                   title="Track Radio"
@@ -169,6 +194,7 @@ function TrackRowCells({
                   </svg>
                   Radio
                 </button>
+                )}
                 {showInlineRating && (
                   <>
                     <span className="w-px h-3 bg-white/20 mx-0.5" />
@@ -250,7 +276,7 @@ function TrackRowCells({
 function TrackTableBody({
   tracks, isLoading, loadedCount, visibleCols, currentTrackId, isCtxTarget, ctxMenu,
   onPlay, onAddToQueue, onPlayRadio, showInlineRating, playlistId,
-  reorderEnabled, trackDrag,
+  reorderEnabled, trackDrag, compact, showRadio,
 }: {
   tracks: MusicTrack[]
   isLoading: boolean
@@ -266,6 +292,8 @@ function TrackTableBody({
   playlistId?: string | null
   reorderEnabled: boolean
   trackDrag: ReturnType<typeof useTrackDrag>
+  compact: boolean
+  showRadio: boolean
 }) {
   const skeletons = isLoading && loadedCount === 0 && Array.from({ length: 8 }).map((_, i) => (
     <tr key={i} className="animate-pulse">
@@ -286,7 +314,7 @@ function TrackTableBody({
     </tr>
   ))
 
-  const cellProps = { visibleCols, currentTrackId, showInlineRating, onPlay, onAddToQueue, onPlayRadio, tracks }
+  const cellProps = { visibleCols, currentTrackId, showInlineRating, onPlay, onAddToQueue, onPlayRadio, tracks, compact, showRadio }
 
   const trackRows = tracks.map((track, idx) => {
     const isActive = currentTrackId === track.id
@@ -357,6 +385,8 @@ export function TrackTable({
   currentTrackId,
   playlistId,
   onReorder,
+  compact = false,
+  showRadio = true,
 }: TrackTableProps) {
   const { handler: ctxMenu, isTarget: isCtxTarget } = useContextMenu()
   const trackDrag = useTrackDrag()
@@ -379,10 +409,11 @@ export function TrackTable({
 
   // Whether to show inline StarRating in the title cell action buttons.
   // If the columns array offers a "rating" column, the parent renders it as a table column instead.
-  const showInlineRating = !columns.some(c => c.id === "rating")
+  const showInlineRating = !compact && !columns.some(c => c.id === "rating")
 
   // Cmd/Ctrl+K hotkey
   useEffect(() => {
+    if (compact) return
     function onKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault()
@@ -395,12 +426,12 @@ export function TrackTable({
     }
     document.addEventListener("keydown", onKeyDown)
     return () => document.removeEventListener("keydown", onKeyDown)
-  }, [onFilterChange])
+  }, [onFilterChange, compact])
 
   return (
-    <div className="px-8 pt-2">
+    <div className={compact ? "min-w-0" : "px-8 pt-2"}>
       {/* Toolbar row: search + column picker */}
-      <div className="flex items-center justify-between pb-1">
+      {!compact && <div className="flex items-center justify-between pb-1">
         <div className="relative">
           <svg className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
             <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85zm-5.242.156a5 5 0 1 1 0-10 5 5 0 0 1 0 10z" />
@@ -415,7 +446,7 @@ export function TrackTable({
           />
         </div>
         <ColumnPicker visible={visibleCols} toggle={toggleCol} columns={columns} />
-      </div>
+      </div>}
 
       {reorderEnabled ? (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -459,12 +490,15 @@ export function TrackTable({
                 playlistId={playlistId}
                 reorderEnabled={reorderEnabled}
                 trackDrag={trackDrag}
+                compact={compact}
+                showRadio={showRadio}
               />
             </table>
           </SortableContext>
         </DndContext>
       ) : (
-        <table className="w-full text-sm text-gray-400">
+        <table className={compact ? "w-full table-fixed text-sm text-[var(--text-secondary)]" : "w-full text-sm text-gray-400"}>
+          {compact && <colgroup><col style={{ width: 44 }} /><col />{[...visibleCols].map(id => <col key={id} style={{ width: "30%" }} />)}<col style={{ width: 76 }} /></colgroup>}
           <thead className="border-b border-white/10">
             <tr>
               <th
@@ -503,6 +537,8 @@ export function TrackTable({
             playlistId={playlistId}
             reorderEnabled={false}
             trackDrag={trackDrag}
+            compact={compact}
+            showRadio={showRadio}
           />
         </table>
       )}

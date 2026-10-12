@@ -56,9 +56,11 @@ function PodcastCard({
 
   const artwork = buildExternalImageUrl(artworkUrl)
   return (
-    <div
+    <button
+      type="button"
+      aria-label={`Open podcast ${title}`}
       onClick={() => void handleClick()}
-      className="group flex-shrink-0 cursor-pointer no-underline"
+      className="group min-w-0 flex-shrink-0 cursor-pointer rounded-lg text-left no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
       style={scrollItem ? { width: "var(--card-size, 160px)" } : undefined}
     >
       <div className="aspect-square w-full overflow-hidden rounded-lg bg-white/5 shadow-lg transition-shadow group-hover:shadow-xl">
@@ -74,8 +76,8 @@ function PodcastCard({
       </div>
       <p className="mt-2 truncate text-sm font-medium text-[color:var(--text-primary)]">{title}</p>
       <p className="truncate text-xs text-gray-400">{author}</p>
-      {lookupError && <p role="alert" className="text-xs text-red-300">Could not open podcast. Click to retry.</p>}
-    </div>
+      {lookupError && <p role="alert" className="text-xs text-red-300">Could not open podcast. Try again.</p>}
+    </button>
   )
 }
 
@@ -85,14 +87,14 @@ function PodcastCard({
 
 function ErrorBanner({ message, onDismiss, onRetry }: { message: string; onDismiss: () => void; onRetry?: () => void }) {
   return (
-    <div className="mb-4 flex items-center gap-3 rounded-lg bg-red-500/10 px-4 py-2.5 text-sm text-red-300 ring-1 ring-red-500/20">
-      <span className="flex-1">{message}</span>
+    <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg bg-red-500/10 px-4 py-2.5 text-sm text-red-300 ring-1 ring-red-500/20">
+      <span className="min-w-0 flex-1 break-words">{message}</span>
       {onRetry && (
         <button onClick={onRetry} className="shrink-0 rounded px-2.5 py-1 text-xs font-medium text-red-200 hover:bg-red-500/20 transition-colors">
           Retry
         </button>
       )}
-      <button onClick={onDismiss} className="shrink-0 text-red-400 hover:text-red-200 transition-colors">
+      <button type="button" aria-label="Dismiss podcast error" onClick={onDismiss} className="shrink-0 rounded p-1 text-red-400 hover:text-red-200 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
         <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
           <path d="M2.22 2.22a.75.75 0 0 1 1.06 0L8 6.94l4.72-4.72a.75.75 0 1 1 1.06 1.06L9.06 8l4.72 4.72a.75.75 0 1 1-1.06 1.06L8 9.06l-4.72 4.72a.75.75 0 0 1-1.06-1.06L6.94 8 2.22 3.28a.75.75 0 0 1 0-1.06z" />
         </svg>
@@ -225,22 +227,23 @@ export function PodcastsPage() {
   const isSearchMode = query.trim().length > 0
 
   return (
-    <div className="p-8">
+    <div className="p-4 sm:p-8">
       {/* Error banner from store (rate limit / network errors) */}
       {lastError && (
         <ErrorBanner message={lastError} onDismiss={clearError} />
       )}
 
       {/* Header */}
-      <div className="mb-8 flex items-center gap-4">
+      <div className="mb-8 flex flex-wrap items-center gap-4">
         <h1 className="text-3xl font-bold">Podcasts</h1>
-        <div className="relative flex-1 max-w-md">
+        <div className="relative min-w-0 flex-[1_1_16rem] max-w-md">
           <input
             type="text"
+            aria-label="Search podcasts"
             value={query}
             onChange={e => handleSearch(e.target.value)}
             placeholder="Search podcasts..."
-            className="w-full rounded-full bg-white/10 px-4 py-2 pl-10 text-sm text-white placeholder-gray-400 outline-none ring-1 ring-white/10 transition-all focus:bg-white/15 focus:ring-white/20"
+            className="w-full rounded-full bg-white/10 px-4 py-2 pl-10 pr-9 text-sm text-white placeholder-gray-400 outline-none ring-1 ring-white/10 transition-all focus:bg-white/15 focus:ring-white/20"
           />
           <svg
             viewBox="0 0 24 24"
@@ -253,6 +256,8 @@ export function PodcastsPage() {
           </svg>
           {query && (
             <button
+              type="button"
+              aria-label="Clear podcast search"
               onClick={() => handleSearch("")}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
             >

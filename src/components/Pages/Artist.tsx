@@ -28,6 +28,7 @@ import { ImageModal } from "../shared/ImageModal"
 import { deduplicateHubAlbums } from "../../lib/dedup"
 import { useMetadataSourceStore } from "../../stores/metadataSourceStore"
 import { HeroRating } from "../HeroRating"
+import { PageLoading } from "../shared/PageLoading"
 import { StarRating } from "../shared/StarRating"
 import { useDebugStore } from "../../stores/debugStore"
 import { useDebugPanelStore } from "../../stores/debugPanelStore"
@@ -236,7 +237,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
     return `deduplicated: ${parts.join(", ")}`
   }, [fullAlbums, singles, relatedHubs])
 
-  if (isLoading) return <div className="p-8 text-sm text-gray-400">Loading artist…</div>
+  if (isLoading) return <PageLoading message="Loading artist…" />
   if (error) return <div className="p-8 text-sm text-red-400">{error}</div>
   if (!artist) return null
 

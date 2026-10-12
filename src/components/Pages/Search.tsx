@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useShallow } from "zustand/shallow"
 import { useSearchStore } from "../../stores"
 import {
@@ -12,6 +12,9 @@ import { prefetchArtist, prefetchAlbum } from "../../stores/metadataCache"
 import { usePlayerStore } from "../../stores/playerStore"
 import { useContextMenu } from "../../hooks/useContextMenu"
 import { makeDragPayload } from "./Home"
+import { TrackTable } from "../shared/TrackTable"
+import { useCapability } from "../../hooks/useCapability"
+import type { ColId } from "../../hooks/useColumnPicker"
 
 type MediaType = "artist" | "album" | "track" | "playlist"
 
@@ -21,6 +24,35 @@ const GROUP_LABELS: Record<MediaType, string> = {
   album: "Albums",
   track: "Tracks",
   playlist: "Playlists",
+}
+
+const PAGE_SIZE: Record<MediaType, number> = {
+  artist: 24,
+  album: 24,
+  track: 50,
+  playlist: 24,
+}
+const TRACK_COLUMNS: { id: ColId; label: string }[] = [
+  { id: "album", label: "Album" },
+]
+const VISIBLE_TRACK_COLUMNS = new Set<ColId>(["album"])
+type SearchView = {
+  results: MusicItem[]
+  query: string
+  filter: MediaType | "all"
+  limits: Record<MediaType, number>
+  sortCol: string
+  sortDir: "asc" | "desc"
+}
+function newView(results: MusicItem[], query: string): SearchView {
+  return {
+    results,
+    query,
+    filter: "all",
+    limits: { ...PAGE_SIZE },
+    sortCol: "default",
+    sortDir: "asc",
+  }
 }
 
 function groupByType(results: MusicItem[]) {
@@ -97,7 +129,15 @@ export function Search() {
       search: s.search,
     }))
   )
-  const playTrack = usePlayerStore((s) => s.playTrack)
+  const { playTrack, addToQueue, playRadio, currentTrack } = usePlayerStore(
+    useShallow((s) => ({
+      playTrack: s.playTrack,
+      addToQueue: s.addToQueue,
+      playRadio: s.playRadio,
+      currentTrack: s.currentTrack,
+    }))
+  )
+  const hasRadio = useCapability("radio")
   const { handler: ctxMenu } = useContextMenu()
 
   const [historyError, setHistoryError] = useState<string | null>(null)
@@ -111,94 +151,223 @@ export function Search() {
   }, [query])
 
   const showResults = query.trim().length > 0
-  const groups = groupByType(results)
+  const groups = useMemo(() => groupByType(results), [results])
+  const [storedView, setView] = useState(() => newView(results, query))
+  // Scope local presentation to the actual result snapshot, including account
+  // switches that reuse the same query text. No retired filter/page hides new data.
+  const view =
+    storedView.results === results && storedView.query === query
+      ? storedView
+      : newView(results, query)
+  const updateView = (change: (current: SearchView) => SearchView) =>
+    setView((current) =>
+      change(
+        current.results === results && current.query === query
+          ? current
+          : newView(results, query)
+      )
+    )
+  const tracks = useMemo(() => {
+    const source = groups.track as (MusicTrack & { type: "track" })[]
+    if (view.sortCol === "default") return source
+    return [...source].sort((a, b) => {
+      const compared =
+        view.sortCol === "duration"
+          ? a.duration - b.duration
+          : view.sortCol === "album"
+            ? a.albumName.localeCompare(b.albumName)
+            : a.title.localeCompare(b.title)
+      return view.sortDir === "asc" ? compared : -compared
+    })
+  }, [groups, view.sortCol, view.sortDir])
+  const total = GROUP_ORDER.reduce((sum, type) => sum + groups[type].length, 0)
 
   return (
-    <div className="pb-32">
+    <div className="min-w-0 pb-12 text-[var(--text-primary)]">
+      <header className="mb-6">
+        <h1 className="break-words text-3xl font-bold">
+          {showResults ? `Results for “${query.trim()}”` : "Search"}
+        </h1>
+        <p className="mt-2 text-sm text-[var(--text-secondary)]">
+          {showResults
+            ? isSearching
+              ? "Searching your library…"
+              : error
+                ? "Search could not be completed."
+                : `${total} ${total === 1 ? "result" : "results"} in your library`
+            : "Find artists, albums, tracks, and playlists in your library."}
+        </p>
+      </header>
       {showResults ? (
-        <div className="space-y-8">
+        <div className="space-y-6">
           {isSearching && (
-            <div role="status" className="text-sm text-gray-400">
+            <p role="status" className="text-sm text-[var(--text-secondary)]">
               Searching…
-            </div>
+            </p>
           )}
           {error && (
-            <div role="alert" className="text-sm text-red-400">
+            <div
+              role="alert"
+              className="rounded-lg border border-red-400/30 bg-red-400/5 p-4 text-sm text-[var(--text-primary)]"
+            >
               <p>Search failed: {error}</p>
               <button
                 onClick={() => void search(query)}
-                className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white"
+                className="mt-3 rounded-full border border-white/20 px-4 py-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
               >
                 Try again
               </button>
             </div>
           )}
-          {!isSearching && !error && results.length === 0 && (
-            <div className="text-sm text-gray-400">
-              No results for "{query}"
+          {!isSearching && !error && total === 0 && (
+            <p className="text-sm text-[var(--text-secondary)]">
+              No results for “{query.trim()}”. Try another artist, album, or
+              track name.
+            </p>
+          )}
+          {total > 0 && (
+            <div
+              role="group"
+              aria-label="Filter search results"
+              className="flex flex-wrap gap-2"
+            >
+              {(["all", ...GROUP_ORDER] as const).map((type) => {
+                const count = type === "all" ? total : groups[type].length
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    aria-pressed={view.filter === type}
+                    disabled={count === 0}
+                    onClick={() =>
+                      updateView((current) => ({ ...current, filter: type }))
+                    }
+                    className={`rounded-full px-4 py-1.5 text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40 ${view.filter === type ? "bg-accent-tint-strong text-accent" : "bg-app-surface text-[var(--text-secondary)] hover:bg-app-surface-hover"}`}
+                  >
+                    {type === "all" ? "All" : GROUP_LABELS[type]}{" "}
+                    <span className="ml-1 tabular-nums">{count}</span>
+                  </button>
+                )
+              })}
             </div>
           )}
-          {GROUP_ORDER.map((type) => {
+          {GROUP_ORDER.filter(
+            (type) => view.filter === "all" || view.filter === type
+          ).map((type) => {
             const items = groups[type]
-            if (!items || items.length === 0) return null
-            const tracks =
-              type === "track"
-                ? items.filter(
-                    (i): i is MusicTrack & { type: "track" } =>
-                      i.type === "track"
-                  )
-                : []
+            if (!items.length) return null
+            const limit = view.limits[type]
+            const visible = Math.min(limit, items.length)
             return (
-              <div key={type}>
-                <div className="mb-3 text-xl font-bold">
-                  {GROUP_LABELS[type]}
-                </div>
-                <MediaGrid gap={3}>
-                  {items.slice(0, 10).map((item) => {
-                    const info = getInfo(item)
-                    if (!info) return null
-                    const prefetch =
-                      info.itemType === "artist"
-                        ? () => prefetchArtist(info.id)
-                        : info.itemType === "album"
-                          ? () => prefetchAlbum(info.id)
+              <section key={type} aria-labelledby={`search-${type}-heading`}>
+                <h2
+                  id={`search-${type}-heading`}
+                  className="mb-3 text-xl font-bold"
+                >
+                  {GROUP_LABELS[type]}{" "}
+                  <span className="ml-2 text-sm font-normal tabular-nums text-[var(--text-secondary)]">
+                    {items.length}
+                  </span>
+                </h2>
+                {type === "track" ? (
+                  <TrackTable
+                    compact
+                    showRadio={hasRadio}
+                    tracks={tracks.slice(0, limit)}
+                    currentTrackId={currentTrack?.id ?? null}
+                    visibleCols={VISIBLE_TRACK_COLUMNS}
+                    toggleCol={() => {}}
+                    columns={TRACK_COLUMNS}
+                    sortCol={view.sortCol}
+                    sortDir={view.sortDir}
+                    onSort={(col) =>
+                      updateView((current) => ({
+                        ...current,
+                        sortCol: col,
+                        sortDir:
+                          current.sortCol === col && current.sortDir === "asc"
+                            ? "desc"
+                            : "asc",
+                      }))
+                    }
+                    onPlay={(track) =>
+                      void playTrack(
+                        track,
+                        tracks,
+                        `Search: ${query.trim()}`,
+                        "/search"
+                      )
+                    }
+                    onAddToQueue={addToQueue}
+                    onPlayRadio={(id, kind) => void playRadio(id, kind)}
+                    searchPlaceholder=""
+                    filterQuery=""
+                    onFilterChange={() => {}}
+                    defaultResetTitle="Restore search result order"
+                  />
+                ) : (
+                  <MediaGrid gap={3}>
+                    {items.slice(0, limit).map((item, index) => {
+                      const info = getInfo(item)
+                      if (!info) return null
+                      const prefetch =
+                        info.itemType === "artist"
+                          ? () => prefetchArtist(info.id)
+                          : info.itemType === "album"
+                            ? () => prefetchAlbum(info.id)
+                            : undefined
+                      const onContextMenu =
+                        item.type === "artist" ||
+                        item.type === "album" ||
+                        item.type === "playlist"
+                          ? ctxMenu(item.type, item)
                           : undefined
-                    const onClick =
-                      info.itemType === "track"
-                        ? () =>
-                            void playTrack(
-                              item as MusicTrack & { type: "track" },
-                              tracks
-                            )
-                        : undefined
-                    const onContextMenu =
-                      item.type === "artist" || item.type === "album"
-                        ? ctxMenu(item.type, item)
-                        : undefined
-                    const Card = MediaCard
-                    return (
-                      <Card
-                        key={info.id}
-                        title={info.title}
-                        desc={info.desc}
-                        thumb={info.thumb}
-                        isArtist={info.isArtist}
-                        href={info.href ?? undefined}
-                        onClick={onClick}
-                        prefetch={prefetch}
-                        onContextMenu={onContextMenu}
-                        dragPayload={makeDragPayload(item)}
-                        artistName={
-                          "artistName" in info ? info.artistName : undefined
-                        }
-                        albumName={
-                          "albumName" in info ? info.albumName : undefined
-                        }
-                      />
-                    )
-                  })}
-                </MediaGrid>
-              </div>
+                      return (
+                        <MediaCard
+                          key={`${info.id}-${index}`}
+                          title={info.title}
+                          desc={info.desc}
+                          thumb={info.thumb}
+                          isArtist={info.isArtist}
+                          href={info.href ?? undefined}
+                          prefetch={prefetch}
+                          onContextMenu={onContextMenu}
+                          dragPayload={makeDragPayload(item)}
+                          artistName={
+                            "artistName" in info ? info.artistName : undefined
+                          }
+                          albumName={
+                            "albumName" in info ? info.albumName : undefined
+                          }
+                        />
+                      )
+                    })}
+                  </MediaGrid>
+                )}
+                {visible < items.length && (
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateView((current) => ({
+                          ...current,
+                          limits: {
+                            ...current.limits,
+                            [type]: current.limits[type] + PAGE_SIZE[type],
+                          },
+                        }))
+                      }
+                      className="rounded-full bg-app-surface px-4 py-2 text-sm font-medium hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                    >
+                      Show more {GROUP_LABELS[type].toLowerCase()} (
+                      {Math.min(PAGE_SIZE[type], items.length - visible)})
+                    </button>
+                    <span className="text-xs tabular-nums text-[var(--text-secondary)]">
+                      Showing {visible} of {items.length}
+                    </span>
+                  </div>
+                )}
+              </section>
             )
           })}
         </div>
@@ -212,7 +381,7 @@ export function Search() {
           {recentSearches.length > 0 ? (
             <>
               <div className="mb-3 flex items-center justify-between">
-                <span className="text-sm font-semibold text-gray-400">
+                <span className="text-sm font-semibold text-[var(--text-secondary)]">
                   Recent searches
                 </span>
                 <button
@@ -225,7 +394,7 @@ export function Search() {
                         "Could not clear recent searches. Try again."
                       )
                   }}
-                  className="text-xs text-gray-600 transition-colors hover:text-gray-300"
+                  className="text-xs text-[var(--text-muted)] transition-colors hover:text-[var(--text-primary)]"
                 >
                   Clear
                 </button>
@@ -235,7 +404,7 @@ export function Search() {
                   <button
                     key={q}
                     onClick={() => void search(q)}
-                    className="rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-sm text-gray-300 transition-all hover:border-accent/30 hover:bg-hl-menu hover:text-white"
+                    className="rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-sm text-[var(--text-secondary)] transition-colors hover:border-accent/30 hover:bg-hl-menu hover:text-[var(--text-primary)]"
                   >
                     {q}
                   </button>
@@ -243,7 +412,7 @@ export function Search() {
               </div>
             </>
           ) : (
-            <div className="py-12 text-center text-sm text-white/40">
+            <div className="py-12 text-center text-sm text-[var(--text-muted)]">
               Type something to search your library.
             </div>
           )}

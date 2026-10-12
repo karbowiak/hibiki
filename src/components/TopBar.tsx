@@ -1,6 +1,6 @@
 import { useProviderStore } from "../stores/providerStore"
 import { useLocation } from "wouter"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useId, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 import {
   useSearchStore,
@@ -11,7 +11,7 @@ import {
 import { metadataBackends } from "../metadata"
 import { clearImageCache } from "../lib/imageCache"
 import { ActivityIndicator } from "./ActivityIndicator"
-import { SearchDropdown } from "./SearchDropdown"
+import { SearchDropdown, buildSearchItems } from "./SearchDropdown"
 import { IS_MACOS } from "../lib/platform"
 import { NotificationCenter } from "./NotificationCenter"
 
@@ -49,6 +49,10 @@ export function TopBar() {
   const [localQuery, setLocalQuery] = useState(query)
   const [showDropdown, setShowDropdown] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
+  const searchId = useId()
+  const results = useSearchStore((s) => s.results)
+  const isSearching = useSearchStore((s) => s.isSearching)
+  const rowCount = results.length ? buildSearchItems(results).length + 1 : 0
   const inputRef = useRef<HTMLInputElement>(null)
 
   // Debounced search — fires regardless of current route
@@ -131,7 +135,7 @@ export function TopBar() {
     }
     if (e.key === "ArrowDown") {
       e.preventDefault()
-      setActiveIndex((i) => i + 1)
+      setActiveIndex((i) => (rowCount ? (i + 1) % rowCount : -1))
     } else if (e.key === "ArrowUp") {
       e.preventDefault()
       setActiveIndex((i) => Math.max(-1, i - 1))
@@ -201,7 +205,7 @@ export function TopBar() {
         </button>
 
         {/* Search input — always visible, wired to store */}
-        <div className="relative min-w-0 w-[364px] max-w-full shrink text-sm text-black">
+        <div className="relative w-[364px] min-w-0 max-w-full shrink text-sm text-black">
           <svg
             height="16"
             width="16"
@@ -214,6 +218,16 @@ export function TopBar() {
             ref={inputRef}
             type="text"
             aria-label="Search your music library"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={showDropdown}
+            aria-controls={showDropdown ? searchId : undefined}
+            aria-activedescendant={
+              showDropdown && activeIndex >= 0 && activeIndex < rowCount
+                ? `${searchId}-option-${activeIndex}`
+                : undefined
+            }
+            aria-busy={isSearching}
             data-library-search="true"
             value={localQuery}
             onChange={(e) => handleQueryChange(e.target.value)}
@@ -221,15 +235,18 @@ export function TopBar() {
             onBlur={handleInputBlur}
             onKeyDown={handleInputKeyDown}
             placeholder="What do you want to listen to?"
-            className="h-[40px] w-full min-w-0 rounded-full bg-white pl-10 pr-4 text-black focus:outline-none"
+            className="h-[40px] w-full min-w-0 rounded-full bg-white pl-10 pr-9 text-black focus:outline-none"
           />
           {localQuery && (
             <button
               type="button"
+              aria-label="Clear search"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
                 setLocalQuery("")
                 clear()
+                setActiveIndex(-1)
+                inputRef.current?.focus()
                 setShowDropdown(false)
               }}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-[#121212]/40 hover:text-[#121212]"
@@ -246,6 +263,7 @@ export function TopBar() {
           )}
           {showDropdown && (
             <SearchDropdown
+              id={searchId}
               activeIndex={activeIndex}
               onActiveIndexChange={setActiveIndex}
               onClose={() => setShowDropdown(false)}

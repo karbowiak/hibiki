@@ -26,6 +26,7 @@ import {
 import { useAlbumEnrichment } from "../../hooks/useMetadataEnrichment"
 import { useMetadataSourceStore } from "../../stores/metadataSourceStore"
 import { HeroRating } from "../HeroRating"
+import { PageLoading } from "../shared/PageLoading"
 import { StarRating } from "../shared/StarRating"
 import { useDebugStore } from "../../stores/debugStore"
 import { useDebugPanelStore } from "../../stores/debugPanelStore"
@@ -153,7 +154,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
   const { failures, onFailure } = useArtworkFailures(JSON.stringify([albumId, album?.artistName, album?.title, album?.thumbUrl]))
   const thumbUrl = useAlbumImage(album?.artistName ?? null, album?.title ?? null, album?.thumbUrl ?? null, albumId, failures)
 
-  if (isLoading) return <div className="p-8 text-sm text-gray-400">Loading album…</div>
+  if (isLoading) return <PageLoading message="Loading album…" />
   if (error) return <div className="p-8 text-sm text-red-400">{error}</div>
   if (!album) return null
 
