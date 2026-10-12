@@ -13,8 +13,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -39,6 +39,16 @@ pub struct CacheStats {
     pub total_bytes: u64,
     pub file_count: usize,
     pub max_bytes: u64,
+    pub status: CacheStatus,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheStatus {
+    Ready,
+    Busy,
+    Unavailable,
+    Retired,
 }
 
 /// Cache, download and loader tasks share the index; the audio callback never
@@ -48,27 +58,29 @@ pub struct AudioCache {
     index: Arc<Mutex<CacheIndex>>,
     max_bytes: Arc<AtomicU64>,
     owner: Arc<CacheOwner>,
-    available: bool,
+    status: AtomicU8,
+    limit_initialized: AtomicBool,
     entry_limit: usize,
 }
 
 struct CacheOwner {
     generation: AtomicU64,
     directory: PathBuf,
-    directory_id: Option<(u64, u64)>,
+    directory_id: OnceLock<(u64, u64)>,
     // Writers retain ownership even if the cache manager is dropped.
-    _lock: Option<fs::File>,
+    _lock: OnceLock<fs::File>,
 }
 
 impl CacheOwner {
     fn directory_is_current(&self) -> bool {
-        let Some(lock) = self._lock.as_ref() else {
+        let Some(lock) = self._lock.get() else {
             return false;
         };
         if !file_is_current(lock, &self.directory.join(".audio-cache.lock")) {
             return false;
         }
-        self.directory_id.is_some() && directory_id(&self.directory) == self.directory_id
+        self.directory_id.get().is_some()
+            && directory_id(&self.directory) == self.directory_id.get().copied()
     }
 }
 
@@ -78,7 +90,7 @@ impl Drop for CacheOwner {
         // spawn can temporarily inherit the locked open-file description.
         // This owner is shared with pending writers, so its final Drop is the
         // point at which no cache operation can still need exclusive access.
-        if let Some(lock) = self._lock.as_ref() {
+        if let Some(lock) = self._lock.get() {
             if let Err(error) = lock.unlock() {
                 warn!(%error, "failed to release audio cache ownership");
             }
@@ -152,6 +164,29 @@ struct CacheIndex {
 }
 
 impl CacheIndex {
+    fn load_verified(directory: &Path) -> Self {
+        let path = directory.join("index.json");
+        let mut index = Self::load(&path);
+        let before = index.entries.len();
+        let mut total = 0_u64;
+        index.entries.retain(|key, entry| {
+            if !valid_entry(directory, key, entry) {
+                return false;
+            }
+            if let Some(sum) = total.checked_add(entry.size_bytes) {
+                total = sum;
+                true
+            } else {
+                false
+            }
+        });
+        if index.entries.len() != before || index.total_bytes != total {
+            index.total_bytes = total;
+            index.save(&path);
+        }
+        index
+    }
+
     fn load(path: &Path) -> Self {
         let read = || -> std::io::Result<Self> {
             let metadata = fs::symlink_metadata(path)?;
@@ -228,11 +263,13 @@ impl AudioCache {
         let root_lock = available
             .then(|| lock_cache_directory(&cache_dir))
             .transpose();
-        let root_lock = match root_lock {
-            Ok(lock) => lock,
+        let (root_lock, status) = match root_lock {
+            Ok(Some(lock)) => (Some(lock), CacheStatus::Ready),
+            Ok(None) => (None, CacheStatus::Unavailable),
             Err(error) => {
                 warn!(%error, "audio cache disabled: cannot acquire ownership");
-                None
+                let status = error.status();
+                (None, status)
             }
         };
         let available = available && root_lock.is_some();
@@ -241,31 +278,11 @@ impl AudioCache {
             use std::os::unix::fs::PermissionsExt;
             let _ = fs::set_permissions(&cache_dir, fs::Permissions::from_mode(0o700));
         }
-        let index_path = cache_dir.join("index.json");
-        let mut index = if available {
-            CacheIndex::load(&index_path)
+        let index = if available {
+            CacheIndex::load_verified(&cache_dir)
         } else {
             CacheIndex::default()
         };
-
-        // Verify entries still exist on disk — remove orphans
-        let before = index.entries.len();
-        let mut total = 0_u64;
-        index.entries.retain(|key, entry| {
-            if !valid_entry(&cache_dir, key, entry) {
-                return false;
-            }
-            if let Some(sum) = total.checked_add(entry.size_bytes) {
-                total = sum;
-                true
-            } else {
-                false
-            }
-        });
-        if index.entries.len() != before || index.total_bytes != total {
-            index.total_bytes = total;
-            index.save(&index_path);
-        }
 
         let max = max_bytes.unwrap_or(DEFAULT_MAX_BYTES);
         info!(
@@ -279,15 +296,22 @@ impl AudioCache {
         let owner = Arc::new(CacheOwner {
             generation: AtomicU64::new(0),
             directory: cache_dir.clone(),
-            directory_id: directory_id(&cache_dir),
-            _lock: root_lock,
+            directory_id: OnceLock::new(),
+            _lock: OnceLock::new(),
         });
+        if let Some(lock) = root_lock {
+            if let Some(identity) = directory_id(&cache_dir) {
+                let _ = owner.directory_id.set(identity);
+            }
+            let _ = owner._lock.set(lock);
+        }
         let cache = Self {
             cache_dir,
             index: Arc::new(Mutex::new(index)),
             max_bytes: Arc::new(AtomicU64::new(max)),
             owner,
-            available,
+            status: AtomicU8::new(status as u8),
+            limit_initialized: AtomicBool::new(max_bytes.is_some()),
             entry_limit,
         };
         if available {
@@ -302,12 +326,16 @@ impl AudioCache {
     }
 
     fn remove_crash_orphans(&self) {
-        if self.check_directory().is_err() {
+        if !self.owner.directory_is_current() {
             return;
         }
         let Ok(idx) = self.index.lock() else {
             return;
         };
+        self.remove_crash_orphans_with_index(&idx);
+    }
+
+    fn remove_crash_orphans_with_index(&self, idx: &CacheIndex) {
         let retained: HashSet<_> = idx
             .entries
             .values()
@@ -381,7 +409,7 @@ impl AudioCache {
     }
 
     fn lookup_file(&self, key: &str) -> Option<(PathBuf, fs::File, CacheStamp)> {
-        if !self.available || !self.owner.directory_is_current() {
+        if self.check_directory().is_err() {
             return None;
         }
         let mut idx = self.index.lock().ok()?;
@@ -411,7 +439,7 @@ impl AudioCache {
 
     /// Get the computed loudness gain for a cached track (if analyzed).
     pub fn get_computed_gain(&self, key: &str) -> Option<f32> {
-        if !self.available || !self.owner.directory_is_current() {
+        if self.check_directory().is_err() {
             return None;
         }
         let idx = self.index.lock().ok()?;
@@ -422,8 +450,7 @@ impl AudioCache {
     }
 
     pub(super) fn stamp_is_current(&self, key: &str, stamp: &CacheStamp) -> bool {
-        self.available
-            && self.owner.directory_is_current()
+        self.check_directory().is_ok()
             && self
                 .index
                 .lock()
@@ -439,7 +466,7 @@ impl AudioCache {
         stamp: &CacheStamp,
         gain_db: f32,
     ) -> bool {
-        if !gain_db.is_finite() || !self.available || !self.owner.directory_is_current() {
+        if !gain_db.is_finite() || self.check_directory().is_err() {
             return false;
         }
         let Ok(mut idx) = self.index.lock() else {
@@ -460,7 +487,7 @@ impl AudioCache {
     /// Test fixture helper; production measurements require an exact file stamp.
     #[cfg(test)]
     pub fn set_computed_gain(&self, key: &str, gain_db: f32) {
-        if !gain_db.is_finite() || !self.available || !self.owner.directory_is_current() {
+        if !gain_db.is_finite() || self.check_directory().is_err() {
             return;
         }
         if let Ok(mut idx) = self.index.lock() {
@@ -475,9 +502,7 @@ impl AudioCache {
     /// Begin writing a new cache file. Returns a `CacheWriter` that receives
     /// chunks and must be finished (or aborted) when done.
     pub fn begin_write(&self, key: &str, ext: &str) -> Result<CacheWriter, String> {
-        if !self.available || !self.owner.directory_is_current() {
-            return Err("audio cache directory is unavailable or redirected".into());
-        }
+        self.check_directory()?;
         if !valid_key(key) {
             return Err("invalid cache key".into());
         }
@@ -531,11 +556,21 @@ impl AudioCache {
 
     /// Update the maximum cache size and trigger eviction if needed.
     pub fn set_max_bytes(&self, max: u64) -> Result<CacheStats, String> {
-        self.check_directory()?;
         let mut idx = self
             .index
             .lock()
             .map_err(|_| "audio cache index unavailable")?;
+        match self.acquire_with_index(&mut idx) {
+            CacheStatus::Busy | CacheStatus::Unavailable => {
+                // Persisted preferences remain valid while another instance
+                // owns the optional cache. Do not touch its files or index.
+                self.max_bytes.store(max, Ordering::Release);
+                self.limit_initialized.store(true, Ordering::Release);
+                return Ok(self.stats_with_index(&idx));
+            }
+            CacheStatus::Retired => return Err(Self::status_error(CacheStatus::Retired)),
+            CacheStatus::Ready => {}
+        }
         let previous = self.max_bytes.swap(max, Ordering::AcqRel);
         if max != 0 && idx.partial_bytes > max {
             self.owner.generation.fetch_add(1, Ordering::AcqRel);
@@ -550,15 +585,99 @@ impl AudioCache {
             self.max_bytes.store(previous, Ordering::Release);
             return Err(error);
         }
+        self.limit_initialized.store(true, Ordering::Release);
         Ok(self.stats_with_index(&idx))
     }
 
     fn check_directory(&self) -> Result<(), String> {
-        if !self.available || !self.owner.directory_is_current() {
-            Err("Audio cache directory is unavailable or has moved. Restart Hibiki after checking storage permissions.".into())
+        let status = if self.owner._lock.get().is_some() {
+            self.current_status()
         } else {
-            Ok(())
+            let mut index = self
+                .index
+                .lock()
+                .map_err(|_| "audio cache index unavailable")?;
+            self.acquire_with_index(&mut index)
+        };
+        match status {
+            CacheStatus::Ready => Ok(()),
+            status => Err(Self::status_error(status)),
         }
+    }
+
+    fn status_error(status: CacheStatus) -> String {
+        match status {
+            CacheStatus::Busy => "Audio cache is in use by another Hibiki instance. Playback continues without caching.",
+            CacheStatus::Unavailable => "Audio cache storage is currently unavailable. Playback continues without caching.",
+            CacheStatus::Retired => "Audio cache directory or lock ownership changed. Restart Hibiki before modifying cached files.",
+            CacheStatus::Ready => "Audio cache is available.",
+        }.into()
+    }
+
+    fn current_status(&self) -> CacheStatus {
+        if self.owner._lock.get().is_some() {
+            if self.owner.directory_is_current() {
+                CacheStatus::Ready
+            } else {
+                CacheStatus::Retired
+            }
+        } else {
+            match self.status.load(Ordering::Acquire) {
+                value if value == CacheStatus::Busy as u8 => CacheStatus::Busy,
+                _ => CacheStatus::Unavailable,
+            }
+        }
+    }
+
+    // Only an owner which has never accepted a directory may recover. Once
+    // accepted, both identity and lock remain pinned for this manager/writers.
+    fn acquire_with_index(&self, index: &mut CacheIndex) -> CacheStatus {
+        if self.owner._lock.get().is_some() {
+            return self.current_status();
+        }
+        let mut directory = fs::DirBuilder::new();
+        directory.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            directory.mode(0o700);
+        }
+        let _ = directory.create(&self.cache_dir);
+        let lock = match lock_cache_directory(&self.cache_dir) {
+            Ok(lock) => lock,
+            Err(error) => {
+                let status = error.status();
+                self.status.store(status as u8, Ordering::Release);
+                return status;
+            }
+        };
+        let Some(identity) = directory_id(&self.cache_dir) else {
+            return CacheStatus::Unavailable;
+        };
+        let _ = self.owner.directory_id.set(identity);
+        let _ = self.owner._lock.set(lock);
+        if !self.owner.directory_is_current() {
+            return CacheStatus::Retired;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&self.cache_dir, fs::Permissions::from_mode(0o700));
+        }
+        *index = CacheIndex::load_verified(&self.cache_dir);
+        self.remove_crash_orphans_with_index(index);
+        // The temporary default must not evict a larger persisted cache before
+        // renderer preferences arrive, including when ownership was deferred.
+        if self.limit_initialized.load(Ordering::Acquire) {
+            let before = index.entries.len();
+            self.evict_with_index(index);
+            if index.entries.len() != before {
+                index.save(&self.index_path());
+            }
+        }
+        self.status
+            .store(CacheStatus::Ready as u8, Ordering::Release);
+        CacheStatus::Ready
     }
 
     fn remove_partials(&self, idx: &mut CacheIndex) -> Result<(), String> {
@@ -634,18 +753,20 @@ impl AudioCache {
             total_bytes: idx.total_bytes.saturating_add(idx.partial_bytes),
             file_count: idx.entries.len(),
             max_bytes: self.max_bytes.load(Ordering::Acquire),
+            status: self.current_status(),
         }
     }
 
     /// Get cache statistics.
     pub fn stats(&self) -> CacheStats {
-        let idx = self.index.lock().unwrap_or_else(|error| error.into_inner());
+        let mut idx = self.index.lock().unwrap_or_else(|error| error.into_inner());
+        self.acquire_with_index(&mut idx);
         self.stats_with_index(&idx)
     }
 
     /// Evict least-recently-accessed entries until under the max size.
     fn evict(&self) {
-        if !self.available || !self.owner.directory_is_current() {
+        if self.check_directory().is_err() {
             return;
         }
         if let Ok(mut idx) = self.index.lock() {
@@ -921,29 +1042,62 @@ fn valid_filename(key: &str, filename: &str) -> bool {
             .is_some_and(|(prefix, extension)| prefix == key && valid_extension(extension))
 }
 
-fn lock_cache_directory(directory: &Path) -> Result<fs::File, String> {
-    let identity = directory_id(directory).ok_or("audio cache directory is unavailable")?;
+#[derive(Debug)]
+enum CacheLockError {
+    Busy,
+    Unavailable(String),
+}
+
+impl CacheLockError {
+    fn status(&self) -> CacheStatus {
+        match self {
+            Self::Busy => CacheStatus::Busy,
+            Self::Unavailable(_) => CacheStatus::Unavailable,
+        }
+    }
+    fn storage(error: impl ToString) -> Self {
+        Self::Unavailable(error.to_string())
+    }
+}
+
+impl std::fmt::Display for CacheLockError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Busy => formatter.write_str("audio cache is owned by another Hibiki instance"),
+            Self::Unavailable(error) => formatter.write_str(error),
+        }
+    }
+}
+
+fn lock_cache_directory(directory: &Path) -> Result<fs::File, CacheLockError> {
+    let identity = directory_id(directory)
+        .ok_or_else(|| CacheLockError::storage("audio cache directory is unavailable"))?;
     let path = directory.join(".audio-cache.lock");
     let lock = match fs::File::create_new(&path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            open_writable_regular_file(&path).map_err(|error| error.to_string())?
+            open_writable_regular_file(&path).map_err(CacheLockError::storage)?
         }
-        Err(error) => return Err(error.to_string()),
+        Err(error) => return Err(CacheLockError::storage(error)),
     };
-    if !regular_file(&lock.metadata().map_err(|error| error.to_string())?) {
-        return Err("audio cache lock is not a private file".into());
+    if !regular_file(&lock.metadata().map_err(CacheLockError::storage)?) {
+        return Err(CacheLockError::storage(
+            "audio cache lock is not a private file",
+        ));
     }
-    lock.try_lock()
-        .map_err(|error| format!("audio cache is owned by another process: {error}"))?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => return Err(CacheLockError::Busy),
+        Err(std::fs::TryLockError::Error(error)) => return Err(CacheLockError::storage(error)),
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         lock.set_permissions(fs::Permissions::from_mode(0o600))
-            .map_err(|error| error.to_string())?;
+            .map_err(CacheLockError::storage)?;
     }
     if directory_id(directory) != Some(identity) || !file_is_current(&lock, &path) {
-        return Err("audio cache directory changed".into());
+        return Err(CacheLockError::storage("audio cache directory changed"));
     }
     Ok(lock)
 }
@@ -1051,6 +1205,128 @@ mod tests {
     }
 
     #[test]
+    fn busy_startup_accepts_preferences_and_recovers_without_mutating_the_active_owner() {
+        let directory = tempfile::tempdir().unwrap();
+        let first = AudioCache::new(directory.path().into(), None);
+        let mut writer = first.begin_write("42", "flac").unwrap();
+        writer.write_chunk(b"original cached source").unwrap();
+        writer.finish(&first).unwrap();
+        let original_index = fs::read(first.index_path()).unwrap();
+        let second = AudioCache::new(directory.path().into(), None);
+        let settings = second.set_max_bytes(64).unwrap();
+        assert_eq!(settings.status, CacheStatus::Busy);
+        assert_eq!(settings.max_bytes, 64);
+        assert!(second.lookup("42").is_none());
+        assert!(second.begin_write("new", "flac").is_err());
+        assert!(second
+            .clear()
+            .unwrap_err()
+            .contains("another Hibiki instance"));
+        assert_eq!(fs::read(first.index_path()).unwrap(), original_index);
+        assert_eq!(
+            fs::read(first.lookup("42").unwrap()).unwrap(),
+            b"original cached source"
+        );
+        drop(first);
+        assert_eq!(
+            fs::read(second.lookup("42").unwrap()).unwrap(),
+            b"original cached source"
+        );
+        assert_eq!(second.stats().status, CacheStatus::Ready);
+        assert_eq!(second.stats().max_bytes, 64);
+        let mut fresh = second.begin_write("new", "flac").unwrap();
+        fresh.write_chunk(b"second cache owner").unwrap();
+        fresh.finish(&second).unwrap();
+        assert_eq!(second.stats().file_count, 2);
+        let mut oversized = second.begin_write("too-large", "flac").unwrap();
+        assert!(oversized.write_chunk(&[0; 65]).is_err());
+        assert_eq!(second.stats().file_count, 2);
+    }
+
+    #[test]
+    fn initially_unavailable_storage_can_recover_without_losing_requested_limits() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache_path = directory.path().join("cache");
+        fs::write(&cache_path, b"unavailable directory placeholder").unwrap();
+        let cache = AudioCache::new(cache_path.clone(), None);
+        let settings = cache.set_max_bytes(128).unwrap();
+        assert_eq!(settings.status, CacheStatus::Unavailable);
+        assert_eq!(settings.max_bytes, 128);
+        assert!(cache.clear().is_err());
+        assert_eq!(
+            fs::read(&cache_path).unwrap(),
+            b"unavailable directory placeholder"
+        );
+        fs::remove_file(&cache_path).unwrap();
+        assert_eq!(cache.stats().status, CacheStatus::Ready);
+        let mut writer = cache.begin_write("42", "flac").unwrap();
+        writer.write_chunk(b"storage is back").unwrap();
+        writer.finish(&cache).unwrap();
+        assert_eq!(cache.stats().max_bytes, 128);
+        assert_eq!(
+            fs::read(cache.lookup("42").unwrap()).unwrap(),
+            b"storage is back"
+        );
+    }
+
+    #[test]
+    fn concurrent_first_recovery_loads_one_shared_index_before_admitting_writers() {
+        let directory = tempfile::tempdir().unwrap();
+        let first = AudioCache::new(directory.path().into(), None);
+        let mut original = first.begin_write("42", "flac").unwrap();
+        original.write_chunk(b"preserved").unwrap();
+        original.finish(&first).unwrap();
+        let second = Arc::new(AudioCache::new(directory.path().into(), None));
+        assert_eq!(
+            second.set_max_bytes(1024).unwrap().status,
+            CacheStatus::Busy
+        );
+        drop(first);
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let workers: Vec<_> = (0..8)
+            .map(|number| {
+                let cache = second.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let mut writer = cache.begin_write(&format!("new-{number}"), "flac").unwrap();
+                    writer.write_chunk(b"new source").unwrap();
+                    writer.finish(&cache).unwrap();
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        assert_eq!(second.stats().status, CacheStatus::Ready);
+        assert_eq!(second.stats().file_count, 9);
+        assert_eq!(
+            fs::read(second.lookup("42").unwrap()).unwrap(),
+            b"preserved"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_normal_parent_directory_alias_can_recover_from_another_instances_lock() {
+        use std::os::unix::fs::symlink;
+        let directory = tempfile::tempdir().unwrap();
+        let real_parent = directory.path().join("real-parent");
+        fs::create_dir(&real_parent).unwrap();
+        let alias = directory.path().join("parent-alias");
+        symlink(&real_parent, &alias).unwrap();
+        let first = AudioCache::new(real_parent.join("cache"), None);
+        let second = AudioCache::new(alias.join("cache"), None);
+        assert_eq!(second.set_max_bytes(64).unwrap().status, CacheStatus::Busy);
+        drop(first);
+        assert_eq!(second.stats().status, CacheStatus::Ready);
+        assert_eq!(
+            second.cache_dir,
+            fs::canonicalize(real_parent.join("cache")).unwrap()
+        );
+    }
+
+    #[test]
     fn final_cache_owner_releases_lock_even_with_a_surviving_duplicate_descriptor() {
         let dir = tempfile::tempdir().unwrap();
         let cache = AudioCache::new(dir.path().into(), None);
@@ -1059,11 +1335,11 @@ mod tests {
         writer.finish(&cache).unwrap();
         // A process spawn can transiently inherit this open-file description
         // before exec closes its descriptor. Model that without forking tests.
-        let inherited = cache.owner._lock.as_ref().unwrap().try_clone().unwrap();
+        let inherited = cache.owner._lock.get().unwrap().try_clone().unwrap();
         drop(cache);
         let restored = AudioCache::new(dir.path().into(), None);
         assert!(
-            restored.available,
+            restored.current_status() == CacheStatus::Ready,
             "the final owner must release its lock explicitly"
         );
         assert_eq!(
@@ -1073,7 +1349,7 @@ mod tests {
         drop(inherited);
         let competing = AudioCache::new(dir.path().into(), None);
         assert!(
-            !competing.available,
+            competing.current_status() == CacheStatus::Busy,
             "replacement owner retains exclusivity"
         );
         assert!(restored.begin_write("43", "flac").is_ok());
@@ -1154,7 +1430,9 @@ mod tests {
         let cache = AudioCache::new(dir.clone(), Some(1));
         if std::env::var("HIBIKI_AUDIO_CACHE_TEST_MODE").unwrap() == "busy" {
             assert!(cache.clear().is_err());
-            assert!(cache.set_max_bytes(1).is_err());
+            let configured = cache.set_max_bytes(1).unwrap();
+            assert_eq!(configured.status, CacheStatus::Busy);
+            assert_eq!(configured.max_bytes, 1);
             assert!(cache.begin_write("replacement", "wav").is_err());
         } else {
             cache.set_max_bytes(1024).unwrap();
@@ -1229,6 +1507,13 @@ mod tests {
         assert_eq!(cache.stats().total_bytes, DEFAULT_MAX_BYTES + 1);
         cache.set_max_bytes(DEFAULT_MAX_BYTES + 2).unwrap();
         assert!(cache.lookup("42").is_some());
+        let delayed = AudioCache::new(directory.path().into(), None);
+        assert_eq!(delayed.stats().status, CacheStatus::Busy);
+        drop(cache);
+        assert!(delayed.lookup("42").is_some());
+        assert_eq!(delayed.stats().total_bytes, DEFAULT_MAX_BYTES + 1);
+        delayed.set_max_bytes(DEFAULT_MAX_BYTES + 2).unwrap();
+        assert!(delayed.lookup("42").is_some());
     }
     #[test]
     fn a_declared_oversized_download_keeps_useful_cached_audio() {
@@ -1365,13 +1650,19 @@ mod tests {
         fs::rename(&cache_dir, directory.path().join("original-cache")).unwrap();
         fs::create_dir(&cache_dir).unwrap();
         fs::write(cache_dir.join("42.flac"), b"private data!").unwrap();
-        Arc::get_mut(&mut cache.owner).unwrap()._lock =
-            Some(lock_cache_directory(&cache_dir).unwrap());
+        Arc::get_mut(&mut cache.owner)
+            .unwrap()
+            ._lock
+            .set(lock_cache_directory(&cache_dir).unwrap())
+            .unwrap();
         assert!(file_is_current(
-            cache.owner._lock.as_ref().unwrap(),
+            cache.owner._lock.get().unwrap(),
             &cache_dir.join(".audio-cache.lock")
         ));
-        assert_ne!(directory_id(&cache_dir), cache.owner.directory_id);
+        assert_ne!(
+            directory_id(&cache_dir),
+            cache.owner.directory_id.get().copied()
+        );
         let hit = cache.open("42");
         assert!(cache.clear().is_err());
         assert!(hit.is_none());

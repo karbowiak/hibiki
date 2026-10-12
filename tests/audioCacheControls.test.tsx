@@ -14,6 +14,7 @@ const initial: AudioCacheStats = {
   total_bytes: 2048,
   file_count: 2,
   max_bytes: 5 * GIB,
+  status: "ready",
 }
 
 async function withControls(

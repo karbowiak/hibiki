@@ -36,6 +36,7 @@ export interface AudioCacheStats {
   total_bytes: number
   file_count: number
   max_bytes: number
+  status: "ready" | "busy" | "unavailable" | "retired"
 }
 
 // ---------------------------------------------------------------------------
