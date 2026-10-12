@@ -1,3 +1,4 @@
+import { useArtworkAppearanceStore } from "../../stores/artworkAppearanceStore"
 import React, { useState, useEffect, useRef, useMemo } from "react"
 import { useLocation } from "wouter"
 import { open } from "@tauri-apps/plugin-shell"
@@ -241,6 +242,7 @@ function SettingCard({
 // ---------------------------------------------------------------------------
 
 function AppearanceSection() {
+  const { artworkColorsEnabled, setArtworkColorsEnabled } = useArtworkAppearanceStore()
   const { accent, setAccent } = useAccentStore()
   const [custom, setCustom] = useState(accent)
   const [theme, setThemeState] = useState(getTheme)
@@ -433,6 +435,10 @@ function AppearanceSection() {
       {/* Compact Mode */}
       <SettingCard title="Compact Mode" description="Reduce spacing across the sidebar, top bar, and player for a denser layout.">
         <Toggle label="Compact Mode" value={compact} onChange={setCompact} />
+      </SettingCard>
+
+      <SettingCard title="Artwork colors" description="Use colors from artist and album artwork for their buttons. Your global accent and custom interface colors stay unchanged.">
+        <Toggle label="Artwork colors" value={artworkColorsEnabled} onChange={setArtworkColorsEnabled} />
       </SettingCard>
 
       {/* Highlight Intensity */}
