@@ -1,4 +1,4 @@
-import { useCallback, useRef, useMemo } from "react"
+import { useCallback, useRef, useMemo, useEffect } from "react"
 import type { LevelData } from "../providers/types"
 import { useVisualizerStore, type CompactVisualizerMode } from "../stores/visualizerStore"
 import { useEasterEggStore } from "../stores/easterEggStore"
@@ -7,87 +7,9 @@ import { useAccentStore } from "../stores/accentStore"
 import { useVisualizationVisibility } from "../hooks/useVisualizationVisibility"
 import { useVisualizationFrames } from "../hooks/useVisualizationFrames"
 import { computeSpectrumFromFFT } from "../lib/visualizerSpectrum"
+import { useArtworkPaletteRevision } from "../lib/artworkPaletteContext"
 
-// ---------------------------------------------------------------------------
-// Waveform math (Catmull-Rom spline — mirrors the SVG WaveformSVG logic)
-// ---------------------------------------------------------------------------
-
-const WAVEFORM_BARS = 200
-const MIN_AMP = 1.5
-const WAVEFORM_SCALE = 0.78 // cap waveform at 78% of half-height — leaves breathing room like PlexAmp
-
-function processLoudnessData(levels: LevelData[]): number[] {
-  if (levels.length === 0) return Array(WAVEFORM_BARS).fill(MIN_AMP / 14)
-  // Mirrors PlexAmp's ProcessLoudnessData: dBFS floor → quadratic boost → power curve → normalise
-  let vals = levels.map(l => {
-    const t = (Math.max(l.loudness, -35) + 35) * (100 / 35)
-    const boosted = t * t / 100 * 1.5
-    return isFinite(boosted) ? boosted : 3
-  })
-  const max1 = Math.max(...vals, 0.01)
-  vals = vals.map(v => v * (90 / 2.2) / max1)
-  const curved = vals.map(v => Math.pow(Math.max(0, v), 1.2) / 2.4)
-  const max2 = Math.max(...curved, 0.01)
-  const normalised = curved.map(v => v / max2)
-  // Linear interpolation to exactly WAVEFORM_BARS (smoother than nearest-neighbour)
-  if (normalised.length === WAVEFORM_BARS) return normalised
-  const out: number[] = new Array(WAVEFORM_BARS)
-  const step = (normalised.length - 1) / (WAVEFORM_BARS - 1)
-  out[0] = normalised[0]
-  for (let i = 1; i < WAVEFORM_BARS - 1; i++) {
-    const pos = i * step
-    const lo = Math.floor(pos)
-    const hi = Math.ceil(pos)
-    out[i] = normalised[lo] + (normalised[hi] - normalised[lo]) * (pos - lo)
-  }
-  out[WAVEFORM_BARS - 1] = normalised[normalised.length - 1]
-  return out
-}
-
-// `move` controls whether to call moveTo at pts[0] — pass false to continue
-// an existing path segment (e.g. for the bottom half of a waveform).
-function catmullRomCanvas(
-  ctx: CanvasRenderingContext2D,
-  pts: Array<{ x: number; y: number }>,
-  move: boolean,
-) {
-  const n = pts.length
-  if (move) ctx.moveTo(pts[0].x, pts[0].y)
-  for (let i = 0; i < n - 1; i++) {
-    const p0 = pts[Math.max(0, i - 1)]
-    const p1 = pts[i]
-    const p2 = pts[i + 1]
-    const p3 = pts[Math.min(n - 1, i + 2)]
-    const cp1x = p1.x + (p2.x - p0.x) / 6
-    const cp1y = p1.y + (p2.y - p0.y) / 6
-    const cp2x = p2.x - (p3.x - p1.x) / 6
-    const cp2y = p2.y - (p3.y - p1.y) / 6
-    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y)
-  }
-}
-
-function buildWaveformPath(
-  ctx: CanvasRenderingContext2D,
-  bars: number[],
-  W: number,
-  H: number,
-) {
-  const mid = H / 2
-  const n = bars.length
-  const topPts = bars.map((v, i) => ({
-    x: (i / (n - 1)) * W,
-    y: mid - Math.max(MIN_AMP, v * mid * WAVEFORM_SCALE),
-  }))
-  const botPts = [...bars].reverse().map((v, i) => ({
-    x: ((n - 1 - i) / (n - 1)) * W,
-    y: mid + Math.max(MIN_AMP, v * mid * WAVEFORM_SCALE),
-  }))
-  ctx.beginPath()
-  catmullRomCanvas(ctx, topPts, true)            // moveTo topLeft, curve to topRight
-  ctx.lineTo(botPts[0].x, botPts[0].y)           // connect topRight → botRight
-  catmullRomCanvas(ctx, botPts, false)            // continue: curve botRight → botLeft
-  ctx.closePath()                                 // close: botLeft → topLeft
-}
+import { normalizeWaveformLoudness, waveformBarGeometry, clampWaveformProgress } from "../lib/waveformGeometry"
 
 // ---------------------------------------------------------------------------
 // Accent colour helpers — reads CSS var so canvas matches the theme accent
@@ -95,13 +17,6 @@ function buildWaveformPath(
 
 function readAccent(el: HTMLElement): string {
   return getComputedStyle(el).getPropertyValue("--accent").trim() || "#d946ef"
-}
-
-function hexToRgba(hex: string, alpha: number): string {
-  const r = parseInt(hex.slice(1, 3), 16)
-  const g = parseInt(hex.slice(3, 5), 16)
-  const b = parseInt(hex.slice(5, 7), 16)
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
 function lerpHex(a: string, b: string, t: number): string {
@@ -141,10 +56,11 @@ export default function VisualizerCanvas({
   const rainbow = useEasterEggStore(s => s.rainbow)
   const accentColor = useAccentStore(s => s.accent)
   const visible = useVisualizationVisibility()
+  const paletteRevision = useArtworkPaletteRevision()
 
   // Preprocess waveform bars from levels (memoised — only changes when levels change)
   const waveformBars = useMemo(
-    () => (levels ? processLoudnessData(levels) : null),
+    () => (levels ? normalizeWaveformLoudness(levels) : null),
     [levels],
   )
 
@@ -158,6 +74,21 @@ export default function VisualizerCanvas({
     if (!canvas) return
     const ctx = canvas.getContext("2d")
     if (!ctx) return
+    let pixelRatio = 1
+    if (mode === "waveform") {
+      const bounds = canvas.getBoundingClientRect()
+      pixelRatio = Math.max(1, Math.min(4, window.devicePixelRatio || 1))
+      if (bounds.width > 0 && bounds.height > 0) {
+        const width = Math.max(1, Math.round(bounds.width * pixelRatio))
+        const height = Math.max(1, Math.round(bounds.height * pixelRatio))
+        if (canvas.width !== width) canvas.width = width
+        if (canvas.height !== height) canvas.height = height
+      }
+    } else {
+      // Existing animated modes retain their original rendering coordinates.
+      if (canvas.width !== 800) canvas.width = 800
+      if (canvas.height !== 28) canvas.height = 28
+    }
     const W = canvas.width
     const H = canvas.height
 
@@ -178,40 +109,45 @@ export default function VisualizerCanvas({
 
     const activePct = hoverPct ?? progressPct
     const splitX = (activePct / 100) * W
-    const isHovering = hoverPct !== null
 
     if (mode === "waveform") {
-      // ── Catmull-Rom waveform ──
-      const bars = waveformBars ?? Array(WAVEFORM_BARS).fill(0.15)
-      const stopOffset = Math.max(0.0001, Math.min(0.9999, activePct / 100))
+      // A quiet symmetric strip, with real played progress and a hover ghost.
+      const styles = getComputedStyle(canvas)
+      const primary = styles.getPropertyValue("--artwork-primary").trim() || accent
+      const ink = styles.getPropertyValue("--text-secondary").trim() || styles.getPropertyValue("--text-muted").trim() || "#777"
+      const bars = waveformBarGeometry(waveformBars ?? [], W, H, pixelRatio)
+      const paint = () => { for (const bar of bars) ctx.fillRect(bar.x, bar.y, bar.width, bar.height) }
+      ctx.save()
+      ctx.fillStyle = ink
+      ctx.globalAlpha = 0.28
+      paint()
+      ctx.globalAlpha = 1
+      ctx.fillStyle = primary
       if (rainbow) {
-        if (activePct <= 0) {
-          ctx.fillStyle = "#404040"
-        } else {
-          const grad = ctx.createLinearGradient(0, 0, W, 0)
-          for (let i = 0; i <= 6; i++) {
-            const hue = (rainbowPhase + (i / 6) * 360) % 360
-            grad.addColorStop(Math.min((i / 6) * stopOffset, 0.9999), `hsl(${hue}, 85%, 60%)`)
-          }
-          if (activePct < 100) {
-            grad.addColorStop(Math.min(stopOffset + 0.0001, 1), "#404040")
-            grad.addColorStop(1, "#404040")
-          }
-          ctx.fillStyle = grad
-        }
-      } else if (activePct > 0 && activePct < 100) {
-        const grad = ctx.createLinearGradient(0, 0, W, 0)
-        grad.addColorStop(stopOffset, isHovering ? hexToRgba(accent, 0.4) : accent)
-        grad.addColorStop(stopOffset, "#404040")
-        grad.addColorStop(1, "#404040")
-        ctx.fillStyle = grad
-      } else if (activePct <= 0) {
-        ctx.fillStyle = "#404040"
-      } else {
-        ctx.fillStyle = isHovering ? hexToRgba(accent, 0.4) : accent
+        const gradient = ctx.createLinearGradient(0, 0, W, 0)
+        for (let i = 0; i <= 6; i++) gradient.addColorStop(i / 6, `hsl(${(rainbowPhase + i / 6 * 360) % 360}, 85%, 60%)`)
+        ctx.fillStyle = gradient
       }
-      buildWaveformPath(ctx, bars, W, H)
-      ctx.fill()
+      const playedX = clampWaveformProgress(progressPct) / 100 * W
+      ctx.save()
+      ctx.beginPath(); ctx.rect(0, 0, playedX, H); ctx.clip()
+      paint()
+      ctx.restore()
+      if (hoverPct !== null) {
+        const hoveredX = clampWaveformProgress(hoverPct) / 100 * W
+        if (hoveredX > playedX) {
+          ctx.save()
+          ctx.globalAlpha = 0.4
+          ctx.beginPath(); ctx.rect(playedX, 0, hoveredX - playedX, H); ctx.clip()
+          paint()
+          ctx.restore()
+        }
+        ctx.fillStyle = primary
+        ctx.globalAlpha = 0.7
+        const ghostWidth = Math.min(W, pixelRatio)
+        ctx.fillRect(Math.max(0, Math.min(W - ghostWidth, hoveredX)), 0, ghostWidth, H)
+      }
+      ctx.restore()
     } else if (mode === "spectrum") {
       // ── Spectrum bars ──
       const BINS = 64
@@ -335,7 +271,16 @@ export default function VisualizerCanvas({
       ctx.lineTo(splitX, H)
       ctx.stroke()
     }
-  }, [mode, waveformBars, progressPct, hoverPct, getRecentSamples, getFrequencyData, getSampleRate, isPlaying, rainbow, accentColor, colors])
+  }, [mode, waveformBars, progressPct, hoverPct, getRecentSamples, getFrequencyData, getSampleRate, isPlaying, rainbow, accentColor, colors, paletteRevision])
+
+  const drawRef = useRef(draw)
+  drawRef.current = draw
+  useEffect(() => {
+    if (mode !== "waveform" || !visible || !canvasRef.current || typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(() => drawRef.current())
+    observer.observe(canvasRef.current)
+    return () => observer.disconnect()
+  }, [mode, visible])
 
   useVisualizationFrames(draw, (mode !== "waveform" && isPlaying) || rainbow, visible)
 
