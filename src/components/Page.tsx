@@ -90,7 +90,7 @@ export function Page() {
         ref={scrollRef}
         onScroll={e => verticalScrollPositions.set(location, e.currentTarget.scrollTop)}
         className={clsx(
-          "flex-1 overflow-auto border-[var(--border)] transition-colors scrollbar scrollbar-track-transparent scrollbar-thumb-[var(--scrollbar-thumb)] scrollbar-track-rounded-lg scrollbar-w-3 hover:scrollbar-thumb-[var(--scrollbar-thumb-hover)]"
+          "app-page-content flex-1 overflow-auto border-[var(--border)] transition-colors scrollbar scrollbar-track-transparent scrollbar-thumb-[var(--scrollbar-thumb)] scrollbar-track-rounded-lg scrollbar-w-3 hover:scrollbar-thumb-[var(--scrollbar-thumb-hover)]"
         )}
         style={hasPadding ? {
           paddingInline: "var(--spacing-topbar)",

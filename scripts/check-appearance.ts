@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { build } from "vite"
-import { chromium, webkit } from "playwright"
+import { chromium, webkit, type Page } from "playwright"
 import { podcastFeedPath } from "../src/lib/podcastRoute"
 import { artworkContrast } from "../src/lib/artworkTone"
 
@@ -11,6 +11,44 @@ import { artworkContrast } from "../src/lib/artworkTone"
 const root = resolve(import.meta.dir, "..")
 const output = await mkdtemp(join(tmpdir(), "hibiki-appearance-"))
 const artifacts = resolve(root, ".tmp/appearance-checks")
+async function checkSearchOverlay(page: Page, browser: string) {
+  for (const [width, height, theme, background] of [
+    [1440, 850, "dark", true],
+    [800, 650, "light", true],
+    [1440, 850, "dark", false],
+  ] as const) {
+    await page.setViewportSize({ width, height })
+    await page.evaluate(value => {
+      ;(window as any).fixtureAppearance.apply(value)
+      ;(window as any).setFixtureSidebarWidth(240)
+    }, { theme, background })
+    for (const path of ["/", "/library", "/album/fixture-album", "/playlist/fixture-playlist-0"]) {
+      await page.evaluate(value => (window as any).fixtureAppearance.route(value), path)
+      await page.locator("main h1").waitFor()
+      if (background) await page.locator('.app-artwork-shell[data-artwork-background="ready"]').waitFor()
+      await page.keyboard.press("Control+k")
+      const popup = page.getByRole("listbox", { name: "Search suggestions", exact: true })
+      await popup.waitFor()
+      const overlap = await popup.evaluate(element => {
+        const r = element.getBoundingClientRect()
+        const misses: string[] = []
+        for (const x of [r.left + 8, r.left + r.width / 2, r.right - 8]) {
+          for (const y of [r.top + 8, r.top + r.height / 2, r.bottom - 8]) {
+            const hit = document.elementFromPoint(x, y)
+            if (!hit || !element.contains(hit)) misses.push(hit?.className?.toString() ?? "nothing")
+          }
+        }
+        const pane = element.closest(".app-page")!.getBoundingClientRect()
+        return { misses, bottom: r.bottom, paneBottom: pane.bottom }
+      })
+      assert.deepEqual(overlap.misses, [], `${browser}/${width}/${path}: page content covers search dropdown`)
+      assert.ok(overlap.bottom <= overlap.paneBottom - 11, `${browser}/${width}/${path}: search dropdown extends under the playbar`)
+      if (path === "/") await page.screenshot({ path: join(artifacts, `${browser}-${width}-${theme}-${background}-search-overlay.png`) })
+      await page.keyboard.press("Escape")
+      await popup.waitFor({ state: "detached" })
+    }
+  }
+}
 await mkdir(artifacts, { recursive: true })
 const previousPlatform = process.env.TAURI_ENV_PLATFORM
 // Browser fixtures exercise Tauri's supported HTTP image transport; native Mac is reviewed separately.
@@ -94,6 +132,12 @@ try {
         `${origin}/tests/fixtures/libraryLayout/index.html?appearance=1&player=1&discovery=1`
       )
       await page.waitForFunction(() => (window as any).visualFixtureReady)
+      await checkSearchOverlay(page, name)
+      if (process.argv.includes("--search-overlay-only")) {
+        assert.deepEqual(errors, [], `${name}: renderer errors`)
+        console.log(`${name}: search overlay stays above content and clear of the playbar across routes, themes and widths`)
+        continue
+      }
       for (const scenario of [
         {
           width: 1440,

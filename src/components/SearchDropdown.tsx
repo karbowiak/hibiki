@@ -256,8 +256,9 @@ export function SearchDropdown({
       const bounds = popupRef.current?.getBoundingClientRect()
       const top = bounds?.top ?? 80
       const left = bounds?.left ?? 0
+      const bottom = popupRef.current?.closest(".app-page")?.getBoundingClientRect().bottom ?? window.innerHeight
       setPanelWidth(Math.max(48, Math.min(560, window.innerWidth - left - 12)))
-      setMaxHeight(Math.max(48, window.innerHeight - top - 12))
+      setMaxHeight(Math.max(48, Math.min(window.innerHeight, bottom) - top - 12))
     }
     update()
     window.addEventListener("resize", update)
