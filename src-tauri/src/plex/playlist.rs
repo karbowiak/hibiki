@@ -2,6 +2,9 @@
 #![allow(dead_code)]
 
 use super::{PlexClient, MediaContainer, Playlist, Track};
+use super::client::{request_error, token_header};
+use super::models::PlexApiResponse;
+use crate::http_response::{BoundedResponseExt, MAX_PLEX_BYTES};
 use anyhow::{Result, Context};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, instrument};
@@ -50,6 +53,16 @@ pub struct SmartPlaylistConfig {
 pub struct PlaylistItemsPage {
     pub items: Vec<Track>,
     pub total: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offset: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct PlaylistPageContainer {
+    #[serde(flatten)]
+    container: MediaContainer<Track>,
+    #[serde(default, deserialize_with = "super::models::serde_string_or_i64_opt::deserialize")]
+    offset: Option<i64>,
 }
 
 /// Smart playlist generator
@@ -90,7 +103,7 @@ impl PlexClient {
             .map(|(k, v)| format!("{}={}", k, v))
             .collect::<Vec<_>>()
             .join("&");
-        let url = format!("{}?{}", self.build_url("/playlists"), query);
+        let url = self.build_url(&format!("/playlists?{query}"));
 
         debug!("Fetching playlists from {}", url);
 
@@ -149,6 +162,9 @@ impl PlexClient {
         limit: Option<i32>,
         offset: Option<i32>,
     ) -> Result<PlaylistItemsPage> {
+        if limit.is_some_and(|size| size < 0) || offset.is_some_and(|start| start < 0) {
+            anyhow::bail!("Playlist page size must not be negative and offset must not be negative");
+        }
         let path = format!("/playlists/{}/items", playlist_id);
         let mut params = Vec::new();
 
@@ -158,29 +174,59 @@ impl PlexClient {
         if let Some(limit) = limit {
             params.push(("X-Plex-Container-Size".to_string(), limit.to_string()));
         }
-        if let Some(offset) = offset {
-            params.push(("X-Plex-Container-Start".to_string(), offset.to_string()));
+        if limit.is_some() || offset.is_some() {
+            params.push(("X-Plex-Container-Start".to_string(), offset.unwrap_or(0).to_string()));
         }
 
-        let url = if params.is_empty() {
-            self.build_url(&path)
-        } else {
-            let query = params
-                .iter()
-                .map(|(k, v)| format!("{}={}", k, v))
-                .collect::<Vec<_>>()
-                .join("&");
-            format!("{}?{}", self.build_url(&path), query)
-        };
+        // build_url already carries includeLoudnessRamps. RequestBuilder::query
+        // appends paging arguments correctly instead of introducing a second '?'.
+        let url = self.build_url(&path);
 
         debug!("Fetching playlist items from {}", url);
 
-        let container: MediaContainer<Track> = self.get_url(&url).await?;
+        let response = self.client.get(&url)
+            .query(&params)
+            .header("X-Plex-Token", token_header(&self.token))
+            .header("Accept", "application/json")
+            .send().await.map_err(request_error).context("Playlist page request failed")?;
+        if !response.status().is_success() {
+            anyhow::bail!("Playlist page returned HTTP {}", response.status());
+        }
+        let read_header = |name: &str| -> Result<Option<i64>> {
+            response.headers().get(name).map(|value| {
+                let parsed = value.to_str().context("Invalid playlist pagination header")?
+                    .parse::<i64>().context("Invalid playlist pagination header")?;
+                anyhow::ensure!(parsed >= 0, "Invalid playlist pagination header");
+                Ok(parsed)
+            }).transpose()
+        };
+        let header_offset = read_header("X-Plex-Container-Start")?;
+        let header_total = read_header("X-Plex-Container-Total-Size")?;
+        let wrapper = response.bounded_json::<PlexApiResponse<PlaylistPageContainer>>(MAX_PLEX_BYTES)
+            .await.context("Failed to parse playlist page")?;
+        let page = wrapper.container;
+        if page.offset.is_some() && header_offset.is_some() && page.offset != header_offset {
+            anyhow::bail!("Plex returned conflicting playlist page offsets; reload the playlist to continue");
+        }
+        let actual_offset = page.offset.or(header_offset);
+        if limit.is_some_and(|size| page.container.metadata.len() > size as usize) {
+            anyhow::bail!("Plex returned more playlist items than requested; reload the playlist to continue");
+        }
+        if let Some(start) = actual_offset {
+            if start < 0 || (!page.container.metadata.is_empty() && start != i64::from(offset.unwrap_or(0))) {
+                anyhow::bail!("Plex returned a nonadvancing playlist page; reload the playlist to continue");
+            }
+        }
+        let body_total = page.container.total_size.filter(|total| *total >= 0);
+        if body_total.is_some_and(|total| total > 0) && header_total.is_some_and(|total| total > 0) && body_total != header_total {
+            anyhow::bail!("Plex returned conflicting playlist totals; reload the playlist to continue");
+        }
         Ok(PlaylistItemsPage {
-            // Zero is unknown when items exist; do not mistake a page length
-            // for the full playlist when a server omits totalSize.
-            total: container.total_size.filter(|total| *total >= 0).unwrap_or(0),
-            items: container.metadata,
+            // Unknown totals stay unknown. Never trim or infer a new offset from
+            // an oversized response: that could silently discard valid entries.
+            total: body_total.filter(|total| *total > 0).or(header_total).unwrap_or(0),
+            items: page.container.metadata,
+            offset: actual_offset,
         })
     }
 
@@ -272,12 +318,11 @@ impl PlexClient {
             query_parts.push(format!("limit={}", limit));
         }
 
-        let uri = format!(
-            "{}library/sections/{}/all?{}",
-            self.build_url("").trim_end_matches('/'),
-            config.section_id,
-            query_parts.join("&")
-        );
+        // This is a resource URI inside the request body, not a metadata
+        // request URL. Runtime query flags must not become part of its path.
+        let uri = self.build_endpoint_url(&format!(
+            "/library/sections/{}/all?{}", config.section_id, query_parts.join("&")
+        ));
 
         let body = serde_json::json!({
             "title": config.title,
@@ -381,7 +426,7 @@ impl PlexClient {
     #[instrument(skip(self))]
     pub async fn move_item(&self, playlist_id: i64, item_id: i64, after_item_id: i64) -> Result<()> {
         let path = format!("/playlists/{}/items/{}/move", playlist_id, item_id);
-        let url = format!("{}?after={}", self.build_url(&path), after_item_id);
+        let url = self.build_url(&format!("{path}?after={after_item_id}"));
 
         let body = serde_json::json!({});
 
@@ -469,6 +514,148 @@ impl PlexClient {
 
 #[cfg(test)]
 mod tests {
+    async fn playlist_response(body: serde_json::Value, headers: &str) -> (PlexClient, tokio::task::JoinHandle<String>) {
+        playlist_response_at(body, headers, "").await
+    }
+
+    async fn playlist_response_at(body: serde_json::Value, headers: &str, prefix: &str) -> (PlexClient, tokio::task::JoinHandle<String>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = PlexClient::new(super::super::PlexClientConfig {
+            base_url: format!("http://{}{prefix}", listener.local_addr().unwrap()),
+            token: "synthetic-test-token".into(), ..Default::default()
+        }).unwrap();
+        let json = body.to_string();
+        let response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{}Connection: close\r\n\r\n{}", json.len(), headers, json);
+        let task = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            loop {
+                let mut bytes = [0; 4096];
+                let n = socket.read(&mut bytes).await.unwrap();
+                request.extend_from_slice(&bytes[..n]);
+                if n == 0 { break }
+                if let Some(end) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&request[..end]);
+                    let length = headers.lines().find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length").then(|| value.trim().parse::<usize>().ok()).flatten()
+                    }).unwrap_or(0);
+                    if request.len() >= end + 4 + length { break }
+                }
+            }
+            socket.write_all(response.as_bytes()).await.unwrap();
+            String::from_utf8(request).unwrap()
+        });
+        (client, task)
+    }
+
+    #[tokio::test]
+    async fn mutation_resource_uris_preserve_reverse_proxy_paths_without_runtime_flags() {
+        let (client, request) = playlist_response_at(serde_json::json!({"MediaContainer":{"Metadata":[{"ratingKey":"1","title":"Synthetic"}]}}), "", "/plex").await;
+        client.create_smart_playlist(&SmartPlaylistConfig {
+            title: "Synthetic".into(), section_id: 7, libtype: Some("10".into()),
+            filters: vec![SearchFilter::YearGte(2020)], sort: Some("title:asc".into()), limit: Some(20)
+        }).await.unwrap();
+        let request = request.await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
+        let uri = url::Url::parse(body["uri"].as_str().unwrap()).unwrap();
+        assert_eq!(uri.path(), "/plex/library/sections/7/all");
+        let query: std::collections::HashMap<_, _> = uri.query_pairs().collect();
+        assert_eq!(query.get("type").map(|v| v.as_ref()), Some("10"));
+        assert_eq!(query.get("year>").map(|v| v.as_ref()), Some("2020"));
+        assert_eq!(query.get("limit").map(|v| v.as_ref()), Some("20"));
+        assert!(!query.contains_key("includeLoudnessRamps"));
+
+        let (client, request) = playlist_response_at(serde_json::Value::Null, "", "/plex/").await;
+        client.add_to_collection(7, &[11, 12]).await.unwrap();
+        let request = request.await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
+        let uri = url::Url::parse(body["uri"].as_str().unwrap()).unwrap();
+        assert_eq!(uri.path(), "/plex/library/metadata/11,12");
+        assert!(uri.query().is_none());
+    }
+
+    #[tokio::test]
+    async fn adjacent_plex_queries_preserve_filters_and_ordering() {
+        // Exercise the real request builders against an isolated synthetic server.
+        for case in 0..9 {
+            let (client, request) = playlist_response(
+                if case < 7 { serde_json::json!({"MediaContainer":{"Metadata":[]}}) } else { serde_json::Value::Null }, ""
+            ).await;
+            let expected: Vec<(&str, &str)> = match case {
+                0 => { client.list_playlists(1, Some(2)).await.unwrap(); vec![("playlistType", "audio"), ("limit", "2")] }
+                1 => { client.sonically_similar::<Track>(7, Some(2), Some(0.3)).await.unwrap(); vec![("limit", "2"), ("maxDistance", "0.3")] }
+                2 => { client.sonic_adventure(1, 7, 8, Some(2)).await.unwrap(); vec![("pivot", "7"), ("to", "8"), ("limit", "2")] }
+                3 => { client.track_radio(1, 7, Some(2), Some(0.3)).await.unwrap(); vec![("pivot", "7"), ("limit", "2"), ("maxDistance", "0.3")] }
+                4 => { client.get_active_sessions(1).await.unwrap(); vec![("sectionID", "1")] }
+                5 => { client.get_history(1, Some(2), Some(4), Some("lastViewedAt:desc")).await.unwrap(); vec![("limit", "2"), ("offset", "4"), ("sort", "lastViewedAt:desc")] }
+                6 => { client.get_collections(1, Some("8")).await.unwrap(); vec![("type", "8")] }
+                7 => { client.move_item(1, 11, 12).await.unwrap(); vec![("after", "12")] }
+                _ => { client.reorder_collection(1, 11, 12).await.unwrap(); vec![("after", "12")] }
+            };
+            let request = request.await.unwrap();
+            let target = request.split_whitespace().nth(1).unwrap();
+            let url = url::Url::parse(&format!("http://synthetic.test{target}")).unwrap();
+            let query: std::collections::HashMap<_, _> = url.query_pairs().collect();
+            assert_eq!(query.get("includeLoudnessRamps").map(|value| value.as_ref()), Some("1"), "case {case}");
+            for (key, value) in expected {
+                assert_eq!(query.get(key).map(|value| value.as_ref()), Some(value), "case {case}, parameter {key}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn playlist_paging_preserves_header_offsets_totals_and_duplicate_occurrences() {
+        let (client, request) = playlist_response(serde_json::json!({"MediaContainer":{"Metadata":[
+            {"ratingKey":"7","title":"Synthetic","playlistItemID":11},
+            {"ratingKey":"7","title":"Synthetic","playlistItemID":12}
+        ]}}), "X-Plex-Container-Start: 4\r\nX-Plex-Container-Total-Size: 500\r\n").await;
+        let page = client.get_playlist_items_page(1, Some(2), Some(4)).await.unwrap();
+        assert_eq!(page.items.len(), 2);
+        assert_eq!(page.items[0].playlist_item_id, Some(11));
+        assert_eq!(page.items[1].playlist_item_id, Some(12));
+        assert_eq!(page.total, 500);
+        assert_eq!(page.offset, Some(4));
+        let request = request.await.unwrap();
+        let target = request.split_whitespace().nth(1).unwrap();
+        let url = url::Url::parse(&format!("http://synthetic.test{target}")).unwrap();
+        let query: std::collections::HashMap<_, _> = url.query_pairs().collect();
+        assert_eq!(query.get("includeLoudnessRamps").map(|value| value.as_ref()), Some("1"));
+        assert_eq!(query.get("X-Plex-Container-Size").map(|value| value.as_ref()), Some("2"));
+        assert_eq!(query.get("X-Plex-Container-Start").map(|value| value.as_ref()), Some("4"));
+    }
+
+    #[tokio::test]
+    async fn playlist_paging_rejects_oversized_and_nonadvancing_responses_without_trimming() {
+        for (container, headers) in [
+            (serde_json::json!({"Metadata":[{"ratingKey":"7"},{"ratingKey":"8"}],"totalSize":500}), ""),
+            (serde_json::json!({"Metadata":[{"ratingKey":"7"}],"offset":0}), ""),
+            (serde_json::json!({"Metadata":[{"ratingKey":"7"}],"offset":4}), "X-Plex-Container-Start: 0\r\n"),
+        ] {
+            let (client, request) = playlist_response(serde_json::json!({"MediaContainer":container}), headers).await;
+            assert!(client.get_playlist_items_page(1, Some(1), Some(4)).await.is_err());
+            request.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn playlist_paging_allows_zero_size_unknown_totals_and_empty_terminal_pages() {
+        let (client, request) = playlist_response(serde_json::json!({"MediaContainer":{"Metadata":[]}}), "X-Plex-Container-Total-Size: 500\r\n").await;
+        let page = client.get_playlist_items_page(1, Some(0), None).await.unwrap();
+        assert_eq!(page.total, 500);
+        assert!(page.items.is_empty());
+        assert!(request.await.unwrap().contains("X-Plex-Container-Size=0&X-Plex-Container-Start=0"));
+        let (client, request) = playlist_response(serde_json::json!({"MediaContainer":{"Metadata":[{"ratingKey":"7"}],"offset":"4"}}), "").await;
+        let page = client.get_playlist_items_page(1, Some(2), Some(4)).await.unwrap();
+        assert_eq!(page.total, 0);
+        assert_eq!(page.offset, Some(4));
+        request.await.unwrap();
+        let (client, request) = playlist_response(serde_json::json!({"MediaContainer":{"Metadata":[],"offset":0}}), "").await;
+        assert!(client.get_playlist_items_page(1, Some(2), Some(500)).await.unwrap().items.is_empty());
+        request.await.unwrap();
+    }
+
     use super::*;
 
     #[test]

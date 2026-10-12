@@ -147,4 +147,6 @@ export interface MusicHub {
 export interface PagedResult<T> {
   items: T[]
   total: number
+  /** Server-reported start index, when provided; never inferred from the request. */
+  offset?: number
 }

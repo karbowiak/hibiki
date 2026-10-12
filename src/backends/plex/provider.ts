@@ -254,6 +254,7 @@ export class PlexProvider implements MusicProvider {
     return {
       items: this.mapTracks(page.items),
       total: page.total,
+      ...(page.offset !== undefined ? { offset: page.offset } : {}),
     }
   }
 

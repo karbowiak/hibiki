@@ -170,13 +170,14 @@ test("paged playlist RPC preserves server totals and duplicate occurrences while
   const rows = [rawTrack(), rawTrack()]
   rows[0].playlist_item_id = 10
   rows[1].playlist_item_id = 11
-  const { calls, invoke } = transportHarness(command => command === "get_playlist_items_page" ? { items: rows, total: 500 } : rows)
+  const { calls, invoke } = transportHarness(command => command === "get_playlist_items_page" ? { items: rows, total: 500, offset: 4 } : rows)
   const api = createPlexApi(context(), invoke)
   expect(await api.getPlaylistItems(7, 2, 4)).toEqual(rows)
   const provider = new PlexProvider(invoke)
   await provider.connect(configuration())
   const page = await provider.getPlaylistItems("7", 4, 2)
   expect(page.total).toBe(500)
+  expect(page.offset).toBe(4)
   expect(page.items.map(item => item.playlistItemId)).toEqual(["10", "11"])
   expect(calls.at(-1)?.command).toBe("get_playlist_items_page")
   expect(calls.at(-1)?.args).toMatchObject({ context: context(), limit: 2, offset: 4 })

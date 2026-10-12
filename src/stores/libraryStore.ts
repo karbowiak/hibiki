@@ -2,7 +2,7 @@ import { create } from "zustand"
 import type { StateStorage } from "zustand/middleware"
 import type { MusicProvider } from "../providers/types"
 import { ScopedPersistence } from "./scopedPersistence"
-import type { MusicPlaylist, MusicTrack, MusicAlbum, MusicArtist, MusicItem, MusicHub } from "../types/music"
+import type { MusicPlaylist, MusicTrack, MusicAlbum, MusicArtist, MusicItem, MusicHub, PagedResult } from "../types/music"
 import { useProviderStore } from "./providerStore"
 import { idbStorage } from "./idbStorage"
 
@@ -55,6 +55,21 @@ const PREFETCH_THRESHOLD = SMALL_PLAYLIST_THRESHOLD
 /** Milliseconds between sequential background prefetch requests. */
 const PREFETCH_DELAY_MS = 100
 
+function checkPlaylistPage(page: PagedResult<MusicTrack>, offset: number, limit: number, previous: MusicTrack[] = []) {
+  if (page.items.length > limit ||
+      (page.offset !== undefined && (!Number.isSafeInteger(page.offset) || page.offset < 0 || (page.items.length > 0 && page.offset !== offset)))) {
+    throw new Error("Playlist paging returned an unexpected page. Reload the playlist to continue.")
+  }
+  // IDs of songs may intentionally repeat. Only occurrence IDs identify a
+  // repeated playlist entry, including a playlist changing between page requests.
+  const occurrences = new Set(previous.flatMap(track => track.playlistItemId ? [track.playlistItemId] : []))
+  for (const track of page.items) {
+    if (!track.playlistItemId) continue
+    if (occurrences.has(track.playlistItemId)) throw new Error("Playlist paging repeated an entry. Reload the playlist to continue.")
+    occurrences.add(track.playlistItemId)
+  }
+}
+
 interface FetchOpts {
   force?: boolean
 }
@@ -79,6 +94,7 @@ export interface LibraryState {
   playlistItemsCache: Record<string, MusicTrack[]>
   /** True once all pages for a playlist have been fetched. */
   playlistIsFullyLoaded: Record<string, boolean>
+  playlistPageErrors: Record<string, string>
   /** Per-mix track cache. Key = mix item key (the API path). */
   mixTracksCache: Record<string, MusicTrack[]>
   /** Shown in TopBar during startup pre-fetch. Null when idle. */
@@ -125,7 +141,7 @@ export interface LibraryState {
   fetchTags: (opts?: FetchOpts) => Promise<void>
   addRecentMix: (seeds: SeedItem[], tabType: "artist" | "album" | "track") => void
   fetchPlaylistItems: (playlistId: string) => Promise<void>
-  fetchMorePlaylistItems: (playlistId: string) => Promise<void>
+  fetchMorePlaylistItems: (playlistId: string, opts?: FetchOpts) => Promise<void>
   prefetchAllPlaylists: () => Promise<void>
   prefetchMixTracks: () => Promise<void>
   createPlaylist: (title: string) => Promise<MusicPlaylist>
@@ -164,6 +180,7 @@ const emptyLibrary = () => ({
   error: null,
   playlistItemsCache: {},
   playlistIsFullyLoaded: {},
+  playlistPageErrors: {},
   mixTracksCache: {},
   tagsGenre: [],
   tagsMood: [],
@@ -347,6 +364,7 @@ export function createLibraryStore({
       const request = (async () => {
         const response = await session.provider.getPlaylistItems(id, 0, limit)
         if (!current(session) || version(id) !== revision) throw new Error("Library request was superseded")
+        checkPlaylistPage(response, 0, limit)
         const items = rated(response.items)
         const total = response.total
         const complete = items.length === 0 || (total > 0 && items.length >= total)
@@ -556,7 +574,17 @@ export function createLibraryStore({
           return
         }
         const playlist = get().playlists.find((playlist) => playlist.id === id) ?? null
-        const cached = get().playlistItemsCache[id]
+        let cached = get().playlistItemsCache[id]
+        if (cached && playlist && playlist.trackCount > 0 && cached.length > playlist.trackCount) {
+          // A smaller fresh metadata count makes this old snapshot inconsistent.
+          // Refetch rather than silently trimming potentially valid occurrences.
+          bumpPlaylist(id)
+          const { [id]: _items, ...items } = get().playlistItemsCache,
+            { [id]: _full, ...full } = get().playlistIsFullyLoaded,
+            { [id]: _error, ...errors } = get().playlistPageErrors
+          set({ playlistItemsCache: items, playlistIsFullyLoaded: full, playlistPageErrors: errors })
+          cached = undefined
+        }
         set({
           currentPlaylist: playlist,
           currentPlaylistId: id,
@@ -576,7 +604,7 @@ export function createLibraryStore({
           if (valid()) set({ error: String(error), isLoading: false })
         }
       },
-      fetchMorePlaylistItems: async (id) => {
+      fetchMorePlaylistItems: async (id, opts = {}) => {
         const session = capture(),
           selection = view,
           revision = version(id)
@@ -585,18 +613,24 @@ export function createLibraryStore({
           get().currentPlaylistId !== id ||
           get().isLoading ||
           get().isFetchingMore ||
-          get().playlistIsFullyLoaded[id]
+          get().playlistIsFullyLoaded[id] ||
+          !Object.hasOwn(get().playlistItemsCache, id) ||
+          (!!get().playlistPageErrors[id] && !opts.force)
         )
           return
         const previous = get().playlistItemsCache[id] ?? [],
           request = Symbol(id)
         moreRequests.set(id, request)
-        set({ isFetchingMore: true })
+        set(state => {
+          const { [id]: _error, ...errors } = state.playlistPageErrors
+          return { isFetchingMore: true, playlistPageErrors: errors }
+        })
         const valid = () => current(session) && version(id) === revision && moreRequests.get(id) === request
         const visible = () => view === selection && get().currentPlaylistId === id
         try {
           const result = await session.provider.getPlaylistItems(id, previous.length, PAGE_SIZE)
           if (!valid() || get().playlistItemsCache[id] !== previous) return
+          checkPlaylistPage(result, previous.length, PAGE_SIZE, previous)
           const items = rated([...previous, ...result.items]),
             total = result.total
           const complete =
@@ -611,7 +645,10 @@ export function createLibraryStore({
             ...(get().currentPlaylistId === id ? { currentPlaylistItems: items } : {})
           }))
         } catch (error) {
-          if (valid() && visible()) set({ error: String(error) })
+          if (valid()) set(state => ({
+            playlistPageErrors: { ...state.playlistPageErrors, [id]: "Could not load more songs. Loaded songs are unchanged; retry or reload the playlist." },
+            ...(visible() ? { error: String(error) } : {})
+          }))
         } finally {
           if (valid()) {
             moreRequests.delete(id)
@@ -625,7 +662,7 @@ export function createLibraryStore({
         if (playlistPrefetch) return playlistPrefetch
         const toFetch = get()
           .playlists.filter(
-            (playlist) => playlist.trackCount <= PREFETCH_THRESHOLD && !get().playlistItemsCache[playlist.id]
+            (playlist) => !playlist.smart && playlist.trackCount <= PREFETCH_THRESHOLD && !get().playlistItemsCache[playlist.id]
           )
           .sort((a, b) => a.trackCount - b.trackCount)
         if (!toFetch.length) return
@@ -713,20 +750,23 @@ export function createLibraryStore({
       invalidatePlaylistItems: (id) => {
         bumpPlaylist(id)
         const { [id]: _items, ...items } = get().playlistItemsCache,
-          { [id]: _loaded, ...loaded } = get().playlistIsFullyLoaded
-        set({ playlistItemsCache: items, playlistIsFullyLoaded: loaded })
+          { [id]: _loaded, ...loaded } = get().playlistIsFullyLoaded,
+          { [id]: _error, ...errors } = get().playlistPageErrors
+        set({ playlistItemsCache: items, playlistIsFullyLoaded: loaded, playlistPageErrors: errors })
         if (get().currentPlaylistId === id) void get().fetchPlaylistItems(id)
       },
       removePlaylist: (id) => {
         bumpPlaylist(id)
         requests.delete("playlists")
         const { [id]: _items, ...items } = get().playlistItemsCache,
-          { [id]: _loaded, ...loaded } = get().playlistIsFullyLoaded
+          { [id]: _loaded, ...loaded } = get().playlistIsFullyLoaded,
+          { [id]: _error, ...errors } = get().playlistPageErrors
         if (get().currentPlaylistId === id) view++
         set({
           playlists: get().playlists.filter((playlist) => playlist.id !== id),
           playlistItemsCache: items,
           playlistIsFullyLoaded: loaded,
+          playlistPageErrors: errors,
           ...(get().currentPlaylistId === id
             ? {
                 currentPlaylist: null,
@@ -830,6 +870,7 @@ export function createLibraryStore({
           _tagsFetchedAt: null,
           playlistItemsCache: {},
           playlistIsFullyLoaded: {},
+          playlistPageErrors: {},
           mixTracksCache: {},
           prefetchStatus: null,
           isLoading: false,

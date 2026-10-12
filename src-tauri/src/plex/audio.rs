@@ -51,20 +51,12 @@ impl PlexClient {
             params.push(("maxDistance", max_distance.to_string()));
         }
 
-        let url = if params.is_empty() {
-            self.build_url(&path)
-        } else {
-            let query = params
-                .iter()
-                .map(|(k, v)| format!("{}={}", k, v))
-                .collect::<Vec<_>>()
-                .join("&");
-            format!("{}?{}", self.build_url(&path), query)
-        };
+        let mut url = url::Url::parse(&self.build_url(&path))?;
+        url.query_pairs_mut().extend_pairs(params);
 
         debug!("Sonic similarity request to {}", url);
 
-        let container: MediaContainer<T> = self.get_url(&url).await
+        let container: MediaContainer<T> = self.get_url(url.as_str()).await
             .context("Failed to fetch sonic metadata")?;
 
         Ok(container.metadata)
@@ -110,17 +102,12 @@ impl PlexClient {
             params.push(("limit", limit.to_string()));
         }
 
-        let query = params
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect::<Vec<_>>()
-            .join("&");
-
-        let url = format!("{}?{}", self.build_url(&path), query);
+        let mut url = url::Url::parse(&self.build_url(&path))?;
+        url.query_pairs_mut().extend_pairs(params);
 
         debug!("Sonic adventure request to {}", url);
 
-        let container: MediaContainer<Track> = self.get_url(&url).await
+        let container: MediaContainer<Track> = self.get_url(url.as_str()).await
             .context("Failed to fetch sonic metadata")?;
 
         Ok(container.metadata)
@@ -154,17 +141,12 @@ impl PlexClient {
             params.push(("maxDistance", max_distance.to_string()));
         }
 
-        let query = params
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect::<Vec<_>>()
-            .join("&");
-
-        let url = format!("{}?{}", self.build_url(&path), query);
+        let mut url = url::Url::parse(&self.build_url(&path))?;
+        url.query_pairs_mut().extend_pairs(params);
 
         debug!("Track radio request to {}", url);
 
-        let container: MediaContainer<Track> = self.get_url(&url).await
+        let container: MediaContainer<Track> = self.get_url(url.as_str()).await
             .context("Failed to fetch sonic metadata")?;
 
         Ok(container.metadata)

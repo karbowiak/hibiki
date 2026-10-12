@@ -544,3 +544,88 @@ test("latest-release shelf persistence restores only its provider scope and albu
   expect(h.state().latestReleases[0].userRating).toBe(8)
   expect(h.state()._latestReleasesLimit).toBe(30)
 })
+
+test("speculative prefetch skips smart playlists while preserving regular complete caches", async () => {
+  const calls: string[] = []
+  const h = harness({ getPlaylistItems: mock(async (id, offset = 0, limit = 0) => {
+    calls.push(id)
+    return { items: Array.from({ length: limit }, (_, i) => track(`${id}-${i}`)), total: limit, offset }
+  }) })
+  await h.activate()
+  h.store.setState({ playlists: [{ ...playlist("smart", 20), smart: true }, { ...playlist("regular", 90), smart: false }] })
+  await h.state().prefetchAllPlaylists()
+  expect(calls).toEqual(["regular"])
+  await h.state().fetchPlaylistItems("regular")
+  expect(h.state().currentPlaylistItems).toHaveLength(90)
+  expect(h.state().playlistIsFullyLoaded.regular).toBe(true)
+  expect(calls).toEqual(["regular"])
+})
+
+test("oversized pages fail without entering the cache or advancing the offset", async () => {
+  let oversized = true
+  const offsets: number[] = []
+  const h = harness({ getPlaylistItems: mock(async (_id, offset = 0, limit = 0) => {
+    offsets.push(offset)
+    return { items: Array.from({ length: oversized ? limit + 1 : limit }, (_, i) => track(String(i))), total: 0, offset }
+  }) })
+  await h.activate(); h.store.setState({ playlists: [playlist("bounded", 20)] })
+  await h.state().fetchPlaylistItems("bounded")
+  expect(h.state().currentPlaylistItems).toEqual([])
+  expect(h.state().playlistItemsCache.bounded).toBeUndefined()
+  expect(h.state().error).toContain("unexpected page")
+  await h.state().fetchMorePlaylistItems("bounded")
+  expect(offsets).toEqual([0], "initial failure must not start automatic pagination")
+  oversized = false
+  await h.state().fetchPlaylistItems("bounded")
+  expect(h.state().currentPlaylistItems).toHaveLength(20)
+  expect(h.state().playlistIsFullyLoaded.bounded).toBe(false)
+})
+
+test("impossible old cache is refetched instead of rendered or silently trimmed", async () => {
+  const h = harness({ getPlaylistItems: mock(async () => ({ items: [track("fresh")], total: 20, offset: 0 })) })
+  await h.activate()
+  h.store.setState({ playlists: [playlist("stale", 20)], playlistItemsCache: { stale: Array.from({ length: 5000 }, (_, i) => track(String(i))) }, playlistIsFullyLoaded: { stale: false } })
+  await h.state().fetchPlaylistItems("stale")
+  expect(h.provider.getPlaylistItems).toHaveBeenCalledTimes(1)
+  expect(h.state().currentPlaylistItems.map(track => track.id)).toEqual(["fresh"])
+  expect(h.state().playlistIsFullyLoaded.stale).toBe(false)
+})
+
+test("nonadvancing pages retain loaded songs and retire automatic retries until explicit retry", async () => {
+  let badOffset = true
+  const calls: number[] = []
+  const h = harness({ getPlaylistItems: mock(async (_id, offset = 0) => {
+    calls.push(offset)
+    return { items: [track(offset === 0 ? "first" : "next")], total: 3, offset: offset && badOffset ? 0 : offset }
+  }) })
+  await h.activate(); h.store.setState({ playlists: [playlist("offset", 3)] })
+  await h.state().fetchPlaylistItems("offset")
+  await h.state().fetchMorePlaylistItems("offset")
+  expect(h.state().currentPlaylistItems.map(track => track.id)).toEqual(["first"])
+  expect(h.state().playlistPageErrors.offset).toBeTruthy()
+  expect(h.state().isFetchingMore).toBe(false)
+  await h.state().fetchMorePlaylistItems("offset")
+  expect(calls).toEqual([0, 1])
+  badOffset = false
+  await h.state().fetchMorePlaylistItems("offset", { force: true })
+  expect(calls).toEqual([0, 1, 1])
+  expect(h.state().currentPlaylistItems.map(track => track.id)).toEqual(["first", "next"])
+  expect(h.state().playlistPageErrors.offset).toBeUndefined()
+})
+
+test("repeated occurrence IDs are rejected while valid duplicate track occurrences remain", async () => {
+  let repeated = true
+  const h = harness({ getPlaylistItems: mock(async (_id, offset = 0) => ({
+    items: [{ ...track("same-song"), playlistItemId: offset && !repeated ? "second-occurrence" : "first-occurrence" }], total: 2, offset,
+  })) })
+  await h.activate(); h.store.setState({ playlists: [playlist("occurrences", 2)] })
+  await h.state().fetchPlaylistItems("occurrences")
+  await h.state().fetchMorePlaylistItems("occurrences")
+  expect(h.state().currentPlaylistItems).toHaveLength(1)
+  expect(h.state().playlistPageErrors.occurrences).toBeTruthy()
+  repeated = false
+  await h.state().fetchMorePlaylistItems("occurrences", { force: true })
+  expect(h.state().currentPlaylistItems.map(track => track.id)).toEqual(["same-song", "same-song"])
+  expect(h.state().currentPlaylistItems.map(track => track.playlistItemId)).toEqual(["first-occurrence", "second-occurrence"])
+  expect(h.state().playlistIsFullyLoaded.occurrences).toBe(true)
+})

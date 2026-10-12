@@ -106,17 +106,12 @@ impl PlexClient {
         let path = "/status/sessions";
         let params = vec![("sectionID", section_id.to_string())];
 
-        let query = params
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect::<Vec<_>>()
-            .join("&");
-
-        let url_with_params = format!("{}?{}", self.build_url(path), query);
+        let mut url_with_params = url::Url::parse(&self.build_url(path))?;
+        url_with_params.query_pairs_mut().extend_pairs(params);
 
         debug!("Fetching active sessions from {}", url_with_params);
 
-        let container: MediaContainer<Session> = self.get_url(&url_with_params).await
+        let container: MediaContainer<Session> = self.get_url(url_with_params.as_str()).await
             .context("Failed to fetch Plex history metadata")?;
 
         Ok(container.metadata)
@@ -165,20 +160,12 @@ impl PlexClient {
             params.push(("sort", sort.to_string()));
         }
 
-        let url = if params.is_empty() {
-            self.build_url(&path)
-        } else {
-            let query = params
-                .iter()
-                .map(|(k, v)| format!("{}={}", k, v))
-                .collect::<Vec<_>>()
-                .join("&");
-            format!("{}?{}", self.build_url(&path), query)
-        };
+        let mut url = url::Url::parse(&self.build_url(&path))?;
+        url.query_pairs_mut().extend_pairs(params);
 
         debug!("Fetching history from {}", url);
 
-        let container: MediaContainer<HistoryItem> = self.get_url(&url).await
+        let container: MediaContainer<HistoryItem> = self.get_url(url.as_str()).await
             .context("Failed to fetch history")?;
 
         Ok(container.metadata)
@@ -528,6 +515,52 @@ impl PlexClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn audio_history_queries_preserve_proxy_paths_and_encode_values() {
+        use super::super::{PlexClientConfig, Track};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for case in 0..7 {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let client = PlexClient::new(PlexClientConfig {
+                base_url: format!("http://{}/proxy/plex/", listener.local_addr().unwrap()),
+                token: "offline-fixture".into(), ..Default::default()
+            }).unwrap();
+            let request = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                loop {
+                    let mut buffer = [0; 4096];
+                    let count = socket.read(&mut buffer).await.unwrap();
+                    bytes.extend_from_slice(&buffer[..count]);
+                    if count == 0 || bytes.windows(4).any(|w| w == b"\r\n\r\n") { break; }
+                }
+                let body = r#"{"MediaContainer":{"Metadata":[]}}"#;
+                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).as_bytes()).await.unwrap();
+                // Return only the target, never authentication headers.
+                String::from_utf8(bytes).unwrap().split_whitespace().nth(1).unwrap().to_owned()
+            });
+            let (path, expected): (&str, Vec<(&str, &str)>) = match case {
+                0 => { client.sonically_similar::<Track>(7, Some(12), Some(0.45)).await.unwrap(); ("/library/metadata/7/nearest", vec![("limit", "12"), ("maxDistance", "0.45")]) }
+                1 => { client.sonic_adventure(3, 7, 9, Some(12)).await.unwrap(); ("/library/sections/3/nearest", vec![("pivot", "7"), ("to", "9"), ("limit", "12")]) }
+                2 => { client.track_radio(3, 7, Some(12), Some(0.45)).await.unwrap(); ("/library/sections/3/mix", vec![("pivot", "7"), ("limit", "12"), ("maxDistance", "0.45")]) }
+                3 => { client.get_active_sessions(3).await.unwrap(); ("/status/sessions", vec![("sectionID", "3")]) }
+                4 => { client.get_history(3, Some(12), Some(4), Some("lastViewedAt:desc&flag=雪+ #")).await.unwrap(); ("/library/sections/3/history", vec![("limit", "12"), ("offset", "4"), ("sort", "lastViewedAt:desc&flag=雪+ #")]) }
+                5 => { client.sonically_similar::<Track>(7, None, None).await.unwrap(); ("/library/metadata/7/nearest", vec![]) }
+                _ => { client.get_history(3, None, None, None).await.unwrap(); ("/library/sections/3/history", vec![]) }
+            };
+            let target = request.await.unwrap();
+            let parsed = url::Url::parse(&format!("http://offline.test{target}")).unwrap();
+            assert_eq!(parsed.path(), format!("/proxy/plex{path}"));
+            let pairs: Vec<_> = parsed.query_pairs().collect();
+            assert_eq!(pairs.len(), expected.len() + 1);
+            assert_eq!(pairs.iter().filter(|(k, v)| k == "includeLoudnessRamps" && v == "1").count(), 1);
+            for (key, value) in expected {
+                assert!(pairs.iter().any(|(k, v)| k == key && v == value));
+            }
+            assert!(parsed.fragment().is_none());
+        }
+    }
 
     #[test]
     fn test_playback_state_serialization() {

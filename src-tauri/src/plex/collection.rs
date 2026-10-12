@@ -80,7 +80,7 @@ impl PlexClient {
     ) -> Result<Vec<Collection>> {
         let path = format!("/library/sections/{}/collections", section_id);
         let url = if let Some(collection_type) = collection_type {
-            format!("{}?type={}", self.build_url(&path), collection_type)
+            self.build_url(&format!("{path}?type={collection_type}"))
         } else {
             self.build_url(&path)
         };
@@ -221,11 +221,8 @@ impl PlexClient {
             .map(|id| id.to_string())
             .collect::<Vec<_>>()
             .join(",");
-        let uri = format!(
-            "{}library/metadata/{}",
-            self.build_url("").trim_end_matches('/'),
-            ids
-        );
+        // Resource URIs preserve the server/proxy path without metadata flags.
+        let uri = self.build_endpoint_url(&format!("/library/metadata/{ids}"));
 
         let body = serde_json::json!({
             "uri": uri
@@ -321,11 +318,7 @@ impl PlexClient {
             "/library/collections/{}/items/{}/move",
             collection_id, collection_item_id
         );
-        let url = format!(
-            "{}?after={}",
-            self.build_url(&path),
-            after_collection_item_id
-        );
+        let url = self.build_url(&format!("{path}?after={after_collection_item_id}"));
 
         let body = serde_json::json!({});
 

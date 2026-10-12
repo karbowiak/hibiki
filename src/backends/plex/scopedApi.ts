@@ -308,7 +308,7 @@ export function createPlexApi(
     playlistId: number,
     limit?: number,
     offset?: number
-  ): Promise<{ items: Track[]; total: number }> {
+  ): Promise<{ items: Track[]; total: number; offset?: number }> {
     return invoke("get_playlist_items_page", {
       playlistId,
       limit: limit ?? null,
