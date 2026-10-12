@@ -71,7 +71,7 @@ if (scenario === "detail-route") {
   await render(<PodcastDetailPage feedUrl="a" />)
   await complete(requests[0], new Error("offline"), true)
   assert(document.body.textContent?.includes("Failed to load podcast feed."))
-  await click(button("Retry"))
+  await click(button("Try again"))
   assert.equal(requests.length, 2)
   await complete(requests[1], feed("a", "Recovered"))
   assert(document.body.textContent?.includes("Recovered"))
@@ -143,7 +143,7 @@ if (scenario === "detail-route") {
   await render(<Router><PodcastsPage /></Router>)
   await complete(requests.find(request => request.command === "podcast_get_categories")!, [])
   await complete(requests.find(request => request.command === "podcast_get_top")!, [{ itunes_id: 1, name: "Unicode", artist_name: "Author", artwork_url: "", feed_url: unicodeFeed }])
-  await click([...document.querySelectorAll("p")].find(node => node.textContent === "Unicode")!)
+  await click(document.querySelector('button[aria-label="Open podcast Unicode"]')!)
   assert.equal(dom.window.location.pathname, podcastFeedPath(unicodeFeed))
   await render(<PodcastDetailPage feedUrl={unicodeFeed} />)
   const request = requests.at(-1)!

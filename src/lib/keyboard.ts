@@ -5,6 +5,7 @@ const CONTROL_SELECTOR = [
   "button",
   "a[href]",
   "summary",
+  '[data-keyboard-scroll="true"]',
   "audio[controls]",
   "video[controls]",
   '[contenteditable]:not([contenteditable="false"])',

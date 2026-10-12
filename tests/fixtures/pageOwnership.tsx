@@ -428,6 +428,10 @@ try {
       assert.ok(navigation.includes("/"))
     }
   } else if (scenario.startsWith("reorder") || scenario === "playlist-load") {
+    // This fixture exercises playlist transactions without a routed artwork shell.
+    mock.module("../../src/components/shared/MediaBackdrop", () => ({
+      AmbientHeroBackdrop: () => null,
+    }))
     mock.module("../../src/components/Page", () => ({
       useScrollContainer: () => null,
     }))

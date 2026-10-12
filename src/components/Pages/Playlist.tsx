@@ -1,5 +1,6 @@
 import type { MusicTrack } from "../../types/music"
 import { ArtworkImage } from "../shared/ArtworkImage"
+import { AmbientHeroBackdrop } from "../shared/MediaBackdrop"
 import {
   useCallback,
   useEffect,
@@ -15,7 +16,7 @@ import { formatTotalMs } from "../../lib/formatters"
 import { useContextMenuStore } from "../../stores/contextMenuStore"
 import { useTableSort } from "../../hooks/useTableSort"
 import { RichText } from "../RichText"
-import { UltraBlur } from "../UltraBlur"
+import "../../styles/media-detail-controls.css"
 import { useScrollContainer } from "../Page"
 import { ALL_COLUMNS, usePlaylistColumns } from "../../hooks/useColumnPicker"
 import { TrackTable } from "../shared/TrackTable"
@@ -91,6 +92,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
   const provider = useProviderStore((s) => s.provider)
   const pageRefreshKey = useUIStore((s) => s.pageRefreshKey)
   const scrollContainerRef = useScrollContainer()
+  const heroRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
 
   const { visible: visibleCols, toggle: toggleCol } = usePlaylistColumns(
@@ -207,10 +209,23 @@ export function Playlist({ playlistId }: { playlistId: string }) {
     }
   }, [playlistId, pageRefreshKey, provider])
 
-  const pageError = useLibraryStore(s => s.playlistPageErrors?.[playlistId] ?? null)
-  const loadNextPage = useCallback(() => { void fetchMorePlaylistItems(playlistId) }, [playlistId, fetchMorePlaylistItems])
-  usePlaylistPagination({ playlistId, scrollContainer: scrollContainerRef, sentinel: sentinelRef,
-    isLoading, isFetchingMore, isFullyLoaded, filterQuery, blocked: !!pageError, onLoadMore: loadNextPage })
+  const pageError = useLibraryStore(
+    (s) => s.playlistPageErrors?.[playlistId] ?? null
+  )
+  const loadNextPage = useCallback(() => {
+    void fetchMorePlaylistItems(playlistId)
+  }, [playlistId, fetchMorePlaylistItems])
+  usePlaylistPagination({
+    playlistId,
+    scrollContainer: scrollContainerRef,
+    sentinel: sentinelRef,
+    isLoading,
+    isFetchingMore,
+    isFullyLoaded,
+    filterQuery,
+    blocked: !!pageError,
+    onLoadMore: loadNextPage,
+  })
 
   // Reorder is only available for non-smart playlists in default sort order with no filter
   const canReorder =
@@ -304,7 +319,9 @@ export function Playlist({ playlistId }: { playlistId: string }) {
 
   const loadedCount = currentPlaylistItems.length
   const totalCount = currentPlaylist.trackCount
-  const displayCount = isFullyLoaded ? loadedCount : Math.max(totalCount, loadedCount)
+  const displayCount = isFullyLoaded
+    ? loadedCount
+    : Math.max(totalCount, loadedCount)
   const totalMs = currentPlaylistItems.reduce((sum, t) => sum + t.duration, 0)
 
   // URI for server-side play queue — enables full-playlist shuffle regardless of loaded count.
@@ -321,10 +338,13 @@ export function Playlist({ playlistId }: { playlistId: string }) {
     : Math.max(0, (totalCount - loadedCount) * ROW_HEIGHT_PX)
 
   return (
-    <div className="pb-12">
-      {/* Header */}
-      <div className="hero-overlay relative flex flex-row items-end overflow-hidden rounded-t-lg px-8 py-6">
-        <UltraBlur src={thumbUrl} />
+    <div className="media-detail-page playlist-detail-page pb-12">
+      <AmbientHeroBackdrop heroRef={heroRef} />
+      {/* The global artwork layer supplies the sharp hero and aligned blur. */}
+      <div
+        ref={heroRef}
+        className="media-detail-hero hero-overlay relative flex items-end"
+      >
         <div className="relative z-10 flex w-full flex-wrap items-end gap-5">
           {/* Cover art */}
           {thumbUrl ? (
@@ -341,7 +361,8 @@ export function Playlist({ playlistId }: { playlistId: string }) {
           {/* Info column */}
           <div className="flex min-h-44 min-w-0 flex-[1_1_16rem] flex-col justify-between gap-4">
             <div className="min-w-0">
-              <h1 className="break-words text-[clamp(1.75rem,3.2vw,3rem)] font-bold leading-tight tracking-tight drop-shadow">
+              <div className="media-detail-eyebrow mb-2">Playlist</div>
+              <h1 className="media-detail-title break-words">
                 {currentPlaylist.title}
               </h1>
               {currentPlaylist.summary && (
@@ -352,21 +373,9 @@ export function Playlist({ playlistId }: { playlistId: string }) {
               )}
             </div>
 
-            {/* Bottom row: stats + play/shuffle buttons */}
-            <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-              <p className="text-sm text-gray-400">
-                {displayCount.toLocaleString()} {displayCount === 1 ? "song" : "songs"}
-                {totalMs > 0 && (
-                  <> · {formatTotalMs(totalMs)}{!isFullyLoaded && " so far"}</>
-                )}
-                {!isFullyLoaded &&
-                  loadedCount > 0 && (
-                    <span className="ml-1 text-white/30">
-                      ({loadedCount.toLocaleString()} loaded)
-                    </span>
-                  )}
-              </p>
-              <div className="relative z-20 flex items-center gap-3">
+            {/* Playlist actions stay beneath the description. */}
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="relative z-20 flex flex-wrap items-center gap-3">
                 {/* Play in order */}
                 <button
                   onClick={() =>
@@ -380,9 +389,10 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                   }
                   disabled={totalCount === 0}
                   title="Play"
-                  className="flex h-14 w-14 items-center justify-center rounded-full border border-white/10 bg-black/30 text-accent backdrop-blur-sm transition-all hover:scale-105 hover:bg-black/45 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="media-primary"
                 >
                   <svg
+                    aria-hidden="true"
                     viewBox="0 0 16 16"
                     width="22"
                     height="22"
@@ -390,6 +400,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                   >
                     <polygon points="3,2 13,8 3,14" />
                   </svg>
+                  Play
                 </button>
 
                 {/* Shuffle */}
@@ -405,9 +416,10 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                   }
                   disabled={!playlistUri || totalCount === 0}
                   title="Shuffle play"
-                  className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/30 text-accent backdrop-blur-sm transition-all hover:scale-105 hover:bg-black/45 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="media-secondary"
                 >
                   <svg
+                    aria-hidden="true"
                     viewBox="0 0 16 16"
                     width="16"
                     height="16"
@@ -415,6 +427,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                   >
                     <path d="M13.151.922a.75.75 0 1 0-1.06 1.06L13.109 3H11.16a3.75 3.75 0 0 0-2.873 1.34l-6.173 7.356A2.25 2.25 0 0 1 .39 12.5H0V14h.391a3.75 3.75 0 0 0 2.873-1.34l6.173-7.356A2.25 2.25 0 0 1 11.16 4.5h1.949l-1.018 1.018a.75.75 0 0 0 1.06 1.06L15.98 3.75 13.15.922zM.391 3.5H0V2h.391c1.109 0 2.16.49 2.873 1.34L4.89 5.277l-.979 1.167-1.796-2.14A2.25 2.25 0 0 0 .39 3.5zm9.831 8.17l.979 1.167.28.334A3.75 3.75 0 0 0 14.36 14.5h1.64V13h-1.64a2.25 2.25 0 0 1-1.726-.83l-.28-.335-1.733-2.063-.979 1.167 1.18 1.731z" />
                   </svg>
+                  Shuffle
                 </button>
 
                 {/* Playlist Radio */}
@@ -429,9 +442,10 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                   }
                   disabled={totalCount === 0}
                   title="Playlist Radio — continuous sonically-similar music"
-                  className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/30 text-accent backdrop-blur-sm transition-all hover:scale-105 hover:bg-black/45 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="media-secondary"
                 >
                   <svg
+                    aria-hidden="true"
                     viewBox="0 0 16 16"
                     width="16"
                     height="16"
@@ -439,6 +453,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                   >
                     <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6A3 3 0 0 0 8 5zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
                   </svg>
+                  Radio
                 </button>
 
                 {/* More actions */}
@@ -456,9 +471,10 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                       )
                   }}
                   title="More actions"
-                  className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/30 text-white/70 backdrop-blur-sm transition-all hover:scale-105 hover:bg-black/45 hover:text-white active:scale-95"
+                  className="media-secondary"
                 >
                   <svg
+                    aria-hidden="true"
                     viewBox="0 0 16 16"
                     width="16"
                     height="16"
@@ -468,12 +484,35 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                     <circle cx="8" cy="8" r="1.5" />
                     <circle cx="13" cy="8" r="1.5" />
                   </svg>
+                  More
                 </button>
               </div>
             </div>
           </div>
         </div>
       </div>
+
+      <dl
+        className="media-ledger playlist-overview"
+        aria-label="Playlist overview"
+      >
+        <div>
+          <dt>Songs</dt>
+          <dd>{displayCount.toLocaleString()}</dd>
+        </div>
+        {totalMs > 0 && (
+          <div>
+            <dt>Runtime{!isFullyLoaded && " so far"}</dt>
+            <dd>{formatTotalMs(totalMs)}</dd>
+          </div>
+        )}
+        {!isFullyLoaded && loadedCount > 0 && (
+          <div>
+            <dt>Songs loaded</dt>
+            <dd>{loadedCount.toLocaleString()}</dd>
+          </div>
+        )}
+      </dl>
 
       {errorNotice}
       {/* Track list */}
@@ -495,13 +534,19 @@ export function Playlist({ playlistId }: { playlistId: string }) {
         onAddToQueue={addToQueue}
         onPlayRadio={playRadio}
         columns={PLAYLIST_COLUMNS}
-        searchPlaceholder="Search in playlist…  ⌘K"
+        searchPlaceholder="Search in playlist…"
         filterQuery={filterQuery}
         onFilterChange={setFilterQuery}
         defaultResetTitle="Restore playlist order"
         isLoading={isLoading}
         loadedCount={loadedCount}
-        emptyMessage={debouncedQuery ? isFullyLoaded ? "No songs match this filter." : "No matches in loaded songs. Load more songs or clear the filter." : "This playlist is empty."}
+        emptyMessage={
+          debouncedQuery
+            ? isFullyLoaded
+              ? "No songs match this filter."
+              : "No matches in loaded songs. Load more songs or clear the filter."
+            : "This playlist is empty."
+        }
         sentinel={sentinelRef}
         spacerHeight={spacerHeight}
         isFetchingMore={isFetchingMore}
@@ -509,18 +554,43 @@ export function Playlist({ playlistId }: { playlistId: string }) {
         playlistId={currentPlaylist.smart ? undefined : playlistId}
         onReorder={canReorder ? handleReorder : undefined}
       />
-      {!isFullyLoaded && loadedCount > 0 && <div className="mx-8 mt-4 flex flex-wrap items-center gap-3">
-        {pageError && <p role="alert" className="w-full text-sm text-red-400">{pageError}</p>}
-        <button type="button" disabled={isFetchingMore || isLoading}
-          onClick={() => void fetchMorePlaylistItems(playlistId, { force: true })}
-          className="rounded-full bg-app-surface px-4 py-2 text-sm text-[var(--text-primary)] hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50">
-          {isFetchingMore ? "Loading more…" : pageError ? "Retry loading more" : "Load more songs"}
-        </button>
-        {pageError && <button type="button" onClick={() => invalidatePlaylistItems(playlistId)}
-          className="rounded-full border border-white/20 px-4 py-2 text-sm text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Reload playlist</button>}
-        {filterQuery && <span className="text-xs text-[var(--text-secondary)]">Filter applies to loaded songs; loading more is optional.</span>}
-      </div>}
-
+      {!isFullyLoaded && loadedCount > 0 && (
+        <div className="mx-8 mt-4 flex flex-wrap items-center gap-3">
+          {pageError && (
+            <p role="alert" className="w-full text-sm text-red-400">
+              {pageError}
+            </p>
+          )}
+          <button
+            type="button"
+            disabled={isFetchingMore || isLoading}
+            onClick={() =>
+              void fetchMorePlaylistItems(playlistId, { force: true })
+            }
+            className="rounded-full bg-app-surface px-4 py-2 text-sm text-[var(--text-primary)] hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
+          >
+            {isFetchingMore
+              ? "Loading more…"
+              : pageError
+                ? "Retry loading more"
+                : "Load more songs"}
+          </button>
+          {pageError && (
+            <button
+              type="button"
+              onClick={() => invalidatePlaylistItems(playlistId)}
+              className="rounded-full border border-white/20 px-4 py-2 text-sm text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              Reload playlist
+            </button>
+          )}
+          {filterQuery && (
+            <span className="text-xs text-[var(--text-secondary)]">
+              Filter applies to loaded songs; loading more is optional.
+            </span>
+          )}
+        </div>
+      )}
     </div>
   )
 }

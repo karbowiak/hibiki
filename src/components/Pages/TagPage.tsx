@@ -228,6 +228,7 @@ export function TagPage({
           {albums.map((album) => (
             <MediaCard
               key={album.id}
+              contextItem={{ ...album, type: "album" }}
               title={album.title}
               desc={album.artistName}
               thumb={album.thumbUrl}

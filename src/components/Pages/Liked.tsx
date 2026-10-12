@@ -255,7 +255,7 @@ export function Liked() {
           onAddToQueue={addToQueue}
           onPlayRadio={playRadio}
           columns={LIKED_COLUMNS}
-          searchPlaceholder="Search in liked songs…  ⌘K"
+          searchPlaceholder="Search in liked songs…"
           filterQuery={filterQuery}
           onFilterChange={setFilterQuery}
           defaultResetTitle="Restore default order (most recently rated)"

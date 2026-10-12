@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useLocation } from "wouter"
 import { open } from "@tauri-apps/plugin-shell"
 import { useShallow } from "zustand/react/shallow"
-import { useContextMenuStore } from "../stores/contextMenuStore"
+import { useContextMenuStore, type ContextActionsData, type ContextAction, type MediaContextMenuData } from "../stores/contextMenuStore"
 import { usePlayerStore, useLibraryStore } from "../stores"
 import { useDeezerMetadataStore } from "../metadata/deezer/store"
 import { useUIStore } from "../stores/uiStore"
@@ -170,13 +170,14 @@ function InlineDeleteConfirm({ title, onConfirm, onCancel }: {
 // ---------------------------------------------------------------------------
 
 export function ContextMenu() {
-  const { open: isOpen, x, y, type, data, playlistId: ctxPlaylistId, ownerProvider, generation, close } = useContextMenuStore()
+  const { open: isOpen, x, y, type, data, playlistId: ctxPlaylistId, ownerProvider, ownerScope, generation, close } = useContextMenuStore()
   const debugEnabled = useDebugStore(s => s.debugEnabled)
   const showDebugPanel = useDebugPanelStore(s => s.show)
   const provider = useProviderStore(s => s.provider)
   const captureOwner = useProviderMutationOwner(provider)
   const hasRadio = useCapability("radio")
   const hasRatings = useCapability("ratings")
+  const hasPlaylists = useCapability("playlists")
   const { playTrack, playFromUri, playRadio, addNext, addToQueue } = usePlayerStore(useShallow(s => ({
     playTrack: s.playTrack,
     playFromUri: s.playFromUri,
@@ -193,19 +194,56 @@ export function ContextMenu() {
   const [menuPos, setMenuPos] = useState({ left: -9999, top: -9999 })
   const [renaming, setRenaming] = useState(false)
   const [confirming, setConfirming] = useState(false)
+  const [actionsError, setActionsError] = useState<string | null>(null)
+  const pendingAction = useRef<symbol | null>(null)
 
   // Reset inline states when menu reopens
   useEffect(() => {
     if (isOpen) {
       setRenaming(false)
       setConfirming(false)
+      setActionsError(null)
+      pendingAction.current = null
     }
   }, [isOpen, generation])
 
-  // Close on Escape
+  useLayoutEffect(() => {
+    if (!isOpen || ownerProvider !== provider || ownerScope !== provider?.cacheScope || !menuRef.current) return
+    const menu = menuRef.current
+    const opener = document.activeElement as HTMLElement | null
+    menu.querySelector<HTMLElement>("button:not(:disabled), input")?.focus({ preventScroll: true })
+    return () => {
+      if (useProviderStore.getState().provider !== provider || provider?.cacheScope !== ownerScope) return
+      const active = document.activeElement
+      // Search intentionally moves focus outside before closing the menu.
+      if (opener?.isConnected && (active === document.body || menu.contains(active))) opener.focus({ preventScroll: true })
+    }
+  }, [isOpen, generation, ownerProvider, ownerScope, provider])
+
   useEffect(() => {
     if (!isOpen) return
-    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") close() }
+    const handler = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.isComposing) return
+      const menu = menuRef.current
+      if (!menu || !menu.contains(e.target as Node)) return
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); return }
+      const controls = Array.from(menu.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), a[href]"))
+      if (!controls.length) return
+      const index = controls.indexOf(document.activeElement as HTMLElement)
+      if (e.key === "Tab") {
+        e.preventDefault()
+        controls[(index + (e.shiftKey ? -1 : 1) + controls.length) % controls.length].focus()
+        return
+      }
+      if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || (e.target as HTMLElement).closest("input, textarea, [contenteditable]")) return
+      let next: number
+      if (e.key === "ArrowDown") next = (index + 1) % controls.length
+      else if (e.key === "ArrowUp") next = (index - 1 + controls.length) % controls.length
+      else if (e.key === "Home") next = 0
+      else if (e.key === "End") next = controls.length - 1
+      else return
+      e.preventDefault(); e.stopPropagation(); controls[next].focus()
+    }
     document.addEventListener("keydown", handler)
     return () => document.removeEventListener("keydown", handler)
   }, [isOpen, close])
@@ -223,13 +261,40 @@ export function ContextMenu() {
     const left = Math.max(8, Math.min(x, window.innerWidth - rect.width - 8))
     const top = Math.max(8, Math.min(y, window.innerHeight - rect.height - 8))
     setMenuPos({ left, top })
-  }, [isOpen, x, y, renaming, confirming, generation])
+  }, [isOpen, x, y, renaming, confirming, actionsError, generation])
 
-  if (!isOpen || !type || !data || ownerProvider !== provider) return null
+  if (!isOpen || !type || !data || (ownerProvider !== provider || ownerScope !== provider?.cacheScope)) return null
 
   const currentMenu = () => useContextMenuStore.getState().open && useContextMenuStore.getState().generation === generation
+    && useProviderStore.getState().provider === provider && provider?.cacheScope === ownerScope
   const failed = (current: () => boolean) => { if (current() && useContextMenuStore.getState().generation === generation) useLibraryStore.setState({ error: "Unable to update the playlist. Please try again." }) }
 
+  if (type === "actions") {
+    const actionData = data as ContextActionsData
+    async function invokeAction(action: ContextAction) {
+      if (!currentMenu() || pendingAction.current) return
+      const request = Symbol("context action")
+      pendingAction.current = request
+      setActionsError(null)
+      try {
+        await action.run()
+        if (currentMenu()) close()
+      } catch {
+        if (currentMenu()) setActionsError("Could not complete this action. Try again.")
+      } finally {
+        if (pendingAction.current === request) pendingAction.current = null
+      }
+    }
+    return <>
+      <div className="fixed inset-0 z-[9998]" onClick={close} onContextMenu={e => { e.preventDefault(); close() }} />
+      <div ref={menuRef} role="dialog" aria-modal="true" aria-label={`${data.title} actions`} style={{ left: menuPos.left, top: menuPos.top }} className="fixed z-[9999] w-60 rounded-lg border border-[var(--border)] bg-app-card shadow-2xl py-1 text-sm select-none">
+        {actionData.actions.map((action, index) => <Item key={`${index}:${action.label}`} label={action.label} onClick={() => void invokeAction(action)} />)}
+        {actionsError && <p role="alert" className="px-3 py-2 text-xs text-[var(--text-secondary)]">{actionsError}</p>}
+      </div>
+    </>
+  }
+
+  const mediaData = data as MediaContextMenuData
   const playlist = type === "playlist" ? (data as MusicPlaylist) : null
   const track = type === "track" ? (data as MusicTrack) : null
   const album = type === "album" ? (data as MusicAlbum) : null
@@ -254,6 +319,7 @@ export function ContextMenu() {
   // ── Actions ──────────────────────────────────────────────────────────────
 
   function doPlay() {
+      if (!currentMenu()) return
     if (track) void playTrack(track)
     else if (album && provider?.buildItemUri) {
       const uri = provider.buildItemUri(album.providerKey ?? `/library/metadata/${album.id}`)
@@ -266,6 +332,7 @@ export function ContextMenu() {
   }
 
   function doAddNext() {
+      if (!currentMenu()) return
     if (track) {
       addNext([track])
       close()
@@ -276,6 +343,7 @@ export function ContextMenu() {
   }
 
   function doQueue() {
+      if (!currentMenu()) return
     if (track) {
       addToQueue([track])
       close()
@@ -294,6 +362,7 @@ export function ContextMenu() {
   }
 
   function doRadio() {
+      if (!currentMenu()) return
     const id = track?.id ?? album?.id ?? artist?.id
     const radioType = track ? "track" : album ? "album" : "artist"
     if (id) void playRadio(id, radioType as "track" | "album" | "artist")
@@ -306,16 +375,19 @@ export function ContextMenu() {
   }
 
   function goToArtist() {
+      if (!currentMenu()) return
     if (track?.artistId) navigate(`/artist/${track.artistId}`)
     close()
   }
 
   function goToAlbum() {
+      if (!currentMenu()) return
     if (track?.albumId) navigate(`/album/${track.albumId}`)
     close()
   }
 
   function doRemoveFromPlaylist() {
+      if (!currentMenu()) return
     if (!track || !ctxPlaylistId || !provider || !track.playlistItemId) return
     const current = captureOwner()
     void provider.removeFromPlaylist(ctxPlaylistId, [track.playlistItemId]).then(() => {
@@ -334,7 +406,7 @@ export function ContextMenu() {
     : []
 
   // Rating data
-  const itemId = data.id
+  const itemId = mediaData.id
   const userRating = (data as MusicTrack | MusicAlbum | MusicArtist).userRating ?? null
   const artistName = track?.artistName ?? album?.artistName ?? artist?.title ?? ""
   const itemTitle = track?.title ?? album?.title ?? artist?.title ?? ""
@@ -353,6 +425,7 @@ export function ContextMenu() {
     const href = `/playlist/${playlist.id}`
 
     function doPlayPlaylist() {
+      if (!currentMenu()) return
       if (!provider?.buildPlaylistUri || !playlist!.providerKey) return
       void playFromUri(
         provider.buildPlaylistUri(playlist!.providerKey),
@@ -364,6 +437,7 @@ export function ContextMenu() {
     }
 
     function doShufflePlaylist() {
+      if (!currentMenu()) return
       if (!provider?.buildPlaylistUri || !playlist!.providerKey) return
       void playFromUri(
         provider.buildPlaylistUri(playlist!.providerKey),
@@ -375,6 +449,7 @@ export function ContextMenu() {
     }
 
     function doRenamePlaylist(newName: string) {
+      if (!currentMenu()) return
       if (!provider) return
       const current = captureOwner()
       void provider.editPlaylist(playlist!.id, newName).then(() => {
@@ -384,6 +459,7 @@ export function ContextMenu() {
     }
 
     function doDeletePlaylist() {
+      if (!currentMenu()) return
       if (!provider) return
       const current = captureOwner()
       void provider.deletePlaylist(playlist!.id).then(() => {
@@ -403,6 +479,9 @@ export function ContextMenu() {
         <div className="fixed inset-0 z-[9998]" onContextMenu={e => { e.preventDefault(); close() }} onClick={close} />
         <div
           ref={menuRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${data.title} actions`}
           style={{ left: menuPos.left, top: menuPos.top }}
           className="fixed z-[9999] w-60 rounded-lg border border-white/10 bg-app-card shadow-2xl py-1 text-sm select-none"
         >
@@ -423,12 +502,13 @@ export function ContextMenu() {
               <Item icon={IconPlay} label="Play" onClick={doPlayPlaylist} />
               <Item icon={IconShuffle} label="Play shuffled" onClick={doShufflePlaylist} />
               {hasRadio && <Item icon={IconRadio} label="Start radio" onClick={() => {
-                void playRadio(playlist.id, "track")
+                if (!currentMenu()) return
+                void playRadio(playlist.id, "playlist")
                 close()
               }} />}
               <Divider />
-              {isEditable && <Item icon={IconEdit} label="Rename" onClick={() => setRenaming(true)} />}
-              <Item icon={IconDelete} label="Delete" onClick={() => setConfirming(true)} danger />
+              {hasPlaylists && isEditable && <Item icon={IconEdit} label="Rename" onClick={() => setRenaming(true)} />}
+              {hasPlaylists && <Item icon={IconDelete} label="Delete" onClick={() => setConfirming(true)} danger />}
               {debugEnabled && (
                 <>
                   <Divider />
@@ -436,7 +516,7 @@ export function ContextMenu() {
                   <Item
                     icon={IconBug}
                     label="Debug Info"
-                    onClick={() => { showDebugPanel(type!, data!); close() }}
+                    onClick={() => { showDebugPanel(type!, mediaData); close() }}
                   />
                 </>
               )}
@@ -455,6 +535,9 @@ export function ContextMenu() {
       {/* Menu */}
       <div
         ref={menuRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${data.title} actions`}
         style={{ left: menuPos.left, top: menuPos.top }}
         className="fixed z-[9999] w-60 rounded-lg border border-white/10 bg-app-card shadow-2xl py-1 text-sm select-none"
       >
@@ -484,7 +567,7 @@ export function ContextMenu() {
         />}
 
         {/* Remove from playlist — when in a playlist context and track has playlistItemId */}
-        {track && ctxPlaylistId && track.playlistItemId && (
+        {hasPlaylists && track && ctxPlaylistId && track.playlistItemId && (
           <>
             <Divider />
             <Item icon={IconRemove} label="Remove from playlist" onClick={doRemoveFromPlaylist} danger />
@@ -492,7 +575,7 @@ export function ContextMenu() {
         )}
 
         {/* Add to playlist — tracks only */}
-        {track && (
+        {hasPlaylists && track && (
           <>
             <Divider />
             <SectionLabel label="Add to playlist" />
@@ -550,7 +633,7 @@ export function ContextMenu() {
             <Item
               icon={IconBug}
               label="Debug Info"
-              onClick={() => { showDebugPanel(type!, data!); close() }}
+              onClick={() => { showDebugPanel(type!, mediaData); close() }}
             />
           </>
         )}

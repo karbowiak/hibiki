@@ -17,3 +17,19 @@ Use existing cached library artwork without large background library scans. Miss
 The bars share one semantic tint. The toolbar has balanced padding, controls have subtle hover states, and the previous image stays visible underneath the incoming fade. Artwork colors are scoped to the app; disabling them restores the saved accent. Hero metadata and small accent text retain readable contrast.
 
 Validation: 606 frontend tests; both TypeScript projects and production build; Chromium and WebKit appearance, artwork transitions, palette contrast, seek controls, account retirement, library/player geometry, search discovery, notifications and renderer/CSP checks. Native screenshots reviewed sharp album/artist heroes, glass surfaces, toolbar spacing and live waveform rendering. No audio-engine changes in this visual batch.
+
+## Follow-up polish
+
+- [x] Give playback controls, popovers and waveform an independent now-playing artwork palette, with saved-accent fallback.
+- [x] Keep Create Playlist on the saved accent as page backgrounds change.
+- [x] Make media context menus and Cmd/Ctrl+K consistent across library, collection and detail routes; support keyboard focus and account retirement.
+- [x] Give podcast and internet-radio cards the shared square artwork layout, with independent open/play and favorite actions and shared context menus.
+- [x] Replace playlist color boxes with sharp full-window artwork heroes, a blurred continuation, labeled actions and a songs/runtime ledger.
+- [x] Rotate eligible cached backgrounds every 45 seconds, with pause and next-image controls; pause automatic rotation in hidden windows and exclude artist/album pages.
+- [x] Replace persistent artwork-source buttons with accessible hover/focus edit pens.
+- [x] Keep wide song tables within their own scroll region and keep keyboard scrolling separate from playback shortcuts.
+- [x] Hide broken-image indicators during bounded retries and use the native image cache for radio artwork.
+
+Validation: 611 frontend tests; both TypeScript projects and production build; Chromium and WebKit appearance and real-card context menus across dark/light/custom palettes, fonts, sizes and narrow windows. Shell, library/player geometry, search discovery, notifications and renderer/CSP checks passed in both browsers. Native review covered the small ❤️ Tracks playlist hero, independent playback colors, library shortcuts, shared context menus and podcast/radio layouts. No playback-engine or Rust changes.
+
+The ignored local `TODO.md` records metadata-provider expansion, optional SoulSync, Plex metadata editing and playlist synchronization. It also records a native radio-directory lookup failure seen during final review: direct public HTTP requests succeeded, so the native client error still needs diagnosis. This batch is committed locally without pushing or releasing.

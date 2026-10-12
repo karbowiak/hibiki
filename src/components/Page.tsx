@@ -54,7 +54,7 @@ const bg = {
   settings:   "bg-[var(--bg-base)]",
 }
 
-const NO_PADDING_ROUTES = new Set(["playlist", "mix", "artist", "album", "collection", "settings", "internet-radio", "podcast"])
+const NO_PADDING_ROUTES = new Set(["playlist", "mix", "artist", "album", "collection", "settings", "internet-radio", "podcasts", "podcast"])
 
 export function Page() {
   const [location] = useLocation()

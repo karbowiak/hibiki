@@ -1,6 +1,6 @@
 import { useCallback } from "react"
 import { useProviderStore } from "../stores/providerStore"
-import { useContextMenuStore, type ContextMenuType } from "../stores/contextMenuStore"
+import { useContextMenuStore, type MediaContextMenuType, type ContextActionsData } from "../stores/contextMenuStore"
 import type { MusicTrack, MusicAlbum, MusicArtist, MusicPlaylist } from "../types/music"
 
 type ContextMenuData = MusicTrack | MusicAlbum | MusicArtist | MusicPlaylist
@@ -14,19 +14,39 @@ type ContextMenuData = MusicTrack | MusicAlbum | MusicArtist | MusicPlaylist
  */
 export function useContextMenu() {
   const provider = useProviderStore(s => s.provider)
+  const scope = provider?.cacheScope
+  const showActions = useContextMenuStore(s => s.showActions)
   const show = useContextMenuStore(s => s.show)
   const open = useContextMenuStore(s => s.open)
   const targetId = useContextMenuStore(s => (s.data as any)?.id ?? null)
 
   const handler = useCallback(
-    (type: ContextMenuType, data: ContextMenuData, playlistId?: string | null) =>
+    (type: MediaContextMenuType, data: ContextMenuData, playlistId?: string | null) =>
       (e: React.MouseEvent) => {
         e.preventDefault()
         e.stopPropagation()
-        if (useProviderStore.getState().provider !== provider) return
-        show(e.clientX, e.clientY, type, data, playlistId)
+        if (!provider || useProviderStore.getState().provider !== provider || provider.cacheScope !== scope) return
+        const root = e.currentTarget as HTMLElement
+        const target = (e.target as HTMLElement).closest?.("button, a[href]") ?? root.querySelector?.("button, a[href]")
+        if (target instanceof window.HTMLElement) target.focus({ preventScroll: true })
+        const bounds = root.getBoundingClientRect()
+        const keyboard = e.clientX === 0 && e.clientY === 0
+        show(keyboard ? bounds.left : e.clientX, keyboard ? bounds.bottom : e.clientY, type, data, playlistId)
       },
-    [show, provider],
+    [show, provider, scope],
+  )
+
+  const actionsHandler = useCallback(
+    (data: ContextActionsData) => (e: React.MouseEvent) => {
+      e.preventDefault(); e.stopPropagation()
+      // Public audio cards remain usable with no music provider connected.
+      if (useProviderStore.getState().provider !== provider || provider?.cacheScope !== scope) return
+      const root = e.currentTarget as HTMLElement
+      const target = (e.target as HTMLElement).closest?.("button, a[href]") ?? root.querySelector?.("button, a[href]")
+      if (target instanceof window.HTMLElement) target.focus({ preventScroll: true })
+      const bounds = root.getBoundingClientRect(), keyboard = e.clientX === 0 && e.clientY === 0
+      showActions(keyboard ? bounds.left : e.clientX, keyboard ? bounds.bottom : e.clientY, data)
+    }, [showActions, provider, scope]
   )
 
   const isTarget = useCallback(
@@ -34,5 +54,5 @@ export function useContextMenu() {
     [open, targetId],
   )
 
-  return { handler, isTarget }
+  return { handler, actionsHandler, isTarget }
 }

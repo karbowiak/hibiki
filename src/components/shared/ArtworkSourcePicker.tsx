@@ -31,6 +31,7 @@ export interface ArtworkSourcePickerProps {
   entityId?: string | null
   className?: string
   label?: string
+  iconOnly?: boolean
   refreshImage?: (
     source: ArtworkSource,
     url: string
@@ -82,6 +83,9 @@ export function ArtworkSourcePicker(props: ArtworkSourcePickerProps) {
     <>
       <button
         type="button"
+        aria-label={
+          props.iconOnly ? (props.label ?? "Artwork sources") : undefined
+        }
         disabled={!key}
         onClick={(event) => {
           event.currentTarget.focus({ preventScroll: true })
@@ -92,7 +96,24 @@ export function ArtworkSourcePicker(props: ArtworkSourcePickerProps) {
           "rounded-full border border-[var(--border)] bg-app-surface px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
         }
       >
-        {props.label ?? "Artwork sources"}
+        {props.iconOnly ? (
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            width="16"
+            height="16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="m16 3 5 5-12 12-6 1 1-6L16 3Z" />
+            <path d="m14 5 5 5" />
+          </svg>
+        ) : (
+          (props.label ?? "Artwork sources")
+        )}
       </button>
       {open && key && (
         <SourceDialog

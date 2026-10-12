@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { build } from "vite"
 import { chromium, webkit } from "playwright"
+import { podcastFeedPath } from "../src/lib/podcastRoute"
 import { artworkContrast } from "../src/lib/artworkTone"
 
 // Real components and stores, disposable preferences and playback, no account I/O.
@@ -12,7 +13,8 @@ const output = await mkdtemp(join(tmpdir(), "hibiki-appearance-"))
 const artifacts = resolve(root, ".tmp/appearance-checks")
 await mkdir(artifacts, { recursive: true })
 const previousPlatform = process.env.TAURI_ENV_PLATFORM
-process.env.TAURI_ENV_PLATFORM = "darwin"
+// Browser fixtures exercise Tauri's supported HTTP image transport; native Mac is reviewed separately.
+process.env.TAURI_ENV_PLATFORM = "windows"
 const fallbackFont = await Bun.file(
   resolve(
     root,
@@ -40,7 +42,7 @@ try {
       const path = new URL(request.url).pathname
       if (path.startsWith("/synthetic-artwork/"))
         return new Response(
-          '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="480"><rect width="480" height="480" fill="#7c3aed"/></svg>',
+          `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="480"><rect width="480" height="480" fill="${path.includes("replacement") ? "#0891b2" : path.includes("next") ? "#f97316" : "#7c3aed"}"/></svg>`,
           { headers: { "Content-Type": "image/svg+xml" } }
         )
       const filePath = resolve(output, `.${path}`)
@@ -60,9 +62,24 @@ try {
     const browser = await type.launch({ headless: true })
     try {
       const context = await browser.newContext()
-      await context.route("**/*", (route) => {
+      await context.route("**/*", async (route) => {
         const url = new URL(route.request().url())
         if (url.origin === origin) return route.continue()
+        if (url.hostname === "image.localhost") {
+          const src = url.searchParams.get("src")
+          if (src && new URL(src).origin === origin) {
+            const response = await fetch(src)
+            return route.fulfill({
+              status: response.status,
+              headers: {
+                "Content-Type": "image/svg+xml",
+                "Access-Control-Allow-Origin": "*",
+              },
+              body: Buffer.from(await response.arrayBuffer()),
+            })
+          }
+          return route.abort()
+        }
         if (url.hostname === "encore.scdn.co" && /\.woff2?$/.test(url.pathname))
           return route.fulfill({
             body: Buffer.from(fallbackFont),
@@ -121,6 +138,10 @@ try {
           "/collection/playlists",
           "/artist/fixture-artist",
           "/album/fixture-album",
+          "/playlist/fixture-playlist-0",
+          "/podcasts",
+          "/internet-radio",
+          podcastFeedPath("https://synthetic.invalid/music.xml")!,
         ]) {
           await page.evaluate(
             (path) => (window as any).fixtureAppearance.route(path),
@@ -202,6 +223,23 @@ try {
           await page.screenshot({
             path: join(artifacts, `${slug}-${route.split("/")[1]}.png`),
           })
+          if (route === "/podcasts" || route === "/internet-radio") {
+            const card = page.locator(".broadcast-card").first()
+            const title = await card.locator(".media-card__title").innerText()
+            await card.locator(".media-card__primary").click({ button: "right" })
+            const menu = page.getByRole("dialog", { name: `${title} actions`, exact: true })
+            await menu.waitFor()
+            assert.ok(await menu.getByRole("button").count() >= 1, `${slug}: public card actions missing`)
+            await page.keyboard.press("Escape")
+            await menu.waitFor({ state: "detached" })
+            await card.locator(".media-card__primary").focus()
+            await page.keyboard.press("Shift+F10")
+            await menu.waitFor()
+            await page.keyboard.press("Control+k")
+            await menu.waitFor({ state: "detached" })
+            assert.equal(await page.getByRole("combobox", { name: "Search your music library" }).evaluate(element => element === document.activeElement), true, `${slug}: search failed from public card menu`)
+            await page.keyboard.press("Escape")
+          }
           if (route.startsWith("/artist") || route.startsWith("/album")) {
             const sharp = page.locator(
               ".app-artwork-frame:not(.app-artwork-frame--retiring) .app-artwork-sharp"
@@ -296,9 +334,22 @@ try {
               "queue"
             )
             const opener = page.getByRole("button", {
-              name: "Artwork sources",
-              exact: true,
+              name: /^Edit .+ artwork sources$/,
             })
+            await opener.focus()
+            await page.waitForFunction(
+              () =>
+                document.activeElement?.classList.contains(
+                  "artwork-edit-trigger"
+                ) && getComputedStyle(document.activeElement).opacity === "1"
+            )
+            assert.equal(
+              await opener.evaluate(
+                (element) => getComputedStyle(element).opacity
+              ),
+              "1",
+              `${slug}: focused edit pen hidden`
+            )
             await opener.click()
             const dialog = page.getByRole("dialog", { name: "Choose artwork" })
             await dialog.waitFor()
@@ -520,6 +571,16 @@ try {
           `${name}: backdrop excludes part of the app`
         )
       }
+      const stablePlayback = await page
+        .locator(".playback-palette")
+        .evaluate((e) =>
+          getComputedStyle(e).getPropertyValue("--artwork-primary")
+        )
+      const stableCreate = await page
+        .getByRole("button", { name: "Create Playlist", exact: true })
+        .evaluate((e) =>
+          getComputedStyle(e).getPropertyValue("--artwork-primary")
+        )
       await page.evaluate(() =>
         (window as any).fixtureArtwork.replace("replacement.svg")
       )
@@ -555,6 +616,115 @@ try {
       await page.screenshot({
         path: join(artifacts, `${name}-artwork-shell.png`),
       })
+      assert.equal(
+        await page
+          .locator(".playback-palette")
+          .evaluate((e) =>
+            getComputedStyle(e).getPropertyValue("--artwork-primary")
+          ),
+        stablePlayback,
+        `${name}: page changed the playing album palette`
+      )
+      assert.equal(
+        await page
+          .getByRole("button", { name: "Create Playlist", exact: true })
+          .evaluate((e) =>
+            getComputedStyle(e).getPropertyValue("--artwork-primary")
+          ),
+        stableCreate,
+        `${name}: page changed Create Playlist color`
+      )
+      assert.notEqual(
+        await page
+          .locator(".app-artwork-shell")
+          .evaluate((e) =>
+            getComputedStyle(e).getPropertyValue("--artwork-primary")
+          ),
+        stablePlayback,
+        `${name}: fixture did not exercise different page and playback palettes`
+      )
+      await page.evaluate(() => (window as any).fixtureArtwork.multiple())
+      await page
+        .getByRole("button", { name: "Next background image", exact: true })
+        .click()
+      await page.waitForFunction(() =>
+        document
+          .querySelector<HTMLImageElement>(
+            ".app-artwork-frame:not(.app-artwork-frame--retiring) img"
+          )
+          ?.src.includes("next.svg")
+      )
+      assert.equal(
+        await page
+          .locator(".playback-palette")
+          .evaluate((e) =>
+            getComputedStyle(e).getPropertyValue("--artwork-primary")
+          ),
+        stablePlayback
+      )
+      await page
+        .getByRole("button", {
+          name: "Resume background rotation",
+          exact: true,
+        })
+        .click()
+      await page
+        .getByRole("button", { name: "Pause background rotation", exact: true })
+        .click()
+      await page.evaluate(() =>
+        (window as any).fixtureAppearance.route("/library")
+      )
+      await page.keyboard.press("Control+k")
+      const searchBox = page.getByRole("combobox", {
+        name: "Search your music library",
+      })
+      await page.waitForFunction(
+        () =>
+          document.querySelector('[role="combobox"]') === document.activeElement
+      )
+      assert.equal(await searchBox.getAttribute("aria-expanded"), "true")
+      await page.keyboard.press("Escape")
+      const menuCard = page.locator("main .media-card__primary").first()
+      await menuCard.click({ button: "right" })
+      await page.getByRole("dialog", { name: / actions$/ }).waitFor()
+      await page.keyboard.press("Control+k")
+      await page.waitForFunction(
+        () =>
+          document.querySelector('[role="combobox"]') === document.activeElement
+      )
+      assert.equal(
+        await page.getByRole("dialog", { name: / actions$/ }).count(),
+        0
+      )
+      await page.keyboard.press("Escape")
+      await page.setViewportSize({ width: 800, height: 850 })
+      await page.evaluate(() =>
+        (window as any).fixtureAppearance.route("/playlist/fixture-playlist-0")
+      )
+      const tableScroll = page.getByRole("region", {
+        name: "Song table",
+        exact: true,
+      })
+      await tableScroll.waitFor()
+      await page.evaluate(() =>
+        (window as any).fixtureAppearance.resetInteractions()
+      )
+      await tableScroll.focus()
+      await page.keyboard.press("ArrowRight")
+      await page.waitForTimeout(150)
+      assert.ok(
+        await tableScroll.evaluate((e) => e.scrollLeft > 0),
+        `${name}: wide song table cannot be scrolled by keyboard`
+      )
+      assert.equal(
+        (
+          await page.evaluate(() =>
+            (window as any).fixtureAppearance.interactions()
+          )
+        ).length,
+        0,
+        `${name}: table scroll changed playback`
+      )
       const seek = page.getByRole("slider", { name: "Seek", exact: true })
       await page.evaluate(() =>
         (window as any).fixtureAppearance.resetInteractions()

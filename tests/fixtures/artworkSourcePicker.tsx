@@ -77,6 +77,8 @@ function Harness() {
     <>
       <output>{info.url}</output>
       <ArtworkSourcePicker
+        iconOnly
+        label="Edit Artist artwork sources"
         kind="artist"
         artistName="Artist"
         plexThumb={plexUrl}
@@ -99,6 +101,7 @@ const root = createRoot(document.getElementById("root")!)
 const button = (label: string) =>
   [...document.querySelectorAll<HTMLButtonElement>("button")].find(
     (b) =>
+      b.getAttribute("aria-label") === label ||
       b.textContent!.trim() === label ||
       [...b.querySelectorAll("span")].some(
         (span) => span.textContent!.trim() === label
@@ -117,7 +120,13 @@ try {
     0,
     "closed picker must not perform extra source lookups"
   )
-  const trigger = button("Artwork sources")
+  const trigger = button("Edit Artist artwork sources")
+  assert.ok(trigger, "icon chooser retains an accessible edit name")
+  assert.equal(trigger.textContent, "")
+  assert.equal(
+    trigger.querySelector("svg")?.getAttribute("aria-hidden"),
+    "true"
+  )
   const outside = document.createElement("input")
   document.body.append(outside)
   outside.focus()

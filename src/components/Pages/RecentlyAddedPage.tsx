@@ -69,6 +69,7 @@ export function RecentlyAddedPage() {
             return (
               <MediaCard
                 key={`${item.id}-${idx}`}
+                contextItem={item}
                 title={info.title}
                 desc={info.desc}
                 thumb={info.thumb}

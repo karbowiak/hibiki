@@ -137,6 +137,7 @@ export function Library() {
           {playlists.map((pl) => (
             <MediaCard
               key={pl.id}
+              contextItem={{ ...pl, type: "playlist" }}
               title={pl.title}
               desc={`${pl.trackCount} songs`}
               thumb={pl.thumbUrl}
@@ -156,6 +157,7 @@ export function Library() {
           {topTracks.map((track) => (
             <MediaCard
               key={track.id}
+              contextItem={{ ...track, type: "track" }}
               title={track.title}
               desc={track.artistName}
               thumb={track.thumbUrl}
@@ -183,6 +185,7 @@ export function Library() {
           {likedAlbums.map((album) => (
             <MediaCard
               key={album.id}
+              contextItem={{ ...album, type: "album" }}
               title={album.title}
               desc={album.artistName ?? ""}
               thumb={album.thumbUrl}
@@ -209,6 +212,7 @@ export function Library() {
           {likedArtists.map((artist) => (
             <MediaCard
               key={artist.id}
+              contextItem={{ ...artist, type: "artist" }}
               title={artist.title}
               desc=""
               thumb={artist.thumbUrl}

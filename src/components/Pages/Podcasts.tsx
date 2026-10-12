@@ -1,10 +1,15 @@
+import { AudioBrowseCard } from "../shared/AudioBrowseCard"
+import { MediaGrid } from "../shared/MediaGrid"
 import { useEffect, useRef, useState, useCallback } from "react"
 import { useLocation } from "wouter"
 import { useShallow } from "zustand/react/shallow"
 import { usePodcastStore } from "../../backends/podcast/store"
 import { podcastGetCategories, podcastLookup } from "../../backends/podcast/api"
-import type { PodcastCategory, PodcastSearchResult, PodcastTopChart } from "../../backends/podcast/api"
-import { ArtworkImage } from "../shared/ArtworkImage"
+import type {
+  PodcastCategory,
+  PodcastSearchResult,
+  PodcastTopChart,
+} from "../../backends/podcast/api"
 import { podcastFeedPath } from "../../lib/podcastRoute"
 import { buildExternalImageUrl } from "../../lib/imageUrl"
 import { ScrollRow } from "../ScrollRow"
@@ -31,7 +36,12 @@ function PodcastCard({
   const [, navigate] = useLocation()
   const [lookupError, setLookupError] = useState(false)
   const lookupRevision = useRef(0)
-  useEffect(() => { setLookupError(false); return () => { ++lookupRevision.current } }, [feedUrl, itunesId])
+  useEffect(() => {
+    setLookupError(false)
+    return () => {
+      ++lookupRevision.current
+    }
+  }, [feedUrl, itunesId])
 
   const handleClick = useCallback(async () => {
     if (feedUrl) {
@@ -50,34 +60,23 @@ function PodcastCard({
         const path = result?.feed_url ? podcastFeedPath(result.feed_url) : null
         if (path) navigate(path)
         else setLookupError(true)
-      } catch { if (revision === lookupRevision.current) setLookupError(true) }
+      } catch {
+        if (revision === lookupRevision.current) setLookupError(true)
+      }
     }
   }, [feedUrl, itunesId, navigate])
 
   const artwork = buildExternalImageUrl(artworkUrl)
   return (
-    <button
-      type="button"
-      aria-label={`Open podcast ${title}`}
-      onClick={() => void handleClick()}
-      className="group min-w-0 flex-shrink-0 cursor-pointer rounded-lg text-left no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
-      style={scrollItem ? { width: "var(--card-size, 160px)" } : undefined}
-    >
-      <div className="aspect-square w-full overflow-hidden rounded-lg bg-white/5 shadow-lg transition-shadow group-hover:shadow-xl">
-        {artwork ? (
-          <ArtworkImage src={artwork} alt="" className="h-full w-full object-cover" loading="lazy" />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-3xl text-gray-500">
-            <svg viewBox="0 0 24 24" width="48" height="48" fill="currentColor">
-              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3zM6 10a1 1 0 1 0-2 0 8 8 0 0 0 7 7.93V21H8a1 1 0 1 0 0 2h8a1 1 0 1 0 0-2h-3v-3.07A8 8 0 0 0 20 10a1 1 0 1 0-2 0 6 6 0 0 1-12 0z" />
-            </svg>
-          </div>
-        )}
-      </div>
-      <p className="mt-2 truncate text-sm font-medium text-[color:var(--text-primary)]">{title}</p>
-      <p className="truncate text-xs text-gray-400">{author}</p>
-      {lookupError && <p role="alert" className="text-xs text-red-300">Could not open podcast. Try again.</p>}
-    </button>
+    <AudioBrowseCard
+      title={title}
+      description={author}
+      src={artwork}
+      openLabel={`Open podcast ${title}`}
+      onOpen={() => void handleClick()}
+      scrollItem={scrollItem}
+      error={lookupError ? "Could not open podcast. Try again." : undefined}
+    />
   )
 }
 
@@ -85,16 +84,35 @@ function PodcastCard({
 // Error banner
 // ---------------------------------------------------------------------------
 
-function ErrorBanner({ message, onDismiss, onRetry }: { message: string; onDismiss: () => void; onRetry?: () => void }) {
+function ErrorBanner({
+  message,
+  onDismiss,
+  onRetry,
+}: {
+  message: string
+  onDismiss: () => void
+  onRetry?: () => void
+}) {
   return (
-    <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg bg-red-500/10 px-4 py-2.5 text-sm text-red-300 ring-1 ring-red-500/20">
+    <div
+      role="alert"
+      className="mb-4 flex flex-wrap items-center gap-3 rounded-lg bg-red-500/10 px-4 py-2.5 text-sm text-red-700 ring-1 ring-red-500/20 dark:text-red-300"
+    >
       <span className="min-w-0 flex-1 break-words">{message}</span>
       {onRetry && (
-        <button onClick={onRetry} className="shrink-0 rounded px-2.5 py-1 text-xs font-medium text-red-200 hover:bg-red-500/20 transition-colors">
+        <button
+          onClick={onRetry}
+          className="shrink-0 rounded px-2.5 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-500/20 dark:text-red-200"
+        >
           Retry
         </button>
       )}
-      <button type="button" aria-label="Dismiss podcast error" onClick={onDismiss} className="shrink-0 rounded p-1 text-red-400 hover:text-red-200 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
+      <button
+        type="button"
+        aria-label="Dismiss podcast error"
+        onClick={onDismiss}
+        className="shrink-0 rounded p-1 text-red-400 transition-colors hover:text-red-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent dark:text-red-200"
+      >
         <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
           <path d="M2.22 2.22a.75.75 0 0 1 1.06 0L8 6.94l4.72-4.72a.75.75 0 1 1 1.06 1.06L9.06 8l4.72 4.72a.75.75 0 1 1-1.06 1.06L8 9.06l-4.72 4.72a.75.75 0 0 1-1.06-1.06L6.94 8 2.22 3.28a.75.75 0 0 1 0-1.06z" />
         </svg>
@@ -108,8 +126,17 @@ function ErrorBanner({ message, onDismiss, onRetry }: { message: string; onDismi
 // ---------------------------------------------------------------------------
 
 export function PodcastsPage() {
-  const { subscriptions, searchResults, isSearching, lastError, searchPodcasts, clearSearch, clearError, getTopChart } =
-    usePodcastStore(useShallow(s => ({
+  const {
+    subscriptions,
+    searchResults,
+    isSearching,
+    lastError,
+    searchPodcasts,
+    clearSearch,
+    clearError,
+    getTopChart,
+  } = usePodcastStore(
+    useShallow((s) => ({
       subscriptions: s.subscriptions,
       searchResults: s.searchResults,
       isSearching: s.isSearching,
@@ -118,14 +145,17 @@ export function PodcastsPage() {
       clearSearch: s.clearSearch,
       clearError: s.clearError,
       getTopChart: s.getTopChart,
-    })))
+    }))
+  )
 
   const [query, setQuery] = useState("")
   const [searchQueued, setSearchQueued] = useState(false)
   const [categories, setCategories] = useState<PodcastCategory[]>([])
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const [topPodcasts, setTopPodcasts] = useState<PodcastTopChart[]>([])
-  const [categoryPodcasts, setCategoryPodcasts] = useState<PodcastTopChart[]>([])
+  const [categoryPodcasts, setCategoryPodcasts] = useState<PodcastTopChart[]>(
+    []
+  )
   const [isLoadingTop, setIsLoadingTop] = useState(true)
   const [isLoadingCategory, setIsLoadingCategory] = useState(false)
   const [topError, setTopError] = useState(false)
@@ -139,21 +169,27 @@ export function PodcastsPage() {
     const requestId = ++topRequestId.current
     setIsLoadingTop(true)
     setTopError(false)
-    getTopChart(undefined, 25).then(results => {
-      if (topRequestId.current !== requestId) return
-      setTopPodcasts(results)
-      setIsLoadingTop(false)
-    }).catch(() => {
-      if (topRequestId.current !== requestId) return
-      setIsLoadingTop(false)
-      setTopError(true)
-    })
+    getTopChart(undefined, 25)
+      .then((results) => {
+        if (topRequestId.current !== requestId) return
+        setTopPodcasts(results)
+        setIsLoadingTop(false)
+      })
+      .catch(() => {
+        if (topRequestId.current !== requestId) return
+        setIsLoadingTop(false)
+        setTopError(true)
+      })
   }, [getTopChart])
 
   // Load categories + top podcasts on mount
   useEffect(() => {
     let current = true
-    void podcastGetCategories().then(results => { if (current) setCategories(results) }).catch(() => {})
+    void podcastGetCategories()
+      .then((results) => {
+        if (current) setCategories(results)
+      })
+      .catch(() => {})
     loadTopPodcasts()
     return () => {
       current = false
@@ -165,92 +201,115 @@ export function PodcastsPage() {
   }, [loadTopPodcasts, clearSearch])
 
   // Debounced search
-  const handleSearch = useCallback((value: string) => {
-    setQuery(value)
-    setSearchQueued(!!value.trim())
-    clearSearch() // Retire the old query before the new debounce can fire.
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    if (!value.trim()) {
-      clearSearch()
-      return
-    }
-    debounceRef.current = setTimeout(() => {
-      setSearchQueued(false)
-      void searchPodcasts(value)
-    }, 400)
-  }, [searchPodcasts, clearSearch])
+  const handleSearch = useCallback(
+    (value: string) => {
+      setQuery(value)
+      setSearchQueued(!!value.trim())
+      clearSearch() // Retire the old query before the new debounce can fire.
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+      if (!value.trim()) {
+        clearSearch()
+        return
+      }
+      debounceRef.current = setTimeout(() => {
+        setSearchQueued(false)
+        void searchPodcasts(value)
+      }, 400)
+    },
+    [searchPodcasts, clearSearch]
+  )
 
   // Category selection with stale request guard
-  const handleCategory = useCallback((catName: string) => {
-    if (selectedCategory === catName) {
-      ++categoryRequestId.current
-      setIsLoadingCategory(false)
-      setSelectedCategory(null)
+  const handleCategory = useCallback(
+    (catName: string) => {
+      if (selectedCategory === catName) {
+        ++categoryRequestId.current
+        setIsLoadingCategory(false)
+        setSelectedCategory(null)
+        setCategoryPodcasts([])
+        setCategoryError(false)
+        return
+      }
+      setSelectedCategory(catName)
       setCategoryPodcasts([])
+      setIsLoadingCategory(true)
       setCategoryError(false)
-      return
-    }
-    setSelectedCategory(catName)
-    setCategoryPodcasts([])
-    setIsLoadingCategory(true)
-    setCategoryError(false)
-    const reqId = ++categoryRequestId.current
-    getTopChart(catName, 25).then(results => {
-      // Ignore stale responses from superseded category selections
-      if (categoryRequestId.current !== reqId) return
-      setCategoryPodcasts(results)
-      setIsLoadingCategory(false)
-    }).catch(() => {
-      if (categoryRequestId.current !== reqId) return
-      setIsLoadingCategory(false)
-      setCategoryError(true)
-    })
-  }, [selectedCategory, getTopChart])
+      const reqId = ++categoryRequestId.current
+      getTopChart(catName, 25)
+        .then((results) => {
+          // Ignore stale responses from superseded category selections
+          if (categoryRequestId.current !== reqId) return
+          setCategoryPodcasts(results)
+          setIsLoadingCategory(false)
+        })
+        .catch(() => {
+          if (categoryRequestId.current !== reqId) return
+          setIsLoadingCategory(false)
+          setCategoryError(true)
+        })
+    },
+    [selectedCategory, getTopChart]
+  )
 
   const retryCategory = useCallback(() => {
     if (selectedCategory) {
       setIsLoadingCategory(true)
       setCategoryError(false)
       const reqId = ++categoryRequestId.current
-      getTopChart(selectedCategory, 25).then(results => {
-        if (categoryRequestId.current !== reqId) return
-        setCategoryPodcasts(results)
-        setIsLoadingCategory(false)
-      }).catch(() => {
-        if (categoryRequestId.current !== reqId) return
-        setIsLoadingCategory(false)
-        setCategoryError(true)
-      })
+      getTopChart(selectedCategory, 25)
+        .then((results) => {
+          if (categoryRequestId.current !== reqId) return
+          setCategoryPodcasts(results)
+          setIsLoadingCategory(false)
+        })
+        .catch(() => {
+          if (categoryRequestId.current !== reqId) return
+          setIsLoadingCategory(false)
+          setCategoryError(true)
+        })
     }
   }, [selectedCategory, getTopChart])
 
   const isSearchMode = query.trim().length > 0
 
   return (
-    <div className="p-4 sm:p-8">
+    <div className="broadcast-page">
       {/* Error banner from store (rate limit / network errors) */}
       {lastError && (
-        <ErrorBanner message={lastError} onDismiss={clearError} />
+        <ErrorBanner
+          message={
+            /429|rate.limit|too many/i.test(lastError)
+              ? "The podcast directory is busy. Try again in a moment."
+              : "Podcasts could not be loaded. Please try again."
+          }
+          onDismiss={clearError}
+        />
       )}
 
       {/* Header */}
-      <div className="mb-8 flex flex-wrap items-center gap-4">
-        <h1 className="text-3xl font-bold">Podcasts</h1>
-        <div className="relative min-w-0 flex-[1_1_16rem] max-w-md">
+      <div className="broadcast-header">
+        <div>
+          <p className="broadcast-eyebrow">Listen and explore</p>
+          <h1 className="broadcast-title">Podcasts</h1>
+          <p className="broadcast-subtitle">
+            Your subscriptions and new voices to discover.
+          </p>
+        </div>
+        <div className="broadcast-search relative">
           <input
             type="text"
             aria-label="Search podcasts"
             value={query}
-            onChange={e => handleSearch(e.target.value)}
+            onChange={(e) => handleSearch(e.target.value)}
             placeholder="Search podcasts..."
-            className="w-full rounded-full bg-white/10 px-4 py-2 pl-10 pr-9 text-sm text-white placeholder-gray-400 outline-none ring-1 ring-white/10 transition-all focus:bg-white/15 focus:ring-white/20"
+            className="broadcast-input"
           />
           <svg
             viewBox="0 0 24 24"
             width="16"
             height="16"
             fill="currentColor"
-            className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400"
+            className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[color:var(--text-secondary)]"
           >
             <path d="M10.533 1.279c-5.18 0-9.407 4.14-9.407 9.279s4.226 9.279 9.407 9.279c2.234 0 4.29-.77 5.907-2.058l4.353 4.353a1 1 0 1 0 1.414-1.414l-4.344-4.344a9.157 9.157 0 0 0 2.077-5.816c0-5.14-4.226-9.28-9.407-9.28zm-7.407 9.279c0-4.006 3.302-7.28 7.407-7.28s7.407 3.274 7.407 7.28-3.302 7.279-7.407 7.279-7.407-3.273-7.407-7.28z" />
           </svg>
@@ -259,9 +318,14 @@ export function PodcastsPage() {
               type="button"
               aria-label="Clear podcast search"
               onClick={() => handleSearch("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-[color:var(--text-secondary)] hover:text-white"
             >
-              <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+              <svg
+                viewBox="0 0 16 16"
+                width="14"
+                height="14"
+                fill="currentColor"
+              >
                 <path d="M2.22 2.22a.75.75 0 0 1 1.06 0L8 6.94l4.72-4.72a.75.75 0 1 1 1.06 1.06L9.06 8l4.72 4.72a.75.75 0 1 1-1.06 1.06L8 9.06l-4.72 4.72a.75.75 0 0 1-1.06-1.06L6.94 8 2.22 3.28a.75.75 0 0 1 0-1.06z" />
               </svg>
             </button>
@@ -273,12 +337,16 @@ export function PodcastsPage() {
       {isSearchMode ? (
         <div>
           <h2 className="mb-4 text-xl font-bold">
-            {isSearching || searchQueued ? "Searching..." : `Results for "${query}"`}
+            {isSearching || searchQueued
+              ? "Searching..."
+              : `Results for "${query}"`}
           </h2>
           {!isSearching && !searchQueued && searchResults.length === 0 && (
-            <p className="text-gray-400">No podcasts found.</p>
+            <p className="text-[color:var(--text-secondary)]">
+              No podcasts found.
+            </p>
           )}
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-6">
+          <MediaGrid>
             {searchResults.map((p: PodcastSearchResult) => (
               <PodcastCard
                 key={p.id}
@@ -288,7 +356,7 @@ export function PodcastsPage() {
                 feedUrl={p.feed_url}
               />
             ))}
-          </div>
+          </MediaGrid>
         </div>
       ) : (
         <>
@@ -296,7 +364,7 @@ export function PodcastsPage() {
           {subscriptions.length > 0 && (
             <div className="mb-10">
               <ScrollRow title="Your Subscriptions" restoreKey="podcast-subs">
-                {subscriptions.map(sub => (
+                {subscriptions.map((sub) => (
                   <PodcastCard
                     key={sub.feedUrl}
                     title={sub.title}
@@ -323,57 +391,60 @@ export function PodcastsPage() {
               </div>
             ) : (
               <ScrollRow title="Top Podcasts" restoreKey="podcast-top">
-                {isLoadingTop ? (
-                  Array.from({ length: 8 }).map((_, i) => (
-                    <div key={i} className="flex-shrink-0 animate-pulse" style={{ width: "var(--card-size, 160px)" }}>
-                      <div className="aspect-square w-full rounded-lg bg-white/5" />
-                      <div className="mt-2 h-3 w-3/4 rounded bg-white/5" />
-                      <div className="mt-1 h-2.5 w-1/2 rounded bg-white/5" />
-                    </div>
-                  ))
-                ) : (
-                  topPodcasts.map((p: PodcastTopChart, idx: number) => (
-                    <PodcastCard
-                      key={`${p.itunes_id}-${idx}`}
-                      title={p.name}
-                      author={p.artist_name}
-                      artworkUrl={p.artwork_url}
-                      feedUrl={p.feed_url || undefined}
-                      itunesId={p.itunes_id}
-                      scrollItem
-                    />
-                  ))
-                )}
+                {isLoadingTop
+                  ? Array.from({ length: 8 }).map((_, i) => (
+                      <div
+                        key={i}
+                        className="flex-shrink-0 motion-safe:animate-pulse"
+                        style={{ width: "var(--card-size, 160px)" }}
+                      >
+                        <div className="aspect-square w-full rounded-lg bg-app-surface" />
+                        <div className="mt-2 h-3 w-3/4 rounded bg-white/5" />
+                        <div className="mt-1 h-2.5 w-1/2 rounded bg-white/5" />
+                      </div>
+                    ))
+                  : topPodcasts.map((p: PodcastTopChart, idx: number) => (
+                      <PodcastCard
+                        key={`${p.itunes_id}-${idx}`}
+                        title={p.name}
+                        author={p.artist_name}
+                        artworkUrl={p.artwork_url}
+                        feedUrl={p.feed_url || undefined}
+                        itunesId={p.itunes_id}
+                        scrollItem
+                      />
+                    ))}
               </ScrollRow>
             )}
           </div>
 
           {/* Categories */}
-          <div className="mb-6">
-            <h2 className="mb-4 text-xl font-bold">Categories</h2>
-            <div className="flex flex-wrap gap-2">
-              {categories.map(cat => (
-                <button
-                  key={cat.id}
-                  onClick={() => handleCategory(cat.name)}
-                  className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
-                    selectedCategory === cat.name
-                      ? "bg-accent text-black"
-                      : "bg-white/10 text-white hover:bg-white/20"
-                  }`}
-                >
-                  {cat.name}
-                </button>
-              ))}
+          {categories.length > 0 && (
+            <div className="mb-6">
+              <h2 className="mb-4 text-xl font-bold">Categories</h2>
+              <div className="flex flex-wrap gap-2">
+                {categories.map((cat) => (
+                  <button
+                    key={cat.id}
+                    onClick={() => handleCategory(cat.name)}
+                    aria-pressed={selectedCategory === cat.name}
+                    className={`broadcast-pill rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+                      selectedCategory === cat.name
+                        ? "bg-accent text-black"
+                        : "bg-white/10 text-white hover:bg-white/20"
+                    }`}
+                  >
+                    {cat.name}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Category results */}
           {selectedCategory && (
             <div>
-              <h2 className="mb-4 text-xl font-bold">
-                {selectedCategory}
-              </h2>
+              <h2 className="mb-4 text-xl font-bold">{selectedCategory}</h2>
               {categoryError && !isLoadingCategory ? (
                 <ErrorBanner
                   message={`Failed to load ${selectedCategory} podcasts.`}
@@ -381,19 +452,21 @@ export function PodcastsPage() {
                   onRetry={retryCategory}
                 />
               ) : isLoadingCategory ? (
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-6">
+                <MediaGrid>
                   {Array.from({ length: 12 }).map((_, i) => (
-                    <div key={i} className="animate-pulse">
-                      <div className="aspect-square w-full rounded-lg bg-white/5" />
+                    <div key={i} className="motion-safe:animate-pulse">
+                      <div className="aspect-square w-full rounded-lg bg-app-surface" />
                       <div className="mt-2 h-3 w-3/4 rounded bg-white/5" />
                       <div className="mt-1 h-2.5 w-1/2 rounded bg-white/5" />
                     </div>
                   ))}
-                </div>
+                </MediaGrid>
               ) : categoryPodcasts.length === 0 ? (
-                <p className="text-gray-400">No podcasts found in this category.</p>
+                <p className="text-[color:var(--text-secondary)]">
+                  No podcasts found in this category.
+                </p>
               ) : (
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-6">
+                <MediaGrid>
                   {categoryPodcasts.map((p: PodcastTopChart, idx: number) => (
                     <PodcastCard
                       key={`${p.itunes_id}-${idx}`}
@@ -404,7 +477,7 @@ export function PodcastsPage() {
                       itunesId={p.itunes_id}
                     />
                   ))}
-                </div>
+                </MediaGrid>
               )}
             </div>
           )}

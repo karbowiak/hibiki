@@ -3,6 +3,8 @@ import { Link } from "wouter"
 import clsx from "clsx"
 import { useTrackDrag } from "../hooks/useTrackDrag"
 import { useArtistImage, useAlbumImage } from "../hooks/useMediaImage"
+import { useContextMenu } from "../hooks/useContextMenu"
+import type { MusicItem } from "../types/music"
 import type { DragPayload } from "../stores/dragStore"
 
 interface MediaCardProps {
@@ -24,6 +26,8 @@ interface MediaCardProps {
   /** When provided, shows a play button overlay on hover. Called on click. */
   onPlay?: (e: React.MouseEvent) => void
   onContextMenu?: (e: React.MouseEvent) => void
+  /** Actual provider media only; synthetic stations and public feeds omit it. */
+  contextItem?: MusicItem
   /** When provided, enables dragging this card to playlists/queue. */
   dragPayload?: DragPayload
   /** Artist name — enables priority-aware image resolution from external sources. */
@@ -66,7 +70,9 @@ export function MediaCard(props: MediaCardProps) {
   return <MediaCardInner {...props} />
 }
 
-function MediaCardInner({ title, desc, thumb, thumbFallback, scrollItem, large, href, onClick, prefetch, onPlay, onContextMenu, dragPayload, onImageFailure }: MediaCardProps) {
+function MediaCardInner({ title, desc, thumb, thumbFallback, scrollItem, large, href, onClick, prefetch, onPlay, onContextMenu, dragPayload, onImageFailure, contextItem }: MediaCardProps) {
+  const { handler } = useContextMenu()
+  const contextHandler = onContextMenu ?? (contextItem ? handler(contextItem.type, contextItem) : undefined)
   const displayThumb = thumb || thumbFallback || null
   const trackDrag = useTrackDrag()
   const scrollStyle = scrollItem
@@ -109,7 +115,14 @@ function MediaCardInner({ title, desc, thumb, thumbFallback, scrollItem, large, 
       style={scrollStyle}
       onMouseEnter={prefetch}
       onFocus={prefetch}
-      onContextMenu={onContextMenu}
+      onContextMenu={contextHandler}
+      onKeyDown={contextHandler ? e => {
+        if (e.repeat || e.nativeEvent.isComposing || e.altKey || e.ctrlKey || e.metaKey) return
+        if (e.key !== "ContextMenu" && !(e.key === "F10" && e.shiftKey)) return
+        e.preventDefault(); e.stopPropagation()
+        const bounds = e.currentTarget.getBoundingClientRect()
+        e.currentTarget.dispatchEvent(new window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: bounds.left, clientY: bounds.bottom }))
+      } : undefined}
       className={cardClass}
       {...(!href && !onClick ? dragHandlers : undefined)}
     >

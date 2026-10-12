@@ -1,0 +1,49 @@
+/* The source chooser is an artwork action, independent of Plex catalog editing. */
+.artwork-edit-trigger {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid rgb(255 255 255 / 0.28);
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.7);
+  color: white;
+  font-size: 0;
+  opacity: 0;
+  transition:
+    opacity 150ms ease,
+    background-color 150ms ease;
+}
+.artwork-edit-frame:hover .artwork-edit-trigger,
+.artwork-edit-frame:focus-within .artwork-edit-trigger {
+  opacity: 1;
+}
+.artwork-edit-trigger:hover {
+  background: rgb(0 0 0 / 0.9);
+}
+.artwork-edit-trigger:focus-visible {
+  outline: 2px solid white;
+  outline-offset: 3px;
+  opacity: 1;
+}
+@media (hover: none), (pointer: coarse) {
+  .artwork-edit-trigger {
+    opacity: 1;
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+}
+.playlist-detail-page {
+  --playlist-detail-gutter: clamp(1.5rem, 3vw, 3rem);
+}
+.playlist-detail-page .media-detail-hero,
+.playlist-detail-page .playlist-overview > div {
+  padding-inline: var(--playlist-detail-gutter);
+}
+.playlist-detail-page .media-primary,
+.playlist-detail-page .media-secondary {
+  flex-shrink: 0;
+}

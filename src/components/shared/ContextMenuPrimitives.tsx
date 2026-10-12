@@ -3,8 +3,9 @@ import type { ReactNode } from "react"
 export function MenuItem({ icon, label, onClick, danger }: { icon?: ReactNode; label: string; onClick: () => void; danger?: boolean }) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-sm text-left transition-colors hover:bg-hl-menu ${danger ? "text-red-400" : "text-white/85"}`}
+      className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-sm text-left transition-colors hover:bg-hl-menu focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${danger ? "text-red-400" : "text-[var(--text-primary)]"}`}
     >
       {icon && <span className="w-4 h-4 flex-shrink-0 opacity-70">{icon}</span>}
       {label}
@@ -13,11 +14,11 @@ export function MenuItem({ icon, label, onClick, danger }: { icon?: ReactNode; l
 }
 
 export function MenuDivider() {
-  return <div className="my-1 border-t border-white/10" />
+  return <div className="my-1 border-t border-[var(--border)]" />
 }
 
 export function MenuSectionLabel({ label }: { label: string }) {
-  return <div className="px-3 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/30">{label}</div>
+  return <div className="px-3 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">{label}</div>
 }
 
 // ---------------------------------------------------------------------------

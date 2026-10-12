@@ -1,3 +1,4 @@
+import "../../styles/media-detail-controls.css"
 import { ArtworkImage, useArtworkFailures } from "../shared/ArtworkImage"
 import { useArtistImage } from "../../hooks/useMediaImage"
 import { useLayoutEffect, useMemo, useRef, useState } from "react"
@@ -438,7 +439,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
         {/* Main content row */}
         <div className="relative z-10 flex w-full flex-wrap items-end gap-6">
           {/* Avatar — click to open modal */}
-          <div className="flex flex-shrink-0 flex-col items-start gap-2">
+          <div className="artwork-edit-frame relative flex flex-shrink-0 flex-col items-start">
             {thumbUrl ? (
               <button
                 type="button"
@@ -465,7 +466,9 @@ export function ArtistPage({ artistId }: { artistId: string }) {
               artistName={artist.title}
               plexThumb={artist.thumbUrl}
               entityId={artistId}
-              className="rounded-full border border-white/20 bg-black/30 px-3 py-1.5 text-xs text-white hover:bg-black/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+              label={`Edit ${artist.title} artwork sources`}
+              iconOnly
+              className="artwork-edit-trigger"
             />
           </div>
 

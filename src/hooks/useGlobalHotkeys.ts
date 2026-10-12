@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { usePlayerStore } from "../stores/playerStore"
 import { useVisualizerStore } from "../stores/visualizerStore"
+import { useContextMenuStore } from "../stores/contextMenuStore"
 import { useRadioStreamStore } from "../stores/radioStreamStore"
 import {
   hasKeyboardModifier,
@@ -12,19 +13,26 @@ export function useGlobalHotkeys() {
   const [hotkeyHelpOpen, setHotkeyHelpOpen] = useState(false)
 
   useEffect(() => {
+    // The app search shortcut owns capture before page-local filters. Window
+    // capture barriers (e.g. shutdown) still get first refusal.
+    function onSearchShortcut(e: KeyboardEvent) {
+      if (e.defaultPrevented || isCompositionKey(e) || e.altKey || e.shiftKey || !(e.metaKey || e.ctrlKey)) return
+      const key = e.key.toLowerCase()
+      if (key !== "k" && key !== "f") return
+      e.preventDefault()
+      e.stopPropagation()
+      if (e.repeat) return
+      useContextMenuStore.getState().close()
+      const visualizer = useVisualizerStore.getState()
+      if (visualizer.fullscreenOpen) visualizer.closeFullscreen()
+      window.dispatchEvent(new CustomEvent("plexify:search-focus"))
+    }
+
     function onKeyDown(e: KeyboardEvent) {
       if (e.defaultPrevented || isCompositionKey(e)) return
       const key = e.key.length === 1 ? e.key.toLowerCase() : e.key
       // Modifier hotkeys (work even in inputs)
       if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
-        if (key === "f" || key === "k") {
-          if (e.repeat) return
-          e.preventDefault()
-          const visualizer = useVisualizerStore.getState()
-          if (visualizer.fullscreenOpen) visualizer.closeFullscreen()
-          window.dispatchEvent(new CustomEvent("plexify:search-focus"))
-          return
-        }
         if (key === "r") {
           if (e.repeat) return
           e.preventDefault()
@@ -120,8 +128,12 @@ export function useGlobalHotkeys() {
       }
     }
 
+    document.addEventListener("keydown", onSearchShortcut, true)
     window.addEventListener("keydown", onKeyDown)
-    return () => window.removeEventListener("keydown", onKeyDown)
+    return () => {
+      document.removeEventListener("keydown", onSearchShortcut, true)
+      window.removeEventListener("keydown", onKeyDown)
+    }
   }, [])
 
   return { hotkeyHelpOpen, setHotkeyHelpOpen }

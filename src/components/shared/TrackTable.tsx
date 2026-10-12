@@ -52,7 +52,7 @@ export interface TrackTableProps {
   playlistId?: string | null
   /** When set, enables drag-to-reorder within the table. Called with (fromIndex, toIndex). */
   onReorder?: (fromIndex: number, toIndex: number) => void
-  /** Compact search results omit a second search toolbar and Cmd/Ctrl+K handler. */
+  /** Compact search results omit a second search toolbar and local filter handler. */
   compact?: boolean
   /** Search follows the current provider's radio capability; existing callers keep their controls. */
   showRadio?: boolean
@@ -381,14 +381,10 @@ export function TrackTable({
   // If the columns array offers a "rating" column, the parent renders it as a table column instead.
   const showInlineRating = !compact && !columns.some(c => c.id === "rating")
 
-  // Cmd/Ctrl+K hotkey
+  // Escape clears this filter; app-wide search owns Cmd/Ctrl+K.
   useEffect(() => {
     if (compact) return
     function onKeyDown(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        e.preventDefault()
-        searchInputRef.current?.focus()
-      }
       if (e.key === "Escape" && document.activeElement === searchInputRef.current) {
         onFilterChange("")
         searchInputRef.current?.blur()
@@ -399,7 +395,7 @@ export function TrackTable({
   }, [onFilterChange, compact])
 
   return (
-    <div className={compact ? "min-w-0" : "px-8 pt-2"}>
+    <div className={compact ? "min-w-0" : "min-w-0 px-8 pt-2"}>
       {/* Toolbar row: search + column picker */}
       {!compact && <div className="flex items-center justify-between pb-1">
         <div className="relative">
@@ -418,6 +414,7 @@ export function TrackTable({
         <ColumnPicker visible={visibleCols} toggle={toggleCol} columns={columns} />
       </div>}
 
+      <div className={compact ? "min-w-0" : "track-table-scroll max-w-full overflow-x-auto"} data-keyboard-scroll={compact ? undefined : "true"} role={compact ? undefined : "region"} aria-label={compact ? undefined : "Song table"} tabIndex={compact ? undefined : 0} onKeyDown={event => { if (event.target === event.currentTarget && !event.metaKey && !event.ctrlKey && !event.altKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) { event.preventDefault(); event.stopPropagation(); event.currentTarget.scrollLeft += event.key === "ArrowRight" ? 80 : -80 } }}>
       {reorderEnabled ? (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={tracks.map((_, i) => String(i))} strategy={verticalListSortingStrategy}>
@@ -512,6 +509,8 @@ export function TrackTable({
           />
         </table>
       )}
+
+      </div>
 
       {/* Sentinel + virtual spacer for infinite scroll */}
       {sentinel && <div ref={sentinel} />}

@@ -1,3 +1,4 @@
+import "../../styles/media-detail-controls.css"
 import { ArtworkImage, useArtworkFailures } from "../shared/ArtworkImage"
 import { useAlbumImage } from "../../hooks/useMediaImage"
 import { useLayoutEffect, useEffect, useMemo, useRef, useState } from "react"
@@ -196,7 +197,6 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     failures
   )
 
-
   if (isLoading) return <PageLoading message="Loading album…" />
   if (!album)
     return (
@@ -297,7 +297,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
       >
         <div className="relative z-10 flex w-full flex-wrap items-end gap-6">
           {/* Album art — click to open modal */}
-          <div className="flex flex-shrink-0 flex-col items-start gap-2">
+          <div className="artwork-edit-frame relative flex flex-shrink-0 flex-col items-start">
             {thumbUrl ? (
               <button
                 type="button"
@@ -325,7 +325,9 @@ export function AlbumPage({ albumId }: { albumId: string }) {
               albumName={album.title}
               plexThumb={album.thumbUrl}
               entityId={albumId}
-              className="rounded-full border border-white/20 bg-black/30 px-3 py-1.5 text-xs text-white hover:bg-black/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+              label={`Edit ${album.title} artwork sources`}
+              iconOnly
+              className="artwork-edit-trigger"
             />
           </div>
 
@@ -953,6 +955,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                   {albumItems.map((a) => (
                     <MediaCard
                       key={a.id}
+                      contextItem={a}
                       title={a.title}
                       desc={`${(a as any).artistName ?? ""} · ${(a as any).year ?? ""}`}
                       thumb={(a as any).thumbUrl ?? null}
@@ -980,6 +983,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                   {artistItems.map((a) => (
                     <MediaCard
                       key={a.id}
+                      contextItem={a}
                       title={a.title}
                       desc="Artist"
                       thumb={(a as any).thumbUrl ?? null}

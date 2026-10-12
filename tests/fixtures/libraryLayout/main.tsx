@@ -1,3 +1,7 @@
+import { usePodcastStore } from "../../../src/backends/podcast/store.ts"
+import { useRadioStreamStore } from "../../../src/stores/radioStreamStore.ts"
+import { useGlobalHotkeys } from "../../../src/hooks/useGlobalHotkeys.ts"
+import { ContextMenu } from "../../../src/components/ContextMenu.tsx"
 import React from "react"
 import { createRoot } from "react-dom/client"
 import { ArtworkShell } from "../../../src/components/ArtworkShell.tsx"
@@ -48,6 +52,20 @@ async function setup() {
     transformCallback: () => ++callback,
     unregisterCallback: () => {},
     invoke: async (command: string) => {
+      if (
+        command === "radiobrowser_top_stations" ||
+        command === "radiobrowser_search"
+      )
+        return stations
+      if (command === "radiobrowser_countries")
+        return [{ name: "Denmark", code: "DK", station_count: 10 }]
+      if (command === "radiobrowser_tags")
+        return [{ name: "Electronic", station_count: 10 }]
+      if (command === "podcast_get_top") return podcastCharts
+      if (command === "podcast_get_categories")
+        return [{ id: 1, name: "Music" }]
+      if (command === "podcast_get_feed") return podcastDetail
+      if (command === "podcast_lookup") return { feed_url: podcastFeed }
       if (command === "plugin:app|version") return "0.5.3"
       if (command === "plugin:window|is_minimized") return false
       if (command === "audio_get_waveform") return []
@@ -61,6 +79,75 @@ async function setup() {
     },
   }
   const thumb = location.origin + "/synthetic-artwork/cover.svg"
+  const podcastFeed = "https://synthetic.invalid/music.xml"
+  const podcastCharts = Array.from({ length: 8 }, (_, i) => ({
+    itunes_id: i + 1,
+    name: "Synthetic podcast " + (i + 1),
+    artist_name: "Fixture broadcaster",
+    artwork_url: thumb,
+    feed_url: podcastFeed,
+    genre: "Music",
+    itunes_url: "https://synthetic.invalid/show",
+  }))
+  const podcastDetail = {
+    feed_url: podcastFeed,
+    title: "Synthetic podcast 1",
+    author: "Fixture broadcaster",
+    description:
+      "A synthetic show with a long episode description for layout review.",
+    artwork_url: thumb,
+    link: "https://synthetic.invalid/show",
+    language: "en",
+    categories: ["Music"],
+    episodes: Array.from({ length: 6 }, (_, i) => ({
+      guid: "episode-" + i,
+      title: "Synthetic episode " + (i + 1),
+      description: "A synthetic episode. No listening account is used.",
+      pub_date: "2026-10-10T12:00:00Z",
+      duration_secs: 3600,
+      audio_url: "https://synthetic.invalid/audio.mp3",
+      audio_type: "audio/mpeg",
+      audio_size: 1000,
+      episode_number: i + 1,
+      season_number: 1,
+      artwork_url: null,
+    })),
+  }
+  const stations = Array.from({ length: 8 }, (_, i) => ({
+    uuid: "station-" + i,
+    name: "Synthetic station " + (i + 1),
+    stream_url: "https://synthetic.invalid/live",
+    homepage: "https://synthetic.invalid",
+    favicon: thumb,
+    tags: ["Electronic"],
+    country: "Denmark",
+    country_code: "DK",
+    language: "Danish",
+    codec: "MP3",
+    bitrate: 128,
+    is_hls: false,
+    votes: 20,
+    click_count: 10,
+    click_trend: 1,
+  }))
+  usePodcastStore.setState({
+    subscriptions: [
+      {
+        feedUrl: podcastFeed,
+        title: podcastDetail.title,
+        author: podcastDetail.author,
+        artworkUrl: thumb,
+        addedAt: 0,
+      },
+    ],
+    feedCache: {},
+    topChartCache: {},
+  })
+  useRadioStreamStore.setState({
+    favorites: [stations[0]],
+    recentStations: stations.slice(0, 2),
+    playStation: async () => {},
+  })
   const artist = {
     type: "artist",
     id: "fixture-artist",
@@ -288,7 +375,11 @@ async function setup() {
       background = true,
       opacity = 0.76,
       artworkColors = true,
+      rotation = false,
     }) => {
+      useArtworkAppearanceStore
+        .getState()
+        .setBackgroundRotationEnabled(rotation)
       useArtworkAppearanceStore
         .getState()
         .setBackgroundArtworkEnabled(background)
@@ -371,6 +462,21 @@ async function setup() {
           ...hub,
           items: hub.items.map(update),
         })),
+      })
+    },
+    multiple: () => {
+      const library = useLibraryStore.getState()
+      useLibraryStore.setState({
+        likedArtists: [
+          ...(library.likedArtists ?? []),
+          {
+            ...artist,
+            id: "next-artist",
+            title: "Next artist",
+            artUrl: location.origin + "/synthetic-artwork/next.svg",
+            thumbUrl: location.origin + "/synthetic-artwork/next.svg",
+          },
+        ],
       })
     },
     retire: () => useProviderStore.getState().clearProvider(),
@@ -517,7 +623,7 @@ async function setup() {
   document.body.append(host)
   createRoot(host).render(
     React.createElement(
-      ArtworkShell,
+      InteractionHarness,
       null,
       React.createElement(
         "div",
@@ -566,3 +672,13 @@ async function setup() {
   ;(window as any).visualFixtureReady = true
 }
 void setup()
+
+function InteractionHarness({ children }: { children: React.ReactNode }) {
+  useGlobalHotkeys()
+  return (
+    <ArtworkShell>
+      {children}
+      <ContextMenu />
+    </ArtworkShell>
+  )
+}
