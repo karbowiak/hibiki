@@ -2,7 +2,10 @@
 use crate::audio_engine::event::{EngineEvent, TrackEndReason};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PlaybackEnd {
@@ -118,12 +121,14 @@ pub enum HistoryEvent {
 pub struct NativeHistory {
     pub session: String,
     journal: Mutex<Journal>,
+    retention_failed: AtomicBool,
 }
 impl NativeHistory {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             session: uuid::Uuid::new_v4().to_string(),
             journal: Mutex::new(Journal::default()),
+            retention_failed: AtomicBool::new(false),
         })
     }
     pub fn start(
@@ -200,6 +205,18 @@ impl NativeHistory {
         }
     }
     fn retain_pending(&self, app: &tauri::AppHandle) -> Result<(), String> {
+        self.with_retention_status(|| self.retain_pending_inner(app))
+    }
+    fn with_retention_status(
+        &self,
+        retain: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
+        let result = retain();
+        self.retention_failed
+            .store(result.is_err(), Ordering::Release);
+        result
+    }
+    fn retain_pending_inner(&self, app: &tauri::AppHandle) -> Result<(), String> {
         use tauri::Manager;
         let records = {
             let journal = self
@@ -301,6 +318,15 @@ struct Report {
     attempts: u32,
     #[serde(default)]
     retry_at: u64,
+}
+impl Report {
+    fn matches_binding(&self, current: &Binding) -> bool {
+        (match self.service {
+            Service::PlexTimeline | Service::PlexPlayed => current.plex.as_deref(),
+            Service::Lastfm => current.lastfm.as_deref(),
+            Service::Listenbrainz => current.listenbrainz.as_deref(),
+        }) == Some(self.binding.as_str())
+    }
 }
 const PREFIX: &str = "listening-outbox-v1/";
 fn listened_enough(end: &PlaybackEnd) -> bool {
@@ -464,12 +490,12 @@ async fn submit(
     timeline_client: Option<&str>,
 ) -> Result<bool, String> {
     let current = Binding::capture(settings, client.map(|client| client.library_scope.clone()));
+    if !report.matches_binding(&current) {
+        return Ok(false);
+    }
     let labels = &report.labels;
     match report.service {
         Service::PlexTimeline | Service::PlexPlayed => {
-            if current.plex.as_deref() != Some(&report.binding) {
-                return Ok(false);
-            }
             let client = client.ok_or("Original Plex library is not connected")?;
             if matches!(report.service, Service::PlexTimeline) {
                 client
@@ -490,9 +516,6 @@ async fn submit(
             }
         }
         Service::Lastfm => {
-            if current.lastfm.as_deref() != Some(&report.binding) {
-                return Ok(false);
-            }
             crate::lastfm::scrobble(
                 &settings.lastfm_api_key,
                 &settings.lastfm_api_secret,
@@ -509,9 +532,6 @@ async fn submit(
             .map_err(|_| "Last.fm listen is retained for retry")?;
         }
         Service::Listenbrainz => {
-            if current.listenbrainz.as_deref() != Some(&report.binding) {
-                return Ok(false);
-            }
             crate::listenbrainz::submit_listen(
                 &settings.listenbrainz_token,
                 &labels.artist,
@@ -646,22 +666,66 @@ pub fn start_worker(app: tauri::AppHandle) {
     });
 }
 
-#[derive(Serialize)]
+#[derive(Default, Serialize)]
 pub struct ListeningStatus {
     pub pending: usize,
     pub unretained: usize,
+    pub save_failed: bool,
+    pub waiting_for_account: usize,
+    pub retrying: usize,
+    pub delayed: usize,
+}
+fn classify_reports(reports: &[(String, Report)], current: &Binding) -> ListeningStatus {
+    let mut status = ListeningStatus {
+        pending: reports.len(),
+        ..Default::default()
+    };
+    for (_, report) in reports {
+        if !report.matches_binding(current) {
+            status.waiting_for_account += 1;
+        } else if report.attempts > 0 {
+            status.retrying += 1;
+            // One failed request is ordinary transient delivery; repeated failures
+            // warrant a notice while the durable queue continues automatic retries.
+            if report.attempts >= 2 {
+                status.delayed += 1;
+            }
+        }
+    }
+    status
 }
 #[tauri::command]
-pub fn listening_history_status(
+pub async fn listening_history_status(
+    app: tauri::AppHandle,
     engine: tauri::State<'_, crate::audio_engine::bridge::AudioEngineState>,
     db: tauri::State<'_, crate::db::DbState>,
 ) -> Result<ListeningStatus, String> {
-    let unretained = engine.0.history.pending()?.len();
+    use tauri::Manager;
+    let config = app
+        .path()
+        .app_config_dir()
+        .map_err(|_| "Account settings unavailable")?;
+    let settings =
+        crate::plex::load_settings(&config).map_err(|_| "Account settings unavailable")?;
+    let client = app
+        .state::<crate::commands::PlexState>()
+        .0
+        .lock()
+        .await
+        .clone();
+    let current = Binding::capture(
+        &settings,
+        client.as_ref().map(|client| client.library_scope.clone()),
+    );
     let conn = db.0.lock().map_err(|_| "Listening database unavailable")?;
-    Ok(ListeningStatus {
-        pending: count_reports(&conn)?,
-        unretained,
-    })
+    let mut status = classify_reports(&read_reports(&conn)?, &current);
+    // Keep the existing total count even if the bounded classification query
+    // cannot inspect every retained entry in an oversized legacy queue.
+    status.pending = count_reports(&conn)?;
+    status.unretained = engine.0.history.pending()?.len();
+    status.save_failed =
+        status.unretained > 0 && engine.0.history.retention_failed.load(Ordering::Acquire);
+    Ok(status)
 }
 #[tauri::command]
 pub async fn retry_listening_history(
@@ -784,22 +848,33 @@ mod tests {
             },
         );
         history.observe_end(&ended(71, 100_000));
+        // A newly completed listen awaiting its normal local save is not a failure.
+        assert!(!history.retention_failed.load(Ordering::Acquire));
         let db = crate::db::DbState::open_in_memory().unwrap();
         let mut conn = db.0.lock().unwrap();
         conn.execute_batch("CREATE TRIGGER reject_history BEFORE INSERT ON kv BEGIN SELECT RAISE(ABORT,'synthetic retention failure'); END").unwrap();
         assert!(history
-            .barrier(|| retain(&mut conn, &history.session, &record, &labels()))
+            .barrier(|| history.with_retention_status(|| retain(
+                &mut conn,
+                &history.session,
+                &record,
+                &labels()
+            )))
             .is_err());
         assert_eq!(history.pending().unwrap().len(), 1);
+        assert!(history.retention_failed.load(Ordering::Acquire));
         assert!(history.shutdown_proofs().unwrap().is_empty());
         conn.execute_batch("DROP TRIGGER reject_history").unwrap();
         let proofs = history
             .barrier(|| {
-                retain(&mut conn, &history.session, &record, &labels())?;
-                history.acknowledge(71);
-                Ok(())
+                history.with_retention_status(|| {
+                    retain(&mut conn, &history.session, &record, &labels())?;
+                    history.acknowledge(71);
+                    Ok(())
+                })
             })
             .unwrap();
+        assert!(!history.retention_failed.load(Ordering::Acquire));
         assert_eq!(proofs.len(), 1);
         assert_eq!(proofs[0].playback_id, 71);
         assert!(history.pending().unwrap().is_empty());
@@ -940,6 +1015,49 @@ mod tests {
             assert!(replacement.owns_outbox(directory.path()).unwrap());
             assert!(second.owns_outbox(directory.path()).is_err());
         }
+    }
+
+    #[test]
+    fn status_distinguishes_ordinary_delivery_repeated_failures_and_inactive_bindings() {
+        let current = Binding::capture(&settings(), Some("original-library".into()));
+        let mut queued: Vec<_> = reports(&completed(1, 100_000), &labels())
+            .into_iter()
+            .enumerate()
+            .map(|(i, report)| (i.to_string(), report))
+            .collect();
+        let initial = classify_reports(&queued, &current);
+        assert_eq!(initial.pending, 4);
+        assert_eq!(initial.waiting_for_account, 0);
+        assert_eq!(initial.retrying, 0);
+        assert_eq!(initial.delayed, 0);
+        queued[0].1.attempts = 1;
+        queued[1].1.attempts = 2;
+        queued[2].1.attempts = 3;
+        let mut changed = settings();
+        changed.lastfm_username = "replacement".into();
+        changed.listenbrainz_enabled = false;
+        let inactive = Binding::capture(&changed, Some("original-library".into()));
+        let status = classify_reports(&queued, &inactive);
+        assert_eq!(status.pending, 4);
+        assert_eq!(status.waiting_for_account, 2);
+        assert_eq!(status.retrying, 2);
+        assert_eq!(
+            status.delayed, 1,
+            "one transient failure is ordinary retry work"
+        );
+        let disconnected = classify_reports(&queued, &Binding::default());
+        assert_eq!(disconnected.waiting_for_account, 4);
+        assert_eq!(
+            disconnected.delayed, 0,
+            "inactive bindings do not masquerade as network failures"
+        );
+        let serialized = serde_json::to_value(&status).unwrap();
+        assert_eq!(serialized.as_object().unwrap().len(), 6);
+        assert!(serialized
+            .as_object()
+            .unwrap()
+            .values()
+            .all(|value| value.is_number() || value.is_boolean()));
     }
 
     #[tokio::test]

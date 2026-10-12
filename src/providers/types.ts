@@ -89,6 +89,8 @@ export interface MusicProvider {
   // --- Browse ---
   search(query: string, type?: "track" | "album" | "artist"): Promise<MusicItem[]>
   getRecentlyAdded(type?: string, limit?: number): Promise<MusicItem[]>
+  /** Albums ordered by original release date, independently of library import date. */
+  getLatestReleases?(limit?: number): Promise<MusicAlbum[]>
   getHubs(): Promise<MusicHub[]>
 
   // --- Library ---

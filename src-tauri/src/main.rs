@@ -342,6 +342,7 @@ pub fn run() {
             commands::get_library_sections,
             commands::search_library,
             commands::get_recently_added,
+            commands::get_latest_releases,
             commands::get_hubs,
             commands::get_on_deck,
             commands::get_section_tags,

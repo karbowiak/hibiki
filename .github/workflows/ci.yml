@@ -28,12 +28,18 @@ jobs:
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: xvfb-run bun scripts/check-library-layout.ts
-      - name: Upload library layout failure screenshots
+      - name: Check notification interactions and layouts
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run bun run test:notifications
+      - name: Upload renderer layout failure screenshots
         if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: library-layout-failures
-          path: .tmp/library-layout-checks/*.png
+          path: |
+            .tmp/library-layout-checks/*.png
+            .tmp/notification-checks/*.png
           include-hidden-files: true
           retention-days: 7
           if-no-files-found: ignore

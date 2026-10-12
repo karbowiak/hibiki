@@ -98,6 +98,11 @@ export function createPlexApi(
   }
 
   /** Get discovery hubs (home screen cards) for a section. */
+  function getLatestReleases(sectionId: number, limit = 30): Promise<Album[]> {
+    return invoke("get_latest_releases", { sectionId, limit })
+  }
+
+  /** Get discovery hubs (home screen cards) for a section. */
   function getHubs(sectionId: number): Promise<Hub[]> {
     return invoke("get_hubs", { sectionId })
   }
@@ -684,6 +689,7 @@ export function createPlexApi(
     getLibrarySections,
     searchLibrary,
     getRecentlyAdded,
+    getLatestReleases,
     getHubs,
     getOnDeck,
     getSectionTags,

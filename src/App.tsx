@@ -36,6 +36,8 @@ import { initializeShutdown } from "./lib/shutdown"
 import { ListeningSyncStatus } from "./components/ListeningSyncStatus"
 import { ShutdownNotice } from "./components/ShutdownNotice"
 import { StorageStatus } from "./components/PersistenceNotice"
+import { NotificationSources } from "./components/NotificationSources"
+import { NotificationToasts } from "./components/NotificationCenter"
 import LiveAnnouncer from "./components/LiveAnnouncer"
 import "./i18n" // Initialize i18n on app load
 
@@ -47,8 +49,8 @@ function DesktopApp() {
   const { isConnected, musicSectionId, isLoading, loadAndConnect } = useConnectionStore(
     useShallow(s => ({ isConnected: s.isConnected, musicSectionId: s.musicSectionId, isLoading: s.isLoading, loadAndConnect: s.loadAndConnect }))
   )
-  const { fetchPlaylists, fetchRecentlyAdded, fetchHubs, fetchTags, prefetchAllPlaylists, prefetchMixTracks } = useLibraryStore(
-    useShallow(s => ({ fetchPlaylists: s.fetchPlaylists, fetchRecentlyAdded: s.fetchRecentlyAdded, fetchHubs: s.fetchHubs, fetchTags: s.fetchTags, prefetchAllPlaylists: s.prefetchAllPlaylists, prefetchMixTracks: s.prefetchMixTracks }))
+  const { fetchPlaylists, fetchRecentlyAdded, fetchLatestReleases, fetchHubs, fetchTags, prefetchAllPlaylists, prefetchMixTracks } = useLibraryStore(
+    useShallow(s => ({ fetchPlaylists: s.fetchPlaylists, fetchRecentlyAdded: s.fetchRecentlyAdded, fetchLatestReleases: s.fetchLatestReleases, fetchHubs: s.fetchHubs, fetchTags: s.fetchTags, prefetchAllPlaylists: s.prefetchAllPlaylists, prefetchMixTracks: s.prefetchMixTracks }))
   )
   const { showCreatePlaylist, setShowCreatePlaylist, pendingPlaylistItemIds, setPendingPlaylistItemIds } = useUIStore(
     useShallow(s => ({ showCreatePlaylist: s.showCreatePlaylist, setShowCreatePlaylist: s.setShowCreatePlaylist, pendingPlaylistItemIds: s.pendingPlaylistItemIds, setPendingPlaylistItemIds: s.setPendingPlaylistItemIds }))
@@ -82,6 +84,7 @@ function DesktopApp() {
       void Promise.all([
         fetchPlaylists(),
         fetchRecentlyAdded(50),
+        fetchLatestReleases(30),
         // Personalized mixes change on the server. Refresh them on connection
         // instead of trusting a persisted recommendation from a previous run.
         fetchHubs({ force: true }),
@@ -107,6 +110,9 @@ function DesktopApp() {
 
   return (
     <div className="select-none">
+      <NotificationSources />
+      <StorageStatus />
+      <ListeningSyncStatus />
       {/*
         Outer shell: full-height flex column.
         - Top row: sidebar + page content (flex-1, takes all space above the player)
@@ -114,8 +120,6 @@ function DesktopApp() {
       */}
       <div className="flex h-screen flex-col overflow-hidden text-white">
         {IS_WINDOWS && <WindowTitleBar />}
-        <StorageStatus />
-        <ListeningSyncStatus />
         {/* Sidebar + main content + optional pinned queue */}
         <div className="relative z-0 flex min-h-0 flex-1 flex-row overflow-hidden">
           <SideBar onCreatePlaylist={() => setShowCreatePlaylist(true)} />
@@ -134,6 +138,7 @@ function DesktopApp() {
       </div>
 
       <TailwindIndicator />
+      <NotificationToasts />
 
       {showCreatePlaylist && (
         <CreatePlaylist

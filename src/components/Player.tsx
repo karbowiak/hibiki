@@ -55,12 +55,11 @@ function RadioPlayerBar() {
     if (volumeTooltipTimer.current) clearTimeout(volumeTooltipTimer.current)
   }, [])
 
-  const { currentStation, isStreamPlaying, isStreamBuffering, streamError, icyNowPlaying, stopStream, pauseStream, resumeStream } =
+  const { currentStation, isStreamPlaying, isStreamBuffering, icyNowPlaying, stopStream, pauseStream, resumeStream } =
     useRadioStreamStore(useShallow(s => ({
       currentStation: s.currentStation,
       isStreamPlaying: s.isStreamPlaying,
       isStreamBuffering: s.isStreamBuffering,
-      streamError: s.streamError,
       icyNowPlaying: s.icyNowPlaying,
       stopStream: s.stopStream,
       pauseStream: s.pauseStream,
@@ -117,12 +116,7 @@ function RadioPlayerBar() {
     .filter(Boolean).join(" ")
 
   return (
-    <div className="relative border-t border-[var(--border)] bg-app-card">
-      {streamError && (
-        <div className="absolute bottom-28 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-red-900/90 px-4 py-2 text-sm text-white shadow-xl backdrop-blur-sm max-w-md text-center">
-          {streamError}
-        </div>
-      )}
+    <div data-player-bar className="relative border-t border-[var(--border)] bg-app-card">
       <div className="flex h-fit w-screen min-w-[620px] flex-col overflow-clip bg-app-card">
         <div style={{ height: "var(--player-height)" }}>
           <div className="flex h-full items-center justify-between" style={{ paddingInline: "var(--spacing-player)" }}>
@@ -277,7 +271,6 @@ export function Player() {
   // positionMs updates at ~4 Hz — isolate it as a primitive selector so only
   // the progress bar re-renders on each tick, not the entire Player subtree.
   const positionMs = usePlayerStore(s => s.positionMs)
-  const outputAvailable = useDeviceStore(s => s.outputAvailable)
 
   const {
     currentTrack,
@@ -288,7 +281,6 @@ export function Player() {
     repeat,
     isRadioMode,
     djMode,
-    playerError,
     contextName,
     contextHref,
     waveformLevels,
@@ -315,7 +307,6 @@ export function Player() {
     repeat: s.repeat,
     isRadioMode: s.isRadioMode,
     djMode: s.djMode,
-    playerError: s.playerError,
     contextName: s.contextName,
     contextHref: s.contextHref,
     waveformLevels: s.waveformLevels,
@@ -518,7 +509,7 @@ export function Player() {
   if (isInternetRadioActive) return <RadioPlayerBar />
 
   return (
-    <div className="relative z-20 border-t border-[var(--border)] bg-app-card">
+    <div data-player-bar className="relative z-20 border-t border-[var(--border)] bg-app-card">
       {/* Expanded album art sits above the player, within the sidebar area. */}
       {isArtExpanded && thumbUrl && (
         <div
@@ -565,12 +556,6 @@ export function Player() {
         />
       )}
 
-      {/* Error toast — shown briefly when playRadio or other player actions fail */}
-      {(playerError || (!outputAvailable && currentTrack && !isInternetRadioActive)) && (
-        <div role="status" className="absolute bottom-28 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-red-900/90 px-4 py-2 text-sm text-white shadow-xl backdrop-blur-sm max-w-md text-center">
-          {playerError || "Waiting for an audio output device…"}
-        </div>
-      )}
       {fullscreenOpen && <VisualizerFullscreen />}
       <div className="flex h-fit w-screen min-w-[620px] flex-col overflow-clip bg-app-card">
         <div className="player-body">

@@ -13,6 +13,7 @@ import { clearImageCache } from "../lib/imageCache"
 import { ActivityIndicator } from "./ActivityIndicator"
 import { SearchDropdown } from "./SearchDropdown"
 import { IS_MACOS } from "../lib/platform"
+import { NotificationCenter } from "./NotificationCenter"
 
 export function TopBar() {
   const provider = useProviderStore((s) => s.provider)
@@ -157,6 +158,7 @@ export function TopBar() {
     // pt-8 gives 32px of clearance for the macOS traffic-light buttons
     <div
       data-tauri-drag-region
+      data-app-toolbar
       className={`mb-3 flex flex-row flex-wrap items-center gap-2 ${IS_MACOS ? "pt-8" : "pt-2"}`}
       style={{ paddingInline: "var(--spacing-topbar)" }}
     >
@@ -274,6 +276,7 @@ export function TopBar() {
           </svg>
         </button>
 
+        <NotificationCenter />
         {/* Settings toggle — click again to go back */}
         <button
           onClick={() =>

@@ -124,9 +124,10 @@ export function makeDragPayload(item: MusicItem): DragPayload | undefined {
 export function Home() {
   // Granular selector: only re-render when recentlyAdded or hubs actually change.
   // Changes to playlistItemsCache (from background prefetch) do NOT trigger re-renders here.
-  const { recentlyAdded, hubs } = useLibraryStore(
+  const { recentlyAdded, latestReleases, hubs } = useLibraryStore(
     useShallow((s) => ({
       recentlyAdded: s.recentlyAdded,
+      latestReleases: s.latestReleases,
       hubs: s.hubs,
     }))
   )
@@ -154,7 +155,11 @@ export function Home() {
     return undefined
   }
 
-  const hasRealData = recentlyAdded.length > 0 || hubs.length > 0
+  const hasRealData = latestReleases.length > 0 || recentlyAdded.length > 0 || hubs.length > 0
+  const latestReleaseItems = useMemo(
+    () => latestReleases.slice(0, 30).map(album => ({ ...album, type: "album" as const })),
+    [latestReleases]
+  )
 
   const { mixesItems, mixesTitle } = useMemo(() => {
     const mh = hubs.filter((h) => h.identifier?.startsWith("music.mixes"))
@@ -247,6 +252,37 @@ export function Home() {
                 }}
                 scrollItem
                 large
+              />
+            )
+          })}
+        </ScrollRow>
+      )}
+
+      {latestReleaseItems.length > 0 && (
+        <ScrollRow
+          title="Latest Releases"
+          restoreKey="home-latest-releases"
+          onPlayAll={provider ? () => playResolved(() => resolveItemsToTracks(latestReleaseItems, provider), "Latest Releases", null, false) : undefined}
+          onShuffleAll={provider ? () => playResolved(() => resolveItemsToTracks(latestReleaseItems, provider), "Latest Releases", null, true) : undefined}
+        >
+          {latestReleaseItems.map((item, idx) => {
+            const info = getMediaInfo(item)
+            if (!info) return null
+            return (
+              <MediaCard
+                key={`${item.id}-${idx}`}
+                title={info.title}
+                desc={info.desc}
+                thumb={info.thumb}
+                isArtist={false}
+                href={info.href ?? undefined}
+                prefetch={makePrefetch(info)}
+                onPlay={makeOnPlay(item, { playTrack, playFromUri, playPlaylist, provider })}
+                onContextMenu={makeOnContextMenu(item)}
+                dragPayload={makeDragPayload(item)}
+                artistName={item.artistName}
+                albumName={item.title}
+                scrollItem
               />
             )
           })}

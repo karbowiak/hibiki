@@ -193,3 +193,21 @@ test("retiring a paged playlist owner discards the delayed page", async () => {
   pending.resolve({ items: [rawTrack()], total: 500 })
   await expect(request).rejects.toThrow("superseded")
 })
+
+test("latest-release RPC and album mapper preserve scoped ownership and release rather than added date", async () => {
+  const pending = deferred<any[]>()
+  const { calls, invoke } = transportHarness(command => command === "get_latest_releases" ? pending.promise : undefined)
+  const provider = new PlexProvider(invoke)
+  await provider.connect(configuration())
+  const albums = provider.getLatestReleases(30)
+  pending.resolve([{ rating_key: 77, title: "Release", parent_title: "Artist", year: 2026,
+    originally_available_at: "2026-10-11", added_at: "2020-01-01T00:00:00Z", thumb: "/library/metadata/77/thumb/1" }])
+  const [album] = await albums
+  expect(calls[0]).toEqual({ command: "get_latest_releases", args: { sectionId: 1, limit: 30, context: context() } })
+  expect(album.releaseDate).toBe("2026-10-11")
+  expect(album.addedAt).toBe("2020-01-01T00:00:00Z")
+  expect(album.thumbUrl).toContain(scope("a"))
+  const late = provider.getLatestReleases()
+  await provider.disconnect()
+  await expect(late).rejects.toThrow("superseded")
+})

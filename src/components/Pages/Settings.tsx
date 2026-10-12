@@ -16,6 +16,7 @@ import type { FontPreset } from "../../stores/fontStore"
 import { useCardSizeStore, CARD_SIZE_MIN, CARD_SIZE_MAX } from "../../stores/cardSizeStore"
 import { useHighlightStore, HIGHLIGHT_DEFAULTS, type HighlightCategory } from "../../stores/highlightStore"
 import { useNotificationStore } from "../../stores/notificationStore"
+import { useNotificationCenterStore } from "../../stores/notificationCenterStore"
 import { useDebugStore } from "../../stores/debugStore"
 import { useUIStore } from "../../stores"
 import { useEasterEggStore } from "../../stores/easterEggStore"
@@ -776,7 +777,9 @@ const LANGUAGES = [
 ] as const
 
 function GeneralSection() {
-  const { notificationsEnabled, setNotificationsEnabled } = useNotificationStore()
+  const { notificationsEnabled, setNotificationsEnabled, warningNotificationsEnabled, setWarningNotificationsEnabled } = useNotificationStore()
+  const [requestingNotificationPermission, setRequestingNotificationPermission] = useState(false)
+  const notificationPermissionRequest = useRef(false)
   const { debugEnabled, setDebugEnabled } = useDebugStore()
   const deduplicateAlbums = useUIStore(s => s.deduplicateAlbums)
   const setDeduplicateAlbums = useUIStore(s => s.setDeduplicateAlbums)
@@ -813,6 +816,33 @@ function GeneralSection() {
             inline
           >
             <Toggle value={notificationsEnabled} onChange={setNotificationsEnabled} />
+          </SettingRow>
+
+          <div className="border-t border-white/[0.06]" />
+
+          <SettingRow
+            label="System alerts"
+            description="Show warnings and errors in system notifications while Hibiki is in the background. In-app notifications are always available."
+            inline
+          >
+            <button
+              role="switch"
+              aria-label="System alerts"
+              aria-checked={warningNotificationsEnabled}
+              disabled={requestingNotificationPermission}
+              className={clsx("relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50", warningNotificationsEnabled ? "bg-accent" : "bg-white/20")}
+              onClick={() => {
+                if (notificationPermissionRequest.current) return
+                const enabling = !warningNotificationsEnabled
+                notificationPermissionRequest.current = true
+                setRequestingNotificationPermission(true)
+                void setWarningNotificationsEnabled(enabling).then(accepted => {
+                  if (enabling && !accepted) useNotificationCenterStore.getState().notify({ id: "system.notifications.permission", title: "System notifications are unavailable", message: "Allow notifications for Hibiki in your system settings, then try again. In-app notifications remain available.", severity: "info" })
+                }).finally(() => { notificationPermissionRequest.current = false; setRequestingNotificationPermission(false) })
+              }}
+            >
+              <span className={clsx("pointer-events-none mt-0.5 inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform", warningNotificationsEnabled ? "translate-x-[22px]" : "translate-x-0.5")} />
+            </button>
           </SettingRow>
 
           <div className="border-t border-white/[0.06]" />

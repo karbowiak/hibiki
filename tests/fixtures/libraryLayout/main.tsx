@@ -1,6 +1,8 @@
 import React from "react"
 import { createRoot } from "react-dom/client"
 import { Page } from "../../../src/components/Page.tsx"
+import { NotificationToasts } from "../../../src/components/NotificationCenter.tsx"
+import { useNotificationCenterStore } from "../../../src/stores/notificationCenterStore.ts"
 import { useAccentStore } from "../../../src/stores/accentStore.ts"
 import { useUIStore } from "../../../src/stores/uiStore.ts"
 import { Player } from "../../../src/components/Player.tsx"
@@ -25,6 +27,7 @@ async function setup() {
   const w = window as any
   const params = new URLSearchParams(location.search)
   const actualPlayer = params.get("player") === "1"
+  const notifications = params.get("notifications") === "1"
   let callback = 0
   w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} }
   w.__TAURI_INTERNALS__ = {
@@ -260,6 +263,69 @@ async function setup() {
     history.pushState({}, "", "/")
     dispatchEvent(new PopStateEvent("popstate"))
   }
+  if (notifications) {
+    let retryCalls = 0
+    let completeRetry: (() => void) | undefined
+    const warning = (
+      message = "Synthetic pending listens are waiting for retry."
+    ) => ({
+      id: "fixture-warning",
+      title: "Fixture listening sync requires attention",
+      message,
+      severity: "warning" as const,
+      persistent: true,
+      action: {
+        label: "Retry fixture",
+        run: async () => {
+          ++retryCalls
+          await new Promise<void>((resolve) => {
+            completeRetry = resolve
+          })
+          useNotificationCenterStore.getState().resolve("fixture-warning")
+        },
+      },
+    })
+    w.fixtureNotifications = {
+      seed: () => {
+        const center = useNotificationCenterStore.getState()
+        center.notify({
+          id: "fixture-info",
+          title: "Fixture refresh finished",
+          message: "Your synthetic library is up to date.",
+          severity: "success",
+        })
+        center.notify(warning())
+        center.notify({
+          id: "fixture-error",
+          title: "Fixture decoder message",
+          message:
+            "This is an intentionally long synthetic diagnostic: " +
+            "LongUnbrokenDiagnostic".repeat(10),
+          severity: "error",
+        })
+      },
+      poll: () =>
+        useNotificationCenterStore
+          .getState()
+          .notify(
+            warning("Still waiting after the next synthetic status poll.")
+          ),
+      recur: () => {
+        useNotificationCenterStore.getState().resolve("fixture-warning")
+        useNotificationCenterStore.getState().notify(warning())
+      },
+      finishRetry: () => completeRetry?.(),
+      retryCalls: () => retryCalls,
+      snapshot: () =>
+        useNotificationCenterStore
+          .getState()
+          .notifications.map(({ action, ...entry }) => ({
+            ...entry,
+            hasAction: !!action,
+          })),
+      theme: (theme: "dark" | "light") => setTheme(theme),
+    }
+  }
   document.getElementById("root")!.style.display = "none"
   const host = document.createElement("div")
   host.id = "layout-fixture"
@@ -282,6 +348,7 @@ async function setup() {
           React.createElement(Page)
         )
       ),
+      notifications ? React.createElement(NotificationToasts) : null,
       actualPlayer
         ? React.createElement(Player)
         : React.createElement(

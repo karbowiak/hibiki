@@ -361,6 +361,18 @@ pub async fn get_recently_added(
 
 /// Get discovery hubs for a section (home screen content).
 #[tauri::command]
+pub async fn get_latest_releases(
+    context: PlexRequestContext,
+    section_id: i64,
+    limit: Option<i32>,
+    state: State<'_, PlexState>,
+) -> Result<Vec<crate::plex::Album>, String> {
+    let c = client!(state, context);
+    c.latest_releases(section_id, limit).await.map_err(|e| format!("{e:#}"))
+}
+
+/// Get discovery hubs for a section (home screen content).
+#[tauri::command]
 pub async fn get_hubs(
     context: PlexRequestContext,
     section_id: i64,

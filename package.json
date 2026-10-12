@@ -13,7 +13,8 @@
     "test": "cd src-tauri && cargo test",
     "test:frontend": "bun test tests",
     "test:unit": "cd src-tauri && cargo test --locked --all-features --bin hibiki -- --skip integration_tests",
-    "test:renderer": "bun scripts/check-renderer.ts"
+    "test:renderer": "bun scripts/check-renderer.ts",
+    "test:notifications": "bun scripts/check-notifications.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

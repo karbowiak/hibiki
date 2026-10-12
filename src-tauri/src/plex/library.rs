@@ -1,7 +1,7 @@
 //! Library operations (sections, browse, search, tags)
 #![allow(dead_code)]
 
-use super::{PlexClient, MediaContainer, Hub, LibrarySection, PlexMedia, Track};
+use super::{PlexClient, MediaContainer, Hub, LibrarySection, PlexMedia, Track, Album};
 use super::playlist::SearchFilter;
 use anyhow::{Result, Context};
 use serde::{Serialize, Deserialize};
@@ -586,6 +586,69 @@ impl PlexClient {
         Ok(container.metadata)
     }
 
+    /// Recent album releases, independently of the date imported into Plex.
+    pub async fn latest_releases(&self, section_id: i64, limit: Option<i32>) -> Result<Vec<Album>> {
+        self.latest_releases_on(section_id, limit, chrono::Utc::now().date_naive())
+            .await
+    }
+
+    async fn latest_releases_on(
+        &self,
+        section_id: i64,
+        limit: Option<i32>,
+        today: chrono::NaiveDate,
+    ) -> Result<Vec<Album>> {
+        anyhow::ensure!(section_id > 0, "Invalid music library section");
+        let limit = limit.unwrap_or(30).clamp(1, 50);
+        let tomorrow = today
+            .succ_opt()
+            .context("Invalid release date boundary")?
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        // Plex date filters use an exclusive 'before' operator. Filtering on
+        // the server before pagination prevents future preorders filling the shelf.
+        let params = vec![
+            ("type".to_owned(), "9".to_owned()),
+            ("sort".to_owned(), "originallyAvailableAt:desc".to_owned()),
+            ("originallyAvailableAt<<".to_owned(), tomorrow.to_string()),
+            ("X-Plex-Container-Start".to_owned(), "0".to_owned()),
+            ("X-Plex-Container-Size".to_owned(), limit.to_string()),
+            ("limit".to_owned(), limit.to_string()),
+        ];
+        let path = format!("/library/sections/{section_id}/all");
+        let url = build_url_from_params(&self.build_url(&path), &params);
+        let container: MediaContainer<PlexMedia> = self
+            .get_url(&url)
+            .await
+            .context("Failed to fetch latest album releases")?;
+        let release_date = |album: &Album| {
+            album
+                .originally_available_at
+                .as_deref()
+                .and_then(|value| chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d").ok())
+        };
+        let mut albums: Vec<_> = container
+            .metadata
+            .into_iter()
+            .filter_map(|item| {
+                let PlexMedia::Album(album) = item else {
+                    return None;
+                };
+                if release_date(&album).is_some_and(|date| date > today) {
+                    return None;
+                }
+                Some(album)
+            })
+            .take(limit as usize)
+            .collect();
+        // Defend against servers ignoring date/sort parameters; unknown dates
+        // remain last within this bounded result, never ordered by addedAt.
+        albums.sort_by_key(|album| std::cmp::Reverse(release_date(album)));
+        Ok(albums)
+    }
+
     /// Find library section by title
     ///
     /// # Arguments
@@ -628,6 +691,83 @@ fn build_query_string(params: &[(&str, String)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plex::PlexClientConfig;
+
+    #[tokio::test]
+    async fn latest_releases_request_albums_by_release_date_with_bounded_paging_and_date_filter() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let body = serde_json::json!({"MediaContainer": {"Metadata": [
+            {"type":"album", "ratingKey":"2", "title":"Old release imported recently", "originallyAvailableAt":"2019-01-01", "addedAt":1800000000},
+            {"type":"album", "ratingKey":"7", "title":"Unknown release date", "addedAt":1800000000},
+            {"type":"album", "ratingKey":"13", "title":"Future preorder", "originallyAvailableAt":"2026-10-13", "addedAt":1700000000},
+            {"type":"track", "ratingKey":"99", "title":"Not an album"},
+            {"type":"album", "ratingKey":"10", "title":"Recent release imported years ago", "originallyAvailableAt":"2026-10-10", "addedAt":1700000000},
+            {"type":"album", "ratingKey":"12", "title":"Released today", "originallyAvailableAt":"2026-10-12", "addedAt":1700000000}
+        ]}}).to_string();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = stream.read(&mut buffer).unwrap();
+                assert!(read > 0 && request.len() < 16 * 1024);
+                request.extend_from_slice(&buffer[..read]);
+            }
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+            String::from_utf8(request)
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap()
+                .to_owned()
+        });
+        let client = PlexClient::new(PlexClientConfig {
+            base_url: format!("http://{address}/proxy"),
+            token: "offline-fixture".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 12).unwrap();
+        let albums = client
+            .latest_releases_on(7, Some(1000), today)
+            .await
+            .unwrap();
+        assert_eq!(
+            albums
+                .iter()
+                .map(|album| album.rating_key)
+                .collect::<Vec<_>>(),
+            vec![12, 10, 2, 7]
+        );
+        let request = server.join().unwrap();
+        let target = request.split_whitespace().nth(1).unwrap();
+        let url = url::Url::parse(&format!("http://{address}{target}")).unwrap();
+        assert_eq!(url.path(), "/proxy/library/sections/7/all");
+        let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(query.get("type").unwrap(), "9");
+        assert_eq!(query.get("sort").unwrap(), "originallyAvailableAt:desc");
+        assert_eq!(query.get("X-Plex-Container-Start").unwrap(), "0");
+        assert_eq!(query.get("X-Plex-Container-Size").unwrap(), "50");
+        assert_eq!(query.get("limit").unwrap(), "50");
+        let tomorrow = today
+            .succ_opt()
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        assert_eq!(
+            query.get("originallyAvailableAt<<").unwrap(),
+            &tomorrow.to_string()
+        );
+        assert!(client.latest_releases_on(-1, None, today).await.is_err());
+    }
+
 
     #[test]
     fn test_build_query_string() {

@@ -188,6 +188,11 @@ export class PlexProvider implements MusicProvider {
     return hubs.map(h => plexHubToMusicHub(h, this.img))
   }
 
+  async getLatestReleases(limit = 30): Promise<MusicAlbum[]> {
+    const albums = await this.api.getLatestReleases(this.requireSection(), limit)
+    return albums.map(album => plexAlbumToMusicAlbum(album, this.img))
+  }
+
   // ---------------------------------------------------------------------------
   // Library
   // ---------------------------------------------------------------------------

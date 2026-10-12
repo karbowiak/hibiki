@@ -23,6 +23,7 @@ export interface RecentMix {
 const TTL_MS = {
   playlists: 5 * 60_000, //  5 minutes
   recentlyAdded: 10 * 60_000, // 10 minutes
+  latestReleases: 10 * 60_000,
   hubs: 15 * 60_000, // 15 minutes
   likedTracks: 10 * 60_000, // 10 minutes
   likedArtists: 10 * 60_000, // 10 minutes
@@ -62,6 +63,7 @@ export interface LibraryState {
   activateProvider: (provider: MusicProvider) => Promise<void>
   playlists: MusicPlaylist[]
   recentlyAdded: MusicItem[]
+  latestReleases: MusicAlbum[]
   hubs: MusicHub[]
   likedTracks: MusicTrack[]
   likedArtists: MusicArtist[]
@@ -102,6 +104,8 @@ export interface LibraryState {
   _playlistsFetchedAt: number | null
   _recentlyAddedFetchedAt: number | null
   _recentlyAddedLimit: number | undefined
+  _latestReleasesFetchedAt: number | null
+  _latestReleasesLimit: number | undefined
   _hubsFetchedAt: number | null
   _likedTracksFetchedAt: number | null
   _likedTracksLimit: number | undefined
@@ -113,6 +117,7 @@ export interface LibraryState {
 
   fetchPlaylists: (opts?: FetchOpts) => Promise<void>
   fetchRecentlyAdded: (limit?: number, opts?: FetchOpts) => Promise<void>
+  fetchLatestReleases: (limit?: number, opts?: FetchOpts) => Promise<void>
   fetchHubs: (opts?: FetchOpts) => Promise<void>
   fetchLikedTracks: (limit?: number, opts?: FetchOpts) => Promise<void>
   fetchLikedArtists: (limit?: number, opts?: FetchOpts) => Promise<void>
@@ -146,6 +151,7 @@ export interface LibraryState {
 const emptyLibrary = () => ({
   playlists: [],
   recentlyAdded: [],
+  latestReleases: [],
   hubs: [],
   likedTracks: [],
   likedArtists: [],
@@ -170,6 +176,8 @@ const emptyLibrary = () => ({
   _playlistsFetchedAt: null,
   _recentlyAddedFetchedAt: null,
   _recentlyAddedLimit: undefined,
+  _latestReleasesFetchedAt: null,
+  _latestReleasesLimit: undefined,
   _hubsFetchedAt: null,
   _likedTracksFetchedAt: null,
   _likedTracksLimit: undefined,
@@ -183,6 +191,7 @@ const emptyLibrary = () => ({
 const persistedFields = [
   "playlists",
   "recentlyAdded",
+  "latestReleases",
   "hubs",
   "likedTracks",
   "likedArtists",
@@ -194,6 +203,8 @@ const persistedFields = [
   "_playlistsFetchedAt",
   "_recentlyAddedFetchedAt",
   "_recentlyAddedLimit",
+  "_latestReleasesFetchedAt",
+  "_latestReleasesLimit",
   "_hubsFetchedAt",
   "_likedTracksFetchedAt",
   "_likedTracksLimit",
@@ -430,6 +441,15 @@ export function createLibraryStore({
           (provider) => provider.getHubs(),
           (hubs) => set({ hubs: hubs.filter((hub) => hub.identifier), _hubsFetchedAt: Date.now() })
         )
+      },
+      fetchLatestReleases: async (limit = 30, opts = {}) => {
+        if (!getProvider()?.getLatestReleases) return
+        limit = Math.min(50, Math.max(1, Number.isSafeInteger(limit) ? limit : 30))
+        if (!opts.force && (get()._latestReleasesLimit ?? 0) >= limit
+          && fresh(get()._latestReleasesFetchedAt, TTL_MS.latestReleases)) return
+        return fetchValue("latest", !!opts.force, limit,
+          provider => provider.getLatestReleases!(limit),
+          latestReleases => set({ latestReleases, _latestReleasesFetchedAt: Date.now(), _latestReleasesLimit: limit }))
       },
       fetchLikedTracks: async (limit = 500, opts = {}) => {
         if (
@@ -686,6 +706,7 @@ export function createLibraryStore({
         await Promise.all([
           get().fetchPlaylists({ force: true }),
           get().fetchRecentlyAdded(50, { force: true }),
+          get().fetchLatestReleases(30, { force: true }),
           get().fetchHubs({ force: true })
         ])
       },
@@ -779,6 +800,7 @@ export function createLibraryStore({
         } else if (itemType === "album") {
           set({ _likedAlbumsFetchedAt: null })
           set({
+            latestReleases: get().latestReleases.map(album => album.id === id ? { ...album, userRating: newRating } : album),
             likedAlbums: get().likedAlbums.map((a) => (a.id === id ? { ...a, userRating: newRating } : a))
           })
         } else if (itemType === "artist") {
@@ -796,6 +818,8 @@ export function createLibraryStore({
           _playlistsFetchedAt: null,
           _recentlyAddedFetchedAt: null,
           _recentlyAddedLimit: undefined,
+          _latestReleasesFetchedAt: null,
+          _latestReleasesLimit: undefined,
           _hubsFetchedAt: null,
           _likedTracksFetchedAt: null,
           _likedTracksLimit: undefined,
@@ -814,8 +838,8 @@ export function createLibraryStore({
         if (get().currentPlaylistId) void get().fetchPlaylistItems(get().currentPlaylistId!)
       },
       invalidateLibraryTTLs: () => {
-        for (const key of ["playlists", "recent", "hubs"]) requests.delete(key)
-        set({ _playlistsFetchedAt: null, _recentlyAddedFetchedAt: null, _hubsFetchedAt: null })
+        for (const key of ["playlists", "recent", "latest", "hubs"]) requests.delete(key)
+        set({ _playlistsFetchedAt: null, _recentlyAddedFetchedAt: null, _latestReleasesFetchedAt: null, _hubsFetchedAt: null })
       },
       clearAll: () => {
         void cache.activate(null)

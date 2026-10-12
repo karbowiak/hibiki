@@ -1,12 +1,13 @@
 import { expect, mock, test } from "bun:test"
 import { createLibraryStore } from "../src/stores/libraryStore"
 import type { MusicProvider } from "../src/providers/types"
-import type { MusicPlaylist, MusicTrack } from "../src/types/music"
+import type { MusicAlbum, MusicPlaylist, MusicTrack } from "../src/types/music"
 import { deferred, settle } from "./helpers/radioAudioFakes"
 
 const track = (id: string, userRating: number | null = null) => ({ id, title: id, userRating }) as MusicTrack
 const playlist = (id: string, trackCount = 1) =>
   ({ id, title: id, trackCount, type: "playlist" }) as MusicPlaylist
+const release = (id: string) => ({ id, title: id, releaseDate: "2026-10-11" }) as MusicAlbum
 function harness(overrides: Partial<MusicProvider> = {}) {
   const values = new Map<string, string>()
   const storage = {
@@ -485,4 +486,61 @@ test("unknown totals allow server-clamped short pages until an empty page", asyn
   expect(h.state().playlistIsFullyLoaded.clamped).toBe(true)
   expect(offsets).toEqual([0, 1, 2])
   expect(h.state().currentPlaylistItems.map(item => item.id)).toEqual(["a", "b"])
+})
+
+test("latest releases deduplicate requests, respect requested limits and retire old provider results", async () => {
+  const pending = deferred<MusicAlbum[]>()
+  const getLatestReleases = mock(async () => pending.promise)
+  const h = harness({ getLatestReleases })
+  await h.activate()
+  const first = h.state().fetchLatestReleases(30)
+  const duplicate = h.state().fetchLatestReleases(30)
+  expect(getLatestReleases).toHaveBeenCalledTimes(1)
+  await h.switchTo("account-b", { getLatestReleases: async () => [release("new-account")] })
+  await h.state().fetchLatestReleases(30)
+  pending.resolve([release("old-account")])
+  await Promise.all([first, duplicate])
+  expect(h.state().latestReleases.map(album => album.id)).toEqual(["new-account"])
+  expect(h.state()._latestReleasesLimit).toBe(30)
+  const current = h.state()._latestReleasesFetchedAt
+  await h.state().fetchLatestReleases(30)
+  expect(h.state()._latestReleasesFetchedAt).toBe(current)
+  h.state().invalidateLibraryTTLs()
+  expect(h.state()._latestReleasesFetchedAt).toBeNull()
+})
+
+test("failed latest releases retry without a successful TTL and optional providers remain compatible", async () => {
+  let attempts = 0
+  const h = harness({ getLatestReleases: async limit => {
+    expect(limit).toBe(50)
+    if (++attempts === 1) throw new Error("synthetic fetch failure")
+    return [release("retry")]
+  } })
+  await h.activate()
+  await h.state().fetchLatestReleases(500)
+  expect(h.state()._latestReleasesFetchedAt).toBeNull()
+  await h.state().fetchLatestReleases(500)
+  expect(attempts).toBe(2)
+  expect(h.state().latestReleases.map(album => album.id)).toEqual(["retry"])
+  await h.switchTo("optional-provider")
+  await h.state().fetchLatestReleases()
+  expect(h.state().latestReleases).toEqual([])
+  expect(h.state()._latestReleasesFetchedAt).toBeNull()
+})
+
+test("latest-release shelf persistence restores only its provider scope and album ratings stay current", async () => {
+  const h = harness({ getLatestReleases: async () => [release("a")] })
+  await h.activate()
+  await h.state().fetchLatestReleases()
+  h.state().onItemRated("a", "album", 8)
+  expect(h.state().latestReleases[0].userRating).toBe(8)
+  await settle()
+  await h.switchTo("account-b", { getLatestReleases: async () => [release("b")] })
+  expect(h.state().latestReleases).toEqual([])
+  await h.state().fetchLatestReleases()
+  await settle()
+  await h.switchTo("account-a", { getLatestReleases: async () => [] })
+  expect(h.state().latestReleases.map(album => album.id)).toEqual(["a"])
+  expect(h.state().latestReleases[0].userRating).toBe(8)
+  expect(h.state()._latestReleasesLimit).toBe(30)
 })

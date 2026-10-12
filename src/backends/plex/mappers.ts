@@ -127,6 +127,7 @@ export function plexAlbumToMusicAlbum(a: Album, img: ImgResolver): MusicAlbum {
     summary: a.summary ?? null,
     userRating: a.user_rating ?? null,
     addedAt: a.added_at ?? null,
+    releaseDate: a.originally_available_at ?? null,
     guid: a.guid ?? null,
     genres: (a.genre ?? []).map(t => t.tag),
     styles: (a.style ?? []).map(t => t.tag),

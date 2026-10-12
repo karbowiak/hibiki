@@ -83,6 +83,7 @@ export interface MusicAlbum {
   summary: string | null
   userRating: number | null
   addedAt: string | null
+  releaseDate?: string | null // originally released, YYYY-MM-DD
   guid: string | null
   genres: string[]
   styles: string[]
