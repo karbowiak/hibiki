@@ -1,3 +1,5 @@
+import { createScalarPreference } from "./scalarPreference"
+
 type Theme = "dark" | "light" | "system"
 
 const STORAGE_KEY = "plex-theme"
@@ -8,10 +10,13 @@ let mediaQuery: MediaQueryList | null = null
 
 function resolveTheme(mode: Theme): "dark" | "light" {
   if (mode !== "system") return mode
-  return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"
+  return window.matchMedia("(prefers-color-scheme: light)").matches
+    ? "light"
+    : "dark"
 }
 
 function applyTheme(mode: Theme) {
+  if (typeof document === "undefined") return
   const resolved = resolveTheme(mode)
   document.documentElement.setAttribute("data-theme", resolved)
 
@@ -28,10 +33,21 @@ function applyTheme(mode: Theme) {
   }
 }
 
+function normalizeTheme(value: unknown): Theme {
+  return value === "light" || value === "system" ? value : DEFAULT_THEME
+}
+const preference = createScalarPreference<Theme>(
+  STORAGE_KEY,
+  DEFAULT_THEME,
+  (raw) => {
+    if (raw !== "dark" && raw !== "light" && raw !== "system")
+      throw new Error("Invalid theme preference")
+    return raw
+  },
+  (value) => value
+)
 function loadTheme(): Theme {
-  const stored = localStorage.getItem(STORAGE_KEY)
-  if (stored === "dark" || stored === "light" || stored === "system") return stored
-  return DEFAULT_THEME
+  return preference.snapshot()
 }
 
 // --- Minimal store (no Zustand needed — pure CSS var side-effects) ---
@@ -46,11 +62,7 @@ export function getTheme(): Theme {
 }
 
 export function setTheme(mode: Theme) {
-  _theme = mode
-  localStorage.setItem(STORAGE_KEY, mode)
-  applyTheme(mode)
-  // Notify all subscribers
-  _listeners.forEach(fn => fn(mode))
+  preference.set(normalizeTheme(mode))
 }
 
 const _listeners = new Set<(theme: Theme) => void>()
@@ -59,3 +71,9 @@ export function subscribeTheme(fn: (theme: Theme) => void): () => void {
   _listeners.add(fn)
   return () => _listeners.delete(fn)
 }
+
+preference.subscribe(() => {
+  _theme = preference.snapshot()
+  applyTheme(_theme)
+  _listeners.forEach((listener) => listener(_theme))
+})

@@ -1,3 +1,5 @@
+import { createScalarPreference } from "./scalarPreference"
+
 const STORAGE_KEY = "plex-font"
 
 export interface FontPreset {
@@ -59,12 +61,17 @@ export const FONT_PRESETS: FontPreset[] = [
 
 const DEFAULT_FONT = "circular"
 
+const preference = createScalarPreference(STORAGE_KEY, DEFAULT_FONT, raw => {
+  if (!FONT_PRESETS.some(preset => preset.name === raw)) throw new Error("Invalid font preference")
+  return raw
+}, value => value)
+
 function loadFont(): FontPreset {
-  const stored = localStorage.getItem(STORAGE_KEY)
-  return FONT_PRESETS.find(p => p.name === stored) ?? FONT_PRESETS[0]!
+  return FONT_PRESETS.find(preset => preset.name === preference.snapshot()) ?? FONT_PRESETS[0]!
 }
 
 function applyFont(preset: FontPreset) {
+  if (typeof document === "undefined") return
   document.documentElement.style.setProperty("--font-family", preset.stack)
 }
 
@@ -81,10 +88,7 @@ export function getFont(): FontPreset {
 
 export function setFont(name: string) {
   const preset = FONT_PRESETS.find(p => p.name === name) ?? FONT_PRESETS[0]!
-  _font = preset
-  localStorage.setItem(STORAGE_KEY, name)
-  applyFont(preset)
-  _listeners.forEach(fn => fn(preset))
+  preference.set(preset.name)
 }
 
 const _listeners = new Set<(font: FontPreset) => void>()
@@ -95,3 +99,9 @@ export function subscribeFont(fn: (font: FontPreset) => void): () => void {
 }
 
 export { DEFAULT_FONT }
+
+preference.subscribe(() => {
+  _font = loadFont()
+  applyFont(_font)
+  _listeners.forEach(listener => listener(_font))
+})
