@@ -18,7 +18,20 @@ use crate::podcast::{PodcastCategory, PodcastTopChart};
 // Config — key/secret injected at build time
 // ---------------------------------------------------------------------------
 
+// Local builds can run the player without optional podcast-directory credentials.
+#[cfg(any(debug_assertions, test))]
+const PI_KEY: &str = match option_env!("PI_KEY") {
+    Some(value) => value,
+    None => "",
+};
+#[cfg(any(debug_assertions, test))]
+const PI_SECRET: &str = match option_env!("PI_SECRET") {
+    Some(value) => value,
+    None => "",
+};
+#[cfg(not(any(debug_assertions, test)))]
 const PI_KEY: &str = env!("PI_KEY", "Set PI_KEY in .env or environment (free from https://api.podcastindex.org/)");
+#[cfg(not(any(debug_assertions, test)))]
 const PI_SECRET: &str = env!("PI_SECRET", "Set PI_SECRET in .env or environment");
 const PI_BASE: &str = "https://api.podcastindex.org/api/1.0";
 const PI_USER_AGENT: &str = "Hibiki/1.0";
@@ -59,6 +72,7 @@ async fn pi_get<T: serde::de::DeserializeOwned>(
     path: &str,
     params: &[(&str, &str)],
 ) -> Result<T> {
+    anyhow::ensure!(!PI_KEY.is_empty() && !PI_SECRET.is_empty(), "Podcast charts are unavailable in this build. You can still search for podcasts or open a feed.");
     let url = format!("{}{}", PI_BASE, path);
     let mut req = PI_CLIENT.get(&url);
     for (k, v) in auth_headers() {
