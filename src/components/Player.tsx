@@ -1,3 +1,6 @@
+import { buildExternalImageUrl } from "../lib/imageUrl"
+import { PlaybackPalette } from "./PlaybackPalette"
+import { useAlbumImage } from "../hooks/useMediaImage"
 import { useArtworkAppearanceStore } from "../stores/artworkAppearanceStore"
 import { ArtworkImage } from "./shared/ArtworkImage"
 import { useEffect, useRef, useState } from "react"
@@ -118,6 +121,7 @@ function RadioPlayerBar() {
     .filter(Boolean).join(" ")
 
   return (
+    <PlaybackPalette src={buildExternalImageUrl(currentStation.favicon)}>
     <div data-player-bar data-shell-transparency={backgroundArtworkEnabled ? "enabled" : undefined} className="app-playbar shell-artwork-surface shell-artwork-player relative border-t border-[var(--border)] bg-app-card">
       <div className="shell-artwork-player-inner flex h-fit w-screen min-w-[620px] flex-col overflow-clip bg-app-card">
         <div style={{ height: "var(--player-height)" }}>
@@ -128,7 +132,7 @@ function RadioPlayerBar() {
               <div className="flex items-center">
                 <div className="mr-3 h-14 w-14 flex-shrink-0 rounded-lg overflow-hidden bg-app-surface flex items-center justify-center">
                   {currentStation.favicon ? (
-                    <img src={currentStation.favicon} alt="" className="h-full w-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = "none" }} />
+                    <ArtworkImage src={buildExternalImageUrl(currentStation.favicon)!} alt="" loading="eager" className="h-full w-full object-cover" />
                   ) : (
                     <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" className="text-white/30">
                       <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
@@ -251,6 +255,7 @@ function RadioPlayerBar() {
         </div>
       </div>
     </div>
+    </PlaybackPalette>
   )
 }
 
@@ -480,7 +485,8 @@ export function Player() {
     return () => el.removeEventListener("wheel", onWheel)
   }, [])
 
-  const thumbUrl = currentTrack?.thumbUrl ?? null
+  const albumArtwork = useAlbumImage(currentTrack?.artistName ?? null, currentTrack?.albumName ?? null, currentTrack?.albumThumbUrl ?? currentTrack?.thumbUrl ?? null, currentTrack?.albumId)
+  const thumbUrl = albumArtwork ?? currentTrack?.artistThumbUrl ?? null
 
   const artistId = currentTrack?.artistId
   const albumId = currentTrack?.albumId
@@ -513,6 +519,7 @@ export function Player() {
   if (isInternetRadioActive) return <RadioPlayerBar />
 
   return (
+    <PlaybackPalette src={thumbUrl}>
     <div data-player-bar data-shell-transparency={backgroundArtworkEnabled ? "enabled" : undefined} className="app-playbar shell-artwork-surface shell-artwork-player relative z-20 border-t border-[var(--border)] bg-app-card">
       {/* Expanded album art sits above the player, within the sidebar area. */}
       {isArtExpanded && thumbUrl && (
@@ -994,5 +1001,6 @@ export function Player() {
         </div>
       </div>
     </div>
+    </PlaybackPalette>
   )
 }

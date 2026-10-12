@@ -1,7 +1,10 @@
 import { useEffect, useId, useState, type RefObject } from "react"
 import { useLocation } from "wouter"
 import { useScrollContainer } from "../../lib/scrollContainer"
-import { useAmbientArtworkClaim } from "../../hooks/useAmbientArtwork"
+import {
+  useAmbientArtworkClaim,
+  useAmbientHeroClaim,
+} from "../../hooks/useAmbientArtwork"
 import type { AmbientArtwork } from "../../stores/ambientArtworkStore"
 
 /** Give the full-window background the current detail artwork and hero geometry. */
@@ -18,12 +21,30 @@ export function MediaBackdrop({
 }) {
   const owner = useId()
   const [route] = useLocation()
-  const scrollerRef = useScrollContainer()
-  const [align, setAlign] = useState<AmbientArtwork["align"]>()
+  const align = useHeroGeometry(heroRef)
   useAmbientArtworkClaim(
     owner,
     src ? { src, position, route, align, onFailure } : null
   )
+  return null
+}
+
+export function AmbientHeroBackdrop({
+  heroRef,
+}: {
+  heroRef: RefObject<HTMLDivElement | null>
+}) {
+  const owner = useId(),
+    [route] = useLocation()
+  const align = useHeroGeometry(heroRef)
+  useAmbientHeroClaim(owner, { route, align })
+  return null
+}
+
+function useHeroGeometry(heroRef: RefObject<HTMLDivElement | null>) {
+  const [route] = useLocation()
+  const scrollerRef = useScrollContainer()
+  const [align, setAlign] = useState<AmbientArtwork["align"]>()
   // Passive effects see both the sibling hero and parent scroll refs attached.
   useEffect(() => {
     const hero = heroRef.current,
@@ -69,6 +90,6 @@ export function MediaBackdrop({
       window.removeEventListener("resizable-change", schedule)
       scroller.removeEventListener("scroll", schedule)
     }
-  }, [heroRef, scrollerRef, src, route])
-  return null
+  }, [heroRef, scrollerRef, route])
+  return align
 }

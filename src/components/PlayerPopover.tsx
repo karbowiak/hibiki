@@ -1,3 +1,4 @@
+import { usePlaybackPalette } from "../lib/playbackPaletteContext"
 import { createPortal } from "react-dom"
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 
@@ -25,6 +26,7 @@ export default function PlayerPopover({
   wide,
   children,
 }: Props) {
+  const palette = usePlaybackPalette()
   const [isOpen, setIsOpen] = useState(false)
   const panelId = useId()
   const [pos, setPos] = useState<{ bottom: number; left: number; maxHeight: number } | null>(null)
@@ -112,8 +114,9 @@ export default function PlayerPopover({
           role="dialog"
           aria-label={label}
           tabIndex={-1}
-          className="fixed overflow-auto outline-none z-[300] rounded-xl bg-app-card border border-[var(--border)] shadow-2xl shadow-black/40 backdrop-blur-lg select-none"
+          className="playback-popover fixed overflow-auto outline-none z-[300] rounded-xl bg-app-card border border-[var(--border)] shadow-2xl shadow-black/40 backdrop-blur-lg select-none"
           style={{
+            ...palette,
             bottom: pos.bottom,
             left: pos.left,
             maxHeight: pos.maxHeight,

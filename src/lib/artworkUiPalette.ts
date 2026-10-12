@@ -76,3 +76,21 @@ export function artworkUiPalette(
     ),
   } as CSSProperties
 }
+
+/** Local fallbacks must explicitly mask every inherited page-artwork color. */
+export function fallbackArtworkTone(accent: string): CSSProperties {
+  const primary = parseColor(accent) ?? [217, 70, 239]
+  const rgb = primary.join(" ")
+  const ink =
+    artworkContrast(primary, [0, 0, 0]) >=
+    artworkContrast(primary, [255, 255, 255])
+      ? "#000000"
+      : "#ffffff"
+  return {
+    "--artwork-primary": accent,
+    "--artwork-primary-rgb": rgb,
+    "--artwork-secondary": accent,
+    "--artwork-secondary-rgb": rgb,
+    "--artwork-ink": ink,
+  } as CSSProperties
+}

@@ -14,6 +14,7 @@ import { useArtworkAppearanceStore } from "../stores/artworkAppearanceStore"
 import { useProviderStore } from "../stores/providerStore"
 import { useCustomColorStore } from "../stores/customColorStore"
 import { getTheme, subscribeTheme } from "../stores/themeStore"
+import { AmbientArtworkControlsContext } from "../lib/ambientArtworkContext"
 import { ArtworkPaletteContext } from "../lib/artworkPaletteContext"
 import { artworkUiPalette } from "../lib/artworkUiPalette"
 import { artworkPlacement } from "../lib/artworkLayout"
@@ -29,11 +30,17 @@ type ReadyArtwork = {
 /** A single image owner and palette for the complete desktop window. */
 export function ArtworkShell({ children }: { children: ReactNode }) {
   const [route] = useLocation()
-  const { artwork, onFailure } = useAmbientArtwork(route)
+  const { artwork, onFailure, next, canRotate } = useAmbientArtwork(route)
   const provider = useProviderStore((state) => state.provider),
     scope = provider?.cacheScope
   const enabled = useArtworkAppearanceStore(
     (state) => state.backgroundArtworkEnabled
+  )
+  const rotation = useArtworkAppearanceStore(
+    (state) => state.backgroundRotationEnabled
+  )
+  const setRotation = useArtworkAppearanceStore(
+    (state) => state.setBackgroundRotationEnabled
   )
   const opacity = useArtworkAppearanceStore((state) => state.interfaceOpacity)
   const colorsEnabled = useArtworkAppearanceStore(
@@ -91,74 +98,85 @@ export function ArtworkShell({ children }: { children: ReactNode }) {
     return () => clearTimeout(timer)
   }, [previous])
   return (
-    <ArtworkPaletteContext.Provider value={revision}>
-      <div
-        className="app-artwork-shell"
-        data-artwork-background={frame ? "ready" : "empty"}
-        data-artwork-colors={palette ? "on" : "off"}
-        style={{ ...palette, "--interface-opacity": opacity } as CSSProperties}
-      >
-        <div className="app-artwork-background" aria-hidden="true">
-          {previous && (
-            <BackdropFrame
-              key={`previous-${previous.artwork.src}`}
-              ready={previous}
-              retiring
-            />
-          )}
-          {frame && <BackdropFrame key={frame.artwork.src} ready={frame} />}
-          {enabled && artwork && artwork.src !== ready?.artwork.src && (
-            <ArtworkImage
-              key={artwork.src}
-              src={artwork.src}
-              alt=""
-              loading="eager"
-              className="app-artwork-staging"
-              onFailure={(src) => {
-                const current = currentRequest.current
-                if (
-                  current.enabled &&
-                  current.artwork?.src === src &&
-                  current.provider === provider &&
-                  current.scope === scope &&
-                  useProviderStore.getState().provider === provider &&
-                  provider?.cacheScope === scope
-                )
-                  onFailure(src)
-              }}
-              onLoad={(event) => {
-                const current = currentRequest.current
-                if (
-                  !current.enabled ||
-                  current.provider !== provider ||
-                  current.scope !== scope ||
-                  current.artwork?.src !== artwork.src ||
-                  useProviderStore.getState().provider !== provider ||
-                  provider?.cacheScope !== scope
-                )
-                  return
-                const next = {
-                  artwork: current.artwork,
-                  width: event.currentTarget.naturalWidth,
-                  height: event.currentTarget.naturalHeight,
-                  provider,
-                  scope,
-                }
-                setDisplay((state) => ({
-                  current: next,
-                  previous:
-                    state.current?.provider === provider &&
-                    state.current.scope === scope
-                      ? state.current
-                      : null,
-                }))
-              }}
-            />
-          )}
+    <AmbientArtworkControlsContext.Provider
+      value={{
+        visible: enabled && canRotate,
+        next,
+        paused: !rotation,
+        togglePaused: () => setRotation(!rotation),
+      }}
+    >
+      <ArtworkPaletteContext.Provider value={revision}>
+        <div
+          className="app-artwork-shell"
+          data-artwork-background={frame ? "ready" : "empty"}
+          data-artwork-colors={palette ? "on" : "off"}
+          style={
+            { ...palette, "--interface-opacity": opacity } as CSSProperties
+          }
+        >
+          <div className="app-artwork-background" aria-hidden="true">
+            {previous && (
+              <BackdropFrame
+                key={`previous-${previous.artwork.src}`}
+                ready={previous}
+                retiring
+              />
+            )}
+            {frame && <BackdropFrame key={frame.artwork.src} ready={frame} />}
+            {enabled && artwork && artwork.src !== ready?.artwork.src && (
+              <ArtworkImage
+                key={artwork.src}
+                src={artwork.src}
+                alt=""
+                loading="eager"
+                className="app-artwork-staging"
+                onFailure={(src) => {
+                  const current = currentRequest.current
+                  if (
+                    current.enabled &&
+                    current.artwork?.src === src &&
+                    current.provider === provider &&
+                    current.scope === scope &&
+                    useProviderStore.getState().provider === provider &&
+                    provider?.cacheScope === scope
+                  )
+                    onFailure(src)
+                }}
+                onLoad={(event) => {
+                  const current = currentRequest.current
+                  if (
+                    !current.enabled ||
+                    current.provider !== provider ||
+                    current.scope !== scope ||
+                    current.artwork?.src !== artwork.src ||
+                    useProviderStore.getState().provider !== provider ||
+                    provider?.cacheScope !== scope
+                  )
+                    return
+                  const next = {
+                    artwork: current.artwork,
+                    width: event.currentTarget.naturalWidth,
+                    height: event.currentTarget.naturalHeight,
+                    provider,
+                    scope,
+                  }
+                  setDisplay((state) => ({
+                    current: next,
+                    previous:
+                      state.current?.provider === provider &&
+                      state.current.scope === scope
+                        ? state.current
+                        : null,
+                  }))
+                }}
+              />
+            )}
+          </div>
+          <div className="app-artwork-content">{children}</div>
         </div>
-        <div className="app-artwork-content">{children}</div>
-      </div>
-    </ArtworkPaletteContext.Provider>
+      </ArtworkPaletteContext.Provider>
+    </AmbientArtworkControlsContext.Provider>
   )
 }
 

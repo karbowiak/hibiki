@@ -119,3 +119,5 @@
   background: var(--artwork-primary, var(--bg-surface));
   color: var(--artwork-ink, var(--text-primary));
 }
+
+.playback-popover .text-accent { color: var(--artwork-accent-text, var(--accent)); }

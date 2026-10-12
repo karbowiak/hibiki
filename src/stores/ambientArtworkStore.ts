@@ -22,6 +22,13 @@ export type AmbientArtworkClaim = Omit<
   AmbientArtwork,
   "owner" | "origin" | "scope" | "position"
 > & { position?: string }
+export type AmbientHeroClaim = { route: string; align: AmbientArtwork["align"] }
+interface OwnedHero {
+  lease: symbol
+  provider: MusicProvider
+  scope: string
+  claim: AmbientHeroClaim
+}
 interface Context {
   provider: MusicProvider | null
   scope?: string
@@ -52,8 +59,17 @@ export function createAmbientArtworkController(getContext: () => Context) {
       artwork: AmbientArtwork | null
     }
   >()
-  const store = createStore<{ claims: OwnedClaim[]; failed: string[] }>(() => ({
+  const heroes = new Map<
+    symbol,
+    { provider: MusicProvider; scope: string; claim: AmbientHeroClaim | null }
+  >()
+  const store = createStore<{
+    claims: OwnedClaim[]
+    heroes: OwnedHero[]
+    failed: string[]
+  }>(() => ({
     claims: [],
+    heroes: [],
     failed: [],
   }))
   const publish = () =>
@@ -76,7 +92,8 @@ export function createAmbientArtworkController(getContext: () => Context) {
     if (next.provider !== context.provider || next.scope !== context.scope) {
       context = next
       owners.clear()
-      store.setState({ claims: [], failed: [] })
+      heroes.clear()
+      store.setState({ claims: [], heroes: [], failed: [] })
     }
   }
   const current = (provider: MusicProvider, scope: string) => {
@@ -142,6 +159,64 @@ export function createAmbientArtworkController(getContext: () => Context) {
       )?.artwork ?? null
     )
   }
+  const publishHeroes = () =>
+    store.setState({
+      heroes: [...heroes].flatMap(([lease, entry]) =>
+        entry.claim
+          ? [
+              {
+                lease,
+                provider: entry.provider,
+                scope: entry.scope,
+                claim: entry.claim,
+              },
+            ]
+          : []
+      ),
+    })
+  const acquireHero = (
+    owner: string,
+    provider: MusicProvider | null,
+    scope?: string
+  ) => {
+    syncContext()
+    const lease = Symbol(owner)
+    if (provider && scope && current(provider, scope)) {
+      heroes.set(lease, { provider, scope, claim: null })
+      while (heroes.size > 8) heroes.delete(heroes.keys().next().value!)
+    }
+    return {
+      update: (claim: AmbientHeroClaim | null) => {
+        const entry = heroes.get(lease)
+        if (!entry || !current(entry.provider, entry.scope)) return
+        const next =
+          claim?.align && Object.values(claim.align).every(Number.isFinite)
+            ? { route: claim.route, align: { ...claim.align } }
+            : null
+        if (JSON.stringify(entry.claim) === JSON.stringify(next)) return
+        entry.claim = next
+        publishHeroes()
+      },
+      release: () => {
+        if (heroes.delete(lease)) publishHeroes()
+      },
+    }
+  }
+  const getHeroWinner = (
+    route: string,
+    provider: MusicProvider | null,
+    scope?: string
+  ) => {
+    if (!provider || !scope || !current(provider, scope)) return undefined
+    return store
+      .getState()
+      .heroes.findLast(
+        (entry) =>
+          entry.provider === provider &&
+          entry.scope === scope &&
+          entry.claim.route === route
+      )?.claim.align
+  }
   const fail = (
     src: string,
     provider: MusicProvider | null,
@@ -168,7 +243,16 @@ export function createAmbientArtworkController(getContext: () => Context) {
     }
     return true
   }
-  return { store, acquire, getWinner, fail, failCurrent, syncContext }
+  return {
+    store,
+    acquire,
+    acquireHero,
+    getWinner,
+    getHeroWinner,
+    fail,
+    failCurrent,
+    syncContext,
+  }
 }
 export const ambientArtworkController = createAmbientArtworkController(() => {
   const provider = useProviderStore.getState().provider

@@ -1,4 +1,6 @@
 import "../styles/shellArtwork.css"
+import { useAccentStore } from "../stores/accentStore"
+import { fallbackArtworkTone, artworkUiPalette } from "../lib/artworkUiPalette"
 import { useArtworkAppearanceStore } from "../stores/artworkAppearanceStore"
 import { ArtworkImage } from "./shared/ArtworkImage"
 import { Link, useLocation } from "wouter"
@@ -143,6 +145,7 @@ function SortablePlaylistItem({ playlist, location, playPlaylist, ctxMenu, justD
 // ---------------------------------------------------------------------------
 
 export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) {
+  const savedAccent = useAccentStore(s => s.accent)
   const backgroundArtworkEnabled = useArtworkAppearanceStore(state => state.backgroundArtworkEnabled)
   const [location] = useLocation()
   const hasStations = useCapability("stations")
@@ -331,9 +334,10 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
       <div className="flex-shrink-0 pb-1 pt-8 text-sm font-semibold">
         <button
           onClick={onCreatePlaylist}
+          style={artworkUiPalette(fallbackArtworkTone(savedAccent), window.getComputedStyle(document.documentElement).getPropertyValue("--bg-base"))}
           className="shell-control-secondary group flex h-10 w-full cursor-pointer items-center gap-3 rounded border-0 bg-transparent px-3 fill-[var(--text-secondary)] text-[var(--text-secondary)] transition-colors duration-200 hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:bg-accent-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
         >
-          <span className="shell-icon-tile flex h-6 w-6 items-center justify-center rounded-sm bg-accent/20 text-accent group-hover:bg-accent/40 transition-colors">
+          <span className="shell-icon-tile flex h-6 w-6 items-center justify-center rounded-sm bg-accent/20 group-hover:bg-accent/40 transition-colors">
             <svg viewBox="0 0 16 16" width="12" height="12" xmlns="http://www.w3.org/2000/svg">
               <path d="M14 7H9V2H7v5H2v2h5v5h2V9h5z" fill="currentColor"></path>
               <path fill="none" d="M0 0h16v16H0z"></path>

@@ -1,3 +1,4 @@
+import { AmbientArtworkControls } from "./AmbientArtworkControls"
 import { useArtworkAppearanceStore } from "../stores/artworkAppearanceStore"
 import "../styles/discovery.css"
 import { getRecentSearches } from "../lib/recentSearches"
@@ -72,6 +73,12 @@ export function TopBar() {
       ? buildSearchItems(results).length + 1
       : 0
   const inputRef = useRef<HTMLInputElement>(null)
+  const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  function cancelPendingBlur() {
+    if (blurTimer.current !== null) clearTimeout(blurTimer.current)
+    blurTimer.current = null
+  }
+  useEffect(() => () => cancelPendingBlur(), [])
 
   // Debounced search — fires regardless of current route
   useEffect(() => {
@@ -115,7 +122,9 @@ export function TopBar() {
   // Listen for global hotkey events from useGlobalHotkeys
   useEffect(() => {
     function onSearchFocus() {
+      cancelPendingBlur()
       inputRef.current?.focus()
+      inputRef.current?.select()
       if (location !== "/search") setShowDropdown(true)
       setActiveIndex(-1)
     }
@@ -145,13 +154,18 @@ export function TopBar() {
   }
 
   const handleInputFocus = () => {
+    cancelPendingBlur()
     if (location !== "/search") setShowDropdown(true)
     setActiveIndex(-1)
   }
 
   const handleInputBlur = () => {
     // Delay so dropdown click events fire before the dropdown closes
-    setTimeout(() => setShowDropdown(false), 150)
+    cancelPendingBlur()
+    blurTimer.current = setTimeout(() => {
+      blurTimer.current = null
+      if (document.activeElement !== inputRef.current) setShowDropdown(false)
+    }, 150)
   }
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -304,6 +318,7 @@ export function TopBar() {
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-2">
+        <AmbientArtworkControls />
         {/* Activity indicator — always visible, animates when busy */}
         <ActivityIndicator />
 

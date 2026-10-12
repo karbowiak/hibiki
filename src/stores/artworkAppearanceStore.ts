@@ -2,6 +2,7 @@ import { create } from "zustand"
 import { booleanPreference, createScalarPreference } from "./scalarPreference"
 const colors = booleanPreference("plex-artwork-colors", true)
 const background = booleanPreference("plex-background-artwork", true)
+const rotation = booleanPreference("plex-background-rotation", true)
 export const INTERFACE_OPACITY_MIN = 0.45
 export const INTERFACE_OPACITY_MAX = 1
 export const INTERFACE_OPACITY_DEFAULT = 0.76
@@ -25,6 +26,8 @@ export interface ArtworkAppearanceState {
   setArtworkColorsEnabled: (value: boolean) => void
   backgroundArtworkEnabled: boolean
   setBackgroundArtworkEnabled: (value: boolean) => void
+  backgroundRotationEnabled: boolean
+  setBackgroundRotationEnabled: (value: boolean) => void
   interfaceOpacity: number
   setInterfaceOpacity: (value: number) => void
 }
@@ -33,6 +36,8 @@ export const useArtworkAppearanceStore = create<ArtworkAppearanceState>(() => ({
   setArtworkColorsEnabled: (value) => colors.set(value),
   backgroundArtworkEnabled: background.snapshot(),
   setBackgroundArtworkEnabled: (value) => background.set(value),
+  backgroundRotationEnabled: rotation.snapshot(),
+  setBackgroundRotationEnabled: (value) => rotation.set(value),
   interfaceOpacity: opacity.snapshot(),
   setInterfaceOpacity: (value) => opacity.set(normalizeOpacity(value)),
 }))
@@ -48,4 +53,10 @@ background.subscribe(() =>
 )
 opacity.subscribe(() =>
   useArtworkAppearanceStore.setState({ interfaceOpacity: opacity.snapshot() })
+)
+
+rotation.subscribe(() =>
+  useArtworkAppearanceStore.setState({
+    backgroundRotationEnabled: rotation.snapshot(),
+  })
 )

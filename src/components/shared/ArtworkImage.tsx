@@ -14,13 +14,16 @@ function ImageAttempt({ src, onFailure, onLoad, ...props }: Omit<ImgHTMLAttribut
 }) {
   const [attempt, setAttempt] = useState(0)
   const [failed, setFailed] = useState(false)
+  const [broken, setBroken] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => () => { if (timer.current !== null) clearTimeout(timer.current) }, [])
   if (failed) return <span className={`block ${props.className ?? ""}`} style={props.style} hidden={props.hidden} aria-hidden="true" />
-  return <img key={attempt} {...props} src={src} onLoad={event => {
+  return <img key={attempt} {...props} style={{...props.style, visibility:broken ? "hidden" : props.style?.visibility}} src={src} onLoad={event => {
+    setBroken(false)
     if (timer.current !== null) { clearTimeout(timer.current); timer.current = null }
     onLoad?.(event)
   }} onError={() => {
+    setBroken(true)
     if (timer.current !== null) return
     if (attempt >= 2) {
       setFailed(true)

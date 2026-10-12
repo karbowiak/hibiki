@@ -242,7 +242,7 @@ function SettingCard({
 // ---------------------------------------------------------------------------
 
 function AppearanceSection() {
-  const { artworkColorsEnabled, setArtworkColorsEnabled, backgroundArtworkEnabled, setBackgroundArtworkEnabled, interfaceOpacity, setInterfaceOpacity } = useArtworkAppearanceStore()
+  const { artworkColorsEnabled, setArtworkColorsEnabled, backgroundArtworkEnabled, setBackgroundArtworkEnabled, backgroundRotationEnabled, setBackgroundRotationEnabled, interfaceOpacity, setInterfaceOpacity } = useArtworkAppearanceStore()
   const { accent, setAccent } = useAccentStore()
   const [custom, setCustom] = useState(accent)
   const [theme, setThemeState] = useState(getTheme)
@@ -443,6 +443,8 @@ function AppearanceSection() {
 
       <SettingCard title="Background artwork" description="Let artwork show softly behind the app. Without artwork, or when reduced transparency is enabled, the interface stays opaque.">
         <Toggle label="Background artwork" value={backgroundArtworkEnabled} onChange={setBackgroundArtworkEnabled} />
+        <div className="mt-4"><Toggle label="Rotate background every 45 seconds" value={backgroundRotationEnabled} onChange={setBackgroundRotationEnabled} /></div>
+        <p className="mt-2 text-xs text-[color:var(--text-muted)]">Artist and album backgrounds stay with their page. Pause rotation or choose the next image from the toolbar.</p>
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <label htmlFor="interface-opacity" className="text-sm text-[color:var(--text-secondary)]">Interface opacity</label>
           <input id="interface-opacity" type="range" min={0.45} max={1} step={0.01} value={interfaceOpacity} disabled={!backgroundArtworkEnabled} onChange={event => setInterfaceOpacity(Number(event.target.value))} className="range-styled min-w-0 flex-1 accent-[var(--accent)] disabled:opacity-40" />

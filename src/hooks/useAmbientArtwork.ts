@@ -1,12 +1,22 @@
-import { useLayoutEffect, useMemo, useRef, useReducer } from "react"
+import {
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useReducer,
+  useCallback,
+  useEffect,
+  useState,
+} from "react"
 import { useStore } from "zustand"
 import { useShallow } from "zustand/shallow"
+import { useArtworkAppearanceStore } from "../stores/artworkAppearanceStore"
 import { useLibraryStore } from "../stores/libraryStore"
 import { useProviderStore } from "../stores/providerStore"
 import {
   ambientArtworkController,
   type AmbientArtwork,
   type AmbientArtworkClaim,
+  type AmbientHeroClaim,
 } from "../stores/ambientArtworkStore"
 import {
   collectAmbientCandidates,
@@ -40,9 +50,33 @@ export function useAmbientArtworkClaim(
     lease.current?.update(claim)
   }, [claim])
 }
+export function useAmbientHeroClaim(
+  owner: string,
+  claim: AmbientHeroClaim | null
+) {
+  const provider = useProviderStore((s) => s.provider),
+    scope = provider?.cacheScope ?? undefined
+  const lease = useRef<ReturnType<
+    typeof ambientArtworkController.acquireHero
+  > | null>(null)
+  useLayoutEffect(() => {
+    const active = ambientArtworkController.acquireHero(owner, provider, scope)
+    lease.current = active
+    active.update(claim)
+    return () => {
+      active.release()
+      if (lease.current === active) lease.current = null
+    }
+  }, [owner, provider, scope, claim?.route])
+  useLayoutEffect(() => {
+    lease.current?.update(claim)
+  }, [claim])
+}
 export function useAmbientArtwork(route: string): {
   artwork: AmbientArtwork | null
   onFailure: (src: string) => void
+  next: () => void
+  canRotate: boolean
 } {
   const provider = useProviderStore((s) => s.provider),
     scope = useProviderStore((s) => s.provider?.cacheScope ?? undefined)
@@ -135,6 +169,61 @@ export function useAmbientArtwork(route: string): {
       retry()
     }
   }, [candidate, src, detail, visit, failed, provider, scope])
+  const align = useStore(ambientArtworkController.store, () =>
+    ambientArtworkController.getHeroWinner(route, provider, scope)
+  )
+  const backgroundEnabled = useArtworkAppearanceStore(
+    (s) => s.backgroundArtworkEnabled
+  )
+  const rotationEnabled = useArtworkAppearanceStore(
+    (s) => s.backgroundRotationEnabled
+  )
+  const [visible, setVisible] = useState(
+    () =>
+      typeof document !== "undefined" && document.visibilityState === "visible"
+  )
+  useEffect(() => {
+    const update = () => setVisible(document.visibilityState === "visible")
+    document.addEventListener("visibilitychange", update)
+    return () => document.removeEventListener("visibilitychange", update)
+  }, [])
+  const options = candidates.filter(
+    (c) => !visit.excluded.has(c.key) && !failed.includes(c.src)
+  )
+  const canRotate =
+    !!provider &&
+    !!scope &&
+    !detail &&
+    !/^\/(artist|album)(?:\/|$)/.test(route) &&
+    options.some((c) => c.key !== candidate?.key)
+  const next = useCallback(() => {
+    if (
+      activeVisit.current !== visit ||
+      useProviderStore.getState().provider !== provider ||
+      provider?.cacheScope !== scope ||
+      ambientArtworkController.getWinner(route, provider, scope) ||
+      /^\/(artist|album)(?:\/|$)/.test(route)
+    )
+      return
+    const choices = candidates.filter(
+      (c) =>
+        c.key !== visit.selected?.key &&
+        !visit.excluded.has(c.key) &&
+        !failed.includes(c.src)
+    )
+    if (!choices.length) return
+    visit.selected =
+      choices[
+        Math.min(choices.length - 1, Math.floor(Math.random() * choices.length))
+      ]
+    visit.attempts = 1
+    retry()
+  }, [visit, candidates, failed, provider, scope, route])
+  useEffect(() => {
+    if (!backgroundEnabled || !rotationEnabled || !visible || !canRotate) return
+    const timer = setInterval(next, 45_000)
+    return () => clearInterval(timer)
+  }, [backgroundEnabled, rotationEnabled, visible, canRotate, next])
   const poolArtwork = useMemo<AmbientArtwork | null>(
     () =>
       provider && scope && src
@@ -145,9 +234,10 @@ export function useAmbientArtwork(route: string): {
             owner: "ambient-pool",
             origin: "pool",
             position: "50% 50%",
+            align,
           }
         : null,
-    [provider, scope, src, route]
+    [provider, scope, src, route, align]
   )
   const artwork = detail ?? poolArtwork
   const activeArtwork = useRef(artwork)
@@ -173,5 +263,5 @@ export function useAmbientArtwork(route: string): {
     } else if (artwork.origin === "pool")
       ambientArtworkController.fail(source, provider, scope)
   }
-  return { artwork, onFailure }
+  return { artwork, onFailure, next, canRotate }
 }
