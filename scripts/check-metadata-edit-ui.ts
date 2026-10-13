@@ -166,6 +166,8 @@ try {
           assert.equal(await general.getAttribute("aria-selected"), "true")
           await general.focus()
           await page.keyboard.press("ArrowDown")
+          await page.keyboard.press("ArrowDown")
+          await page.keyboard.press("ArrowDown")
           const sources = page.getByRole("tab", {
             name: "Metadata sources",
             exact: true,

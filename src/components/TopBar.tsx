@@ -22,10 +22,14 @@ import {
 } from "./SearchDropdown"
 import { IS_MACOS } from "../lib/platform"
 import { NotificationCenter } from "./NotificationCenter"
+import { useOfflineStatusStore } from "../offline/statusStore"
 
 export function TopBar() {
   const backgroundArtworkEnabled = useArtworkAppearanceStore(state => state.backgroundArtworkEnabled)
   const provider = useProviderStore((s) => s.provider)
+  const offlineMode = useOfflineStatusStore(s => s.offlineMode)
+  const savedReads = useOfflineStatusStore(s => s.savedReads)
+  const savedCount = Object.keys(savedReads).length
   const [location, navigate] = useLocation()
   const { search, clear, setQuery, query } = useSearchStore(
     useShallow((s) => ({
@@ -318,6 +322,9 @@ export function TopBar() {
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-2">
+        {(offlineMode || savedCount > 0) && <button type="button" className="shell-control-secondary rounded-full px-3 py-1.5 text-xs" onClick={() => navigate("/settings")} title="Previously saved pages; open connection settings">
+          {offlineMode ? "Saved library" : "Saved copy"}
+        </button>}
         <AmbientArtworkControls />
         {/* Activity indicator — always visible, animates when busy */}
         <ActivityIndicator />

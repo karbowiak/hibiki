@@ -38,6 +38,8 @@ interface MediaCardProps {
   artistName?: string | null
   /** Album name — enables priority-aware album image resolution (requires artistName too). */
   albumName?: string | null
+  versionCount?: number
+  onViewVersions?: () => void
 }
 
 /**
@@ -74,7 +76,7 @@ export function MediaCard(props: MediaCardProps) {
   return <MediaCardInner {...props} />
 }
 
-function MediaCardInner({ title, desc, thumb, thumbFallback, scrollItem, large, href, onClick, prefetch, onPlay, onContextMenu, dragPayload, onImageFailure, contextItem, contextActions }: MediaCardProps) {
+function MediaCardInner({ title, desc, thumb, thumbFallback, scrollItem, large, href, onClick, prefetch, onPlay, onContextMenu, dragPayload, onImageFailure, contextItem, contextActions, versionCount, onViewVersions }: MediaCardProps) {
   const { handler, actionsHandler } = useContextMenu()
   const menuOwner = useRef({})
   useEffect(() => () => {
@@ -105,6 +107,7 @@ function MediaCardInner({ title, desc, thumb, thumbFallback, scrollItem, large, 
         )}
       </div>
       <div className="media-card__gradient" aria-hidden="true" />
+      {onViewVersions && (versionCount ?? 0) > 1 && <button type="button" className="media-card__versions" aria-label={`Compare ${versionCount} versions of ${title}`} onClick={event => { event.preventDefault(); event.stopPropagation(); onViewVersions() }}>{versionCount} versions</button>}
       <div className={clsx("media-card__caption", onPlay && "media-card__caption--play")}>
         <div className="media-card__title" title={title}>{title}</div>
         <div className="media-card__meta" title={desc}>{desc}</div>

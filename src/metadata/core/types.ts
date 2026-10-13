@@ -37,7 +37,7 @@ export interface MetadataFields {
 export type MetadataField = keyof MetadataFields
 /** Confidence is evidence, never an invented numeric search score. */
 export interface MetadataMatch {
-  kind: "library" | "exact-name" | "candidate"
+  kind: "library" | "exact-name" | "candidate" | "reviewed-identity"
   reason: string
 }
 export interface MetadataSnapshot {

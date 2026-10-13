@@ -28,8 +28,30 @@ export function nativeHeyaAdapter(
   return {
     id: "heya",
     fields: {
-      artist: ["biography", "genres", "tags", "artistType"],
-      album: ["summary", "genres", "tags", "releaseDate"],
+      artist: [
+        "biography",
+        "genres",
+        "tags",
+        "artistType",
+        "area",
+        "beginDate",
+        "mbid",
+        "listeners",
+        "playCount",
+        "fans",
+        "wikipediaUrl",
+      ],
+      album: [
+        "summary",
+        "genres",
+        "tags",
+        "releaseDate",
+        "mbid",
+        "listeners",
+        "playCount",
+        "fans",
+        "wikipediaUrl",
+      ],
     },
     transportPolicy:
       "Explicitly configured native GET-only canonical search/detail, bounded response/admission and shared 1 request/sec gate; normal server stale-read refresh may occur.",

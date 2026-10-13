@@ -42,6 +42,8 @@ import { useCapability } from "../../hooks/useCapability"
 import { useTrackDrag } from "../../hooks/useTrackDrag"
 import { useMetadataSnapshot } from "../../hooks/useMetadataSnapshot"
 import { MetadataEditDialog } from "../shared/MetadataEditDialog"
+import { AppDialog } from "../shared/AppDialog"
+import { VersionReviewPanel } from "../VersionReview/VersionReviewPanel"
 
 function TagChip({
   tag,
@@ -94,6 +96,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
   const [showImageModal, setShowImageModal] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
+  const [versionsOpen, setVersionsOpen] = useState(false)
   const menuBtnRef = useRef<HTMLButtonElement>(null)
   const heroRef = useRef<HTMLDivElement>(null)
   const debugEnabled = useDebugStore((s) => s.debugEnabled)
@@ -136,6 +139,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     setDescExpanded(false)
     setShowImageModal(false)
     setEditOpen(false)
+    setVersionsOpen(false)
 
     // Seed ALL state from persistent cache — avoids loading flash.
     const freshCache = getCachedAlbum(albumId)
@@ -281,6 +285,9 @@ export function AlbumPage({ albumId }: { albumId: string }) {
 
   return (
     <div className="media-detail-page pb-12">
+      {versionsOpen && <AppDialog key={`${provider?.cacheScope}:versions:${album.id}`} title="Album and media versions" description={album.title} onClose={() => setVersionsOpen(false)}>
+        <VersionReviewPanel album={album} tracks={tracks} />
+      </AppDialog>}
       {editOpen && (
         <MetadataEditDialog
           key={`${provider?.cacheScope}:album:${album.id}`}
@@ -561,6 +568,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                         >
                           Edit metadata and sources…
                         </button>
+                        <button type="button" onClick={() => { setMenuOpen(false); setVersionsOpen(true) }} className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]">Compare album and media versions…</button>
                         <button
                           onClick={() => {
                             addNext(tracks)

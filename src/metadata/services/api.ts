@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core"
 export type ConfiguredMetadataService = "fanart" | "heya"
 export interface MetadataServiceStatus {
+  connectionId?: string | null
   revision: string
   baseUrl: string
   configured: boolean
@@ -40,3 +41,20 @@ export const fanartGetArtist = (
   artistMbid: string
 ): Promise<FanartArtist | null> =>
   invoke("fanart_get_artist", { revision, artistMbid })
+
+export interface FanartAlbum {
+  mbid: string
+  revision: string
+  posters: ProviderArtworkCandidate[]
+  backgrounds: ProviderArtworkCandidate[]
+}
+export const fanartGetAlbum = (
+  revision: string,
+  releaseGroupMbid: string,
+  artistMbid?: string
+): Promise<FanartAlbum | null> =>
+  invoke("fanart_get_album", {
+    revision,
+    releaseGroupMbid,
+    artistMbid: artistMbid ?? null,
+  })

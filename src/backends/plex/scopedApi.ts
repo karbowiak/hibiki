@@ -1,4 +1,10 @@
-import type { LibraryMetadataPatch, LibraryMetadataExpected } from "../../providers/types"
+import type {
+  LibraryMetadataPatch,
+  LibraryMetadataExpected,
+  LibraryArtworkInventory,
+  PlaylistOccurrenceState,
+  PlaylistOccurrenceMutation,
+} from "../../providers/types"
 /** Plex library RPCs retain their originating native connection and library. */
 import { invoke as nativeInvoke } from "@tauri-apps/api/core"
 import type {
@@ -317,6 +323,20 @@ export function createPlexApi(
     })
   }
 
+  function mutatePlaylistOccurrence(
+    playlistId: number,
+    sectionId: number,
+    expected: PlaylistOccurrenceState,
+    operation: PlaylistOccurrenceMutation
+  ): Promise<PlaylistOccurrenceState> {
+    return invoke("playlist_sync_plex_mutate", {
+      playlistId,
+      sectionId,
+      expected,
+      operation,
+    })
+  }
+
   /** Create a new playlist from a list of track rating keys. */
   function createPlaylist(
     title: string,
@@ -356,9 +376,42 @@ export function createPlexApi(
     return invoke("delete_playlist", { playlistId })
   }
 
-  function editLibraryMetadata(sectionId: number, itemId: number, kind: "artist" | "album", patch: LibraryMetadataPatch, expected: LibraryMetadataExpected): Promise<void> {
-    if (!Number.isSafeInteger(sectionId) || sectionId <= 0 || !Number.isSafeInteger(itemId) || itemId <= 0) return Promise.reject(new Error("Invalid Plex library or item ID"))
-    return invoke("edit_library_metadata", { sectionId, itemId, kind, patch: { ...patch }, expected: { ...expected } })
+  function getAdvancedMetadata(sectionId: number, itemId: number, kind: "artist" | "album"): Promise<import("../../lib/metadataAdvanced").AdvancedMetadata> {
+    return invoke("get_advanced_metadata", { sectionId, itemId, kind })
+  }
+  function editAdvancedMetadata(sectionId: number, itemId: number, kind: "artist" | "album", patch: import("../../lib/metadataAdvanced").AdvancedMetadataPatch): Promise<void> {
+    return invoke("edit_advanced_metadata", { sectionId, itemId, kind, patch })
+  }
+  function editLibraryMetadata(
+    sectionId: number,
+    itemId: number,
+    kind: "artist" | "album",
+    patch: LibraryMetadataPatch,
+    expected: LibraryMetadataExpected
+  ): Promise<void> {
+    if (
+      !Number.isSafeInteger(sectionId) ||
+      sectionId <= 0 ||
+      !Number.isSafeInteger(itemId) ||
+      itemId <= 0
+    )
+      return Promise.reject(new Error("Invalid Plex library or item ID"))
+    return invoke("edit_library_metadata", {
+      sectionId,
+      itemId,
+      kind,
+      patch: { ...patch },
+      expected: { ...expected },
+    })
+  }
+
+  function getLibraryArtwork(sectionId: number, itemId: number, kind: "artist" | "album", role: "poster" | "background"): Promise<LibraryArtworkInventory> {
+    return invoke("get_library_artwork", { sectionId, itemId, kind, role })
+  }
+  function saveLibraryArtwork(sectionId: number, itemId: number, kind: "artist" | "album", role: "poster" | "background", baseline: string,
+    change: { choice: string } | { upload: number[] }): Promise<LibraryArtworkInventory> {
+    return invoke("save_library_artwork", { sectionId, itemId, kind, role, baseline,
+      choice: "choice" in change ? change.choice : null, upload: "upload" in change ? change.upload : null })
   }
 
   /** Edit playlist metadata (title and/or summary). */
@@ -719,6 +772,7 @@ export function createPlexApi(
     getMixTracks,
     getPlaylistItems,
     getPlaylistItemsPage,
+    mutatePlaylistOccurrence,
     createPlaylist,
     addItemsToPlaylist,
     removeItemsFromPlaylist,
@@ -726,6 +780,10 @@ export function createPlexApi(
     deletePlaylist,
     editPlaylist,
     editLibraryMetadata,
+    getAdvancedMetadata,
+    editAdvancedMetadata,
+    getLibraryArtwork,
+    saveLibraryArtwork,
     createPlayQueue,
     getPlayQueue,
     addToPlayQueue,

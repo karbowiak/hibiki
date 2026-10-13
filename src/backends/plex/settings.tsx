@@ -20,6 +20,8 @@ export function PlexSettings() {
     startPlexAuth,
     isLoading,
     isConnected,
+    isOffline,
+    browseSavedLibrary,
     error,
     clearError,
     baseUrl: savedUrl,
@@ -36,6 +38,8 @@ export function PlexSettings() {
     startPlexAuth: s.startPlexAuth,
     isLoading: s.isLoading,
     isConnected: s.isConnected,
+    isOffline: s.isOffline,
+    browseSavedLibrary: s.browseSavedLibrary,
     error: s.error,
     clearError: s.clearError,
     baseUrl: s.baseUrl,
@@ -317,7 +321,7 @@ export function PlexSettings() {
         <span className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${isConnected ? "bg-accent" : "bg-red-500"}`} />
         <div className="min-w-0">
           <p className="text-sm font-medium text-white">
-            {isConnected ? "Connected" : "Not connected"}
+            {isConnected ? "Connected" : isOffline ? "Browsing saved library" : "Not connected"}
           </p>
           {isConnected && (
             <p className="mt-0.5 truncate text-xs text-white/40">{savedUrl}</p>
@@ -333,6 +337,18 @@ export function PlexSettings() {
           </button>
         )}
       </div>
+
+      {!isConnected && (
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-4 text-[var(--text-primary)]">
+          <p className="text-sm">Saved pages stay on this device for the same Plex account and library. Offline browsing does not enable playback or library changes.</p>
+          <button type="button" disabled={isLoading} className="mt-3 rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-medium hover:bg-[var(--bg-elevated)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50" onClick={async () => {
+            stopPolling()
+            const request = authGeneration.current
+            await browseSavedLibrary()
+            if (authIsCurrent(request) && useConnectionStore.getState().isOffline) navigate("/")
+          }}>{isLoading ? "Opening saved library…" : isOffline ? "Return to saved library" : "Browse saved library"}</button>
+        </div>
+      )}
 
       {/* Library switcher (when connected with multiple libraries) */}
       {isConnected && !showLibrarySwitcher && (

@@ -134,8 +134,8 @@ export function Home() {
       hubs: s.hubs,
     }))
   )
-  const { isConnected, isLoading: isConnecting } = useConnectionStore(
-    useShallow((s) => ({ isConnected: s.isConnected, isLoading: s.isLoading }))
+  const { isConnected, isOffline, isLoading: isConnecting } = useConnectionStore(
+    useShallow((s) => ({ isConnected: s.isConnected, isOffline: s.isOffline, isLoading: s.isLoading }))
   )
   const provider = useProviderStore((s) => s.provider)
   const { playFromUri, playTrack, playPlaylist } = usePlayerStore(
@@ -213,13 +213,15 @@ export function Home() {
       ? "Connecting…"
       : isConnected
         ? "Loading your library…"
-        : "Not connected. Go to Settings to connect."
+        : isOffline
+          ? "There is no saved home page for this library. Previously saved artists, albums and playlists are still available."
+          : "Not connected. Go to Settings to connect."
     if (isConnecting || isConnected) {
       return <PageLoading message={message} variant="home" />
     }
     return (
       <div className="mx-auto max-w-lg space-y-3 rounded-xl border border-[var(--border)] bg-app-card px-6 py-8 text-center">
-        <h1 className="text-xl font-semibold">Connect your music library</h1>
+        <h1 className="text-xl font-semibold">{isOffline ? "Your saved library" : "Connect your music library"}</h1>
         <p className="text-sm text-[color:var(--text-secondary)]">{message}</p>
         <button
           onClick={() => navigate("/settings")}
@@ -227,6 +229,11 @@ export function Home() {
         >
           Open Settings
         </button>
+        {isOffline && (
+          <button onClick={() => navigate("/library")} className="ml-2 rounded-full border border-[var(--border)] px-4 py-2 text-sm">
+            Browse saved library
+          </button>
+        )}
       </div>
     )
   }

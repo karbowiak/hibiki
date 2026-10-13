@@ -11,11 +11,14 @@ pub(crate) struct Configuration {
     pub base_url: String,
     pub api_key: String,
     pub enabled: bool,
+    #[serde(default)]
+    pub connection_id: String,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     pub revision: String,
+    pub connection_id: Option<String>,
     pub base_url: String,
     pub configured: bool,
     pub has_api_key: bool,
@@ -49,6 +52,8 @@ impl ServiceSettings {
     fn status(&self, current: &Current) -> Status {
         Status {
             revision: current.revision.clone(),
+            connection_id: (!current.configuration.connection_id.is_empty())
+                .then(|| current.configuration.connection_id.clone()),
             base_url: current.configuration.base_url.clone(),
             configured: !current.configuration.base_url.is_empty()
                 && (!self.requires_key || !current.configuration.api_key.is_empty()),
@@ -131,10 +136,19 @@ impl ServiceSettings {
             );
         }
         let previous = current.configuration.clone();
+        let connection_id = if previous.base_url == base
+            && previous.api_key == api_key
+            && !previous.connection_id.is_empty()
+        {
+            previous.connection_id.clone()
+        } else {
+            uuid::Uuid::new_v4().to_string()
+        };
         let next = Configuration {
             base_url: base,
             api_key,
             enabled: enabled && !clear,
+            connection_id,
         };
         let saved = next.clone();
         let path = directory.to_path_buf();
@@ -214,7 +228,7 @@ fn transaction(
     lock.lock()
         .map_err(|_| "Could not lock Metadata service settings.")?;
     let path = directory.join("credentials.json");
-    let saved = match std::fs::symlink_metadata(&path) {
+    let mut saved = match std::fs::symlink_metadata(&path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Configuration::default(),
         Err(_) => return Err("Could not safely read Metadata service settings.".into()),
         Ok(metadata) => {
@@ -261,32 +275,50 @@ fn transaction(
             "Metadata service settings are invalid; existing credentials were preserved.".into(),
         );
     }
+    if !saved.connection_id.is_empty() && uuid::Uuid::parse_str(&saved.connection_id).is_err() {
+        return Err(
+            "Metadata service settings are invalid; existing credentials were preserved.".into(),
+        );
+    }
+    // One locked, atomic upgrade establishes a public opaque binding. It is
+    // independent of the runtime request revision and of credential digests.
+    let migrated = update.is_none() && !saved.base_url.is_empty() && saved.connection_id.is_empty();
+    if migrated {
+        saved.connection_id = uuid::Uuid::new_v4().to_string();
+    }
     if let Some((next, expected)) = update {
         if saved != expected {
             return Err("Metadata service configuration changed in another app instance. Reload Settings before saving.".into());
         }
-        let bytes =
-            serde_json::to_vec(&next).map_err(|_| "Could not save Metadata service settings.")?;
-        let mut temporary = tempfile::Builder::new()
-            .prefix(".credentials.")
-            .tempfile_in(directory)
-            .map_err(|_| "Could not save Metadata service settings.")?;
-        private(temporary.as_file())?;
-        temporary
-            .write_all(&bytes)
-            .and_then(|_| temporary.as_file().sync_all())
-            .map_err(|_| "Could not save Metadata service settings.")?;
-        temporary.persist(path).map_err(|_| {
-            "Could not replace Metadata service settings; existing credentials were preserved."
-        })?;
-        #[cfg(unix)]
-        std::fs::File::open(directory)
-            .and_then(|file| file.sync_all())
-            .map_err(|_| "Could not sync Metadata service settings.")?;
+        write_configuration(directory, &path, &next)?;
         Ok(next)
     } else {
+        if migrated {
+            write_configuration(directory, &path, &saved)?;
+        }
         Ok(saved)
     }
+}
+fn write_configuration(directory: &Path, path: &Path, next: &Configuration) -> Result<(), String> {
+    let bytes =
+        serde_json::to_vec(&next).map_err(|_| "Could not save Metadata service settings.")?;
+    let mut temporary = tempfile::Builder::new()
+        .prefix(".credentials.")
+        .tempfile_in(directory)
+        .map_err(|_| "Could not save Metadata service settings.")?;
+    private(temporary.as_file())?;
+    temporary
+        .write_all(&bytes)
+        .and_then(|_| temporary.as_file().sync_all())
+        .map_err(|_| "Could not save Metadata service settings.")?;
+    temporary.persist(path).map_err(|_| {
+        "Could not replace Metadata service settings; existing credentials were preserved."
+    })?;
+    #[cfg(unix)]
+    std::fs::File::open(directory)
+        .and_then(|file| file.sync_all())
+        .map_err(|_| "Could not sync Metadata service settings.")?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -309,6 +341,13 @@ mod tests {
             .await
             .unwrap();
         assert!(public.configured && public.enabled && !public.has_api_key);
+        let binding = public.connection_id.clone().unwrap();
+        let (restart, _) = ServiceSettings::new(false)
+            .snapshot(root.path())
+            .await
+            .unwrap();
+        assert_eq!(restart.connection_id.as_deref(), Some(binding.as_str()));
+        assert_ne!(restart.revision, public.revision);
         let protected = state
             .update(
                 root.path(),
@@ -320,6 +359,7 @@ mod tests {
             )
             .await
             .unwrap();
+        assert_ne!(protected.connection_id.as_deref(), Some(binding.as_str()));
         let saved = std::fs::read(root.path().join("credentials.json")).unwrap();
         for target in ["https://other.test/api", "https://synthetic.test/other"] {
             assert!(state
@@ -356,6 +396,20 @@ mod tests {
         let reopened = ServiceSettings::new(false);
         let (status, config) = reopened.snapshot(root.path()).await.unwrap();
         assert!(status.has_api_key && config.api_key == "fictional-native-key");
+        assert_eq!(status.connection_id, protected.connection_id);
+        let unchanged = reopened
+            .update(
+                root.path(),
+                &status.revision,
+                status.base_url.clone(),
+                None,
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(unchanged.connection_id, protected.connection_id);
+        let status = unchanged;
         let cleared = reopened
             .update(
                 root.path(),
@@ -368,12 +422,38 @@ mod tests {
             .await
             .unwrap();
         assert!(!cleared.has_api_key && !cleared.enabled);
+        assert_ne!(cleared.connection_id, protected.connection_id);
         std::fs::write(root.path().join("credentials.json"), "{original-invalid").unwrap();
         assert!(reopened.snapshot(root.path()).await.is_err());
         assert_eq!(
             std::fs::read_to_string(root.path().join("credentials.json")).unwrap(),
             "{original-invalid"
         );
+    }
+    #[tokio::test]
+    async fn legacy_connection_identity_migrates_once_without_exposing_private_binding() {
+        let root = tempfile::tempdir().unwrap();
+        let old = Configuration {
+            base_url: "https://synthetic.test/".into(),
+            api_key: "fictional-legacy-key".into(),
+            enabled: true,
+            connection_id: String::new(),
+        };
+        write_configuration(root.path(), &root.path().join("credentials.json"), &old).unwrap();
+        let (first, private) = ServiceSettings::new(false)
+            .snapshot(root.path())
+            .await
+            .unwrap();
+        let first_id = first.connection_id.clone().unwrap();
+        assert!(uuid::Uuid::parse_str(&first_id).is_ok());
+        assert_eq!(private.api_key, old.api_key);
+        let (second, _) = ServiceSettings::new(false)
+            .snapshot(root.path())
+            .await
+            .unwrap();
+        assert_eq!(second.connection_id.as_deref(), Some(first_id.as_str()));
+        assert_ne!(first.revision, second.revision);
+        assert!(!serde_json::to_string(&first).unwrap().contains("fictional"));
     }
     #[tokio::test]
     async fn concurrent_settings_instances_require_reload_and_fanart_requires_key() {

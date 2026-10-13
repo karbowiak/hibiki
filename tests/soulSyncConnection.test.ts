@@ -70,7 +70,12 @@ test("native SoulSync adapter stays silent while unconfigured and retires old co
     })
   ).toEqual({ status: "unavailable" })
   expect(calls).toBe(0)
-  const adapter = nativeSoulSyncAdapter(status, () => current, lookup)
+  const adapter = nativeSoulSyncAdapter(
+    status,
+    () => current,
+    lookup,
+    async () => ({ status: "unavailable" })
+  )
   expect(
     await adapter.lookup({
       kind: "album",
@@ -78,7 +83,7 @@ test("native SoulSync adapter stays silent while unconfigured and retires old co
       title: "Album",
       scope: "library",
     })
-  ).toEqual({ status: "unsupported" })
+  ).toEqual({ status: "unavailable" })
   expect(calls).toBe(0)
   const request = adapter.lookup({
     kind: "artist",
@@ -189,4 +194,63 @@ test("native ambiguity stays explicit and aggregate field provenance is retained
       },
     },
   })
+})
+
+test("SoulSync album/track enrichment projects verified fields and retires a replaced service", async () => {
+  let current = status
+  const pending = deferred<any>()
+  const calls: any[] = []
+  const adapter = nativeSoulSyncAdapter(
+    status,
+    () => current,
+    async () => null,
+    async (...args) => {
+      calls.push(args)
+      return pending.promise
+    }
+  )
+  const identity = {
+    kind: "album" as const,
+    artist: "Artist",
+    title: "Album",
+    scope: "library",
+  }
+  const request = adapter.lookup(identity)
+  pending.resolve({
+    status: "ready",
+    item: {
+      artist: "Artist",
+      title: "Album",
+      fields: { summary: "Album context", trackCount: 12 },
+      fieldOrigins: { summary: "Last.fm via SoulSync" },
+    },
+  })
+  expect(await request).toMatchObject({
+    status: "ready",
+    snapshot: {
+      identity,
+      fields: { summary: "Album context", trackCount: 12 },
+      fieldOrigins: { summary: "Last.fm via SoulSync" },
+    },
+  })
+  expect(calls).toEqual([["one", "album", "Artist", "Album"]])
+  const late = deferred<any>()
+  const retiring = nativeSoulSyncAdapter(
+    status,
+    () => current,
+    async () => null,
+    async () => late.promise
+  )
+  const job = retiring.lookup({ ...identity, kind: "track", title: "Song" })
+  current = { ...status, revision: "changed" }
+  late.resolve({
+    status: "ready",
+    item: {
+      artist: "Artist",
+      title: "Song",
+      fields: { summary: "Retired" },
+      fieldOrigins: {},
+    },
+  })
+  expect(await job).toEqual({ status: "retired" })
 })

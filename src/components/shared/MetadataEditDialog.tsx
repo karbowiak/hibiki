@@ -48,6 +48,9 @@ import { useProviderStore } from "../../stores/providerStore"
 import { useLibraryStore } from "../../stores/libraryStore"
 import { invalidateMetadataItem } from "../../stores/metadataCache"
 import { AppDialog } from "./AppDialog"
+import { MetadataIdentityPanel } from "./MetadataIdentityPanel"
+import { PlexArtworkPanel } from "./PlexArtworkPanel"
+import { AdvancedMetadataPanel } from "./AdvancedMetadataPanel"
 import { ArtworkSourcePanel } from "./ArtworkSourcePicker"
 import { ArtworkImage } from "./ArtworkImage"
 import { useArtworkTone } from "../../hooks/useArtworkTone"
@@ -80,6 +83,12 @@ const fieldLabels: Partial<Record<MetadataField, string>> = {
   artistType: "Artist type",
   area: "Origin",
   beginDate: "Formed / born",
+  listeners: "Listeners",
+  playCount: "Plays",
+  fans: "Fans",
+  trackCount: "Tracks",
+  mbid: "MusicBrainz identity",
+  wikipediaUrl: "Wikipedia",
 }
 const button = "metadata-edit-button"
 const input = "metadata-edit-input"
@@ -105,7 +114,7 @@ export function MetadataEditDialog({
   const [baseline, setBaseline] = useState(item),
     [draft, setDraft] = useState(() => metadataEditDraft(kind, item))
   const [tab, setTab] = useState<
-    "library" | "sources" | "poster" | "background"
+    "library" | "identity" | "advanced" | "sources" | "poster" | "background"
   >("library")
   const artworkRole = tab === "background" ? "background" : "poster"
   const tabId = useId()
@@ -172,14 +181,10 @@ export function MetadataEditDialog({
     () =>
       [
         ...existingMetadataProviders(),
-        ...(kind === "artist"
-          ? [
               nativeSoulSyncAdapter(
                 soulStatus,
                 () => useSoulSyncStore.getState().status
               ),
-            ]
-          : []),
       ].filter(
         (adapter) =>
           kind !== "playlist" &&
@@ -209,8 +214,13 @@ export function MetadataEditDialog({
           "artistType",
           "area",
           "beginDate",
+          "listeners",
+          "playCount",
+          "fans",
+          "mbid",
+          "wikipediaUrl",
         ]
-      : ["summary", "genres", "tags", "releaseDate", "label"]
+      : ["summary", "genres", "tags", "releaseDate", "label", "trackCount", "listeners", "playCount", "mbid"]
   const allowed =
     !!owner &&
     (kind === "playlist"
@@ -382,6 +392,8 @@ export function MetadataEditDialog({
     ...(kind === "playlist"
       ? []
       : [
+          { key: "identity" as const, label: "Identity", icon: IconMusic },
+          { key: "advanced" as const, label: "Fields and locks", icon: IconLock },
           {
             key: "sources" as const,
             label: "Metadata sources",
@@ -447,7 +459,7 @@ export function MetadataEditDialog({
               )
             ) : (
               <p className="metadata-edit-note">
-                Preferences apply to this item in Hibiki.
+                {tab === "advanced" ? "Fields and locks are saved to Plex." : tab === "poster" || tab === "background" ? "Artwork can be selected in Hibiki or saved to Plex." : "Preferences apply to this item in Hibiki."}
               </p>
             )}
           </div>
@@ -699,6 +711,12 @@ export function MetadataEditDialog({
                 </p>
               )}
             </>
+          ) : tab === "advanced" && kind !== "playlist" ? (
+            <AdvancedMetadataPanel kind={kind} itemId={baseline.id} disabled={busy || needsReload}
+              onSavingChange={value => { pending.current = value ? "write" : null; setBusy(value) }}
+              onSaved={() => { invalidateMetadataItem(kind, item.id); useLibraryStore.getState().invalidateLibraryTTLs(); onSaved?.() }} />
+          ) : tab === "identity" && identity ? (
+            <MetadataIdentityPanel identity={identity} disabled={busy || needsReload} />
           ) : tab === "poster" || tab === "background" ? (
             <div className="space-y-5">
               <div>
@@ -725,6 +743,10 @@ export function MetadataEditDialog({
                 plexArt={(baseline as MusicArtist | MusicAlbum).artUrl ?? null}
                 entityId={baseline.id}
               />
+              <PlexArtworkPanel key={`${baseline.id}:${artworkRole}`} kind={kind as "artist" | "album"}
+                itemId={baseline.id} role={artworkRole} disabled={needsReload || (busy && pending.current !== "write")}
+                onBusy={(value) => { pending.current = value ? "write" : null; setBusy(value) }}
+                onSaved={() => { invalidateMetadataItem(kind as "artist" | "album", item.id); useLibraryStore.getState().invalidateLibraryTTLs(); onSaved?.() }} />
             </div>
           ) : (
             <div className="space-y-5">
@@ -848,8 +870,8 @@ export function MetadataEditDialog({
                           {resolved.origin ? ` · ${resolved.origin}` : ""}
                           {resolved.fallback ? " · Fallback" : ""} ·{" "}
                           {resolved.match.kind === "library"
-                            ? "Library metadata"
-                            : "Matching names"}
+                              ? "Library metadata"
+                            : resolved.match.kind === "reviewed-identity" ? "Reviewed identity" : "Matching names"}
                         </p>
                       )}
                       {allowed &&

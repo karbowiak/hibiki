@@ -102,6 +102,22 @@
 }
 .media-card__play:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
 .media-card__play:active { transform: scale(0.94); }
+.media-card__versions {
+  position: absolute;
+  z-index: 3;
+  top: 8px;
+  left: 8px;
+  padding: 5px 8px;
+  border: 1px solid rgb(255 255 255 / 0.2);
+  border-radius: 999px;
+  background: rgb(12 13 16 / 0.8);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 600;
+  transition: background-color 150ms;
+}
+.media-card__versions:hover { background: rgb(35 36 40 / 0.95); }
+.media-card__versions:focus-visible { outline: 2px solid white; outline-offset: 2px; }
 @media (hover: none) { .media-card__play { opacity: 1; transform: none; } }
 .media-row__header { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.8rem; }
 .media-row__heading {

@@ -38,17 +38,20 @@ import { ListeningSyncStatus } from "./components/ListeningSyncStatus"
 import { ShutdownNotice } from "./components/ShutdownNotice"
 import { StorageStatus } from "./components/PersistenceNotice"
 import { NotificationSources } from "./components/NotificationSources"
+import { OfflineStatus } from "./components/OfflineStatus"
+import { useLinkedPlaylistSync } from "./hooks/useLinkedPlaylistSync"
 import { NotificationToasts } from "./components/NotificationCenter"
 import LiveAnnouncer from "./components/LiveAnnouncer"
 import "./i18n" // Initialize i18n on app load
 
 function DesktopApp() {
+  useLinkedPlaylistSync()
   const activeProvider = useProviderStore(s => s.provider)
   const debugPanelOpen = useDebugPanelStore(s => s.open)
   const fullscreenOpen = useVisualizerStore(s => s.fullscreenOpen)
   const { hotkeyHelpOpen, setHotkeyHelpOpen } = useGlobalHotkeys()
-  const { isConnected, musicSectionId, isLoading, loadAndConnect } = useConnectionStore(
-    useShallow(s => ({ isConnected: s.isConnected, musicSectionId: s.musicSectionId, isLoading: s.isLoading, loadAndConnect: s.loadAndConnect }))
+  const { isConnected, isOffline, musicSectionId, isLoading, loadAndConnect } = useConnectionStore(
+    useShallow(s => ({ isConnected: s.isConnected, isOffline: s.isOffline, musicSectionId: s.musicSectionId, isLoading: s.isLoading, loadAndConnect: s.loadAndConnect }))
   )
   const { fetchPlaylists, fetchRecentlyAdded, fetchLatestReleases, fetchHubs, fetchTags, prefetchAllPlaylists, prefetchMixTracks } = useLibraryStore(
     useShallow(s => ({ fetchPlaylists: s.fetchPlaylists, fetchRecentlyAdded: s.fetchRecentlyAdded, fetchLatestReleases: s.fetchLatestReleases, fetchHubs: s.fetchHubs, fetchTags: s.fetchTags, prefetchAllPlaylists: s.prefetchAllPlaylists, prefetchMixTracks: s.prefetchMixTracks }))
@@ -78,7 +81,7 @@ function DesktopApp() {
 
   useEffect(() => {
     let active = true
-    if (isConnected && musicSectionId !== null && activeProvider) {
+    if ((isConnected || isOffline) && musicSectionId !== null && activeProvider) {
       // Fetch all home-page data in parallel, THEN start background prefetch.
       // Starting prefetch early was competing with fetchHubs/fetchRecentlyAdded
       // for Plex server connections, causing hubs to silently fail.
@@ -91,19 +94,19 @@ function DesktopApp() {
         fetchHubs({ force: true }),
         fetchTags(),    // 24h TTL — rarely hits network after first load
       ]).then(() => {
-        if (!active || useProviderStore.getState().provider !== activeProvider) return
+        if (!active || isOffline || useProviderStore.getState().provider !== activeProvider) return
         void prefetchAllPlaylists()
         void prefetchMixTracks()
       })
     }
     return () => { active = false }
-  }, [isConnected, musicSectionId, activeProvider])
+  }, [isConnected, isOffline, musicSectionId, activeProvider])
 
   useEffect(() => {
-    if (!isLoading && !isConnected && location !== "/settings") {
+    if (!isLoading && !isConnected && !isOffline && location !== "/settings") {
       navigate("/settings")
     }
-  }, [isLoading, isConnected])
+  }, [isLoading, isConnected, isOffline])
 
   if (process.env.NODE_ENV === "production") {
     document.addEventListener("contextmenu", (event) => event.preventDefault())
@@ -112,6 +115,7 @@ function DesktopApp() {
   return (
     <div className="select-none">
       <NotificationSources />
+      <OfflineStatus />
       <StorageStatus />
       <ListeningSyncStatus />
       {/*

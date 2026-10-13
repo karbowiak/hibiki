@@ -1,3 +1,4 @@
+import type { SequenceOperation } from "./linked"
 import { invoke } from "@tauri-apps/api/core"
 import { fromJspf, playlistId } from "./jspf"
 import { recordingMbid } from "./matching"
@@ -16,6 +17,12 @@ export interface ListenBrainzPlaylistTransport {
     count: number
   }>
   read(expected: PlaylistAccount, id: string): Promise<unknown>
+  mutate?(
+    expected: PlaylistAccount,
+    id: string,
+    before: { title: string; mbids: string[] },
+    operation: SequenceOperation
+  ): Promise<unknown>
   create(
     expected: PlaylistAccount,
     title: string,
@@ -28,6 +35,13 @@ export const nativeListenBrainzPlaylists: ListenBrainzPlaylistTransport = {
     invoke("playlist_sync_listenbrainz_list", { expected, offset, count }),
   read: (expected, id) =>
     invoke("playlist_sync_listenbrainz_read", { expected, id }),
+  mutate: (expected, id, before, operation) =>
+    invoke("playlist_sync_listenbrainz_mutate", {
+      expected,
+      id,
+      before,
+      operation,
+    }),
   create: (expected, title, mbids) =>
     invoke("playlist_sync_listenbrainz_create", { expected, title, mbids }),
 }

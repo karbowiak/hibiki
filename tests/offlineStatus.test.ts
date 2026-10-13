@@ -1,0 +1,21 @@
+import { expect, test } from "bun:test"
+import { createOfflineStatusStore } from "../src/offline/statusStore"
+test("saved-copy status is scoped, bounded and clears on online recovery or logout", () => {
+  const store = createOfflineStatusStore()
+  store.getState().activate("account-a")
+  store.getState().cached("old-account", { key: "old", cachedAt: 1 })
+  expect(store.getState().savedReads).toEqual({})
+  for (let n = 0; n < 60; n++)
+    store.getState().cached("account-a", { key: `page-${n}`, cachedAt: n })
+  expect(Object.keys(store.getState().savedReads)).toHaveLength(50)
+  store.getState().online("other-account", "page-59")
+  expect(store.getState().savedReads["page-59"]).toBe(59)
+  store.getState().online("account-a", "page-59")
+  expect(store.getState().savedReads["page-59"]).toBeUndefined()
+  store.getState().activate("account-b", true)
+  expect(store.getState().offlineMode).toBe(true)
+  expect(store.getState().savedReads).toEqual({})
+  store.getState().activate(null)
+  expect(store.getState().offlineMode).toBe(false)
+  expect(store.getState().scope).toBeNull()
+})

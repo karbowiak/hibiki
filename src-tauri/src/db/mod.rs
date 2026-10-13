@@ -7,8 +7,10 @@
 pub mod albums;
 pub mod artists;
 pub mod kv;
+pub mod offline;
 pub mod playlists;
 pub mod schema;
+pub mod semantic;
 pub mod tracks;
 
 use std::path::Path;

@@ -1,3 +1,6 @@
+import { useMetadataIdentityStore } from "../stores/metadataIdentityStore"
+import { resolveMetadataIdentity } from "../metadata/identity/resolve"
+import { reviewedIdentityAdapters } from "../metadata/identity/adapters"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 import {
@@ -40,6 +43,11 @@ export function useMetadataSnapshot(
   suppliedSelection?: MetadataSelection,
   additionalProviders: readonly MetadataAdapter[] = NO_ADDITIONAL_PROVIDERS
 ) {
+  useMetadataIdentityStore((state) => state.choices)
+  useMetadataIdentityStore((state) => state.versions)
+  useMetadataIdentityStore((state) => state.hydrated)
+  const reviewed = identity ? resolveMetadataIdentity(identity) : null
+  const offline = useProviderStore((state) => state.provider?.isOffline)
   const choices = useMetadataSelectionStore((state) => state.choices)
   const selection =
     suppliedSelection ??
@@ -73,11 +81,23 @@ export function useMetadataSnapshot(
   const client = useMemo(() => {
     const token = {}
     return createMetadataClient(
-      [...existingMetadataProviders(), soulAdapter, ...additionalProviders],
+      reviewed
+        ? reviewedIdentityAdapters(
+            [
+              ...existingMetadataProviders(),
+              soulAdapter,
+              ...additionalProviders,
+            ],
+            reviewed
+          )
+        : [...existingMetadataProviders(), soulAdapter, ...additionalProviders],
       () => {
         const current = useProviderStore.getState().provider,
           currentAuth = useLastfmStore.getState()
-        return current === provider &&
+        return !current?.isOffline &&
+          current === provider &&
+          (!identity ||
+            resolveMetadataIdentity(identity).lease === reviewed?.lease) &&
           current?.cacheScope === scope &&
           useFanartServiceStore.getState().status?.revision ===
             fanartStatus?.revision &&
@@ -99,6 +119,7 @@ export function useMetadataSnapshot(
     fanartStatus?.revision,
     heyaStatus?.revision,
     additionalProviders,
+    reviewed?.lease,
   ])
   const key = identity ? metadataIdentityKey(identity) : null
   const requestScope = identity?.scope
@@ -129,6 +150,7 @@ export function useMetadataSnapshot(
     // Observe actual transitions, including provider A -> B -> A before a render.
     const retire = () => client.retire()
     const unsubscribeProvider = useProviderStore.subscribe(retire)
+    const unsubscribeIdentity = useMetadataIdentityStore.subscribe(retire)
     const unsubscribeAuth = useLastfmStore.subscribe(retire)
     const unsubscribeSoulSync = useSoulSyncStore.subscribe((next, previous) => {
       if (next.status?.revision !== previous.status?.revision) {
@@ -149,6 +171,7 @@ export function useMetadataSnapshot(
     )
     return () => {
       unsubscribeProvider()
+      unsubscribeIdentity()
       unsubscribeAuth()
       unsubscribeSoulSync()
       unsubscribeServices.forEach((unsubscribe) => unsubscribe())
@@ -158,7 +181,14 @@ export function useMetadataSnapshot(
   useEffect(() => {
     let active = true
     setLoaded({ key, scope: requestScope, client, results: {} })
-    if (!identity || !provider || requestScope !== scope) return
+    if (
+      !identity ||
+      !provider ||
+      offline ||
+      !reviewed?.ready ||
+      requestScope !== scope
+    )
+      return
     for (const source of requestedSources) {
       void client.lookup(source, identity).then((result) => {
         if (!active) return
@@ -172,7 +202,7 @@ export function useMetadataSnapshot(
       active = false
       client.retire()
     }
-  }, [client, key, requestScope, requestedSources, revision])
+  }, [client, key, requestScope, requestedSources, revision, offline])
   const owned =
     !!identity &&
     !!provider &&
@@ -212,6 +242,8 @@ export function useMetadataSnapshot(
     resolveField,
     refresh,
     isLoading:
+      !!reviewed?.ready &&
+      !offline &&
       !!identity &&
       requestScope === scope &&
       requestedSources.some((source) => !results[source]),

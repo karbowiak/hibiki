@@ -288,6 +288,39 @@ where
     }
     Ok(bytes)
 }
+/// Offline references may originate before a native restart. Only the current
+/// private service binding can authorize existing pixels; no registry or HTTP
+/// lookup is needed, and absent pixels remain absent.
+async fn resolve_cached_offline(
+    connection: &Connection,
+    directory: &Path,
+    source: &str,
+    scope: &str,
+    cache: Arc<crate::image_cache::ImageCache>,
+    ticket: crate::image_cache::Ticket,
+) -> Result<Vec<u8>, String> {
+    let (id, _) = reference(source)?;
+    let (status, configuration) = connection.settings.snapshot(directory).await?;
+    if !status.enabled || !status.configured {
+        return Err("HeyaMetadata is unavailable offline.".into());
+    }
+    let key = cache_key(&configuration, scope, &id);
+    let ticket = cache
+        .bind_key(&ticket, &key)
+        .map_err(|_| "Artwork request was retired.")?;
+    let guard = connection
+        .settings
+        .publication_guard(&status.revision)
+        .await?;
+    let bytes = crate::image_cache::read_validated(cache, ticket, key).await;
+    drop(guard);
+    let (current, _) = connection.settings.snapshot(directory).await?;
+    if current.revision != status.revision || !current.enabled || !current.configured {
+        return Err("HeyaMetadata image source changed. Retry the lookup.".into());
+    }
+    bytes.ok_or_else(|| "This artwork has not been saved for offline use.".into())
+}
+
 /// The runtime revision is never the disk key: restart cache hits are shared only
 /// under the same private origin/auth binding and a newly registered reference.
 pub async fn resolve_heya_image(
@@ -303,6 +336,28 @@ pub async fn resolve_heya_image(
     let directory = directory(app, Service::Heya)?;
     let state = app.state::<crate::commands::PlexState>();
     let publication_state = &state;
+    if context
+        .client
+        .as_ref()
+        .is_some_and(|client| client.offline_only)
+    {
+        if refresh {
+            return Err("Artwork cannot be refreshed offline.".into());
+        }
+        let bytes = resolve_cached_offline(
+            connection,
+            &directory,
+            source,
+            context.cache_scope(),
+            cache,
+            ticket,
+        )
+        .await?;
+        if !state.image_context_is_current(context).await {
+            return Err("The library changed. Retry the lookup.".into());
+        }
+        return Ok(bytes);
+    }
     let bytes = resolve_registered(
         connection,
         &directory,
@@ -472,6 +527,31 @@ mod tests {
             cache_key(&config, "scope", ID)
         );
         let cache = Arc::new(crate::image_cache::ImageCache::new(cache_path));
+        // Offline restart accepts saved references without re-registering them,
+        // but authorizes pixels exclusively through the current private binding.
+        assert_eq!(
+            resolve_cached_offline(
+                &reopened,
+                &credentials,
+                &uri,
+                "scope",
+                cache.clone(),
+                cache.ticket(),
+            )
+            .await
+            .unwrap(),
+            png
+        );
+        assert!(resolve_cached_offline(
+            &reopened,
+            &credentials,
+            &uri,
+            "different-scope",
+            cache.clone(),
+            cache.ticket(),
+        )
+        .await
+        .is_err());
         let new_uri = format!(
             "heyametadata://image/{ID}?serviceRevision={}",
             status.revision

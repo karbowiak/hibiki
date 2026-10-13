@@ -93,9 +93,8 @@ export function deduplicateAlbums(albums: MusicAlbum[]): MusicAlbum[] {
     if (assigned.has(album.id)) continue
     const norm = normalizeTitle(album.title)
     const artist = normalizeTitle(album.artistName)
-    const key = album.year > 0
-      ? `${norm}|${album.year}|${artist}`
-      : `${norm}||${artist}`
+    const key =
+      album.year > 0 ? `${norm}|${album.year}|${artist}` : `${norm}||${artist}`
 
     let group = titleMap.get(key)
     if (!group) {
@@ -123,7 +122,13 @@ export function deduplicateAlbums(albums: MusicAlbum[]): MusicAlbum[] {
       }
       const sorted = [...sub].sort((a, b) => b.trackCount - a.trackCount)
       const primary = sorted[0]
-      const alternateIds = sorted.slice(1).map(a => a.id)
+      const aliases = new Set<string>()
+      for (const version of sorted) {
+        aliases.add(version.id)
+        for (const alias of version._alternateIds ?? []) aliases.add(alias)
+      }
+      aliases.delete(primary.id)
+      const alternateIds = [...aliases]
       result.push({ ...primary, _alternateIds: alternateIds })
     }
   }
@@ -147,7 +152,7 @@ export function deduplicateHubAlbums(hub: MusicHub): MusicHub {
   return {
     ...hub,
     items: [
-      ...deduped.map(a => ({ ...a, type: "album" as const })),
+      ...deduped.map((a) => ({ ...a, type: "album" as const })),
       ...otherItems,
     ],
   }
@@ -186,19 +191,19 @@ export function collectAllIds(albums: MusicAlbum[]): Set<string> {
 export function processArtistAlbums(
   allAlbums: MusicAlbum[],
   singleList: MusicAlbum[],
-  deduplicate: boolean,
+  deduplicate: boolean
 ): { albums: MusicAlbum[]; singles: MusicAlbum[] } {
   // IDs that came from the singles/EP-filtered endpoint
-  const singleIds = new Set(singleList.map(s => s.id))
+  const singleIds = new Set(singleList.map((s) => s.id))
 
   // Separate: remove singles from all-albums to get pure albums
-  const albumsOnly = allAlbums.filter(a => !singleIds.has(a.id))
+  const albumsOnly = allAlbums.filter((a) => !singleIds.has(a.id))
 
   if (!deduplicate) {
     // Simple ID-dedup only
     const idDedup = <T extends { id: string }>(items: T[]): T[] => {
       const seen = new Set<string>()
-      return items.filter(item => {
+      return items.filter((item) => {
         if (seen.has(item.id)) return false
         seen.add(item.id)
         return true
@@ -225,9 +230,10 @@ const LOSSLESS_CODECS = new Set(["flac", "alac", "wav", "aiff", "dsd"])
  */
 export function scoreMedia(media: Media): number {
   const codec = (media.audio_codec ?? "").toLowerCase()
-  const stream = media.parts?.[0]?.streams?.find(s => s.stream_type === 2)
+  const stream = media.parts?.[0]?.streams?.find((s) => s.stream_type === 2)
 
-  const isLossless = LOSSLESS_CODECS.has(codec) ||
+  const isLossless =
+    LOSSLESS_CODECS.has(codec) ||
     (stream?.codec ? LOSSLESS_CODECS.has(stream.codec.toLowerCase()) : false)
 
   const bitDepth = stream?.bit_depth ?? 16
@@ -236,9 +242,9 @@ export function scoreMedia(media: Media): number {
 
   let score = 0
   if (isLossless) score += 10_000
-  score += bitDepth * 100        // 24-bit = 2400, 16-bit = 1600
-  score += samplingRate / 100    // 96kHz = 960, 44.1kHz = 441
-  score += bitrate               // 320kbps = 320 (mostly for lossy tiebreak)
+  score += bitDepth * 100 // 24-bit = 2400, 16-bit = 1600
+  score += samplingRate / 100 // 96kHz = 960, 44.1kHz = 441
+  score += bitrate // 320kbps = 320 (mostly for lossy tiebreak)
   return score
 }
 
@@ -250,7 +256,7 @@ export function pickBestMediaIndex(mediaList: Media[]): number {
   if (mediaList.length <= 1) return 0
   let bestIdx = 0
   let bestScore = -1
-  const hasPlayableMedia = mediaList.some(media => !!media.parts?.[0]?.key)
+  const hasPlayableMedia = mediaList.some((media) => !!media.parts?.[0]?.key)
   for (let i = 0; i < mediaList.length; i++) {
     if (hasPlayableMedia && !mediaList[i].parts?.[0]?.key) continue
     const s = scoreMedia(mediaList[i])

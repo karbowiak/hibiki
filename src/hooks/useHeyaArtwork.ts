@@ -1,3 +1,6 @@
+import type { MetadataIdentity } from "../metadata/core/types"
+import { useReviewedArtwork } from "./useReviewedArtwork"
+import { useProviderStore } from "../stores/providerStore"
 import { useEffect } from "react"
 import { useHeyaArtworkStore } from "../metadata/heya/artworkStore"
 import { useHeyaServiceStore } from "../metadata/services/store"
@@ -17,8 +20,26 @@ export function useHeyaArtwork(
   role: ArtworkRole,
   scope: string | undefined,
   revise: (url: string | null) => string | null,
-  allowFetch: boolean
+  allowFetch: boolean,
+  reviewedIdentity?: MetadataIdentity,
+  offlineCandidateId?: string
 ) {
+  const reviewed = useReviewedArtwork(
+    "heya",
+    reviewedIdentity ??
+      (scope && artist
+        ? {
+            kind,
+            artist,
+            title: title ?? undefined,
+            entityId: entityId ?? undefined,
+            scope,
+          }
+        : null),
+    allowFetch
+  )
+  const currentScope = useProviderStore((state) => state.provider?.cacheScope)
+  const offline = useProviderStore((state) => state.provider?.isOffline)
   const status = useHeyaServiceStore((s) => s.status)
   const loadStatus = useHeyaServiceStore((s) => s.load)
   const key =
@@ -53,9 +74,11 @@ export function useHeyaArtwork(
       : !!albumEntry?.data &&
         albumMatches(albumEntry.data, artist ?? "", title ?? ""))
   useEffect(() => {
-    if (allowFetch && !status) void loadStatus()
+    if ((allowFetch || offline) && !status) void loadStatus()
     if (
+      !!reviewed.resolution?.choice ||
       !allowFetch ||
+      offline ||
       !enabled ||
       !hydrated ||
       !artist ||
@@ -73,6 +96,8 @@ export function useHeyaArtwork(
     else void getAlbum(artist, title!).catch(() => {})
   }, [
     allowFetch,
+    reviewed.resolution?.lease,
+    offline,
     status,
     enabled,
     hydrated,
@@ -86,10 +111,43 @@ export function useHeyaArtwork(
     getAlbum,
     loadStatus,
   ])
-  const posters = Array.isArray(data?.posters) ? data.posters : []
-  const backgrounds = Array.isArray(data?.backgrounds) ? data.backgrounds : []
+  const offlineSaved =
+    offline &&
+    enabled &&
+    scope &&
+    scope === currentScope &&
+    offlineCandidateId &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      offlineCandidateId
+    )
+      ? verifiedHeyaCandidates(
+          [
+            {
+              id: offlineCandidateId,
+              url: `heyametadata://image/${offlineCandidateId}?serviceRevision=${status!.revision}`,
+              label: "Saved artwork · offline cache",
+            },
+          ],
+          status!.revision
+        )
+      : []
+  const selectedData = reviewed.resolution?.choice ? reviewed.data : data
+  const selectedValid = reviewed.resolution?.choice ? !!reviewed.data : valid
+  // A saved explicit UUID is a cache-only native target, never a reconstructed
+  // online candidate or permission to issue a metadata/image network request.
+  const activeData = offlineSaved.length
+    ? {
+        posters: role === "poster" ? offlineSaved : [],
+        backgrounds: role === "background" ? offlineSaved : [],
+      }
+    : selectedData
+  const activeValid = offlineSaved.length > 0 || selectedValid
+  const posters = Array.isArray(activeData?.posters) ? activeData.posters : []
+  const backgrounds = Array.isArray(activeData?.backgrounds)
+    ? activeData.backgrounds
+    : []
   const raw =
-    valid && data
+    activeValid && activeData
       ? role === "poster"
         ? posters
         : backgrounds.length
@@ -120,7 +178,9 @@ export function useHeyaArtwork(
   }))
   return {
     images,
-    pending: enabled && (!hydrated || pending),
+    pending: reviewed.resolution?.choice
+      ? reviewed.pending
+      : enabled && (!hydrated || pending),
     revision: status?.revision,
   }
 }

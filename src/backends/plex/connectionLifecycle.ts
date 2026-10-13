@@ -1,4 +1,5 @@
 import { create } from "zustand"
+import type { OfflineContext } from "../../offline/nativeCache"
 import type { MusicProvider } from "../../providers/types"
 import type { LibrarySection, PlexAuthPin, PlexSettings } from "./types"
 import type { PlexConnectionInfo } from "./api"
@@ -29,16 +30,32 @@ export interface ConnectionDependencies {
     expectedMachineIdentifier?: string
   ): Promise<PlexConnectionInfo>
   disconnectPlex(clearSaved: boolean): Promise<number>
-  saveSettings(revision: number, allUrls: string[], sectionId?: number, sectionUuid?: string): Promise<void>
-  testServerConnection(url: string, expectedMachineIdentifier?: string): Promise<number>
+  saveSettings(
+    revision: number,
+    allUrls: string[],
+    sectionId?: number,
+    sectionUuid?: string
+  ): Promise<void>
+  testServerConnection(
+    url: string,
+    expectedMachineIdentifier?: string
+  ): Promise<number>
   startPlexAuth(): Promise<PlexAuthPin>
-  createProvider(context: ConnectionContext, section: LibrarySection): Promise<MusicProvider>
+  createProvider(
+    context: ConnectionContext,
+    section: LibrarySection
+  ): Promise<MusicProvider>
   activateProvider(
     provider: MusicProvider,
     context: ConnectionContext,
     section: LibrarySection,
     ownsRequest: () => boolean
   ): void | Promise<void>
+  restoreOfflineContext?(revision: number): Promise<OfflineContext>
+  activateOfflineProvider?(
+    context: OfflineContext,
+    ownsRequest: () => boolean
+  ): Promise<void>
   clearSession(): void
 }
 
@@ -46,6 +63,7 @@ export interface ConnectionState {
   baseUrl: string
   token: string
   isConnected: boolean
+  isOffline: boolean
   isLoading: boolean
   error: string | null
   musicSectionId: number | null
@@ -56,6 +74,7 @@ export interface ConnectionState {
   availableMusicSections: LibrarySection[]
   needsLibraryPick: boolean
   loadAndConnect(): Promise<void>
+  browseSavedLibrary(): Promise<void>
   connect(
     baseUrl: string,
     token: string,
@@ -93,7 +112,8 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
     availableMusicSections: [],
     needsLibraryPick: false,
     isConnected: false,
-    error: null
+    isOffline: false,
+    error: null,
   }
 
   return create<ConnectionState>((set) => {
@@ -104,9 +124,10 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
       set({
         ...(clearConnection ? blank : {}),
         isConnected: false,
+        isOffline: false,
         needsLibraryPick: false,
         isLoading: true,
-        error: null
+        error: null,
       })
       return request
     }
@@ -123,7 +144,11 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
       return operation
     }
 
-    function save(request: number, connection: ConnectionContext, section?: LibrarySection) {
+    function save(
+      request: number,
+      connection: ConnectionContext,
+      section?: LibrarySection
+    ) {
       const operation = saves.then(async () => {
         check(request)
         await deps.saveSettings(
@@ -138,7 +163,11 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
       return operation
     }
 
-    async function chooseLibrary(request: number, connection: ConnectionContext, section: LibrarySection) {
+    async function chooseLibrary(
+      request: number,
+      connection: ConnectionContext,
+      section: LibrarySection
+    ) {
       check(request)
       await save(request, connection, section)
       const provider = await deps.createProvider(connection, section)
@@ -146,7 +175,9 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
         await provider.disconnect()
         throw new ConnectionSupersededError()
       }
-      await deps.activateProvider(provider, connection, section, () => current(request))
+      await deps.activateProvider(provider, connection, section, () =>
+        current(request)
+      )
       if (!current(request)) {
         await provider.disconnect()
         throw new ConnectionSupersededError()
@@ -157,7 +188,7 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
         musicSectionId: section.key,
         sectionUuid: section.uuid ?? null,
         musicSectionTitle: section.title,
-        needsLibraryPick: false
+        needsLibraryPick: false,
       })
     }
 
@@ -180,8 +211,11 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
         expectedMachineIdentifier
       )
       check(request)
-      const sections = info.sections.filter((section) => section.section_type === "artist")
-      if (!sections.length) throw new Error("No music libraries found on this server.")
+      const sections = info.sections.filter(
+        (section) => section.section_type === "artist"
+      )
+      if (!sections.length)
+        throw new Error("No music libraries found on this server.")
       const connection = {
         revision,
         baseUrl,
@@ -189,7 +223,7 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
         allUrls: [...new Set([baseUrl, ...(allUrls ?? [])])],
         machineIdentifier: info.machineIdentifier,
         cacheScopes: info.cacheScopes ?? {},
-        sections
+        sections,
       }
       await save(request, connection)
       const saved = await deps.loadSettings()
@@ -200,10 +234,12 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
         token,
         allUrls: connection.allUrls,
         tlsExceptions: saved.tls_exceptions ?? [],
-        availableMusicSections: sections
+        availableMusicSections: sections,
       })
       const section =
-        sections.length === 1 ? sections[0] : sections.find((section) => section.key === savedSectionId)
+        sections.length === 1
+          ? sections[0]
+          : sections.find((section) => section.key === savedSectionId)
       if (section) await chooseLibrary(request, connection, section)
       else set({ isLoading: false, needsLibraryPick: true })
     }
@@ -218,15 +254,18 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
       } catch {
         /* Preserve the original error. */
       }
-      if (current(request)) set({ ...blank, isLoading: false, error: String(error) })
+      if (current(request))
+        set({ ...blank, isLoading: false, error: String(error) })
     }
 
     async function select(section: LibrarySection) {
       const connection = context
       const selected = connection?.sections.find(
-        (candidate) => candidate.key === section.key && candidate.uuid === section.uuid
+        (candidate) =>
+          candidate.key === section.key && candidate.uuid === section.uuid
       )
-      if (!connection || !selected) throw new Error("Select a music library from the connected server.")
+      if (!connection || !selected)
+        throw new Error("Select a music library from the connected server.")
       const request = begin(false)
       try {
         await chooseLibrary(request, connection, selected)
@@ -239,6 +278,43 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
     return {
       ...blank,
       isLoading: true,
+      browseSavedLibrary: async () => {
+        const request = begin()
+        try {
+          const revision = await reset(request, false)
+          if (!deps.restoreOfflineContext || !deps.activateOfflineProvider)
+            throw new Error("Saved library browsing is unavailable.")
+          const saved = await deps.restoreOfflineContext(revision)
+          check(request)
+          if (
+            saved.revision !== revision ||
+            !/^plex-[a-f0-9]{64}$/.test(saved.cacheScope) ||
+            !Number.isSafeInteger(saved.sectionId) ||
+            saved.sectionId <= 0
+          )
+            throw new Error("Saved library identity is unavailable.")
+          await deps.activateOfflineProvider(saved, () => current(request))
+          check(request)
+          set({
+            isConnected: false,
+            isOffline: true,
+            isLoading: false,
+            error: null,
+            musicSectionId: saved.sectionId,
+            sectionUuid: saved.sectionUuid,
+            musicSectionTitle: saved.sectionTitle,
+            baseUrl: saved.baseUrl,
+            token: "",
+          })
+        } catch {
+          await failed(
+            request,
+            new Error(
+              "This saved library is unavailable. Connect to Plex and visit some library pages before browsing offline."
+            )
+          )
+        }
+      },
       loadAndConnect: async () => {
         const request = begin()
         try {
@@ -266,7 +342,9 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
             return
           } catch (error) {
             check(request)
-            const fallbacks = [...new Set(urls)].filter((url) => url !== settings.base_url)
+            const fallbacks = [...new Set(urls)].filter(
+              (url) => url !== settings.base_url
+            )
             // Older saved settings have no verified identity; refresh via sign-in rather
             // than exposing their token to an address that now belongs to another server.
             if (!fallbacks.length) throw error
@@ -275,18 +353,26 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
                 "The saved Plex server has no verified identity. Sign in with Plex again to refresh its connection URLs."
               )
             const probes = await Promise.allSettled(
-              fallbacks.map(async (url) => ({ url, latency: await deps.testServerConnection(url, expected) }))
+              fallbacks.map(async (url) => ({
+                url,
+                latency: await deps.testServerConnection(url, expected),
+              }))
             )
             check(request)
             const reachable = probes
               .filter(
-                (probe): probe is PromiseFulfilledResult<{ url: string; latency: number }> =>
-                  probe.status === "fulfilled"
+                (
+                  probe
+                ): probe is PromiseFulfilledResult<{
+                  url: string
+                  latency: number
+                }> => probe.status === "fulfilled"
               )
               .map((probe) => probe.value)
               .sort(
                 (a, b) =>
-                  Number(b.url.startsWith("https://")) - Number(a.url.startsWith("https://")) ||
+                  Number(b.url.startsWith("https://")) -
+                    Number(a.url.startsWith("https://")) ||
                   a.latency - b.latency
               )
             for (const candidate of reachable) {
@@ -363,7 +449,7 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
       startPlexAuth: async () => {
         set({ error: null })
         return deps.startPlexAuth()
-      }
+      },
     }
   })
 }

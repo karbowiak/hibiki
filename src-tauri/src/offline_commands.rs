@@ -1,0 +1,209 @@
+//! Saved browsing is admitted only under a trusted native account/library owner.
+use crate::commands::{PlexRequestContext, PlexState};
+use crate::db::{offline, DbState};
+use crate::plex::{PlexClient, PlexClientConfig, PlexSettings};
+use tauri::{Manager, State};
+
+#[tauri::command]
+pub async fn semantic_documents(context: PlexRequestContext,
+    state: State<'_, PlexState>, db: State<'_, DbState>) -> Result<Vec<crate::db::semantic::Document>, String> {
+    let guard = state.0.lock().await;
+    let client = state.checked_cache_client(&context, &guard)?;
+    let conn = db.0.lock().map_err(|_| "Discovery storage is unavailable")?;
+    crate::db::semantic::documents(&conn, &client.library_scope)
+}
+
+#[tauri::command]
+pub async fn semantic_put_vectors(context: PlexRequestContext, model_id: String,
+    embeddings: Vec<crate::db::semantic::Embedding>, state: State<'_, PlexState>, db: State<'_, DbState>) -> Result<(), String> {
+    let guard = state.0.lock().await;
+    let client = state.checked_cache_client(&context, &guard)?;
+    let conn = db.0.lock().map_err(|_| "Discovery storage is unavailable")?;
+    crate::db::semantic::put(&conn, &client.library_scope, &model_id, &embeddings, now()?)
+}
+
+#[tauri::command]
+pub async fn semantic_search(context: PlexRequestContext, model_id: String, query_vector: Vec<f32>, limit: usize,
+    state: State<'_, PlexState>, db: State<'_, DbState>) -> Result<Vec<crate::db::semantic::Match>, String> {
+    let guard = state.0.lock().await;
+    let client = state.checked_cache_client(&context, &guard)?;
+    let conn = db.0.lock().map_err(|_| "Discovery storage is unavailable")?;
+    crate::db::semantic::search(&conn, &client.library_scope, &model_id, &query_vector, limit)
+}
+
+#[tauri::command]
+pub async fn semantic_info(context: PlexRequestContext,
+    state: State<'_, PlexState>, db: State<'_, DbState>) -> Result<crate::db::semantic::IndexInfo, String> {
+    let guard = state.0.lock().await;
+    let client = state.checked_cache_client(&context, &guard)?;
+    let conn = db.0.lock().map_err(|_| "Discovery storage is unavailable")?;
+    crate::db::semantic::info(&conn, &client.library_scope)
+}
+
+#[tauri::command]
+pub async fn semantic_clear(context: PlexRequestContext,
+    state: State<'_, PlexState>, db: State<'_, DbState>) -> Result<(), String> {
+    let guard = state.0.lock().await;
+    let client = state.checked_cache_client(&context, &guard)?;
+    let conn = db.0.lock().map_err(|_| "Discovery storage is unavailable")?;
+    crate::db::semantic::clear(&conn, &client.library_scope)
+}
+
+fn now() -> Result<i64, String> {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map(|time| time.as_millis().min(i64::MAX as u128) as i64)
+        .map_err(|_| "The system clock is unavailable".into())
+}
+
+#[tauri::command]
+pub async fn offline_cache_get(context: PlexRequestContext, key: String,
+    state: State<'_, PlexState>, db: State<'_, DbState>) -> Result<Option<offline::Snapshot>, String> {
+    let guard = state.0.lock().await;
+    let client = state.checked_cache_client(&context, &guard)?;
+    let conn = db.0.lock().map_err(|_| "Saved browsing storage is unavailable")?;
+    offline::get(&conn, &client.library_scope, &key, now()?)
+}
+
+#[tauri::command]
+pub async fn offline_cache_put(context: PlexRequestContext, key: String, payload: serde_json::Value,
+    state: State<'_, PlexState>, db: State<'_, DbState>) -> Result<(), String> {
+    let guard = state.0.lock().await;
+    let client = state.checked_client(&context, &guard)?;
+    let conn = db.0.lock().map_err(|_| "Saved browsing storage is unavailable")?;
+    offline::put(&conn, &client.library_scope, &key, &payload, now()?)
+}
+
+#[tauri::command]
+pub async fn offline_cache_invalidate(context: PlexRequestContext, prefixes: Vec<String>,
+    state: State<'_, PlexState>, db: State<'_, DbState>) -> Result<(), String> {
+    let guard = state.0.lock().await;
+    let client = state.checked_client(&context, &guard)?;
+    let conn = db.0.lock().map_err(|_| "Saved browsing storage is unavailable")?;
+    offline::invalidate(&conn, &client.library_scope, &prefixes)
+}
+
+#[tauri::command]
+pub async fn offline_cache_info(context: PlexRequestContext,
+    state: State<'_, PlexState>, db: State<'_, DbState>) -> Result<offline::CacheInfo, String> {
+    let guard = state.0.lock().await;
+    let client = state.checked_cache_client(&context, &guard)?;
+    let conn = db.0.lock().map_err(|_| "Saved browsing storage is unavailable")?;
+    offline::info(&conn, &client.library_scope)
+}
+
+#[tauri::command]
+pub async fn offline_cache_clear(context: PlexRequestContext,
+    state: State<'_, PlexState>, db: State<'_, DbState>) -> Result<(), String> {
+    let guard = state.0.lock().await;
+    let client = state.checked_cache_client(&context, &guard)?;
+    let conn = db.0.lock().map_err(|_| "Saved browsing storage is unavailable")?;
+    offline::clear(&conn, &client.library_scope)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OfflineContext {
+    revision: u64,
+    cache_scope: String,
+    base_url: String,
+    machine_identifier: String,
+    section_id: i64,
+    section_uuid: String,
+    section_title: &'static str,
+}
+
+fn saved_client(settings: &PlexSettings) -> Result<PlexClient, String> {
+    if settings.base_url.is_empty() || settings.token.is_empty() || settings.client_id.is_empty()
+        || settings.machine_identifier.is_empty() || settings.section_id <= 0 || settings.section_uuid.is_empty() {
+        return Err("Connect to a Plex music library before browsing saved items.".into());
+    }
+    let mut client = PlexClient::new(PlexClientConfig {
+        base_url: settings.base_url.clone(), token: settings.token.clone(), client_id: settings.client_id.clone(),
+        // Saved browsing performs no network requests, so it needs no TLS exception.
+        ..Default::default()
+    }).map_err(|_| "The saved Plex connection is invalid")?;
+    client.machine_identifier = settings.machine_identifier.clone();
+    client.library_scope = client.cache_scope_for_library(settings.section_id, Some(&settings.section_uuid));
+    client.offline_only = true;
+    Ok(client)
+}
+
+async fn restore_saved(state: &PlexState, db: &DbState, directory: &std::path::Path,
+    revision: u64) -> Result<OfflineContext, String> {
+    if !state.is_current(revision) { return Err("Plex connection was superseded".into()); }
+    let settings = crate::plex::load_settings(directory).map_err(|_| "Cannot read the saved Plex connection")?;
+    let client = saved_client(&settings)?;
+    {
+        let conn = db.0.lock().map_err(|_| "Saved browsing storage is unavailable")?;
+        if offline::info(&conn, &client.library_scope)?.entries == 0 {
+            return Err("There are no saved pages for this Plex music library yet.".into());
+        }
+    }
+    // A settings edit/logout during restoration cannot resurrect an older account.
+    let latest = crate::plex::load_settings(directory).map_err(|_| "Cannot read the saved Plex connection")?;
+    if saved_client(&latest)?.library_scope != client.library_scope {
+        return Err("The saved Plex music library changed. Try again.".into());
+    }
+    let response = OfflineContext {
+        revision, cache_scope: client.library_scope.clone(), base_url: client.base_url().into(),
+        machine_identifier: client.machine_identifier.clone(), section_id: settings.section_id,
+        section_uuid: settings.section_uuid, section_title: "Saved music library",
+    };
+    state.publish_offline(revision, client).await?;
+    Ok(response)
+}
+
+#[tauri::command]
+pub async fn restore_offline_context(app: tauri::AppHandle, revision: u64,
+    state: State<'_, PlexState>, db: State<'_, DbState>) -> Result<OfflineContext, String> {
+    let directory = app.path().app_config_dir().map_err(|_| "Cannot find private settings")?;
+    restore_saved(&state, &db, &directory, revision).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn fixtures() -> (tempfile::TempDir, DbState, PlexSettings) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = DbState::open(&dir.path().join("test.sqlite")).unwrap();
+        let settings = PlexSettings { base_url: "http://127.0.0.1:1".into(), token: "fixture-token".into(),
+            client_id: "fixture-installation".into(), machine_identifier: "fixture-server".into(),
+            section_id: 7, section_uuid: "fixture-library".into(), ..Default::default() };
+        crate::plex::update_settings(dir.path(), |current| { *current = settings.clone(); Ok(()) }).unwrap();
+        (dir, db, settings)
+    }
+    fn save(db: &DbState, settings: &PlexSettings) {
+        offline::put(&db.0.lock().unwrap(), &saved_client(settings).unwrap().library_scope,
+            "fixture", &serde_json::json!({"title":"Saved music"}), 1).unwrap();
+    }
+    #[tokio::test]
+    async fn restore_is_local_scoped_and_credential_free() {
+        let (dir, db, settings) = fixtures(); save(&db, &settings);
+        let state = PlexState::new();
+        let result = restore_saved(&state, &db, dir.path(), 0).await.unwrap();
+        let payload = serde_json::to_string(&result).unwrap();
+        assert!(!payload.contains("fixture-token")); assert!(!payload.contains("token"));
+        let context = PlexRequestContext { connection_revision: 0, cache_scope: result.cache_scope.clone() };
+        let guard = state.0.lock().await;
+        assert!(state.checked_cache_client(&context, &guard).unwrap().offline_only);
+        assert!(state.checked_client(&context, &guard).is_err());
+        assert!(state.checked_cache_client(&PlexRequestContext { cache_scope: "other".into(), ..context }, &guard).is_err());
+    }
+    #[tokio::test]
+    async fn restore_rejects_absent_wrong_scope_and_active_owner() {
+        let (dir, db, settings) = fixtures(); let state = PlexState::new();
+        assert!(restore_saved(&state, &db, dir.path(), 0).await.is_err());
+        let mut other = settings.clone(); other.token = "other-account".into(); save(&db, &other);
+        assert!(restore_saved(&state, &db, dir.path(), 0).await.is_err());
+        save(&db, &settings);
+        let mut online = saved_client(&settings).unwrap(); online.offline_only = false;
+        *state.0.lock().await = Some(online);
+        assert!(restore_saved(&state, &db, dir.path(), 0).await.is_err());
+        assert!(!state.0.lock().await.as_ref().unwrap().offline_only);
+    }
+    #[tokio::test]
+    async fn restore_rejects_retired_revision() {
+        let (dir, db, settings) = fixtures(); save(&db, &settings);
+        assert!(restore_saved(&PlexState::new(), &db, dir.path(), 1).await.is_err());
+    }
+}

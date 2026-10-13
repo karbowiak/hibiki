@@ -11,6 +11,9 @@ Object.assign(globalThis, {
   IS_REACT_ACT_ENVIRONMENT: true,
 })
 const { createRoot } = await import("react-dom/client")
+const { useMetadataIdentityStore } =
+  await import("../../src/stores/metadataIdentityStore")
+useMetadataIdentityStore.setState({ choices: {}, versions: {}, hydrated: true })
 const { useArtistArtwork } = await import("../../src/hooks/useMediaImage")
 const { useFanartMetadataStore } =
   await import("../../src/metadata/fanart/store")

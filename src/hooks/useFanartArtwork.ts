@@ -1,3 +1,6 @@
+import type { MetadataIdentity } from "../metadata/core/types"
+import { useReviewedArtwork } from "./useReviewedArtwork"
+import { useProviderStore } from "../stores/providerStore"
 import { useEffect } from "react"
 import { useFanartMetadataStore } from "../metadata/fanart/store"
 import { useFanartServiceStore } from "../metadata/services/store"
@@ -17,8 +20,24 @@ export function useFanartArtwork(
   role: ArtworkRole,
   scope: string | undefined,
   revise: (url: string | null) => string | null,
-  allowFetch: boolean
+  allowFetch: boolean,
+  reviewedIdentity?: MetadataIdentity
 ) {
+  const reviewed = useReviewedArtwork(
+    "fanart",
+    reviewedIdentity ??
+      (scope && artist
+        ? {
+            kind,
+            artist,
+            title: title ?? undefined,
+            entityId: entityId ?? undefined,
+            scope,
+          }
+        : null),
+    allowFetch
+  )
+  const offline = useProviderStore((state) => state.provider?.isOffline)
   const status = useFanartServiceStore((s) => s.status)
   const loadStatus = useFanartServiceStore((s) => s.load)
   const key =
@@ -53,9 +72,11 @@ export function useFanartArtwork(
       : !!albumEntry?.data &&
         albumMatches(albumEntry.data, artist ?? "", title ?? ""))
   useEffect(() => {
-    if (allowFetch && !status) void loadStatus()
+    if ((allowFetch || offline) && !status) void loadStatus()
     if (
+      !!reviewed.resolution?.choice ||
       !allowFetch ||
+      offline ||
       !enabled ||
       !hydrated ||
       !artist ||
@@ -68,6 +89,8 @@ export function useFanartArtwork(
     else void getAlbum(artist, title!).catch(() => {})
   }, [
     allowFetch,
+    reviewed.resolution?.lease,
+    offline,
     status,
     enabled,
     hydrated,
@@ -81,10 +104,14 @@ export function useFanartArtwork(
     getAlbum,
     loadStatus,
   ])
-  const posters = Array.isArray(data?.posters) ? data.posters : []
-  const backgrounds = Array.isArray(data?.backgrounds) ? data.backgrounds : []
+  const activeData = reviewed.resolution?.choice ? reviewed.data : data
+  const activeValid = reviewed.resolution?.choice ? !!reviewed.data : valid
+  const posters = Array.isArray(activeData?.posters) ? activeData.posters : []
+  const backgrounds = Array.isArray(activeData?.backgrounds)
+    ? activeData.backgrounds
+    : []
   const raw =
-    valid && data
+    activeValid && activeData
       ? role === "poster"
         ? posters
         : backgrounds.length
@@ -112,7 +139,9 @@ export function useFanartArtwork(
   )
   return {
     images,
-    pending: enabled && (!hydrated || pending),
+    pending: reviewed.resolution?.choice
+      ? reviewed.pending
+      : enabled && (!hydrated || pending),
     revision: status?.revision,
   }
 }

@@ -51,6 +51,31 @@ function resolveImg(
 // Track
 // ---------------------------------------------------------------------------
 
+/** Small credential/path-free DTO survives offline browsing sanitation. */
+export function projectMediaVersions(mediaList: import("./types").Media[]): import("../../types/music").MusicMediaVersion[] {
+  const selectedIndex = pickBestMediaIndex(mediaList)
+  const indexes = mediaList.map((_, index) => index).slice(0, 32)
+  if (selectedIndex >= 32) indexes[31] = selectedIndex
+  const number = (value: unknown, maximum = Number.MAX_SAFE_INTEGER) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= maximum ? value : null
+  const identifier = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? String(value) : null
+  const format = (value: unknown) => typeof value === "string" && /^[a-zA-Z0-9_+. -]{1,32}$/.test(value) ? value : null
+  return indexes.map(index => {
+    const media = mediaList[index]
+    const parts = media.parts ?? []
+    const part = parts[0]
+    const stream = part?.streams?.find(item => item.stream_type === 2)
+    const sizes = parts.slice(0, 32).map(part => number(part.size))
+    const fileSize = parts.length > 0 && parts.length <= 32 && sizes.every(size => size !== null) ? number(sizes.reduce<number>((sum,size) => sum + size!, 0)) : null
+    return {
+      mediaId: identifier(media.id), partId: identifier(part?.id), versionNumber: index + 1,
+      codec: format(stream?.codec ?? media.audio_codec), container: format(media.container),
+      bitrate: number(stream?.bitrate ?? media.bitrate), channels: number(stream?.channels ?? media.audio_channels, 64),
+      bitDepth: number(stream?.bit_depth, 128), samplingRate: number(stream?.sampling_rate, 1536000),
+      duration: number(media.duration), fileSize, partCount: Math.min(parts.length, 32), selected: index === selectedIndex,
+    }
+  })
+}
+
 export function plexTrackToMusicTrack(t: Track, img: ImgResolver): MusicTrack {
   const media = t.media?.[pickBestMediaIndex(t.media ?? [])]
   const stream = media?.parts?.[0]?.streams?.find(s => s.stream_type === 2)
@@ -97,6 +122,8 @@ export function plexTrackToMusicTrack(t: Track, img: ImgResolver): MusicTrack {
     endRamp: stream?.end_ramp ?? t.end_ramp ?? null,
     rawThumbPath: t.thumb ?? t.parent_thumb ?? null,
     mediaInfo: {
+      versions: projectMediaVersions(t.media ?? []),
+      versionsTruncated: (t.media?.length ?? 0) > 32,
       container: media?.container ?? null,
       fileSize: part?.size ?? null,
       audioStreamId: stream?.id ?? null,

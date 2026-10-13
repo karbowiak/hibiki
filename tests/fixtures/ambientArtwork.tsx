@@ -21,6 +21,9 @@ const library = create(() => ({
 mock.module("../../src/stores/libraryStore", () => ({
   useLibraryStore: library,
 }))
+const { useMetadataIdentityStore } =
+  await import("../../src/stores/metadataIdentityStore")
+useMetadataIdentityStore.setState({ choices: {}, versions: {}, hydrated: true })
 const { createRoot } = await import("react-dom/client")
 const { useAmbientArtwork, useAmbientArtworkClaim } =
   await import("../../src/hooks/useAmbientArtwork")

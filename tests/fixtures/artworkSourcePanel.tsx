@@ -11,6 +11,9 @@ Object.assign(globalThis, {
   document: dom.window.document,
   IS_REACT_ACT_ENVIRONMENT: true,
 })
+const { useMetadataIdentityStore } =
+  await import("../../src/stores/metadataIdentityStore")
+useMetadataIdentityStore.setState({ choices: {}, versions: {}, hydrated: true })
 const { createRoot } = await import("react-dom/client")
 const { ArtworkSourcePanel } =
   await import("../../src/components/shared/ArtworkSourcePicker")

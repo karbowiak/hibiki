@@ -6,10 +6,29 @@
  * ever see ready-to-use URLs (image:// or https://).
  */
 
+/** Read-only media version summary; never includes file paths or playback URLs. */
+export interface MusicMediaVersion {
+  mediaId: string | null
+  partId: string | null
+  versionNumber: number
+  codec: string | null
+  container: string | null
+  bitrate: number | null
+  channels: number | null
+  bitDepth: number | null
+  samplingRate: number | null
+  duration: number | null
+  fileSize: number | null
+  partCount: number
+  selected: boolean
+}
+
 /** Extended audio/media details that list endpoints may not include. */
 export interface MediaInfo {
   /** This item came from a full metadata request, including unavailable ramps. */
   metadataComplete?: boolean
+  versions?: MusicMediaVersion[]
+  versionsTruncated?: boolean
   container?: string | null
   fileSize?: number | null
   audioStreamId?: number | null

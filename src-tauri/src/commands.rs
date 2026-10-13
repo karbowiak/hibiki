@@ -25,11 +25,11 @@ use crate::plex::{
 pub struct PlexState(pub Arc<Mutex<Option<PlexClient>>>, Arc<AtomicU64>);
 
 /// Identifies the account/server/library that originated a provider request.
-#[derive(Clone, serde::Deserialize)]
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlexRequestContext {
-    connection_revision: u64,
-    cache_scope: String,
+    pub(crate) connection_revision: u64,
+    pub(crate) cache_scope: String,
 }
 
 impl PlexState {
@@ -154,11 +154,23 @@ impl PlexState {
         }
     }
 
-    fn is_current(&self, revision: u64) -> bool {
+    pub(crate) fn is_current(&self, revision: u64) -> bool {
         self.1.load(Ordering::SeqCst) == revision
     }
 
-    fn checked_client<'a>(
+    pub(crate) fn checked_client<'a>(
+        &self,
+        context: &PlexRequestContext,
+        current: &'a Option<PlexClient>,
+    ) -> Result<&'a PlexClient, String> {
+        let client = self.checked_cache_client(context, current)?;
+        if client.offline_only {
+            return Err("Reconnect to Plex to use this operation.".into());
+        }
+        Ok(client)
+    }
+
+    pub(crate) fn checked_cache_client<'a>(
         &self,
         context: &PlexRequestContext,
         current: &'a Option<PlexClient>,
@@ -171,6 +183,10 @@ impl PlexState {
             return Err("Plex music library was superseded".into());
         }
         Ok(client)
+    }
+
+    pub(crate) async fn is_offline(&self) -> bool {
+        self.0.lock().await.as_ref().is_some_and(|client| client.offline_only)
     }
 
     async fn client_for(&self, context: &PlexRequestContext) -> Result<PlexClient, String> {
@@ -192,6 +208,19 @@ impl PlexState {
         let mut current = self.0.lock().await;
         if !self.is_current(revision) {
             return Err("Plex connection was superseded".into());
+        }
+        *current = Some(client);
+        Ok(())
+    }
+
+    /// Explicit saved-library entry may only fill a reset, unclaimed owner.
+    pub(crate) async fn publish_offline(&self, revision: u64, client: PlexClient) -> Result<(), String> {
+        let mut current = self.0.lock().await;
+        if !self.is_current(revision) {
+            return Err("Plex connection was superseded".into());
+        }
+        if current.is_some() || !client.offline_only || client.library_scope.is_empty() {
+            return Err("The connection changed. Try saved browsing again.".into());
         }
         *current = Some(client);
         Ok(())
@@ -838,13 +867,96 @@ impl PlexState {
         patch: &crate::plex::metadata_edit::MetadataEditPatch,
         expected: &crate::plex::metadata_edit::MetadataEditExpected) -> Result<(), String> {
         let client = self.client_for(context).await?;
-        let prepared = client.prepare_metadata_edit(section_id, item_id, kind, patch, expected).await.map_err(|error| error.to_string())?;
+        let prepared = tokio::time::timeout(std::time::Duration::from_secs(30), client.prepare_metadata_edit(section_id, item_id, kind, patch, expected))
+            .await.map_err(|_| "Metadata review timed out before saving")?.map_err(|error| error.to_string())?;
+        {
+            let guard = self.0.lock().await;
+            let current = self.checked_client(context, &guard)?;
+            tokio::time::timeout(std::time::Duration::from_secs(15), current.save_metadata_edit(prepared))
+                .await.map_err(|_| "Plex did not confirm the metadata save")?.map_err(|_| "Plex did not confirm the metadata save")?;
+        }
+        // Once the single write was sent, failed or retired proof is unconfirmed.
+        tokio::time::timeout(std::time::Duration::from_secs(30), client.verify_metadata_edit(section_id, item_id, kind, patch))
+            .await.map_err(|_| "Plex did not confirm the metadata save")?.map_err(|_| "Plex did not confirm the metadata save. Reload current values before retrying.")?;
         let guard = self.0.lock().await;
-        let current = self.checked_client(context, &guard)?;
-        let result = current.save_metadata_edit(prepared).await.map_err(|error| error.to_string());
-        self.checked_client(context, &guard)?;
-        result
+        self.checked_client(context, &guard).map_err(|_| "Plex did not confirm the metadata save: the library changed")?;
+        Ok(())
     }
+}
+
+/// Edit playlist metadata (title, summary).
+#[tauri::command]
+pub async fn get_advanced_metadata(context: PlexRequestContext, section_id: i64, item_id: i64,
+    kind: crate::plex::metadata_edit::MetadataEditKind, state: State<'_, PlexState>) -> Result<crate::plex::metadata_advanced::AdvancedMetadata, String> {
+    let client = state.client_for(&context).await?;
+    let result = tokio::time::timeout(std::time::Duration::from_secs(30), client.advanced_metadata(section_id, item_id, kind))
+        .await.map_err(|_| "Metadata review timed out")?.map_err(|error| error.to_string())?;
+    let guard = state.0.lock().await; state.checked_client(&context, &guard)?;
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn edit_advanced_metadata(context: PlexRequestContext, section_id: i64, item_id: i64,
+    kind: crate::plex::metadata_edit::MetadataEditKind, patch: crate::plex::metadata_advanced::AdvancedPatch,
+    state: State<'_, PlexState>) -> Result<(), String> {
+    state.edit_advanced_metadata_owned(&context, section_id, item_id, kind, &patch).await
+}
+impl PlexState {
+    async fn edit_advanced_metadata_owned(&self, context: &PlexRequestContext, section_id: i64, item_id: i64,
+        kind: crate::plex::metadata_edit::MetadataEditKind, patch: &crate::plex::metadata_advanced::AdvancedPatch) -> Result<(), String> {
+        let client = self.client_for(context).await?;
+        let prepared = tokio::time::timeout(std::time::Duration::from_secs(30), client.prepare_advanced_metadata_edit(section_id, item_id, kind, patch))
+            .await.map_err(|_| "Metadata review timed out before saving")?.map_err(|error| error.to_string())?;
+        {
+            let guard = self.0.lock().await; let current = self.checked_client(context, &guard)?;
+            tokio::time::timeout(std::time::Duration::from_secs(15), current.commit_advanced_metadata_once(prepared))
+                .await.map_err(|_| "Plex did not confirm the metadata save")?.map_err(|_| "Plex did not confirm the metadata save")?;
+        }
+        let verified = tokio::time::timeout(std::time::Duration::from_secs(30), client.advanced_metadata(section_id, item_id, kind))
+            .await.map_err(|_| "Plex did not confirm the metadata save")?.map_err(|_| "Plex did not confirm the metadata save")?;
+        for (key, wanted) in &patch.changes {
+            let actual = verified.fields.get(key).ok_or("Plex did not confirm the metadata save")?;
+            use crate::plex::metadata_advanced::AdvancedValue;
+            let same_value = match (&wanted.value, &actual.value) {
+                // Plex controls tag presentation order; membership is the edit.
+                (AdvancedValue::Tags(wanted), AdvancedValue::Tags(actual)) => wanted.iter().collect::<std::collections::BTreeSet<_>>() == actual.iter().collect(),
+                (wanted, actual) => wanted == actual,
+            };
+            if wanted.locked != actual.locked || !same_value { return Err("Plex did not confirm the metadata save. Reload the current values.".into()); }
+        }
+        let guard = self.0.lock().await;
+        self.checked_client(context, &guard).map_err(|_| "Plex did not confirm the metadata save: the library changed")?;
+        Ok(())
+    }
+}
+
+/// Edit playlist metadata (title, summary).
+#[tauri::command]
+pub async fn playlist_sync_plex_mutate(
+    context: PlexRequestContext, section_id: i64, playlist_id: i64,
+    expected: crate::plex::playlist_sync_edit::PlaylistSyncState,
+    operation: crate::plex::playlist_sync_edit::PlaylistSyncOperation,
+    state: State<'_, PlexState>,
+) -> Result<crate::plex::playlist_sync_edit::PlaylistSyncState, String> {
+    let client = state.client_for(&context).await?;
+    let prepared = tokio::time::timeout(std::time::Duration::from_secs(30),
+        client.prepare_playlist_sync_edit(section_id, playlist_id, &expected, &operation))
+        .await.map_err(|_| "Playlist review timed out before saving")?
+        .map_err(|error| error.to_string())?;
+    {
+        let guard = state.0.lock().await;
+        let current = state.checked_client(&context, &guard)?;
+        // Once sent, failure is unconfirmed: the journal must reconcile before retrying.
+        tokio::time::timeout(std::time::Duration::from_secs(15), current.commit_playlist_sync_edit_once(&prepared))
+            .await.map_err(|_| "Plex did not confirm the playlist change")?
+            .map_err(|error| error.to_string())?;
+    }
+    let result = tokio::time::timeout(std::time::Duration::from_secs(30), client.verify_playlist_sync_edit(&prepared))
+        .await.map_err(|_| "Plex did not confirm the playlist change")?
+        .map_err(|_| "Plex did not confirm the playlist change")?;
+    let guard = state.0.lock().await;
+    state.checked_client(&context, &guard).map_err(|_| "Plex did not confirm the playlist change: the connection changed")?;
+    Ok(result)
 }
 
 /// Edit playlist metadata (title, summary).
@@ -3231,6 +3343,199 @@ mod metadata_edit_ownership_tests {
             else {state.1.fetch_add(1,Ordering::SeqCst);}
             release_tx.send(()).unwrap();
             assert!(job.await.unwrap().unwrap_err().contains("superseded")); server.join().unwrap();
+        }
+    }
+}
+
+#[cfg(test)]
+mod advanced_metadata_ownership_tests {
+    use super::*;
+    use crate::plex::metadata_advanced::{AdvancedField, AdvancedPatch, AdvancedValue};
+    use crate::plex::metadata_edit::MetadataEditKind;
+    use std::io::{Read, Write};
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn advanced_save_requires_postproof_and_current_owner_without_replaying_put() {
+        // Success, accepted-but-ignored values, and a retired owner during postproof.
+        for scenario in 0..3 {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let base = format!("http://{}/proxy", listener.local_addr().unwrap());
+            let (proof_seen_tx, proof_seen_rx) = tokio::sync::oneshot::channel();
+            let (proof_release_tx, proof_release_rx) = std::sync::mpsc::channel();
+            let server = std::thread::spawn(move || {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                let mut proof_seen_tx = Some(proof_seen_tx);
+                let mut puts = 0;
+                for number in 0..5 {
+                    let mut stream = loop {
+                        match listener.accept() {
+                            Ok((stream, _)) => break stream,
+                            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                                assert!(std::time::Instant::now() < deadline, "missing bounded fixture request");
+                                std::thread::sleep(std::time::Duration::from_millis(2));
+                            }
+                            Err(error) => panic!("fixture accept failed: {error}"),
+                        }
+                    };
+                    // macOS inherits O_NONBLOCK from the listener. The accepted
+                    // stream must block while waiting for the complete HTTP header.
+                    stream.set_nonblocking(false).unwrap();
+                    stream.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+                    let mut bytes = vec![]; let mut buffer = [0;4096];
+                    while !bytes.windows(4).any(|part| part == b"\r\n\r\n") {
+                        let count = stream.read(&mut buffer).unwrap();
+                        assert!(count > 0); bytes.extend_from_slice(&buffer[..count]);
+                    }
+                    let request = String::from_utf8(bytes).unwrap();
+                    let head = request.lines().next().unwrap().split_whitespace().collect::<Vec<_>>();
+                    let url = url::Url::parse(&format!("http://synthetic{}",head[1])).unwrap();
+                    assert!(request.to_lowercase().contains("x-plex-token: synthetic-token"));
+                    let body = match number {
+                        0 | 3 => {
+                            assert_eq!(head[0],"GET"); assert_eq!(url.path(),"/proxy/library/sections");
+                            serde_json::json!({"MediaContainer":{"Directory":[{"key":"5","type":"artist","uuid":"synthetic"}]}})
+                        }
+                        1 | 4 => {
+                            assert_eq!(head[0],"GET"); assert_eq!(url.path(),"/proxy/library/metadata/42");
+                            if number == 4 && scenario == 2 {
+                                proof_seen_tx.take().unwrap().send(()).unwrap();
+                                proof_release_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+                            }
+                            let applied = number == 4 && scenario != 1;
+                            serde_json::json!({"MediaContainer":{"Metadata":[{"ratingKey":"42","librarySectionID":"5","type":"artist","titleSort":if applied {"New"} else {"Old"},"Field":[{"name":"titleSort","locked":if applied {1} else {0}}]}]}})
+                        }
+                        2 => {
+                            puts += 1; assert_eq!(head[0],"PUT"); assert_eq!(url.path(),"/proxy/library/sections/5/all");
+                            let query = url.query_pairs().into_owned().collect::<std::collections::BTreeMap<_,_>>();
+                            assert_eq!(query.get("titleSort.value").unwrap(),"New"); assert_eq!(query.get("titleSort.locked").unwrap(),"1");
+                            assert!(!query.contains_key("includeLoudnessRamps"));
+                            serde_json::json!({})
+                        }
+                        _ => unreachable!(),
+                    }.to_string();
+                    write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+                }
+                assert_eq!(puts,1); puts
+            });
+            let mut client = PlexClient::new(PlexClientConfig {base_url:base,token:"synthetic-token".into(),..Default::default()}).unwrap();
+            client.library_scope = client.cache_scope_for_library(5,Some("synthetic"));
+            let context = PlexRequestContext {connection_revision:0,cache_scope:client.library_scope.clone()};
+            let state = Arc::new(PlexState::new()); *state.0.lock().await = Some(client);
+            let task_state = state.clone();
+            let job = tokio::spawn(async move {
+                task_state.edit_advanced_metadata_owned(&context,5,42,MetadataEditKind::Artist,&AdvancedPatch {
+                    expected:std::collections::BTreeMap::from([("sortTitle".into(),AdvancedField{value:AdvancedValue::Text("Old".into()),locked:Some(false)})]),
+                    changes:std::collections::BTreeMap::from([("sortTitle".into(),AdvancedField{value:AdvancedValue::Text("New".into()),locked:Some(true)})]),
+                }).await
+            });
+            if scenario == 2 {
+                tokio::time::timeout(std::time::Duration::from_secs(5),proof_seen_rx).await.unwrap().unwrap();
+                // Proof is outside the ownership mutex, so the new owner can retire it.
+                state.1.fetch_add(1,Ordering::SeqCst);
+                state.0.lock().await.as_mut().unwrap().library_scope = "replacement-library".into();
+                proof_release_tx.send(()).unwrap();
+            }
+            let result = tokio::time::timeout(std::time::Duration::from_secs(10),job).await.unwrap().unwrap();
+            if scenario == 0 { assert!(result.is_ok(), "synthetic scenario {scenario} failed: {result:?}"); }
+            else { assert!(result.unwrap_err().contains("did not confirm")); }
+            assert_eq!(server.join().unwrap(),1);
+        }
+    }
+}
+
+#[cfg(test)]
+mod simple_metadata_postproof_tests {
+    use super::*;
+    use crate::plex::metadata_edit::MetadataEditPatch;
+    use crate::plex::metadata_edit::MetadataEditKind;
+    use std::io::{Read, Write};
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn simple_save_verifies_values_date_locks_and_owner_without_replaying_put() {
+        // Success, accepted-but-ignored values, and a retired owner during postproof.
+        for scenario in 0..5 {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let base = format!("http://{}/proxy", listener.local_addr().unwrap());
+            let (proof_seen_tx, proof_seen_rx) = tokio::sync::oneshot::channel();
+            let (proof_release_tx, proof_release_rx) = std::sync::mpsc::channel();
+            let server = std::thread::spawn(move || {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                let mut proof_seen_tx = Some(proof_seen_tx);
+                let mut puts = 0;
+                for number in 0..5 {
+                    let mut stream = loop {
+                        match listener.accept() {
+                            Ok((stream, _)) => break stream,
+                            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                                assert!(std::time::Instant::now() < deadline, "missing bounded fixture request");
+                                std::thread::sleep(std::time::Duration::from_millis(2));
+                            }
+                            Err(error) => panic!("fixture accept failed: {error}"),
+                        }
+                    };
+                    // macOS inherits O_NONBLOCK from the listener. The accepted
+                    // stream must block while waiting for the complete HTTP header.
+                    stream.set_nonblocking(false).unwrap();
+                    stream.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+                    let mut bytes = vec![]; let mut buffer = [0;4096];
+                    while !bytes.windows(4).any(|part| part == b"\r\n\r\n") {
+                        let count = stream.read(&mut buffer).unwrap();
+                        assert!(count > 0); bytes.extend_from_slice(&buffer[..count]);
+                    }
+                    let request = String::from_utf8(bytes).unwrap();
+                    let head = request.lines().next().unwrap().split_whitespace().collect::<Vec<_>>();
+                    let url = url::Url::parse(&format!("http://synthetic{}",head[1])).unwrap();
+                    assert!(request.to_lowercase().contains("x-plex-token: synthetic-token"));
+                    let body = match number {
+                        0 | 3 => {
+                            assert_eq!(head[0],"GET"); assert_eq!(url.path(),"/proxy/library/sections");
+                            serde_json::json!({"MediaContainer":{"Directory":[{"key":"5","type":"artist","uuid":"synthetic"}]}})
+                        }
+                        1 | 4 => {
+                            assert_eq!(head[0],"GET"); assert_eq!(url.path(),"/proxy/library/metadata/42");
+                            if number == 4 && scenario == 4 {
+                                proof_seen_tx.take().unwrap().send(()).unwrap();
+                                proof_release_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+                            }
+                            let applied = number == 4;
+                            serde_json::json!({"MediaContainer":{"Metadata":[{"ratingKey":"42","librarySectionID":"5","type":"album","parentRatingKey":"7","title":if applied {"New"} else {"Old"},"summary":if applied && scenario != 1 {"new-summary"}else{"old-summary"},"originallyAvailableAt":if applied && scenario != 3 {"2024-04-05"}else{"2020-01-01"},"Field":if applied && scenario != 2 {serde_json::json!([{"name":"title","locked":1},{"name":"summary","locked":true},{"name":"originallyAvailableAt","locked":"1"}])}else{serde_json::json!([])}}]}})
+                        }
+                        2 => {
+                            puts += 1; assert_eq!(head[0],"PUT"); assert_eq!(url.path(),"/proxy/library/sections/5/all");
+                            let query = url.query_pairs().into_owned().collect::<std::collections::BTreeMap<_,_>>();
+                            assert_eq!(query.get("title.value").unwrap(),"New"); assert_eq!(query.get("title.locked").unwrap(),"1");
+                            assert!(!query.contains_key("includeLoudnessRamps"));
+                            serde_json::json!({})
+                        }
+                        _ => unreachable!(),
+                    }.to_string();
+                    write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+                }
+                assert_eq!(puts,1); puts
+            });
+            let mut client = PlexClient::new(PlexClientConfig {base_url:base,token:"synthetic-token".into(),..Default::default()}).unwrap();
+            client.library_scope = client.cache_scope_for_library(5,Some("synthetic"));
+            let context = PlexRequestContext {connection_revision:0,cache_scope:client.library_scope.clone()};
+            let state = Arc::new(PlexState::new()); *state.0.lock().await = Some(client);
+            let task_state = state.clone();
+            let job = tokio::spawn(async move {
+                task_state.edit_metadata_owned(&context,5,42,MetadataEditKind::Album,&MetadataEditPatch {
+                    title:Some("New".into()), summary:Some("new-summary".into()),release_date:Some("2024-04-05".into()), ..Default::default()
+                },&std::collections::BTreeMap::from([("title".into(),Some("Old".into())),("summary".into(),Some("old-summary".into())),("releaseDate".into(),Some("2020-01-01".into()))])).await
+            });
+            if scenario == 4 {
+                tokio::time::timeout(std::time::Duration::from_secs(5),proof_seen_rx).await.unwrap().unwrap();
+                // Proof is outside the ownership mutex, so the new owner can retire it.
+                state.1.fetch_add(1,Ordering::SeqCst);
+                state.0.lock().await.as_mut().unwrap().library_scope = "replacement-library".into();
+                proof_release_tx.send(()).unwrap();
+            }
+            let result = tokio::time::timeout(std::time::Duration::from_secs(10),job).await.unwrap().unwrap();
+            if scenario == 0 { assert!(result.is_ok(), "synthetic scenario {scenario} failed: {result:?}"); }
+            else { assert!(result.unwrap_err().contains("did not confirm")); }
+            assert_eq!(server.join().unwrap(),1);
         }
     }
 }

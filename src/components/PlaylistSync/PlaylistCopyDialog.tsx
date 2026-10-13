@@ -475,7 +475,7 @@ export function PlaylistCopyDialog({
   )
 }
 
-function OccurrenceResolver({
+export function OccurrenceResolver({
   index,
   row,
   mode,

@@ -45,6 +45,8 @@ import { useCapability } from "../../hooks/useCapability"
 import { useTrackDrag } from "../../hooks/useTrackDrag"
 import { useMetadataSnapshot } from "../../hooks/useMetadataSnapshot"
 import { MetadataEditDialog } from "../shared/MetadataEditDialog"
+import { AppDialog } from "../shared/AppDialog"
+import { VersionReviewPanel } from "../VersionReview/VersionReviewPanel"
 
 function dedupe<T extends { id: string }>(items: T[]): T[] {
   const seen = new Set<string>()
@@ -155,6 +157,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
   const [showHeroModal, setShowHeroModal] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
+  const [versionAlbum, setVersionAlbum] = useState<MusicAlbum | null>(null)
   const menuBtnRef = useRef<HTMLButtonElement>(null)
   const heroRef = useRef<HTMLDivElement>(null)
   const debugEnabled = useDebugStore((s) => s.debugEnabled)
@@ -185,6 +188,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
     setBioExpanded(false)
     setShowImageModal(false)
     setEditOpen(false)
+    setVersionAlbum(null)
     setShowHeroModal(false)
 
     // Seed ALL state from persistent cache — avoids loading flash AND layout shift.
@@ -408,6 +412,9 @@ export function ArtistPage({ artistId }: { artistId: string }) {
 
   return (
     <div className="media-detail-page">
+      {versionAlbum && <AppDialog key={`${provider?.cacheScope}:versions:${versionAlbum.id}`} title="Album and media versions" description={versionAlbum.title} onClose={() => setVersionAlbum(null)}>
+        <VersionReviewPanel album={versionAlbum} />
+      </AppDialog>}
       {editOpen && (
         <MetadataEditDialog
           key={`${provider?.cacheScope}:artist:${artist.id}`}
@@ -1047,6 +1054,8 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                 key={album.id}
                 title={album.title}
                 desc={String(album.year)}
+                versionCount={1 + (album._alternateIds?.length ?? 0)}
+                onViewVersions={() => setVersionAlbum(album)}
                 thumb={album.thumbUrl}
                 href={`/album/${album.id}`}
                 prefetch={() => prefetchAlbum(album.id)}
@@ -1085,6 +1094,8 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                 key={album.id}
                 title={album.title}
                 desc={`Single · ${album.year}`}
+                versionCount={1 + (album._alternateIds?.length ?? 0)}
+                onViewVersions={() => setVersionAlbum(album)}
                 thumb={album.thumbUrl}
                 href={`/album/${album.id}`}
                 prefetch={() => prefetchAlbum(album.id)}
@@ -1127,6 +1138,8 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                   key={a.id}
                   title={a.title}
                   desc={String(a.year)}
+                  versionCount={1 + ((a as MusicAlbum)._alternateIds?.length ?? 0)}
+                  onViewVersions={() => setVersionAlbum(a as MusicAlbum)}
                   thumb={a.thumbUrl}
                   href={`/album/${a.id}`}
                   prefetch={() => prefetchAlbum(a.id)}

@@ -1,5 +1,6 @@
 import { MetadataServiceSettings } from "../Settings/MetadataServiceSettings"
 import { SoulSyncSettings } from "../Settings/SoulSyncSettings"
+import { SemanticDiscoverySettings } from "../Settings/SemanticDiscoverySettings"
 import { useArtworkAppearanceStore } from "../../stores/artworkAppearanceStore"
 import React, { useState, useEffect, useRef, useMemo } from "react"
 import { useLocation } from "wouter"
@@ -1085,6 +1086,7 @@ function MetadataListView({ setSection }: { setSection: (s: Section) => void }) 
       <SoulSyncSettings />
       <MetadataServiceSettings service="fanart" />
       <MetadataServiceSettings service="heya" />
+      <SemanticDiscoverySettings />
       {/* Metadata Source Priority */}
       <SettingCard title="Metadata Source Priority" description="Drag to reorder. Higher sources take precedence for bios, images, genres, and tags. Artist, album, and track names always come from Plex.">
         <div

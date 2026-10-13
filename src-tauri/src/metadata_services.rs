@@ -1,4 +1,6 @@
 //! Optional configured HeyaMetadata and fixed-origin Fanart music GETs.
+pub(crate) mod discovery;
+pub(crate) mod identity;
 use crate::{
     http_response::{BoundedResponseExt, MAX_JSON_BYTES},
     metadata_service_settings::{Configuration, ServiceSettings, Status},
@@ -23,6 +25,8 @@ pub enum Service {
     Heya,
 }
 struct Connection {
+    discovery: Mutex<discovery::Registry>,
+    discovery_admission: tokio::sync::Semaphore,
     settings: ServiceSettings,
     gate: Mutex<Option<tokio::time::Instant>>,
     cooldown: std::sync::Mutex<Option<tokio::time::Instant>>,
@@ -33,6 +37,8 @@ struct Connection {
 impl Connection {
     fn new(required: bool) -> Self {
         Self {
+            discovery: Mutex::new(discovery::Registry::default()),
+            discovery_admission: tokio::sync::Semaphore::new(1),
             settings: ServiceSettings::new(required),
             gate: Mutex::new(None),
             cooldown: std::sync::Mutex::new(None),
@@ -417,6 +423,88 @@ pub async fn fanart_get_artist(
     Ok(fanart_artist(&value, &artist_mbid, &revision))
 }
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FanartAlbumResult {
+    mbid: String,
+    revision: String,
+    posters: Vec<ArtworkCandidate>,
+    backgrounds: Vec<ArtworkCandidate>,
+}
+#[tauri::command]
+pub async fn fanart_get_album(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<MetadataServicesState>>,
+    revision: String,
+    release_group_mbid: String,
+    artist_mbid: Option<String>,
+) -> Result<Option<FanartAlbumResult>, String> {
+    if !valid_mbid(&release_group_mbid) || artist_mbid.as_deref().is_some_and(|id| !valid_mbid(id))
+    {
+        return Err("Invalid MusicBrainz identity.".into());
+    }
+    if app
+        .state::<crate::commands::PlexState>()
+        .image_context()
+        .await
+        .client
+        .as_ref()
+        .is_some_and(|client| client.offline_only)
+    {
+        return Err("Fanart lookup is unavailable offline.".into());
+    }
+    let dir = directory(&app, Service::Fanart)?;
+    let connection = state.connection(Service::Fanart);
+    let (status, config) = connection.settings.snapshot(&dir).await?;
+    if status.revision != revision {
+        return Err("Metadata service configuration changed. Retry the lookup.".into());
+    }
+    if !status.enabled || !status.configured {
+        return Ok(None);
+    }
+    if base(&config.base_url)?.as_str() != FANART_BASE {
+        return Err("Fanart service configuration needs to be saved again.".into());
+    }
+    let Some(value) = connection
+        .get(
+            Service::Fanart,
+            &dir,
+            &revision,
+            &config,
+            &format!("music/albums/{}", release_group_mbid.to_lowercase()),
+            &[],
+        )
+        .await?
+    else {
+        return Ok(None);
+    };
+    let Some(parent) = value
+        .get("mbid_id")
+        .and_then(Value::as_str)
+        .filter(|id| valid_mbid(id))
+    else {
+        return Ok(None);
+    };
+    if artist_mbid
+        .as_deref()
+        .is_some_and(|id| !id.eq_ignore_ascii_case(parent))
+    {
+        return Ok(None);
+    }
+    let Some(item) = fanart_artist(&value, parent, &revision) else {
+        return Ok(None);
+    };
+    Ok(item
+        .albums
+        .into_iter()
+        .find(|album| album.mbid.eq_ignore_ascii_case(&release_group_mbid))
+        .map(|album| FanartAlbumResult {
+            mbid: album.mbid,
+            revision,
+            posters: album.posters,
+            backgrounds: vec![],
+        }))
+}
+#[derive(Serialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
 pub enum HeyaLookup {
     Ready { item: HeyaItem },
@@ -565,12 +653,128 @@ fn heya_item(
     {
         fields.insert("releaseDate".into(), json!(date));
     }
+    if kind == "artist" {
+        if let Some(area) = data
+            .get("areas")
+            .and_then(Value::as_array)
+            .and_then(|areas| {
+                areas
+                    .iter()
+                    .find(|area| area.get("role").and_then(Value::as_str) == Some("primary"))
+            })
+            .and_then(|area| area.get("name"))
+            .and_then(Value::as_str)
+            .filter(|name| !name.trim().is_empty() && name.chars().count() <= 512)
+        {
+            fields.insert("area".into(), json!(area));
+        }
+        if let Some(date) = data
+            .pointer("/lifecycle/dates")
+            .and_then(Value::as_array)
+            .and_then(|dates| {
+                dates
+                    .iter()
+                    .find(|date| date.get("type").and_then(Value::as_str) == Some("begin"))
+            })
+            .and_then(|date| date.get("value"))
+            .and_then(Value::as_str)
+            .filter(|date| {
+                [4, 7, 10].contains(&date.len())
+                    && date.bytes().enumerate().all(|(i, b)| {
+                        if i == 4 || i == 7 {
+                            b == b'-'
+                        } else {
+                            b.is_ascii_digit()
+                        }
+                    })
+            })
+        {
+            fields.insert("beginDate".into(), json!(date));
+        }
+    }
+    if let Some(id) = value
+        .get("external_ids")
+        .and_then(Value::as_array)
+        .and_then(|ids| {
+            ids.iter().find(|id| {
+                id.get("provider").and_then(Value::as_str) == Some("musicbrainz")
+                    && id.get("namespace").and_then(Value::as_str)
+                        == Some(if kind == "artist" {
+                            "artist"
+                        } else {
+                            "release_group"
+                        })
+            })
+        })
+        .and_then(|id| id.get("value"))
+        .and_then(Value::as_str)
+        .filter(|id| valid_mbid(id))
+    {
+        fields.insert("mbid".into(), json!(id));
+    }
+    if let Some(metrics) = data.get("metrics").and_then(Value::as_array) {
+        for metric in metrics.iter().take(128) {
+            let field = match metric.get("name").and_then(Value::as_str) {
+                Some("listeners") => "listeners",
+                Some("playcount") => "playCount",
+                Some("fan_count") => "fans",
+                _ => continue,
+            };
+            if fields.contains_key(field) {
+                continue;
+            }
+            let count = metric.get("value").and_then(Value::as_f64).filter(|count| {
+                count.is_finite()
+                    && *count >= 0.0
+                    && *count <= 9007199254740991.0
+                    && count.fract() == 0.0
+            });
+            if let Some(count) = count {
+                fields.insert(field.into(), json!(count as u64));
+                let provider = metric
+                    .get("provider")
+                    .and_then(Value::as_str)
+                    .filter(|provider| provider.len() <= 40)
+                    .unwrap_or("Canonical projection");
+                origins.insert(field.into(), format!("{provider} via HeyaMetadata"));
+            }
+        }
+    }
+    if let Some(links) = data.get("links").and_then(Value::as_array) {
+        for link in links.iter().take(128) {
+            let Some(url) = link
+                .get("url")
+                .and_then(Value::as_str)
+                .filter(|url| url.len() <= 2048)
+                .and_then(|url| url::Url::parse(url).ok())
+            else {
+                continue;
+            };
+            if url.scheme() == "https"
+                && url
+                    .host_str()
+                    .is_some_and(|host| host == "wikipedia.org" || host.ends_with(".wikipedia.org"))
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.port().is_none()
+                && url.query().is_none()
+                && url.fragment().is_none()
+            {
+                fields.insert("wikipediaUrl".into(), json!(url.to_string()));
+                break;
+            }
+        }
+    }
     for (field, key) in [
         (field, text_key),
         ("genres", "genres"),
         ("tags", "tags"),
         ("artistType", "classification.artist_type"),
         ("releaseDate", "dates"),
+        ("area", "areas"),
+        ("beginDate", "lifecycle"),
+        ("mbid", "external_ids"),
+        ("wikipediaUrl", "links"),
     ] {
         if fields.contains_key(field) {
             let providers = value
@@ -706,7 +910,19 @@ pub async fn heya_get_metadata(
     artist: String,
     title: Option<String>,
     mbid: Option<String>,
+    selected_id: Option<String>,
+    selected_connection_id: Option<String>,
 ) -> Result<HeyaLookup, String> {
+    if app
+        .state::<crate::commands::PlexState>()
+        .image_context()
+        .await
+        .client
+        .as_ref()
+        .is_some_and(|client| client.offline_only)
+    {
+        return Err("HeyaMetadata lookup is unavailable offline.".into());
+    }
     let kind = match kind.as_str() {
         "artist" => "artist",
         "album" => "release_group",
@@ -720,6 +936,74 @@ pub async fn heya_get_metadata(
         || mbid.as_deref().is_some_and(|id| !valid_mbid(id))
     {
         return Err("Invalid HeyaMetadata identity.".into());
+    }
+    if let Some(id) = selected_id {
+        if !valid_mbid(&id) {
+            return Err("Invalid canonical identity.".into());
+        }
+        let connection = state.connection(Service::Heya);
+        let dir = directory(&app, Service::Heya)?;
+        let (status, config) = connection.settings.snapshot(&dir).await?;
+        if status.revision != revision
+            || status.connection_id.as_deref() != selected_connection_id.as_deref()
+            || !status.enabled
+            || !status.configured
+            || selected_connection_id.is_none()
+        {
+            return Err(
+                "The reviewed HeyaMetadata connection changed. Review the identity again.".into(),
+            );
+        }
+        let Some(detail) = connection
+            .get(
+                Service::Heya,
+                &dir,
+                &revision,
+                &config,
+                &format!("api/v2/entities/{id}"),
+                &[],
+            )
+            .await?
+        else {
+            return Ok(HeyaLookup::Unavailable);
+        };
+        if detail.get("id").and_then(Value::as_str) != Some(id.as_str())
+            || detail.get("kind").and_then(Value::as_str) != Some(kind)
+        {
+            return Err("The canonical identity response did not match.".into());
+        }
+        let canonical_artist = detail
+            .pointer(if kind == "artist" {
+                "/display/name"
+            } else {
+                "/display/artist_credit"
+            })
+            .and_then(Value::as_str)
+            .ok_or("The canonical artist is unavailable.")?;
+        let canonical_title = detail
+            .pointer("/display/title")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let mut item = heya_item(
+            &detail,
+            &id,
+            kind,
+            canonical_artist,
+            canonical_title,
+            None,
+            &revision,
+        )
+        .ok_or("The canonical identity response did not match.")?;
+        item.artist = artist;
+        item.title = (kind != "artist").then_some(title);
+        let guard = connection.settings.publication_guard(&revision).await?;
+        connection.register_images(&item).await;
+        drop(guard);
+        let (current, _) = connection.settings.snapshot(&dir).await?;
+        if current.revision != revision {
+            return Err("Metadata service configuration changed. Retry the lookup.".into());
+        }
+        return Ok(HeyaLookup::Ready { item });
     }
     heya_lookup(
         state.connection(Service::Heya),
@@ -768,7 +1052,7 @@ mod tests {
         });
         (base, server)
     }
-    async fn configured(
+    pub(super) async fn configured(
         connection: &Connection,
         directory: &Path,
         url: String,

@@ -4,6 +4,16 @@ import react from "@vitejs/plugin-react"
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  // ONNX's official external-WASM entry prevents bundling a second runtime.
+  // The semantic worker always supplies its verified binary and self-hosted glue.
+  resolve: {
+    conditions: [
+      "onnxruntime-web-use-extern-wasm",
+      "module",
+      "browser",
+      "development|production",
+    ],
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   // prevent vite from obscuring rust errors

@@ -8,6 +8,9 @@ const dom = new JSDOM("<div id='root'></div>", {
 globalThis.window = dom.window as any
 globalThis.document = dom.window.document
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
+const { useMetadataIdentityStore } =
+  await import("../../src/stores/metadataIdentityStore")
+useMetadataIdentityStore.setState({ choices: {}, versions: {}, hydrated: true })
 const { createRoot } = await import("react-dom/client")
 const { ArtworkSourcePicker } =
   await import("../../src/components/shared/ArtworkSourcePicker")

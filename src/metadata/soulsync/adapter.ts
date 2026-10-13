@@ -1,4 +1,4 @@
-import { soulSyncArtist } from "./api"
+import { soulSyncArtist, soulSyncEntity } from "./api"
 import type { MetadataAdapter } from "../core/types"
 import type { SoulSyncStatus, SoulSyncArtist, SoulSyncLookup } from "./api"
 export function nativeSoulSyncAdapter(
@@ -7,11 +7,24 @@ export function nativeSoulSyncAdapter(
   lookup: (
     revision: string,
     artist: string
-  ) => Promise<SoulSyncArtist | SoulSyncLookup | null> = soulSyncArtist
+  ) => Promise<SoulSyncArtist | SoulSyncLookup | null> = soulSyncArtist,
+  lookupEntity: typeof soulSyncEntity = soulSyncEntity
 ): MetadataAdapter {
   return {
     id: "soulsync",
     fields: {
+      album: [
+        "summary",
+        "genres",
+        "tags",
+        "listeners",
+        "playCount",
+        "label",
+        "mbid",
+        "releaseDate",
+        "trackCount",
+      ],
+      track: ["summary", "tags", "listeners", "playCount", "mbid"],
       artist: [
         "biography",
         "artwork",
@@ -28,11 +41,50 @@ export function nativeSoulSyncAdapter(
     transportPolicy:
       "Native credential storage and shared 1 request/second GET-only transport.",
     async lookup(identity) {
-      if (identity.kind !== "artist") return { status: "unsupported" }
       if (!status?.enabled || !status.configured)
         return { status: "unavailable" }
       if (getStatus()?.revision !== status.revision)
         return { status: "retired" }
+      if (identity.kind !== "artist") {
+        const response = await lookupEntity(
+          status.revision,
+          identity.kind,
+          identity.artist,
+          identity.title ?? ""
+        )
+        if (getStatus()?.revision !== status.revision)
+          return { status: "retired" }
+        if (response.status === "ambiguous")
+          return {
+            status: "ambiguous",
+            candidates: response.candidates,
+            reason:
+              "Several SoulSync library records share this exact artist/title; no record was chosen.",
+          }
+        if (response.status !== "ready") return { status: "unavailable" }
+        if (
+          response.item.artist.trim().toLowerCase() !==
+            identity.artist.trim().toLowerCase() ||
+          response.item.title.trim().toLowerCase() !==
+            identity.title?.trim().toLowerCase()
+        )
+          return { status: "unavailable" }
+        return {
+          status: "ready",
+          snapshot: {
+            source: "soulsync",
+            identity: { ...identity },
+            fields: response.item.fields,
+            fieldOrigins: response.item.fieldOrigins,
+            match: {
+              kind: "exact-name",
+              reason:
+                "Unique exact artist/title library record and detail artist ownership verified.",
+            },
+            observedAt: Date.now(),
+          },
+        }
+      }
       const response = await lookup(status.revision, identity.artist)
       if (getStatus()?.revision !== status.revision)
         return { status: "retired" }

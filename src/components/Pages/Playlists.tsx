@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { LinkedPlaylistManager } from "../PlaylistSync/LinkedPlaylistManager"
 import { PlaylistCopyDialog } from "../PlaylistSync/PlaylistCopyDialog"
 import { PlaylistCopyReceipts } from "../PlaylistSync/PlaylistCopyReceipts"
 import { MediaCard } from "../MediaCard"
@@ -9,9 +10,11 @@ import { useContextMenu } from "../../hooks/useContextMenu"
 import { MediaGrid } from "../shared/MediaGrid"
 
 export function Playlists() {
-  const [copyView, setCopyView] = useState<"import" | "receipts" | null>(null)
-  const playlists = useLibraryStore(s => s.playlists)
-  const playPlaylist = usePlayerStore(useShallow(s => s.playPlaylist))
+  const [copyView, setCopyView] = useState<
+    "import" | "receipts" | "linked" | null
+  >(null)
+  const playlists = useLibraryStore((s) => s.playlists)
+  const playPlaylist = usePlayerStore(useShallow((s) => s.playPlaylist))
   const { handler: ctxMenu } = useContextMenu()
 
   const count = playlists.length
@@ -21,7 +24,13 @@ export function Playlists() {
       {/* Header */}
       <div className="flex flex-wrap items-center gap-5 px-8 py-6">
         <div className="flex h-32 w-32 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-700 to-purple-500 shadow-lg">
-          <svg aria-hidden="true" viewBox="0 0 24 24" width="56" height="56" fill="white">
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            width="56"
+            height="56"
+            fill="white"
+          >
             <path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z" />
           </svg>
         </div>
@@ -42,11 +51,43 @@ export function Playlists() {
       </div>
 
       <div className="mb-5 flex flex-wrap gap-2 px-8">
-        <button type="button" className="media-secondary" onClick={() => setCopyView("import")}>Import a copy from ListenBrainz</button>
-        <button type="button" className="media-secondary" onClick={() => setCopyView("receipts")}>Review copies</button>
+        <button
+          type="button"
+          className="media-secondary"
+          onClick={() => setCopyView("import")}
+        >
+          Import a copy from ListenBrainz
+        </button>
+        <button
+          type="button"
+          className="media-secondary"
+          onClick={() => setCopyView("receipts")}
+        >
+          Review copies
+        </button>
+        <button
+          type="button"
+          className="media-secondary"
+          onClick={() => setCopyView("linked")}
+        >
+          Linked sync
+        </button>
       </div>
-      {copyView === "import" && <PlaylistCopyDialog mode="import" onClose={() => setCopyView(null)} onCreated={() => useLibraryStore.getState().fetchPlaylists({ force: true })}/>}
-      {copyView === "receipts" && <PlaylistCopyReceipts onClose={() => setCopyView(null)}/>}
+      {copyView === "linked" && (
+        <LinkedPlaylistManager onClose={() => setCopyView(null)} />
+      )}
+      {copyView === "import" && (
+        <PlaylistCopyDialog
+          mode="import"
+          onClose={() => setCopyView(null)}
+          onCreated={() =>
+            useLibraryStore.getState().fetchPlaylists({ force: true })
+          }
+        />
+      )}
+      {copyView === "receipts" && (
+        <PlaylistCopyReceipts onClose={() => setCopyView(null)} />
+      )}
       {/* Playlist grid */}
       <div className="px-8 pt-2">
         {count === 0 ? (
@@ -55,7 +96,7 @@ export function Playlists() {
           </div>
         ) : (
           <MediaGrid>
-            {playlists.map(pl => {
+            {playlists.map((pl) => {
               const href = `/playlist/${pl.id}`
               return (
                 <MediaCard
@@ -65,7 +106,9 @@ export function Playlists() {
                   desc={`${pl.trackCount.toLocaleString()} ${pl.trackCount === 1 ? "song" : "songs"}`}
                   thumb={pl.thumbUrl}
                   onContextMenu={ctxMenu("playlist", pl)}
-                  onPlay={() => void playPlaylist(pl.id, pl.trackCount, pl.title, href)}
+                  onPlay={() =>
+                    void playPlaylist(pl.id, pl.trackCount, pl.title, href)
+                  }
                 />
               )
             })}

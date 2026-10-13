@@ -83,6 +83,14 @@ dialog.metadata-edit-dialog {
   height: min(540px, calc(90dvh - 222px));
   min-height: 180px;
 }
+.metadata-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+@media (max-width: 740px) {
+  .metadata-advanced-grid { grid-template-columns: minmax(0, 1fr); }
+}
 .metadata-edit-nav {
   display: flex;
   flex-direction: column;

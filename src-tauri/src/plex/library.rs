@@ -66,7 +66,9 @@ impl PlexClient {
     /// * `Result<LibrarySection>` - The library section
     #[instrument(skip(self))]
     pub async fn get_section(&self, section_id: i64) -> Result<LibrarySection> {
-        let url = self.build_url(&format!("/library/sections/{}", section_id));
+        // /sections/{id} is a browsing interstitial (Directory keys such as
+        // "all" and "genre"), not a LibrarySection record with its stable UUID.
+        let url = self.build_url("/library/sections");
         debug!("Fetching library section {} from {}", section_id, url);
 
         let container: MediaContainer<LibrarySection> = self
@@ -75,9 +77,10 @@ impl PlexClient {
             .with_context(|| format!("Failed to fetch library section {}", section_id))?;
 
         container
-            .metadata
+            .directory
             .into_iter()
-            .next()
+            .chain(container.metadata)
+            .find(|section| section.key == section_id)
             .context("Section not found")
     }
 

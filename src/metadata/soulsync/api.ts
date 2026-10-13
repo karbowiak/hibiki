@@ -32,3 +32,30 @@ export const soulSyncConfigure = (args: {
 }) => invoke<SoulSyncStatus>("soulsync_configure", args)
 export const soulSyncArtist = (revision: string, artist: string) =>
   invoke<SoulSyncLookup>("soulsync_artist", { revision, artist })
+
+export type SoulSyncEntityLookup =
+  | {
+      status: "ready"
+      item: {
+        artist: string
+        title: string
+        fields: Partial<import("../core/types").MetadataFields>
+        fieldOrigins: Partial<
+          Record<import("../core/types").MetadataField, string>
+        >
+      }
+    }
+  | { status: "unavailable" }
+  | { status: "ambiguous"; candidates: { id: string; name: string }[] }
+export const soulSyncEntity = (
+  revision: string,
+  kind: "album" | "track",
+  artist: string,
+  title: string
+) =>
+  invoke<SoulSyncEntityLookup>("soulsync_entity", {
+    revision,
+    kind,
+    artist,
+    title,
+  })

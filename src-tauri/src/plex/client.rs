@@ -109,6 +109,8 @@ pub struct PlexClient {
     pub client_id: String,
     pub machine_identifier: String,
     pub library_scope: String,
+    /// Restored cached-library contexts must never dispatch server requests.
+    pub offline_only: bool,
     pub client: ClientWithMiddleware,
     /// Separate reqwest client for `fetch_bytes` (audio download path).
     ///
@@ -260,6 +262,7 @@ impl PlexClient {
             client_id: config.client_id,
             machine_identifier: String::new(),
             library_scope: String::new(),
+            offline_only: false,
             client,
             media_client,
             artwork_client,
@@ -449,11 +452,34 @@ impl PlexClient {
 
     /// One explicit metadata write. Do not replay an unknown outcome.
     pub(crate) async fn put_metadata_params_once(&self, path: &str, params: &[(&str, &str)]) -> Result<()> {
-        let response = self.metadata_mutation_client.put(self.build_url(path))
+        self.mutate_params_once(reqwest::Method::PUT, path, params, None, None).await
+    }
+
+    /// A user-admitted mutation has exactly one HTTP attempt and cannot redirect.
+    pub(crate) async fn mutate_params_once(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        params: &[(&str, &str)],
+        body: Option<Vec<u8>>,
+        content_type: Option<&str>,
+    ) -> Result<()> {
+        if self.offline_only { anyhow::bail!("Reconnect to Plex before changing the library."); }
+        if !matches!(method, reqwest::Method::POST | reqwest::Method::PUT | reqwest::Method::DELETE) {
+            anyhow::bail!("Unsupported library mutation method.");
+        }
+        let mut request = self.metadata_mutation_client.request(method, self.build_endpoint_url(path))
             .header("X-Plex-Token", token_header(&self.token))
-            .header("Accept", "application/json").query(params).send().await
-            .map_err(|error| error.without_url()).context("Metadata save request failed")?;
-        if !response.status().is_success() { anyhow::bail!("Metadata save HTTP {}", response.status()); }
+            .header("Accept", "application/json").query(params);
+        if let Some(body) = body {
+            request = request.body(body);
+            if let Some(content_type) = content_type {
+                request = request.header(reqwest::header::CONTENT_TYPE, content_type);
+            }
+        }
+        let response = request.send().await
+            .map_err(|error| error.without_url()).context("Plex did not confirm the library change")?;
+        if !response.status().is_success() { anyhow::bail!("Plex did not confirm the library change (HTTP {})", response.status()); }
         Ok(())
     }
 
@@ -596,6 +622,13 @@ impl PlexClient {
             return None;
         }
         Some(self.artwork_client.get(target).header("X-Plex-Token", token_header(&self.token)))
+    }
+
+    /// Only the inventory registry may call this with a verified same-item image
+    /// route. The direct client has no redirects or retry middleware.
+    pub(crate) fn registered_artwork_request(&self, value: &str) -> reqwest::RequestBuilder {
+        self.metadata_mutation_client.get(value)
+            .header("X-Plex-Token", token_header(&self.token))
     }
 
     /// Fetch the raw response body bytes for a pre-built full URL.

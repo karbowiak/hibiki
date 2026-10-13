@@ -1,4 +1,5 @@
 //! Exact-identity public enrichment. No credentials, redirects, or name search.
+pub mod identity;
 use crate::http_response::{BoundedResponseExt, MAX_JSON_BYTES};
 use once_cell::sync::Lazy;
 use serde::Serialize;

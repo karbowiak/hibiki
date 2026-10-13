@@ -6,6 +6,8 @@ mod audio_engine;
 mod cache_files;
 mod commands;
 mod db;
+mod offline_commands;
+mod artwork_commands;
 mod deezer;
 mod genius;
 mod http_response;
@@ -142,6 +144,9 @@ async fn resolve_image(
     if metadata_services::is_heya_image(src) {
         return metadata_services::resolve_heya_image(app,src,context,cache,ticket,false).await.ok();
     }
+    if src.starts_with("plexartwork:") {
+        return artwork_commands::resolve_inventory_image(app, src, context, cache, ticket).await;
+    }
     let source_request = if src.is_empty() {
         None
     } else {
@@ -155,6 +160,11 @@ async fn resolve_image(
         image_protocol::cached_artwork(request, context, cache.clone(), ticket.clone()).await
     {
         return Some(bytes);
+    }
+
+    // Saved browsing reads verified local pixels only, including public sources.
+    if context.client.as_ref().is_some_and(|client| client.offline_only) {
+        return None;
     }
 
     // Try fetching from src URL
@@ -237,6 +247,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .manage(PlexState::new())
+        .manage(artwork_commands::ArtworkInventoryState::default())
         .manage(std::sync::Arc::new(soulsync::SoulSyncState::default()))
         .manage(std::sync::Arc::new(metadata_services::MetadataServicesState::default()))
         .manage(shutdown::ShutdownState::default())
@@ -354,6 +365,17 @@ pub fn run() {
             // Connection
             commands::connect_plex,
             commands::disconnect_plex,
+            offline_commands::restore_offline_context,
+            offline_commands::offline_cache_get,
+            offline_commands::offline_cache_put,
+            offline_commands::offline_cache_info,
+            offline_commands::offline_cache_clear,
+            offline_commands::offline_cache_invalidate,
+            offline_commands::semantic_documents,
+            offline_commands::semantic_put_vectors,
+            offline_commands::semantic_search,
+            offline_commands::semantic_info,
+            offline_commands::semantic_clear,
             // Library
             commands::get_library_sections,
             commands::search_library,
@@ -366,6 +388,10 @@ pub fn run() {
             commands::get_track,
             commands::get_artist,
             commands::get_album,
+            artwork_commands::get_library_artwork,
+            artwork_commands::save_library_artwork,
+            commands::get_advanced_metadata,
+            commands::edit_advanced_metadata,
             commands::get_artist_albums,
             commands::get_album_tracks,
             commands::get_artist_popular_tracks,
@@ -504,7 +530,17 @@ pub fn run() {
             metadata_services::metadata_service_status,
             metadata_services::metadata_service_configure,
             metadata_services::fanart_get_artist,
+            metadata_services::fanart_get_album,
+            soulsync::entities::soulsync_entity,
             metadata_services::heya_get_metadata,
+            metadata_services::identity::heya_search_identities,
+            metadata_services::identity::heya_review_identity,
+            metadata_services::discovery::heya_discovery_capability,
+            metadata_services::discovery::heya_discover,
+            metadata_services::discovery::heya_discovery_step,
+            metadata_services::discovery::heya_discovery_forget,
+            musicbrainz::musicbrainz_search_identities,
+            musicbrainz::musicbrainz_review_identity,
             public_metadata::wikidata_get_artist,
             public_metadata::coverartarchive_get_album,
             commands::musicbrainz_get_artist_info,
@@ -515,6 +551,8 @@ pub fn run() {
             playlist_sync::playlist_sync_listenbrainz_list,
             playlist_sync::playlist_sync_listenbrainz_read,
             playlist_sync::playlist_sync_listenbrainz_create,
+            playlist_sync::playlist_sync_listenbrainz_mutate,
+            commands::playlist_sync_plex_mutate,
             commands::listenbrainz_save_token,
             commands::listenbrainz_disconnect,
             commands::listenbrainz_set_enabled,

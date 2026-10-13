@@ -1,4 +1,5 @@
 //! Optional explicit SoulSync connection. No discovery, credential imports or mutations.
+pub(crate) mod entities;
 use crate::http_response::BoundedResponseExt;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -644,7 +645,7 @@ pub async fn soulsync_artist(
 mod tests {
     use super::*;
     use std::io::{Read, Write};
-    fn service(
+    pub(super) fn service(
         replies: Vec<(u16, String, Option<String>)>,
     ) -> (String, std::thread::JoinHandle<Vec<String>>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -675,7 +676,7 @@ mod tests {
         });
         (base, server)
     }
-    async fn configured(directory: &Path, base: String) -> (SoulSyncState, String) {
+    pub(super) async fn configured(directory: &Path, base: String) -> (SoulSyncState, String) {
         let state = SoulSyncState::default();
         state.load(directory).await.unwrap();
         let revision = state.current.lock().await.revision.clone();

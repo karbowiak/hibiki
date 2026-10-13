@@ -84,21 +84,18 @@ fn id(value: Option<&serde_json::Value>) -> Option<i64> {
         .filter(|value| *value > 0)
 }
 impl PlexClient {
-    pub async fn prepare_metadata_edit(
+    async fn validated_metadata_item(
         &self,
         section_id: i64,
         item_id: i64,
         kind: MetadataEditKind,
-        patch: &MetadataEditPatch,
-        expected: &MetadataEditExpected,
-    ) -> Result<PreparedMetadataEdit> {
-        if section_id <= 0 || item_id <= 0 {
-            bail!("Plex library and item IDs must be positive.");
+    ) -> Result<serde_json::Value> {
+        if self.offline_only || section_id <= 0 || item_id <= 0 {
+            bail!("Reconnect to the Plex music library.");
         }
-        patch.validate(kind, expected)?;
         let sections: MediaContainer<LibrarySection> = tokio::time::timeout(
             Duration::from_secs(20),
-            self.get(&format!("/library/sections/{section_id}")),
+            self.get("/library/sections"),
         )
         .await
         .context("Plex library verification timed out.")?
@@ -106,6 +103,7 @@ impl PlexClient {
         let section = sections
             .directory
             .iter()
+            .chain(sections.metadata.iter())
             .find(|section| section.key == section_id)
             .context("Plex music library was not found.")?;
         if section.section_type != "artist" {
@@ -143,6 +141,68 @@ impl PlexClient {
         {
             bail!("Plex item identity or library does not match the edit.");
         }
+        Ok(item.clone())
+    }
+    pub async fn verify_metadata_edit(
+        &self,
+        section_id: i64,
+        item_id: i64,
+        kind: MetadataEditKind,
+        patch: &MetadataEditPatch,
+    ) -> Result<()> {
+        let item = self
+            .validated_metadata_item(section_id, item_id, kind)
+            .await?;
+        let fields = item
+            .get("Field")
+            .and_then(serde_json::Value::as_array)
+            .context("Plex omitted metadata lock proof.")?;
+        if fields.len() > 128 {
+            bail!("Plex metadata lock proof exceeds bounds.");
+        }
+        for (_, field, wanted) in patch.fields() {
+            let actual = item.get(field);
+            let confirmed = actual.and_then(serde_json::Value::as_str) == Some(wanted)
+                || (wanted.is_empty()
+                    && field != "title"
+                    && (actual.is_none() || actual == Some(&serde_json::Value::Null)));
+            if !confirmed {
+                bail!("Plex did not confirm the requested metadata value.");
+            }
+            let matching: Vec<_> = fields
+                .iter()
+                .filter(|value| {
+                    value.get("name").and_then(serde_json::Value::as_str) == Some(field)
+                })
+                .collect();
+            if matching.len() != 1 {
+                bail!("Plex did not confirm the metadata lock.");
+            }
+            let locked = matching[0].get("locked");
+            if !(locked == Some(&serde_json::Value::Bool(true))
+                || locked == Some(&serde_json::json!(1))
+                || locked == Some(&serde_json::json!("1")))
+            {
+                bail!("Plex did not confirm the metadata lock.");
+            }
+        }
+        Ok(())
+    }
+    pub async fn prepare_metadata_edit(
+        &self,
+        section_id: i64,
+        item_id: i64,
+        kind: MetadataEditKind,
+        patch: &MetadataEditPatch,
+        expected: &MetadataEditExpected,
+    ) -> Result<PreparedMetadataEdit> {
+        if section_id <= 0 || item_id <= 0 {
+            bail!("Plex library and item IDs must be positive.");
+        }
+        patch.validate(kind, expected)?;
+        let item = self
+            .validated_metadata_item(section_id, item_id, kind)
+            .await?;
         let mut params = vec![
             ("id".into(), item_id.to_string()),
             (
@@ -262,7 +322,7 @@ mod tests {
             .unwrap();
         client.save_metadata_edit(edit).await.unwrap();
         let requests = server.join().unwrap();
-        assert!(requests[0].starts_with("GET /proxy/library/sections/5?"));
+        assert!(requests[0].starts_with("GET /proxy/library/sections?"));
         let target = requests[2].split_whitespace().nth(1).unwrap();
         let url = url::Url::parse(&format!("http://synthetic.test{target}")).unwrap();
         assert_eq!(url.path(), "/proxy/library/sections/5/all");

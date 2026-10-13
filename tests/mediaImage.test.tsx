@@ -1,3 +1,4 @@
+import { useMetadataIdentityStore } from "../src/stores/metadataIdentityStore"
 import { resolve } from "node:path"
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test"
 import { JSDOM } from "jsdom"
@@ -71,6 +72,11 @@ async function render(
   })
 }
 beforeEach(() => {
+  useMetadataIdentityStore.setState({
+    choices: {},
+    versions: {},
+    hydrated: true,
+  })
   useHeyaServiceStore.setState({ status: null })
   useHeyaArtworkStore.setState({
     artists: {},
@@ -813,4 +819,61 @@ test("late Fanart hydration replaces old-service positive through actual validat
     new Response(child.stderr).text(),
   ])
   expect({ status, output: output + errors }).toEqual({ status: 0, output: "" })
+})
+
+test("offline explicit Heya UUID restores only its managed cache target without metadata requests", async () => {
+  const scope = "synthetic-account-library-a",
+    revision = "22222222-2222-4222-8222-222222222222",
+    id = "11111111-1111-4111-8111-111111111111"
+  useProviderStore.setState({
+    provider: { cacheScope: scope, isOffline: true } as any,
+  })
+  useHeyaServiceStore.setState({
+    status: {
+      revision,
+      baseUrl: "https://synthetic.test/",
+      enabled: true,
+      configured: true,
+      hasApiKey: false,
+    },
+  })
+  useHeyaArtworkStore.setState({
+    artists: {},
+    albums: {},
+    getArtist: async () => {
+      requests.push("unexpected-heya")
+      return null
+    },
+    getAlbum: async () => {
+      requests.push("unexpected-heya")
+      return null
+    },
+  })
+  const key = artworkPreferenceKey(scope, "artist", "Artist")!
+  useArtworkPreferenceStore.getState().setCandidate(key, "heya", id)
+  await render()
+  const values = () =>
+    JSON.parse(document.querySelector("output")!.textContent!)
+  const target = values().image
+  const ref = new URL(new URL(target).searchParams.get("src")!)
+  expect(ref.hostname).toBe("image")
+  expect(ref.pathname).toBe(`/${id}`)
+  expect(ref.searchParams.get("serviceRevision")).toBe(revision)
+  expect(new URL(target).searchParams.get("scope")).toBe(scope)
+  expect(requests).toEqual([])
+  await render({ failures: [target] })
+  expect(values().image).toBe("plex-art")
+  expect(requests).toEqual([])
+  await act(() =>
+    useArtworkPreferenceStore.getState().setCandidate(key, "heya", "invalid-id")
+  )
+  await render()
+  expect(values().image).toBe("plex-art")
+  expect(requests).toEqual([])
+  await act(() =>
+    useProviderStore.setState({
+      provider: { cacheScope: "other", isOffline: true } as any,
+    })
+  )
+  expect(values().image).toBe("plex-art")
 })

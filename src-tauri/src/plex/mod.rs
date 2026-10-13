@@ -28,6 +28,7 @@
 
 pub mod audio;
 pub mod artwork;
+pub mod artwork_inventory;
 pub mod auth;
 pub mod client;
 pub mod cache_scope;
@@ -37,8 +38,10 @@ pub mod discovery;
 pub mod history;
 pub mod library;
 pub mod metadata_edit;
+pub mod metadata_advanced;
 pub mod models;
 pub mod playlist;
+pub mod playlist_sync_edit;
 pub mod playqueue;
 pub mod server;
 pub mod streaming;

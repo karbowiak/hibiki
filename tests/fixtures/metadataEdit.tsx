@@ -301,11 +301,11 @@ await act(async () => {
   await flush()
 })
 assert.equal(
-  button("Metadata sources").getAttribute("aria-selected"),
+  button("Identity").getAttribute("aria-selected"),
   "true",
   "Child tab keyboard handler must run through dialog containment"
 )
-assert.equal(document.activeElement, button("Metadata sources"))
+assert.equal(document.activeElement, button("Identity"))
 await click("Metadata sources")
 assert.equal(
   document.querySelector("img"),

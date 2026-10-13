@@ -1,3 +1,6 @@
+import { useReviewedArtwork } from "./useReviewedArtwork"
+import { useMetadataIdentityStore } from "../stores/metadataIdentityStore"
+import { resolveMetadataIdentity } from "../metadata/identity/resolve"
 /**
  * Priority-aware image resolution hooks.
  *
@@ -155,8 +158,28 @@ export function useArtistArtwork(
   allowFetch = true,
   role: ArtworkRole = "poster"
 ): ArtworkResolution {
+  const offline = useProviderStore((state) => state.provider?.isOffline)
+  allowFetch = allowFetch && !offline
   const { priority, preference, scope, revise, savedCandidate } =
     useArtworkOrder("artist", artistName, undefined, role)
+
+  useMetadataIdentityStore((state) => state.choices)
+  useMetadataIdentityStore((state) => state.versions)
+  useMetadataIdentityStore((state) => state.hydrated)
+  const originalIdentity =
+    scope && artistName
+      ? {
+          kind: "artist" as const,
+          artist: artistName,
+          entityId: artistId ?? undefined,
+          scope,
+        }
+      : undefined
+  const reviewedIdentity = originalIdentity
+    ? resolveMetadataIdentity(originalIdentity)
+    : null
+  allowFetch = allowFetch && !!reviewedIdentity?.ready
+  artistName = reviewedIdentity?.lookupArtist ?? artistName
 
   plexThumb = revise(plexThumb)
   const plexTarget = plexThumb
@@ -174,7 +197,9 @@ export function useArtistArtwork(
   const getDeezerArtist = useDeezerMetadataStore((s) => s.getArtist)
   const deezerHydrated = useDeezerMetadataStore((s) => s._hasHydrated)
 
-  const rawDeezerUrl = deezerEntry?.data?.image_url ?? null
+  const rawDeezerUrl = reviewedIdentity?.ready
+    ? (deezerEntry?.data?.image_url ?? null)
+    : null
   const deezerUrl =
     rawDeezerUrl &&
     !failedUrls.includes(
@@ -204,7 +229,8 @@ export function useArtistArtwork(
       shouldWarmSource(priority, "fanart", {
         plex: plexThumb,
         deezer: deezerUrl,
-      })
+      }),
+    originalIdentity
   )
   const heya = useHeyaArtwork(
     "artist",
@@ -219,7 +245,11 @@ export function useArtistArtwork(
         plex: plexThumb,
         fanart: fanart.images[0]?.url ?? null,
         deezer: deezerUrl,
-      })
+      }),
+    originalIdentity,
+    preference === "heya" && savedCandidate?.source === "heya"
+      ? savedCandidate.id
+      : undefined
   )
   // Warm the Deezer cache when this artist hasn't been fetched yet.
   // Gate on hydration to avoid firing fetches before IndexedDB data loads.
@@ -239,6 +269,7 @@ export function useArtistArtwork(
     void getDeezerArtist(artistName)
   }, [
     allowFetch,
+    reviewedIdentity?.lease,
     priority,
     plexThumb,
     deezerHydrated,
@@ -309,8 +340,36 @@ export function useAlbumArtwork(
   allowFetch = true,
   role: ArtworkRole = "poster"
 ): ArtworkResolution {
+  const offline = useProviderStore((state) => state.provider?.isOffline)
+  allowFetch = allowFetch && !offline
   const { priority, preference, scope, revise, savedCandidate } =
     useArtworkOrder("album", artistName, albumName, role)
+
+  useMetadataIdentityStore((state) => state.choices)
+  useMetadataIdentityStore((state) => state.versions)
+  useMetadataIdentityStore((state) => state.hydrated)
+  const originalIdentity =
+    scope && artistName
+      ? {
+          kind: "album" as const,
+          artist: artistName,
+          title: albumName ?? undefined,
+          entityId: albumId ?? undefined,
+          scope,
+        }
+      : undefined
+  const reviewedCaa = useReviewedArtwork(
+    "coverartarchive",
+    originalIdentity ?? null,
+    allowFetch &&
+      shouldWarmSource(priority, "coverartarchive", { plex: plexThumb })
+  )
+  const reviewedIdentity = originalIdentity
+    ? resolveMetadataIdentity(originalIdentity)
+    : null
+  allowFetch = allowFetch && !!reviewedIdentity?.ready
+  artistName = reviewedIdentity?.lookupArtist ?? artistName
+  albumName = reviewedIdentity?.lookupTitle ?? albumName
 
   plexThumb = revise(plexThumb)
   const plexTarget = plexThumb
@@ -338,7 +397,11 @@ export function useAlbumArtwork(
   const caaInvalid =
     !!caaEntry?.data &&
     !albumMatches(caaEntry.data, artistName ?? "", albumName ?? "")
-  const rawCaaUrl = !caaInvalid ? (caaEntry?.data?.cover_url ?? null) : null
+  const rawCaaUrl = reviewedIdentity?.choice
+    ? (reviewedCaa.data?.posters[0]?.url ?? null)
+    : !caaInvalid
+      ? (caaEntry?.data?.cover_url ?? null)
+      : null
   const caaTarget = rawCaaUrl
     ? revise(
         buildImageUrl(
@@ -367,9 +430,10 @@ export function useAlbumArtwork(
     !!itunesEntry &&
     itunesEntry.data !== null &&
     !albumMatches(itunesEntry.data, artistName ?? "", albumName ?? "")
-  const rawDeezerUrl = !deezerInvalid
-    ? (deezerEntry?.data?.cover_url ?? null)
-    : null
+  const rawDeezerUrl =
+    reviewedIdentity?.ready && !deezerInvalid
+      ? (deezerEntry?.data?.cover_url ?? null)
+      : null
   const deezerUrl =
     rawDeezerUrl &&
     !failedUrls.includes(
@@ -386,9 +450,10 @@ export function useAlbumArtwork(
     )
       ? rawDeezerUrl
       : null
-  const rawAppleUrl = !appleInvalid
-    ? (itunesEntry?.data?.cover_url ?? null)
-    : null
+  const rawAppleUrl =
+    reviewedIdentity?.ready && !appleInvalid
+      ? (itunesEntry?.data?.cover_url ?? null)
+      : null
   const appleUrl =
     rawAppleUrl &&
     !failedUrls.includes(
@@ -420,7 +485,8 @@ export function useAlbumArtwork(
         deezer: deezerUrl,
         apple: appleUrl,
         coverartarchive: caaUrl,
-      })
+      }),
+    originalIdentity
   )
   const heya = useHeyaArtwork(
     "album",
@@ -437,7 +503,11 @@ export function useAlbumArtwork(
         deezer: deezerUrl,
         apple: appleUrl,
         coverartarchive: caaUrl,
-      })
+      }),
+    originalIdentity,
+    preference === "heya" && savedCandidate?.source === "heya"
+      ? savedCandidate.id
+      : undefined
   )
   // Warm caches when entries are missing.
   // Gate on hydration to avoid firing fetches before IndexedDB data loads.
@@ -469,6 +539,7 @@ export function useAlbumArtwork(
     )
       void getItunesAlbum(artistName, albumName)
     if (
+      !reviewedIdentity?.choice &&
       caaHydrated &&
       (caaEntry === undefined || caaInvalid) &&
       shouldWarmSource(priority, "coverartarchive", {
@@ -482,6 +553,7 @@ export function useAlbumArtwork(
       void getCaaAlbum(artistName, albumName)
   }, [
     allowFetch,
+    reviewedIdentity?.lease,
     priority,
     artistName,
     albumName,
@@ -538,7 +610,10 @@ export function useAlbumArtwork(
     },
     (preference === "deezer" && (!deezerHydrated || deezerPending)) ||
       (preference === "apple" && (!itunesHydrated || applePending)) ||
-      (preference === "coverartarchive" && (!caaHydrated || caaPending)) ||
+      (preference === "coverartarchive" &&
+        (reviewedIdentity?.choice
+          ? reviewedCaa.pending
+          : !caaHydrated || caaPending)) ||
       (preference === "fanart" && fanart.pending) ||
       (preference === "heya" && heya.pending),
     {

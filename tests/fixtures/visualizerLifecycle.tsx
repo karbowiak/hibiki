@@ -76,7 +76,9 @@ mock.module("@tauri-apps/api/core", () => ({
   invoke: async () => undefined,
 }))
 mock.module("idb-keyval", () => ({
+  createStore: () => () => Promise.resolve(),
   get: async () => undefined,
+  set: async () => {},
   update: async () => {},
   del: async () => {},
 }))

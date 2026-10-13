@@ -8,3 +8,7 @@ export * from "./provider"
 export * from "./journal"
 export * from "./lastfm"
 export * from "./conflicts"
+
+export * from "./linked"
+export * from "./linkedExecution"
+export * from "./linkedJournal"

@@ -7,19 +7,20 @@ import {
 } from "./types"
 const KEY = "attempts-v1"
 let database: ReturnType<typeof createStore> | undefined
-function store() {
+export function playlistJournalDatabase() {
   return (database ??= createStore("hibiki-playlist-sync", "attempts"))
 }
 /** Only token-free receipts are retained. Unknown outcomes are never automatically evicted or retried. */
 export const playlistAttemptJournal: PlaylistAttemptJournal = {
-  list: async () => (await get<PlaylistAttempt[]>(KEY, store())) ?? [],
+  list: async () =>
+    (await get<PlaylistAttempt[]>(KEY, playlistJournalDatabase())) ?? [],
   save: async (attempt) => {
     await update<PlaylistAttempt[]>(
       KEY,
       (previous) => {
         return mergePlaylistAttempt(previous ?? [], attempt)
       },
-      store()
+      playlistJournalDatabase()
     )
   },
 }

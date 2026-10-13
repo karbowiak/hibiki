@@ -12,6 +12,9 @@ globalThis.document = dom.window.document
 globalThis.window = dom.window as any
 globalThis.localStorage = dom.window.localStorage
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
+const { useMetadataIdentityStore } =
+  await import("../../src/stores/metadataIdentityStore")
+useMetadataIdentityStore.setState({ choices: {}, versions: {}, hydrated: true })
 const { createRoot } = await import("react-dom/client")
 const root = createRoot(document.getElementById("root")!)
 const timers = new Map<number, () => void>()
@@ -126,6 +129,10 @@ try {
     callback()
     assert.equal(player.getState().playerError, null)
   } else {
+    const { useProviderStore } = await import("../../src/stores/providerStore")
+    useProviderStore
+      .getState()
+      .setProvider({ cacheScope: "synthetic/library", capabilities: {} } as any)
     const { SimilarArtistAvatar } =
       await import("../../src/components/Pages/Artist")
     if (scenario === "disabled") {

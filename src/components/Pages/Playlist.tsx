@@ -1,4 +1,5 @@
 import { MetadataEditDialog } from "../shared/MetadataEditDialog"
+import { LinkedPlaylistManager } from "../PlaylistSync/LinkedPlaylistManager"
 import { PlaylistCopyDialog } from "../PlaylistSync/PlaylistCopyDialog"
 import type { MusicTrack } from "../../types/music"
 import { ArtworkImage } from "../shared/ArtworkImage"
@@ -15,7 +16,10 @@ import { useShallow } from "zustand/react/shallow"
 import { useLibraryStore, usePlayerStore, useUIStore } from "../../stores"
 import { useProviderStore } from "../../stores/providerStore"
 import { formatTotalMs } from "../../lib/formatters"
-import { useContextMenuStore, type ContextAction } from "../../stores/contextMenuStore"
+import {
+  useContextMenuStore,
+  type ContextAction,
+} from "../../stores/contextMenuStore"
 import { useTableSort } from "../../hooks/useTableSort"
 import { RichText } from "../RichText"
 import "../../styles/media-detail-controls.css"
@@ -36,6 +40,7 @@ const ROW_HEIGHT_PX = 40
 const EMPTY_ITEMS: MusicTrack[] = []
 
 export function Playlist({ playlistId }: { playlistId: string }) {
+  const [showLinked, setShowLinked] = useState(false)
   const [showCopy, setShowCopy] = useState(false)
   const [showEdit, setShowEdit] = useState(false)
   const ownedMenuActions = useRef<ContextAction[]>([])
@@ -212,7 +217,12 @@ export function Playlist({ playlistId }: { playlistId: string }) {
     return () => {
       view.active = false
       const menu = useContextMenuStore.getState()
-      if (menu.extraActions?.some(action => ownedMenuActions.current.includes(action))) menu.close()
+      if (
+        menu.extraActions?.some((action) =>
+          ownedMenuActions.current.includes(action)
+        )
+      )
+        menu.close()
       ownedMenuActions.current = []
     }
   }, [playlistId, pageRefreshKey, provider])
@@ -469,11 +479,44 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                   onClick={(e) => {
                     e.stopPropagation()
                     const rect = e.currentTarget.getBoundingClientRect()
-                    const pageOwner = viewRef.current, scope = provider?.cacheScope, session = provider?.playbackSession
-                    const current = () => pageOwner?.active && useProviderStore.getState().provider === provider && provider?.cacheScope === scope && provider?.playbackSession === session
+                    const pageOwner = viewRef.current,
+                      scope = provider?.cacheScope,
+                      session = provider?.playbackSession
+                    const current = () =>
+                      pageOwner?.active &&
+                      useProviderStore.getState().provider === provider &&
+                      provider?.cacheScope === scope &&
+                      provider?.playbackSession === session
                     const actions: ContextAction[] = [
-                      { label: "Export a private copy", run: () => { if (current()) setShowCopy(true) } },
-                      ...(provider?.capabilities.playlistEdit && !currentPlaylist.smart ? [{ label: "Edit playlist", run: () => { if (current()) setShowEdit(true) } }] : []),
+                      ...(provider?.mutatePlaylistOccurrence &&
+                      !provider.isOffline &&
+                      !currentPlaylist.smart
+                        ? [
+                            {
+                              label: "Linked sync",
+                              run: () => {
+                                if (current()) setShowLinked(true)
+                              },
+                            },
+                          ]
+                        : []),
+                      {
+                        label: "Export a private copy",
+                        run: () => {
+                          if (current()) setShowCopy(true)
+                        },
+                      },
+                      ...(provider?.capabilities.playlistEdit &&
+                      !currentPlaylist.smart
+                        ? [
+                            {
+                              label: "Edit playlist",
+                              run: () => {
+                                if (current()) setShowEdit(true)
+                              },
+                            },
+                          ]
+                        : []),
                     ]
                     ownedMenuActions.current = actions
                     useContextMenuStore
@@ -509,8 +552,33 @@ export function Playlist({ playlistId }: { playlistId: string }) {
         </div>
       </div>
 
-      {showEdit && <MetadataEditDialog key={`playlist:${playlistId}:${provider?.cacheScope ?? ""}`} kind="playlist" item={currentPlaylist} onClose={() => setShowEdit(false)} onSaved={() => { invalidatePlaylistItems(playlistId); void fetchPlaylistItems(playlistId) }}/>}
-      {showCopy && <PlaylistCopyDialog key={`${playlistId}:${provider?.cacheScope ?? ""}`} mode="export" playlistId={playlistId} onClose={() => setShowCopy(false)}/>}
+      {showEdit && (
+        <MetadataEditDialog
+          key={`playlist:${playlistId}:${provider?.cacheScope ?? ""}`}
+          kind="playlist"
+          item={currentPlaylist}
+          onClose={() => setShowEdit(false)}
+          onSaved={() => {
+            invalidatePlaylistItems(playlistId)
+            void fetchPlaylistItems(playlistId)
+          }}
+        />
+      )}
+      {showLinked && (
+        <LinkedPlaylistManager
+          key={`linked:${playlistId}:${provider?.cacheScope ?? ""}`}
+          playlistId={playlistId}
+          onClose={() => setShowLinked(false)}
+        />
+      )}
+      {showCopy && (
+        <PlaylistCopyDialog
+          key={`${playlistId}:${provider?.cacheScope ?? ""}`}
+          mode="export"
+          playlistId={playlistId}
+          onClose={() => setShowCopy(false)}
+        />
+      )}
 
       <dl
         className="media-ledger playlist-overview"

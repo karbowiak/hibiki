@@ -21,7 +21,22 @@ export interface LibraryMetadataPatch {
   sortTitle?: string
   releaseDate?: string
 }
-export type LibraryMetadataExpected = Partial<Record<keyof LibraryMetadataPatch, string | null>>
+export type LibraryMetadataExpected = Partial<
+  Record<keyof LibraryMetadataPatch, string | null>
+>
+export interface LibraryArtworkInventory {
+  baseline: string
+  candidates: { id: string; sourceUrl: string | null; label: string; selected: boolean }[]
+}
+
+export interface PlaylistOccurrenceState {
+  title: string
+  items: { trackId: string; occurrenceId: string }[]
+}
+export type PlaylistOccurrenceMutation =
+  | { kind: "append"; trackId: string }
+  | { kind: "move"; from: number; to: number }
+  | { kind: "delete"; index: number }
 
 export interface ProviderCapabilities {
   search: boolean
@@ -77,13 +92,15 @@ export interface LyricLineData {
 }
 
 export interface LyricsSource {
-  id: string           // "plex" | "genius-{songId}"
-  label: string        // "Plex" | song title from Genius
+  id: string // "plex" | "genius-{songId}"
+  label: string // "Plex" | song title from Genius
   lines: LyricLineData[]
-  isSynced: boolean    // true=timed (Plex), false=plain (Genius)
+  isSynced: boolean // true=timed (Plex), false=plain (Genius)
 }
 
 export interface MusicProvider {
+  /** Cached-library browsing does not claim a live server connection. */
+  readonly isOffline?: boolean
   /** Runtime identity changes when this provider revokes or replaces its connection. */
   readonly playbackSession?: unknown
   readonly name: string
@@ -97,7 +114,10 @@ export interface MusicProvider {
   isConnected(): boolean
 
   // --- Browse ---
-  search(query: string, type?: "track" | "album" | "artist"): Promise<MusicItem[]>
+  search(
+    query: string,
+    type?: "track" | "album" | "artist"
+  ): Promise<MusicItem[]>
   getRecentlyAdded(type?: string, limit?: number): Promise<MusicItem[]>
   /** Albums ordered by original release date, independently of library import date. */
   getLatestReleases?(limit?: number): Promise<MusicAlbum[]>
@@ -107,22 +127,59 @@ export interface MusicProvider {
   getTrack(id: string): Promise<MusicTrack>
   getAlbum(id: string): Promise<MusicAlbum>
   getArtist(id: string): Promise<MusicArtist>
-  editMetadata?(kind: "artist" | "album", itemId: string, patch: LibraryMetadataPatch, expected: LibraryMetadataExpected): Promise<void>
+  editMetadata?(
+    kind: "artist" | "album",
+    itemId: string,
+    patch: LibraryMetadataPatch,
+    expected: LibraryMetadataExpected
+  ): Promise<void>
+  getAdvancedMetadata?(kind: "artist" | "album", itemId: string): Promise<import("../lib/metadataAdvanced").AdvancedMetadata>
+  editAdvancedMetadata?(kind: "artist" | "album", itemId: string, patch: import("../lib/metadataAdvanced").AdvancedMetadataPatch): Promise<void>
+  getArtworkInventory?(kind: "artist" | "album", itemId: string, role: "poster" | "background"): Promise<LibraryArtworkInventory>
+  saveArtwork?(kind: "artist" | "album", itemId: string, role: "poster" | "background", baseline: string,
+    change: { choice: string } | { upload: number[] }): Promise<LibraryArtworkInventory>
   getAlbumTracks(albumId: string): Promise<MusicTrack[]>
-  getArtistAlbums(artistId: string, formatFilter?: string): Promise<MusicAlbum[]>
-  getArtistPopularTracks(artistId: string, limit?: number): Promise<MusicTrack[]>
+  getArtistAlbums(
+    artistId: string,
+    formatFilter?: string
+  ): Promise<MusicAlbum[]>
+  getArtistPopularTracks(
+    artistId: string,
+    limit?: number
+  ): Promise<MusicTrack[]>
   getArtistSimilar(artistId: string): Promise<MusicArtist[]>
   getRelatedHubs(itemId: string): Promise<MusicHub[]>
 
   // --- Playlists ---
   getPlaylists(): Promise<MusicPlaylist[]>
-  getPlaylistItems(playlistId: string, offset?: number, limit?: number): Promise<PagedResult<MusicTrack>>
+  getPlaylistItems(
+    playlistId: string,
+    offset?: number,
+    limit?: number
+  ): Promise<PagedResult<MusicTrack>>
   createPlaylist(title: string, itemIds: string[]): Promise<MusicPlaylist>
+  /** One preflighted, non-retrying occurrence mutation for explicitly linked sync. */
+  mutatePlaylistOccurrence?(
+    playlistId: string,
+    expected: PlaylistOccurrenceState,
+    operation: PlaylistOccurrenceMutation
+  ): Promise<PlaylistOccurrenceState>
   addToPlaylist(playlistId: string, itemIds: string[]): Promise<void>
-  removeFromPlaylist(playlistId: string, playlistItemIds: string[]): Promise<void>
+  removeFromPlaylist(
+    playlistId: string,
+    playlistItemIds: string[]
+  ): Promise<void>
   deletePlaylist(playlistId: string): Promise<void>
-  editPlaylist(playlistId: string, title?: string, summary?: string): Promise<void>
-  movePlaylistItem(playlistId: string, itemId: string, afterItemId: string): Promise<void>
+  editPlaylist(
+    playlistId: string,
+    title?: string,
+    summary?: string
+  ): Promise<void>
+  movePlaylistItem(
+    playlistId: string,
+    itemId: string,
+    afterItemId: string
+  ): Promise<void>
 
   // --- Liked ---
   getLikedTracks(limit?: number): Promise<MusicTrack[]>
@@ -132,34 +189,89 @@ export interface MusicProvider {
   // --- Playback ---
   getStreamUrl(track: MusicTrack): Promise<string>
   getPlaybackInfo(track: MusicTrack): Promise<TrackPlaybackInfo>
-  getTranscodePlaybackInfo?(track: MusicTrack, bitrate?: number, codec?: string): Promise<TrackPlaybackInfo>
+  getTranscodePlaybackInfo?(
+    track: MusicTrack,
+    bitrate?: number,
+    codec?: string
+  ): Promise<TrackPlaybackInfo>
   rate(itemId: string, rating: number | null): Promise<void>
   markPlayed(trackId: string): Promise<void>
-  reportProgress(trackId: string, positionMs: number, state: string, duration: number): Promise<void>
+  reportProgress(
+    trackId: string,
+    positionMs: number,
+    state: string,
+    duration: number
+  ): Promise<void>
 
   // --- Optional (capability-gated) ---
   getStreamLevels?(streamId: number, subSample?: number): Promise<LevelData[]>
   getLyrics?(trackId: string): Promise<LyricLineData[]>
   getTags?(tagType: string): Promise<{ tag: string; count: number | null }[]>
-  getItemsByTag?(tagType: string, tagName: string, type?: string, limit?: number, offset?: number): Promise<PagedResult<MusicItem>>
+  getItemsByTag?(
+    tagType: string,
+    tagName: string,
+    type?: string,
+    limit?: number,
+    offset?: number
+  ): Promise<PagedResult<MusicItem>>
   getMixTracks?(mixKey: string): Promise<MusicTrack[]>
   getSectionStations?(): Promise<MusicHub[]>
   getArtistStations?(artistId: string): Promise<MusicPlaylist[]>
 
   // --- Plex-specific optional methods (sonic/radio/queue) ---
-  createRadioQueue?(seedId: string, seedType: string, degreesOfSeparation?: number): Promise<{ queueId: number; tracks: MusicTrack[] }>
-  createSmartShuffleQueue?(seedId: string, seedType: string, djMode?: string, degreesOfSeparation?: number): Promise<{ queueId: number; tracks: MusicTrack[] }>
-  createPlayQueue?(uri: string, shuffle?: boolean, repeat?: number): Promise<{ queueId: number; tracks: MusicTrack[] }>
-  computeSonicPath?(startId: string, endId: string, count?: number): Promise<MusicTrack[]>
-  getSonicallySimilar?(itemId: string, limit?: number, maxDistance?: number): Promise<MusicArtist[]>
-  getArtistSonicallySimilar?(artistId: string, limit?: number, maxDistance?: number): Promise<MusicArtist[]>
-  getArtistPopularTracksInSection?(artistId: string, limit?: number): Promise<MusicTrack[]>
-  getArtistAlbumsInSection?(artistId: string, formatFilter?: string): Promise<MusicAlbum[]>
+  createRadioQueue?(
+    seedId: string,
+    seedType: string,
+    degreesOfSeparation?: number
+  ): Promise<{ queueId: number; tracks: MusicTrack[] }>
+  createSmartShuffleQueue?(
+    seedId: string,
+    seedType: string,
+    djMode?: string,
+    degreesOfSeparation?: number
+  ): Promise<{ queueId: number; tracks: MusicTrack[] }>
+  createPlayQueue?(
+    uri: string,
+    shuffle?: boolean,
+    repeat?: number
+  ): Promise<{ queueId: number; tracks: MusicTrack[] }>
+  computeSonicPath?(
+    startId: string,
+    endId: string,
+    count?: number
+  ): Promise<MusicTrack[]>
+  getSonicallySimilar?(
+    itemId: string,
+    limit?: number,
+    maxDistance?: number
+  ): Promise<MusicArtist[]>
+  getArtistSonicallySimilar?(
+    artistId: string,
+    limit?: number,
+    maxDistance?: number
+  ): Promise<MusicArtist[]>
+  getArtistPopularTracksInSection?(
+    artistId: string,
+    limit?: number
+  ): Promise<MusicTrack[]>
+  getArtistAlbumsInSection?(
+    artistId: string,
+    formatFilter?: string
+  ): Promise<MusicAlbum[]>
 
   // --- Full-library sync (capability-gated) ---
-  getAllArtists?(offset?: number, limit?: number): Promise<PagedResult<MusicArtist>>
-  getAllAlbums?(offset?: number, limit?: number): Promise<PagedResult<MusicAlbum>>
-  getAllTracks?(offset?: number, limit?: number): Promise<PagedResult<MusicTrack>>
+  getAllArtists?(
+    offset?: number,
+    limit?: number
+  ): Promise<PagedResult<MusicArtist>>
+  getAllAlbums?(
+    offset?: number,
+    limit?: number
+  ): Promise<PagedResult<MusicAlbum>>
+  getAllTracks?(
+    offset?: number,
+    limit?: number
+  ): Promise<PagedResult<MusicTrack>>
 
   // --- URI builders (needed by stores for queue creation) ---
   buildItemUri?(itemKey: string): string
@@ -169,8 +281,17 @@ export interface MusicProvider {
   buildTagFilterUri?(tagType: string, tagValue: string): string
 
   // --- Now Playing / OS integration ---
-  updateNowPlaying?(title: string, artist: string, album: string, thumbPath: string | null, durationMs: number): Promise<void>
-  setNowPlayingState?(state: "playing" | "paused" | "stopped", positionMs?: number): Promise<void>
+  updateNowPlaying?(
+    title: string,
+    artist: string,
+    album: string,
+    thumbPath: string | null,
+    durationMs: number
+  ): Promise<void>
+  setNowPlayingState?(
+    state: "playing" | "paused" | "stopped",
+    positionMs?: number
+  ): Promise<void>
 
   // --- Track lifecycle hooks (scrobbling, external integrations) ---
   onTrackStart?(track: MusicTrack, isCurrent?: () => boolean): void
