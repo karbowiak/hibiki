@@ -216,3 +216,30 @@ Native dev-app follow-through on the two weekly imports the user created showed
 remaining occurrences available in Review. These were resumed only through
 their existing admitted syncs. No additional copies or unrelated user playlist
 mutations were requested. The isolated QA playlist was separately deleted.
+
+### Packaging and installer verification follow-through
+
+A fresh Linux ARM debug AppImage built from committed `5f437f6`, with its
+frontend rebuilt inside the Linux staging directory, passed AppDir, desktop and
+AppStream validation. Its private proof records the complete source snapshot
+and frontend asset hashes. This does not claim Linux GUI/playback or signed
+amd64 release verification.
+
+The release audit found that macOS DMGs were checked only for presence and size.
+For 0.6.0 onward, macOS packaging now runs `hdiutil verify`, signs each DMG with
+the existing updater key and release version, and uploads its signature only to
+the matching draft after proving the uploaded installer matches local bytes.
+The publication gate streams and verifies all nine installers. Every signature
+must authenticate the release version, and DMGs also authenticate their exact
+filename. The application enables Tauri's signed-version update requirement;
+historical release verification keeps the old seven-artifact contract.
+
+A real synthetic UDZO image passed native `hdiutil verify` and the installed
+Tauri CLI signer using a fresh ephemeral key. The publication verifier accepted
+that actual signature and rejected a different version, different filename and
+altered image bytes. The ephemeral private key was removed; no production key
+or remote release asset was used. Thirty-two focused release tests and six
+Python AppImage checks passed; native compilation accepted the updater setting.
+Read-only post-publication verification is prepared for all nine artifacts but
+has not run: the user continues to hold 0.6.0 and current local commits have not
+been pushed for exact-commit CI or release-matrix builds.

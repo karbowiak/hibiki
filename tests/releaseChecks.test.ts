@@ -19,14 +19,13 @@ const rawKey = keys.publicKey
 const key = Buffer.from(
   `untrusted comment: fixture\n${Buffer.concat([Buffer.from("Ed"), keyId, rawKey]).toString("base64")}\n`
 ).toString("base64")
-function signed(bytes: Buffer) {
+function signed(bytes: Buffer, comment = "timestamp:1\tfile:fixture") {
   const signature = sign(
     null,
     createHash("blake2b512").update(bytes).digest(),
     keys.privateKey
   )
   const packet = Buffer.concat([Buffer.from("ED"), keyId, signature])
-  const comment = "timestamp:1\tfile:fixture"
   const global = sign(
     null,
     Buffer.concat([signature, Buffer.from(comment)]),
@@ -52,11 +51,29 @@ function fixture(version = "0.5.2", legacyMacArchives = false) {
     bodies.set(result.id, bytes)
     return result
   }
-  asset(`Hibiki_${version}_aarch64.dmg`, Buffer.from("arm dmg"))
-  asset(`Hibiki_${version}_x64.dmg`, Buffer.from("intel dmg"))
+  const modern =
+    Number(version.split(".")[0]) > 0 || Number(version.split(".")[1]) >= 6
+  for (const arch of ["aarch64", "x64"]) {
+    const name = `Hibiki_${version}_${arch}.dmg`
+    const bytes = modern
+      ? Buffer.alloc(512, arch === "x64" ? 1 : 2)
+      : Buffer.from(`${arch} dmg`)
+    asset(name, bytes)
+    if (modern)
+      asset(
+        `${name}.sig`,
+        Buffer.from(
+          signed(bytes, `timestamp:1\tfile:${name}\tversion:${version}`)
+        )
+      )
+  }
   const entries = {
-    "darwin-aarch64-app": legacyMacArchives ? "Hibiki_aarch64.app.tar.gz" : `Hibiki_${version}_aarch64.app.tar.gz`,
-    "darwin-x86_64-app": legacyMacArchives ? "Hibiki_x64.app.tar.gz" : `Hibiki_${version}_x64.app.tar.gz`,
+    "darwin-aarch64-app": legacyMacArchives
+      ? "Hibiki_aarch64.app.tar.gz"
+      : `Hibiki_${version}_aarch64.app.tar.gz`,
+    "darwin-x86_64-app": legacyMacArchives
+      ? "Hibiki_x64.app.tar.gz"
+      : `Hibiki_${version}_x64.app.tar.gz`,
     "linux-x86_64-appimage": `Hibiki_${version}_amd64.AppImage`,
     "linux-x86_64-deb": `Hibiki_${version}_amd64.deb`,
     "linux-x86_64-rpm": `Hibiki-${version}-1.x86_64.rpm`,
@@ -66,7 +83,10 @@ function fixture(version = "0.5.2", legacyMacArchives = false) {
   const platforms: Record<string, any> = {}
   for (const [platform, name] of Object.entries(entries)) {
     const bytes = Buffer.from(`installer:${name}`),
-      signature = signed(bytes)
+      signature = signed(
+        bytes,
+        `timestamp:1\tfile:fixture${modern ? `\tversion:${version}` : ""}`
+      )
     asset(name, bytes)
     asset(`${name}.sig`, Buffer.from(signature))
     platforms[platform] = {
@@ -286,46 +306,85 @@ test("truncated downloads fail, and redirect requests never forward GitHub autho
 
 test("current versioned macOS archives retain all seven cryptographic installer checks", async () => {
   const f = fixture("0.5.3")
-  expect(await assertArtifacts(f.github, repo, "v0.5.3", 99, key, f.download)).toBe(7)
+  expect(
+    await assertArtifacts(f.github, repo, "v0.5.3", 99, key, f.download)
+  ).toBe(7)
   expect(f.downloaded).toContain("Hibiki_0.5.3_aarch64.app.tar.gz")
   expect(f.downloaded).toContain("Hibiki_0.5.3_x64.app.tar.gz")
   for (const version of ["0.5.1", "0.5.2", "0.5.4"]) {
     const mismatched = fixture("0.5.3")
     mismatched.manifest.platforms["darwin-aarch64-app"].url =
-      mismatched.manifest.platforms["darwin-aarch64-app"].url.replace("Hibiki_0.5.3_", `Hibiki_${version}_`)
-    expect(() => artifactPlan(mismatched.manifest, mismatched.release, repo, "v0.5.3")).toThrow("Wrong artifact")
+      mismatched.manifest.platforms["darwin-aarch64-app"].url.replace(
+        "Hibiki_0.5.3_",
+        `Hibiki_${version}_`
+      )
+    expect(() =>
+      artifactPlan(mismatched.manifest, mismatched.release, repo, "v0.5.3")
+    ).toThrow("Wrong artifact")
   }
 })
 
 test("unversioned macOS archives are retained only for the verified legacy v0.5.1 format", async () => {
   const legacy = fixture("0.5.1", true)
-  expect(await assertArtifacts(legacy.github, repo, "v0.5.1", 99, key, legacy.download)).toBe(7)
+  expect(
+    await assertArtifacts(
+      legacy.github,
+      repo,
+      "v0.5.1",
+      99,
+      key,
+      legacy.download
+    )
+  ).toBe(7)
   for (const version of ["0.5.2", "0.5.3"]) {
     const obsolete = fixture(version, true)
-    expect(() => artifactPlan(obsolete.manifest, obsolete.release, repo, `v${version}`)).toThrow("Wrong artifact")
+    expect(() =>
+      artifactPlan(obsolete.manifest, obsolete.release, repo, `v${version}`)
+    ).toThrow("Wrong artifact")
   }
 })
 
 test("actual Tauri action v1 v0.5.2 matrix metadata maps to all seven installers", () => {
-  const current = JSON.parse(readFileSync(new URL("./fixtures/releases/tauri-action-v1-v0.5.2.json", import.meta.url), "utf8"))
-  const plan = artifactPlan(current.manifest, current.release, current.repo, "v0.5.2")
+  const current = JSON.parse(
+    readFileSync(
+      new URL(
+        "./fixtures/releases/tauri-action-v1-v0.5.2.json",
+        import.meta.url
+      ),
+      "utf8"
+    )
+  )
+  const plan = artifactPlan(
+    current.manifest,
+    current.release,
+    current.repo,
+    "v0.5.2"
+  )
   expect(plan).toHaveLength(7)
-  expect(plan.map((entry: any) => entry.artifact.name).sort()).toEqual([
-    "Hibiki_0.5.2_aarch64.app.tar.gz", "Hibiki_0.5.2_x64.app.tar.gz",
-    "Hibiki_0.5.2_amd64.AppImage", "Hibiki_0.5.2_amd64.deb", "Hibiki-0.5.2-1.x86_64.rpm",
-    "Hibiki_0.5.2_x64_en-US.msi", "Hibiki_0.5.2_x64-setup.exe",
-  ].sort())
+  expect(plan.map((entry: any) => entry.artifact.name).sort()).toEqual(
+    [
+      "Hibiki_0.5.2_aarch64.app.tar.gz",
+      "Hibiki_0.5.2_x64.app.tar.gz",
+      "Hibiki_0.5.2_amd64.AppImage",
+      "Hibiki_0.5.2_amd64.deb",
+      "Hibiki-0.5.2-1.x86_64.rpm",
+      "Hibiki_0.5.2_x64_en-US.msi",
+      "Hibiki_0.5.2_x64-setup.exe",
+    ].sort()
+  )
 })
 
 test("GitHub API updater URLs are bound to the exact release's signed installer IDs", async () => {
   const f = fixture("0.5.3")
   for (const entry of Object.values(f.manifest.platforms)) {
     const name = entry.url.split("/").at(-1)
-    const asset = f.release.assets.find(asset => asset.name === name)!
+    const asset = f.release.assets.find((asset) => asset.name === name)!
     entry.url = `https://api.github.com/repos/owner/repo/releases/assets/${asset.id}`
   }
   f.update()
-  expect(await assertArtifacts(f.github, repo, "v0.5.3", 99, key, f.download)).toBe(7)
+  expect(
+    await assertArtifacts(f.github, repo, "v0.5.3", 99, key, f.download)
+  ).toBe(7)
   for (const url of [
     "https://api.github.com/repos/another/repo/releases/assets/3",
     "https://api.github.com/repos/owner/another/releases/assets/3",
@@ -334,10 +393,137 @@ test("GitHub API updater URLs are bound to the exact release's signed installer 
     "https://api.github.com/repos/owner/repo/releases/assets/03",
     "https://api.github.com/repos/owner/repo/releases/assets/3?download=1",
     "https://api.github.com:8443/repos/owner/repo/releases/assets/3",
-    `https://api.github.com/repos/owner/repo/releases/assets/${f.release.assets.find(asset => asset.name === "Hibiki_0.5.3_x64.app.tar.gz")!.id}`,
+    `https://api.github.com/repos/owner/repo/releases/assets/${f.release.assets.find((asset) => asset.name === "Hibiki_0.5.3_x64.app.tar.gz")!.id}`,
   ]) {
     const bad = structuredClone(f.manifest)
     bad.platforms["darwin-aarch64-app"].url = url
     expect(() => artifactPlan(bad, f.release, repo, "v0.5.3")).toThrow()
   }
+})
+
+test("v0.6 verifies nine signed artifacts without adding fake DMG updater targets", async () => {
+  const f = fixture("0.6.0")
+  expect(
+    await assertArtifacts(f.github, repo, "v0.6.0", 99, key, f.download)
+  ).toBe(9)
+  expect(f.downloaded.filter((name) => name.endsWith(".dmg"))).toHaveLength(2)
+  expect(
+    Object.keys(f.manifest.platforms).some((name) => name.includes("dmg"))
+  ).toBe(false)
+})
+test("modern DMGs reject missing companions, one-byte images and tampered complete bytes", async () => {
+  const missing = fixture("0.6.0")
+  missing.release.assets = missing.release.assets.filter(
+    (asset) => asset.name !== "Hibiki_0.6.0_x64.dmg.sig"
+  )
+  await expect(
+    assertArtifacts(missing.github, repo, "v0.6.0", 99, key, missing.download)
+  ).rejects.toThrow("Missing or incomplete")
+  const short = fixture("0.6.0")
+  short.release.assets.find(
+    (asset) => asset.name === "Hibiki_0.6.0_x64.dmg"
+  ).size = 1
+  expect(() =>
+    artifactPlan(short.manifest, short.release, repo, "v0.6.0")
+  ).toThrow("DMG is too small")
+  const tampered = fixture("0.6.0")
+  const image = tampered.release.assets.find(
+    (asset) => asset.name === "Hibiki_0.6.0_x64.dmg"
+  )
+  tampered.bodies.set(image.id, Buffer.alloc(image.size, 9))
+  await expect(
+    assertArtifacts(tampered.github, repo, "v0.6.0", 99, key, tampered.download)
+  ).rejects.toThrow("Invalid updater signature")
+})
+test("tampered DMG signature companion blocks publication", async () => {
+  const f = fixture("0.6.0"),
+    companion = f.release.assets.find(
+      (asset) => asset.name === "Hibiki_0.6.0_x64.dmg.sig"
+    )
+  const bytes = Buffer.from(f.bodies.get(companion.id)!)
+  bytes[20] = bytes[20] === 65 ? 66 : 65
+  f.bodies.set(companion.id, bytes)
+  await expect(
+    assertArtifacts(f.github, repo, "v0.6.0", 99, key, f.download)
+  ).rejects.toThrow()
+})
+
+test("modern signatures bind signed version for all archives and exact DMG filename", async () => {
+  for (const name of [
+    "Hibiki_0.6.0_x64.dmg",
+    "Hibiki_0.6.0_aarch64.app.tar.gz",
+  ]) {
+    for (const comment of [
+      `timestamp:1\tfile:${name}`,
+      `timestamp:1\tfile:${name}\tversion:0.5.4`,
+      `timestamp:1\tfile:${name}\tversion:0.6.0\tversion:0.6.0`,
+      `timestamp:bad\tfile:${name}\tversion:0.6.0`,
+      `timestamp:1\tfile:\tversion:0.6.0`,
+      `timestamp:1\tfile:${name}\tversion:0.6.0\tmalformed`,
+    ]) {
+      const f = fixture("0.6.0"),
+        asset = f.release.assets.find((asset) => asset.name === name),
+        companion = f.release.assets.find(
+          (asset) => asset.name === name + ".sig"
+        )
+      const encoded = signed(f.bodies.get(asset.id)!, comment)
+      f.bodies.set(companion.id, Buffer.from(encoded))
+      companion.size = Buffer.byteLength(encoded)
+      for (const entry of Object.values(f.manifest.platforms) as any[])
+        if (entry.url.endsWith(name)) entry.signature = encoded
+      f.update()
+      await expect(
+        assertArtifacts(f.github, repo, "v0.6.0", 99, key, f.download)
+      ).rejects.toThrow()
+    }
+  }
+  const f = fixture("0.6.0"),
+    asset = f.release.assets.find(
+      (asset) => asset.name === "Hibiki_0.6.0_x64.dmg"
+    ),
+    companion = f.release.assets.find(
+      (candidate) => candidate.name === asset.name + ".sig"
+    )
+  const wrong = signed(
+    f.bodies.get(asset.id)!,
+    "timestamp:1\tfile:Other.dmg\tversion:0.6.0"
+  )
+  f.bodies.set(companion.id, Buffer.from(wrong))
+  companion.size = Buffer.byteLength(wrong)
+  await expect(
+    assertArtifacts(f.github, repo, "v0.6.0", 99, key, f.download)
+  ).rejects.toThrow("filename differs")
+})
+test("macOS workflow validates DMG before signing with version and environment-only key", () => {
+  const workflow = Bun.YAML.parse(
+    readFileSync(
+      new URL("../.github/workflows/release.yml", import.meta.url),
+      "utf8"
+    )
+  ) as any
+  const steps = workflow.jobs["build-tauri"].steps
+  const signing = steps.find(
+    (step: any) => step.name === "Verify and sign macOS disk image"
+  )
+  expect(signing.run.indexOf("hdiutil verify")).toBeLessThan(
+    signing.run.indexOf("tauri signer sign")
+  )
+  expect(signing.run).toContain('--app-version "$VERSION"')
+  expect(signing.run).not.toContain("--private-key")
+  expect(signing.env.TAURI_SIGNING_PRIVATE_KEY).toBe(
+    "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
+  )
+  expect(
+    steps.find(
+      (step: any) => step.name === "Upload verified macOS disk image signature"
+    ).with.script
+  ).toContain("uploadDmgSignature")
+  expect(
+    JSON.parse(
+      readFileSync(
+        new URL("../src-tauri/tauri.conf.json", import.meta.url),
+        "utf8"
+      )
+    ).plugins.updater.requireSignedVersion
+  ).toBe(true)
 })

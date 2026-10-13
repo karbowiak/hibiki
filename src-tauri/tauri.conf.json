@@ -108,6 +108,7 @@
   },
   "plugins": {
     "updater": {
+      "requireSignedVersion": true,
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFEMEY3RDI3Q0RCN0ZGNjIKUldSaS83Zk5KMzBQclhrMFFqSmlrVmVXcXJmZmtUS1REWHcyUXQ1TDV5NDhRQnV5SVZ4OUwzN04K",
       "endpoints": [
         "https://github.com/karbowiak/hibiki/releases/latest/download/latest.json"

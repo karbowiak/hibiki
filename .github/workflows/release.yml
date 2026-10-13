@@ -199,6 +199,39 @@ jobs:
           uploadUpdaterJson: true
           args: ${{ matrix.args }}
 
+      - name: Verify and sign macOS disk image
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          VERSION: ${{ needs.create-release.outputs.version }}
+          RUST_TARGET: ${{ matrix.rust_target }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          images=(src-tauri/target/"$RUST_TARGET"/release/bundle/dmg/*.dmg)
+          [[ ${#images[@]} -eq 1 && -f "${images[0]}" ]] || { echo "Expected exactly one DMG" >&2; exit 1; }
+          hdiutil verify "${images[0]}"
+          bun run tauri signer sign --app-version "$VERSION" "${images[0]}"
+
+      - name: Upload verified macOS disk image signature
+        if: runner.os == 'macOS'
+        uses: actions/github-script@v9
+        env:
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+          RELEASE_TAG: ${{ needs.create-release.outputs.tag }}
+          RUST_TARGET: ${{ matrix.rust_target }}
+        with:
+          script: |
+            const fs = require('fs')
+            const path = require('path')
+            const { uploadDmgSignature } = require('./scripts/dmg-release.cjs')
+            const directory = `src-tauri/target/${process.env.RUST_TARGET}/release/bundle/dmg`
+            const images = fs.readdirSync(directory).filter(name => name.endsWith('.dmg'))
+            if (images.length !== 1) throw Error('Expected exactly one verified DMG')
+            await uploadDmgSignature(github, context.repo, Number(process.env.RELEASE_ID),
+              process.env.RELEASE_TAG, path.join(directory, images[0]))
+
       - name: Validate relocated AppImage metadata
         if: runner.os == 'Linux'
         run: python3 scripts/check-appimage.py --prepare-zsync src-tauri/target/release/bundle/appimage/*.AppImage

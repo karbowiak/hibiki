@@ -77,7 +77,12 @@ function publicKey(encoded) {
   }
 }
 
-function signature(encoded, key) {
+function signedVersionRequired(tag) {
+  const [major, minor] = tag.slice(1).split(".").map(Number)
+  return major > 0 || minor >= 6
+}
+
+function signature(encoded, key, expected) {
   const lines = base64(encoded, "updater signature")
     .toString("utf8")
     .trim()
@@ -107,6 +112,26 @@ function signature(encoded, key) {
   )
   if (!verify(null, Buffer.concat([signed, comment]), key.key, global))
     fail("Invalid minisign trusted-comment signature")
+  if (expected) {
+    const fields = new Map()
+    for (const field of comment.toString("utf8").split("\t")) {
+      const colon = field.indexOf(":")
+      if (colon < 1 || fields.has(field.slice(0, colon)))
+        fail("Invalid signed release comment fields")
+      fields.set(field.slice(0, colon), field.slice(colon + 1))
+    }
+    if (
+      fields.size !== 3 ||
+      !/^\d+$/.test(fields.get("timestamp") ?? "") ||
+      !fields.get("file") ||
+      !fields.get("version")
+    )
+      fail("Invalid signed release comment fields")
+    if (fields.get("version") !== expected.version)
+      fail("Signed artifact version differs from release tag")
+    if (expected.file && fields.get("file") !== expected.file)
+      fail("Signed artifact filename differs from release asset")
+  }
   return signed
 }
 
@@ -120,7 +145,11 @@ function artifactPlan(manifest, release, repo, tag) {
   const assetsById = new Map()
   for (const asset of release.assets) {
     if (assets.has(asset.name)) fail(`Duplicate release asset ${asset.name}`)
-    if (!Number.isSafeInteger(asset.id) || asset.id <= 0 || assetsById.has(asset.id))
+    if (
+      !Number.isSafeInteger(asset.id) ||
+      asset.id <= 0 ||
+      assetsById.has(asset.id)
+    )
       fail(`Invalid or duplicate release asset ID for ${asset.name}`)
     assets.set(asset.name, asset)
     assetsById.set(asset.id, asset)
@@ -172,7 +201,14 @@ function artifactPlan(manifest, release, repo, tag) {
     )
       fail(`Incomplete updater entry ${platform}`)
     const url = new URL(entry.url)
-    if (url.protocol !== "https:" || url.port || url.username || url.password || url.search || url.hash)
+    if (
+      url.protocol !== "https:" ||
+      url.port ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    )
       fail(`Updater URL for ${platform} must refer to this release`)
     const prefix = `/${repo.owner}/${repo.repo}/releases/download/${tag}/`
     let name
@@ -182,21 +218,26 @@ function artifactPlan(manifest, release, repo, tag) {
       // Tauri action v1 emits GitHub API URLs. The immutable asset ID must
       // belong to this exact tag's release; checking the host alone is unsafe.
       const apiPrefix = `/repos/${repo.owner}/${repo.repo}/releases/assets/`
-      const id = url.pathname.startsWith(apiPrefix) ? url.pathname.slice(apiPrefix.length) : ""
+      const id = url.pathname.startsWith(apiPrefix)
+        ? url.pathname.slice(apiPrefix.length)
+        : ""
       if (!/^[1-9][0-9]*$/.test(id) || !Number.isSafeInteger(Number(id)))
         fail(`Updater URL for ${platform} must refer to this release`)
       name = assetsById.get(Number(id))?.name
-      if (!name) fail(`Updater asset for ${platform} does not belong to this release`)
+      if (!name)
+        fail(`Updater asset for ${platform} does not belong to this release`)
     } else {
       fail(`Updater URL for ${platform} must refer to this release`)
     }
     // v0.5.1 used Tauri's historical unversioned macOS updater archives.
     // Current tauri-action v1 uploads versioned names; never accept another
     // release version's archive or a legacy name for a new release.
-    const legacy = version === "0.5.1" && {
-      "darwin-aarch64-app": "Hibiki_aarch64.app.tar.gz",
-      "darwin-x86_64-app": "Hibiki_x64.app.tar.gz",
-    }[platform]
+    const legacy =
+      version === "0.5.1" &&
+      {
+        "darwin-aarch64-app": "Hibiki_aarch64.app.tar.gz",
+        "darwin-x86_64-app": "Hibiki_x64.app.tar.gz",
+      }[platform]
     if (expected[platform] && name !== expected[platform] && name !== legacy)
       fail(`Wrong artifact for ${platform}`)
     if (
@@ -213,6 +254,19 @@ function artifactPlan(manifest, release, repo, tag) {
     if (plan.has(name) && plan.get(name).encoded !== entry.signature)
       fail(`Conflicting signatures for ${name}`)
     plan.set(name, { artifact, companion, encoded: entry.signature })
+  }
+  if (signedVersionRequired(tag)) {
+    for (const arch of ["aarch64", "x64"]) {
+      const name = `Hibiki_${version}_${arch}.dmg`
+      const artifact = required(name)
+      if (artifact.size < 512)
+        fail(`DMG is too small to contain a UDIF trailer: ${name}`)
+      plan.set(name, {
+        artifact,
+        companion: required(`${name}.sig`),
+        dmg: true,
+      })
+    }
   }
   return [...plan.values()]
 }
@@ -296,10 +350,16 @@ async function assertArtifacts(
   const key = publicKey(encodedKey)
   // Fetch each unique installer once and stream its digest. No release-sized
   // buffer is retained; aliases share verification of the same artifact.
-  for (const { artifact, companion, encoded } of plan) {
-    const signed = signature(encoded, key)
+  for (const { artifact, companion, encoded, dmg } of plan) {
     const uploaded = await readSmall(repo, companion, 16 * 1024, download)
-    if (uploaded.trim() !== encoded.trim())
+    const signed = signature(
+      encoded ?? uploaded.trim(),
+      key,
+      signedVersionRequired(tag)
+        ? { version: tag.slice(1), ...(dmg ? { file: artifact.name } : {}) }
+        : undefined
+    )
+    if (encoded && uploaded.trim() !== encoded.trim())
       fail(`Manifest signature differs from ${companion.name}`)
     const hash = createHash("blake2b512")
     await consume(
