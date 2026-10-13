@@ -156,14 +156,7 @@ fn binding(
         Some(&client.library_scope),
     )?;
     let stream = part.streams.iter().find(|s| s.stream_type == Some(2));
-    use sha2::{Digest, Sha256};
-    let analysis_version = format!(
-        "{:x}",
-        Sha256::digest(
-            serde_json::to_vec(&(media, track.music_analysis_version, track.updated_at))
-                .map_err(|_| "Invalid audio metadata")?
-        )
-    );
+    let analysis_version = crate::plex::catalogue::analysis_revision(media, track.music_analysis_version)?;
     let mut metadata = json!({
         "id":expected.to_string(),"title":track.title,"trackNumber":track.index,"duration":track.duration,
         "albumId":parent_id(&track.parent_key),"albumName":track.parent_title,"albumYear":track.parent_year,
@@ -351,6 +344,35 @@ pub async fn audio_prepare_plex_track(
 /// Read full-resolution Plex levels once per exact media/analysis revision.
 /// `/levels` contains the same 100 ms loudness series as `/loudness`, plus
 /// sample-count metadata. Keep its complete response, not just 128 UI buckets.
+fn cached_levels(
+    conn: &rusqlite::Connection,
+    client: &PlexClient,
+    current: &Binding,
+    stream_id: i64,
+    version: &str,
+) -> Result<Option<Value>, String> {
+    if let Some(raw) = crate::db::catalogue::levels(conn, &client.library_scope, &current.cache_key, stream_id, version)? {
+        return Ok(Some(raw));
+    }
+    let Some(raw) = crate::db::catalogue::get(conn, &client.library_scope, "track", current.track_id)? else { return Ok(None) };
+    let Ok(track) = serde_json::from_value::<Track>(raw) else { return Ok(None) };
+    let Ok((checked, _, _)) = binding(client, track.library_section_id, current.track_id, &track) else { return Ok(None) };
+    if checked.cache_key != current.cache_key
+        || checked.metadata["localAnalysisVersion"].as_str() != Some(version)
+        || checked.metadata["mediaInfo"]["audioStreamId"].as_i64() != Some(stream_id)
+    {
+        return Ok(None);
+    }
+    // Adopt only the exact old hash of this same native raw Media/source and
+    // analysis version. Never select an arbitrary older waveform for a track.
+    use sha2::{Digest, Sha256};
+    let media = best_media(&track)?;
+    let legacy = format!("{:x}", Sha256::digest(serde_json::to_vec(&(media, track.music_analysis_version, track.updated_at)).map_err(|_| "Invalid legacy analysis revision")?));
+    let Some(levels) = crate::db::catalogue::levels(conn, &client.library_scope, &current.cache_key, stream_id, &legacy)? else { return Ok(None) };
+    crate::db::catalogue::save_levels(conn, &client.library_scope, &current.cache_key, stream_id, version, &levels)?;
+    Ok(Some(levels))
+}
+
 async fn ensure_levels(
     app: &tauri::AppHandle,
     context: &PlexRequestContext,
@@ -372,10 +394,10 @@ async fn ensure_levels(
     let client = {
         let guard = plex.0.lock().await;
         let client = plex.checked_cache_client(context, &guard)?;
-        let saved = crate::db::catalogue::levels(
+        let saved = cached_levels(
             &*db.0.lock().map_err(|_| "Analysis storage unavailable")?,
-            &client.library_scope,
-            &binding.cache_key,
+            client,
+            binding,
             stream_id,
             version,
         )?;
@@ -393,10 +415,10 @@ async fn ensure_levels(
     {
         let guard = plex.0.lock().await;
         plex.checked_client(context, &guard)?;
-        if let Some(saved) = crate::db::catalogue::levels(
+        if let Some(saved) = cached_levels(
             &*db.0.lock().map_err(|_| "Analysis storage unavailable")?,
-            &client.library_scope,
-            &binding.cache_key,
+            &client,
+            binding,
             stream_id,
             version,
         )? {
@@ -1343,6 +1365,11 @@ mod tests {
             analyzed.metadata["localAnalysisVersion"]
         );
         assert_eq!(first.cache_key, analyzed.cache_key);
+        track.updated_at = chrono::DateTime::from_timestamp(1234567890, 0);
+        track.title = "Metadata-only edit".into();
+        let edited = binding(&client, 1, 42, &track).unwrap().0;
+        assert_eq!(analyzed.metadata["localAnalysisVersion"], edited.metadata["localAnalysisVersion"]);
+        assert_eq!(analyzed.cache_key, edited.cache_key);
         track.media[0].parts[0].streams[0].gain = Some(-6.0);
         let changed = binding(&client, 1, 42, &track).unwrap().0;
         assert_ne!(
@@ -1354,6 +1381,29 @@ mod tests {
             changed.cache_key,
             binding(&client, 1, 42, &track).unwrap().0.cache_key
         );
+    }
+    #[test]
+    fn cached_levels_adopts_only_the_exact_legacy_source_stream_and_analysis_revision() {
+        use sha2::{Digest, Sha256};
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::schema::run_migrations(&conn).unwrap();
+        let client = client();
+        let raw = json!({"type":"track","ratingKey":"42","librarySectionID":1,"duration":1000,"updatedAt":12345,"musicAnalysisVersion":1,"Media":[{"audioCodec":"wav","Part":[{"id":10,"key":"/library/parts/10/file.wav","Stream":[{"id":17,"streamType":2,"gain":-3.0}]}]}]});
+        let track: Track = serde_json::from_value(raw.clone()).unwrap();
+        let current = binding(&client, 1, 42, &track).unwrap().0;
+        let version = current.metadata["localAnalysisVersion"].as_str().unwrap();
+        let legacy = format!("{:x}", Sha256::digest(serde_json::to_vec(&(best_media(&track).unwrap(), track.music_analysis_version, track.updated_at)).unwrap()));
+        let levels = json!({"Level":[{"v":0.4},{"v":0.8}],"futureField":"retained"});
+        crate::db::catalogue::save(&conn, &client.library_scope, "track", 42, &raw, true).unwrap();
+        crate::db::catalogue::save_levels(&conn, &client.library_scope, &current.cache_key, 17, &legacy, &levels).unwrap();
+        assert!(cached_levels(&conn, &client, &current, 18, version).unwrap().is_none());
+        let mut foreign = client.clone(); foreign.library_scope = format!("plex-{}", "b".repeat(64));
+        assert!(cached_levels(&conn, &foreign, &current, 17, version).unwrap().is_none());
+        let mut different = track.clone(); different.media[0].parts[0].streams[0].gain = Some(-6.0);
+        let changed = binding(&client, 1, 42, &different).unwrap().0;
+        assert!(cached_levels(&conn, &client, &changed, 17, changed.metadata["localAnalysisVersion"].as_str().unwrap()).unwrap().is_none());
+        assert_eq!(cached_levels(&conn, &client, &current, 17, version).unwrap(), Some(levels.clone()));
+        assert_eq!(crate::db::catalogue::levels(&conn, &client.library_scope, &current.cache_key, 17, version).unwrap(), Some(levels));
     }
     #[test]
     fn media_selection_matches_frontend_quality_order_and_keeps_first_equal_quality_version() {

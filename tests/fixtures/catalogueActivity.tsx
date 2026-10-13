@@ -78,12 +78,41 @@ assert.match(
   /25 items saved · 3 waveforms/
 )
 await act(async () => {
-  useCatalogueStore
-    .getState()
-    .update(context, {
-      ...progress,
-      tasks: [{ ...progress.tasks[0], status: "error" }],
-    })
+  useCatalogueStore.getState().update(context, {
+    ...progress,
+    tasks: [
+      { task: "catchup:track", status: "running", cursor: 2, total: 10 },
+      ...progress.tasks,
+    ],
+    incremental: {
+      pending: 3,
+      catchUpRequested: true,
+      watermark: 1770000000,
+      changesRevision: 1,
+      phase: "catchingUp",
+    },
+  })
+  await settle()
+})
+assert.match(
+  document.querySelector("[role=dialog]")!.textContent!,
+  /Checking Plex for changes/
+)
+assert.match(
+  document.querySelector("[role=dialog]")!.textContent!,
+  /3 items awaiting updates/
+)
+assert.equal(opener.title, "2 active operations")
+assert.match(
+  document.querySelector("[role=dialog]")!.textContent!,
+  /Tracks: 25 \/ 100/,
+  "catch-up progress must not hide initial import progress"
+)
+await act(async () => {
+  useCatalogueStore.getState().update(context, {
+    ...progress,
+    tasks: [{ ...progress.tasks[0], status: "error" }],
+  })
   await settle()
 })
 assert.equal(

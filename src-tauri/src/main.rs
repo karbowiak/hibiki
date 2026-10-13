@@ -386,6 +386,7 @@ pub fn run() {
             catalogue_commands::catalogue_query,
             catalogue_commands::catalogue_progress,
             catalogue_commands::catalogue_retry,
+            catalogue_commands::catalogue_notify,
             catalogue_commands::catalogue_health,
             catalogue_commands::catalogue_availability,
             catalogue_commands::catalogue_remote_page,

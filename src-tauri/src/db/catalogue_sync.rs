@@ -14,10 +14,16 @@ pub struct Task {
     pub total: Option<i64>,
     pub completed_at: Option<i64>,
     pub error: Option<String>,
+    pub scan_mode: String,
+    pub key_cursor: i64,
+    pub upper_id: Option<i64>,
+    pub started_at: i64,
+    pub lower_time: Option<i64>,
+    pub upper_time: Option<i64>,
 }
 pub fn task(conn: &Connection, scope: &str, name: &str) -> Result<Option<Task>, String> {
     super::offline::check_identity(scope, name)?;
-    conn.query_row("SELECT task,generation,status,cursor,total,completed_at,error FROM plex_catalogue_tasks WHERE scope=?1 AND task=?2",params![scope,name],|r|Ok(Task{task:r.get(0)?,generation:r.get(1)?,status:r.get(2)?,cursor:r.get(3)?,total:r.get(4)?,completed_at:r.get(5)?,error:r.get(6)?})).optional().map_err(|_|"Cannot read catalogue progress".into())
+    conn.query_row("SELECT task,generation,status,cursor,total,completed_at,error,scan_mode,key_cursor,upper_id,started_at,lower_time,upper_time FROM plex_catalogue_tasks WHERE scope=?1 AND task=?2",params![scope,name],|r|Ok(Task{task:r.get(0)?,generation:r.get(1)?,status:r.get(2)?,cursor:r.get(3)?,total:r.get(4)?,completed_at:r.get(5)?,error:r.get(6)?,scan_mode:r.get(7)?,key_cursor:r.get(8)?,upper_id:r.get(9)?,started_at:r.get(10)?,lower_time:r.get(11)?,upper_time:r.get(12)?})).optional().map_err(|_|"Cannot read catalogue progress".into())
 }
 pub fn begin(
     conn: &Connection,
@@ -27,7 +33,8 @@ pub fn begin(
 ) -> Result<Task, String> {
     let previous = task(conn, scope, name)?;
     if let Some(previous) = previous {
-        let needs_restart = previous.status == "error"
+        let needs_restart = previous.scan_mode == "offset"
+            && previous.status == "error"
             && previous.error.as_deref().is_some_and(|e| {
                 e.contains("changed") || e.contains("repeated") || e.contains("nonadvancing")
             });
@@ -35,7 +42,7 @@ pub fn begin(
         let fresh = generation.is_some()
             || previous
                 .completed_at
-                .is_some_and(|t| now().saturating_sub(t) < 24 * 60 * 60 * 1000);
+                .is_some_and(|t| now().saturating_sub(t) < 30 * 24 * 60 * 60 * 1000);
         if same && (previous.status != "complete" || fresh) {
             return Ok(previous);
         }
@@ -50,7 +57,7 @@ pub fn begin(
         conn.execute("DELETE FROM plex_catalogue_playlist_members WHERE scope=?1 AND playlist_id=?2 AND generation=?3 AND generation IS NOT (SELECT generation FROM plex_catalogue_playlist_versions WHERE scope=?1 AND playlist_id=?2)",params![scope,id,generation]).map_err(|_|"Cannot retire interrupted staging")?;
     }
     conn.execute("INSERT INTO plex_catalogue_tasks(scope,task,generation,status,updated_at) VALUES(?1,?2,?3,'pending',?4)
-       ON CONFLICT(scope,task) DO UPDATE SET generation=excluded.generation,status='pending',cursor=0,total=NULL,completed_at=NULL,error=NULL,updated_at=excluded.updated_at",params![scope,name,generation,now()]).map_err(|_|"Cannot begin catalogue sync")?;
+       ON CONFLICT(scope,task) DO UPDATE SET generation=excluded.generation,status='pending',cursor=0,total=NULL,completed_at=NULL,error=NULL,scan_mode='offset',key_cursor=0,upper_id=NULL,started_at=0,lower_time=NULL,upper_time=NULL,updated_at=excluded.updated_at",params![scope,name,generation,now()]).map_err(|_|"Cannot begin catalogue sync")?;
     task(conn, scope, name)?.ok_or("Catalogue task unavailable".into())
 }
 pub fn checkpoint(
@@ -81,6 +88,7 @@ pub fn stop(
     Ok(())
 }
 
+#[cfg(test)]
 pub fn roster_page(
     conn: &Connection,
     scope: &str,
@@ -155,7 +163,7 @@ pub fn pending_details(
     kind: &str,
     cursor: i64,
 ) -> Result<Vec<i64>, String> {
-    let mut query=conn.prepare("SELECT id FROM plex_catalogue WHERE scope=?1 AND kind=?2 AND removed=0 AND id>?3 ORDER BY id LIMIT 50").map_err(|_|"Cannot read detail queue")?;
+    let mut query=conn.prepare("SELECT id FROM plex_catalogue WHERE scope=?1 AND kind=?2 AND removed=0 AND id>?3 AND (kind='playlist' OR detail=0 OR detail_revision IS NOT listing_revision) ORDER BY id LIMIT 50").map_err(|_|"Cannot read detail queue")?;
     let rows = query
         .query_map(params![scope, kind, cursor], |row| row.get(0))
         .map_err(|_| "Cannot read detail queue")?
@@ -163,6 +171,7 @@ pub fn pending_details(
         .map_err(|_| "Cannot read detail queue".into());
     rows
 }
+#[cfg(test)]
 pub fn detail_page(
     conn: &Connection,
     scope: &str,
@@ -202,6 +211,7 @@ pub fn detail_page(
         .map_err(|_| "Cannot commit catalogue details".into())
 }
 
+#[cfg(test)]
 pub fn playlist_page(
     conn: &Connection,
     scope: &str,
@@ -211,12 +221,30 @@ pub fn playlist_page(
     total: Option<i64>,
     complete: bool,
 ) -> Result<(), String> {
+    playlist_page_checked(conn, scope, id, task, items, total, complete, None).map(|_| ())
+}
+pub fn playlist_page_checked(
+    conn: &Connection,
+    scope: &str,
+    id: i64,
+    task: &Task,
+    items: &[Value],
+    total: Option<i64>,
+    complete: bool,
+    admission: Option<&super::catalogue_incremental::Change>,
+) -> Result<Option<i64>, String> {
     if task.total.is_some() && total.is_some() && task.total != total {
         return Err("Playlist changed during catalogue sync".into());
     }
     let transaction = conn
         .unchecked_transaction()
         .map_err(|_| "Cannot save playlist catalogue")?;
+    if let Some(change) = admission {
+        if !super::catalogue_incremental::current(&transaction, scope, change)? {
+            return Err("Catalogue change was superseded".into());
+        }
+    }
+    let mut revision = None;
     for (index, item) in items.iter().enumerate() {
         if item["type"].as_str() != Some("track")
             || crate::plex::catalogue::number(&item["ratingKey"]).is_none_or(|id| id <= 0)
@@ -234,6 +262,10 @@ pub fn playlist_page(
         if count != cursor || total.is_some_and(|total| total != cursor) {
             return Err("Incomplete playlist catalogue".into());
         }
+        let previous:Option<String>=transaction.query_row("SELECT generation FROM plex_catalogue_playlist_versions WHERE scope=?1 AND playlist_id=?2",params![scope,id],|r|r.get(0)).optional().map_err(|_|"Cannot compare playlist publication")?;
+        if previous.as_deref() != Some(&task.generation) {
+            revision = Some(super::catalogue_incremental::bump(&transaction, scope)?);
+        }
         transaction.execute("INSERT INTO plex_catalogue_playlist_versions(scope,playlist_id,generation,total,saved_at) VALUES(?1,?2,?3,?4,?5)
           ON CONFLICT(scope,playlist_id) DO UPDATE SET generation=excluded.generation,total=excluded.total,saved_at=excluded.saved_at",params![scope,id,task.generation,cursor,now()]).map_err(|_|"Cannot publish playlist catalogue")?;
         transaction.execute("DELETE FROM plex_catalogue_playlist_members WHERE scope=?1 AND playlist_id=?2 AND generation!=?3",params![scope,id,task.generation]).map_err(|_|"Cannot retire playlist staging")?;
@@ -248,7 +280,8 @@ pub fn playlist_page(
     )?;
     transaction
         .commit()
-        .map_err(|_| "Cannot commit playlist catalogue".into())
+        .map_err(|_| "Cannot commit playlist catalogue")?;
+    Ok(revision)
 }
 
 #[cfg(test)]

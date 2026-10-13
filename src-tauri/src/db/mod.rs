@@ -8,6 +8,7 @@ pub mod albums;
 pub mod audio;
 pub mod catalogue;
 pub mod catalogue_sync;
+pub mod catalogue_incremental;
 pub mod download_entities;
 pub mod catalogue_query;
 pub mod artists;

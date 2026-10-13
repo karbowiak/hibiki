@@ -220,9 +220,24 @@ fn recover_values(
     Ok(())
 }
 
+/// Analysis identity depends on the media and actual analysis revision, not a
+/// metadata edit timestamp (which also changes for ratings/tags).
+pub(crate) fn analysis_revision(
+    media: &super::Media,
+    music_version: Option<i64>,
+) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    Ok(format!(
+        "{:x}",
+        Sha256::digest(
+            serde_json::to_vec(&(media, music_version)).map_err(|_| "Invalid analysis revision")?
+        )
+    ))
+}
 pub struct Page {
     pub items: Vec<Value>,
     pub total: Option<i64>,
+    pub server_time: Option<i64>,
 }
 pub fn number(value: &Value) -> Option<i64> {
     value
@@ -279,7 +294,11 @@ fn parse_page(
         total.is_none_or(|n| n >= offset + items.len() as i64),
         "Plex catalogue page exceeded its total"
     );
-    Ok(Page { items, total })
+    Ok(Page {
+        items,
+        total,
+        server_time: None,
+    })
 }
 
 impl PlexClient {
@@ -326,6 +345,12 @@ impl PlexClient {
                 })
                 .transpose()
         };
+        let server_time = response
+            .headers()
+            .get("Date")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| chrono::DateTime::parse_from_rfc2822(v).ok())
+            .map(|v| v.timestamp());
         let start = header("X-Plex-Container-Start")?;
         let total = header("X-Plex-Container-Total-Size")?;
         let raw: Value = response
@@ -344,9 +369,47 @@ impl PlexClient {
                 "Plex did not confirm its playlist page offset"
             );
         }
-        parse_page(container, offset, limit, start, total)
+        let mut page = parse_page(container, offset, limit, start, total)?;
+        page.server_time = server_time;
+        Ok(page)
     }
 
+    /// A genuine authenticated 404 is distinct from transport/JSON failures.
+    /// Callers still verify the owning native account, server and section.
+    pub async fn catalogue_lookup(&self, id: i64, playlist: bool) -> Result<Option<Value>> {
+        anyhow::ensure!(id > 0, "Invalid catalogue identity");
+        let path = if playlist {
+            format!("/playlists/{id}")
+        } else {
+            format!(
+                "/library/metadata/{id}?includeGuids=1&includeLyrics=1&resolveTags=1&skipRefresh=1"
+            )
+        };
+        let response = self
+            .client
+            .get(self.build_url(&path))
+            .header("X-Plex-Token", token_header(&self.token))
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .map_err(request_error)
+            .context("Catalogue lookup failed")?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let raw: Value = response
+            .bounded_plex_json(16 * 1024 * 1024)
+            .await
+            .context("Catalogue lookup is unavailable or invalid")?;
+        let items = raw["MediaContainer"]["Metadata"]
+            .as_array()
+            .context("Missing catalogue lookup records")?;
+        anyhow::ensure!(
+            items.len() == 1 && number(&items[0]["ratingKey"]) == Some(id),
+            "Plex returned a different catalogue item"
+        );
+        Ok(Some(items[0].clone()))
+    }
     pub async fn catalogue_details(&self, ids: &[i64]) -> Result<Vec<Value>> {
         anyhow::ensure!(
             !ids.is_empty() && ids.len() <= 50 && ids.iter().all(|id| *id > 0),

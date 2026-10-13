@@ -23,6 +23,7 @@ interface Activity {
   retry?: () => void
 }
 function phaseLabel(task: string) {
+  if (task.startsWith("catchup:")) return "Checking for changes"
   if (task.startsWith("playlist:")) return "Playlist contents"
   if (task.startsWith("details:")) return "Full music metadata"
   return (
@@ -61,9 +62,12 @@ export function ActivityIndicator() {
     buttonRef = useRef<HTMLButtonElement>(null),
     panelId = useId()
   const [position, setPosition] = useState({ left: 0, top: 0, width: 320 })
+  const bulkTasks = progress?.tasks.filter(
+    (task) => !task.task.startsWith("catchup:")
+  )
   const task =
-    progress?.tasks.find((task) => task.status === "error") ??
-    progress?.tasks.find((task) => task.status !== "complete")
+    bulkTasks?.find((task) => task.status === "error") ??
+    bulkTasks?.find((task) => task.status !== "complete")
   const failed = task?.status === "error"
   const owns = () =>
     !!context &&
@@ -77,14 +81,12 @@ export function ActivityIndicator() {
       await catalogueRetry(context)
     } catch {
       if (owns())
-        useNotificationCenterStore
-          .getState()
-          .notify({
-            id: "library.indexing.retry",
-            title: "Could not resume library indexing",
-            message: "Check your Plex connection and try again.",
-            severity: "warning",
-          })
+        useNotificationCenterStore.getState().notify({
+          id: "library.indexing.retry",
+          title: "Could not resume library indexing",
+          message: "Check your Plex connection and try again.",
+          severity: "warning",
+        })
     } finally {
       setRetrying(false)
     }
@@ -136,10 +138,37 @@ export function ActivityIndicator() {
         progress.analysisUnavailable
           ? `${progress.analysisUnavailable.toLocaleString()} waveforms unavailable`
           : null,
+        progress.incremental?.watermark
+          ? `Changes last checked ${new Date(progress.incremental.watermark * 1000).toLocaleTimeString()}`
+          : null,
       ]
         .filter(Boolean)
         .join("\n"),
       retry: failed && !offline && !retrying ? () => void retry() : undefined,
+    })
+  }
+  const incremental = progress?.incremental
+  if (
+    context &&
+    incremental &&
+    (incremental.pending > 0 ||
+      incremental.catchUpRequested ||
+      incremental.phase !== "idle")
+  ) {
+    const catchingUp =
+      incremental.catchUpRequested || incremental.phase === "catchingUp"
+    activities.push({
+      id: "catalogue-updates",
+      busy: !offline,
+      state: offline ? "paused" : undefined,
+      label: offline
+        ? "Library updates paused"
+        : catchingUp
+          ? "Checking Plex for changes"
+          : "Updating saved metadata",
+      detail: incremental.pending
+        ? `${incremental.pending.toLocaleString()} items awaiting updates`
+        : "Only new or changed items are fetched.",
     })
   }
   if (libraryScanning)

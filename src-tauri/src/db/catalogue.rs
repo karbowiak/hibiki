@@ -106,7 +106,7 @@ pub fn save(
         serde_json::to_string(&clean_document(document)?).map_err(|_| "Invalid Plex metadata")?;
     conn.execute("INSERT INTO plex_catalogue(scope,kind,id,document,detail,saved_at) VALUES(?1,?2,?3,?4,?5,?6)
         ON CONFLICT(scope,kind,id) DO UPDATE SET document=excluded.document,detail=excluded.detail,saved_at=excluded.saved_at
-        WHERE excluded.detail >= plex_catalogue.detail", params![scope,kind,id,document,detail,now()]).map_err(|_| "Cannot save Plex metadata")?;
+        WHERE excluded.detail >= plex_catalogue.detail AND (json_extract(excluded.document,'$.updatedAt') IS NULL OR json_extract(plex_catalogue.document,'$.updatedAt') IS NULL OR CAST(json_extract(excluded.document,'$.updatedAt') AS INTEGER)>=CAST(json_extract(plex_catalogue.document,'$.updatedAt') AS INTEGER))", params![scope,kind,id,document,detail,now()]).map_err(|_| "Cannot save Plex metadata")?;
     Ok(())
 }
 pub fn get(conn: &Connection, scope: &str, kind: &str, id: i64) -> Result<Option<Value>, String> {

@@ -17,6 +17,10 @@ export interface CatalogueTask {
   total: number | null
   completedAt: number | null
   error: string | null
+  scanMode?: "keyset" | "offset"
+  keyCursor?: number
+  upperId?: number | null
+  startedAt?: number | null
 }
 export interface CatalogueProgress {
   tasks: CatalogueTask[]
@@ -25,7 +29,25 @@ export interface CatalogueProgress {
   waveforms: number
   analysisPending: number
   analysisUnavailable: number
+  incremental?: {
+    pending: number
+    catchUpRequested: boolean
+    watermark: number | null
+    changesRevision: number
+    phase: string
+  }
 }
+export interface CatalogueChange {
+  id: number
+  type: 8 | 9 | 10 | 15
+  state: 0 | 1 | 5 | 9
+}
+/** Events are hints; native code verifies identity and reads authoritative Plex data. */
+export const catalogueNotify = (
+  context: PlexRequestContext,
+  changes: CatalogueChange[],
+  catchUp = false
+) => invoke<void>("catalogue_notify", { context, changes, catchUp })
 export const catalogueStart = (context: PlexRequestContext) =>
   invoke<void>("catalogue_start", { context })
 export const catalogueHealth = (context: PlexRequestContext) =>

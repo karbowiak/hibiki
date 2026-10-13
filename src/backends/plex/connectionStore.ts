@@ -2,14 +2,18 @@ import {
   catalogueStart,
   catalogueHealth,
   catalogueProgress,
+  catalogueNotify,
+  catalogueRead,
   projectOfflineAvailability,
 } from "../../offline/catalogue"
 import { useCatalogueStore } from "../../offline/catalogueStore"
+import { watchCatalogueUpdates } from "../../offline/catalogueUpdates"
 import type { MusicProvider } from "../../providers/types"
 import type { PlexRequestContext } from "./scopedApi"
 import { PlexProvider } from "./provider"
 import { useOfflineStatusStore } from "../../offline/statusStore"
 import { createOfflineProvider } from "../../offline/providerCache"
+import { offlineKey } from "../../offline/providerCache"
 import { createSavedLibraryProvider } from "../../offline/offlineProvider"
 import { createPlexApi } from "./scopedApi"
 import { localAudioTrack } from "../../offline/audio"
@@ -199,9 +203,6 @@ export const useConnectionStore = createPlexConnectionStore({
     if (!ownsRequest()) return
     useOfflineStatusStore.getState().activate(provider.cacheScope ?? null)
     useProviderStore.getState().setProvider(provider)
-    wsManager = new PlexWebSocketManager()
-    wsManager.connect(context.baseUrl, context.token, section.key)
-    void provider.resumeDownloads?.().catch(() => {})
     const captured = {
       connectionRevision: context.revision,
       cacheScope: provider.cacheScope!,
@@ -209,10 +210,72 @@ export const useConnectionStore = createPlexConnectionStore({
     useCatalogueStore.getState().activate(captured)
     let retired = false,
       running = false,
-      lastStart = 0
+      lastStart = 0,
+      lastCatchUp = 0
+    let lastChangeRevision: number | null = null
+    const refreshCommitted = (revision: number) => {
+      if (
+        retired ||
+        !ownsRequest() ||
+        useOfflineStatusStore.getState().offlineMode ||
+        (lastChangeRevision != null && revision <= lastChangeRevision)
+      )
+        return
+      lastChangeRevision = revision
+      useLibraryStore.getState().invalidateLibraryTTLs()
+      useUIStore.getState().incrementPageRefreshKey()
+      void useLibraryStore
+        .getState()
+        .refreshAll()
+        .catch(() => {})
+      const query = useSearchStore.getState().query
+      if (query.trim())
+        void catalogueRead(
+          captured,
+          context.baseUrl,
+          offlineKey("search", [query])
+        )
+          .then((snapshot) => {
+            if (
+              !retired &&
+              ownsRequest() &&
+              snapshot &&
+              snapshot.catalogueComplete !== false
+            )
+              useSearchStore
+                .getState()
+                .acceptLocalRefresh(
+                  captured.cacheScope,
+                  provider.playbackSession,
+                  query,
+                  snapshot.payload as import("../../types/music").MusicItem[]
+                )
+          })
+          .catch(() => {})
+    }
+    const stopUpdates = watchCatalogueUpdates(
+      captured,
+      () => !retired && ownsRequest(),
+      (update) => refreshCommitted(update.changesRevision)
+    )
+    const startSocket = () => {
+      const socket = new PlexWebSocketManager(
+        undefined,
+        undefined,
+        async (changes, catchUp) => {
+          if (retired || !ownsRequest()) return
+          await catalogueNotify(captured, changes, catchUp)
+        }
+      )
+      socket.connect(context.baseUrl, context.token, section.key)
+      return socket
+    }
+    wsManager = startSocket()
+    void provider.resumeDownloads?.().catch(() => {})
     stopMonitor = () => {
       retired = true
       clearInterval(timer)
+      stopUpdates()
     }
     const probe = async () => {
       if (retired || running || !ownsRequest()) return
@@ -236,17 +299,26 @@ export const useConnectionStore = createPlexConnectionStore({
             wsManager?.disconnect()
             wsManager = null
           } else {
-            wsManager = new PlexWebSocketManager()
-            wsManager.connect(context.baseUrl, context.token, section.key)
+            wsManager = startSocket()
             void provider.resumeDownloads?.().catch(() => {})
           }
         }
         const progress = await catalogueProgress(captured)
         if (!retired && ownsRequest())
           useCatalogueStore.getState().update(captured, progress)
+        if (progress.incremental) {
+          if (lastChangeRevision == null)
+            lastChangeRevision = progress.incremental.changesRevision
+          else refreshCommitted(progress.incremental.changesRevision)
+        }
         if (healthy && Date.now() - lastStart > 60_000) {
           lastStart = Date.now()
           await catalogueStart(captured)
+        }
+        if (healthy && Date.now() - lastCatchUp > 5 * 60_000) {
+          lastCatchUp = Date.now()
+          // Also catches missed events if WebSocket setup/reconnect is unavailable.
+          wsManager?.requestCatchUp()
         }
       } catch {
         /* A retired native revision cannot alter availability. */

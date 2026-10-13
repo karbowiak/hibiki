@@ -4,13 +4,19 @@ SQLite V2 browsing snapshots are separate from the legacy globally keyed Plex
 metadata tables. A snapshot belongs to the protected account/server/library digest
 and an exact method + argument key, including pagination offset/size and filters.
 Repeated playlist occurrences, server totals and album alternate IDs are preserved.
-These snapshots remain bounded. SQLite V5/V6 separately retains the complete
+These snapshots remain bounded. SQLite V5–V8 separately retain the complete
 private Plex documents and builds a resumable catalogue with scoped FTS5 search.
 The native worker scans bounded artist/album/track/playlist rosters, batches full
 details, and publishes playlist memberships only after a complete verified scan.
-Interrupted pages resume; changed totals/repeated pages restart a generation.
-Missing entities are soft removed after a complete census, preserving download
-provenance. Legacy unscoped rows never become a trusted catalogue.
+V8 captures a finite highest item ID and walks `sort=id:asc` with exclusive
+`id>>` and inclusive `id<` filters. The ID cursor and processed row count persist
+separately. Imports can change totals without restarting the census; completion
+requires the terminal empty bounded page. Legacy partial offset scans convert
+once without deleting raw metadata, and completed baselines reconcile every
+30 days. Census absence only stages a verification candidate: a fresh scoped
+library check and authenticated item 404 are required before soft removal.
+Local audio bytes, shared download claims and raw provenance remain intact.
+Legacy unscoped rows never become a trusted catalogue.
 
 Plex reads show local data immediately and revalidate asynchronously. Identical
 sanitized responses do not trigger UI refreshes; changed responses update active
@@ -122,3 +128,42 @@ full track details enrich their media/analysis without losing playlist order or
 duplicate occurrences. Removing a collection or removing/re-adding it retires
 its revision, so outstanding batch admission cannot resurrect cancelled jobs.
 Individual-song removal excludes that song from any remaining pending batches.
+
+## Incremental catalogue updates
+
+Plex WebSocket hints enter `catalogue_notify` in batches of at most 200. Only
+native-owned scoped contexts and supported artist/album/track/audio-playlist
+kinds and states are admitted; renderer hints never authorize deletion. A
+durable queue coalesces each entity and fences GET responses and atomic playlist
+publication against newer admitted hints. Its independent native worker can
+update the current library while the initial bulk census or waveform pass runs.
+Live hints take priority over catch-up/deletion work. Processing states 0/1
+retain their admission and retry if the item is not yet queryable.
+Native GETs verify selected-library membership before archiving full metadata.
+Bulk detail requests run only for missing or changed listing revisions, retain
+unknown fields and full Media/Stream/Guid documents, and cannot overwrite a
+newer event publication. Unchanged notifications acknowledge without UI events.
+
+Socket reconnect/scan-end and periodic fallback request a catch-up pass. PMS
+HTTP Date supplies the upper epoch-second watermark. Each finite ID pass applies
+an overlapping timestamp window; all four kinds must complete before atomic
+watermark publication. Active windows resume across restarts, and new requests
+remain pending behind the five-minute native throttle. Queue overflow requests
+full catch-up; page backpressure prevents advancing checkpoints past unqueued
+changes. Rare full censuses also find deletion/missed-event candidates.
+
+Scoped `catalogue_updated` events follow actual native publications and include
+bounded changed entity references. `catalogue_progress.incremental` reports
+pending changes, catch-up request, epoch-second watermark, changes revision and
+`idle`/`updating`/`catchingUp` phase. Finite baseline coverage is separate from
+later arrivals; ongoing imports do not imply a completed live-server snapshot.
+Media/stream waveform identities use source, full Media and musicAnalysisVersion,
+so unrelated metadata timestamps do not refetch levels. Exact legacy revisions
+are adopted only after source/stream/media/analysis identity verification.
+
+Transport behavior was checked against the official PMS media-query language
+and read-only live bounded pages for all four kinds. Primary references: the
+[official media-query specification](https://developer.plex.tv/pms/#section/API-Info/Media-Queries)
+and [PlexAPI alert state documentation](https://python-plexapi.readthedocs.io/en/latest/modules/alert.html). The native ignored proof
+uses an explicitly supplied private settings path and an isolated temporary DB;
+no server object, active playback, live cache or downloaded file is modified.

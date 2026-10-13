@@ -21,6 +21,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
         (5, include_str!("migrations/V5__plex_catalogue.sql")),
         (6, include_str!("migrations/V6__catalogue_sync.sql")),
         (7, include_str!("migrations/V7__download_entities.sql")),
+        (8, include_str!("migrations/V8__catalogue_incremental.sql")),
     ];
 
     for &(version, sql) in migrations {
@@ -61,14 +62,14 @@ mod tests {
         let v1: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v1, 7);
+        assert_eq!(v1, 8);
 
         // Run again — should be a no-op
         run_migrations(&conn).expect("second run");
         let v2: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v2, 7);
+        assert_eq!(v2, 8);
     }
 
     #[test]
