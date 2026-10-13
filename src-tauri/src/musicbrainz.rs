@@ -947,3 +947,52 @@ mod identity_tests {
         );
     }
 }
+
+/// Only exact recording IDs or exact release-track relationships; no name search.
+#[derive(Clone,Copy)]
+pub(crate) enum ExactPlaylistIdentity { Recording,ReleaseTrack }
+pub(crate) async fn exact_playlist_identity_json(kind:ExactPlaylistIdentity,id:&str,current:&impl Fn()->bool)->Result<serde_json::Value> {
+    exact_playlist_identity_from(&MB_CLIENT,MB_BASE,&LIMITER,kind,id,current).await
+}
+async fn exact_playlist_identity_from(client:&reqwest::Client,base:&str,limiter:&RequestLimiter,kind:ExactPlaylistIdentity,id:&str,current:&impl Fn()->bool)->Result<serde_json::Value> {
+    if !current(){anyhow::bail!("Recording connection changed")}
+    let canonical=uuid::Uuid::parse_str(id).context("Invalid exact MusicBrainz reference")?;
+    if id.len()!=36||canonical.to_string()!=id {anyhow::bail!("Invalid exact MusicBrainz reference")}
+    let request=match kind {
+        ExactPlaylistIdentity::Recording=>client.get(format!("{base}/recording/{id}")).query(&[("inc","artist-credits"),("fmt","json")]),
+        ExactPlaylistIdentity::ReleaseTrack=>client.get(format!("{base}/release")).query(&[("track",id),("inc","recordings+artist-credits"),("fmt","json"),("limit","5")]),
+    };
+    limiter.wait().await;
+    if !current(){anyhow::bail!("Recording connection changed")}
+    let response=request.send().await.map_err(|e|e.without_url()).context("Exact MusicBrainz read unavailable")?;
+    if !current(){anyhow::bail!("Recording connection changed")}
+    if !response.status().is_success(){anyhow::bail!("Exact MusicBrainz read unavailable")}
+    let value=response.bounded_json(MAX_JSON_BYTES).await.context("Invalid exact MusicBrainz response")?;
+    if !current(){anyhow::bail!("Recording connection changed")}
+    Ok(value)
+}
+#[cfg(test)]
+mod playlist_exact_tests {
+    use super::*;
+    use std::sync::{Arc,atomic::{AtomicBool,Ordering}};
+    use tokio::io::{AsyncReadExt,AsyncWriteExt};
+    #[tokio::test]
+    async fn exact_playlist_reads_use_canonical_endpoints_bounded_json_and_current_context() {
+        let id="11111111-1111-4111-8111-111111111111";
+        for case in 0..4 {
+            let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let base=format!("http://{}/ws/2",listener.local_addr().unwrap());
+            let live=Arc::new(AtomicBool::new(true));let server_live=live.clone();
+            let server=tokio::spawn(async move {
+                let (mut stream,_)=tokio::time::timeout(std::time::Duration::from_secs(8),listener.accept()).await.unwrap().unwrap();let mut bytes=Vec::new();let mut buffer=[0;4096];
+                while !bytes.windows(4).any(|w|w==b"\r\n\r\n") {let n=tokio::time::timeout(std::time::Duration::from_secs(5),stream.read(&mut buffer)).await.unwrap().unwrap();assert!(n>0);bytes.extend_from_slice(&buffer[..n]);assert!(bytes.len()<65536)}
+                let request=String::from_utf8(bytes).unwrap();let line=request.lines().next().unwrap().split_whitespace().collect::<Vec<_>>();assert_eq!(line[0],"GET");let url=url::Url::parse(&format!("http://fixture{}",line[1])).unwrap();
+                let query=url.query_pairs().into_owned().collect::<std::collections::BTreeMap<_,_>>();assert_eq!(query["fmt"],"json");assert!(!query.contains_key("query"));
+                if case==1 {assert_eq!(url.path(),"/ws/2/release");assert_eq!(query["track"],id);assert_eq!(query["limit"],"5");assert_eq!(query["inc"],"recordings+artist-credits");}else{assert_eq!(url.path(),format!("/ws/2/recording/{id}"));assert_eq!(query["inc"],"artist-credits");}
+                if case==3 {server_live.store(false,Ordering::SeqCst)}
+                let body="{}";let length=if case==2{MAX_JSON_BYTES+1}else{body.len()};stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n{body}").as_bytes()).await.unwrap();
+            });
+            let limiter=RequestLimiter::new();let client=reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().unwrap();let kind=if case==1{ExactPlaylistIdentity::ReleaseTrack}else{ExactPlaylistIdentity::Recording};
+            let outcome=exact_playlist_identity_from(&client,&base,&limiter,kind,id,&||live.load(Ordering::SeqCst)).await;assert_eq!(outcome.is_ok(),case<2);server.await.unwrap();
+        }
+    }
+}

@@ -797,6 +797,18 @@ async fn live_owned_playlist_smoke() -> Result<()> {
     );
     let run =
         canonical_mbid(&std::env::var("HIBIKI_QA_RUN_ID").context("Reviewed QA UUID required")?)?;
+    if mode == "inspect-weekly-import" {
+        return weekly_diagnostic::inspect(&config).await;
+    }
+    if mode == "prepare-empty" {
+        return empty::prepare(&config, &run).await;
+    }
+    if mode == "execute-empty" {
+        return empty::execute(&config, &run).await;
+    }
+    if mode == "prepare-empty-cleanup" || mode == "cleanup-empty-reviewed" {
+        return empty::cleanup(&config, &run, mode == "cleanup-empty-reviewed").await;
+    }
     if mode == "prepare-reviewed-copy" {
         let previous = canonical_mbid(
             &std::env::var("HIBIKI_QA_PREVIOUS_RUN").context("Reviewed previous run required")?,
@@ -836,6 +848,8 @@ async fn live_owned_playlist_smoke() -> Result<()> {
 }
 
 mod execution;
+mod empty;
+mod weekly_diagnostic;
 
 async fn prepare_reviewed_copy(config: &Path, run: &str, previous: &str) -> Result<()> {
     let source: Value = serde_json::from_slice(&std::fs::read(

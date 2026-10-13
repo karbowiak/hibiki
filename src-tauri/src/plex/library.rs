@@ -672,11 +672,9 @@ pub(super) fn build_url_from_params(base_url: &str, params: &[(String, String)])
     if params.is_empty() {
         base_url.to_string()
     } else {
-        let query = params
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect::<Vec<_>>()
-            .join("&");
+        let query = url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(params.iter().map(|(key, value)| (key.as_str(), value.as_str())))
+            .finish();
         let separator = if base_url.contains('?') { "&" } else { "?" };
         format!("{}{}{}", base_url, separator, query)
     }
@@ -684,11 +682,9 @@ pub(super) fn build_url_from_params(base_url: &str, params: &[(String, String)])
 
 /// Build query string from parameters
 fn build_query_string(params: &[(&str, String)]) -> String {
-    params
-        .iter()
-        .map(|(k, v)| format!("{}={}", k, v))
-        .collect::<Vec<_>>()
-        .join("&")
+    url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(params.iter().map(|(key, value)| (*key, value.as_str())))
+        .finish()
 }
 
 #[cfg(test)]
@@ -781,7 +777,22 @@ mod tests {
         ];
 
         let query = build_query_string(&params);
-        assert_eq!(query, "type=track&sort=addedAt:desc&limit=50");
+        assert_eq!(query, "type=track&sort=addedAt%3Adesc&limit=50");
+    }
+
+    #[test]
+    fn search_labels_remain_one_query_parameter_with_existing_url_parameters() {
+        let label = "Yoshiko & Tatsunoshin + Bumble Bee #日本語 ? limit=0";
+        let url = build_url_from_params("http://localhost:32400/hubs/search?existing=1", &[
+            ("query".into(), label.into()), ("sectionId".into(), "1".into())
+        ]);
+        let parsed = url::Url::parse(&url).unwrap();
+        let pairs: Vec<_> = parsed.query_pairs().collect();
+        assert_eq!(pairs.len(), 3);
+        assert_eq!(pairs[0], ("existing".into(), "1".into()));
+        assert_eq!(pairs[1], ("query".into(), label.into()));
+        assert_eq!(pairs[2], ("sectionId".into(), "1".into()));
+        assert_eq!(parsed.fragment(), None);
     }
 }
 

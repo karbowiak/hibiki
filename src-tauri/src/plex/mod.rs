@@ -41,6 +41,7 @@ pub mod metadata_edit;
 pub mod metadata_advanced;
 pub mod models;
 pub mod playlist;
+pub mod playlist_description;
 pub mod playlist_sync_edit;
 pub mod playqueue;
 pub mod server;

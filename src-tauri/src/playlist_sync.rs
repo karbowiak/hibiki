@@ -163,38 +163,41 @@ pub async fn playlist_sync_listenbrainz_account(
         .map(|value| value.account)
         .map_err(|_| "Connect ListenBrainz before using playlists".into())
 }
+#[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ListenBrainzListing { Created, Createdfor, Collaborator }
+impl ListenBrainzListing {
+    fn suffix(self) -> Option<&'static str> {match self {Self::Created=>None,Self::Createdfor=>Some("createdfor"),Self::Collaborator=>Some("collaborator")}}
+}
+async fn list_from(client:&reqwest::Client, base:&str, token:&str, username:&str, source:ListenBrainzListing, offset:u32,count:u32)->Result<Value> {
+    if count==0 || count>100 || offset>100_000 {bail!("Invalid playlist page")}
+    let mut segments=vec!["user",username,"playlists"];
+    if let Some(suffix)=source.suffix(){segments.push(suffix)}
+    let mut value=response(client.get(endpoint(base,&segments)?).header("Authorization",format!("Token {token}")).query(&[("offset",offset),("count",count)])).await?;
+    let items=value.get("playlists").and_then(Value::as_array).context("Invalid playlist list response")?;
+    if items.len()>count as usize || value.get("offset").and_then(Value::as_u64)!=Some(offset as u64)
+        || value.get("playlist_count").and_then(Value::as_u64).is_none() {bail!("Invalid playlist list response")}
+    // These documented user-list endpoints return summaries without recordings.
+    // Do not silently turn browsing all lists into a bulk track download.
+    for item in items {
+        let playlist=item.get("playlist").and_then(Value::as_object).context("Invalid playlist summary")?;
+        if playlist.get("track").is_some_and(|tracks| tracks.as_array().is_none_or(|t|!t.is_empty())) {bail!("Playlist list unexpectedly contains recordings")}
+        let id=playlist.get("identifier").and_then(Value::as_str).context("Playlist summary identity missing")?.trim_start_matches("https://listenbrainz.org/playlist/");
+        canonical_mbid(id)?;
+    }
+    value["listing_source"]=serde_json::to_value(source)?;
+    Ok(value)
+}
 #[tauri::command]
 pub async fn playlist_sync_listenbrainz_list(
-    app: tauri::AppHandle,
-    expected: PlaylistAccount,
-    offset: u32,
-    count: u32,
-) -> Result<Value, String> {
-    if count == 0 || count > 100 || offset > 100_000 {
-        return Err("Invalid playlist page".into());
-    }
-    let path = config(&app)?;
-    let current = owned(&path, &expected)
-        .map_err(|_| "ListenBrainz account changed. Preview again.".to_string())?;
-    let url = endpoint(BASE, &["user", &current.account.user, "playlists"])
-        .map_err(|_| "Invalid playlist request".to_string())?;
-    let value = response(
-        CLIENT
-            .get(url)
-            .header("Authorization", format!("Token {}", current.token))
-            .query(&[("offset", offset), ("count", count)]),
-    )
-    .await
-    .map_err(|_| "Could not load ListenBrainz playlists".to_string())?;
-    owned(&path, &expected)
-        .map_err(|_| "ListenBrainz account changed. Preview again.".to_string())?;
-    let items = value
-        .get("playlists")
-        .and_then(Value::as_array)
-        .ok_or("Invalid playlist list response")?;
-    if items.len() > count as usize {
-        return Err("Invalid playlist list response".into());
-    }
+    app: tauri::AppHandle, expected: PlaylistAccount, offset:u32,count:u32,
+    source:Option<ListenBrainzListing>,
+)->Result<Value,String> {
+    let path=config(&app)?;
+    let current=owned(&path,&expected).map_err(|_|"ListenBrainz account changed. Preview again.".to_string())?;
+    let value=list_from(&CLIENT,BASE,&current.token,&current.account.user,source.unwrap_or(ListenBrainzListing::Created),offset,count).await
+        .map_err(|_|"Could not load ListenBrainz playlist summaries".to_string())?;
+    owned(&path,&expected).map_err(|_|"ListenBrainz account changed. Preview again.".to_string())?;
     Ok(value)
 }
 #[tauri::command]
@@ -397,6 +400,25 @@ async fn mutate_from(
     }
     Ok(result)
 }
+async fn require_owned_destination(
+    client:&reqwest::Client,base:&str,token:&str,id:&str,account:&PlaylistAccount,current:impl Fn()->Result<()>,
+)->Result<()> {
+    let id=canonical_mbid(id)?;
+    current()?;
+    let authenticated=response(client.get(endpoint(base,&["validate-token"])?).header("Authorization",format!("Token {token}"))).await?;
+    if authenticated["valid"]!=true || authenticated["user_name"].as_str()!=Some(account.user.as_str()) {bail!("Authenticated ListenBrainz account changed")}
+    current()?;
+    let value=sync_read(client,base,token,&id).await?;
+    recording_ids(&value,&id)?;
+    let playlist=value.get("playlist").context("Playlist ownership missing")?;
+    let generated=playlist.get("extension").and_then(|e|e.get("https://musicbrainz.org/doc/jspf#playlist"))
+        .and_then(|e|e.get("created_for")).is_some_and(|v|!v.is_null());
+    if playlist.get("creator").and_then(Value::as_str)!=Some(account.user.as_str()) || generated {
+        bail!("Generated and collaborator playlists are read-only sync sources")
+    }
+    current()?;
+    Ok(())
+}
 static SYNC_MUTATION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 #[tauri::command]
 pub async fn playlist_sync_listenbrainz_mutate(
@@ -412,6 +434,8 @@ pub async fn playlist_sync_listenbrainz_mutate(
     let _guard = SYNC_MUTATION_LOCK.lock().await;
     let credentials = owned(&path, &expected)
         .map_err(|_| "ListenBrainz account changed. Review again.".to_string())?;
+    require_owned_destination(&CLIENT,BASE,&credentials.token,&id,&expected,||owned(&path,&expected).map(|_|())).await
+        .map_err(|_|"ListenBrainz destination ownership could not be confirmed. Only your own playlists can be updated.".to_string())?;
     mutate_from(
         &CLIENT,
         BASE,
@@ -731,3 +755,154 @@ mod tests {
 
 #[cfg(test)]
 mod live_smoke;
+
+#[cfg(test)]
+mod listing_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt,AsyncWriteExt};
+    #[tokio::test]
+    async fn all_official_user_listing_feeds_are_bounded_metadata_only_pages() {
+        for source in [ListenBrainzListing::Created,ListenBrainzListing::Createdfor,ListenBrainzListing::Collaborator] {
+            let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base=format!("http://{}/1/",listener.local_addr().unwrap());
+            let server=tokio::spawn(async move {
+                let (mut stream,_)=listener.accept().await.unwrap();let mut bytes=Vec::new();let mut buffer=[0;4096];
+                while !bytes.windows(4).any(|w|w==b"\r\n\r\n") {let n=stream.read(&mut buffer).await.unwrap();assert!(n>0);bytes.extend_from_slice(&buffer[..n]);assert!(bytes.len()<65536);}
+                let text=String::from_utf8(bytes).unwrap();let target=text.lines().next().unwrap().split_whitespace().nth(1).unwrap();
+                let url=url::Url::parse(&format!("http://fixture{target}")).unwrap();
+                let wanted=format!("/1/user/fixture%2Fname/playlists{}",source.suffix().map(|s|format!("/{s}")).unwrap_or_default());assert_eq!(url.path(),wanted);
+                let query=url.query_pairs().into_owned().collect::<std::collections::BTreeMap<_,_>>();assert_eq!(query.len(),2);assert_eq!(query["offset"],"100");assert_eq!(query["count"],"2");assert!(text.to_lowercase().contains("authorization: token fixture-token"));
+                let body=json!({"playlists":[{"playlist":{"identifier":"https://listenbrainz.org/playlist/11111111-1111-4111-8111-111111111111","title":"Weekly fixture","creator":"fixture-bot","track":[]}}],"playlist_count":101,"offset":100,"count":2}).to_string();
+                stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+            });
+            let value=list_from(&CLIENT,&base,"fixture-token","fixture/name",source,100,2).await.unwrap();assert_eq!(value["playlists"].as_array().unwrap().len(),1);assert_eq!(value["listing_source"],serde_json::to_value(source).unwrap());server.await.unwrap();
+        }
+    }
+    #[tokio::test]
+    async fn listing_rejects_recordings_oversized_pages_and_wrong_offsets() {
+        for case in 0..3 {
+            let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let base=format!("http://{}/1/",listener.local_addr().unwrap());
+            let server=tokio::spawn(async move {
+                let (mut stream,_)=listener.accept().await.unwrap();let mut buffer=[0;4096];let _=stream.read(&mut buffer).await.unwrap();
+                let item=json!({"playlist":{"identifier":"11111111-1111-4111-8111-111111111111","track":if case==0 {json!([{"identifier":[]}])}else{json!([])}}});
+                let body=json!({"playlists":if case==1 {vec![item.clone(),item]}else{vec![item]},"playlist_count":2,"offset":if case==2{1}else{0},"count":1}).to_string();
+                stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+            });
+            assert!(list_from(&CLIENT,&base,"fixture-token","fixture",ListenBrainzListing::Createdfor,0,1).await.is_err());server.await.unwrap();
+        }
+    }
+}
+
+#[cfg(test)]
+mod readonly_listing_smoke {
+    use super::*;
+    #[tokio::test]
+    #[ignore="Explicit bounded read-only account verification; never ordinary CI"]
+    async fn live_readonly_visible_listing_feeds() -> Result<()> {
+        if std::env::var("HIBIKI_READONLY_LB_LIST_VERIFY").ok().as_deref()!=Some("1") {bail!("Explicit read-only listing approval required")}
+        let path=std::path::PathBuf::from(std::env::var("HIBIKI_READONLY_LB_LIST_CONFIG").context("Explicit private config path required")?);
+        let current=credentials(&path)?;
+        let auth=response(CLIENT.get(endpoint(BASE,&["validate-token"])?).header("Authorization",format!("Token {}",current.token))).await?;
+        if auth["valid"]!=true || auth["user_name"].as_str()!=Some(current.account.user.as_str()){bail!("Read-only authenticated account mismatch")}
+        let mut proof=vec![];
+        for source in [ListenBrainzListing::Created,ListenBrainzListing::Createdfor,ListenBrainzListing::Collaborator] {
+            let mut offset=0;let mut pages=0;let mut total=None;let mut seen=std::collections::BTreeSet::new();
+            loop {
+                let lease=owned(&path,&current.account)?;if lease.token!=current.token {bail!("Read-only credential revision changed")}
+                let page=list_from(&CLIENT,BASE,&current.token,&current.account.user,source,offset,100).await?;
+                let count=page["playlist_count"].as_u64().context("Invalid page total")?;
+                if total.is_some_and(|old|old!=count){bail!("Read-only list changed while paging")};total=Some(count);
+                let items=page["playlists"].as_array().unwrap();
+                if items.is_empty() && (offset as u64)<count {bail!("Incomplete visible feed")}
+                for item in items {let id=item["playlist"]["identifier"].as_str().unwrap();if !seen.insert(id.to_owned()){bail!("Repeated visible page")}}
+                offset+=items.len() as u32;pages+=1;
+                let complete=(offset as u64)>=count;
+                if complete || pages>=20 {proof.push(json!({"source":source,"summaries":offset,"reportedTotal":count,"pages":pages,"complete":complete}));break}
+            }
+            owned(&path,&current.account)?;
+        }
+        let artifact=std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join(".tmp/lb-visible-feeds-proof.json");
+        std::fs::write(artifact,serde_json::to_vec_pretty(&proof)?)?;
+        println!("Read-only visible feed proof: {}",serde_json::to_string(&proof)?);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod destination_ownership_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize,Ordering};
+    use tokio::io::{AsyncReadExt,AsyncWriteExt};
+    #[tokio::test]
+    async fn authenticated_owned_destination_required_before_any_mutation() {
+        let id="11111111-1111-4111-8111-111111111111";
+        let recording="22222222-2222-4222-8222-222222222222";
+        for case in 0..5 {
+            let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let base=format!("http://{}/1/",listener.local_addr().unwrap());
+            let (stop,mut stopped)=tokio::sync::oneshot::channel();
+            let server=tokio::spawn(async move {
+                let mut mutations=0;let mut changed=false;let mut reads=0;
+                loop {
+                    let (mut stream,_)=tokio::select!{_= &mut stopped=>break,accepted=listener.accept()=>accepted.unwrap()};
+                    let mut bytes=Vec::new();let mut buffer=[0;4096];while !bytes.windows(4).any(|w|w==b"\r\n\r\n"){let n=stream.read(&mut buffer).await.unwrap();assert!(n>0);bytes.extend_from_slice(&buffer[..n]);assert!(bytes.len()<65536)}
+                    let request=String::from_utf8(bytes).unwrap();let line=request.lines().next().unwrap();let auth=line.contains("validate-token");let writing=line.starts_with("POST ");
+                    let value=if auth {json!({"valid":true,"user_name":if case==4{"other"}else{"fixture-user"}})}else if writing {mutations+=1;changed=true;json!({"status":"ok"})}else {
+                        reads+=1;json!({"playlist":{"identifier":format!("https://listenbrainz.org/playlist/{id}"),"title":"Fixture","creator":if case==0||case==3{"fixture-user"}else if case==1{"weekly-bot"}else{"friend"},"extension":{"https://musicbrainz.org/doc/jspf#playlist":{"created_for":if case==1{json!("fixture-user")}else{json!(null)}}},"track":if changed {vec![json!({"identifier":[format!("https://musicbrainz.org/recording/{recording}")]})]}else{vec![]}}})
+                    };
+                    let body=value.to_string();stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+                } (mutations,reads)
+            });
+            let account=PlaylistAccount{service:"listenbrainz".into(),user:"fixture-user".into(),revision:"fixture".into()};let checks=AtomicUsize::new(0);
+            let guard=|| {let n=checks.fetch_add(1,Ordering::SeqCst);if case==3&&n>=2{bail!("retired")};Ok(())};
+            let permission=require_owned_destination(&CLIENT,&base,"fixture-token",id,&account,guard).await;
+            if permission.is_ok(){mutate_from(&CLIENT,&base,"fixture-token",id,&ListenBrainzExpected{title:"Fixture".into(),mbids:vec![]},&ListenBrainzOperation::Append{track_id:recording.into()},||Ok(())).await.unwrap();}
+            let _=stop.send(());let (mutations,reads)=server.await.unwrap();assert_eq!(mutations,usize::from(case==0));assert_eq!(permission.is_ok(),case==0);if case==0{assert_eq!(reads,3);}
+        }
+    }
+}
+
+pub mod recordings;
+
+#[cfg(test)]
+mod weekly_metadata_probe {
+    use super::*;
+    fn minimal(value:&Value,depth:usize)->Value {
+        if depth==0{return Value::Null}
+        match value {
+            Value::Object(map)=>Value::Object(map.iter().take(24).filter(|(k,_)|!matches!(k.to_lowercase().as_str(),"token"|"authorization"|"password"|"api_key")).map(|(k,v)|(k.clone(),minimal(v,depth-1))).collect()),
+            Value::Array(a)=>Value::Array(a.iter().take(8).map(|v|minimal(v,depth-1)).collect()),
+            Value::String(s)=>Value::String(s.chars().take(500).collect()),
+            other=>other.clone(),
+        }
+    }
+    #[tokio::test]
+    #[ignore="Explicit read-only weekly summary probe; never ordinary CI"]
+    async fn live_readonly_weekly_metadata() -> Result<()> {
+        if std::env::var("HIBIKI_READONLY_WEEKLY_VERIFY").ok().as_deref()!=Some("1"){bail!("Explicit read-only probe required")}
+        let path=std::path::PathBuf::from(std::env::var("HIBIKI_READONLY_LB_LIST_CONFIG")?);
+        let week=std::env::var("HIBIKI_WEEKLY_PROBE_WEEK")?;
+        let account=credentials(&path)?;
+        let value=list_from(&CLIENT,BASE,&account.token,&account.account.user,ListenBrainzListing::Createdfor,0,100).await?;
+        owned(&path,&account.account)?;
+        let selected=value["playlists"].as_array().unwrap().iter().filter(|row|row["playlist"]["title"].as_str().is_some_and(|s|s.contains(&week)&&(s.starts_with("Weekly Exploration")||s.starts_with("Weekly Jams")))).take(4).collect::<Vec<_>>();
+        let mut proof=Vec::new();let mut detail_reads=0;
+        for row in selected {
+            let mut playlist=row["playlist"].clone();
+            if !playlist.get("date").is_some_and(Value::is_string) {
+                owned(&path,&account.account)?;
+                let id=canonical_mbid(playlist["identifier"].as_str().context("Missing weekly identity")?.trim_start_matches("https://listenbrainz.org/playlist/"))?;
+                playlist=sync_read(&CLIENT,BASE,&account.token,&id).await?["playlist"].clone();detail_reads+=1;
+                owned(&path,&account.account)?;
+            }
+            let mut fields=serde_json::Map::new();
+            for key in ["identifier","title","creator","date","created","created_at","updated","last_modified","extension"] {
+                if let Some(value)=playlist.get(key){fields.insert(key.into(),minimal(value,5));}
+            }
+            proof.push(Value::Object(fields));
+        }
+        owned(&path,&account.account)?;
+        let artifact=std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join(".tmp/lb-weekly-metadata-proof.json");
+        use std::io::Write;let mut file=tempfile::NamedTempFile::new_in(artifact.parent().unwrap())?;file.write_all(&serde_json::to_vec_pretty(&proof)?)?;file.as_file().sync_all()?;std::fs::rename(file.into_temp_path(),&artifact)?;
+        println!("Read-only weekly metadata retained: {} selected summaries, {} detail reads; no writes.",proof.len(),detail_reads);Ok(())
+    }
+}

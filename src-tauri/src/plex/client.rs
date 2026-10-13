@@ -886,7 +886,7 @@ mod playlist_create_once_tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     #[tokio::test]
     async fn playlist_creates_use_one_bounded_nonredirecting_request_and_one_positive_id() {
-        for case in 0..7 {
+        for case in 0..8 {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let base = format!("http://{}/proxy", listener.local_addr().unwrap());
             let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel();
@@ -911,7 +911,7 @@ mod playlist_create_once_tests {
                     let query = url.query_pairs().into_owned().collect::<std::collections::BTreeMap<_,_>>();
                     assert_eq!(query.get("title").unwrap(), "Hibiki QA fixture");
                     assert_eq!(query.get("type").unwrap(), "audio"); assert_eq!(query.get("smart").unwrap(), "0");
-                    assert_eq!(query.get("uri").unwrap(), "server://synthetic/com.plexapp.plugins.library/library/metadata/1,2,1");
+                    assert_eq!(query.get("uri").unwrap(), if case == 7 { "" } else { "server://synthetic/com.plexapp.plugins.library/library/metadata/1,2,1" });
                     assert!(!query.contains_key("includeLoudnessRamps"));
                     assert!(request.to_lowercase().contains("x-plex-token: synthetic-token"));
                     let status = if case == 1 {503} else if case == 2 {302} else {200};
@@ -930,11 +930,12 @@ mod playlist_create_once_tests {
             });
             let mut client = PlexClient::new(PlexClientConfig {base_url:base,token:"synthetic-token".into(),..Default::default()}).unwrap();
             client.machine_identifier = "synthetic".into();
-            let outcome = tokio::time::timeout(std::time::Duration::from_secs(10), client.create_playlist("Hibiki QA fixture",5,&[1,2,1])).await;
+            let ids: &[i64] = if case == 7 { &[] } else { &[1,2,1] };
+            let outcome = tokio::time::timeout(std::time::Duration::from_secs(10), client.create_playlist("Hibiki QA fixture",5,ids)).await;
             let _ = stop_tx.send(());
             assert_eq!(server.await.unwrap(),1,"create must not retry or follow redirects");
             let result = outcome.expect("single create request did not finish");
-            if case == 0 {assert_eq!(result.unwrap().rating_key,41);}
+            if case == 0 || case == 7 {assert_eq!(result.unwrap().rating_key,41);}
             else {let error=result.unwrap_err().to_string();assert!(!error.contains("synthetic-token"));}
         }
     }

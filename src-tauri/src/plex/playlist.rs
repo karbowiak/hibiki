@@ -251,8 +251,10 @@ impl PlexClient {
         // Plex expects one library URI with an ordered comma-separated ID list.
         // Repeating the entire URI for each ID is accepted as an empty playlist.
         let ids = item_ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
-        let uri = format!("server://{}/com.plexapp.plugins.library/library/metadata/{}",
-            self.machine_identifier, ids);
+        let uri = if item_ids.is_empty() { String::new() } else {
+            format!("server://{}/com.plexapp.plugins.library/library/metadata/{}",
+                self.machine_identifier, ids)
+        };
 
 
         let container: MediaContainer<Playlist> = self
@@ -361,11 +363,26 @@ impl PlexClient {
         title: Option<&str>,
         summary: Option<&str>,
     ) -> Result<()> {
+        if playlist_id <= 0 || self.offline_only {
+            anyhow::bail!("Reconnect to Plex before editing this playlist");
+        }
+        if title.is_some_and(|text| text.trim().is_empty() || text.len() > 2000)
+            || summary.is_some_and(|text| text.len() > 5000) {
+            anyhow::bail!("Invalid playlist metadata");
+        }
         let path = format!("/playlists/{}", playlist_id);
         let mut params: Vec<(&str, &str)> = Vec::new();
         if let Some(t) = title { params.push(("title", t)); }
         if let Some(s) = summary { params.push(("summary", s)); }
-        self.put_params_ok(&path, &params).await.context("Failed to edit playlist")
+        if params.is_empty() { return Ok(()); }
+        self.put_metadata_params_once(&path, &params).await.context("Plex did not confirm the playlist metadata")?;
+        let actual = self.get_playlist(playlist_id).await.context("Playlist metadata outcome requires reconciliation")?;
+        if actual.rating_key != playlist_id
+            || title.is_some_and(|text| actual.title != text)
+            || summary.is_some_and(|text| actual.summary.as_deref().unwrap_or("") != text) {
+            anyhow::bail!("Playlist metadata outcome requires reconciliation");
+        }
+        Ok(())
     }
 
     /// Add items to a playlist

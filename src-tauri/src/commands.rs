@@ -959,6 +959,34 @@ pub async fn playlist_sync_plex_mutate(
     Ok(result)
 }
 
+/// Update a weekly description after a retained before-state, then prove it.
+#[tauri::command]
+pub async fn playlist_sync_plex_describe(
+    context: PlexRequestContext, section_id: i64, playlist_id: i64,
+    expected: crate::plex::playlist_sync_edit::PlaylistSyncState,
+    expected_description: String, description: String,
+    state: State<'_, PlexState>,
+) -> Result<String, String> {
+    let client = state.client_for(&context).await?;
+    let prepared = tokio::time::timeout(std::time::Duration::from_secs(30),
+        client.prepare_playlist_description(section_id, playlist_id, &expected, &expected_description, &description))
+        .await.map_err(|_| "Playlist description review timed out before saving")?
+        .map_err(|error| error.to_string())?;
+    {
+        let guard = state.0.lock().await;
+        let current = state.checked_client(&context, &guard)?;
+        tokio::time::timeout(std::time::Duration::from_secs(15), current.commit_playlist_description_once(&prepared))
+            .await.map_err(|_| "Plex did not confirm the playlist description")?
+            .map_err(|_| "Plex did not confirm the playlist description")?;
+    }
+    let result = tokio::time::timeout(std::time::Duration::from_secs(30), client.verify_playlist_description(&prepared))
+        .await.map_err(|_| "Playlist description outcome requires reconciliation")?
+        .map_err(|_| "Playlist description outcome requires reconciliation")?;
+    let guard = state.0.lock().await;
+    state.checked_client(&context, &guard).map_err(|_| "Playlist description outcome requires reconciliation: the connection changed")?;
+    Ok(result)
+}
+
 /// Edit playlist metadata (title, summary).
 #[tauri::command]
 pub async fn edit_playlist(
@@ -3538,4 +3566,19 @@ mod simple_metadata_postproof_tests {
             assert_eq!(server.join().unwrap(),1);
         }
     }
+}
+
+/// Read-only exact-ID proof for a row explicitly selected in playlist review.
+#[tauri::command]
+pub async fn playlist_sync_resolve_recording(
+    context:PlexRequestContext,section_id:i64,track_id:i64,
+    expected:crate::playlist_sync::recordings::RecordingExpected,state:State<'_,PlexState>,
+)->Result<crate::playlist_sync::recordings::RecordingResolution,String> {
+    let client=state.client_for(&context).await?;
+    let result=tokio::time::timeout(std::time::Duration::from_secs(45),
+        crate::playlist_sync::recordings::resolve(&client,section_id,track_id,&expected,||state.is_current(context.connection_revision)))
+        .await.map_err(|_|"Recording verification timed out. Retry the selected row.".to_string())?
+        .map_err(|_|"Could not verify the selected recording for this library connection.".to_string())?;
+    let guard=state.0.lock().await;state.checked_client(&context,&guard)?;
+    Ok(result)
 }
