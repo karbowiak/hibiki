@@ -91,6 +91,10 @@ export function createPlexApi(
     })
   }
 
+  function findPlaylistCandidates(sectionId: number, source: {title:string;artist:string;recordingMbid?:string|null}): Promise<{tracks:Track[];truncated:boolean;unavailable:boolean}> {
+    return invoke("playlist_sync_candidates", {sectionId,source:{title:source.title,artist:source.artist,recordingMbid:source.recordingMbid??null}})
+  }
+
   /** Get recently added items in a section. */
   function getRecentlyAdded(
     sectionId: number,
@@ -755,6 +759,7 @@ export function createPlexApi(
     context: requestContext,
     getLibrarySections,
     searchLibrary,
+    findPlaylistCandidates,
     getRecentlyAdded,
     getLatestReleases,
     getHubs,

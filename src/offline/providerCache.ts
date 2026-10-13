@@ -201,6 +201,21 @@ export function isUnconfirmedWrite(error: unknown): boolean {
   )
 }
 
+type PlaylistReads = Pick<MusicProvider, "getPlaylists" | "getPlaylistItems">
+const freshReads = new WeakMap<MusicProvider, PlaylistReads>()
+
+/** Sync must never treat saved browsing data as a fresh server snapshot. */
+export function freshPlaylistReads(provider: MusicProvider): PlaylistReads {
+  if (provider.isOffline)
+    throw new Error("Reconnect to read the current playlist before syncing.")
+  return (
+    freshReads.get(provider) ?? {
+      getPlaylists: provider.getPlaylists.bind(provider),
+      getPlaylistItems: provider.getPlaylistItems.bind(provider),
+    }
+  )
+}
+
 /** Wrap reads only. Native authorization still fences every cache IPC. */
 export function createOfflineProvider<T extends MusicProvider>(
   provider: T,
@@ -220,7 +235,7 @@ export function createOfflineProvider<T extends MusicProvider>(
   let writes: Promise<void> = Promise.resolve()
   let cacheEpoch = 0
   let fallbackSafe = true
-  return new Proxy(provider, {
+  const proxy = new Proxy(provider, {
     get(target, property) {
       const value = Reflect.get(target, property, target)
       if (typeof value !== "function") return value
@@ -350,4 +365,30 @@ export function createOfflineProvider<T extends MusicProvider>(
       return wrapped
     },
   })
+  const checkFresh = () => {
+    if (
+      provider.isOffline ||
+      provider.cacheScope !== initialScope ||
+      provider.playbackSession !== initialSession ||
+      !(options.owns?.() ?? true)
+    )
+      throw new Error(
+        "Current playlist request was superseded. Reconnect and try again."
+      )
+  }
+  freshReads.set(proxy, {
+    getPlaylists: async (...args) => {
+      checkFresh()
+      const result = await provider.getPlaylists(...args)
+      checkFresh()
+      return result
+    },
+    getPlaylistItems: async (...args) => {
+      checkFresh()
+      const result = await provider.getPlaylistItems(...args)
+      checkFresh()
+      return result
+    },
+  })
+  return proxy
 }

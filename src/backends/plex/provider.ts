@@ -240,6 +240,11 @@ export class PlexProvider implements MusicProvider {
       .filter((x): x is MusicItem => x !== null)
   }
 
+  async findPlaylistCandidates(source: import("../../providers/types").PlaylistRecordingTrack & {recordingMbid?: string|null}) {
+    const result = await this.api.findPlaylistCandidates(this.requireSection(), source)
+    return {...result, tracks:this.mapTracks(result.tracks)}
+  }
+
   async getRecentlyAdded(type?: string, limit?: number): Promise<MusicItem[]> {
     const sid = this.requireSection()
     const items = await this.api.getRecentlyAdded(sid, type, limit)

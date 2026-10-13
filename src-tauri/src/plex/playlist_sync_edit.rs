@@ -385,9 +385,14 @@ mod tests {
                             let item = items.remove(*from);
                             // Simulate the API's actual insert-after semantics,
                             // rather than moving to the implementation's target.
-                            let insertion = if after == 0 { 0 } else {
-                                items.iter().position(|(_, id)| *id == after)
-                                    .expect("predecessor must remain after source removal") + 1
+                            let insertion = if after == 0 {
+                                0
+                            } else {
+                                items
+                                    .iter()
+                                    .position(|(_, id)| *id == after)
+                                    .expect("predecessor must remain after source removal")
+                                    + 1
                             };
                             items.insert(insertion, item);
                         }
@@ -427,6 +432,66 @@ mod tests {
         client.library_scope = client.cache_scope_for_library(5, Some("library"));
         (client, thread)
     }
+    #[tokio::test]
+    async fn fresh_smart_playlist_flag_blocks_sync_write_after_regular_source_read() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}/proxy", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let mut methods = Vec::new();
+            for index in 0..3 {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut chunk = [0; 2048];
+                while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                    let size = stream.read(&mut chunk).unwrap();
+                    assert!(size > 0);
+                    request.extend_from_slice(&chunk[..size]);
+                }
+                let request = String::from_utf8(request).unwrap();
+                let first = request.lines().next().unwrap();
+                let parts: Vec<_> = first.split_whitespace().collect();
+                methods.push(parts[0].to_owned());
+                assert_eq!(parts[0], "GET", "Smart preflight must not issue a mutation");
+                let path = url::Url::parse(&format!("http://test{}", parts[1])).unwrap();
+                let body = if index == 1 {
+                    assert_eq!(path.path(), "/proxy/library/sections");
+                    json!({"MediaContainer":{"Directory":[{"key":"5","type":"artist","uuid":"library"}]}})
+                } else {
+                    assert_eq!(path.path(), "/proxy/library/metadata/19");
+                    json!({"MediaContainer":{"Metadata":[{"ratingKey":"19","title":"Ordered","playlistType":"audio","smart":index == 2,"radio":false,"leafCount":3}]}})
+                }.to_string();
+                write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+            }
+            methods
+        });
+        let mut client = PlexClient::new(PlexClientConfig {
+            base_url: base,
+            token: "offline-token".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        client.machine_identifier = "machine".into();
+        client.library_scope = client.cache_scope_for_library(5, Some("library"));
+        assert!(!client.get_playlist(19).await.unwrap().smart);
+        let result = client
+            .prepare_playlist_sync_edit(
+                5,
+                19,
+                &state(),
+                &PlaylistSyncOperation::Move { from: 0, to: 1 },
+            )
+            .await;
+        assert!(result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("regular music playlist"));
+        assert_eq!(server.join().unwrap(), vec!["GET", "GET", "GET"]);
+    }
+
     #[tokio::test]
     async fn one_verb_transport_preserves_duplicate_handles_proxy_paths_and_postproof() {
         for operation in [

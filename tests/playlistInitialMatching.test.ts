@@ -527,3 +527,65 @@ test("explicit rematch never writes when the fresh source differs from the admit
   expect(h.link().message).toContain("admitted source changed")
   expect(canRematchIncomplete(h.link())).toBe(false)
 })
+
+test("same-labelled distinct recordings each receive an ID-scoped discovery and retain their own limits", async () => {
+  const h = harness(2)
+  h.source.items[1].track = {
+    ...h.source.items[1].track,
+    title: h.source.items[0].track.title,
+    artist: h.source.items[0].track.artist,
+  }
+  h.provider.search = async () => []
+  const lookedUp: string[] = []
+  h.provider.findPlaylistCandidates = async (source) => {
+    lookedUp.push(source.recordingMbid!)
+    return { tracks: [], truncated: true, unavailable: false }
+  }
+  await matchInitialSync(
+    "link",
+    h.provider,
+    h.repository,
+    h.current,
+    h.services
+  )
+  expect(lookedUp.sort()).toEqual(
+    h.source.items.map((i) => i.track.recordingMbid!).sort()
+  )
+  expect(
+    h
+      .link()
+      .incomplete?.lookupLimits?.map((x) => x.sourceTrackId)
+      .sort()
+  ).toEqual(h.source.items.map((i) => i.track.id).sort())
+  expect(h.writes()).toBe(0)
+})
+
+test("successful explicit relookup clears a retained candidate limit", async () => {
+  const h = harness(1)
+  const id = h.source.items[0].track.id
+  h.replace({
+    ...h.link(),
+    incomplete: {
+      ...h.link().incomplete!,
+      lookupLimits: [{ sourceTrackId: id, reason: "unavailable" }],
+    },
+  })
+  h.provider.search = async () => [
+    {
+      type: "track",
+      id: "20",
+      title: "Song 0",
+      artistName: "Artist",
+      duration: 180000,
+    } as any,
+  ]
+  await matchInitialSync(
+    "link",
+    h.provider,
+    h.repository,
+    h.current,
+    h.services
+  )
+  expect(h.link().incomplete?.lookupLimits ?? []).toEqual([])
+  expect(h.local().items.map((i) => i.track.id)).toEqual(["20"])
+})

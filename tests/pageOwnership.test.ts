@@ -30,6 +30,7 @@ for (const scenario of [
   "reorder-unmount",
   "reorder-recover",
   "playlist-load",
+  "playlist-smart-sync",
 ]) {
   test(`mounted page ownership: ${scenario}`, async () => {
     const child = Bun.spawn(

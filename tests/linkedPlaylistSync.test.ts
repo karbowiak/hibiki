@@ -225,3 +225,59 @@ test("explicit connection rebind retains provenance and cannot steal an already 
     retainReboundLink([original], original.id, 1, nextAccount)
   ).toThrow("original connection")
 })
+
+test("smart source links can only be retained as export, never import or two-way destinations", async () => {
+  const { retainLink } = await import("../src/playlistSync/linkedJournal")
+  const original = link()
+  original.baseline.library.readOnly = true
+  for (const direction of ["import", "bidirectional"] as const)
+    expect(() => retainLink([], { ...original, direction }, null)).toThrow(
+      "export sync only"
+    )
+  expect(
+    retainLink([], { ...original, direction: "export" }, null)[0].baseline
+      .library.readOnly
+  ).toBe(true)
+})
+
+test("bounded lookup limits stay tied to admitted source IDs without losing occurrences", async () => {
+  const { retainLink } = await import("../src/playlistSync/linkedJournal")
+  const original = link()
+  original.direction = "import"
+  const source = original.baseline.listenbrainz
+  original.incomplete = {
+    sourceSnapshot: source,
+    missingOccurrenceIds: source.items.map((item) => item.occurrenceId),
+    matchedCount: 0,
+    total: source.items.length,
+    matchingCursor: 0,
+    matchingDone: false,
+    lookupLimits: [{ sourceTrackId: mbid, reason: "truncated" }],
+  }
+  const saved = retainLink([], original, null)[0]
+  expect(
+    saved.incomplete!.sourceSnapshot.items.map((item) => item.occurrenceId)
+  ).toEqual(["0", "1"])
+  expect(saved.incomplete!.lookupLimits).toEqual([
+    { sourceTrackId: mbid, reason: "truncated" },
+  ])
+  for (const limits of [
+    [{ sourceTrackId: "outside-source", reason: "unavailable" }],
+    [{ sourceTrackId: mbid, reason: "raw-server-error" }],
+    [
+      { sourceTrackId: mbid, reason: "truncated" },
+      { sourceTrackId: mbid, reason: "unavailable" },
+    ],
+  ]) {
+    expect(() =>
+      retainLink(
+        [],
+        {
+          ...original,
+          incomplete: { ...original.incomplete!, lookupLimits: limits as any },
+        },
+        null
+      )
+    ).toThrow("bounded playlist lookup status")
+  }
+})

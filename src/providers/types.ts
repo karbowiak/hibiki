@@ -138,6 +138,8 @@ export interface MusicProvider {
     query: string,
     type?: "track" | "album" | "artist"
   ): Promise<MusicItem[]>
+  /** Bounded scoped discovery only; returned metadata does not establish recording identity. */
+  findPlaylistCandidates?(track: PlaylistRecordingTrack & {recordingMbid?: string | null}): Promise<{tracks: MusicTrack[]; truncated: boolean; unavailable: boolean}>
   getRecentlyAdded(type?: string, limit?: number): Promise<MusicItem[]>
   /** Albums ordered by original release date, independently of library import date. */
   getLatestReleases?(limit?: number): Promise<MusicAlbum[]>

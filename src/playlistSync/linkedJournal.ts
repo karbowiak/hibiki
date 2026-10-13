@@ -62,12 +62,35 @@ export function validateLinks(links: LinkedPlaylist[]) {
     ids.add(link.id)
     validateSnapshot(link.baseline.library)
     validateSnapshot(link.baseline.listenbrainz)
+    if (
+      link.baseline.library.readOnly &&
+      linkedSyncDirection(link) !== "export"
+    )
+      throw Error("Smart playlists support export sync only")
     if (link.incomplete) {
       const partial = link.incomplete
       validateSnapshot(partial.sourceSnapshot)
       const occurrences = new Set(
         partial.sourceSnapshot.items.map((item) => item.occurrenceId)
       )
+      if (partial.lookupLimits !== undefined) {
+        const tracks = new Set(
+          partial.sourceSnapshot.items.map((item) => item.track.id)
+        )
+        if (
+          !Array.isArray(partial.lookupLimits) ||
+          partial.lookupLimits.length > 1000 ||
+          new Set(partial.lookupLimits.map((limit) => limit?.sourceTrackId))
+            .size !== partial.lookupLimits.length ||
+          partial.lookupLimits.some(
+            (limit) =>
+              !limit ||
+              !tracks.has(limit.sourceTrackId) ||
+              !["truncated", "unavailable"].includes(limit.reason)
+          )
+        )
+          throw Error("Invalid bounded playlist lookup status")
+      }
       if (
         linkedSyncDirection(link) !== "import" ||
         partial.sourceSnapshot.id !== link.listenbrainzPlaylistId ||

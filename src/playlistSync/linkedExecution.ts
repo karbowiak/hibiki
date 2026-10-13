@@ -84,6 +84,15 @@ export async function checkLinkedPlaylist(
         "Linked account changed. Reconnect the original account before reviewing.",
       lastCheckedAt: now(),
     })
+  if (library.readOnly && linkedSyncDirection(link) !== "export")
+    return save({
+      ...link,
+      paused: true,
+      state: "conflict",
+      message:
+        "Smart playlists support Plex → ListenBrainz only. Their membership cannot be changed by sync.",
+      lastCheckedAt: now(),
+    })
   if (!link.job) {
     let decision = decideLinkedSync(link, library, remote)
     if (link.incomplete) {

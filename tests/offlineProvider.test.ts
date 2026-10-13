@@ -427,3 +427,32 @@ test("unknown write waits for an in-flight cache write before invalidating and p
   await fallback
   expect(order).toEqual(["put begin", "put end", "invalidate", "read"])
 })
+
+test("fresh sync reads retire delayed scope/session/owner completions without saved fallback", async () => {
+  const { freshPlaylistReads } = await import("../src/offline/providerCache")
+  for (const retirement of ["scope", "session", "owner"] as const) {
+    const pending = deferred<unknown>()
+    const state = setup(() => pending.promise)
+    let owns = true
+    state.provider.getPlaylists = (() =>
+      pending.promise) as MusicProvider["getPlaylists"]
+    const wrapped = createOfflineProvider(
+      state.provider,
+      {
+        get: async () => {
+          throw Error("Fresh reads must not access saved data")
+        },
+        put: async () => {
+          throw Error("Fresh reads must not update browsing data")
+        },
+      },
+      { owns: () => owns }
+    )
+    const read = freshPlaylistReads(wrapped).getPlaylists()
+    if (retirement === "scope") state.provider.cacheScope = "replacement"
+    if (retirement === "session") state.provider.playbackSession = {}
+    if (retirement === "owner") owns = false
+    pending.resolve([])
+    await expect(read).rejects.toThrow("superseded")
+  }
+})

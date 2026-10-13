@@ -45,7 +45,31 @@ untouched; an already equal destination can be verified without a write. This
 conservative boundary also pauses reorderings of duplicate sequences. Updates
 into ListenBrainz retain their existing occurrence-preserving behavior.
 
-Linked sync is opt-in for one regular Plex music playlist and one owned ListenBrainz playlist. Preview both ordered versions, resolve every occurrence, choose initial order, and confirm enabling before retaining a link. Recording suggestions require explicit verification; duplicate occurrences remain independent. Names, descriptions, privacy, and collaborators are not synchronized.
+Linked sync is opt-in for a Plex music playlist and a ListenBrainz playlist.
+Regular playlist links default to manual Plex → ListenBrainz, with explicitly
+enabled two-way/import modes for writable destinations. Smart/dynamic Plex
+playlists are export-only sources: Configure sync is available on their page,
+but importing into them or altering their rules is prohibited by the UI, journal,
+fresh execution checks and native preflight. Read-only/generated ListenBrainz
+feeds similarly cannot become export destinations.
+
+Sync requires fresh online roster and member reads. Ordinary browsing may use
+saved data on a network failure, but sync never uses that fallback to authorize
+an export or update. Membership and bounds come from actual item-page totals,
+not Plex's sometimes stale metadata count. Scope/session retirement rejects
+delayed reads. Names, privacy and collaborators are not ordinarily synchronized;
+stable weekly feeds have separately verified edition descriptions.
+
+Initial imports can retain a link and match/fill songs in the background.
+Candidate discovery first uses combined artist/title and title-only searches;
+unresolved queries can additionally use a bounded native recording-GUID and
+artist-catalogue lookup. At most three queries run concurrently, scoped results
+are capped at 200 rows, and truncated/unavailable results remain explicit review
+limits. Recording GUID search is a discovery hint, not proof that a generic
+Plex `mbid` identifies a recording. The final matcher still checks version,
+duration, artist evidence and conflicting IDs. Same-labelled source recordings
+keep independent recording-ID lookup keys. Unresolved songs are not declared
+absent from the library merely because these bounded searches did not find them.
 
 One-sided verified changes propagate; changes on both sides pause for review. The app checks eligible links every two minutes while online, with at most 20 occurrence mutations per cycle. Each append/move/delete has a durable admission record, exact preflight, one non-retrying authenticated request, and ordered post-read proof. No playlist-wide clear or unreviewed replacement is used. Providers do not expose transactional compare-and-swap: an external editor can race the final preflight. This limitation is explicit, and failed postproof stops further writes as an unknown outcome.
 
@@ -53,4 +77,4 @@ Unknown outcomes are never blindly retried. Read recovery verifies an applied up
 
 Links retain opaque ownership, never credentials. ListenBrainz username is durable identity, with a fresh native authentication lease for each run. Plex scope currently includes connection credentials: changing token/server/library pauses an existing link. Explicit rebind requires the original playlist to be visible in the current connection and a reviewed snapshot, retains previous scope provenance, and never rebinds an unresolved mutation. Future work: verified Plex user identity could permit safe normal token rotation without manual rebind; do not reduce ownership to server/library alone.
 
-Limits: 16 retained links, 1,000 ordered songs per playlist, last 64 resolved step receipts per link, paged 50-item ListenBrainz browse. Disabled links remain retained. Tests use synthetic adapters and local HTTP servers only.
+Limits: 16 retained links, 1,000 ordered songs per playlist, last 64 resolved step receipts per link, paged 50-item ListenBrainz browse. Disabled links remain retained. Ordinary automated tests use synthetic adapters and local HTTP servers. Separate ignored live QA requires an explicitly reviewed disposable-resource workflow and durable receipts.

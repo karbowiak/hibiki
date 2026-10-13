@@ -888,3 +888,97 @@ describe("explicit unknown-outcome dismissal", () => {
     ).toThrow(/previous copy/)
   })
 })
+
+test("provider smart snapshot remains readable with duplicates and rejects use as writable destination", async () => {
+  let smart = true
+  const provider: any = {
+    name: "Plex",
+    cacheScope: "smart-scope",
+    playbackSession: {},
+    capabilities: { playlists: true },
+    getPlaylists: async () => [{ id: "smart", title: "Liked tracks", smart }],
+    getPlaylistItems: async () => ({
+      items: ["a", "b", "a"].map((id, index) => ({
+        id,
+        title: id,
+        artistName: "Artist",
+        duration: 1,
+        playlistItemId: String(index),
+      })),
+      total: 3,
+      offset: 0,
+    }),
+  }
+  const adapter = providerPlaylistAdapter(provider, { current: () => provider })
+  const snapshot = await adapter.read("smart")
+  expect(snapshot.readOnly).toBe(true)
+  expect(snapshot.items.map((item) => item.track.id)).toEqual(["a", "b", "a"])
+  await expect(adapter.assertWritable("smart")).rejects.toThrow("read-only")
+  smart = false
+  await expect(adapter.assertWritable("smart")).resolves.toBeUndefined()
+  expect((await adapter.read("smart")).readOnly).toBeUndefined()
+  smart = true
+  await expect(adapter.assertWritable("smart")).rejects.toThrow("read-only")
+})
+
+test("sync requires fresh roster and membership while browsing retains saved fallback", async () => {
+  const { createOfflineProvider } = await import("../src/offline/providerCache")
+  const saved = new Map<string, { payload: unknown; cachedAt: number }>()
+  let failure: "roster" | "items" | null = null
+  let current = true
+  const session = {}
+  const tracks = Array.from({ length: 81 }, (_, index) => ({
+    id: String(index),
+    title: "Song",
+    artistName: "Artist",
+    albumName: "Album",
+    duration: 100000,
+    playlistItemId: String(index),
+  }))
+  const target = {
+    name: "Plex",
+    cacheScope: "fresh-scope",
+    playbackSession: session,
+    capabilities: { playlists: true },
+    getPlaylists: async function () {
+      expect(this).toBe(target)
+      if (failure === "roster") throw Error("Network unavailable")
+      return [
+        { id: "smart", title: "Saved songs", smart: true, trackCount: 97 },
+      ]
+    },
+    getPlaylistItems: async function () {
+      expect(this).toBe(target)
+      if (failure === "items") throw Error("Network unavailable")
+      return { items: tracks, total: 81, offset: 0 }
+    },
+  } as unknown as import("../src/providers/types").MusicProvider
+  const provider = createOfflineProvider(
+    target,
+    {
+      get: async (key) => saved.get(key) ?? null,
+      put: async (key, payload) => {
+        saved.set(key, { payload, cachedAt: 1 })
+      },
+    },
+    { owns: () => current }
+  )
+  await provider.getPlaylists()
+  await provider.getPlaylistItems("smart", 0, 100)
+  const adapter = providerPlaylistAdapter(provider, { current: () => provider })
+  expect((await adapter.read("smart")).items).toHaveLength(81)
+  failure = "roster"
+  expect(await provider.getPlaylists()).toHaveLength(1)
+  await expect(adapter.read("smart")).rejects.toThrow("Network unavailable")
+  failure = "items"
+  expect((await provider.getPlaylistItems("smart", 0, 100)).items).toHaveLength(
+    81
+  )
+  await expect(adapter.read("smart")).rejects.toThrow("Network unavailable")
+  failure = null
+  current = false
+  await expect(adapter.read("smart")).rejects.toThrow("superseded")
+  current = true
+  target.isOffline = true
+  await expect(adapter.read("smart")).rejects.toThrow("Reconnect")
+})

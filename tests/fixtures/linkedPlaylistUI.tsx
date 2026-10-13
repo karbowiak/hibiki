@@ -21,6 +21,7 @@ const { useListenBrainzStore } =
 const { retainLink } = await import("../../src/playlistSync/linkedJournal")
 const { applySequenceOperation } = await import("../../src/playlistSync/linked")
 await settle()
+const smart = process.argv[2] === "smart"
 const A = "11111111-1111-4111-8111-111111111111",
   remoteId = "22222222-2222-4222-8222-222222222222"
 const account = (service: string) => ({
@@ -32,6 +33,7 @@ let local: any = {
     account: account("library:Plex"),
     id: "1",
     title: "Local",
+    ...(smart ? { readOnly: true } : {}),
     items: [
       {
         occurrenceId: "11",
@@ -69,7 +71,7 @@ const provider: any = {
   capabilities: { playlists: true, playlistEdit: true, search: true },
   playbackSession: {},
   mutatePlaylistOccurrence: async () => {},
-  getPlaylists: async () => [{ id: "1", title: "Local", smart: false }],
+  getPlaylists: async () => [{ id: "1", title: "Local", smart }],
   search: async () => [],
 }
 useProviderStore.setState({ provider })
@@ -167,6 +169,27 @@ async function select(label: string, value: string) {
     await settle()
   })
 }
+if (smart) {
+  const direction = [...document.querySelectorAll("label")]
+    .find((label) => label.textContent?.startsWith("Sync direction"))!
+    .querySelector("select")!
+  assert.equal(direction.value, "export")
+  assert.equal(
+    direction.querySelector<HTMLOptionElement>('option[value="import"]')!
+      .disabled,
+    true
+  )
+  assert.equal(
+    direction.querySelector<HTMLOptionElement>('option[value="bidirectional"]')!
+      .disabled,
+    true
+  )
+  assert.ok(
+    document.body.textContent!.includes(
+      "Smart playlists are read-only snapshots"
+    )
+  )
+}
 await select("ListenBrainz playlist", remoteId)
 await click("Preview link")
 assert.equal(mutations, 0)
@@ -220,6 +243,18 @@ assert.equal(
   "Explicit pause cannot inherit unmatched rollover permission"
 )
 assert.equal(mutations, 1)
+if (smart) {
+  assert.equal(rows[0].baseline.library.readOnly, true)
+  assert.equal(rows[0].direction, "export")
+  assert.equal(
+    mutations,
+    1,
+    "Only synthetic remote update is admitted for smart export"
+  )
+  await act(() => root.unmount())
+  dom.window.close()
+  process.exit(0)
+}
 // A completed background import keeps unresolved source rows until explicit review.
 rows = [
   {
@@ -358,6 +393,9 @@ rows = [
       total: 1,
       matchingCursor: 0,
       matchingDone: false,
+      lookupLimits: [
+        { sourceTrackId: remote.items[0].track.id, reason: "unavailable" },
+      ],
     },
   },
 ]
@@ -373,6 +411,11 @@ await act(async () => {
   )
   await settle()
 })
+assert.ok(
+  document.body.textContent!.includes(
+    "does not mean they are missing from your library"
+  )
+)
 await act(async () => {
   button("Retry background lookups").click()
   button("Retry background lookups").click()

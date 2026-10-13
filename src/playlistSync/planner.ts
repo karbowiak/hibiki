@@ -27,6 +27,8 @@ export function snapshotRevision(snapshot: PlaylistSnapshot): string {
   return JSON.stringify(snapshot)
 }
 export function validateSnapshot(snapshot: PlaylistSnapshot) {
+  if (snapshot.readOnly !== undefined && typeof snapshot.readOnly !== "boolean")
+    throw Error("Invalid playlist write capability")
   if (
     !snapshot.account.service ||
     !snapshot.account.user ||

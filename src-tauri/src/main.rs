@@ -555,6 +555,7 @@ pub fn run() {
             commands::playlist_sync_plex_mutate,
             commands::playlist_sync_plex_describe,
             commands::playlist_sync_resolve_recording,
+            playlist_sync::playlist_sync_candidates,
             commands::listenbrainz_save_token,
             commands::listenbrainz_disconnect,
             commands::listenbrainz_set_enabled,

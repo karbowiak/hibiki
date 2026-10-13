@@ -428,7 +428,11 @@ try {
       )
       assert.ok(navigation.includes("/"))
     }
-  } else if (scenario.startsWith("reorder") || scenario === "playlist-load") {
+  } else if (
+    scenario.startsWith("reorder") ||
+    scenario === "playlist-load" ||
+    scenario === "playlist-smart-sync"
+  ) {
     // This fixture exercises playlist transactions without a routed artwork shell.
     mock.module("../../src/components/shared/MediaBackdrop", () => ({
       AmbientHeroBackdrop: () => null,
@@ -451,6 +455,23 @@ try {
         </div>
       ),
     }))
+    if (scenario === "playlist-smart-sync") {
+      first.name = "Plex"
+      first.cacheScope = "smart-scope"
+      first.playbackSession = {}
+      first.capabilities = { playlists: true, playlistEdit: true }
+      first.mutatePlaylistOccurrence = async () => {
+        throw Error("No real mutation permitted")
+      }
+      mock.module(
+        "../../src/components/PlaylistSync/LinkedPlaylistManager",
+        () => ({
+          LinkedPlaylistManager: ({ playlistId }: any) => (
+            <p data-sync-config={playlistId}>Smart sync configuration</p>
+          ),
+        })
+      )
+    }
     const { Playlist } = await import("../../src/components/Pages/Playlist")
     const songs = [
       {
@@ -475,7 +496,7 @@ try {
         id: "1",
         title: "First playlist",
         trackCount: 2,
-        smart: false,
+        smart: scenario === "playlist-smart-sync",
         thumbUrl: null,
       },
       "2": {
@@ -543,7 +564,43 @@ try {
     const render = (id: string) =>
       act(() => root.render(<Playlist playlistId={id} />))
     await render("1")
-    if (scenario === "playlist-load") {
+    if (scenario === "playlist-smart-sync") {
+      const sync = [
+        ...document.querySelectorAll<HTMLButtonElement>("button"),
+      ].find((button) => button.textContent?.trim() === "Sync")!
+      assert.ok(sync)
+      assert.equal(sync.disabled, true, "Unconfigured sync remains disabled")
+      assert.equal(
+        [...document.querySelectorAll<HTMLButtonElement>("button")].find(
+          (button) => button.textContent === "Move occurrence"
+        )!.disabled,
+        true
+      )
+      await act(() =>
+        document
+          .querySelector<HTMLButtonElement>('button[title="More actions"]')!
+          .click()
+      )
+      const { useContextMenuStore } =
+        await import("../../src/stores/contextMenuStore")
+      const actions = useContextMenuStore.getState().extraActions
+      const configure = actions.find(
+        (action: any) => action.label === "Configure sync"
+      )
+      assert.ok(configure, "Smart playlist must expose Configure sync")
+      assert.equal(
+        actions.some((action: any) => action.label === "Edit playlist"),
+        false
+      )
+      await act(() => configure.run())
+      assert.equal(
+        document
+          .querySelector("[data-sync-config]")
+          ?.getAttribute("data-sync-config"),
+        "1"
+      )
+      assert.deepEqual(moved, [])
+    } else if (scenario === "playlist-load") {
       assert.ok(
         document.querySelector("[role=alert]")!.textContent!.includes("songs")
       )

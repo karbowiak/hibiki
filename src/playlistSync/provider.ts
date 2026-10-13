@@ -1,3 +1,4 @@
+import { freshPlaylistReads } from "../offline/providerCache"
 import type { MusicProvider } from "../providers/types"
 import type { MusicTrack } from "../types/music"
 import { useProviderStore } from "../stores/providerStore"
@@ -44,11 +45,13 @@ export function providerPlaylistAdapter(
     current?: () => MusicProvider | null
     verifiedMbid?: (track: MusicTrack) => string | null
   } = {}
-): PlaylistAdapter {
+): PlaylistAdapter & { assertWritable(id: string): Promise<void> } {
   const expected = providerPlaylistAccount(provider),
     session = provider.playbackSession,
     current = options.current ?? (() => useProviderStore.getState().provider)
   function owns() {
+    if (provider.isOffline)
+      throw Error("Reconnect to read the current playlist before syncing.")
     if (
       current() !== provider ||
       provider.playbackSession !== session ||
@@ -57,6 +60,17 @@ export function providerPlaylistAdapter(
       throw Error("Library account changed. Preview again.")
   }
   return {
+    assertWritable: async (id) => {
+      owns()
+      const metadata = (await freshPlaylistReads(provider).getPlaylists()).find(
+        (playlist) => playlist.id === id
+      )
+      owns()
+      if (!metadata || metadata.smart)
+        throw Error(
+          "Smart playlists are read-only sync sources. Choose a regular destination playlist."
+        )
+    },
     capabilities: {
       read: provider.capabilities.playlists,
       createCopy: provider.capabilities.playlists,
@@ -71,7 +85,7 @@ export function providerPlaylistAdapter(
     },
     read: async (id) => {
       owns()
-      const playlists = await provider.getPlaylists()
+      const playlists = await freshPlaylistReads(provider).getPlaylists()
       owns()
       const metadata = playlists.find((playlist) => playlist.id === id)
       if (!metadata) throw Error("Source playlist is no longer available")
@@ -80,7 +94,11 @@ export function providerPlaylistAdapter(
       let total: number | undefined
       while (total === undefined || items.length < total) {
         const offset = items.length,
-          page = await provider.getPlaylistItems(id, offset, 100)
+          page = await freshPlaylistReads(provider).getPlaylistItems(
+            id,
+            offset,
+            100
+          )
         owns()
         if (
           !Number.isSafeInteger(page.total) ||
@@ -114,6 +132,7 @@ export function providerPlaylistAdapter(
         id,
         title: metadata.title,
         description: metadata.summary ?? "",
+        ...(metadata.smart ? { readOnly: true } : {}),
         items,
       }
     },

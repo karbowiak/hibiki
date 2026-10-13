@@ -906,3 +906,14 @@ mod weekly_metadata_probe {
         println!("Read-only weekly metadata retained: {} selected summaries, {} detail reads; no writes.",proof.len(),detail_reads);Ok(())
     }
 }
+
+pub mod candidates;
+/// Explicit selected-song discovery; no recording-identity promotion or writes.
+#[tauri::command]
+pub async fn playlist_sync_candidates(context:crate::commands::PlexRequestContext,section_id:i64,source:candidates::CandidateSource,state:tauri::State<'_,crate::commands::PlexState>)->Result<candidates::Discovery,String>{
+    let client={let guard=state.0.lock().await;state.checked_client(&context,&guard)?.clone()};
+    let result=tokio::time::timeout(std::time::Duration::from_secs(30),candidates::discover(&client,section_id,&source,||state.is_current(context.connection_revision))).await
+        .map_err(|_|"Scoped candidate discovery timed out. Review or retry this song.".to_string())?
+        .map_err(|_|"Could not confirm scoped candidates for this library connection.".to_string())?;
+    let guard=state.0.lock().await;state.checked_client(&context,&guard)?;Ok(result)
+}

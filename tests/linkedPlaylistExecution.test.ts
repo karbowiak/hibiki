@@ -307,3 +307,35 @@ test("bounded work retains a resumable cursor and does not advance baseline prem
   expect(h.calls()).toBe(2)
   expect(h.remote().items.map((item) => item.track.id)).toEqual([A, B, A])
 })
+
+test("smart library snapshots export dynamic duplicate occurrences without any local write", async () => {
+  const h = harness()
+  h.initial.direction = "export"
+  h.local().readOnly = true
+  h.services.library.mutate = async () => {
+    throw Error("Smart source must never be changed")
+  }
+  const result = await checkLinkedPlaylist(h.initial, h.services)
+  expect(h.remote().items.map((item) => item.track.id)).toEqual([A, B, A])
+  expect(h.local().items.map((item) => item.track.id)).toEqual(["a", "b", "a"])
+  expect(result.baseline.library.readOnly).toBe(true)
+  expect(result.job).toBeUndefined()
+})
+test("fresh smart flag retires an existing ordinary import or two-way link before any mutation", async () => {
+  for (const direction of ["import", "bidirectional"] as const) {
+    const h = harness()
+    h.initial.direction = direction
+    h.initial.baseline.library = structuredClone(h.local())
+    h.changeRemote([A, B])
+    h.local().readOnly = true
+    const result = await checkLinkedPlaylist(h.initial, h.services)
+    expect(result.paused).toBe(true)
+    expect(result.message).toContain("Smart playlists support")
+    expect(h.calls()).toBe(0)
+    expect(h.local().items.map((item) => item.track.id)).toEqual([
+      "a",
+      "b",
+      "a",
+    ])
+  }
+})

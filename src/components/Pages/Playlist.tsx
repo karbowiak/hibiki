@@ -570,8 +570,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                       provider?.playbackSession === session
                     const actions: ContextAction[] = [
                       ...(provider?.mutatePlaylistOccurrence &&
-                      !provider.isOffline &&
-                      !currentPlaylist.smart
+                      !provider.isOffline
                         ? [
                             {
                               label: "Configure sync",

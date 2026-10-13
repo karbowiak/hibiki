@@ -74,6 +74,10 @@ export async function linkedSyncServices(
               !sameAccount(providerPlaylistAccount(provider), expected)
             )
               throw Error("Library account changed")
+            if (before.readOnly)
+              throw Error("Smart playlists are read-only sync sources")
+            await libraryReader.assertWritable(before.id)
+            if (!owns()) throw Error("Library account changed")
             const confirmed = await provider.describePlaylist!(
               before.id,
               {
@@ -95,6 +99,10 @@ export async function linkedSyncServices(
     mutate: async (before, operation, expected) => {
       if (!owns() || !sameAccount(providerPlaylistAccount(provider), expected))
         throw Error("Library account changed")
+      if (before.readOnly)
+        throw Error("Smart playlists are read-only sync sources")
+      await libraryReader.assertWritable(before.id)
+      if (!owns()) throw Error("Library account changed")
       await provider.mutatePlaylistOccurrence!(
         before.id,
         {

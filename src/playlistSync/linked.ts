@@ -43,6 +43,10 @@ export interface LinkedPlaylist {
     sourceSnapshot: PlaylistSnapshot
     missingOccurrenceIds: string[]
     unsupportedRepeatOccurrenceIds?: string[]
+    lookupLimits?: {
+      sourceTrackId: string
+      reason: "truncated" | "unavailable"
+    }[]
     matchedCount: number
     total: number
     matchingCursor: number
@@ -195,6 +199,12 @@ export function decideLinkedSync(
     return {
       status: "retired",
       reason: "A linked playlist belongs to another account or library.",
+    }
+  if (library.readOnly && linkedSyncDirection(link) !== "export")
+    return {
+      status: "conflict",
+      reason:
+        "Smart playlists support Plex → ListenBrainz only. Their membership cannot be changed by sync.",
     }
   if (!link.enabled || link.paused || link.job) return { status: "paused" }
   const localChanged =

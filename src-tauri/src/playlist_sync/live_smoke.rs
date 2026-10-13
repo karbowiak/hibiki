@@ -797,6 +797,9 @@ async fn live_owned_playlist_smoke() -> Result<()> {
     );
     let run =
         canonical_mbid(&std::env::var("HIBIKI_QA_RUN_ID").context("Reviewed QA UUID required")?)?;
+    if mode == "inspect-weekly-candidates" {
+        return weekly_diagnostic::candidates(&config).await;
+    }
     if mode == "inspect-weekly-import" {
         return weekly_diagnostic::inspect(&config).await;
     }

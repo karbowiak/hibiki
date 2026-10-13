@@ -1,8 +1,11 @@
 import { createVerifiedPlaylistRefresh } from "../components/PlaylistSync/verifiedPlaylistRefresh"
 import type { MusicProvider } from "../providers/types"
-import type { MusicTrack } from "../types/music"
 import { playlistCandidateScore, matchTrack, recordingMbid } from "./matching"
-import { playlistTrackFromMusic, providerPlaylistAccount } from "./provider"
+import { providerPlaylistAccount } from "./provider"
+import {
+  candidateQueryKey,
+  retrievePlaylistCandidates,
+} from "./candidateRetrieval"
 import { samePlaylistIdentity, type PlaylistTrack } from "./types"
 import {
   mapLinkedTracks,
@@ -67,10 +70,7 @@ export async function matchInitialSync(
   }
   const queries = [
     ...new Map(
-      source.items.map((item) => [
-        JSON.stringify([item.track.artist, item.track.title]),
-        item.track,
-      ])
+      source.items.map((item) => [candidateQueryKey(item.track), item.track])
     ).values(),
   ]
   async function fill() {
@@ -124,63 +124,20 @@ export async function matchInitialSync(
     let next = 0,
       failed = false
     const results = new Map<string, PlaylistTrack[]>()
+    const issues = new Map<string, "truncated" | "unavailable">()
     await Promise.all(
       Array.from({ length: Math.min(3, batch.length) }, async () => {
         while (next < batch.length) {
           owns()
           const track = batch[next++],
-            key = JSON.stringify([track.artist, track.title])
+            key = candidateQueryKey(track)
           try {
-            const query = `${track.artist} ${track.title}`.trim()
-            if (query.length > 1000)
-              throw Error("Source labels need manual search")
-            const candidatesFor = async (query: string) => {
-              const items = await provider.search(query, "track")
-              owns()
-              const tracks = items.filter(
-                (item): item is MusicTrack & { type: "track" } =>
-                  item.type === "track"
-              )
-              if (tracks.length > 50)
-                throw Error("Search needs narrower manual review")
-              return [
-                ...new Map(
-                  tracks.map((item) => {
-                    const candidate = playlistTrackFromMusic(item)
-                    return [candidate.id, candidate]
-                  })
-                ).values(),
-              ]
-            }
-            let candidates: PlaylistTrack[] = [],
-              usable = false
-            try {
-              candidates = await candidatesFor(query)
-              usable = true
-            } catch {
-              owns()
-            }
-            if (
-              (!usable || matchTrack(track, candidates).status !== "matched") &&
-              track.title.trim() &&
-              track.title.trim() !== query
-            ) {
-              try {
-                const titleCandidates = await candidatesFor(track.title.trim())
-                usable = true
-                candidates = [
-                  ...new Map(
-                    [...candidates, ...titleCandidates].map((candidate) => [
-                      candidate.id,
-                      candidate,
-                    ])
-                  ).values(),
-                ]
-              } catch {
-                owns()
-              }
-            }
-            if (!usable) throw Error("Search lookup unavailable")
+            const candidates = await retrievePlaylistCandidates(
+              provider,
+              track,
+              current,
+              (reason) => issues.set(key, reason)
+            )
             results.set(key, candidates)
           } catch {
             owns()
@@ -204,9 +161,7 @@ export async function matchInitialSync(
         )
       )
         continue
-      const candidates = results.get(
-        JSON.stringify([item.track.artist, item.track.title])
-      )
+      const candidates = results.get(candidateQueryKey(item.track))
       if (!candidates) continue
       const match = matchTrack(item.track, candidates)
       if (match.status === "matched")
@@ -228,6 +183,33 @@ export async function matchInitialSync(
           ...link.incomplete!,
           matchingCursor: cursor,
           matchingDone: done,
+          lookupLimits: [
+            ...(link.incomplete!.lookupLimits ?? []).filter(
+              (issue) =>
+                !source.items.some(
+                  (item) =>
+                    item.track.id === issue.sourceTrackId &&
+                    batch.some(
+                      (track) =>
+                        candidateQueryKey(track) ===
+                        candidateQueryKey(item.track)
+                    )
+                )
+            ),
+            ...[
+              ...new Map(
+                source.items
+                  .filter((item) => issues.has(candidateQueryKey(item.track)))
+                  .map((item) => [
+                    item.track.id,
+                    {
+                      sourceTrackId: item.track.id,
+                      reason: issues.get(candidateQueryKey(item.track))!,
+                    },
+                  ])
+              ).values(),
+            ],
+          ],
           matchedCount: mapped.desired.length,
           missingOccurrenceIds: mapped.missing.map(
             (index) => source.items[index].occurrenceId

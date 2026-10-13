@@ -186,6 +186,8 @@ export function LinkedPlaylistManager({
       summary?.access?.writable ?? services !== linkedPlaylistManagerServices
     )
   }
+  const smartLibrary = (id: string) =>
+    libraries.some((item) => item.id === id && item.smart)
   const save = async (link: LinkedPlaylist, revision: number | null) =>
     services === linkedPlaylistManagerServices
       ? useLinkedPlaylistStore.getState().save(link, revision)
@@ -249,7 +251,7 @@ export function LinkedPlaylistManager({
         ])
         if (!owns() || revision !== request.current) return
         lease.current = account
-        setLibraries(local.filter((item) => !item.smart))
+        setLibraries(local)
         setRemotes(selectedRemote ? [selectedRemote] : remote.items)
         setTotal(selectedRemote ? 1 : remote.total)
         const currentStored = stored.map((link) => {
@@ -386,6 +388,15 @@ export function LinkedPlaylistManager({
   }
   async function prepare(existing?: LinkedPlaylist) {
     if (
+      smartLibrary(existing?.libraryPlaylistId ?? libraryId) &&
+      (existing ? linkedSyncDirection(existing) : direction) !== "export"
+    ) {
+      setError(
+        "Smart playlists support Plex → ListenBrainz only. Choose export sync for this playlist."
+      )
+      return
+    }
+    if (
       !remoteWritable(remoteId || preview?.remote.id || "") &&
       direction !== "import"
     ) {
@@ -433,6 +444,15 @@ export function LinkedPlaylistManager({
           .read(existing?.listenbrainzPlaylistId ?? remoteId),
       ])
       if (!owns() || revision !== request.current) return
+      if (
+        library.readOnly &&
+        (existing ? linkedSyncDirection(existing) : direction) !== "export"
+      ) {
+        setError(
+          "This playlist is now smart and supports export sync only. Review its direction before continuing."
+        )
+        return
+      }
       const copyDirection = reviewSource === "library" ? "export" : "import",
         sourceSnapshot = reviewSource === "library" ? library : remote,
         target = reviewSource === "library" ? remote.account : library.account
@@ -514,6 +534,8 @@ export function LinkedPlaylistManager({
         throw Error("Preview changed")
       if (existing?.job?.step || existing?.job?.descriptionStep)
         throw Error("Reconcile the retained operation first")
+      if (library.readOnly && direction !== "export")
+        throw Error("Smart playlists cannot be changed by sync")
       const mappings: LinkedTrackMapping[] = rows.map((row, index) => ({
         libraryTrack: preview.source === "library" ? row.source : tracks[index],
         recordingMbid: recordingMbid(
@@ -633,6 +655,10 @@ export function LinkedPlaylistManager({
     nextDirection: LinkedSyncDirection,
     nextAutomatic: boolean
   ) {
+    if (smartLibrary(link.libraryPlaylistId) && nextDirection !== "export") {
+      setError("Smart playlists support export sync only.")
+      return
+    }
     if (
       admission.current ||
       (!remoteWritable(link.listenbrainzPlaylistId) &&
@@ -862,12 +888,19 @@ export function LinkedPlaylistManager({
                       className={`${button} mt-1 w-full`}
                       value={libraryId}
                       disabled={busy || resolving}
-                      onChange={(event) => setLibraryId(event.target.value)}
+                      onChange={(event) => {
+                        setLibraryId(event.target.value)
+                        if (smartLibrary(event.target.value)) {
+                          setDirection("export")
+                          setSource("library")
+                        }
+                      }}
                     >
-                      <option value="">Choose a regular playlist</option>
+                      <option value="">Choose a playlist</option>
                       {libraries.map((item) => (
                         <option key={item.id} value={item.id}>
                           {item.title}
+                          {item.smart ? " · Smart snapshot" : ""}
                         </option>
                       ))}
                     </select>
@@ -882,7 +915,13 @@ export function LinkedPlaylistManager({
                     >
                       <option value="">Choose your playlist</option>
                       {remotes.map((item) => (
-                        <option key={item.id} value={item.id}>
+                        <option
+                          key={item.id}
+                          value={item.id}
+                          disabled={
+                            smartLibrary(libraryId) && !remoteWritable(item.id)
+                          }
+                        >
                           {item.title}
                         </option>
                       ))}
@@ -925,15 +964,26 @@ export function LinkedPlaylistManager({
                     <option value="export" disabled={!remoteWritable(remoteId)}>
                       Plex → ListenBrainz
                     </option>
-                    <option value="import">ListenBrainz → Plex</option>
+                    <option value="import" disabled={smartLibrary(libraryId)}>
+                      ListenBrainz → Plex
+                    </option>
                     <option
                       value="bidirectional"
-                      disabled={!remoteWritable(remoteId)}
+                      disabled={
+                        !remoteWritable(remoteId) || smartLibrary(libraryId)
+                      }
                     >
                       Two-way
                     </option>
                   </select>
                 </label>
+                {smartLibrary(libraryId) && (
+                  <p className="text-sm text-[var(--text-secondary)]">
+                    Smart playlists are read-only snapshots. Plex → ListenBrainz
+                    copies their current songs; sync never changes the smart
+                    playlist or its rules.
+                  </p>
+                )}
                 {remoteId && !remoteWritable(remoteId) && (
                   <p className="text-sm text-[var(--text-secondary)]">
                     This ListenBrainz playlist is read-only. Sync can read it
@@ -944,7 +994,12 @@ export function LinkedPlaylistManager({
                   <input
                     type="checkbox"
                     checked={direction === "bidirectional"}
-                    disabled={busy || resolving || !remoteWritable(remoteId)}
+                    disabled={
+                      busy ||
+                      resolving ||
+                      !remoteWritable(remoteId) ||
+                      smartLibrary(libraryId)
+                    }
                     onChange={(event) =>
                       setDirection(
                         event.target.checked
@@ -1283,6 +1338,13 @@ export function LinkedPlaylistManager({
                         ? "Automatic checks on"
                         : "Manual sync · automatic checks off"}
                     </p>
+                    {(smartLibrary(link.libraryPlaylistId) ||
+                      link.baseline.library.readOnly) && (
+                      <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                        Smart snapshot · Plex → ListenBrainz only. Sync never
+                        changes this playlist’s songs or rules in Plex.
+                      </p>
+                    )}
                     {link.incomplete && (
                       <p className="mt-2 text-sm" role="status">
                         {link.paused ||
@@ -1302,6 +1364,14 @@ export function LinkedPlaylistManager({
                     {link.message && (
                       <p className="mt-1 text-sm" role="status">
                         {link.message}
+                      </p>
+                    )}
+                    {!!link.incomplete?.lookupLimits?.length && (
+                      <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                        Some catalogue lookups were incomplete or unavailable.
+                        Those songs remain for review; this does not mean they
+                        are missing from your library. Retry lookups or search
+                        manually to choose a recording.
                       </p>
                     )}
                     {tab === "review" &&
@@ -1338,11 +1408,17 @@ export function LinkedPlaylistManager({
                           >
                             Plex → ListenBrainz
                           </option>
-                          <option value="import">ListenBrainz → Plex</option>
+                          <option
+                            value="import"
+                            disabled={smartLibrary(link.libraryPlaylistId)}
+                          >
+                            ListenBrainz → Plex
+                          </option>
                           <option
                             value="bidirectional"
                             disabled={
-                              !remoteWritable(link.listenbrainzPlaylistId)
+                              !remoteWritable(link.listenbrainzPlaylistId) ||
+                              smartLibrary(link.libraryPlaylistId)
                             }
                           >
                             Two-way

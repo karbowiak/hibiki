@@ -18,6 +18,8 @@ export interface PlaylistOccurrence {
   track: PlaylistTrack
 }
 export interface PlaylistSnapshot {
+  /** Dynamic/smart playlists may be read as snapshots but cannot be sync destinations. */
+  readOnly?: boolean
   description?: string
   account: PlaylistAccount
   id: string
