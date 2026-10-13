@@ -65,7 +65,56 @@ HeyaMetadata connections. Source preferences belong to the current library and
 item; saved image choices retain only source/candidate IDs. The metadata guide
 records supported fields and limitations.
 
-ListenBrainz playlist integration currently offers explicitly reviewed private
-copies in either direction, with duplicate/order preservation and local recovery
-receipts. Continuous synchronization and conflict reconciliation remain roadmap
-work; Last.fm's retired playlist API is not presented as an available sync source.
+ListenBrainz playlist integration offers explicitly reviewed private copies and
+opt-in links in either direction, with duplicate/order preservation, conflict
+review and durable per-occurrence recovery. Last.fm's retired playlist API is not
+presented as an available sync source.
+
+## Metadata, saved-library and discovery roadmap completion
+
+- [x] Add reviewed canonical MusicBrainz/Heya identities with aliases, exact-ID
+  evidence and scoped local application. Heya discovery/resolution is an explicit,
+  capability-gated action with bounded status polling and ambiguity review.
+- [x] Extend SoulSync to conservatively matched album/track data and project richer
+  Heya fields through the shared metadata interface.
+- [x] Add independent Plex poster/background inventories, selection, validated
+  raster uploads and proof after a single attempted save.
+- [x] Add reviewed sort title, album studio, genres/styles/moods/labels and
+  per-field/artwork locks, using the actual current Plex section identity.
+- [x] Add explicit linked ListenBrainz sync, one-sided propagation, conflict
+  review, durable write admission, unknown-outcome recovery and credential rebind.
+- [x] Add bounded account/server/library SQLite snapshots and read-only saved
+  browsing. Refetch current owned track data before online playback of cached DTOs.
+- [x] Preserve joined duplicate identities and expose non-destructive album/media
+  version comparisons without altering automatic playback selection.
+- [x] Add optional local semantic discovery with pinned, hash-verified assets,
+  bounded worker inference and metadata-revision-scoped SQLite vectors.
+- [x] Prepare safe Home/artist/album/search release previews from actual components
+  with fictional data and local artwork; retain existing published screenshots.
+- [x] Review direct Discogs/Spotify/TIDAL/TheAudioDB contracts and limitations in
+  the metadata guide; retain unsupported adapters as future work.
+
+Native review found and fixed two real Plex contract errors. The section-specific
+route returns a browsing interstitial; section validation now selects the exact
+item from the global library roster. Current JSON artwork inventories use
+`Metadata` rather than the XML/legacy `Photo` key. Local/embedded previews use a
+file endpoint bound to the exact native inventory resource, without broadening
+the general authenticated image allowlist. The native poster preview, fields and
+locks, canonical Heya search and exact review, version comparison, and linked-sync
+setup were inspected without applying library/account changes. Global search
+shortcut and dropdown layering passed on Your Library. Optional local-model
+onboarding remains disabled until explicit installation.
+
+Validation: 767 frontend tests; 568 safe native tests (5 ignored and 73 live
+integrations excluded); both TypeScript projects and production build; 12
+Chromium/WebKit dark/light editor views; real semantic inference in both browsers
+and the isolated packaged macOS Tauri window (five normalized 384-dimensional
+vectors, all five paraphrase rankings, bounded long input, 1,887 ms, no network or
+personal data). The current Linux ARM source builds and validates the actual
+AppImage, desktop entry and AppStream metadata. This is compile/bundle evidence;
+Windows/Linux semantic webview execution and signed amd64 publication remain
+future platform/release checks. Screenshot previews are renderer fixtures with
+inert audio and an offline font fallback, not connected-app playback evidence.
+
+The ignored local TODO retains future provider adapters, release publication and
+the original un-reproduced radio failure. No push or release is part of this batch.
