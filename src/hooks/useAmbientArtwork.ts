@@ -20,6 +20,8 @@ import {
 } from "../stores/ambientArtworkStore"
 import {
   collectAmbientCandidates,
+  collectPlaylistAmbientCandidates,
+  isCurrentPlaylistRoute,
   type AmbientCandidate,
 } from "../lib/ambientArtwork"
 import { useArtistArtwork, useAlbumArtwork } from "./useMediaImage"
@@ -77,6 +79,7 @@ export function useAmbientArtwork(route: string): {
   onFailure: (src: string) => void
   next: () => void
   canRotate: boolean
+  playlistOwners?: readonly string[]
 } {
   const provider = useProviderStore((s) => s.provider),
     scope = useProviderStore((s) => s.provider?.cacheScope ?? undefined)
@@ -89,12 +92,23 @@ export function useAmbientArtwork(route: string): {
       hubs: s.hubs,
       likedTracks: s.likedTracks,
       playlists: s.playlists,
+      currentPlaylistId: s.currentPlaylistId,
+      currentPlaylistItems: s.currentPlaylistItems,
     }))
   )
-  const candidates = useMemo(
-    () => (scope ? collectAmbientCandidates(library, scope) : []),
-    [library, scope]
-  )
+  const playlistRoute = /^\/playlist(?:\/|$)/.test(route)
+  const candidates = useMemo(() => {
+    if (!scope) return []
+    if (playlistRoute)
+      return isCurrentPlaylistRoute(route, library.currentPlaylistId)
+        ? collectPlaylistAmbientCandidates(
+            library.currentPlaylistItems ?? [],
+            scope,
+            library.likedArtists ?? []
+          )
+        : []
+    return collectAmbientCandidates(library, scope)
+  }, [library, scope, route, playlistRoute])
   const visit = useMemo(
     () => ({
       route,
@@ -113,6 +127,12 @@ export function useAmbientArtwork(route: string): {
     activeVisit.current = visit
   }, [visit])
   const failed = useStore(ambientArtworkController.store, (s) => s.failed)
+  if (
+    playlistRoute &&
+    visit.selected &&
+    !candidates.some((candidate) => candidate.key === visit.selected?.key)
+  )
+    visit.selected = null
   if (!visit.selected && visit.attempts < 5 && candidates.length) {
     const options = candidates.filter(
       (c) => !visit.excluded.has(c.key) && !failed.includes(c.src)
@@ -124,13 +144,15 @@ export function useAmbientArtwork(route: string): {
     }
   }
   const candidate =
-    candidates.find((c) => c.key === visit.selected?.key) ?? visit.selected
+    candidates.find((c) => c.key === visit.selected?.key) ??
+    (playlistRoute ? null : visit.selected)
   const artist = useArtistArtwork(
     candidate?.kind === "artist" ? candidate.artist : null,
     candidate?.kind === "artist" ? candidate.src : null,
     candidate?.id,
     failed,
-    false
+    false,
+    playlistRoute ? "background" : "poster"
   )
   const album = useAlbumArtwork(
     candidate?.kind === "album" ? candidate.artist : null,
@@ -138,7 +160,8 @@ export function useAmbientArtwork(route: string): {
     candidate?.kind === "album" ? candidate.src : null,
     candidate?.id,
     failed,
-    false
+    false,
+    playlistRoute ? "background" : "poster"
   )
   const revisions = useArtworkPreferenceStore((s) => s.revisions)
   const plainKey =
@@ -231,13 +254,16 @@ export function useAmbientArtwork(route: string): {
             src,
             route,
             scope,
-            owner: "ambient-pool",
+            owner:
+              playlistRoute && candidate
+                ? `ambient-playlist:${candidate.key}`
+                : "ambient-pool",
             origin: "pool",
             position: "50% 50%",
             align,
           }
         : null,
-    [provider, scope, src, route, align]
+    [provider, scope, src, route, align, playlistRoute, candidate?.key]
   )
   const artwork = detail ?? poolArtwork
   const activeArtwork = useRef(artwork)
@@ -263,5 +289,13 @@ export function useAmbientArtwork(route: string): {
     } else if (artwork.origin === "pool")
       ambientArtworkController.fail(source, provider, scope)
   }
-  return { artwork, onFailure, next, canRotate }
+  return {
+    artwork,
+    onFailure,
+    next,
+    canRotate,
+    playlistOwners: playlistRoute
+      ? candidates.map((candidate) => `ambient-playlist:${candidate.key}`)
+      : undefined,
+  }
 }

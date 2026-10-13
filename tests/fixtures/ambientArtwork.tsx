@@ -17,6 +17,8 @@ const library = create(() => ({
   hubs: [] as any[],
   likedTracks: [] as any[],
   playlists: [] as any[],
+  currentPlaylistId: null as string | null,
+  currentPlaylistItems: [] as any[],
 }))
 mock.module("../../src/stores/libraryStore", () => ({
   useLibraryStore: library,
@@ -266,6 +268,66 @@ try {
     "a new route visit can choose another non-broken cached item"
   )
   assert.equal(requests, 0)
+  await render({ route: "/playlist/p" })
+  assert.equal(
+    latest!.artwork,
+    null,
+    "loading playlist never borrows unrelated global artwork"
+  )
+  const member = (id: string) => ({
+    id,
+    artistId: id,
+    artistName: `Member ${id}`,
+    artistThumbUrl: image(id, "b"),
+    albumId: null,
+    albumName: "",
+    albumThumbUrl: null,
+    thumbUrl: null,
+  })
+  await act(() =>
+    library.setState({
+      currentPlaylistId: "p",
+      currentPlaylistItems: [member("p-one"), member("p-two")],
+    })
+  )
+  assert.equal(latest!.artwork?.src, image("p-one", "b"))
+  assert.equal(latest!.canRotate, true)
+  const retiredPlaylistFailure = latest!.onFailure
+  await act(() => latest!.next())
+  assert.equal(
+    latest!.artwork?.src,
+    image("p-two", "b"),
+    "rotation stays inside loaded playlist members"
+  )
+  await render({ route: "/playlist/q" })
+  assert.equal(
+    latest!.artwork,
+    null,
+    "old playlist members cannot appear during next playlist load"
+  )
+  await act(() => retiredPlaylistFailure(image("p-two", "b")))
+  await act(() =>
+    library.setState({ currentPlaylistId: "q", currentPlaylistItems: [] })
+  )
+  assert.equal(latest!.artwork, null, "empty playlist stays neutral")
+  await act(() =>
+    library.setState({
+      currentPlaylistId: "q",
+      currentPlaylistItems: [member("q-one")],
+    })
+  )
+  assert.equal(latest!.artwork?.src, image("q-one", "b"))
+  await act(() => latest!.onFailure(image("q-one", "b")))
+  assert.equal(
+    latest!.artwork,
+    null,
+    "failed playlist member artwork never falls through to unrelated global pool"
+  )
+  assert.equal(
+    requests,
+    0,
+    "playlist artwork uses loaded cache-only members without fetching playlist or metadata"
+  )
 } finally {
   await act(() => root.unmount())
   Math.random = random

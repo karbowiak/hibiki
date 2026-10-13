@@ -8,7 +8,7 @@ const status = {
   configured: true,
   enabled: true,
 }
-test("SoulSync store owns only native status, preserves failed settings and clears keys only explicitly", async () => {
+test("SoulSync store owns native status, reloads unknown saves and clears keys only explicitly", async () => {
   const calls: any[] = []
   let fail = false
   const store = createSoulSyncStore(
@@ -42,9 +42,12 @@ test("SoulSync store owns only native status, preserves failed settings and clea
       .getState()
       .configure({ baseUrl: status.baseUrl, enabled: false })
   ).toBe(false)
-  expect(store.getState().status?.enabled).toBe(true)
+  expect(store.getState().status).toBeNull()
   expect(store.getState().error).not.toContain("private upstream detail")
   fail = false
+  expect(await store.getState().configure({ baseUrl: status.baseUrl, clear: true, enabled: false })).toBe(false)
+  expect(calls.length).toBe(2)
+  await store.getState().load()
   expect(
     await store
       .getState()
@@ -52,6 +55,26 @@ test("SoulSync store owns only native status, preserves failed settings and clea
   ).toBe(true)
   expect(store.getState().status?.configured).toBe(false)
   expect(calls[2]).toMatchObject({ clear: true, apiKey: null })
+})
+test("lost SoulSync configuration receipt retires pending metadata until actual status is reloaded", async () => {
+  let actual = status
+  const pending = deferred<any>()
+  const store = createSoulSyncStore({
+    status: async () => actual,
+    configure: async () => {
+      actual = { ...status, revision: "changed", enabled: false }
+      throw Error("private failure after committed native save")
+    },
+  }, () => true)
+  await store.getState().load()
+  const adapter = nativeSoulSyncAdapter(status, () => store.getState().status, () => pending.promise)
+  const lookup = adapter.lookup({ kind: "artist", artist: "Artist", scope: "library" })
+  expect(await store.getState().configure({ baseUrl: status.baseUrl, enabled: false })).toBe(false)
+  expect(store.getState().status).toBeNull()
+  pending.resolve({ name: "Artist", summary: "Old metadata", thumbUrl: null, genres: [], label: null, mbid: null })
+  expect(await lookup).toEqual({ status: "retired" })
+  await store.getState().load()
+  expect(store.getState().status).toMatchObject({ revision: "changed", enabled: false })
 })
 test("native SoulSync adapter stays silent while unconfigured and retires old configuration replies", async () => {
   let current = status,

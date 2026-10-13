@@ -243,3 +243,42 @@ Python AppImage checks passed; native compilation accepted the updater setting.
 Read-only post-publication verification is prepared for all nine artifacts but
 has not run: the user continues to hold 0.6.0 and current local commits have not
 been pushed for exact-commit CI or release-matrix builds.
+
+### Playlist membership, dynamic sync and metadata configuration
+
+Playlist backgrounds now use only artist/album artwork from loaded members.
+The rendered shell also rejects unrelated ready/retiring frames and palette
+ownership during loading, empty/error states, navigation and member removal;
+eligible rotation within the same playlist retains its crossfade. No full
+playlist fetch or extra artwork-provider lookup was added.
+
+Smart/dynamic Plex playlists expose Configure sync and export-only snapshots.
+Import/two-way operations remain blocked in UI, journal, fresh execution and
+native preflight. Sync reads bypass saved-library fallback, while ordinary
+browsing retains it. Current native item membership was 81 songs for the selected
+liked playlist despite Plex roster metadata saying 97; item totals govern sync.
+No live link or export was created in this verification.
+
+Matching now has bounded artist/recording candidate discovery, with typed
+section ownership, source-recording query keys and explicit truncated/unavailable
+review limits. Three unresolved live samples produced no additional accepted
+matches; synthetic crowded-title regressions prove the retrieval improvement
+without claiming a measured live match-rate gain.
+
+Metadata source rows now have configuration dialogs, status badges and keyboard
+reordering. SoulSync joins the priority list without replacing saved ranking;
+native keys stay absent from modal fields and an in-flight configuration save
+prevents dialog dismissal. Existing listening/lyrics account settings remain
+separate. The larger scoped SQLite catalogue/path-join design is documented in
+src/metadata/README.md as research, not an implemented full-library sync.
+SoulSync configuration now retires lookup ownership before dispatch too: a lost
+save receipt requires reloading actual native status, and late metadata cannot
+reappear under the previous connection. Eleven final focused metadata tests
+and a fresh production build passed after this additional guard.
+
+Validation: final full frontend run passed 882 tests; native run passed 595,
+with eight ignored live tests and 73 integration tests filtered. Production
+build and TypeScript passed. Native computer use verified the source dialog,
+smart export-only setup and 90er Dakkedak's member artwork. The idle development
+bundle was rebuilt/reopened at localhost:1420 and reconnected cleanly; playback
+and settings were not used as write targets. Release remains held.

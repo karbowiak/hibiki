@@ -1,5 +1,5 @@
 import type { LibraryState } from "../stores/libraryStore"
-import type { MusicItem } from "../types/music"
+import type { MusicArtist, MusicTrack, MusicItem } from "../types/music"
 export interface AmbientCandidate {
   key: string
   kind: "artist" | "album" | "plain"
@@ -121,4 +121,68 @@ export function collectAmbientCandidates(
     add(item)
   }
   return result
+}
+
+/** Only artwork whose artist or album occurs among this playlist's loaded members. */
+export function collectPlaylistAmbientCandidates(
+  tracks: readonly MusicTrack[],
+  scope: string,
+  artists: readonly MusicArtist[] = []
+): AmbientCandidate[] {
+  const result: AmbientCandidate[] = [],
+    seen = new Set<string>(),
+    urls = new Set<string>()
+  const add = (
+    kind: "artist" | "album",
+    id: string | null,
+    src: string | null,
+    artist: string,
+    album: string | null
+  ) => {
+    if (!id || !artist || !eligibleAmbientUrl(src, scope)) return
+    const key = JSON.stringify([kind, id, artist, album])
+    if (seen.has(key) || urls.has(src)) return
+    seen.add(key)
+    urls.add(src)
+    result.push({ key, kind, id, src, artist, album })
+  }
+  const knownArtists = new Map(
+    artists.slice(0, 256).map((artist) => [artist.id, artist])
+  )
+  for (const track of tracks.slice(0, 512)) {
+    if (!track) continue
+    const cachedArtist = track.artistId
+      ? knownArtists.get(track.artistId)
+      : undefined
+    const knownArtist =
+      cachedArtist?.title === track.artistName ? cachedArtist : undefined
+    add(
+      "artist",
+      track.artistId,
+      eligibleAmbientUrl(knownArtist?.artUrl, scope)
+        ? knownArtist.artUrl
+        : track.artistThumbUrl,
+      track.artistName,
+      null
+    )
+    add(
+      "album",
+      track.albumId,
+      track.albumThumbUrl ?? track.thumbUrl,
+      track.artistName,
+      track.albumName
+    )
+    if (result.length >= 96) break
+  }
+  return result.slice(0, 96)
+}
+export function isCurrentPlaylistRoute(
+  route: string,
+  id: string | null | undefined
+): boolean {
+  if (!id) return false
+  return (
+    route === `/playlist/${id}` ||
+    route === decodeURI(`/playlist/${encodeURIComponent(id)}`)
+  )
 }

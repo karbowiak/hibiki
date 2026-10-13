@@ -22,8 +22,10 @@ export type MetadataSource =
   | "fanart"
   | "heya"
   | "theaudiodb"
+  | "soulsync"
 
 export const SOURCE_LABELS: Record<MetadataSource, string> = {
+  soulsync: "SoulSync",
   plex: "Plex",
   deezer: "Deezer",
   lastfm: "Last.fm",
@@ -37,10 +39,13 @@ export const SOURCE_LABELS: Record<MetadataSource, string> = {
 }
 
 export const SOURCE_DESCRIPTIONS: Record<MetadataSource, string> = {
+  soulsync:
+    "Metadata from your SoulSync library, including original provider attribution",
   fanart:
     "Configured Fanart.tv artist backgrounds, portraits, and matched album covers",
   heya: "Metadata from your configured HeyaMetadata server, with source provenance",
-  theaudiodb: "Optional premium TheAudioDB metadata and artwork, with verified identities",
+  theaudiodb:
+    "Optional premium TheAudioDB metadata and artwork, with verified identities",
   plex: "Your Plex library metadata (always the source for names)",
   deezer: "Deezer artist images, fan counts, genres, and cover art",
   lastfm: "Last.fm biographies, tags, listener counts, and similar artists",
@@ -63,7 +68,22 @@ const DEFAULT_PRIORITY: MetadataSource[] = [
   "fanart",
   "heya",
   "theaudiodb",
+  "soulsync",
 ]
+
+/** Preserve saved ranking, drop retired/duplicate entries, append new sources. */
+export function normalizeMetadataPriority(
+  order: readonly string[]
+): MetadataSource[] {
+  return [
+    ...new Set([
+      ...order.filter((source): source is MetadataSource =>
+        DEFAULT_PRIORITY.includes(source as MetadataSource)
+      ),
+      ...DEFAULT_PRIORITY,
+    ]),
+  ]
+}
 
 interface MetadataSourceState {
   /** Ordered list of metadata sources, highest priority first. */
@@ -76,7 +96,8 @@ export const useMetadataSourceStore = create<MetadataSourceState>()(
   safePersist(
     (set) => ({
       priority: DEFAULT_PRIORITY,
-      setPriority: (order) => set({ priority: order }),
+      setPriority: (order) =>
+        set({ priority: normalizeMetadataPriority(order) }),
     }),
     {
       name: "metadata-source-priority-v1",
@@ -88,14 +109,9 @@ export const useMetadataSourceStore = create<MetadataSourceState>()(
       onRehydrateStorage: () => (state) => {
         if (!state) return
         // Ensure newly added sources appear in existing saved priority lists
-        const missing = DEFAULT_PRIORITY.filter(
-          (s) => !state.priority.includes(s)
-        )
-        if (missing.length > 0) {
-          useMetadataSourceStore.setState({
-            priority: [...state.priority, ...missing],
-          })
-        }
+        useMetadataSourceStore.setState({
+          priority: normalizeMetadataPriority(state.priority),
+        })
       },
     }
   )

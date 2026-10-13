@@ -54,7 +54,9 @@ export function createSoulSyncStore(
       const status = get().status
       if (!status || !desktop() || get().loading) return false
       const version = ++generation
-      set({ loading: true, error: null })
+      // The atomic native save may succeed even if its receipt is lost.
+      // Retire lookup ownership before dispatch; reload after an unknown result.
+      set({ status: null, loading: true, error: null })
       try {
         const next = await api.configure({
           revision: status.revision,

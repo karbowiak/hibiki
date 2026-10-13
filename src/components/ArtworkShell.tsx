@@ -30,7 +30,8 @@ type ReadyArtwork = {
 /** A single image owner and palette for the complete desktop window. */
 export function ArtworkShell({ children }: { children: ReactNode }) {
   const [route] = useLocation()
-  const { artwork, onFailure, next, canRotate } = useAmbientArtwork(route)
+  const { artwork, onFailure, next, canRotate, playlistOwners } =
+    useAmbientArtwork(route)
   const provider = useProviderStore((state) => state.provider),
     scope = provider?.cacheScope
   const enabled = useArtworkAppearanceStore(
@@ -55,14 +56,22 @@ export function ArtworkShell({ children }: { children: ReactNode }) {
   }>({ current: null, previous: null })
   const currentRequest = useRef({ artwork, provider, scope, enabled })
   currentRequest.current = { artwork, provider, scope, enabled }
+  const belongsToPlaylist = (ready: ReadyArtwork | null) =>
+    playlistOwners === undefined ||
+    (!!artwork &&
+      !!ready &&
+      ready.artwork.route === route &&
+      playlistOwners.includes(ready.artwork.owner))
   const ready =
     enabled &&
+    belongsToPlaylist(display.current) &&
     display.current?.provider === provider &&
     display.current.scope === scope
       ? display.current
       : null
   const previous =
     enabled &&
+    belongsToPlaylist(display.previous) &&
     display.previous?.provider === provider &&
     display.previous.scope === scope
       ? display.previous

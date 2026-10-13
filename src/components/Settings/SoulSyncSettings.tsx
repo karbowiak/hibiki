@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from "react"
 import { useSoulSyncStore } from "../../metadata/soulsync/store"
-export function SoulSyncSettings() {
+export function SoulSyncSettings({ embedded = false }: { embedded?: boolean } = {}) {
   const { status, loading, error, load, configure } = useSoulSyncStore()
   const [baseUrl, setBaseUrl] = useState(""),
     [key, setKey] = useState(""),
@@ -19,13 +19,13 @@ export function SoulSyncSettings() {
   }, [status?.revision])
   return (
     <section
-      className="rounded-xl border border-[var(--border)] bg-app-surface p-5"
-      aria-labelledby={`${id}-title`}
+      className={embedded ? "space-y-3" : "rounded-xl border border-[var(--border)] bg-app-surface p-5"}
+      aria-labelledby={embedded ? undefined : `${id}-title`}
     >
-      <h3 id={`${id}-title`} className="font-semibold">
+      {!embedded && <h3 id={`${id}-title`} className="font-semibold">
         SoulSync{" "}
         <span className="text-xs text-[var(--text-muted)]">Optional</span>
-      </h3>
+      </h3>}
       <p className="mt-2 text-sm text-[var(--text-secondary)]">
         Enrich artist, album and track metadata from your own SoulSync library,
         including descriptions and genres where available. Lookups are

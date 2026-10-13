@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from "react"
 import { useTheAudioDbStore } from "../../metadata/theaudiodb/store"
-export function TheAudioDbSettings() {
+export function TheAudioDbSettings({ embedded = false }: { embedded?: boolean } = {}) {
   const id = useId(),
     { status, loading, error, load, configure } = useTheAudioDbStore()
   const [key, setKey] = useState(""),
@@ -14,12 +14,12 @@ export function TheAudioDbSettings() {
   }, [status?.revision])
   return (
     <section
-      className="mt-6 rounded-xl border border-[var(--border)] p-4"
-      aria-labelledby={`${id}-title`}
+      className={embedded ? "space-y-3" : "mt-6 rounded-xl border border-[var(--border)] p-4"}
+      aria-labelledby={embedded ? undefined : `${id}-title`}
     >
-      <h3 id={`${id}-title`} className="font-semibold">
+      {!embedded && <h3 id={`${id}-title`} className="font-semibold">
         TheAudioDB
-      </h3>
+      </h3>}
       <p className="mt-1 text-sm text-[var(--text-muted)]">
         Artist biographies, album and track descriptions, genres and artwork
         from TheAudioDB. A premium V2 API key is required.

@@ -18,6 +18,8 @@ const library = create(() => ({
   hubs: [] as any[],
   likedTracks: [] as any[],
   playlists: [] as any[],
+  currentPlaylistId: null as string | null,
+  currentPlaylistItems: [] as any[],
 }))
 mock.module("../../src/stores/libraryStore", () => ({
   useLibraryStore: library,
@@ -151,6 +153,21 @@ try {
   await render("/album/one")
   assert.equal(latest!.canRotate, false)
   assert.equal(intervals.size, 0)
+  await act(() =>
+    library.setState({
+      currentPlaylistId: "one",
+      currentPlaylistItems: ["one", "two"].map((id) => ({
+        id,
+        albumId: id,
+        albumName: id,
+        artistName: "Artist",
+        albumThumbUrl: image(id),
+        artistId: null,
+        artistThumbUrl: null,
+        thumbUrl: null,
+      })),
+    })
+  )
   await render("/playlist/one")
   assert.equal(latest!.canRotate, true)
   assert.equal(intervals.size, 1)

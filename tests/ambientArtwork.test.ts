@@ -2,6 +2,8 @@ import { expect, test } from "bun:test"
 import { createAmbientArtworkController } from "../src/stores/ambientArtworkStore"
 import {
   collectAmbientCandidates,
+  collectPlaylistAmbientCandidates,
+  isCurrentPlaylistRoute,
   eligibleAmbientUrl,
 } from "../src/lib/ambientArtwork"
 import type { MusicProvider } from "../src/providers/types"
@@ -176,4 +178,53 @@ test("pool excludes absent, foreign-scope and metadata-only URLs instead of init
     eligibleAmbientUrl("image://localhost/ext/img?src=not-a-url&scope=a", "a")
   ).toBe(false)
   expect(eligibleAmbientUrl(image("good"), "a")).toBe(true)
+})
+
+test("playlist pool contains only loaded member artists/albums, deduplicates and rejects foreign scope", () => {
+  const track = {
+    id: "track",
+    artistId: "member",
+    artistName: "Member",
+    artistThumbUrl: image("member-poster"),
+    albumId: "album",
+    albumName: "Album",
+    albumThumbUrl: image("album"),
+    thumbUrl: null,
+  } as any
+  const artists = [
+    { id: "unrelated", title: "Unrelated", artUrl: image("unrelated") },
+    { id: "member", title: "Member", artUrl: image("member-wide") },
+  ] as any
+  const pool = collectPlaylistAmbientCandidates([track, track], "a", artists)
+  expect(pool.map((candidate) => candidate.src)).toEqual([
+    image("member-wide"),
+    image("album"),
+  ])
+  expect(collectPlaylistAmbientCandidates([], "a", artists)).toEqual([])
+  expect(
+    collectPlaylistAmbientCandidates(
+      [
+        {
+          ...track,
+          artistThumbUrl: image("foreign", "b"),
+          albumThumbUrl: image("foreign-album", "b"),
+        },
+      ],
+      "a"
+    )
+  ).toEqual([])
+  expect(isCurrentPlaylistRoute("/playlist/next", "old")).toBe(false)
+  expect(isCurrentPlaylistRoute("/playlist/p", "p")).toBe(true)
+  expect(
+    collectPlaylistAmbientCandidates(
+      Array.from({ length: 10000 }, (_, i) => ({
+        ...track,
+        artistId: String(i),
+        albumId: String(i),
+        artistThumbUrl: image(`artist-${i}`),
+        albumThumbUrl: image(`album-${i}`),
+      })),
+      "a"
+    ).length
+  ).toBeLessThanOrEqual(96)
 })

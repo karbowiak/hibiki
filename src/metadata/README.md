@@ -95,6 +95,76 @@ concurrent change can still race the request. A timeout or unconfirmed result
 requires reloading the current values before another save. Account changes retire
 the dialog and prevent a late response from changing another library's UI.
 
+## Local catalogue and metadata research (2026-10-13)
+
+The next catalogue design is research, not an implemented full-library sync.
+Hibiki currently stores bounded snapshots of visited Plex pages in SQLite
+(`db/offline.rs`: 2,000 entries / 32 MiB per scope), plus the existing metadata
+caches. Those browsing snapshots are not a complete track index and should not
+be repurposed as one by removing their limits.
+
+The original SQLite schema also contains artist/album/track/media-part tables
+and sync helpers. Their primary identities are bare Plex rating keys rather
+than account/server/library-scoped keys. They cannot safely become the active
+catalogue for whichever library is connected now; a scoped replacement or
+explicitly verified migration is needed, without automatically adopting legacy
+rows into the current account.
+
+| Source | Useful available data | Identity and coverage limits |
+| --- | --- | --- |
+| Plex | Scoped rating keys, album/artist links, dates, tags, ratings, play history, GUIDs, media versions, part IDs, paths, duration, size and audio properties | Rating keys belong to a server/library. `mbid://` does not necessarily mean a recording. Keep file/media facts distinct from catalogue enrichment. |
+| SoulSync | File path, duration, bitrate, track/parent IDs, source and provider match statuses, recording/provider IDs, Soul IDs and Last.fm/Genius fields | Its paths can be remapped to its own filesystem. Track search is forgiving and bounded, with no exact-path or paginated full-track API. IDs alone do not prove the same Plex library. |
+| HeyaMetadata | Canonical artists, recordings, issued releases and release groups; external IDs, aliases, credits, biographies, tags, images, metrics, freshness and provenance; supported lyrics/fingerprint endpoints | Actual coverage depends on provider configuration and materialized records. An album edition and a recording are different identities; no local Plex path ownership is implied. |
+
+Evidence: Plex's native `Track`, `Media` and `MediaPart` models already retain
+file/part information; [the official library API](https://developer.plex.tv/pms/#tag/Library)
+provides scoped paginated reads. Two bounded read-only requests against the
+configured SoulSync deployment confirmed populated paths, duration, bitrate,
+recording MBID, source/match fields, Soul IDs and Last.fm counters for one sample.
+BPM, ISRC, several provider IDs and Genius/Last.fm enrichment fields were empty
+for that sample; this is not a catalogue-wide coverage measurement. The API did
+not expose ratings, a separate Plex ID, a version field, codec/channel/sample
+rate/bit-depth, disc number or original server path. The primary contracts are
+[SoulSync's serializer](https://github.com/Nezreka/SoulSync/blob/main/api/serializers.py),
+[library routes](https://github.com/Nezreka/SoulSync/blob/main/api/library.py) and
+[path remapping](https://github.com/Nezreka/SoulSync/blob/main/database/music_database.py).
+No credentials or user file paths are retained in this documentation.
+
+Heya's deployed public OpenAPI reported `Heya Metadata API`, version `v2`, with
+54 paths. The local source's music coverage catalogue and artist/release-group
+projections preserve provider observations, per-field provenance, typed images,
+localized values and edition/recording boundaries. Reuse those normalization and
+identity rules through the existing Heya adapter; do not copy its Redis,
+Postgres, River or raw-response storage architecture into the desktop app.
+See [music coverage](https://github.com/HeyaMedia/HeyaMetadata/blob/main/coverage/music.json)
+and [artist projection](https://github.com/HeyaMedia/HeyaMetadata/blob/main/internal/domains/artist/projection.go).
+
+Recommended implementation sequence, subject to agreeing the catalogue design:
+
+1. Add separate account/server/library-scoped SQLite track, album, artist and
+   media-part tables with ID/path indexes and local text search. Import only
+   metadata in resumable bounded pages; retain checkpoints, pause/cancel controls
+   and a successful complete-census requirement before deleting absent entries.
+   Keep playback using fresh owned Plex stream information.
+2. Add optional native SoulSync identity joins. Prefer the exact known track ID
+   as a bounded discovery hint, then verify an explicitly mapped Plex part path,
+   artist/title/version and duration. Prefix mappings must respect directory
+   boundaries and path case; no filename-only or suffix guessing. A missing,
+   capped, conflicting or ambiguous result remains unresolved. No download API.
+3. Persist small normalized enrichment observations separately from Plex facts,
+   including transport source, original provider, source entity ID, match
+   evidence, observed/fresh-until times and schema version. Enrich visited,
+   playing and selected items first; avoid automatically fanning every library
+   track out to every upstream service.
+4. Resolve a display view using explicit per-item/field choices, source priority
+   and meaningful fallbacks. Preserve disagreements for review; do not add global
+   Last.fm counts to personal Plex counts, collapse editions/recordings, overwrite
+   media facts, or write enrichment back to Plex without a reviewed Save.
+
+Configuration now lives beside each source in Metadata Source Priority.
+SoulSync is included in the ordering; saved rankings are retained and new sources
+are appended. Unconfigured services remain unavailable to metadata editors.
+
 ## Extending the system
 
 `core/types.ts` defines field capabilities, snapshots, identity, provenance and

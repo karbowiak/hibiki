@@ -1,6 +1,4 @@
-import { MetadataServiceSettings } from "../Settings/MetadataServiceSettings"
-import { SoulSyncSettings } from "../Settings/SoulSyncSettings"
-import { TheAudioDbSettings } from "../Settings/TheAudioDbSettings"
+import { MetadataPriorityList } from "../Settings/MetadataPriorityList"
 import { useArtworkAppearanceStore } from "../../stores/artworkAppearanceStore"
 import React, { useState, useEffect, useRef, useMemo } from "react"
 import { useLocation } from "wouter"
@@ -12,7 +10,6 @@ import { AudioCacheControls } from "../AudioCacheControls"
 import { getVersion } from "@tauri-apps/api/app"
 import { useAudioSettingsStore } from "../../stores/audioSettingsStore"
 import { useUpdateStore } from "../../stores/updateStore"
-import { useLastfmStore } from "../../metadata/lastfm/authStore"
 import { useAccentStore, ACCENT_PRESETS } from "../../stores/accentStore"
 import { getTheme, setTheme, subscribeTheme } from "../../stores/themeStore"
 import { getFont, setFont, subscribeFont, FONT_PRESETS } from "../../stores/fontStore"
@@ -28,7 +25,6 @@ import { plexBackend } from "../../backends/plex/definition"
 import { metadataBackends, getMetadataBackend } from "../../metadata"
 import type { ProviderCapabilities } from "../../providers/types"
 import type { MetadataCapabilities } from "../../metadata/types"
-import { useMetadataSourceStore, type MetadataSource, SOURCE_LABELS, SOURCE_DESCRIPTIONS } from "../../stores/metadataSourceStore"
 import { useCompactStore } from "../../stores/compactStore"
 import { ColorPicker } from "../shared/ColorPicker"
 import { useCustomColorStore, SEMANTIC_COLOR_LABELS, UI_COLOR_COUNT, type SemanticColor } from "../../stores/customColorStore"
@@ -949,47 +945,6 @@ const METADATA_CAPABILITY_LABELS: Record<keyof MetadataCapabilities, string> = {
   lyrics: "Lyrics",
 }
 
-const SOURCE_ICONS: Record<MetadataSource, React.ReactNode> = {
-  theaudiodb: (
-    <svg height="18" width="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-      <ellipse cx="12" cy="5" rx="8" ry="3" /><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7" />
-    </svg>
-  ),
-  fanart: <span aria-hidden="true">F</span>,
-  heya: <span aria-hidden="true">H</span>,
-  wikidata: <span aria-hidden="true">W</span>,
-  coverartarchive: <span aria-hidden="true">CAA</span>,
-  plex: (
-    <svg height="18" width="18" viewBox="0 0 24 24" fill="currentColor" className="text-yellow-400">
-      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z" />
-    </svg>
-  ),
-  deezer: (
-    <svg height="18" width="18" viewBox="0 0 24 24" fill="currentColor" className="text-[#EF5466]">
-      <rect x="2" y="14" width="3" height="6" rx="1" />
-      <rect x="6.5" y="11" width="3" height="9" rx="1" />
-      <rect x="11" y="8" width="3" height="12" rx="1" />
-      <rect x="15.5" y="5" width="3" height="15" rx="1" />
-      <rect x="20" y="2" width="2" height="18" rx="1" />
-    </svg>
-  ),
-  lastfm: (
-    <svg height="18" width="18" viewBox="0 0 24 24" fill="currentColor" className="text-red-500">
-      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z" />
-    </svg>
-  ),
-  apple: (
-    <svg height="18" width="18" viewBox="0 0 24 24" fill="currentColor" className="text-pink-400">
-      <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
-    </svg>
-  ),
-  musicbrainz: (
-    <svg height="18" width="18" viewBox="0 0 24 24" fill="currentColor" className="text-[#BA478F]">
-      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 15.5v-3l-3 3v-7l3 3v-3l3 3v-3l3 3v-7l-3 3v-3l-3 3v-3l-3 3V5.5l9 6.5-9 6.5z" />
-    </svg>
-  ),
-}
-
 function CapabilityGrid({ caps, labels }: { caps: { [k: string]: boolean }; labels: { [k: string]: string } }) {
   const entries = Object.entries(labels)
   return (
@@ -1041,105 +996,17 @@ function PlexSection() {
 }
 
 function MetadataListView({ setSection }: { setSection: (s: Section) => void }) {
-  const { hasApiKey: lastfmHasApiKey } = useLastfmStore()
-  const { priority, setPriority } = useMetadataSourceStore()
-
-  // Pointer-based drag for source priority
-  const [draggingIdx, setDraggingIdx] = useState<number | null>(null)
-  const [hoverIdx, setHoverIdx] = useState<number | null>(null)
-  const sortListRef = useRef<HTMLDivElement>(null)
-
-  function getHoveredIndex(clientY: number): number | null {
-    if (!sortListRef.current) return null
-    const children = Array.from(sortListRef.current.children) as HTMLElement[]
-    for (let i = 0; i < children.length; i++) {
-      const rect = children[i].getBoundingClientRect()
-      if (clientY >= rect.top && clientY <= rect.bottom) return i
-    }
-    return null
-  }
-
-  function onHandlePointerDown(e: React.PointerEvent, idx: number) {
-    e.preventDefault()
-    sortListRef.current?.setPointerCapture(e.pointerId)
-    setDraggingIdx(idx)
-    setHoverIdx(idx)
-  }
-
-  function onListPointerMove(e: React.PointerEvent) {
-    if (draggingIdx === null) return
-    const idx = getHoveredIndex(e.clientY)
-    if (idx !== null) setHoverIdx(idx)
-  }
-
-  function onListPointerUp(e: React.PointerEvent) {
-    if (draggingIdx === null) return
-    const toIdx = getHoveredIndex(e.clientY) ?? draggingIdx
-    if (toIdx !== draggingIdx) {
-      const next = [...priority]
-      const [item] = next.splice(draggingIdx, 1)
-      next.splice(toIdx, 0, item)
-      setPriority(next)
-    }
-    setDraggingIdx(null)
-    setHoverIdx(null)
-  }
-
   return (
-    <div className="max-w-2xl space-y-6">
-
-      <SoulSyncSettings />
-      <MetadataServiceSettings service="fanart" />
-      <MetadataServiceSettings service="heya" />
-      <TheAudioDbSettings />
-      {/* Metadata Source Priority */}
-      <SettingCard title="Metadata Source Priority" description="Drag to reorder. Higher sources take precedence for bios, images, genres, and tags. Artist, album, and track names always come from Plex.">
-        <div
-          ref={sortListRef}
-          className="flex flex-col gap-2 touch-none"
-          onPointerMove={onListPointerMove}
-          onPointerUp={onListPointerUp}
-          onPointerCancel={onListPointerUp}
-        >
-          {priority.map((source, idx) => (
-            <div
-              key={source}
-              className={clsx(
-                "flex items-center gap-3 rounded-xl border px-4 py-3 transition-colors select-none",
-                draggingIdx === idx
-                  ? "border-accent/60 bg-accent/15 opacity-70"
-                  : hoverIdx === idx && draggingIdx !== null
-                    ? "border-accent/50 bg-accent/10"
-                    : "border-white/10 bg-white/3"
-              )}
-            >
-              <div
-                className="cursor-grab active:cursor-grabbing p-0.5 -ml-0.5 flex-shrink-0"
-                onPointerDown={e => onHandlePointerDown(e, idx)}
-              >
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" className="text-white/30 pointer-events-none">
-                  <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" />
-                </svg>
-              </div>
-              <span className="flex-shrink-0">{SOURCE_ICONS[source]}</span>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-white">{SOURCE_LABELS[source]}</p>
-                <p className="text-xs text-white/40 truncate">{SOURCE_DESCRIPTIONS[source]}</p>
-              </div>
-              <span className="text-xs font-mono text-white/20 tabular-nums">#{idx + 1}</span>
-              {source === "lastfm" && !lastfmHasApiKey && (
-                <span className="rounded-full bg-white/8 px-2 py-0.5 text-xs text-white/35 flex-shrink-0">No API key</span>
-              )}
-            </div>
-          ))}
-        </div>
+    <div className="max-w-3xl space-y-6">
+      <SettingCard title="Metadata Source Priority" description="Higher sources take precedence for biographies, artwork, genres and other enrichment. Drag or use the arrow controls to reorder; configure each source here. Library names still come from Plex.">
+        <MetadataPriorityList />
       </SettingCard>
 
-      {/* Metadata Backends */}
+      {/* Listening integrations keep their dedicated account settings. */}
       <div>
-        <h3 className="text-xs font-bold uppercase tracking-widest text-white/25 mb-4">Metadata Sources</h3>
+        <h3 className="text-xs font-bold uppercase tracking-widest text-white/25 mb-4">Listening &amp; Lyrics</h3>
         <div className="space-y-3">
-          {metadataBackends.map(mb => {
+          {metadataBackends.filter(mb => mb.id === "genius" || mb.id === "listenbrainz").map(mb => {
             const enabled = mb.useIsEnabled()
             const Icon = mb.icon
             return (

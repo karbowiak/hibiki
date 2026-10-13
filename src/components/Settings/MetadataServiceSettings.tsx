@@ -6,8 +6,10 @@ import {
 import type { ConfiguredMetadataService } from "../../metadata/services/api"
 export function MetadataServiceSettings({
   service,
+  embedded = false,
 }: {
   service: ConfiguredMetadataService
+  embedded?: boolean
 }) {
   const id = useId(),
     store = service === "fanart" ? useFanartServiceStore : useHeyaServiceStore
@@ -29,12 +31,12 @@ export function MetadataServiceSettings({
     "rounded-lg border border-[var(--border)] bg-app-bg px-3 py-2 text-sm"
   return (
     <section
-      className="mt-6 rounded-xl border border-[var(--border)] p-4"
-      aria-labelledby={`${id}-heading`}
+      className={embedded ? "space-y-3" : "mt-6 rounded-xl border border-[var(--border)] p-4"}
+      aria-labelledby={embedded ? undefined : `${id}-heading`}
     >
-      <h3 id={`${id}-heading`} className="text-base font-semibold">
+      {!embedded && <h3 id={`${id}-heading`} className="text-base font-semibold">
         {name}
-      </h3>
+      </h3>}
       <p className="mt-1 text-sm text-[var(--text-muted)]">
         {service === "fanart"
           ? "Artist backgrounds, portraits, and album covers matched by MusicBrainz identity."
