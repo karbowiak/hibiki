@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test"
 import { resolve } from "node:path"
-test("downloads controls show actual availability, fence account changes and serialize removals", async () => {
+test("entity icons coalesce, expose partial status, offer artist retry/removal and retire across accounts", async () => {
   const child = Bun.spawn(
-    [process.execPath, "tests/fixtures/downloadsPage.tsx"],
+    [process.execPath, "tests/fixtures/downloadEntitiesUi.tsx"],
     { cwd: resolve(import.meta.dir, ".."), stdout: "pipe", stderr: "pipe" }
   )
   const [status, out, err] = await Promise.all([

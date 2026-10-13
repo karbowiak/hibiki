@@ -153,3 +153,8 @@
 @media (prefers-reduced-motion: reduce) {
   .media-card, .media-card__play, .media-row__button { transition: none; }
 }
+
+/* Unavailable audio remains browsable in a saved library. */
+.media-card--unavailable .media-card__image { opacity: 0.45; }
+.media-card--unavailable .media-card__caption { opacity: 0.65; }
+.media-card__play:disabled { cursor: default; opacity: 0.35; }

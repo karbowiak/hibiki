@@ -70,6 +70,14 @@ export function createPlexApi(
   // Library
   // ---------------------------------------------------------------------------
 
+  function cataloguePage(
+    kind: "artist" | "album" | "track",
+    offset = 0,
+    limit = 200
+  ): Promise<{ items: PlexMedia[]; total: number; offset: number }> {
+    return invoke("catalogue_remote_page", { kind, offset, limit })
+  }
+
   function prepareTrackAudio(
     trackId: number,
     localOnly = false
@@ -865,6 +873,7 @@ export function createPlexApi(
     removeDownload,
     resumeDownloads,
     getLibrarySections,
+    cataloguePage,
     searchLibrary,
     findPlaylistCandidates,
     getRecentlyAdded,

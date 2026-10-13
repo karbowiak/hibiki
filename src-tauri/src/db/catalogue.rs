@@ -50,35 +50,26 @@ pub fn clean_document(value: &Value) -> Result<Value, String> {
                     .collect::<Result<_, _>>()?,
             ),
             Value::String(text) => {
-                if let Ok(mut url) = url::Url::parse(text) {
-                    // Only web URLs can carry authentication; Plex GUIDs and
-                    // opaque server paths must remain byte-for-byte unchanged.
-                    if matches!(url.scheme(), "http" | "https") {
-                        let pairs: Vec<_> = url
-                            .query_pairs()
-                            .filter(|(key, _)| {
-                                !matches!(
-                                    key.replace(['-', '_'], "").to_ascii_lowercase().as_str(),
-                                    "token" | "xplextoken" | "accesstoken" | "apikey"
-                                )
-                            })
-                            .map(|(k, v)| (k.into_owned(), v.into_owned()))
-                            .collect();
-                        if !url.username().is_empty()
-                            || url.password().is_some()
-                            || pairs.len() != url.query_pairs().count()
-                        {
-                            let _ = url.set_username("");
-                            let _ = url.set_password(None);
-                            url.set_query(None);
-                            if !pairs.is_empty() {
-                                url.query_pairs_mut().extend_pairs(pairs);
-                            }
-                            return Ok(Value::String(url.to_string()));
+                let mut result=text.clone();
+                let web=url::Url::parse(text).ok().filter(|url|matches!(url.scheme(),"http"|"https"));
+                let relative=text.starts_with("/library/") || text.starts_with("/resources/");
+                if web.is_some() || relative {
+                    let (before_fragment,fragment)=text.split_once('#').map(|(a,b)|(a,format!("#{b}"))).unwrap_or((text.as_str(),String::new()));
+                    if let Some((base,query))=before_fragment.split_once('?') {
+                        let pairs=query.split('&').filter(|pair|{
+                            let key=url::form_urlencoded::parse(pair.as_bytes()).next().map(|(k,_)|k.into_owned()).unwrap_or_default();
+                            !matches!(key.replace(['-','_'],"").to_ascii_lowercase().as_str(),"token"|"xplextoken"|"accesstoken"|"apikey"|"authorization"|"password"|"secret")
+                        }).collect::<Vec<_>>();
+                        result=format!("{base}{}{fragment}",if pairs.is_empty(){String::new()}else{format!("?{}",pairs.join("&"))});
+                    }
+                    if let Some(mut parsed)=web {
+                        if !parsed.username().is_empty() || parsed.password().is_some() {
+                            let query=result.split_once('?').map(|(_,s)|s.split('#').next().unwrap_or_default().to_owned());
+                            let _=parsed.set_username("");let _=parsed.set_password(None);parsed.set_query(query.as_deref());result=parsed.to_string();
                         }
                     }
                 }
-                value.clone()
+                Value::String(result)
             }
             _ => value.clone(),
         })
@@ -210,7 +201,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         super::super::schema::run_migrations(&conn).unwrap();
         let scope = format!("plex-{}", "a".repeat(64));
-        let document = serde_json::json!({"ratingKey":"42","type":"track","futureSonicData":{"features":[1,2,3]},"Guid":[{"id":"mbid://x"}],"Media":[{"Part":[{"file":"/storage/Artist/song.flac","Stream":[{"startRamp":"1,2","futureField":3}]}]},{"id":2}],"url":"https://user:password@server.test/data?X-Plex-Token=private&keep=1","token":"private"});
+        let document = serde_json::json!({"ratingKey":"42","type":"track","futureSonicData":{"features":[1,2,3]},"Guid":[{"id":"mbid://x"}],"Media":[{"Part":[{"file":"/storage/Artist/song.flac","Stream":[{"startRamp":"1,2","futureField":3}]}]},{"id":2}],"url":"https://user:password@server.test/data?X-Plex-Token=private&keep=1","token":"private","relative":"/library/metadata/42?sig=a%2fb+Z&X-Plex-Token=private&keep=%20"});
         save(&conn, &scope, "track", 42, &document, true).unwrap();
         let saved = get(&conn, &scope, "track", 42).unwrap().unwrap();
         assert_eq!(saved["Media"], document["Media"]);
@@ -218,6 +209,7 @@ mod tests {
         assert_eq!(saved["Guid"], document["Guid"]);
         assert!(!saved.to_string().contains("private"));
         assert_eq!(saved["url"], "https://server.test/data?keep=1");
+        assert_eq!(saved["relative"],"/library/metadata/42?sig=a%2fb+Z&keep=%20");
         save(
             &conn,
             &scope,

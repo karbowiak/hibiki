@@ -33,6 +33,7 @@ export function createSavedLibraryProvider(
     "getArtist",
     "getAlbumTracks",
     "getArtistAlbums",
+    "getArtistTracks",
     "getArtistPopularTracks",
     "getArtistSimilar",
     "getRelatedHubs",
@@ -117,6 +118,7 @@ export function createSavedLibraryProvider(
       syncTracks: false,
     },
     isConnected: () => false,
+
     ...(audio
       ? {
           getPlaybackInfo: async (track: MusicTrack) => {
@@ -161,6 +163,20 @@ export function createSavedLibraryProvider(
   const functions = new Map<PropertyKey, unknown>()
   return new Proxy(target, {
     get(object, key) {
+      if (
+        typeof key === "string" &&
+        [
+          "buildItemUri",
+          "buildDirectoryUri",
+          "buildPlaylistUri",
+          "buildRadioUri",
+          "buildTagFilterUri",
+          "createPlayQueue",
+          "createRadioQueue",
+          "createSmartShuffleQueue",
+        ].includes(key)
+      )
+        return undefined
       if (key in object) return Reflect.get(object, key)
       if (functions.has(key)) return functions.get(key)
       if (typeof key !== "string" || (!reads.has(key) && !blocked.has(key)))

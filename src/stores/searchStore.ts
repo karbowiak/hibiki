@@ -12,6 +12,12 @@ interface SearchState {
   setQuery: (q: string) => void
   search: (q: string) => Promise<void>
   clear: () => void
+  acceptLocalRefresh: (
+    scope: string,
+    session: unknown,
+    query: string,
+    results: MusicItem[]
+  ) => void
 }
 
 export function createSearchStore(
@@ -20,7 +26,19 @@ export function createSearchStore(
   recordRecent = recordRecentSearch
 ) {
   let revision = 0
+  let refreshed: { revision: number; results: MusicItem[] } | null = null
   return create<SearchState>((set, get) => ({
+    acceptLocalRefresh: (scope, session, query, results) => {
+      const provider = getProvider()
+      if (
+        provider?.cacheScope !== scope ||
+        provider.playbackSession !== session ||
+        get().query !== query
+      )
+        return
+      refreshed = { revision, results }
+      if (!get().isSearching) set({ results, error: null })
+    },
     query: "",
     results: [],
     isSearching: false,
@@ -52,7 +70,11 @@ export function createSearchStore(
       try {
         const results = await provider.search(q)
         if (!current()) return
-        set({ results, isSearching: false })
+        set({
+          results:
+            refreshed?.revision === request ? refreshed.results : results,
+          isSearching: false,
+        })
         try {
           recordRecent(q)
         } catch {

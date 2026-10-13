@@ -28,6 +28,18 @@ pub struct AudioDownloads {
     analysis_scheduled: Mutex<HashSet<(u64, String)>>,
 }
 impl AudioDownloads {
+    pub(crate) fn cancel_download(&self, scope: &str, track_id: i64) -> Result<(), String> {
+        let active = self
+            .active
+            .lock()
+            .map_err(|_| "Download worker unavailable")?;
+        if let Some((owner, id, cancel)) = active.as_ref() {
+            if owner == scope && *id == track_id {
+                cancel.store(true, Ordering::Release);
+            }
+        }
+        Ok(())
+    }
     pub fn new(root: std::path::PathBuf) -> Self {
         Self {
             cache: Arc::new(AudioCache::downloads(root)),
@@ -616,6 +628,16 @@ pub async fn audio_download_enqueue(
     db: State<'_, DbState>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
+    enqueue_download_batch(context, track_ids, plex, db, app, None).await
+}
+pub(crate) async fn enqueue_download_batch(
+    context: PlexRequestContext,
+    track_ids: Vec<i64>,
+    plex: State<'_, PlexState>,
+    db: State<'_, DbState>,
+    app: tauri::AppHandle,
+    source: Option<(&str, i64, &str)>,
+) -> Result<(), String> {
     if track_ids.is_empty() || track_ids.len() > 256 {
         return Err("Choose between 1 and 256 tracks per download batch".into());
     }
@@ -625,6 +647,21 @@ pub async fn audio_download_enqueue(
     let guard = plex.0.lock().await;
     let client = plex.checked_client(&context, &guard)?;
     let conn = db.0.lock().map_err(|_| "Download storage unavailable")?;
+    let track_ids = if let Some((kind, id, revision)) = source {
+        crate::db::download_entities::admit(
+            &conn,
+            &client.library_scope,
+            kind,
+            id,
+            revision,
+            &track_ids,
+        )?
+    } else {
+        track_ids
+    };
+    if track_ids.is_empty() {
+        return Ok(());
+    }
     // Missing completed files may be explicitly downloaded again.
     for id in &track_ids {
         if let Some(mut job) = audio::jobs_for_id(&conn, &client.library_scope, *id)? {
@@ -1576,4 +1613,34 @@ mod tests {
             }
         }
     }
+}
+
+#[tauri::command]
+pub async fn audio_availability(
+    context: PlexRequestContext,
+    track_ids: Vec<i64>,
+    plex: State<'_, PlexState>,
+    db: State<'_, DbState>,
+    downloads: State<'_, AudioDownloads>,
+    engine: State<'_, crate::audio_engine::bridge::AudioEngineState>,
+) -> Result<Vec<i64>, String> {
+    if track_ids.len() > 10000 || track_ids.iter().any(|id| *id <= 0) {
+        return Err("Invalid availability batch".into());
+    }
+    let guard = plex.0.lock().await;
+    let client = plex.checked_cache_client(&context, &guard)?;
+    let conn = db.0.lock().map_err(|_| "Local audio storage unavailable")?;
+    let mut result = Vec::new();
+    for id in track_ids {
+        if available(
+            audio::bindings(&conn, &client.library_scope, id)?,
+            &downloads.cache,
+            engine.0.cache(),
+        )
+        .is_some()
+        {
+            result.push(id);
+        }
+    }
+    Ok(result)
 }

@@ -398,6 +398,15 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
           }
         } catch (error) {
           await failed(request, error)
+          if(!current(request) || !deps.restoreOfflineContext || !deps.activateOfflineProvider)return
+          try {
+            const revision=await reset(request,false)
+            const saved=await deps.restoreOfflineContext(revision)
+            check(request)
+            if(saved.revision!==revision || !/^plex-[a-f0-9]{64}$/.test(saved.cacheScope) || !Number.isSafeInteger(saved.sectionId) || saved.sectionId<=0)throw new Error("Saved library identity is unavailable.")
+            await deps.activateOfflineProvider(saved,()=>current(request));check(request)
+            set({isConnected:false,isOffline:true,isLoading:false,error:null,musicSectionId:saved.sectionId,sectionUuid:saved.sectionUuid,musicSectionTitle:saved.sectionTitle,baseUrl:saved.baseUrl,token:""})
+          }catch{/* Keep the connection error when no trusted local catalogue exists. */}
         }
       },
       connect: async (

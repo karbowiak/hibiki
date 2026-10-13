@@ -450,6 +450,7 @@ pub async fn get_section_tags(
 pub async fn get_track(
     context: PlexRequestContext,
     rating_key: i64,
+    app: tauri::AppHandle,
     state: State<'_, PlexState>,
     db: State<'_, crate::db::DbState>,
 ) -> Result<Track, String> {
@@ -457,7 +458,7 @@ pub async fn get_track(
     let (track,raw) = c.get_track_document(rating_key).await.map_err(|e| format!("{e:#}"))?;
     let guard = state.0.lock().await;
     state.checked_client(&context,&guard)?;
-    if let Ok(conn) = db.0.lock() { let _ = crate::db::catalogue::save(&conn,&c.library_scope,"track",rating_key,&raw,true); }
+    if track.library_section_id == crate::offline_audio::library_id(&app,&c)? { if let Ok(conn) = db.0.lock() { let _ = crate::db::catalogue::save(&conn,&c.library_scope,"track",rating_key,&raw,true); } }
     Ok(track)
 }
 

@@ -1,4 +1,5 @@
 import "../styles/shellArtwork.css"
+import { DownloadBadge } from "./shared/DownloadBadge"
 import { useAccentStore } from "../stores/accentStore"
 import { fallbackArtworkTone, artworkUiPalette } from "../lib/artworkUiPalette"
 import { useArtworkAppearanceStore } from "../stores/artworkAppearanceStore"
@@ -44,7 +45,9 @@ function getCustomOrder(): string[] {
   try {
     const raw = localStorage.getItem(ORDER_KEY)
     return raw ? JSON.parse(raw) : []
-  } catch { return [] }
+  } catch {
+    return []
+  }
 }
 
 function setCustomOrder(ids: string[]) {
@@ -58,18 +61,42 @@ function setCustomOrder(ids: string[]) {
 interface SortablePlaylistItemProps {
   playlist: MusicPlaylist
   location: string
-  playPlaylist: (playlistId: string, count: number, title: string, href: string) => void
-  ctxMenu: (type: "playlist", data: MusicPlaylist) => (e: React.MouseEvent) => void
+  playPlaylist: (
+    playlistId: string,
+    count: number,
+    title: string,
+    href: string
+  ) => void
+  ctxMenu: (
+    type: "playlist",
+    data: MusicPlaylist
+  ) => (e: React.MouseEvent) => void
   justDragged: React.RefObject<boolean>
 }
 
-function SortablePlaylistItem({ playlist, location, playPlaylist, ctxMenu, justDragged }: SortablePlaylistItemProps) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+function SortablePlaylistItem({
+  playlist,
+  location,
+  playPlaylist,
+  ctxMenu,
+  justDragged,
+}: SortablePlaylistItemProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
     id: playlist.id,
   })
-  const isDropTarget = !playlist.smart
+  const offline = useProviderStore((state) => state.provider?.isOffline)
+  const isDropTarget = !playlist.smart && !offline
   // Subscribe to hover state from pointer-based drag system
-  const isHovered = useDragStore(s => s.isDragging && s.hoveredPlaylistId === playlist.id)
+  const isHovered = useDragStore(
+    (s) => s.isDragging && s.hoveredPlaylistId === playlist.id
+  )
   const [dropFlash, setDropFlash] = useState<"success" | "error" | null>(null)
 
   // Listen for media-drop custom events targeted at this playlist
@@ -111,35 +138,57 @@ function SortablePlaylistItem({ playlist, location, playPlaylist, ctxMenu, justD
       <Link
         href={href}
         aria-current={location === href ? "page" : undefined}
-        onClick={e => { if (justDragged.current) { e.preventDefault(); e.stopPropagation() } }}
+        onClick={(e) => {
+          if (justDragged.current) {
+            e.preventDefault()
+            e.stopPropagation()
+          }
+        }}
         onContextMenu={ctxMenu("playlist", playlist)}
         className={clsx(
-          "group flex cursor-default items-center gap-3 rounded-md px-1 py-[5px] no-underline hover:bg-accent-tint hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent transition-colors duration-200",
-          location !== href ? "text-[color:var(--text-secondary)]" : "bg-accent-tint-strong text-[color:var(--text-primary)]",
-          isHovered && isDropTarget && "ring-2 ring-accent/60 bg-accent/10",
-          dropFlash === "success" && "ring-2 ring-green-500/60 bg-green-500/10",
-          dropFlash === "error" && "ring-2 ring-red-500/60 bg-red-500/10",
+          "group flex cursor-default items-center gap-3 rounded-md px-1 py-[5px] no-underline transition-colors duration-200 hover:bg-accent-tint hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
+          location !== href
+            ? "text-[color:var(--text-secondary)]"
+            : "bg-accent-tint-strong text-[color:var(--text-primary)]",
+          isHovered && isDropTarget && "bg-accent/10 ring-2 ring-accent/60",
+          dropFlash === "success" && "bg-green-500/10 ring-2 ring-green-500/60",
+          dropFlash === "error" && "bg-red-500/10 ring-2 ring-red-500/60"
         )}
       >
         <div className="relative h-10 w-10 flex-shrink-0 overflow-hidden rounded bg-app-surface">
           {artUrl && (
-            <ArtworkImage loading="eager" src={artUrl} alt="" className="h-full w-full object-cover" draggable={false} />
+            <ArtworkImage
+              loading="eager"
+              src={artUrl}
+              alt=""
+              className="h-full w-full object-cover"
+              draggable={false}
+            />
           )}
           <button
-            onClick={e => {
+            onClick={(e) => {
               e.preventDefault()
               e.stopPropagation()
-              void playPlaylist(playlist.id, playlist.trackCount, playlist.title, href)
+              void playPlaylist(
+                playlist.id,
+                playlist.trackCount,
+                playlist.title,
+                href
+              )
             }}
             title={`Play ${playlist.title}`}
-            className="absolute inset-0 flex items-center justify-center border-0 bg-overlay-medium opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent transition-opacity"
+            disabled={!!offline && playlist.offlineAvailable !== true}
+            className="absolute inset-0 flex items-center justify-center border-0 bg-overlay-medium opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
           >
             <svg viewBox="0 0 16 16" width="16" height="16" fill="white">
               <polygon points="3,2 13,8 3,14" />
             </svg>
           </button>
         </div>
-        <span className="truncate text-sm font-normal">{playlist.title}</span>
+        <span className="min-w-0 flex-1 truncate text-sm font-normal">
+          {playlist.title}
+        </span>
+        <DownloadBadge kind="playlist" id={playlist.id} className="mr-1" />
       </Link>
     </li>
   )
@@ -149,17 +198,23 @@ function SortablePlaylistItem({ playlist, location, playPlaylist, ctxMenu, justD
 // SideBar
 // ---------------------------------------------------------------------------
 
-export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) {
-  const savedAccent = useAccentStore(s => s.accent)
-  const backgroundArtworkEnabled = useArtworkAppearanceStore(state => state.backgroundArtworkEnabled)
+export function SideBar({
+  onCreatePlaylist,
+}: {
+  onCreatePlaylist: () => void
+}) {
+  const savedAccent = useAccentStore((s) => s.accent)
+  const backgroundArtworkEnabled = useArtworkAppearanceStore(
+    (state) => state.backgroundArtworkEnabled
+  )
   const [location] = useLocation()
   const hasStations = useCapability("stations")
   const canEditPlaylists = useCapability("playlistEdit")
-  const playlists = useLibraryStore(s => s.playlists)
-  const playPlaylist = usePlayerStore(useShallow(s => s.playPlaylist))
-  const isArtExpanded = useUIStore(s => s.isArtExpanded)
+  const playlists = useLibraryStore((s) => s.playlists)
+  const playPlaylist = usePlayerStore(useShallow((s) => s.playPlaylist))
+  const isArtExpanded = useUIStore((s) => s.isArtExpanded)
   const { handler: ctxMenu } = useContextMenu()
-  const provider = useProviderStore(s => s.provider)
+  const provider = useProviderStore((s) => s.provider)
   const captureOwner = useProviderMutationOwner(provider)
 
   // Handle media drops (tracks, albums, artists) from the pointer-based drag system
@@ -245,11 +300,17 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
   })
 
   // DnD sensors — require 5px movement to start drag (prevents accidental drags on clicks)
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+  )
   const [orderVersion, setOrderVersion] = useState(0)
   const justDragged = useRef(false)
   const [libraryExpanded, setLibraryExpanded] = useState(() => {
-    try { return localStorage.getItem(LIBRARY_EXPANDED_KEY) === "true" } catch { return false }
+    try {
+      return localStorage.getItem(LIBRARY_EXPANDED_KEY) === "true"
+    } catch {
+      return false
+    }
   })
 
   // Sort playlists by custom order; new playlists go to bottom
@@ -259,9 +320,9 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
 
     const orderMap = new Map(order.map((id, idx) => [id, idx]))
     const inOrder = playlists
-      .filter(p => orderMap.has(p.id))
+      .filter((p) => orderMap.has(p.id))
       .sort((a, b) => orderMap.get(a.id)! - orderMap.get(b.id)!)
-    const notInOrder = playlists.filter(p => !orderMap.has(p.id))
+    const notInOrder = playlists.filter((p) => !orderMap.has(p.id))
     return [...inOrder, ...notInOrder]
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playlists, orderVersion])
@@ -273,12 +334,14 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
   function handleDragEnd(event: DragEndEvent) {
     // Keep justDragged true long enough to swallow the click that fires after pointer-up.
     // rAF is unreliable — the click can land 1-2 frames later depending on the browser.
-    setTimeout(() => { justDragged.current = false }, 300)
+    setTimeout(() => {
+      justDragged.current = false
+    }, 300)
 
     const { active, over } = event
     if (!over || active.id === over.id) return
 
-    const ids = sortedPlaylists.map(p => p.id)
+    const ids = sortedPlaylists.map((p) => p.id)
     const oldIdx = ids.indexOf(String(active.id))
     const newIdx = ids.indexOf(String(over.id))
     if (oldIdx === -1 || newIdx === -1) return
@@ -287,100 +350,155 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
     const [moved] = reordered.splice(oldIdx, 1)
     reordered.splice(newIdx, 0, moved)
     setCustomOrder(reordered)
-    setOrderVersion(v => v + 1)
+    setOrderVersion((v) => v + 1)
   }
 
   return (
-    <nav role="navigation" aria-label="Main navigation" data-shell-transparency={backgroundArtworkEnabled ? "enabled" : undefined} className="app-sidebar shell-artwork-surface relative flex h-full flex-shrink-0 flex-col bg-app-bg" style={{ width, padding: "var(--spacing-sidebar)", ...(IS_MACOS && { paddingTop: "max(var(--spacing-sidebar), 28px)" }) }}>
+    <nav
+      role="navigation"
+      aria-label="Main navigation"
+      data-shell-transparency={backgroundArtworkEnabled ? "enabled" : undefined}
+      className="app-sidebar shell-artwork-surface relative flex h-full flex-shrink-0 flex-col bg-app-bg"
+      style={{
+        width,
+        padding: "var(--spacing-sidebar)",
+        ...(IS_MACOS && { paddingTop: "max(var(--spacing-sidebar), 28px)" }),
+      }}
+    >
       {/* Resize handle */}
       <div
-        className="absolute right-0 top-0 bottom-0 w-1 cursor-ew-resize z-10 hover:bg-white/10 transition-colors"
+        className="absolute bottom-0 right-0 top-0 z-10 w-1 cursor-ew-resize transition-colors hover:bg-white/10"
         onMouseDown={onMouseDown}
       />
       <ul className="flex-shrink-0 pt-1 text-sm font-semibold">
-        {routes1.filter(i => i.href !== "/stations" || hasStations).map((i, index) => {
-          const isActive = i.href === "/library"
-            ? location === "/library" || location.startsWith("/collection/")
-            : location === i.href
-          return (
-            <li key={`${i.href}-${index}`}>
-              <div className={clsx("flex items-center rounded", isActive && "shell-nav-active bg-accent-tint-strong")}>
-                <Link
-                  href={i.href}
-                  aria-current={location === i.href ? "page" : undefined}
-                  onClick={() => {
-                    if (i.href === "/library" && !libraryExpanded) {
-                      setLibraryExpanded(true)
-                      try { localStorage.setItem(LIBRARY_EXPANDED_KEY, "true") } catch {}
-                    }
-                  }}
+        {routes1
+          .filter((i) => i.href !== "/stations" || hasStations)
+          .map((i, index) => {
+            const isActive =
+              i.href === "/library"
+                ? location === "/library" || location.startsWith("/collection/")
+                : location === i.href
+            return (
+              <li key={`${i.href}-${index}`}>
+                <div
                   className={clsx(
-                    "shell-nav-link flex h-10 min-w-0 flex-1 cursor-pointer items-center gap-3 rounded px-3 no-underline transition-colors duration-200 hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:bg-accent-tint hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
-                    !isActive
-                      ? "fill-[var(--text-secondary)] text-[var(--text-secondary)]"
-                      : "fill-accent text-accent"
+                    "flex items-center rounded",
+                    isActive && "shell-nav-active bg-accent-tint-strong"
                   )}
                 >
-                  <svg height="24" width="24" viewBox="0 0 24 24" className="shrink-0">
-                    {!isActive ? i.icon : i.iconActive}
-                  </svg>
-                  <span className="truncate">{i.title}</span>
-                </Link>
-                {i.href === "/library" && (
-                  <button
-                    aria-label={libraryExpanded ? "Collapse library" : "Expand library"}
-                    aria-expanded={libraryExpanded}
-                    aria-controls="sidebar-library-links"
-                    onClick={() => setLibraryExpanded(prev => {
-                      const next = !prev
-                      try { localStorage.setItem(LIBRARY_EXPANDED_KEY, String(next)) } catch {}
-                      return next
-                    })}
-                    className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded border-0 bg-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-accent-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent transition-colors"
+                  <Link
+                    href={i.href}
+                    aria-current={location === i.href ? "page" : undefined}
+                    onClick={() => {
+                      if (i.href === "/library" && !libraryExpanded) {
+                        setLibraryExpanded(true)
+                        try {
+                          localStorage.setItem(LIBRARY_EXPANDED_KEY, "true")
+                        } catch {}
+                      }
+                    }}
+                    className={clsx(
+                      "shell-nav-link flex h-10 min-w-0 flex-1 cursor-pointer items-center gap-3 rounded px-3 no-underline transition-colors duration-200 hover:bg-accent-tint hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
+                      !isActive
+                        ? "fill-[var(--text-secondary)] text-[var(--text-secondary)]"
+                        : "fill-accent text-accent"
+                    )}
                   >
                     <svg
-                      width="16" height="16" viewBox="0 0 16 16" fill="currentColor"
-                      className={clsx("transition-transform duration-200", libraryExpanded && "rotate-90")}
+                      height="24"
+                      width="24"
+                      viewBox="0 0 24 24"
+                      className="shrink-0"
                     >
-                      <path d="M6 3l5 5-5 5z" />
+                      {!isActive ? i.icon : i.iconActive}
                     </svg>
-                  </button>
-                )}
-              </div>
-              {i.href === "/library" && libraryExpanded && (
-                <ul id="sidebar-library-links" className="ml-10 mt-0.5 mb-0.5 space-y-0.5 text-sm font-normal">
-                  {librarySubLinks.map(sub => (
-                    <li key={sub.href}>
-                      <Link
-                        href={sub.href}
-                        aria-current={location === sub.href ? "page" : undefined}
+                    <span className="truncate">{i.title}</span>
+                  </Link>
+                  {i.href === "/library" && (
+                    <button
+                      aria-label={
+                        libraryExpanded ? "Collapse library" : "Expand library"
+                      }
+                      aria-expanded={libraryExpanded}
+                      aria-controls="sidebar-library-links"
+                      onClick={() =>
+                        setLibraryExpanded((prev) => {
+                          const next = !prev
+                          try {
+                            localStorage.setItem(
+                              LIBRARY_EXPANDED_KEY,
+                              String(next)
+                            )
+                          } catch {}
+                          return next
+                        })
+                      }
+                      className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded border-0 bg-transparent text-[var(--text-secondary)] transition-colors hover:bg-accent-tint hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
+                    >
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 16 16"
+                        fill="currentColor"
                         className={clsx(
-                          "shell-nav-link flex h-8 items-center rounded px-2 no-underline transition-colors duration-200 hover:bg-accent-tint hover:text-[var(--text-primary)] hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
-                          location === sub.href
-                            ? "shell-nav-active bg-accent-tint-strong text-accent"
-                            : "text-[var(--text-secondary)]"
+                          "transition-transform duration-200",
+                          libraryExpanded && "rotate-90"
                         )}
                       >
-                        {sub.title}
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </li>
-          )
-        })}
+                        <path d="M6 3l5 5-5 5z" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+                {i.href === "/library" && libraryExpanded && (
+                  <ul
+                    id="sidebar-library-links"
+                    className="mb-0.5 ml-10 mt-0.5 space-y-0.5 text-sm font-normal"
+                  >
+                    {librarySubLinks.map((sub) => (
+                      <li key={sub.href}>
+                        <Link
+                          href={sub.href}
+                          aria-current={
+                            location === sub.href ? "page" : undefined
+                          }
+                          className={clsx(
+                            "shell-nav-link flex h-8 items-center rounded px-2 no-underline transition-colors duration-200 hover:bg-accent-tint hover:text-[var(--text-primary)] hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
+                            location === sub.href
+                              ? "shell-nav-active bg-accent-tint-strong text-accent"
+                              : "text-[var(--text-secondary)]"
+                          )}
+                        >
+                          {sub.title}
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            )
+          })}
       </ul>
 
       <div className="flex-shrink-0 pb-1 pt-8 text-sm font-semibold">
         <button
           onClick={onCreatePlaylist}
           disabled={!canEditPlaylists}
-          style={artworkUiPalette(fallbackArtworkTone(savedAccent), window.getComputedStyle(document.documentElement).getPropertyValue("--bg-base"))}
-          className="shell-control-secondary group flex h-10 w-full cursor-pointer items-center gap-3 rounded border-0 bg-transparent px-3 fill-[var(--text-secondary)] text-[var(--text-secondary)] transition-colors duration-200 hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:bg-accent-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
+          style={artworkUiPalette(
+            fallbackArtworkTone(savedAccent),
+            window
+              .getComputedStyle(document.documentElement)
+              .getPropertyValue("--bg-base")
+          )}
+          className="shell-control-secondary group flex h-10 w-full cursor-pointer items-center gap-3 rounded border-0 bg-transparent fill-[var(--text-secondary)] px-3 text-[var(--text-secondary)] transition-colors duration-200 hover:bg-accent-tint hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
         >
-          <span className="shell-icon-tile flex h-6 w-6 items-center justify-center rounded-sm bg-accent/20 group-hover:bg-accent/40 transition-colors">
-            <svg viewBox="0 0 16 16" width="12" height="12" xmlns="http://www.w3.org/2000/svg">
+          <span className="shell-icon-tile flex h-6 w-6 items-center justify-center rounded-sm bg-accent/20 transition-colors group-hover:bg-accent/40">
+            <svg
+              viewBox="0 0 16 16"
+              width="12"
+              height="12"
+              xmlns="http://www.w3.org/2000/svg"
+            >
               <path d="M14 7H9V2H7v5H2v2h5v5h2V9h5z" fill="currentColor"></path>
               <path fill="none" d="M0 0h16v16H0z"></path>
             </svg>
@@ -389,9 +507,22 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
         </button>
       </div>
 
-      <div className="mt-2 min-h-0 flex-1 overflow-y-scroll scrollbar scrollbar-w-1 scrollbar-track-[var(--bg-base)] scrollbar-thumb-[var(--bg-surface)] hover:scrollbar-thumb-[var(--bg-surface-hover)]">
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={() => setTimeout(() => { justDragged.current = false }, 300)}>
-          <SortableContext items={sortedPlaylists.map(p => p.id)} strategy={verticalListSortingStrategy}>
+      <div className="scrollbar-track-[var(--bg-base)] scrollbar-thumb-[var(--bg-surface)] hover:scrollbar-thumb-[var(--bg-surface-hover)] mt-2 min-h-0 flex-1 overflow-y-scroll scrollbar scrollbar-w-1">
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+          onDragCancel={() =>
+            setTimeout(() => {
+              justDragged.current = false
+            }, 300)
+          }
+        >
+          <SortableContext
+            items={sortedPlaylists.map((p) => p.id)}
+            strategy={verticalListSortingStrategy}
+          >
             <ul className="pt-1">
               {sortedPlaylists.map((playlist) => (
                 <SortablePlaylistItem
@@ -410,7 +541,10 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
       {/* Spacer to push sidebar content up when expanded art covers the bottom-left corner.
           The expanded art is (sidebarWidth × sidebarWidth), overlapping the player bar (h-24 = 96px). */}
       {isArtExpanded && (
-        <div className="flex-shrink-0 transition-all duration-300" style={{ height: width - 120 }} />
+        <div
+          className="flex-shrink-0 transition-all duration-300"
+          style={{ height: width - 120 }}
+        />
       )}
     </nav>
   )
@@ -480,7 +614,6 @@ const routes1 = [
 ]
 
 const librarySubLinks = [
-  { title: "Downloads", href: "/downloads" },
   { title: "Playlists", href: "/collection/playlists" },
   { title: "Liked Songs", href: "/collection/tracks" },
   { title: "Liked Albums", href: "/collection/albums" },

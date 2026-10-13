@@ -183,6 +183,8 @@ export interface MusicProvider {
     change: { choice: string } | { upload: number[] }
   ): Promise<LibraryArtworkInventory>
   getAlbumTracks(albumId: string): Promise<MusicTrack[]>
+  /** Complete known artist discography; offline callers filter native file availability. */
+  getArtistTracks?(artistId: string): Promise<MusicTrack[]>
   getArtistAlbums(
     artistId: string,
     formatFilter?: string

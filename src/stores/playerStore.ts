@@ -697,7 +697,7 @@ async function loadMorePlaylistTracks(get: () => PlayerState, set: (fn: (s: Play
     if (!isCurrent()) return
     if (result.items.length > 0) {
       set(s => ({
-        queue: [...s.queue, ...result.items],
+        queue: [...s.queue, ...(provider.isOffline?result.items.filter(track=>track.mediaInfo?.localAudio || track.mediaInfo?.offlineAvailable===true):result.items)],
         playlistLoadedCount: s.playlistLoadedCount + result.items.length,
         playlistTotalCount: result.total > 0 ? result.total : 0,
         isLoadingMoreTracks: false,
@@ -936,6 +936,8 @@ export const usePlayerStore = create<PlayerState>()(
 
   playTrack: async (track: MusicTrack, context?: MusicTrack[], contextName?: string | null, contextHref?: string | null, albumPlaybackId?: string | null) => {
     const provider = getProvider()
+    if(provider?.isOffline && !track.mediaInfo?.localAudio && track.mediaInfo?.offlineAvailable!==true){set({playerError:"This track is not available offline. Reconnect to Plex to download it."});return}
+    if(provider?.isOffline && context)context=context.filter(item=>item.mediaInfo?.localAudio || item.mediaInfo?.offlineAvailable===true)
     const generation = beginQueueSelection()
     const itemKey = `/library/metadata/${track.id}`
     const uri = provider?.buildItemUri ? provider.buildItemUri(itemKey) : itemKey
@@ -1008,8 +1010,8 @@ export const usePlayerStore = create<PlayerState>()(
     try {
       const result = await provider.getPlaylistItems(playlistId, 0, PLAYLIST_PAGE_SIZE)
       if (!isCurrent()) return
-      const tracks = result.items
-      if (tracks.length === 0) return
+      const tracks = provider.isOffline ? result.items.filter(track=>track.mediaInfo?.localAudio || track.mediaInfo?.offlineAvailable===true) : result.items
+      if (tracks.length === 0) {set({playerError:"No tracks on this page are available offline. Open the playlist and choose a downloaded track."});return}
 
       _djGeneratedKeys.clear()
       _radioGeneratedKeys.clear()
@@ -1017,7 +1019,7 @@ export const usePlayerStore = create<PlayerState>()(
       set({
         queue: tracks, queueId: null, shuffle: false, playerError: null,
         playlistKey: playlistId, playlistTotalCount: result.total > 0 ? result.total : 0,
-        playlistLoadedCount: tracks.length, isLoadingMoreTracks: false,
+        playlistLoadedCount: result.items.length, isLoadingMoreTracks: false,
         isRadioMode: false, radioSeedKey: null, radioType: null, radioSeedArtist: null,
         contextName: title, contextHref: href, albumPlaybackId: null,
       })
@@ -1155,7 +1157,8 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   addToQueue: (tracks: MusicTrack[]) => {
-    set(s => ({ queue: [...s.queue, ...tracks] }))
+    const provider=getProvider();const available=provider?.isOffline?tracks.filter(track=>track.mediaInfo?.localAudio || track.mediaInfo?.offlineAvailable===true):tracks
+    set(s => ({ queue: [...s.queue, ...available] }))
   },
 
   stopRadio: () => {

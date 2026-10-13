@@ -27,6 +27,7 @@
 //! ```
 
 pub mod audio;
+pub mod catalogue;
 pub mod artwork;
 pub mod artwork_inventory;
 pub mod auth;

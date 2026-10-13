@@ -27,6 +27,8 @@ export interface MusicMediaVersion {
 export interface MediaInfo {
   /** A local-audio selection must not request playback, gain or waveform from Plex. */
   localAudio?: boolean
+  /** Complete native cache/download exists; false disables offline play actions. */
+  offlineAvailable?: boolean
   /** This item came from a full metadata request, including unavailable ramps. */
   metadataComplete?: boolean
   versions?: MusicMediaVersion[]
@@ -116,6 +118,8 @@ export interface MusicAlbum {
   reviews?: AlbumReview[]
   /** IDs of duplicate albums merged into this one (for deduplication). */
   _alternateIds?: string[]
+  /** Native complete-file evidence for offline collection play controls. */
+  offlineAvailable?: boolean
   /** Opaque provider-specific data. */
   _providerData?: unknown
 }
@@ -131,6 +135,8 @@ export interface MusicArtist {
   guid: string | null
   distance?: number | null
   providerKey?: string | null
+  /** Native complete-file evidence for offline collection play controls. */
+  offlineAvailable?: boolean
   /** Opaque provider-specific data. */
   _providerData?: unknown
 }
@@ -146,6 +152,8 @@ export interface MusicPlaylist {
   addedAt: string | null
   guid?: string | null
   providerKey?: string | null
+  /** Native complete-file evidence for offline collection play controls. */
+  offlineAvailable?: boolean
   /** Opaque provider-specific data. */
   _providerData?: unknown
 }
@@ -167,6 +175,9 @@ export interface MusicHub {
 }
 
 export interface PagedResult<T> {
+  /** Local partial scan; total counts saved rows and serverTotal is separately reported. */
+  localCoverageComplete?: boolean
+  serverTotal?: number | null
   items: T[]
   total: number
   /** Server-reported start index, when provided; never inferred from the request. */

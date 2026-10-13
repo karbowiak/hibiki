@@ -15,6 +15,12 @@ pub(crate) trait BoundedResponseExt {
         self,
         limit: usize,
     ) -> impl Future<Output = Result<T>> + Send;
+    /// Only Plex read responses tolerate malformed UTF-8 value strings, with
+    /// native original-byte provenance. JSON syntax and size limits stay strict.
+    fn bounded_plex_json<T: DeserializeOwned>(
+        self,
+        limit: usize,
+    ) -> impl Future<Output = Result<T>> + Send;
     fn bounded_text(self, limit: usize) -> impl Future<Output = Result<String>> + Send;
 }
 
@@ -48,6 +54,11 @@ impl BoundedResponseExt for reqwest::Response {
     async fn bounded_json<T: DeserializeOwned>(self, limit: usize) -> Result<T> {
         let body = self.bounded_bytes(limit).await?;
         serde_json::from_slice(&body).context("Failed to parse metadata JSON")
+    }
+
+    async fn bounded_plex_json<T: DeserializeOwned>(self, limit: usize) -> Result<T> {
+        let body = self.bounded_bytes(limit).await?;
+        crate::plex::catalogue::decode_json(&body)
     }
 
     async fn bounded_text(self, limit: usize) -> Result<String> {
@@ -156,6 +167,48 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(json["a"], 1);
+    }
+
+    #[tokio::test]
+    async fn plex_value_text_recovery_preserves_strict_generic_json_and_body_bounds() {
+        let body = b"{\"title\":\"caf\xe9\"}";
+        let headers = format!("200 OK\r\nContent-Length: {}", body.len());
+        let json = response(&headers, body)
+            .await
+            .bounded_plex_json::<serde_json::Value>(body.len())
+            .await
+            .unwrap();
+        assert_eq!(json["title"], "caf\u{fffd}");
+        assert_eq!(
+            json["_hibikiInvalidUtf8"]["fields"][0]["replacements"][0]["bytesHex"],
+            "e9"
+        );
+        assert!(response(&headers, body)
+            .await
+            .bounded_json::<serde_json::Value>(body.len())
+            .await
+            .is_err());
+        assert!(response(&headers, body)
+            .await
+            .bounded_plex_json::<serde_json::Value>(body.len() - 1)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("exceeds"));
+        let chunked = b"8\r\n{\"title\"\r\n8\r\n:\"caf\xe9\"}\r\n0\r\n\r\n";
+        assert!(response("200 OK\r\nTransfer-Encoding: chunked", chunked)
+            .await
+            .bounded_plex_json::<serde_json::Value>(15)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("exceeds"));
+        let json = response("200 OK\r\nTransfer-Encoding: chunked", chunked)
+            .await
+            .bounded_plex_json::<serde_json::Value>(16)
+            .await
+            .unwrap();
+        assert_eq!(json["title"], "caf\u{fffd}");
     }
 
     #[tokio::test]

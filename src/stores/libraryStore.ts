@@ -76,6 +76,7 @@ interface FetchOpts {
 
 export interface LibraryState {
   activateProvider: (provider: MusicProvider) => Promise<void>
+  acceptLocalRefresh: (method: string,args: unknown[],payload: unknown) => void
   playlists: MusicPlaylist[]
   recentlyAdded: MusicItem[]
   latestReleases: MusicAlbum[]
@@ -740,6 +741,20 @@ export function createLibraryStore({
         requests.delete("playlists")
         set((state) => ({ playlists: [...state.playlists, playlist], _playlistsFetchedAt: null }))
         return playlist
+      },
+      acceptLocalRefresh: (method,args,payload) => {
+        const fields:Record<string,string>={getPlaylists:"playlists",getRecentlyAdded:"recentlyAdded",getLatestReleases:"latestReleases",getHubs:"hubs",getLikedTracks:"likedTracks",getLikedAlbums:"likedAlbums",getLikedArtists:"likedArtists"}
+        const field=fields[method]
+        if(field && Array.isArray(payload)){set({[field]:payload});return}
+        if(method==="getPlaylistItems") {
+          // Any changed page retires the complete old generation. Never append
+          // fresh later pages to an earlier membership snapshot.
+          const id=String(args[0]);bumpPlaylist(id)
+          const page=payload as PagedResult<MusicTrack>
+          if((args[1]??0)===0){
+            set(state=>({playlistItemsCache:{...state.playlistItemsCache,[id]:page.items},playlistIsFullyLoaded:{...state.playlistIsFullyLoaded,[id]:page.items.length>=page.total},...(state.currentPlaylistId===id?{currentPlaylistItems:page.items,currentPlaylist:state.currentPlaylist?{...state.currentPlaylist,trackCount:page.total}:null,isLoading:false,isFetchingMore:false}: {})}))
+          } else get().invalidatePlaylistItems(id)
+        }
       },
       refreshAll: async () => {
         await Promise.all([

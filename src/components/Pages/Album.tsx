@@ -1,3 +1,5 @@
+import { DownloadMenuItems } from "../shared/DownloadMenuItems"
+import { DownloadBadge } from "../shared/DownloadBadge"
 import "../../styles/media-detail-controls.css"
 import { ArtworkImage, useArtworkFailures } from "../shared/ArtworkImage"
 import { useAlbumImage, useAlbumBackground } from "../../hooks/useMediaImage"
@@ -249,6 +251,13 @@ export function AlbumPage({ albumId }: { albumId: string }) {
       </div>
     )
 
+  const playableTracks = provider?.isOffline
+    ? tracks.filter(
+        (track) =>
+          track.mediaInfo?.offlineAvailable === true ||
+          track.mediaInfo?.localAudio
+      )
+    : tracks
   const parentThumbUrl = album.artistThumbUrl
 
   const formatLabel = album.format ?? "Album"
@@ -285,9 +294,16 @@ export function AlbumPage({ albumId }: { albumId: string }) {
 
   return (
     <div className="media-detail-page pb-12">
-      {versionsOpen && <AppDialog key={`${provider?.cacheScope}:versions:${album.id}`} title="Album and media versions" description={album.title} onClose={() => setVersionsOpen(false)}>
-        <VersionReviewPanel album={album} tracks={tracks} />
-      </AppDialog>}
+      {versionsOpen && (
+        <AppDialog
+          key={`${provider?.cacheScope}:versions:${album.id}`}
+          title="Album and media versions"
+          description={album.title}
+          onClose={() => setVersionsOpen(false)}
+        >
+          <VersionReviewPanel album={album} tracks={tracks} />
+        </AppDialog>
+      )}
       {editOpen && (
         <MetadataEditDialog
           key={`${provider?.cacheScope}:album:${album.id}`}
@@ -347,7 +363,10 @@ export function AlbumPage({ albumId }: { albumId: string }) {
 
           {/* Info column — no fixed height so hero grows with expanded description */}
           <div className="flex min-w-0 flex-[1_1_20rem] flex-col gap-2 pb-2">
-            <div className="media-detail-eyebrow">{formatLabel}</div>
+            <div className="flex items-center gap-2">
+              <div className="media-detail-eyebrow">{formatLabel}</div>
+              <DownloadBadge kind="album" id={albumId} />
+            </div>
             <h1 className="media-detail-title select-text break-words">
               {album.title}
             </h1>
@@ -451,16 +470,16 @@ export function AlbumPage({ albumId }: { albumId: string }) {
             {/* Play */}
             <button
               onClick={() =>
-                tracks.length > 0 &&
+                playableTracks.length > 0 &&
                 void playTrack(
-                  tracks[0],
-                  tracks,
+                  playableTracks[0],
+                  playableTracks,
                   album.title,
                   `/album/${albumId}`,
                   albumId
                 )
               }
-              disabled={tracks.length === 0}
+              disabled={playableTracks.length === 0}
               title="Play"
               className="media-primary"
             >
@@ -477,8 +496,8 @@ export function AlbumPage({ albumId }: { albumId: string }) {
             {/* Shuffle */}
             <button
               onClick={() => {
-                if (tracks.length === 0) return
-                const s = [...tracks].sort(() => Math.random() - 0.5)
+                if (playableTracks.length === 0) return
+                const s = [...playableTracks].sort(() => Math.random() - 0.5)
                 void playTrack(
                   s[0],
                   s,
@@ -487,7 +506,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                   albumId
                 )
               }}
-              disabled={tracks.length === 0}
+              disabled={playableTracks.length === 0}
               title="Shuffle"
               className="media-secondary"
             >
@@ -557,6 +576,16 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                           right: window.innerWidth - (rect?.right ?? 0),
                         }}
                       >
+                        <DownloadMenuItems
+                          kind="album"
+                          id={albumId}
+                          title={album.title}
+                          close={() => setMenuOpen(false)}
+                          current={() =>
+                            menuOpen &&
+                            useProviderStore.getState().provider === provider
+                          }
+                        />
                         {/* Queue */}
                         <button
                           type="button"
@@ -568,7 +597,16 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                         >
                           Edit metadata and sources…
                         </button>
-                        <button type="button" onClick={() => { setMenuOpen(false); setVersionsOpen(true) }} className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]">Compare album and media versions…</button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMenuOpen(false)
+                            setVersionsOpen(true)
+                          }}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                        >
+                          Compare album and media versions…
+                        </button>
                         <button
                           onClick={() => {
                             addNext(tracks)
@@ -783,16 +821,21 @@ export function AlbumPage({ albumId }: { albumId: string }) {
             </thead>
             <tbody>
               {tracks.map((track, idx) => {
+                const unavailable =
+                  !!provider?.isOffline &&
+                  !track.mediaInfo?.offlineAvailable &&
+                  !track.mediaInfo?.localAudio
                 const isActive = currentTrack?.id === track.id
                 const isContextTarget = isCtxTarget(track.id)
                 return (
                   <tr
                     key={track.id}
-                    className={`media-track-row group cursor-pointer rounded focus-within:bg-hl-row ${isActive || isContextTarget ? "bg-hl-row" : "hover:bg-hl-row"}`}
+                    className={`media-track-row group ${unavailable ? "cursor-default opacity-40" : "cursor-pointer"} rounded focus-within:bg-hl-row ${isActive || isContextTarget ? "bg-hl-row" : "hover:bg-hl-row"}`}
                     onClick={() =>
+                      !unavailable &&
                       void playTrack(
                         track,
-                        tracks,
+                        playableTracks,
                         album.title,
                         `/album/${albumId}`,
                         albumId
@@ -815,12 +858,13 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                       <button
                         type="button"
                         aria-label={`Play ${track.title}`}
+                        disabled={unavailable}
                         onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
                           e.stopPropagation()
                           void playTrack(
                             track,
-                            tracks,
+                            playableTracks,
                             album.title,
                             `/album/${albumId}`,
                             albumId
@@ -868,6 +912,11 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                         }
                       >
                         {track.title}
+                        <DownloadBadge
+                          kind="track"
+                          id={track.id}
+                          className="ml-2 align-middle"
+                        />
                       </div>
                       {track.originalTitle &&
                         track.originalTitle !== album.artistName && (

@@ -137,3 +137,36 @@ test("malformed or unavailable history is safe to render and remains untouched b
   expect(writes).toBe(0)
   expect(clearRecentSearches()).toBe(false)
 })
+
+test("changed local-first search results update only the active owner/query and win an early refresh race", async () => {
+  const scope = `plex-${"a".repeat(64)}`,
+    session = {}
+  const pending = deferred<any>()
+  let provider = {
+    cacheScope: scope,
+    playbackSession: session,
+    search: () => pending.promise,
+  } as MusicProvider
+  const store = createSearchStore(
+    () => provider,
+    () => {}
+  )
+  const request = store.getState().search("Query")
+  store.getState().acceptLocalRefresh(scope, session, "Query", result("Fresh"))
+  pending.resolve(result("Saved"))
+  await request
+  expect(store.getState().results).toEqual(result("Fresh"))
+  store
+    .getState()
+    .acceptLocalRefresh(scope, session, "Other", result("Wrong query"))
+  expect(store.getState().results).toEqual(result("Fresh"))
+  provider = {
+    cacheScope: scope,
+    playbackSession: {},
+    search: async () => [],
+  } as unknown as MusicProvider
+  store
+    .getState()
+    .acceptLocalRefresh(scope, session, "Query", result("Old session"))
+  expect(store.getState().results).toEqual(result("Fresh"))
+})

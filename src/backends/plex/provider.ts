@@ -839,6 +839,58 @@ export class PlexProvider implements MusicProvider {
     return artists.map((a) => plexArtistToMusicArtist(a, this.img))
   }
 
+  private async cataloguePage(
+    kind: "artist" | "album" | "track",
+    offset = 0,
+    limit = 200
+  ): Promise<PagedResult<MusicItem>> {
+    const page = await this.api.cataloguePage(kind, offset, limit)
+    const items = page.items
+      .map((item) => plexMediaToMusicItem(item, this.img))
+      .filter((item): item is MusicItem => item !== null)
+      .map((item) => ({ ...item, _providerData: undefined }))
+    return { ...page, items }
+  }
+  async getAllArtists(
+    offset = 0,
+    limit = 200
+  ): Promise<PagedResult<MusicArtist>> {
+    return this.cataloguePage("artist", offset, limit) as Promise<
+      PagedResult<MusicArtist>
+    >
+  }
+  async getAllAlbums(
+    offset = 0,
+    limit = 200
+  ): Promise<PagedResult<MusicAlbum>> {
+    return this.cataloguePage("album", offset, limit) as Promise<
+      PagedResult<MusicAlbum>
+    >
+  }
+  async getAllTracks(
+    offset = 0,
+    limit = 200
+  ): Promise<PagedResult<MusicTrack>> {
+    return this.cataloguePage("track", offset, limit) as Promise<
+      PagedResult<MusicTrack>
+    >
+  }
+
+  async getArtistTracks(artistId: string): Promise<MusicTrack[]> {
+    const albums = await this.getArtistAlbumsInSection(artistId)
+    const tracks: MusicTrack[] = []
+    const seen = new Set<string>()
+    for (const album of albums) {
+      for (const track of await this.getAlbumTracks(album.id)) {
+        if (track.artistId === artistId && !seen.has(track.id)) {
+          seen.add(track.id)
+          tracks.push(track)
+        }
+      }
+    }
+    return tracks
+  }
+
   async getArtistPopularTracksInSection(
     artistId: string,
     limit?: number

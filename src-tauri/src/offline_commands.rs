@@ -34,7 +34,13 @@ pub async fn offline_cache_invalidate(context: PlexRequestContext, prefixes: Vec
     let guard = state.0.lock().await;
     let client = state.checked_client(&context, &guard)?;
     let conn = db.0.lock().map_err(|_| "Saved browsing storage is unavailable")?;
-    offline::invalidate(&conn, &client.library_scope, &prefixes)
+    offline::invalidate(&conn, &client.library_scope, &prefixes)?;
+    for prefix in &prefixes {
+        if let Some(method)=prefix.split('"').nth(3) {
+            conn.execute("INSERT INTO plex_catalogue_invalidations(scope,method,invalidated_at) VALUES(?1,?2,?3) ON CONFLICT(scope,method) DO UPDATE SET invalidated_at=excluded.invalidated_at",rusqlite::params![client.library_scope,method,now()?]).map_err(|_|"Cannot invalidate catalogue")?;
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -91,7 +97,8 @@ async fn restore_saved(state: &PlexState, db: &DbState, directory: &std::path::P
     {
         let conn = db.0.lock().map_err(|_| "Saved browsing storage is unavailable")?;
         let audio_tracks: i64 = conn.query_row("SELECT COUNT(*) FROM local_audio WHERE scope=?1",[&client.library_scope],|row|row.get(0)).map_err(|_| "Cannot read saved audio")?;
-        if offline::info(&conn, &client.library_scope)?.entries == 0 && audio_tracks == 0 {
+        let catalogue_tracks:i64=conn.query_row("SELECT COUNT(*) FROM plex_catalogue WHERE scope=?1 AND removed=0",[&client.library_scope],|r|r.get(0)).map_err(|_|"Cannot read saved catalogue")?;
+        if offline::info(&conn, &client.library_scope)?.entries == 0 && audio_tracks == 0 && catalogue_tracks == 0 {
             return Err("There are no saved pages for this Plex music library yet.".into());
         }
     }

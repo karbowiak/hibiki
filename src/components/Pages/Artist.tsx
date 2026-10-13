@@ -1,3 +1,6 @@
+import { makeOnPlay } from "../../lib/mediaPlay"
+import { DownloadMenuItems } from "../shared/DownloadMenuItems"
+import { DownloadBadge } from "../shared/DownloadBadge"
 import "../../styles/media-detail-controls.css"
 import { ArtworkImage, useArtworkFailures } from "../shared/ArtworkImage"
 import { useArtistImage, useArtistBackground } from "../../hooks/useMediaImage"
@@ -384,6 +387,17 @@ export function ArtistPage({ artistId }: { artistId: string }) {
       </div>
     )
 
+  const playablePopularTracks = provider?.isOffline
+    ? popularTracks.filter(
+        (track) =>
+          track.mediaInfo?.offlineAvailable || track.mediaInfo?.localAudio
+      )
+    : popularTracks
+  const playOfflineArtist = () =>
+    makeOnPlay(
+      { ...artist, type: "artist" },
+      { ...usePlayerStore.getState(), provider }
+    )?.()
   const artistUri = provider?.buildItemUri
     ? provider.buildItemUri(`/library/metadata/${artistId}`)
     : null
@@ -412,9 +426,16 @@ export function ArtistPage({ artistId }: { artistId: string }) {
 
   return (
     <div className="media-detail-page">
-      {versionAlbum && <AppDialog key={`${provider?.cacheScope}:versions:${versionAlbum.id}`} title="Album and media versions" description={versionAlbum.title} onClose={() => setVersionAlbum(null)}>
-        <VersionReviewPanel album={versionAlbum} />
-      </AppDialog>}
+      {versionAlbum && (
+        <AppDialog
+          key={`${provider?.cacheScope}:versions:${versionAlbum.id}`}
+          title="Album and media versions"
+          description={versionAlbum.title}
+          onClose={() => setVersionAlbum(null)}
+        >
+          <VersionReviewPanel album={versionAlbum} />
+        </AppDialog>
+      )}
       {editOpen && (
         <MetadataEditDialog
           key={`${provider?.cacheScope}:artist:${artist.id}`}
@@ -491,7 +512,10 @@ export function ArtistPage({ artistId }: { artistId: string }) {
 
           {/* Info column — no fixed height, flows naturally */}
           <div className="flex min-w-0 flex-[1_1_20rem] flex-col gap-2">
-            <div className="media-detail-eyebrow">Artist</div>
+            <div className="flex items-center gap-2">
+              <div className="media-detail-eyebrow">Artist</div>
+              <DownloadBadge kind="artist" id={artistId} />
+            </div>
             <h1 className="media-detail-title select-text break-words">
               {artist.title}
             </h1>
@@ -585,15 +609,21 @@ export function ArtistPage({ artistId }: { artistId: string }) {
             {/* Play */}
             <button
               onClick={() =>
-                artistUri &&
-                void playFromUri(
-                  artistUri,
-                  false,
-                  artist.title,
-                  `/artist/${artistId}`
-                )
+                provider?.isOffline
+                  ? playOfflineArtist()
+                  : artistUri &&
+                    void playFromUri(
+                      artistUri,
+                      false,
+                      artist.title,
+                      `/artist/${artistId}`
+                    )
               }
-              disabled={!artistUri}
+              disabled={
+                provider?.isOffline
+                  ? artist.offlineAvailable !== true
+                  : !artistUri
+              }
               title="Play"
               className="media-primary"
             >
@@ -618,7 +648,10 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                   `/artist/${artistId}`
                 )
               }
-              disabled={!artistUri}
+              disabled={
+                !artistUri ||
+                (!!provider?.isOffline && artist.offlineAvailable !== true)
+              }
               title="Shuffle play"
               className="media-secondary"
             >
@@ -686,6 +719,16 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                           right: window.innerWidth - (rect?.right ?? 0),
                         }}
                       >
+                        <DownloadMenuItems
+                          kind="artist"
+                          id={artistId}
+                          title={artist.title}
+                          close={() => setMenuOpen(false)}
+                          current={() =>
+                            menuOpen &&
+                            useProviderStore.getState().provider === provider
+                          }
+                        />
                         {/* Queue */}
                         <button
                           type="button"
@@ -888,22 +931,27 @@ export function ArtistPage({ artistId }: { artistId: string }) {
             <div className="flex flex-col">
               {popularTracks.map((track, i) => {
                 const albumId = track.albumId
+                const unavailable =
+                  !!provider?.isOffline &&
+                  !track.mediaInfo?.offlineAvailable &&
+                  !track.mediaInfo?.localAudio
                 const isActive = currentTrack?.id === track.id
                 const isContextTarget = isCtxTarget(track.id)
                 return (
                   <div
                     key={`${track.id}-${i}`}
                     onClick={() =>
+                      !unavailable &&
                       playTrack(
                         track,
-                        popularTracks,
+                        playablePopularTracks,
                         artist.title,
                         `/artist/${artistId}`
                       )
                     }
                     onMouseEnter={() => prefetchTrackAudio(track)}
                     onContextMenu={ctxMenu("track", track)}
-                    className={`media-track-row group flex cursor-pointer flex-wrap items-center gap-3 rounded-md px-3 py-1.5 focus-within:bg-hl-menu ${isActive || isContextTarget ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
+                    className={`media-track-row group flex ${unavailable ? "cursor-default opacity-40" : "cursor-pointer"} flex-wrap items-center gap-3 rounded-md px-3 py-1.5 focus-within:bg-hl-menu ${isActive || isContextTarget ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
                     onPointerDown={(e) =>
                       trackDrag.onPointerDown(e, {
                         type: "track",
@@ -918,12 +966,13 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                     <button
                       type="button"
                       aria-label={`Play ${track.title}`}
+                      disabled={unavailable}
                       onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.stopPropagation()
                         void playTrack(
                           track,
-                          popularTracks,
+                          playablePopularTracks,
                           artist.title,
                           `/artist/${artistId}`
                         )
@@ -967,6 +1016,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                         >
                           {track.title}
                         </span>
+                        <DownloadBadge kind="track" id={track.id} />
                         {albumId && (
                           <span className="flex min-w-0 max-w-full items-center gap-1.5">
                             <span className="text-xs text-[color:var(--text-muted)]">
@@ -1138,7 +1188,9 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                   key={a.id}
                   title={a.title}
                   desc={String(a.year)}
-                  versionCount={1 + ((a as MusicAlbum)._alternateIds?.length ?? 0)}
+                  versionCount={
+                    1 + ((a as MusicAlbum)._alternateIds?.length ?? 0)
+                  }
                   onViewVersions={() => setVersionAlbum(a as MusicAlbum)}
                   thumb={a.thumbUrl}
                   href={`/album/${a.id}`}

@@ -123,11 +123,13 @@ the dialog and prevent a late response from changing another library's UI.
 
 ## Local catalogue and metadata research (2026-10-13)
 
-The next catalogue design is research, not an implemented full-library sync.
-Hibiki currently stores bounded snapshots of visited Plex pages in SQLite
-(`db/offline.rs`: 2,000 entries / 32 MiB per scope), plus the existing metadata
-caches. Those browsing snapshots are not a complete track index and should not
-be repurposed as one by removing their limits.
+The scoped catalogue is now implemented separately from bounded visited-page
+snapshots. V5/V6 retains full private Plex documents, native media/analysis
+identities, resumable roster/detail tasks, atomic playlist generations and a
+scoped FTS5 index. Connected browsing uses local-first asynchronous refresh;
+offline browsing uses known local coverage and actual complete audio files.
+See [the catalogue and offline contract](../offline/README.md). Snapshot limits
+remain intact (`db/offline.rs`: 2,000 entries / 32 MiB per scope).
 
 The original SQLite schema also contains artist/album/track/media-part tables
 and sync helpers. Their primary identities are bare Plex rating keys rather
@@ -165,9 +167,9 @@ Postgres, River or raw-response storage architecture into the desktop app.
 See [music coverage](https://github.com/HeyaMedia/HeyaMetadata/blob/main/coverage/music.json)
 and [artist projection](https://github.com/HeyaMedia/HeyaMetadata/blob/main/internal/domains/artist/projection.go).
 
-Recommended implementation sequence, subject to agreeing the catalogue design:
+Implementation sequence (catalogue approved on 2026-10-13; enrichment remains separate):
 
-1. Add separate account/server/library-scoped SQLite track, album, artist and
+1. Implemented: separate account/server/library-scoped SQLite track, album, artist and
    media-part tables with ID/path indexes and local text search. Import only
    metadata in resumable bounded pages; retain checkpoints, pause/cancel controls
    and a successful complete-census requirement before deleting absent entries.

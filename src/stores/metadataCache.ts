@@ -22,3 +22,5 @@ export const invalidateMetadataItem = metadata.invalidate
 export const getMetadataCacheStats = metadata.stats
 export const prefetchArtist = metadata.prefetchArtist
 export const prefetchAlbum = metadata.prefetchAlbum
+
+export const refreshMetadataCache = metadata.refresh

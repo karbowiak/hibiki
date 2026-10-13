@@ -304,7 +304,7 @@ impl PlexClient {
         }
 
         let wrapper = response
-            .bounded_json::<PlexApiResponse<T>>(MAX_PLEX_BYTES)
+            .bounded_plex_json::<PlexApiResponse<T>>(MAX_PLEX_BYTES)
             .await
             .context("Failed to parse JSON response")?;
 
@@ -587,7 +587,7 @@ impl PlexClient {
         }
 
         let wrapper = response
-            .bounded_json::<PlexApiResponse<T>>(MAX_PLEX_BYTES)
+            .bounded_plex_json::<PlexApiResponse<T>>(MAX_PLEX_BYTES)
             .await
             .context("Failed to parse JSON response")?;
 

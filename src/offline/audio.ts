@@ -54,7 +54,7 @@ export function localAudioTrack(
       : null
   return {
     ...raw,
-    mediaInfo: { ...raw.mediaInfo, localAudio: true, metadataComplete: true },
+    mediaInfo: { ...raw.mediaInfo, localAudio: true, offlineAvailable: true, metadataComplete: true },
     thumbUrl: img(raw.rawThumbPath, "track", raw.id, raw.title),
     albumThumbUrl: img(
       paths.localAlbumThumbPath,

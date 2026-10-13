@@ -460,6 +460,10 @@ impl AudioEngine {
     }
 
     /// Access the audio file cache.
+    pub(crate) fn background_indexing_delay(&self) -> bool {
+        matches!(self.atomics.get_state(), types::EngineState::Playing | types::EngineState::Buffering)
+    }
+
     pub fn cache(&self) -> &Arc<AudioCache> {
         &self.cache
     }

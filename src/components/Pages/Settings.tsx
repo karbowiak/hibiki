@@ -6,6 +6,7 @@ import { open } from "@tauri-apps/plugin-shell"
 import clsx from "clsx"
 import { ImageCacheControls } from "../ImageCacheControls"
 import { engine } from "../../audio/RustAudioEngine"
+import { DownloadStorageControls } from "../DownloadStorageControls"
 import { AudioCacheControls } from "../AudioCacheControls"
 import { getVersion } from "@tauri-apps/api/app"
 import { useAudioSettingsStore } from "../../stores/audioSettingsStore"
@@ -746,6 +747,10 @@ function CacheSection() {
         <AudioCacheControls backend={engine} maximum={cacheMaxBytes} onMaximumChange={setCacheMaxBytes} />
       </SettingCard>
 
+      <SettingCard title="Downloads" description="Music saved explicitly stays on this device until you remove it. Download icons appear on tracks, albums, artists and playlists.">
+        <DownloadStorageControls />
+      </SettingCard>
+
       {/* Image Cache */}
       <SettingCard title="Image Cache" description="Artwork fetched from Plex and external metadata sources.">
         <ImageCacheControls />
@@ -889,10 +894,6 @@ function GeneralSection() {
             <Toggle label="Debug Mode" value={debugEnabled} onChange={setDebugEnabled} />
           </SettingRow>
         </div>
-      </SettingCard>
-
-      <SettingCard title="Downloads" disabled badge="Coming soon">
-        <p className="text-sm text-white/40">Offline caching and download quality settings will appear here.</p>
       </SettingCard>
 
       <SettingCard title="AI" disabled badge="Coming soon">

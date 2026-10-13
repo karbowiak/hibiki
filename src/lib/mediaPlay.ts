@@ -99,7 +99,9 @@ export function createMediaPlayController(ownership: PlaybackOwnership) {
               `/playlist/${item.id}`
             )
           )
-        const uri = provider.buildItemUri?.(`/library/metadata/${item.id}`)
+        const uri =
+          !provider.isOffline &&
+          provider.buildItemUri?.(`/library/metadata/${item.id}`)
         if (uri)
           return play(() =>
             playFromUri(
@@ -117,11 +119,19 @@ export function createMediaPlayController(ownership: PlaybackOwnership) {
           try {
             selected = await selection
             if (!current()) return
-            const tracks =
+            let tracks =
               item.type === "album"
                 ? await provider.getAlbumTracks(item.id)
-                : await provider.getArtistPopularTracks(item.id)
+                : await (provider.isOffline && provider.getArtistTracks
+                    ? provider.getArtistTracks(item.id)
+                    : provider.getArtistPopularTracks(item.id))
             if (!current()) return
+            if (provider.isOffline)
+              tracks = tracks.filter(
+                (track) =>
+                  track.mediaInfo?.localAudio ||
+                  track.mediaInfo?.offlineAvailable === true
+              )
             if (!tracks.length)
               return report(`No playable tracks were found for ${item.title}.`)
             play(() =>

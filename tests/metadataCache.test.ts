@@ -304,3 +304,18 @@ test("saved metadata can hydrate before provider publication and is immediately 
   published = next
   expect(cache.getAlbum("same")?.album.title).toBe("Saved")
 })
+
+test("a downloaded artist remains browsable before album census coverage with its actual local tracks", async () => {
+  const h = harness({
+    isOffline: true,
+    getArtistAlbumsInSection: async () => { throw Error("Global album census is incomplete") },
+    getArtistTracks: async () => [{id:"saved",title:"Saved song",mediaInfo:{offlineAvailable:true}}] as any,
+    getArtistPopularTracksInSection: async () => { throw Error("Must not require the global track census") },
+  })
+  await h.activate()
+  const page=await h.cache.loadArtist("downloaded")
+  expect(page.artist.id).toBe("downloaded")
+  expect(page.albums).toEqual([])
+  expect(page.singles).toEqual([])
+  expect(page.popularTracks.map(track=>track.id)).toEqual(["saved"])
+})

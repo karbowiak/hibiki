@@ -23,6 +23,7 @@ const reads = new Set([
   "getArtist",
   "getAlbumTracks",
   "getArtistAlbums",
+  "getArtistTracks",
   "getArtistPopularTracks",
   "getArtistSimilar",
   "getRelatedHubs",
@@ -45,6 +46,8 @@ const reads = new Set([
 
 const mutations = new Set([
   "createPlaylist",
+  "mutatePlaylistOccurrence",
+  "describePlaylist",
   "addToPlaylist",
   "removeFromPlaylist",
   "deletePlaylist",
@@ -225,6 +228,11 @@ export function createOfflineProvider<T extends MusicProvider>(
     onOfflineRead?: (notice: OfflineReadNotice) => void
     onOnlineRead?: (key: string) => void
     unavailable?: (error: unknown) => boolean
+    localFirst?: boolean
+    isOffline?: () => boolean
+    offlineProvider?: MusicProvider
+    projectOffline?: (payload: unknown) => Promise<unknown>
+    onRefresh?: (method: string, args: unknown[], payload: unknown) => void
   } = {}
 ): T {
   const methods = new Map<PropertyKey, unknown>()
@@ -235,14 +243,48 @@ export function createOfflineProvider<T extends MusicProvider>(
   let writes: Promise<void> = Promise.resolve()
   let cacheEpoch = 0
   let fallbackSafe = true
+  const revalidations = new Map<string, Promise<unknown>>()
+  const refreshed = new Map<string, number>()
   const proxy = new Proxy(provider, {
     get(target, property) {
+      if (
+        options.isOffline?.() &&
+        typeof property === "string" &&
+        [
+          "buildItemUri",
+          "buildDirectoryUri",
+          "buildPlaylistUri",
+          "buildRadioUri",
+          "buildTagFilterUri",
+          "createPlayQueue",
+          "createRadioQueue",
+          "createSmartShuffleQueue",
+        ].includes(property)
+      )
+        return undefined
+      if (property === "isOffline" && options.isOffline)
+        return options.isOffline()
+      if (property === "capabilities" && options.isOffline?.())
+        return (
+          options.offlineProvider?.capabilities ?? {
+            ...target.capabilities,
+            playlistEdit: false,
+            metadataEdit: false,
+            ratings: false,
+            radio: false,
+            playQueues: false,
+          }
+        )
       const value = Reflect.get(target, property, target)
       if (typeof value !== "function") return value
       if (methods.has(property)) return methods.get(property)
       const bound = value.bind(target)
       if (typeof property === "string" && mutations.has(property)) {
         const mutation = async (...args: unknown[]) => {
+          if (options.isOffline?.())
+            throw new Error(
+              "Reconnect to Plex to change your library or playlists."
+            )
           const scope = target.cacheScope
           const session = target.playbackSession
           const ownsMutation = () =>
@@ -257,6 +299,8 @@ export function createOfflineProvider<T extends MusicProvider>(
           const invalidateOwned = async () => {
             if (!ownsMutation()) return
             cacheEpoch++
+            refreshed.clear()
+            revalidations.clear()
             const invalidation = writes.then(async () => {
               if (!ownsMutation()) return
               if (!cache.invalidate) {
@@ -286,8 +330,26 @@ export function createOfflineProvider<T extends MusicProvider>(
         return mutation
       }
       if (typeof property !== "string" || !reads.has(property)) {
-        methods.set(property, bound)
-        return bound
+        const guarded = (...args: unknown[]) => {
+          if (
+            options.isOffline?.() &&
+            property !== "disconnect" &&
+            property !== "updateNowPlaying" &&
+            property !== "setNowPlayingState"
+          ) {
+            if (property === "isConnected") return false
+            const local =
+              options.offlineProvider &&
+              Reflect.get(options.offlineProvider, property)
+            if (typeof local === "function") return local(...args)
+            return Promise.reject(
+              new Error("Reconnect to Plex to use this operation.")
+            )
+          }
+          return bound(...args)
+        }
+        methods.set(property, guarded)
+        return guarded
       }
       const wrapped = async (...args: unknown[]) => {
         const scope = target.cacheScope
@@ -361,13 +423,84 @@ export function createOfflineProvider<T extends MusicProvider>(
           if (versions.get(key) === version) versions.delete(key)
         }
       }
-      methods.set(property, wrapped)
-      return wrapped
+      const localFirst = async (...args: unknown[]) => {
+        if (!target.cacheScope || !options.localFirst) return wrapped(...args)
+        const scope = target.cacheScope,
+          session = target.playbackSession,
+          epoch = cacheEpoch
+        const current = () =>
+          target.cacheScope === initialScope &&
+          target.cacheScope === scope &&
+          target.playbackSession === initialSession &&
+          target.playbackSession === session &&
+          (options.owns?.() ?? true) &&
+          epoch === cacheEpoch
+        const check = () => {
+          if (!current())
+            throw new Error("Saved library request was superseded")
+        }
+        const key = offlineKey(property, args)
+        await writes
+        check()
+        const saved = fallbackSafe
+          ? await cache.get(key).catch(() => null)
+          : null
+        check()
+        if (options.isOffline?.()) {
+          if (!saved)
+            throw new Error(
+              "This content is not saved locally. Reconnect to Plex to load it."
+            )
+          options.onOfflineRead?.({ key, cachedAt: saved.cachedAt })
+          const payload = structuredClone(saved.payload)
+          const projected = options.projectOffline
+            ? await options.projectOffline(payload)
+            : payload
+          check()
+          return projected
+        }
+        const revalidate = () => {
+          let pending = revalidations.get(key)
+          if (!pending) {
+            pending = wrapped(...args)
+              .then((result) => {
+                check()
+                if (options.isOffline?.()) return result
+                const sanitized = sanitizeOfflineData(result)
+                if (
+                  saved &&
+                  JSON.stringify(sanitized) !== JSON.stringify(saved.payload)
+                )
+                  options.onRefresh?.(property, args, sanitized)
+                refreshed.delete(key)
+                refreshed.set(key, Date.now())
+                if (refreshed.size > 256)
+                  refreshed.delete(refreshed.keys().next().value!)
+                return result
+              })
+              .finally(() => {
+                if (revalidations.get(key) === pending)
+                  revalidations.delete(key)
+              })
+            revalidations.set(key, pending)
+          }
+          return pending
+        }
+        if (saved) {
+          if (Date.now() - (refreshed.get(key) ?? 0) > 30_000)
+            void revalidate().catch(() => {})
+          return structuredClone(saved.payload)
+        }
+        return revalidate()
+      }
+      methods.set(property, localFirst)
+      return localFirst
     },
   })
   const checkFresh = () => {
     if (
       provider.isOffline ||
+      options.isOffline?.() ||
       provider.cacheScope !== initialScope ||
       provider.playbackSession !== initialSession ||
       !(options.owns?.() ?? true)

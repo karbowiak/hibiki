@@ -1,3 +1,4 @@
+import { DownloadBadge } from "../shared/DownloadBadge"
 import { MetadataEditDialog } from "../shared/MetadataEditDialog"
 import { LinkedPlaylistManager } from "../PlaylistSync/LinkedPlaylistManager"
 import {
@@ -387,7 +388,10 @@ export function Playlist({ playlistId }: { playlistId: string }) {
           {/* Info column */}
           <div className="flex min-h-44 min-w-0 flex-[1_1_16rem] flex-col justify-between gap-4">
             <div className="min-w-0">
-              <div className="media-detail-eyebrow mb-2">Playlist</div>
+              <div className="flex items-center gap-2">
+                <div className="media-detail-eyebrow mb-2">Playlist</div>
+                <DownloadBadge kind="playlist" id={playlistId} />
+              </div>
               <h1 className="media-detail-title break-words">
                 {currentPlaylist.title}
               </h1>
@@ -413,7 +417,11 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                       `/playlist/${playlistId}`
                     )
                   }
-                  disabled={totalCount === 0}
+                  disabled={
+                    totalCount === 0 ||
+                    (!!provider?.isOffline &&
+                      currentPlaylist.offlineAvailable !== true)
+                  }
                   title="Play"
                   className="media-primary"
                 >
@@ -440,7 +448,11 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                       `/playlist/${playlistId}`
                     )
                   }
-                  disabled={!playlistUri || totalCount === 0}
+                  disabled={
+                    !playlistUri ||
+                    totalCount === 0 ||
+                    !!provider?.isOffline
+                  }
                   title="Shuffle play"
                   className="media-secondary"
                 >
@@ -466,7 +478,10 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                       currentPlaylist.title
                     )
                   }
-                  disabled={totalCount === 0}
+                  disabled={
+                    totalCount === 0 ||
+                    !provider?.capabilities.radio
+                  }
                   title="Playlist Radio — continuous sonically-similar music"
                   className="media-secondary"
                 >
