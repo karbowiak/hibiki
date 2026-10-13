@@ -110,3 +110,31 @@ test("unreadable column preferences keep edits pending and replay them after sto
     flushSync(() => root.unmount());
   `)
 })
+
+test("download column defaults on for saved layouts and its independent toggle survives remounts", async () => {
+  await isolated(`
+    const React = await import("react"); const { createRoot } = await import("react-dom/client"); const { flushSync } = await import("react-dom");
+    const { usePlaylistColumns } = await import("./src/hooks/useColumnPicker");
+    const { localPreferencePersistence: persistence } = await import("./src/stores/localPreferenceStorage");
+    values.set("existing-layout", '["album","rating"]');
+    values.set("previously-hidden-downloads", '["artist"]');
+    values.set("previously-hidden-downloads-downloads-visible", "0");
+    let result; function Fixture({ storageKey }) { result = usePlaylistColumns(storageKey); return null; }
+    const root = createRoot(document.getElementById("root"));
+    flushSync(() => root.render(React.createElement(Fixture, { storageKey: "existing-layout" })));
+    check(result.visible.has("downloads") && result.visible.has("rating") && !result.visible.has("artist"), "new column reset existing layout");
+    await settle(); flushSync(() => result.toggle("downloads")); await settle(); await persistence.flush();
+    check(!result.visible.has("downloads") && result.visible.has("rating"), "download toggle changed other columns");
+    check(values.get("existing-layout") === '["album","rating"]', "existing column bytes were rewritten");
+    check(values.get("existing-layout-downloads-visible") === "0", "off choice was not saved");
+    flushSync(() => root.render(null)); flushSync(() => root.render(React.createElement(Fixture, { storageKey: "existing-layout" })));
+    check(!result.visible.has("downloads"), "remount restored hidden column");
+    flushSync(() => { result.toggle("downloads"); result.toggle("downloads"); result.toggle("downloads"); }); await settle(); await persistence.flush();
+    check(result.visible.has("downloads") && values.get("existing-layout-downloads-visible") === "1", "rapid toggles lost final choice");
+    flushSync(() => root.render(React.createElement(Fixture, { storageKey: "previously-hidden-downloads" })));
+    check(!result.visible.has("downloads") && result.visible.has("artist"), "saved off choice was not loaded");
+    flushSync(() => root.render(React.createElement(Fixture, { storageKey: "fresh-layout" })));
+    check(result.visible.has("downloads"), "fresh layout did not default on");
+    flushSync(() => root.unmount());
+  `)
+})

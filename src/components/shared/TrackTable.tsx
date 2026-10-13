@@ -1,4 +1,5 @@
 import { DownloadBadge } from "./DownloadBadge"
+import { IconDownload } from "@tabler/icons-react"
 import { useOfflineStatusStore } from "../../offline/statusStore"
 import { ArtworkImage } from "./ArtworkImage"
 import { Skeleton } from "./Skeleton"
@@ -121,12 +122,22 @@ function SortableTrackRow({
   )
 }
 
+function DownloadStatusHeader() {
+  return (
+    <th scope="col" className="w-12 p-2 text-center" title="Download status">
+      <IconDownload aria-hidden="true" size={16} className="mx-auto" />
+      <span className="sr-only">Download status</span>
+    </th>
+  )
+}
+
 function TrackRowCells({
   track,
   idx,
   visibleCols,
   currentTrackId,
   showInlineRating,
+  showInlineDownload,
   onPlay,
   onAddToQueue,
   onPlayRadio,
@@ -139,6 +150,7 @@ function TrackRowCells({
   visibleCols: Set<ColId>
   currentTrackId?: string | null
   showInlineRating: boolean
+  showInlineDownload: boolean
   onPlay: TrackTableProps["onPlay"]
   onAddToQueue: TrackTableProps["onAddToQueue"]
   onPlayRadio: TrackTableProps["onPlayRadio"]
@@ -222,7 +234,9 @@ function TrackRowCells({
               >
                 {track.title}
               </span>
-              <DownloadBadge kind="track" id={track.id} />
+              {showInlineDownload && (
+                <DownloadBadge kind="track" id={track.id} />
+              )}
             </div>
             <div
               className={`flex min-w-0 items-center gap-2 ${compact ? "flex-wrap" : ""}`}
@@ -383,6 +397,11 @@ function TrackRowCells({
       <td className="p-2 text-right tabular-nums">
         {formatMs(track.duration)}
       </td>
+      {visibleCols.has("downloads") && (
+        <td className="w-12 p-2 text-center">
+          <DownloadBadge kind="track" id={track.id} />
+        </td>
+      )}
     </>
   )
 }
@@ -399,6 +418,7 @@ function TrackTableBody({
   onAddToQueue,
   onPlayRadio,
   showInlineRating,
+  showInlineDownload,
   playlistId,
   reorderEnabled,
   trackDrag,
@@ -416,6 +436,7 @@ function TrackTableBody({
   onAddToQueue: TrackTableProps["onAddToQueue"]
   onPlayRadio: TrackTableProps["onPlayRadio"]
   showInlineRating: boolean
+  showInlineDownload: boolean
   playlistId?: string | null
   reorderEnabled: boolean
   trackDrag: ReturnType<typeof useTrackDrag>
@@ -439,14 +460,21 @@ function TrackTableBody({
             </div>
           </div>
         </td>
-        {[...visibleCols].map((id) => (
-          <td key={id} className="p-2">
-            <Skeleton className="h-3 w-3/4" />
-          </td>
-        ))}
+        {[...visibleCols]
+          .filter((id) => id !== "downloads")
+          .map((id) => (
+            <td key={id} className="p-2">
+              <Skeleton className="h-3 w-3/4" />
+            </td>
+          ))}
         <td className="p-2 text-right">
           <Skeleton className="ml-auto h-3 w-10" />
         </td>
+        {visibleCols.has("downloads") && (
+          <td className="w-12 p-2">
+            <Skeleton className="mx-auto h-4 w-4" />
+          </td>
+        )}
       </tr>
     ))
 
@@ -454,6 +482,7 @@ function TrackTableBody({
     visibleCols,
     currentTrackId,
     showInlineRating,
+    showInlineDownload,
     onPlay,
     onAddToQueue,
     onPlayRadio,
@@ -579,6 +608,8 @@ export function TrackTable({
   // Whether to show inline StarRating in the title cell action buttons.
   // If the columns array offers a "rating" column, the parent renders it as a table column instead.
   const showInlineRating = !compact && !columns.some((c) => c.id === "rating")
+  const showInlineDownload =
+    !columns.some((c) => c.id === "downloads") && !visibleCols.has("downloads")
 
   // Escape clears this filter; app-wide search owns Cmd/Ctrl+K.
   useEffect(() => {
@@ -800,6 +831,7 @@ export function TrackTable({
                       onSort={onSort}
                       align="right"
                     />
+                    {visibleCols.has("downloads") && <DownloadStatusHeader />}
                   </tr>
                 </thead>
                 <TrackTableBody
@@ -814,6 +846,7 @@ export function TrackTable({
                   onAddToQueue={onAddToQueue}
                   onPlayRadio={onPlayRadio}
                   showInlineRating={showInlineRating}
+                  showInlineDownload={showInlineDownload}
                   playlistId={playlistId}
                   reorderEnabled={reorderEnabled}
                   trackDrag={trackDrag}
@@ -835,10 +868,13 @@ export function TrackTable({
               <colgroup>
                 <col style={{ width: 44 }} />
                 <col />
-                {[...visibleCols].map((id) => (
-                  <col key={id} style={{ width: "30%" }} />
-                ))}
+                {[...visibleCols]
+                  .filter((id) => id !== "downloads")
+                  .map((id) => (
+                    <col key={id} style={{ width: "30%" }} />
+                  ))}
                 <col style={{ width: 76 }} />
+                {visibleCols.has("downloads") && <col style={{ width: 48 }} />}
               </colgroup>
             )}
             <thead className="border-b border-white/10">
@@ -979,6 +1015,7 @@ export function TrackTable({
                   onSort={onSort}
                   align="right"
                 />
+                {visibleCols.has("downloads") && <DownloadStatusHeader />}
               </tr>
             </thead>
             <TrackTableBody
@@ -993,6 +1030,7 @@ export function TrackTable({
               onAddToQueue={onAddToQueue}
               onPlayRadio={onPlayRadio}
               showInlineRating={showInlineRating}
+              showInlineDownload={showInlineDownload}
               playlistId={playlistId}
               reorderEnabled={false}
               trackDrag={trackDrag}

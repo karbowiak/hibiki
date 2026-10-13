@@ -27,6 +27,7 @@ mock.module("../../src/hooks/useMediaImage", () => ({ useArtistImage: () => null
 mock.module("../../src/components/shared/ArtworkImage", () => ({ ArtworkImage: () => null, useArtworkFailures: () => ({ failures: [], onFailure: noop }) }))
 mock.module("../../src/hooks/useColumnPicker", () => ({ ColumnPicker: () => null }))
 mock.module("../../src/components/shared/StarRating", () => ({ StarRating: () => null }))
+mock.module("../../src/components/shared/DownloadBadge", () => ({ DownloadBadge: ({ id }: any) => <span role="img" aria-label={`Downloaded ${id}`} /> }))
 const lyrics = create<any>(() => ({ sources: [], activeSourceId: null, geniusHits: [], isSearching: false, isFetchingLyrics: false, selectSource: noop, fetchGeniusLyrics: async () => {} }))
 mock.module("../../src/stores/lyricsStore", () => ({ useLyricsStore: lyrics }))
 mock.module("../../src/stores/lyricsOffsetStore", () => ({ useLyricsOffsetStore: create(() => ({ offsetMs: 0, setOffset: noop, resetOffset: noop })) }))
@@ -59,6 +60,22 @@ assert.equal(named("Play Seed mix").tagName, "BUTTON")
 const beforeMix = plays; await click(named("Play Seed mix")); assert.equal(plays, beforeMix + 1)
 const props: any = { tracks: [track], visibleCols: new Set(), toggleCol: noop, sortCol: "default", sortDir: "asc", onSort: noop, onPlay() { plays++ }, onAddToQueue: noop, onPlayRadio: noop, columns: [{ id: "rating", label: "Rating" }], searchPlaceholder: "Filter", filterQuery: "", onFilterChange: noop, currentTrackId: "one" }
 for (const compact of [false, true]) { await render(<TrackTable {...props} compact={compact} />); const before = plays; await click(named("Play First track")); assert.equal(plays, before + 1); assert.equal(named("Play First track").getAttribute("aria-current"), "true") }
+for (const onReorder of [undefined, noop]) {
+  const downloadProps = { ...props, columns: [{ id: "downloads" as const, label: "Download status" }], onReorder }
+  await render(<TrackTable {...downloadProps} visibleCols={new Set(["downloads"])} />)
+  let row = document.querySelector("tbody tr")!
+  assert.equal(document.querySelector("thead th:last-child")!.textContent, "Download status")
+  assert.ok(row.querySelector('td:last-child [aria-label="Downloaded one"]'), "download status belongs in the far-right cell")
+  assert.equal(row.querySelector('td:nth-child(2) [role="img"]'), null, "title does not duplicate download status")
+  assert.equal(row.children.length, document.querySelectorAll("thead th").length)
+  await render(<TrackTable {...downloadProps} visibleCols={new Set()} />)
+  assert.equal(document.querySelector('thead [title="Download status"]'), null)
+  assert.equal(document.querySelector('tbody [aria-label="Downloaded one"]'), null, "hidden column must hide the badge")
+  await render(<TrackTable {...downloadProps} tracks={[]} isLoading visibleCols={new Set(["downloads"])} />)
+  for (const skeleton of document.querySelectorAll("tbody tr")) assert.equal(skeleton.children.length, document.querySelectorAll("thead th").length, "loading rows align with download column")
+}
+await render(<TrackTable {...props} compact />)
+assert.ok(document.querySelector('tbody td:nth-child(2) [aria-label="Downloaded one"]'), "compact results retain inline status without a column picker")
 await render(<><QueuePanel /><LyricsPanel /></>)
 await click(named("Remove Next track from queue")); assert.equal(removes, 1); assert.equal(jumps, 0)
 assert.match(named("Remove Next track from queue").className, /focus-visible:opacity-100/)
