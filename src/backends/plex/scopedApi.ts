@@ -337,6 +337,14 @@ export function createPlexApi(
     })
   }
 
+  function resolvePlaylistRecording(sectionId:number,track:import("../../providers/types").PlaylistRecordingTrack):Promise<import("../../providers/types").PlaylistRecordingResolution> {
+    if (!Number.isSafeInteger(Number(track.id)) || Number(track.id)<=0 || String(Number(track.id))!==track.id) return Promise.resolve({status:"unmatched",reason:"invalid-track-id"})
+    return invoke("playlist_sync_resolve_recording",{sectionId,trackId:Number(track.id),expected:{title:track.title,artist:track.artist,durationMs:track.durationMs ?? null}})
+  }
+  function describePlaylist(playlistId:number,sectionId:number,expected:PlaylistOccurrenceState,expectedDescription:string,description:string):Promise<string> {
+    if (description.length>5000||expectedDescription.length>5000) throw Error("Playlist description is too long")
+    return invoke("playlist_sync_plex_describe",{playlistId,sectionId,expected,expectedDescription,description})
+  }
   /** Create a new playlist from a list of track rating keys. */
   function createPlaylist(
     title: string,
@@ -773,6 +781,8 @@ export function createPlexApi(
     getPlaylistItems,
     getPlaylistItemsPage,
     mutatePlaylistOccurrence,
+    resolvePlaylistRecording,
+    describePlaylist,
     createPlaylist,
     addItemsToPlaylist,
     removeItemsFromPlaylist,

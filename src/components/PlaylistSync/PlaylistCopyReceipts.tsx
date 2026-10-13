@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { AppDialog } from "../shared/AppDialog"
+import { PlaylistSyncFrame } from "./PlaylistSyncFrame"
 import { useListenBrainzStore } from "../../metadata/listenbrainz/authStore"
 import { useProviderStore } from "../../stores/providerStore"
 import {
@@ -11,6 +11,7 @@ import {
 } from "../../playlistSync"
 import { playlistCopyServices, type PlaylistCopyServices } from "./services"
 import { useCopyOwner } from "./useCopyOwner"
+import { providerPlaylistAccount } from "../../playlistSync/provider"
 const button =
   "rounded-lg border border-[var(--border)] bg-app-surface px-3 py-2 text-sm hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
 function accountLabel(attempt: PlaylistAttempt) {
@@ -20,9 +21,13 @@ function accountLabel(attempt: PlaylistAttempt) {
 }
 export function PlaylistCopyReceipts({
   onClose,
+  embedded = false,
+  playlistId,
   services = playlistCopyServices,
 }: {
   onClose(): void
+  embedded?: boolean
+  playlistId?: string
   services?: PlaylistCopyServices
 }) {
   const authenticated = useListenBrainzStore((s) => s.isAuthenticated),
@@ -37,11 +42,36 @@ export function PlaylistCopyReceipts({
     const current = capture()
     setLoading(true)
     setError(null)
-    void services.journal
-      .list()
-      .then((value) => {
-        if (current())
-          setItems([...value].sort((a, b) => b.createdAt - a.createdAt))
+    void Promise.all([
+      services.journal.list(),
+      playlistId ? services.account() : Promise.resolve(null),
+    ])
+      .then(([value, remoteAccount]) => {
+        if (!current()) return
+        const libraryAccount = provider
+          ? providerPlaylistAccount(provider)
+          : null
+        setItems(
+          [...value]
+            .filter((item) => {
+              if (!playlistId) return true
+              const sourceOwned =
+                (libraryAccount &&
+                  samePlaylistIdentity(item.sourceAccount, libraryAccount)) ||
+                (remoteAccount &&
+                  samePlaylistIdentity(item.sourceAccount, remoteAccount))
+              const targetOwned =
+                (libraryAccount &&
+                  samePlaylistIdentity(item.account, libraryAccount)) ||
+                (remoteAccount &&
+                  samePlaylistIdentity(item.account, remoteAccount))
+              return (
+                (sourceOwned && item.sourcePlaylistId === playlistId) ||
+                (targetOwned && item.destinationId === playlistId)
+              )
+            })
+            .sort((a, b) => b.createdAt - a.createdAt)
+        )
       })
       .catch(() => {
         if (current())
@@ -54,7 +84,9 @@ export function PlaylistCopyReceipts({
       })
   }, [
     services,
+    capture,
     retry,
+    playlistId,
     provider,
     provider?.cacheScope,
     provider?.playbackSession,
@@ -62,7 +94,8 @@ export function PlaylistCopyReceipts({
     username,
   ])
   return (
-    <AppDialog
+    <PlaylistSyncFrame
+      embedded={embedded}
       title="Review playlist copies"
       description="Checking a receipt only reads the destination. It never repeats a create request."
       onClose={onClose}
@@ -100,7 +133,7 @@ export function PlaylistCopyReceipts({
           </li>
         ))}
       </ul>
-    </AppDialog>
+    </PlaylistSyncFrame>
   )
 }
 function Receipt({

@@ -1,7 +1,5 @@
 import { useState } from "react"
-import { LinkedPlaylistManager } from "../PlaylistSync/LinkedPlaylistManager"
-import { PlaylistCopyDialog } from "../PlaylistSync/PlaylistCopyDialog"
-import { PlaylistCopyReceipts } from "../PlaylistSync/PlaylistCopyReceipts"
+import { PlaylistSyncDialog } from "../PlaylistSync/PlaylistSyncDialog"
 import { MediaCard } from "../MediaCard"
 import { useShallow } from "zustand/react/shallow"
 import { useLibraryStore } from "../../stores"
@@ -10,9 +8,7 @@ import { useContextMenu } from "../../hooks/useContextMenu"
 import { MediaGrid } from "../shared/MediaGrid"
 
 export function Playlists() {
-  const [copyView, setCopyView] = useState<
-    "import" | "receipts" | "linked" | null
-  >(null)
+  const [showSync, setShowSync] = useState(false)
   const playlists = useLibraryStore((s) => s.playlists)
   const playPlaylist = usePlayerStore(useShallow((s) => s.playPlaylist))
   const { handler: ctxMenu } = useContextMenu()
@@ -54,40 +50,12 @@ export function Playlists() {
         <button
           type="button"
           className="media-secondary"
-          onClick={() => setCopyView("import")}
+          onClick={() => setShowSync(true)}
         >
-          Import a copy from ListenBrainz
-        </button>
-        <button
-          type="button"
-          className="media-secondary"
-          onClick={() => setCopyView("receipts")}
-        >
-          Review copies
-        </button>
-        <button
-          type="button"
-          className="media-secondary"
-          onClick={() => setCopyView("linked")}
-        >
-          Linked sync
+          Sync
         </button>
       </div>
-      {copyView === "linked" && (
-        <LinkedPlaylistManager onClose={() => setCopyView(null)} />
-      )}
-      {copyView === "import" && (
-        <PlaylistCopyDialog
-          mode="import"
-          onClose={() => setCopyView(null)}
-          onCreated={() =>
-            useLibraryStore.getState().fetchPlaylists({ force: true })
-          }
-        />
-      )}
-      {copyView === "receipts" && (
-        <PlaylistCopyReceipts onClose={() => setCopyView(null)} />
-      )}
+      {showSync && <PlaylistSyncDialog onClose={() => setShowSync(false)} />}
       {/* Playlist grid */}
       <div className="px-8 pt-2">
         {count === 0 ? (

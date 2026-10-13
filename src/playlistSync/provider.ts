@@ -109,7 +109,13 @@ export function providerPlaylistAdapter(
           })
         }
       }
-      return { account: expected, id, title: metadata.title, items }
+      return {
+        account: expected,
+        id,
+        title: metadata.title,
+        description: metadata.summary ?? "",
+        items,
+      }
     },
     createCopy: async (title, tracks, account) => {
       owns()

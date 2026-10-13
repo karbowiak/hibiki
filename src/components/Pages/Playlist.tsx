@@ -1,6 +1,10 @@
 import { MetadataEditDialog } from "../shared/MetadataEditDialog"
 import { LinkedPlaylistManager } from "../PlaylistSync/LinkedPlaylistManager"
-import { PlaylistCopyDialog } from "../PlaylistSync/PlaylistCopyDialog"
+import {
+  useLinkedPlaylistStore,
+  linksForPlaylist,
+} from "../../stores/linkedPlaylistStore"
+import { useListenBrainzStore } from "../../metadata/listenbrainz/authStore"
 import type { MusicTrack } from "../../types/music"
 import { ArtworkImage } from "../shared/ArtworkImage"
 import { AmbientHeroBackdrop } from "../shared/MediaBackdrop"
@@ -41,7 +45,10 @@ const EMPTY_ITEMS: MusicTrack[] = []
 
 export function Playlist({ playlistId }: { playlistId: string }) {
   const [showLinked, setShowLinked] = useState(false)
-  const [showCopy, setShowCopy] = useState(false)
+  const [syncReview, setSyncReview] = useState(false)
+  const [syncError, setSyncError] = useState<string | null>(null)
+  const linkedState = useLinkedPlaylistStore()
+  const syncAuthenticated = useListenBrainzStore((s) => s.isAuthenticated)
   const [showEdit, setShowEdit] = useState(false)
   const ownedMenuActions = useRef<ContextAction[]>([])
   // Granular selectors: changes to playlistItemsCache (background prefetch)
@@ -100,6 +107,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
     }))
   )
   const provider = useProviderStore((s) => s.provider)
+  const syncLink = linksForPlaylist(provider, playlistId)[0]
   const pageRefreshKey = useUIStore((s) => s.pageRefreshKey)
   const scrollContainerRef = useScrollContainer()
   const heroRef = useRef<HTMLDivElement>(null)
@@ -474,6 +482,79 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                   Radio
                 </button>
 
+                <button
+                  type="button"
+                  className="media-secondary"
+                  disabled={
+                    !syncLink ||
+                    !!linkedState.running[syncLink.id] ||
+                    !syncAuthenticated ||
+                    !!provider?.isOffline
+                  }
+                  title={
+                    syncLink
+                      ? "Run this playlist's configured sync"
+                      : "Configure sync from the playlist menu first"
+                  }
+                  onClick={() => {
+                    if (!syncLink) return
+                    if (
+                      !syncLink.enabled ||
+                      syncLink.paused ||
+                      syncLink.state === "conflict" ||
+                      !!syncLink.incomplete ||
+                      syncLink.job?.step ||
+                      syncLink.job?.descriptionStep ||
+                      linkedState.holds[syncLink.id] ||
+                      linkedState.error
+                    ) {
+                      setSyncReview(true)
+                      setShowLinked(true)
+                      return
+                    }
+                    const pageOwner = viewRef.current,
+                      scope = provider?.cacheScope,
+                      session = provider?.playbackSession
+                    const current = () =>
+                      !!pageOwner?.active &&
+                      useProviderStore.getState().provider === provider &&
+                      provider?.cacheScope === scope &&
+                      provider?.playbackSession === session
+                    setSyncError(null)
+                    void linkedState.syncNow(syncLink.id, current).then(
+                      () => {
+                        if (current()) {
+                          invalidatePlaylistItems(playlistId)
+                          void useLibraryStore
+                            .getState()
+                            .fetchPlaylists({ force: true })
+                        }
+                      },
+                      () => {
+                        if (current())
+                          setSyncError(
+                            "Sync needs review. Open Configure sync to check matching, settings or a retained update."
+                          )
+                      }
+                    )
+                  }}
+                >
+                  {syncLink && linkedState.running[syncLink.id]
+                    ? "Syncing…"
+                    : syncLink?.incomplete?.matchingDone &&
+                        syncLink.incomplete.missingOccurrenceIds.length > 0
+                      ? `Review ${syncLink.incomplete.missingOccurrenceIds.length} songs`
+                      : "Sync"}
+                </button>
+                {syncError && (
+                  <p
+                    role="status"
+                    className="basis-full text-sm text-[var(--text-secondary)]"
+                  >
+                    {syncError}
+                  </p>
+                )}
+
                 {/* More actions */}
                 <button
                   onClick={(e) => {
@@ -493,19 +574,16 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                       !currentPlaylist.smart
                         ? [
                             {
-                              label: "Linked sync",
+                              label: "Configure sync",
                               run: () => {
-                                if (current()) setShowLinked(true)
+                                if (current()) {
+                                  setSyncReview(false)
+                                  setShowLinked(true)
+                                }
                               },
                             },
                           ]
                         : []),
-                      {
-                        label: "Export a private copy",
-                        run: () => {
-                          if (current()) setShowCopy(true)
-                        },
-                      },
                       ...(provider?.capabilities.playlistEdit &&
                       !currentPlaylist.smart
                         ? [
@@ -568,15 +646,8 @@ export function Playlist({ playlistId }: { playlistId: string }) {
         <LinkedPlaylistManager
           key={`linked:${playlistId}:${provider?.cacheScope ?? ""}`}
           playlistId={playlistId}
+          initialTab={syncReview ? "review" : "setup"}
           onClose={() => setShowLinked(false)}
-        />
-      )}
-      {showCopy && (
-        <PlaylistCopyDialog
-          key={`${playlistId}:${provider?.cacheScope ?? ""}`}
-          mode="export"
-          playlistId={playlistId}
-          onClose={() => setShowCopy(false)}
         />
       )}
 

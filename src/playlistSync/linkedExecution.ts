@@ -6,6 +6,8 @@ import {
 import {
   applySequenceOperation,
   decideLinkedSync,
+  linkedSyncDirection,
+  mapLinkedTracks,
   linkedOwner,
   nextSequenceOperation,
   playlistContent,
@@ -15,7 +17,17 @@ import {
   type SyncSide,
 } from "./linked"
 import type { LinkedPlaylistRepository } from "./linkedJournal"
+import {
+  weeklySourceDescription,
+  type WeeklyFamily,
+  type WeeklyChannel,
+} from "./weekly"
 export interface LinkedPlaylistAdapter {
+  describe?(
+    before: PlaylistSnapshot,
+    description: string,
+    lease: PlaylistAccount
+  ): Promise<PlaylistSnapshot>
   preservesDuplicateOccurrences?: boolean
   account(): Promise<PlaylistAccount>
   read(id: string): Promise<PlaylistSnapshot>
@@ -26,6 +38,7 @@ export interface LinkedPlaylistAdapter {
   ): Promise<PlaylistSnapshot>
 }
 export interface LinkedSyncServices {
+  latestWeekly?(family: WeeklyFamily): Promise<WeeklyChannel>
   library: LinkedPlaylistAdapter
   listenbrainz: LinkedPlaylistAdapter
   repository: LinkedPlaylistRepository
@@ -72,7 +85,134 @@ export async function checkLinkedPlaylist(
       lastCheckedAt: now(),
     })
   if (!link.job) {
-    const decision = decideLinkedSync(link, library, remote)
+    let decision = decideLinkedSync(link, library, remote)
+    if (link.incomplete) {
+      if (
+        playlistContent(remote) !==
+        playlistContent(link.incomplete.sourceSnapshot)
+      )
+        decision = {
+          status: "conflict",
+          reason:
+            "The admitted source changed while matching. Review its original and current songs before continuing.",
+        }
+      else if (
+        playlistContent(library) !== playlistContent(link.baseline.library) ||
+        (library.description ?? "") !==
+          (link.baseline.library.description ?? "")
+      )
+        decision = {
+          status: "conflict",
+          reason:
+            "The library playlist changed during the incomplete import. Review it before continuing.",
+        }
+      else if (!remote.items.length && link.weeklySource)
+        decision = {
+          status: "conflict",
+          reason:
+            "The weekly source has no verified songs yet. The empty local playlist remains retained for review.",
+        }
+      else {
+        const mapped = mapLinkedTracks("listenbrainz", remote, link.mappings)
+        const unsupportedRepeatOccurrenceIds: string[] = []
+        if (services.library.preservesDuplicateOccurrences === false) {
+          const missing = new Set(mapped.missing),
+            seen = new Set<string>()
+          const distinct: typeof mapped.desired = []
+          let cursor = 0
+          for (let index = 0; index < remote.items.length; index++) {
+            if (missing.has(index)) continue
+            const item = mapped.desired[cursor++]
+            if (seen.has(item.id)) {
+              missing.add(index)
+              unsupportedRepeatOccurrenceIds.push(
+                remote.items[index].occurrenceId
+              )
+            } else {
+              seen.add(item.id)
+              distinct.push(item)
+            }
+          }
+          mapped.desired = distinct
+          mapped.missing = [...missing].sort((a, b) => a - b)
+        }
+        link = {
+          ...link,
+          incomplete: {
+            ...link.incomplete,
+            matchedCount: mapped.desired.length,
+            unsupportedRepeatOccurrenceIds,
+            missingOccurrenceIds: mapped.missing.map(
+              (index) => remote.items[index].occurrenceId
+            ),
+          },
+        }
+        if (!mapped.desired.length && mapped.missing.length)
+          return save({
+            ...link,
+            paused: link.incomplete!.matchingDone,
+            pauseReason: link.incomplete!.matchingDone
+              ? "unmatched"
+              : undefined,
+            state: link.incomplete!.matchingDone ? "conflict" : "ready",
+            message: link.incomplete!.matchingDone
+              ? "No reliable matches were found. Review the retained source songs before filling the playlist."
+              : "Matching source songs in the background; the new playlist is retained.",
+          })
+        decision = {
+          status: "update",
+          source: "listenbrainz",
+          desired: mapped.desired,
+        }
+      }
+    } else if (
+      link.weeklySource &&
+      link.weeklySource.lastSyncedEditionId !==
+        link.weeklySource.edition.playlistId
+    ) {
+      if (
+        playlistContent(library) !== playlistContent(link.baseline.library) ||
+        (library.description ?? "") !==
+          (link.baseline.library.description ?? "")
+      )
+        decision = {
+          status: "conflict",
+          reason:
+            "The library playlist changed before this weekly edition. Review it before replacing songs.",
+        }
+      else if (
+        link.weeklySource.pendingSourceSnapshot &&
+        playlistContent(remote) !==
+          playlistContent(link.weeklySource.pendingSourceSnapshot)
+      )
+        decision = {
+          status: "conflict",
+          reason:
+            "The admitted weekly edition changed. Review its current songs before continuing.",
+        }
+      else if (!remote.items.length)
+        decision = {
+          status: "conflict",
+          reason:
+            "This weekly edition has no verified songs. Review the source before changing the library playlist.",
+        }
+      else {
+        const mapped = mapLinkedTracks("listenbrainz", remote, link.mappings)
+        decision = mapped.missing.length
+          ? {
+              status: "matching",
+              source: "listenbrainz",
+              missing: mapped.missing,
+              reason:
+                "This weekly edition has unmatched songs. Review every recording before syncing; no songs were dropped.",
+            }
+          : {
+              status: "update",
+              source: "listenbrainz",
+              desired: mapped.desired,
+            }
+      }
+    }
     if (decision.status === "idle")
       return save({
         ...link,
@@ -140,6 +280,44 @@ export async function checkLinkedPlaylist(
       })
     const job = link.job!,
       step = job.step
+    if (job.descriptionStep) {
+      const descriptionStep = job.descriptionStep
+      if (
+        targetNow.title === descriptionStep.before.title &&
+        sameIds(
+          targetNow,
+          job.desired.map((track) => track.id)
+        ) &&
+        (targetNow.description ?? "") === descriptionStep.description
+      ) {
+        await save({
+          ...link,
+          job: {
+            ...job,
+            descriptionStep: undefined,
+            destinationSnapshot: targetNow,
+          },
+          descriptionHistory: [
+            ...(link.descriptionHistory ?? []),
+            {
+              ...descriptionStep,
+              state: "verified" as const,
+              settledAt: now(),
+            },
+          ].slice(-64),
+          state: "ready",
+          message: undefined,
+        })
+        continue
+      }
+      return save({
+        ...link,
+        paused: true,
+        state: "unknown",
+        message:
+          "The weekly description update was not confirmed. Read and review the retained operation before retrying.",
+      })
+    }
     if (step) {
       // An unknown/admitted operation is reconciled by reads only, never resent.
       if (
@@ -183,6 +361,21 @@ export async function checkLinkedPlaylist(
       ids(targetNow),
       job.desired.map((track) => track.id)
     )
+    const direction = linkedSyncDirection(link)
+    if (
+      operation &&
+      ((direction === "export" && source !== "library") ||
+        (direction === "import" && source !== "listenbrainz"))
+    ) {
+      return save({
+        ...link,
+        paused: true,
+        state: "conflict",
+        message:
+          "The retained sync job would write against the configured direction. Review partial progress and the link settings before continuing.",
+        lastCheckedAt: now(),
+      })
+    }
     if (
       operation &&
       targetAdapter.preservesDuplicateOccurrences === false &&
@@ -198,8 +391,114 @@ export async function checkLinkedPlaylist(
       })
     }
     if (!operation) {
+      if (link.weeklySource && source === "listenbrainz") {
+        const partial =
+          link.incomplete &&
+          (link.incomplete.missingOccurrenceIds.length ||
+            !link.incomplete.matchingDone)
+        const description =
+          weeklySourceDescription(link.weeklySource.edition) +
+          (partial
+            ? ` Incomplete: ${link.incomplete!.matchedCount} of ${link.incomplete!.total} songs matched.`
+            : "")
+        if ((targetNow.description ?? "") !== description) {
+          if (!targetAdapter.describe)
+            return save({
+              ...link,
+              paused: true,
+              state: "conflict",
+              message:
+                "This connection cannot safely retain the weekly edition description. Review the playlist before continuing.",
+            })
+          if (
+            (targetNow.description ?? "") !==
+            (link.baseline.library.description ?? "")
+          )
+            return save({
+              ...link,
+              paused: true,
+              state: "conflict",
+              message:
+                "The playlist description changed. Review it before applying the weekly date.",
+            })
+          const descriptionStep = {
+            id: id(),
+            weeklyEditionId: link.weeklySource.edition.playlistId,
+            before: targetNow,
+            description,
+            state: "admitting" as const,
+          }
+          await save({ ...link, job: { ...job, descriptionStep } })
+          const retained = (await services.repository.load()).find(
+            (item) => item.id === link.id
+          )
+          if (
+            !services.current() ||
+            retained?.revision !== link.revision ||
+            retained.paused ||
+            !retained.enabled
+          )
+            throw Error("Weekly description settings changed after admission")
+          let result: PlaylistSnapshot
+          try {
+            result = await targetAdapter.describe(targetNow, description, lease)
+          } catch {
+            return save({
+              ...link,
+              paused: true,
+              state: "unknown",
+              message:
+                "Weekly description outcome is unknown. Review the retained update before any retry.",
+              job: {
+                ...link.job!,
+                descriptionStep: { ...descriptionStep, state: "unknown" },
+              },
+            })
+          }
+          owns()
+          if (
+            !samePlaylistIdentity(result.account, link.library) ||
+            result.title !== targetNow.title ||
+            !sameIds(
+              result,
+              job.desired.map((track) => track.id)
+            ) ||
+            result.description !== description
+          )
+            return save({
+              ...link,
+              paused: true,
+              state: "unknown",
+              message:
+                "Weekly description proof did not match. Review the destination before continuing.",
+            })
+          await save({
+            ...link,
+            job: {
+              ...link.job!,
+              descriptionStep: undefined,
+              destinationSnapshot: result,
+            },
+            descriptionHistory: [
+              ...(link.descriptionHistory ?? []),
+              {
+                ...descriptionStep,
+                state: "verified" as const,
+                settledAt: now(),
+              },
+            ].slice(-64),
+            state: "ready",
+            message: undefined,
+          })
+          continue
+        }
+      }
       const finalLibrary = destination === "library" ? targetNow : sourceNow,
         finalRemote = destination === "listenbrainz" ? targetNow : sourceNow
+      const partial =
+        !!link.incomplete &&
+        (link.incomplete.missingOccurrenceIds.length > 0 ||
+          !link.incomplete.matchingDone)
       return save({
         ...link,
         baseline: { library: finalLibrary, listenbrainz: finalRemote },
@@ -208,8 +507,23 @@ export async function checkLinkedPlaylist(
           listenbrainz: await playlistContentHash(finalRemote),
         },
         job: undefined,
-        state: "ready",
-        message: undefined,
+        ...(link.weeklySource && !partial
+          ? {
+              weeklySource: {
+                ...link.weeklySource,
+                lastSyncedEditionId: link.weeklySource.edition.playlistId,
+                pendingSourceSnapshot: undefined,
+              },
+            }
+          : {}),
+        incomplete: partial ? link.incomplete : undefined,
+        paused: partial && !!link.incomplete?.matchingDone,
+        pauseReason:
+          partial && link.incomplete?.matchingDone ? "unmatched" : undefined,
+        state: partial && link.incomplete?.matchingDone ? "conflict" : "ready",
+        message: partial
+          ? `${link.incomplete!.matchedCount} of ${link.incomplete!.total} songs matched. ${link.incomplete!.matchingDone ? "Review unmatched songs; every original occurrence is retained." : "Background matching continues."}`
+          : undefined,
         lastSyncAt: now(),
         lastCheckedAt: now(),
       })
@@ -223,6 +537,9 @@ export async function checkLinkedPlaylist(
           before: targetNow,
           afterIds: applySequenceOperation(ids(targetNow), operation),
           operation,
+          ...(link.weeklySource
+            ? { weeklyEditionId: link.weeklySource.edition.playlistId }
+            : {}),
           state: "admitting",
         },
       },
@@ -292,6 +609,8 @@ export async function reconcileLinkedStep(
   services: LinkedSyncServices,
   allowReviewedRetry = false
 ): Promise<LinkedPlaylist> {
+  if (link.job?.descriptionStep)
+    return reconcileLinkedDescriptionStep(link, services, allowReviewedRetry)
   const job = link.job,
     step = job?.step
   if (!job || !step) throw Error("No retained operation to reconcile")
@@ -353,6 +672,8 @@ export async function archiveReviewedLinkedStep(
   services: LinkedSyncServices,
   reviewed: PlaylistSnapshot
 ): Promise<LinkedPlaylist> {
+  if (link.job?.descriptionStep)
+    return reconcileLinkedDescriptionStep(link, services, false, reviewed)
   const job = link.job,
     step = job?.step
   if (!job || !step || !services.current())
@@ -387,5 +708,73 @@ export async function archiveReviewedLinkedStep(
   }
   const saved = await services.repository.save(next, link.revision)
   if (!services.current()) throw Error("Recovery ownership changed")
+  return saved
+}
+/** Description recovery is read-only; a failed PUT is never automatically replayed. */
+async function reconcileLinkedDescriptionStep(
+  link: LinkedPlaylist,
+  services: LinkedSyncServices,
+  allowReviewedRetry: boolean,
+  reviewed?: PlaylistSnapshot
+): Promise<LinkedPlaylist> {
+  const job = link.job,
+    step = job?.descriptionStep
+  if (!job || !step || !services.current())
+    throw Error("No retained weekly description to reconcile")
+  const [account, actual] = await Promise.all([
+    services.library.account(),
+    services.library.read(step.before.id),
+  ])
+  if (
+    !services.current() ||
+    !samePlaylistIdentity(account, link.library) ||
+    !samePlaylistIdentity(actual.account, link.library) ||
+    actual.id !== step.before.id
+  )
+    throw Error("Weekly destination account changed")
+  const same = playlistContent(actual) === playlistContent(step.before)
+  const applied = same && (actual.description ?? "") === step.description
+  const before =
+    same && (actual.description ?? "") === (step.before.description ?? "")
+  if (reviewed) {
+    if (
+      !samePlaylistIdentity(reviewed.account, actual.account) ||
+      playlistContent(reviewed) !== playlistContent(actual) ||
+      (reviewed.description ?? "") !== (actual.description ?? "")
+    )
+      throw Error("Reviewed description changed. Read again")
+  } else if (!applied && !(before && allowReviewedRetry))
+    throw Error(
+      before
+        ? "No description update was confirmed. Explicitly review before retrying."
+        : "Destination differs from the retained description proof. Review it before any write."
+    )
+  const next: LinkedPlaylist = {
+    ...link,
+    paused: true,
+    state: "conflict",
+    message: reviewed
+      ? "The uncertain description intent was retained after reviewing the current playlist. Review the weekly source before resuming."
+      : applied
+        ? "Weekly description verified. Review remaining progress before resuming."
+        : "Description was reviewed as not applied. Review before a fresh request.",
+    job: reviewed
+      ? undefined
+      : { ...job, descriptionStep: undefined, destinationSnapshot: actual },
+    descriptionHistory: [
+      ...(link.descriptionHistory ?? []),
+      {
+        ...step,
+        state: reviewed
+          ? ("reviewed-current" as const)
+          : applied
+            ? ("verified" as const)
+            : ("reviewed-not-applied" as const),
+        settledAt: (services.now ?? Date.now)(),
+      },
+    ].slice(-64),
+  }
+  const saved = await services.repository.save(next, link.revision)
+  if (!services.current()) throw Error("Weekly recovery owner changed")
   return saved
 }

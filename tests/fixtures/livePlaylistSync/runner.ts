@@ -184,6 +184,8 @@ export async function runLivePlaylistSmoke(bridge: LiveSmokeTransport) {
     listenbrainzPlaylistId: session.remoteId,
     enabled: true,
     paused: false,
+    direction: "bidirectional",
+    automatic: false,
     state: "ready",
     baseline: { library, listenbrainz: remoteValue },
     mappings: session.tracks,

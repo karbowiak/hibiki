@@ -186,11 +186,11 @@ await act(async () => {
   await settle()
 })
 await click("Use verified recording for occurrence 1")
-assert.equal((button("Enable linked sync") as HTMLButtonElement).disabled, true)
-await act(async () => input("I reviewed the ordered songs").click())
+assert.equal((button("Save reviewed link") as HTMLButtonElement).disabled, true)
+await act(async () => input("I reviewed every ordered song").click())
 await act(async () => {
-  button("Enable linked sync").click()
-  button("Enable linked sync").click()
+  button("Save reviewed link").click()
+  button("Save reviewed link").click()
   await settle()
 })
 assert.equal(saveCalls, 1)
@@ -205,13 +205,287 @@ await act(async () => {
 })
 assert.equal(rows.length, 1)
 assert.equal(rows[0].enabled, true)
+assert.equal(rows[0].direction, "export")
+assert.equal(rows[0].automatic, false)
 assert.equal(rows[0].job.desired[0].id, A)
-await click("Check now")
+await click("Sync now")
 assert.equal(mutations, 1)
 assert.equal(rows[0].job, undefined)
 assert.equal(rows[0].history[0].state, "verified")
 await click("Pause")
 assert.equal(rows[0].paused, true)
+assert.equal(
+  rows[0].pauseReason,
+  "manual",
+  "Explicit pause cannot inherit unmatched rollover permission"
+)
 assert.equal(mutations, 1)
+// A completed background import keeps unresolved source rows until explicit review.
+rows = [
+  {
+    ...rows[0],
+    direction: "import",
+    automatic: false,
+    mappings: [
+      ...rows[0].mappings,
+      {
+        libraryTrack: { ...local.items[0].track, id: "obsolete" },
+        recordingMbid: A,
+        verifiedBy: "reviewed",
+        sourceOccurrenceId: remote.items[0].occurrenceId,
+      },
+    ],
+    incomplete: {
+      sourceSnapshot: structuredClone(remote),
+      missingOccurrenceIds: [remote.items[0].occurrenceId],
+      matchedCount: 0,
+      total: 1,
+      matchingCursor: 1,
+      matchingDone: true,
+    },
+  },
+]
+await act(async () => {
+  root.render(
+    <LinkedPlaylistManager
+      key="import-review"
+      playlistId="1"
+      initialTab="review"
+      services={services}
+      onClose={() => closed++}
+    />
+  )
+  await settle()
+})
+assert.ok(document.body.textContent!.includes("Background matching is paused"))
+await click("Review versions and resume")
+assert.ok(
+  document.body.textContent!.includes("ListenBrainz version"),
+  "Existing import must review the remote source despite local default export"
+)
+await click("Confirm local match occurrence 1")
+await act(async () => {
+  input("I reviewed every ordered song").click()
+  await settle()
+})
+await click("Save reviewed link")
+assert.equal(
+  rows[0].incomplete,
+  undefined,
+  "Fully reviewed source retires retained incomplete progress"
+)
+assert.equal(rows[0].direction, "import")
+assert.equal(
+  rows[0].pauseReason,
+  undefined,
+  "Explicit reviewed resume clears manual pause"
+)
+assert.ok(
+  rows[0].mappings.some(
+    (mapping: any) =>
+      mapping.sourceOccurrenceId === remote.items[0].occurrenceId
+  ),
+  "Per-occurrence reviewed choice is retained"
+)
+assert.equal(mutations, 1, "Review retention itself does not write remotely")
+assert.equal(
+  rows[0].mappings.some(
+    (mapping: any) => mapping.libraryTrack.id === "obsolete"
+  ),
+  false,
+  "New per-occurrence choice replaces obsolete reviewed mapping"
+)
+// Persisted metadata IDs are lookup keys, not new recording-ID proof.
+local.items[0].track.recordingMbid = A
+rows = [
+  {
+    ...rows[0],
+    paused: false,
+    mappings: [
+      {
+        libraryTrack: structuredClone(local.items[0].track),
+        recordingMbid: A,
+        verifiedBy: "metadata",
+      },
+    ],
+  },
+]
+await act(async () => {
+  root.render(
+    <LinkedPlaylistManager
+      key="evidence"
+      playlistId="1"
+      initialTab="review"
+      services={services}
+      onClose={() => closed++}
+    />
+  )
+  await settle()
+})
+await click("Review versions and resume")
+assert.ok(document.body.textContent!.includes("Matched by metadata"))
+assert.equal(
+  document.body.textContent!.includes("Matched by recording ID"),
+  false,
+  "Saved fuzzy mapping must not upgrade to recording-ID evidence"
+)
+assert.equal(document.body.textContent!.includes("compare-and-swap"), false)
+assert.equal(
+  document.body.textContent!.includes("Last.fm playlist syncing"),
+  false
+)
+// Retry re-admits lookups only; uncertain write receipts keep the recovery path.
+const { useLinkedPlaylistStore } =
+  await import("../../src/stores/linkedPlaylistStore")
+const retryGate = deferred<void>()
+let retries = 0
+useLinkedPlaylistStore.setState({
+  retryMatching: async (_id: string, current?: () => boolean) => {
+    assert.equal(current?.(), true)
+    retries++
+    await retryGate.promise
+  },
+})
+rows = [
+  {
+    ...rows[0],
+    state: "error",
+    paused: true,
+    incomplete: {
+      sourceSnapshot: structuredClone(remote),
+      missingOccurrenceIds: [remote.items[0].occurrenceId],
+      matchedCount: 0,
+      total: 1,
+      matchingCursor: 0,
+      matchingDone: false,
+    },
+  },
+]
+await act(async () => {
+  root.render(
+    <LinkedPlaylistManager
+      key="retry"
+      playlistId="1"
+      initialTab="review"
+      services={services}
+      onClose={() => closed++}
+    />
+  )
+  await settle()
+})
+await act(async () => {
+  button("Retry background lookups").click()
+  button("Retry background lookups").click()
+  await settle()
+})
+assert.equal(retries, 1, "Concurrent retry has one admission")
+assert.equal(mutations, 1, "Lookup retry itself does not mutate playlists")
+await act(async () => {
+  retryGate.resolve()
+  await settle()
+})
+// Legacy completed partial imports offer an explicit rematch, not generic conflict retry.
+rows = [
+  {
+    ...rows[0],
+    state: "conflict",
+    paused: true,
+    pauseReason: undefined,
+    job: undefined,
+    message:
+      "0 of 1 songs matched. Review unmatched songs; every original occurrence is retained.",
+    incomplete: {
+      ...rows[0].incomplete,
+      matchingDone: true,
+      matchingCursor: 1,
+    },
+  },
+]
+await act(async () => {
+  root.render(
+    <LinkedPlaylistManager
+      key="rematch"
+      playlistId="1"
+      initialTab="review"
+      services={services}
+      onClose={() => closed++}
+    />
+  )
+  await settle()
+})
+await click("Find more matches")
+assert.equal(
+  retries,
+  2,
+  "Explicit completed-partial rematch uses guarded domain retry"
+)
+for (const change of [
+  { pauseReason: "manual" },
+  { message: "The source changed; review the conflict" },
+]) {
+  const original = rows[0]
+  rows = [{ ...original, ...change }]
+  await act(async () => {
+    root.render(
+      <LinkedPlaylistManager
+        key={JSON.stringify(change)}
+        playlistId="1"
+        initialTab="review"
+        services={services}
+        onClose={() => closed++}
+      />
+    )
+    await settle()
+  })
+  assert.equal(
+    [...document.querySelectorAll("button")].some((button) =>
+      button.textContent?.includes("Find more matches")
+    ),
+    false,
+    "Manual pause and source conflicts must not expose automatic rematch"
+  )
+  rows = [original]
+}
+for (const field of ["step", "descriptionStep"]) {
+  rows = [
+    {
+      ...rows[0],
+      job: {
+        id: "unknown",
+        source: "listenbrainz",
+        sourceSnapshot: remote,
+        destinationSnapshot: local,
+        desired: [],
+        completedSteps: 0,
+        [field]: {
+          id: "unknown",
+          state: "unknown",
+          before: local,
+          description: "Expected description",
+        },
+      },
+    },
+  ]
+  await act(async () => {
+    root.render(
+      <LinkedPlaylistManager
+        key={field}
+        playlistId="1"
+        initialTab="review"
+        services={services}
+        onClose={() => closed++}
+      />
+    )
+    await settle()
+  })
+  assert.equal(
+    [...document.querySelectorAll("button")].some((button) =>
+      button.textContent?.includes("Retry background lookups")
+    ),
+    false,
+    "Uncertain write must be inspected instead of lookup retry"
+  )
+  assert.ok(button("Read recovery proof"))
+}
 await act(() => root.unmount())
 dom.window.close()

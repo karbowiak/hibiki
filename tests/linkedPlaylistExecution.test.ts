@@ -51,6 +51,7 @@ function harness() {
     libraryPlaylistId: "library",
     listenbrainzPlaylistId: "listenbrainz",
     enabled: true,
+    direction: "bidirectional",
     paused: false,
     state: "ready",
     baseline: {
@@ -148,6 +149,66 @@ test("Plex duplicate limitation pauses before writes and preserves existing occu
   expect(result.message).toContain("Plex cannot safely apply repeated songs")
   expect(h.calls()).toBe(0)
   expect(h.local().items.map((item) => item.track.id)).toEqual(["a", "b", "a"])
+})
+test("default export never downsyncs remote edits and legacy import job cannot write into Plex", async () => {
+  const h = harness()
+  delete h.initial.direction
+  h.initial.baseline.library = structuredClone(h.local())
+  h.changeRemote([A, B])
+  const conflict = await checkLinkedPlaylist(h.initial, h.services)
+  expect(conflict.paused).toBe(true)
+  expect(conflict.state).toBe("conflict")
+  expect(h.calls()).toBe(0)
+  const other = harness()
+  delete other.initial.direction
+  other.initial.job = {
+    id: "old-import",
+    source: "listenbrainz",
+    sourceSnapshot: structuredClone(other.remote()),
+    destinationSnapshot: structuredClone(other.local()),
+    desired: [other.local().items[0].track],
+    completedSteps: 0,
+  }
+  const stopped = await checkLinkedPlaylist(other.initial, other.services)
+  expect(stopped.paused).toBe(true)
+  expect(stopped.message).toContain("configured direction")
+  expect(other.calls()).toBe(0)
+})
+test("explicit import applies remote-only changes while default export retains read-only old-step recovery", async () => {
+  const h = harness()
+  h.initial.direction = "import"
+  h.initial.baseline.library = structuredClone(h.local())
+  h.changeRemote([A, B])
+  const result = await checkLinkedPlaylist(h.initial, h.services)
+  expect(result.state).toBe("ready")
+  expect(h.calls()).toBe(1)
+  expect(h.local().items.map((item) => item.track.id)).toEqual(["a", "b"])
+  expect(h.remote().items.map((item) => item.track.id)).toEqual([A, B])
+  const recovery = harness()
+  delete recovery.initial.direction
+  const before = snapshot("library", ["a", "b"])
+  recovery.initial.job = {
+    id: "old",
+    source: "listenbrainz",
+    sourceSnapshot: structuredClone(recovery.remote()),
+    destinationSnapshot: before,
+    desired: recovery.local().items.map((item) => item.track),
+    completedSteps: 0,
+    step: {
+      id: "old-step",
+      before,
+      afterIds: ["a", "b", "a"],
+      operation: { kind: "append", trackId: "a" },
+      state: "unknown",
+    },
+  }
+  const recovered = await checkLinkedPlaylist(
+    recovery.initial,
+    recovery.services
+  )
+  expect(recovered.history?.[0].state).toBe("verified")
+  expect(recovered.job).toBeUndefined()
+  expect(recovery.calls()).toBe(0)
 })
 test("already identical duplicate target is read-only verified even with Plex limitation", async () => {
   const h = harness()

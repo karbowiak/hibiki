@@ -1,5 +1,6 @@
 import { validateSnapshot } from "./planner"
 import { recordingMbid } from "./matching"
+import type { WeeklySourceBinding } from "./weekly"
 import {
   samePlaylistIdentity,
   type PlaylistAccount,
@@ -7,10 +8,24 @@ import {
   type PlaylistTrack,
 } from "./types"
 export type SyncSide = "library" | "listenbrainz"
+export type LinkedSyncDirection = "export" | "import" | "bidirectional"
+/** Legacy links are conservative: manual Plex → ListenBrainz until reviewed. */
+export function linkedSyncDirection(
+  link: Pick<LinkedPlaylist, "direction">
+): LinkedSyncDirection {
+  return link.direction ?? "export"
+}
+export function linkedAutomaticSync(
+  link: Pick<LinkedPlaylist, "automatic">
+): boolean {
+  return link.automatic === true
+}
 export interface LinkedTrackMapping {
+  sourceOccurrenceId?: string
   libraryTrack: PlaylistTrack
   recordingMbid: string
-  verifiedBy: "reviewed" | "provider-mbid"
+  verifiedBy: "reviewed" | "provider-mbid" | "metadata"
+  score?: number
 }
 export interface LinkedPlaylist {
   version: 1
@@ -21,11 +36,25 @@ export interface LinkedPlaylist {
   libraryPlaylistId: string
   listenbrainzPlaylistId: string
   enabled: boolean
+  direction?: LinkedSyncDirection
+  automatic?: boolean
+  weeklySource?: WeeklySourceBinding
+  incomplete?: {
+    sourceSnapshot: PlaylistSnapshot
+    missingOccurrenceIds: string[]
+    unsupportedRepeatOccurrenceIds?: string[]
+    matchedCount: number
+    total: number
+    matchingCursor: number
+    matchingDone: boolean
+  }
+  pauseReason?: "unmatched" | "manual"
   paused: boolean
   baseline: { library: PlaylistSnapshot; listenbrainz: PlaylistSnapshot }
   mappings: LinkedTrackMapping[]
   baselineHashes?: { library: string; listenbrainz: string }
   history?: SyncStep[]
+  descriptionHistory?: SyncDescriptionStep[]
   previousLibraryOwners?: PlaylistAccount[]
   lastSyncAt?: number
   lastCheckedAt?: number
@@ -38,6 +67,7 @@ export type SequenceOperation =
   | { kind: "move"; from: number; to: number }
   | { kind: "delete"; index: number }
 export interface SyncStep {
+  weeklyEditionId?: string
   id: string
   before: PlaylistSnapshot
   afterIds: string[]
@@ -51,6 +81,7 @@ export interface SyncStep {
   settledAt?: number
 }
 export interface SyncJob {
+  descriptionStep?: SyncDescriptionStep
   id: string
   source: SyncSide
   sourceSnapshot: PlaylistSnapshot
@@ -58,6 +89,19 @@ export interface SyncJob {
   desired: PlaylistTrack[]
   step?: SyncStep
   completedSteps: number
+}
+export interface SyncDescriptionStep {
+  id: string
+  weeklyEditionId: string
+  before: PlaylistSnapshot
+  description: string
+  state:
+    | "admitting"
+    | "unknown"
+    | "verified"
+    | "reviewed-not-applied"
+    | "reviewed-current"
+  settledAt?: number
 }
 export type LinkedDecision =
   | { status: "paused" | "idle" | "retired" | "conflict"; reason?: string }
@@ -97,11 +141,22 @@ export function mapLinkedTracks(
   const desired: PlaylistTrack[] = [],
     missing: number[] = []
   snapshot.items.forEach((item, index) => {
-    const matches = mappings.filter((mapping) =>
+    let matches = mappings.filter((mapping) =>
       source === "library"
         ? mapping.libraryTrack.id === item.track.id
-        : mapping.recordingMbid === recordingMbid(item.track.recordingMbid)
+        : mapping.recordingMbid === recordingMbid(item.track.recordingMbid) &&
+          (!mapping.sourceOccurrenceId ||
+            mapping.sourceOccurrenceId === item.occurrenceId)
     )
+    if (
+      source === "listenbrainz" &&
+      matches.some(
+        (mapping) => mapping.sourceOccurrenceId === item.occurrenceId
+      )
+    )
+      matches = matches.filter(
+        (mapping) => mapping.sourceOccurrenceId === item.occurrenceId
+      )
     const unique = new Map(
       matches.map((mapping) => [
         source === "library" ? mapping.recordingMbid : mapping.libraryTrack.id,
@@ -151,6 +206,19 @@ export function decideLinkedSync(
     return {
       status: "conflict",
       reason: "Both playlists changed. Review which ordered version to keep.",
+    }
+  const direction = linkedSyncDirection(link)
+  if (direction === "export" && remoteChanged)
+    return {
+      status: "conflict",
+      reason:
+        "ListenBrainz changed outside this export link. Review the remote changes before syncing; Plex will not be changed.",
+    }
+  if (direction === "import" && localChanged)
+    return {
+      status: "conflict",
+      reason:
+        "Plex changed outside this import link. Review the library changes before syncing; ListenBrainz will not be changed.",
     }
   if (
     library.title !== link.baseline.library.title ||
@@ -236,4 +304,18 @@ export function nextSequenceOperation(
   return before.length > target.length
     ? { kind: "delete", index: before.length - 1 }
     : null
+}
+
+/** Only the engine's completed unmatched pause can follow a new weekly edition. */
+export function canAdvancePartialWeekly(link: LinkedPlaylist): boolean {
+  return (
+    !!link.weeklySource &&
+    link.automatic === true &&
+    link.enabled &&
+    link.paused &&
+    link.pauseReason === "unmatched" &&
+    link.state === "conflict" &&
+    !!link.incomplete?.matchingDone &&
+    !link.job
+  )
 }

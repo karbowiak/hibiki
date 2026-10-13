@@ -26,7 +26,12 @@ export type LibraryMetadataExpected = Partial<
 >
 export interface LibraryArtworkInventory {
   baseline: string
-  candidates: { id: string; sourceUrl: string | null; label: string; selected: boolean }[]
+  candidates: {
+    id: string
+    sourceUrl: string | null
+    label: string
+    selected: boolean
+  }[]
 }
 
 export interface PlaylistOccurrenceState {
@@ -98,6 +103,21 @@ export interface LyricsSource {
   isSynced: boolean // true=timed (Plex), false=plain (Genius)
 }
 
+export interface PlaylistRecordingTrack {
+  id: string
+  title: string
+  artist: string
+  album?: string | null
+  durationMs?: number | null
+}
+export type PlaylistRecordingResolution =
+  | {
+      status: "verified"
+      recordingMbid: string
+      proof: "explicit-recording-guid" | "release-track-relationship"
+      metadataFingerprint: string
+    }
+  | { status: "unmatched" | "unavailable"; reason: string }
 export interface MusicProvider {
   /** Cached-library browsing does not claim a live server connection. */
   readonly isOffline?: boolean
@@ -133,11 +153,27 @@ export interface MusicProvider {
     patch: LibraryMetadataPatch,
     expected: LibraryMetadataExpected
   ): Promise<void>
-  getAdvancedMetadata?(kind: "artist" | "album", itemId: string): Promise<import("../lib/metadataAdvanced").AdvancedMetadata>
-  editAdvancedMetadata?(kind: "artist" | "album", itemId: string, patch: import("../lib/metadataAdvanced").AdvancedMetadataPatch): Promise<void>
-  getArtworkInventory?(kind: "artist" | "album", itemId: string, role: "poster" | "background"): Promise<LibraryArtworkInventory>
-  saveArtwork?(kind: "artist" | "album", itemId: string, role: "poster" | "background", baseline: string,
-    change: { choice: string } | { upload: number[] }): Promise<LibraryArtworkInventory>
+  getAdvancedMetadata?(
+    kind: "artist" | "album",
+    itemId: string
+  ): Promise<import("../lib/metadataAdvanced").AdvancedMetadata>
+  editAdvancedMetadata?(
+    kind: "artist" | "album",
+    itemId: string,
+    patch: import("../lib/metadataAdvanced").AdvancedMetadataPatch
+  ): Promise<void>
+  getArtworkInventory?(
+    kind: "artist" | "album",
+    itemId: string,
+    role: "poster" | "background"
+  ): Promise<LibraryArtworkInventory>
+  saveArtwork?(
+    kind: "artist" | "album",
+    itemId: string,
+    role: "poster" | "background",
+    baseline: string,
+    change: { choice: string } | { upload: number[] }
+  ): Promise<LibraryArtworkInventory>
   getAlbumTracks(albumId: string): Promise<MusicTrack[]>
   getArtistAlbums(
     artistId: string,
@@ -164,6 +200,17 @@ export interface MusicProvider {
     expected: PlaylistOccurrenceState,
     operation: PlaylistOccurrenceMutation
   ): Promise<PlaylistOccurrenceState>
+  /** Read-only exact-ID resolution, only after explicit selected-playlist review. */
+  resolvePlaylistRecording?(
+    track: PlaylistRecordingTrack
+  ): Promise<PlaylistRecordingResolution>
+  /** One owned, preflighted description save with fresh post-read proof. */
+  describePlaylist?(
+    playlistId: string,
+    expected: PlaylistOccurrenceState,
+    expectedDescription: string,
+    description: string
+  ): Promise<string>
   addToPlaylist(playlistId: string, itemIds: string[]): Promise<void>
   removeFromPlaylist(
     playlistId: string,

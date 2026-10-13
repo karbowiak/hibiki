@@ -4,8 +4,10 @@ import { useListenBrainzStore } from "../metadata/listenbrainz/authStore"
 import { useLinkedPlaylistStore } from "../stores/linkedPlaylistStore"
 import { providerPlaylistAccount } from "../playlistSync/provider"
 import { samePlaylistIdentity } from "../playlistSync/types"
-import { linkedSyncServices } from "../playlistSync/linkedServices"
-import { checkLinkedPlaylist } from "../playlistSync/linkedExecution"
+import {
+  canAdvancePartialWeekly,
+  linkedAutomaticSync,
+} from "../playlistSync/linked"
 /** Explicit links only; no auto-linking, no whole-library scan, no overlapping ticks. */
 export function useLinkedPlaylistSync() {
   const provider = useProviderStore((s) => s.provider),
@@ -45,35 +47,30 @@ export function useLinkedPlaylistSync() {
           if (!current()) break
           if (
             !link.enabled ||
-            link.paused ||
+            (!linkedAutomaticSync(link) &&
+              !(link.incomplete && !link.incomplete.matchingDone)) ||
+            (link.paused && !canAdvancePartialWeekly(link)) ||
+            useLinkedPlaylistStore.getState().holds[link.id] ||
+            useLinkedPlaylistStore.getState().running[link.id] ||
             !samePlaylistIdentity(link.library, account) ||
             link.listenbrainz.user !== username
           )
             continue
-          const services = await linkedSyncServices(provider!, link, current)
-          // Publish only acknowledged durable updates; persistence failure disables all writes.
-          services.repository = {
-            load: services.repository.load,
-            save: async (value, revision) =>
-              useLinkedPlaylistStore.getState().save(value, revision),
-          }
-          for (const side of ["library", "listenbrainz"] as const) {
-            const mutate = services[side].mutate
-            services[side].mutate = async (...args) => {
-              budget--
-              return mutate(...args)
-            }
-          }
           try {
-            const checked = await checkLinkedPlaylist(
-              link,
-              services,
-              Math.max(0, budget)
-            )
-            if (current()) {
-              useLinkedPlaylistStore.getState().publish(checked)
-              useLinkedPlaylistStore.getState().checkError(link.id, null)
+            if (link.incomplete && !link.incomplete.matchingDone) {
+              void useLinkedPlaylistStore
+                .getState()
+                .matchIncomplete(link.id)
+                .catch(() => {})
+              continue
             }
+            await useLinkedPlaylistStore.getState().syncNow(link.id, current, {
+              maxSteps: Math.max(0, budget),
+              automatic: true,
+              onMutation: () => {
+                budget--
+              },
+            })
           } catch {
             if (current())
               useLinkedPlaylistStore

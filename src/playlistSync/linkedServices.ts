@@ -7,7 +7,11 @@ import {
 } from "./listenbrainz"
 import { providerPlaylistAdapter, providerPlaylistAccount } from "./provider"
 import { fromJspf } from "./jspf"
-import { sameAccount, type PlaylistAccount } from "./types"
+import {
+  sameAccount,
+  type PlaylistAccount,
+  type PlaylistSnapshot,
+} from "./types"
 import { recordingMbid } from "./matching"
 import type { LinkedPlaylist } from "./linked"
 import type {
@@ -15,6 +19,14 @@ import type {
   LinkedSyncServices,
 } from "./linkedExecution"
 import { linkedPlaylistRepository } from "./linkedJournal"
+import { weeklySourceChannels, type WeeklySummary } from "./weekly"
+const weeklyFeeds = new Map<
+  string,
+  {
+    expires: number
+    request: Promise<{ items: WeeklySummary[]; total: number }>
+  }
+>()
 export async function linkedSyncServices(
   provider: MusicProvider,
   link: LinkedPlaylist,
@@ -50,6 +62,36 @@ export async function linkedSyncServices(
       : {}),
     account: () => libraryReader.account(),
     read: (id) => libraryReader.read(id),
+    ...(provider.describePlaylist
+      ? {
+          describe: async (
+            before: PlaylistSnapshot,
+            description: string,
+            expected: PlaylistAccount
+          ) => {
+            if (
+              !owns() ||
+              !sameAccount(providerPlaylistAccount(provider), expected)
+            )
+              throw Error("Library account changed")
+            const confirmed = await provider.describePlaylist!(
+              before.id,
+              {
+                title: before.title,
+                items: before.items.map((item) => ({
+                  trackId: item.track.id,
+                  occurrenceId: item.occurrenceId,
+                })),
+              },
+              before.description ?? "",
+              description
+            )
+            if (!owns() || confirmed !== description)
+              throw Error("Weekly description requires reconciliation")
+            return libraryReader.read(before.id)
+          },
+        }
+      : {}),
     mutate: async (before, operation, expected) => {
       if (!owns() || !sameAccount(providerPlaylistAccount(provider), expected))
         throw Error("Library account changed")
@@ -99,5 +141,29 @@ export async function linkedSyncServices(
     listenbrainz: remote,
     repository: linkedPlaylistRepository,
     current: owns,
+    latestWeekly: async (family) => {
+      if (!owns()) throw Error("Weekly account changed")
+      const key = JSON.stringify(lease)
+      let feed = weeklyFeeds.get(key)
+      if (!feed || feed.expires <= Date.now()) {
+        const request = remoteReader.list(0, 100, "createdfor")
+        feed = { expires: Date.now() + 60_000, request }
+        weeklyFeeds.set(key, feed)
+        if (weeklyFeeds.size > 8)
+          weeklyFeeds.delete(weeklyFeeds.keys().next().value!)
+        void request.catch(() => {
+          if (weeklyFeeds.get(key)?.request === request) weeklyFeeds.delete(key)
+        })
+      }
+      const listing = await feed.request
+      if (!owns()) throw Error("Weekly account changed")
+      return weeklySourceChannels(
+        {
+          items: listing.items,
+          complete: listing.total <= listing.items.length,
+        },
+        lease
+      ).find((channel) => channel.family === family)!
+    },
   }
 }

@@ -169,3 +169,50 @@ The original Radio Browser failure remains unreproduced; the current native
 shelves and bounded concurrent read-only probes pass. Direct Spotify/Discogs/
 TIDAL adapters, premium TheAudioDB live verification, a duplicate-preserving Plex
 copy path, and the user's later AI design remain future work.
+
+### Playlist sync redesign and matching follow-up (release remains on hold)
+
+The global Playlists Sync entry lists owned, generated and collaborative
+ListenBrainz playlists. Each local playlist has its own Sync control and overflow
+configuration. Ordinary links default to manual Plex → ListenBrainz; import and
+two-way modes require explicit configuration. Weekly Exploration and Weekly Jams
+have one stable channel each, with dated editions retained behind the channel.
+
+Create Sync admits one empty destination immediately, retaining the complete
+source before creation. Background matching processes the selected songs in
+bounded batches and resumes admitted unfinished work on startup. Missing songs
+and unsupported repeats remain in per-playlist Review. Unknown creation outcomes
+and returned IDs have durable recovery; they cannot silently request another
+playlist. Weekly completion requires verified order and description, and a new
+edition runs through the same matcher.
+
+Live user testing found two defects: failed combined searches stopped a batch
+before adding its reliable matches, and cached empty pages did not refresh after
+verified writes. These are fixed. Title searches also recover failed/unrelated
+combined results. Matching handles explicit collaborator credits, Latin accents,
+punctuation and equivalent library copies, while retaining different recording,
+version and duration safeguards. Old automatic metadata choices are revalidated
+before reuse; reviewed choices and in-flight jobs stay protected. Search query
+parameters are now encoded, preserving ampersands, plus signs and hash marks as
+search text. Match labels preserve their actual evidence rather than presenting
+metadata choices as verified recording IDs.
+
+Validation: 850 frontend tests and 588 safe native unit tests passed; 8 native
+live/manual tests were ignored and 73 integration tests excluded. Both TypeScript
+projects and the production build passed. A fresh isolated empty-playlist create
+was verified with zero ordered items; its separately reviewed single deletion
+returned an exact fresh 404. This evidence is separate from the user's weekly
+imports. No release tag or publication has been requested for this revision.
+
+The final weekly/archive and matching changes also passed 38 focused frontend
+checks and a fresh production build. Unresolved earlier editions are retained;
+only settled history is trimmed. The archive stops before discarding unresolved
+records if its capacity is reached. Manual pauses and unknown writes remain
+separate from automatic unmatched-song review. Completed partial imports can
+explicitly find more matches without creating another playlist.
+
+Native dev-app follow-through on the two weekly imports the user created showed
+31 of 50 Weekly Jams songs and 26 of 50 Weekly Exploration songs added, with the
+remaining occurrences available in Review. These were resumed only through
+their existing admitted syncs. No additional copies or unrelated user playlist
+mutations were requested. The isolated QA playlist was separately deleted.

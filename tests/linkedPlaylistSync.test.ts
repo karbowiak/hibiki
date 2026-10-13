@@ -5,6 +5,8 @@ import {
   decideLinkedSync,
   mapLinkedTracks,
   playlistContentHash,
+  linkedSyncDirection,
+  linkedAutomaticSync,
   type LinkedPlaylist,
 } from "../src/playlistSync/linked"
 import type { PlaylistSnapshot } from "../src/playlistSync/types"
@@ -37,6 +39,7 @@ const link = (): LinkedPlaylist => ({
   libraryPlaylistId: "library",
   listenbrainzPlaylistId: "listenbrainz",
   enabled: true,
+  direction: "bidirectional",
   paused: false,
   baseline: {
     library: snapshot("library", ["a", "a"]),
@@ -50,6 +53,76 @@ const link = (): LinkedPlaylist => ({
     },
   ],
   state: "ready",
+})
+test("legacy links default to manual export and one-way destination edits require review", () => {
+  const legacy = { ...link(), direction: undefined, automatic: undefined }
+  expect(linkedSyncDirection(legacy)).toBe("export")
+  expect(linkedAutomaticSync(legacy)).toBe(false)
+  expect(
+    decideLinkedSync(
+      legacy,
+      legacy.baseline.library,
+      snapshot("listenbrainz", [mbid])
+    ).status
+  ).toBe("conflict")
+  expect(
+    decideLinkedSync(
+      legacy,
+      snapshot("library", ["a"]),
+      legacy.baseline.listenbrainz
+    )
+  ).toEqual({
+    status: "update",
+    source: "library",
+    desired: [expect.objectContaining({ id: mbid })],
+  })
+  const imported: LinkedPlaylist = { ...legacy, direction: "import" }
+  expect(
+    decideLinkedSync(
+      imported,
+      snapshot("library", ["a"]),
+      imported.baseline.listenbrainz
+    ).status
+  ).toBe("conflict")
+  expect(
+    decideLinkedSync(
+      imported,
+      imported.baseline.library,
+      snapshot("listenbrainz", [mbid])
+    ).status
+  ).toBe("update")
+})
+test("retained settings normalize manual defaults and forbid switching unresolved operation direction", async () => {
+  const { retainLink, validateLinks } =
+    await import("../src/playlistSync/linkedJournal")
+  const legacy = { ...link(), direction: undefined, automatic: undefined }
+  const saved = retainLink([], legacy, null)[0]
+  expect(saved.direction).toBe("export")
+  expect(saved.automatic).toBe(false)
+  expect(() =>
+    validateLinks([{ ...saved, direction: "wrong" as any }])
+  ).toThrow("Invalid linked")
+  const pending: LinkedPlaylist = {
+    ...saved,
+    job: {
+      id: "job",
+      source: "library",
+      sourceSnapshot: saved.baseline.library,
+      destinationSnapshot: saved.baseline.listenbrainz,
+      desired: [],
+      completedSteps: 0,
+      step: {
+        id: "step",
+        before: saved.baseline.listenbrainz,
+        afterIds: [],
+        operation: { kind: "delete", index: 0 },
+        state: "unknown",
+      },
+    },
+  }
+  expect(() =>
+    retainLink([pending], { ...pending, direction: "import" }, pending.revision)
+  ).toThrow("unresolved")
 })
 test("one-step transformations preserve duplicate occurrence order without clearing playlists", () => {
   for (const [before, target] of [

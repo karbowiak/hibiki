@@ -369,6 +369,12 @@ export class PlexProvider implements MusicProvider {
     )
   }
 
+  async resolvePlaylistRecording(track:import("../../providers/types").PlaylistRecordingTrack):Promise<import("../../providers/types").PlaylistRecordingResolution> {
+    return this.api.resolvePlaylistRecording(this.requireSection(),track)
+  }
+  async describePlaylist(playlistId:string,expected:PlaylistOccurrenceState,expectedDescription:string,description:string):Promise<string> {
+    return this.api.describePlaylist(Number(playlistId),this.requireSection(),expected,expectedDescription,description)
+  }
   async addToPlaylist(playlistId: string, itemIds: string[]): Promise<void> {
     await this.api.addItemsToPlaylist(Number(playlistId), itemIds.map(Number))
   }

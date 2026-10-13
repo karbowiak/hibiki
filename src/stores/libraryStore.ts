@@ -148,6 +148,8 @@ export interface LibraryState {
   refreshAll: () => Promise<void>
   /** Evict a single playlist's item cache and refetch if it's currently viewed. */
   invalidatePlaylistItems: (playlistId: string) => void
+  /** A verified sync response refreshes only this playlist, including its displayed count. */
+  onPlaylistSyncVerified: (playlistId: string, itemCount: number, description?: string) => void
   /** Remove a playlist from the sidebar list and clean its item cache. */
   removePlaylist: (id: string) => void
   /** Rename a playlist in the sidebar list. */
@@ -754,6 +756,14 @@ export function createLibraryStore({
           { [id]: _error, ...errors } = get().playlistPageErrors
         set({ playlistItemsCache: items, playlistIsFullyLoaded: loaded, playlistPageErrors: errors })
         if (get().currentPlaylistId === id) void get().fetchPlaylistItems(id)
+      },
+      onPlaylistSyncVerified: (id, itemCount, description) => {
+        if (!capture() || !id || !Number.isSafeInteger(itemCount) || itemCount < 0 || itemCount > 1000) return
+        set((state) => ({
+          playlists: state.playlists.map(playlist => playlist.id === id ? { ...playlist, trackCount: itemCount, ...(description !== undefined ? { summary: description } : {}) } : playlist),
+          ...(state.currentPlaylistId === id && state.currentPlaylist ? { currentPlaylist: { ...state.currentPlaylist, trackCount: itemCount, ...(description !== undefined ? { summary: description } : {}) } } : {})
+        }))
+        get().invalidatePlaylistItems(id)
       },
       removePlaylist: (id) => {
         bumpPlaylist(id)

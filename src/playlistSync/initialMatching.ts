@@ -1,0 +1,337 @@
+import { createVerifiedPlaylistRefresh } from "../components/PlaylistSync/verifiedPlaylistRefresh"
+import type { MusicProvider } from "../providers/types"
+import type { MusicTrack } from "../types/music"
+import { playlistCandidateScore, matchTrack, recordingMbid } from "./matching"
+import { playlistTrackFromMusic, providerPlaylistAccount } from "./provider"
+import { samePlaylistIdentity, type PlaylistTrack } from "./types"
+import {
+  mapLinkedTracks,
+  type LinkedPlaylist,
+  type LinkedTrackMapping,
+} from "./linked"
+import type { LinkedPlaylistRepository } from "./linkedJournal"
+import { linkedSyncServices } from "./linkedServices"
+import { checkLinkedPlaylist, type LinkedSyncServices } from "./linkedExecution"
+/** Batches bound concurrency/memory, not the number of selected songs that receive a lookup. */
+export async function matchInitialSync(
+  id: string,
+  provider: MusicProvider,
+  repository: LinkedPlaylistRepository,
+  current: () => boolean,
+  servicesFor: (link: LinkedPlaylist) => Promise<LinkedSyncServices> = (link) =>
+    linkedSyncServices(provider, link, current)
+): Promise<void> {
+  const notifyVerified = createVerifiedPlaylistRefresh(provider, current)
+  const owns = () => {
+    if (!current()) throw Error("Initial sync owner changed")
+  }
+  const load = async () => {
+    owns()
+    const link = (await repository.load()).find((item) => item.id === id)
+    owns()
+    if (
+      !link ||
+      !samePlaylistIdentity(link.library, providerPlaylistAccount(provider))
+    )
+      throw Error("Initial sync belongs to another library")
+    return link
+  }
+  let link = await load()
+  if (!link.enabled || link.paused || !link.incomplete) return
+  const source = link.incomplete.sourceSnapshot
+  // New safety rules must not inherit an older automatic decision as verified identity.
+  // Retained jobs remain immutable until their admitted operations are reconciled.
+  if (!link.job) {
+    const mappings = revalidateAutomaticMappings(link)
+    if (mappings.length !== link.mappings.length) {
+      owns()
+      const mapped = mapLinkedTracks("listenbrainz", source, mappings)
+      link = await repository.save(
+        {
+          ...link,
+          mappings,
+          incomplete: {
+            ...link.incomplete!,
+            matchingCursor: 0,
+            matchingDone: false,
+            matchedCount: mapped.desired.length,
+            missingOccurrenceIds: mapped.missing.map(
+              (index) => source.items[index].occurrenceId
+            ),
+          },
+        },
+        link.revision
+      )
+      owns()
+    }
+  }
+  const queries = [
+    ...new Map(
+      source.items.map((item) => [
+        JSON.stringify([item.track.artist, item.track.title]),
+        item.track,
+      ])
+    ).values(),
+  ]
+  async function fill() {
+    let chunks = 0
+    do {
+      owns()
+      if (link.paused || !link.enabled) return
+      const services = await servicesFor(link)
+      owns()
+      services.repository = repository
+      const mutate = services.library.mutate
+      services.library.mutate = async (...args) => {
+        const result = await mutate(...args)
+        if (current()) notifyVerified(result)
+        return result
+      }
+      const describe = services.library.describe
+      if (describe)
+        services.library.describe = async (...args) => {
+          const result = await describe(...args)
+          if (current()) notifyVerified(result)
+          return result
+        }
+      link = await checkLinkedPlaylist(link, services, 20)
+      owns()
+      if (++chunks > 200) throw Error("Initial sync progress needs review")
+    } while (link.job && !link.paused)
+  }
+  if (link.job) {
+    await fill()
+    if (link.paused || !link.incomplete) return
+  }
+  while (link.incomplete && !link.incomplete.matchingDone && !link.paused) {
+    owns()
+    if (!provider.capabilities.search) {
+      link = await repository.save(
+        {
+          ...link,
+          paused: true,
+          state: "conflict",
+          incomplete: { ...link.incomplete, matchingDone: true },
+          message:
+            "This connection cannot search for automatic matches. Review every retained source song manually.",
+        },
+        link.revision
+      )
+      return
+    }
+    const start = link.incomplete.matchingCursor,
+      batch = queries.slice(start, start + 30)
+    let next = 0,
+      failed = false
+    const results = new Map<string, PlaylistTrack[]>()
+    await Promise.all(
+      Array.from({ length: Math.min(3, batch.length) }, async () => {
+        while (next < batch.length) {
+          owns()
+          const track = batch[next++],
+            key = JSON.stringify([track.artist, track.title])
+          try {
+            const query = `${track.artist} ${track.title}`.trim()
+            if (query.length > 1000)
+              throw Error("Source labels need manual search")
+            const candidatesFor = async (query: string) => {
+              const items = await provider.search(query, "track")
+              owns()
+              const tracks = items.filter(
+                (item): item is MusicTrack & { type: "track" } =>
+                  item.type === "track"
+              )
+              if (tracks.length > 50)
+                throw Error("Search needs narrower manual review")
+              return [
+                ...new Map(
+                  tracks.map((item) => {
+                    const candidate = playlistTrackFromMusic(item)
+                    return [candidate.id, candidate]
+                  })
+                ).values(),
+              ]
+            }
+            let candidates: PlaylistTrack[] = [],
+              usable = false
+            try {
+              candidates = await candidatesFor(query)
+              usable = true
+            } catch {
+              owns()
+            }
+            if (
+              (!usable || matchTrack(track, candidates).status !== "matched") &&
+              track.title.trim() &&
+              track.title.trim() !== query
+            ) {
+              try {
+                const titleCandidates = await candidatesFor(track.title.trim())
+                usable = true
+                candidates = [
+                  ...new Map(
+                    [...candidates, ...titleCandidates].map((candidate) => [
+                      candidate.id,
+                      candidate,
+                    ])
+                  ).values(),
+                ]
+              } catch {
+                owns()
+              }
+            }
+            if (!usable) throw Error("Search lookup unavailable")
+            results.set(key, candidates)
+          } catch {
+            owns()
+            failed = true
+          }
+        }
+      })
+    )
+    owns()
+    const fresh = await load()
+    if (fresh.revision !== link.revision)
+      throw Error("Matching settings changed")
+    const mappings: LinkedTrackMapping[] = [...link.mappings]
+    for (const item of source.items) {
+      const mbid = recordingMbid(item.track.recordingMbid)
+      if (
+        !mbid ||
+        mappings.some(
+          (mapping) =>
+            mapping.recordingMbid === mbid && !mapping.sourceOccurrenceId
+        )
+      )
+        continue
+      const candidates = results.get(
+        JSON.stringify([item.track.artist, item.track.title])
+      )
+      if (!candidates) continue
+      const match = matchTrack(item.track, candidates)
+      if (match.status === "matched")
+        mappings.push({
+          libraryTrack: match.track,
+          recordingMbid: mbid,
+          verifiedBy: match.by === "mbid" ? "provider-mbid" : "metadata",
+          score: match.score,
+        })
+    }
+    const mapped = mapLinkedTracks("listenbrainz", source, mappings)
+    const cursor = failed ? start : start + batch.length,
+      done = !failed && cursor >= queries.length
+    link = await repository.save(
+      {
+        ...link,
+        mappings,
+        incomplete: {
+          ...link.incomplete!,
+          matchingCursor: cursor,
+          matchingDone: done,
+          matchedCount: mapped.desired.length,
+          missingOccurrenceIds: mapped.missing.map(
+            (index) => source.items[index].occurrenceId
+          ),
+        },
+        state: "ready",
+        paused: false,
+        message: failed
+          ? "Some lookups could not be confirmed. Matched songs and every source occurrence are retained; retry matching or review this playlist."
+          : "Matching the selected playlist in bounded background batches.",
+      },
+      link.revision
+    )
+    owns()
+    await fill()
+    if (failed) {
+      if (!link.paused && link.incomplete) {
+        link = await repository.save(
+          {
+            ...link,
+            paused: true,
+            state: "error",
+            message:
+              "Some lookups could not be confirmed. Reliable matched songs were added; every source occurrence is retained. Retry matching or review the remaining songs.",
+          },
+          link.revision
+        )
+      }
+      return
+    }
+    if (!batch.length) return
+  }
+  if (link.incomplete && link.incomplete.matchingDone && !link.paused)
+    await fill()
+}
+
+/** Explicit re-match admission recognizes an engine result, never an ownership/content conflict. */
+export function canRematchIncomplete(link: LinkedPlaylist): boolean {
+  const partial = link.incomplete
+  if (
+    !link.enabled ||
+    !partial?.matchingDone ||
+    !partial.missingOccurrenceIds.length ||
+    link.job ||
+    link.state !== "conflict" ||
+    link.pauseReason === "manual"
+  )
+    return false
+  return (
+    link.message ===
+      `${partial.matchedCount} of ${partial.total} songs matched. Review unmatched songs; every original occurrence is retained.` ||
+    link.message ===
+      "No reliable matches were found. Review the retained source songs before filling the playlist."
+  )
+}
+/** Lookup retry cannot acknowledge an unknown write or override a content conflict. */
+export function resumeInitialMatching(link: LinkedPlaylist): LinkedPlaylist {
+  const completed = canRematchIncomplete(link)
+  if (
+    !link.enabled ||
+    !link.incomplete ||
+    (!completed &&
+      (link.incomplete.matchingDone ||
+        !["ready", "error"].includes(link.state))) ||
+    link.pauseReason === "manual" ||
+    link.job?.step ||
+    link.job?.descriptionStep
+  )
+    throw Error("Review retained playlist changes before retrying matching")
+  return {
+    ...link,
+    paused: false,
+    pauseReason: undefined,
+    state: "ready",
+    incomplete: completed
+      ? { ...link.incomplete, matchingCursor: 0, matchingDone: false }
+      : link.incomplete,
+    message:
+      "Retrying the retained source lookups in bounded background batches.",
+  }
+}
+
+/** Only automatic label-based mappings are reconsidered; explicit reviews and verified IDs survive. */
+export function revalidateAutomaticMappings(
+  link: LinkedPlaylist
+): LinkedTrackMapping[] {
+  if (link.job || !link.incomplete) return link.mappings
+  return link.mappings.filter((mapping) => {
+    if (mapping.verifiedBy !== "metadata") return true
+    const occurrences = link.incomplete!.sourceSnapshot.items.filter(
+      (item) =>
+        recordingMbid(item.track.recordingMbid) === mapping.recordingMbid &&
+        (!mapping.sourceOccurrenceId ||
+          mapping.sourceOccurrenceId === item.occurrenceId)
+    )
+    return (
+      occurrences.length > 0 &&
+      occurrences.every(
+        (item) =>
+          playlistCandidateScore(item.track, {
+            ...mapping.libraryTrack,
+            recordingMbid: null,
+          }) > 0.95
+      )
+    )
+  })
+}

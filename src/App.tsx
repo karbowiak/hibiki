@@ -40,6 +40,7 @@ import { StorageStatus } from "./components/PersistenceNotice"
 import { NotificationSources } from "./components/NotificationSources"
 import { OfflineStatus } from "./components/OfflineStatus"
 import { useLinkedPlaylistSync } from "./hooks/useLinkedPlaylistSync"
+import { PlaylistSyncStatus } from "./components/PlaylistSync/PlaylistSyncStatus"
 import { NotificationToasts } from "./components/NotificationCenter"
 import LiveAnnouncer from "./components/LiveAnnouncer"
 import "./i18n" // Initialize i18n on app load
@@ -118,6 +119,7 @@ function DesktopApp() {
       <OfflineStatus />
       <StorageStatus />
       <ListeningSyncStatus />
+      <PlaylistSyncStatus />
       {/*
         Outer shell: full-height flex column.
         - Top row: sidebar + page content (flex-1, takes all space above the player)

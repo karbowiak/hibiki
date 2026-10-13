@@ -187,7 +187,7 @@ describe("provider-neutral playlist previews", () => {
       )
     ).toEqual(data)
   })
-  test("MBIDs beat metadata; different MBIDs, live versions, wrong albums and ambiguous local editions do not silently match", () => {
+  test("MBIDs beat metadata; different recordings and live versions remain separate while compilation albums may match", () => {
     expect(matchTrack(track("a"), [track("b", B)]).status).toBe("missing")
     expect(
       matchTrack(track("a", null), [
@@ -198,10 +198,10 @@ describe("provider-neutral playlist previews", () => {
       matchTrack(track("a", null), [
         { ...track("b", null), album: "Other album" },
       ]).status
-    ).toBe("missing")
+    ).toBe("matched")
     expect(
       matchTrack(track("a"), [track("a"), track("alternate")]).status
-    ).toBe("ambiguous")
+    ).toBe("matched")
     expect(
       matchTrack(track("a"), [track("same"), track("text-only", null)])
     ).toMatchObject({ status: "matched", by: "mbid", track: { id: "same" } })

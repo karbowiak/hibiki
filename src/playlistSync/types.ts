@@ -18,6 +18,7 @@ export interface PlaylistOccurrence {
   track: PlaylistTrack
 }
 export interface PlaylistSnapshot {
+  description?: string
   account: PlaylistAccount
   id: string
   title: string
@@ -47,6 +48,8 @@ export type MatchResult =
       status: "matched"
       track: PlaylistTrack
       by: "mbid" | "metadata" | "manual"
+      /** Deterministic label similarity, not a probability of recording identity. */
+      score?: number
     }
   | { status: "missing" | "ambiguous"; candidates: readonly PlaylistTrack[] }
 export interface PlaylistPlan {

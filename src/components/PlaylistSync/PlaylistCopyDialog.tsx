@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react"
 import { open } from "@tauri-apps/plugin-shell"
 import { useProviderStore } from "../../stores/providerStore"
 import { useListenBrainzStore } from "../../metadata/listenbrainz/authStore"
-import { AppDialog } from "../shared/AppDialog"
+import { VerifiedRecordingsAction } from "./VerifiedRecordingsAction"
+import { PlaylistSyncFrame } from "./PlaylistSyncFrame"
 import { Skeleton } from "../shared/Skeleton"
 import {
   executePlaylistCopy,
@@ -21,6 +22,10 @@ import {
 } from "../../playlistSync"
 import { playlistCopyServices, type PlaylistCopyServices } from "./services"
 import { useCopyOwner } from "./useCopyOwner"
+import {
+  playlistSearchQuery,
+  filterPlaylistCandidates,
+} from "../../playlistSync/manualSearch"
 
 const button =
   "rounded-lg border border-[var(--border)] bg-app-surface px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
@@ -28,13 +33,21 @@ const input =
   "w-full rounded-lg border border-[var(--border)] bg-app-surface px-3 py-2 text-sm text-[var(--text-primary)] focus:outline focus:outline-2 focus:outline-accent"
 interface Props {
   mode: "import" | "export"
+  suggestedTitle?: string
+  remotePlaylistId?: string
+  embedded?: boolean
+  onBusyChange?(busy: boolean): void
   playlistId?: string
   onClose(): void
-  onCreated?(): void | Promise<void>
+  onCreated?(attempt: PlaylistAttempt): void | Promise<void>
   services?: PlaylistCopyServices
 }
 export function PlaylistCopyDialog({
   mode,
+  suggestedTitle,
+  remotePlaylistId,
+  embedded = false,
+  onBusyChange,
   playlistId,
   onClose,
   onCreated,
@@ -43,7 +56,10 @@ export function PlaylistCopyDialog({
   const provider = useProviderStore((s) => s.provider)
   const authenticated = useListenBrainzStore((s) => s.isAuthenticated)
   const username = useListenBrainzStore((s) => s.username)
-  const capture = useCopyOwner(provider, `${mode}:${playlistId ?? ""}`)
+  const capture = useCopyOwner(
+    provider,
+    `${mode}:${playlistId ?? ""}:${remotePlaylistId ?? ""}`
+  )
   const [sourceAdapter, setSourceAdapter] = useState<PlaylistAdapter | null>(
     null
   )
@@ -60,6 +76,7 @@ export function PlaylistCopyDialog({
   const [error, setError] = useState<string | null>(null),
     [result, setResult] = useState<PlaylistAttempt | null>(null)
   const [unretained, setUnretained] = useState<PlaylistAttempt | null>(null)
+  const [resolving, setResolving] = useState(false)
   const [retry, setRetry] = useState(0)
   const revision = useRef(0),
     selectionPending = useRef<symbol | null>(null),
@@ -71,6 +88,10 @@ export function PlaylistCopyDialog({
       mounted.current = false
     }
   }, [])
+  useEffect(() => {
+    onBusyChange?.(committing || !!unretained)
+    return () => onBusyChange?.(false)
+  }, [committing, unretained, onBusyChange])
   const ready =
     !!provider?.capabilities.playlists &&
     !!provider.cacheScope &&
@@ -133,7 +154,7 @@ export function PlaylistCopyDialog({
       candidates,
     })
     setPlan(next)
-    setTitle(next.title)
+    setTitle(suggestedTitle ?? next.title)
     setResult(null)
   }
 
@@ -161,7 +182,9 @@ export function PlaylistCopyDialog({
           target = mode === "import" ? library : lb
         setSourceAdapter(source)
         setTargetAdapter(target)
-        if (mode === "import") {
+        if (mode === "import" && remotePlaylistId) {
+          await preview(await source.read(remotePlaylistId), target, current)
+        } else if (mode === "import") {
           const response = await lb.list(page * 50, 50)
           if (current()) {
             setChoices(response.items)
@@ -184,6 +207,8 @@ export function PlaylistCopyDialog({
   }, [
     mode,
     playlistId,
+    remotePlaylistId,
+    suggestedTitle,
     provider,
     provider?.cacheScope,
     provider?.playbackSession,
@@ -192,6 +217,7 @@ export function PlaylistCopyDialog({
     page,
     retry,
     services,
+    capture,
   ])
 
   async function choose(id: string) {
@@ -240,7 +266,16 @@ export function PlaylistCopyDialog({
       )
       if (!current()) return
       setResult(receipt)
-      if (receipt.state === "verified") await onCreated?.()
+      if (receipt.state === "verified") {
+        try {
+          await onCreated?.(receipt)
+        } catch {
+          if (current())
+            setError(
+              "The copy was created and verified, but the library view could not refresh. Reload the playlist view; do not create another copy."
+            )
+        }
+      }
     } catch (failure) {
       if (!current()) {
         if (
@@ -297,7 +332,8 @@ export function PlaylistCopyDialog({
       ? playlistCopyBlockReason(plan, targetAdapter.capabilities)
       : null
   return (
-    <AppDialog
+    <PlaylistSyncFrame
+      embedded={embedded}
       title={
         mode === "import"
           ? "Import a playlist copy"
@@ -312,7 +348,7 @@ export function PlaylistCopyDialog({
           {unretained ? (
             <button
               className={button}
-              disabled={committing}
+              disabled={committing || resolving}
               onClick={() => void retain()}
             >
               Retry saving receipt
@@ -322,6 +358,7 @@ export function PlaylistCopyDialog({
               className={button}
               disabled={
                 loading ||
+                resolving ||
                 committing ||
                 missing > 0 ||
                 !!copyBlocked ||
@@ -424,13 +461,23 @@ export function PlaylistCopyDialog({
       )}
       {plan && !loading && (
         <>
+          <VerifiedRecordingsAction
+            provider={provider}
+            plan={plan}
+            current={capture}
+            disabled={committing || !!result || !!unretained}
+            onRunning={setResolving}
+            onResolved={(next) =>
+              setPlan((previous) => (previous === plan ? next : previous))
+            }
+          />
           <label className="mb-4 block text-sm">
             Copy title
             <input
               className={`${input} mt-1`}
               maxLength={500}
               value={title}
-              disabled={committing || !!result}
+              disabled={committing || resolving || !!result}
               onChange={(event) => setTitle(event.target.value)}
             />
           </label>
@@ -453,7 +500,7 @@ export function PlaylistCopyDialog({
                   index={index}
                   row={row}
                   mode={mode}
-                  disabled={committing || !!result}
+                  disabled={committing || resolving || !!result}
                   provider={provider}
                   current={capture}
                   onResolve={(selected) =>
@@ -482,10 +529,10 @@ export function PlaylistCopyDialog({
             ? "Copy created and its ordered songs verified."
             : result.state === "cancelled"
               ? "No request was sent."
-              : "This copy needs checking. Use Review copies on the Playlists page before retrying."}
+              : "This copy needs checking. Open Sync, choose the original remote playlist and use Recover an earlier copy before retrying."}
         </div>
       )}
-    </AppDialog>
+    </PlaylistSyncFrame>
   )
 }
 
@@ -497,6 +544,7 @@ export function OccurrenceResolver({
   provider,
   current,
   onResolve,
+  evidenceLabel,
 }: {
   index: number
   row: PlaylistPlan["rows"][number]
@@ -505,16 +553,19 @@ export function OccurrenceResolver({
   provider: ReturnType<typeof useProviderStore.getState>["provider"]
   current: () => () => boolean
   onResolve(track: PlaylistTrack): void
+  evidenceLabel?: string
 }) {
   const [query, setQuery] = useState(
-      `${row.source.artist} ${row.source.title}`.slice(0, 500)
+      `${row.source.artist} ${row.source.title}`.slice(0, 256)
     ),
     [mbid, setMbid] = useState("")
   const [confirmed, setConfirmed] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState<string | null>(null)
   const [candidates, setCandidates] = useState<PlaylistTrack[]>(
-    row.match.status === "ambiguous" ? [...row.match.candidates] : []
+    row.match.status === "ambiguous" || row.match.status === "missing"
+      ? [...row.match.candidates]
+      : []
   )
   const request = useRef(0),
     searchPending = useRef<symbol | null>(null),
@@ -528,9 +579,10 @@ export function OccurrenceResolver({
   }, [])
   const canonical = recordingMbid(mbid)
   async function search() {
+    const upstream = playlistSearchQuery(query)
     if (
       !provider?.capabilities.search ||
-      !query.trim() ||
+      !upstream ||
       busy ||
       searchPending.current
     )
@@ -542,13 +594,16 @@ export function OccurrenceResolver({
     setBusy(true)
     setError(null)
     try {
-      const found = await provider.search(query.trim(), "track")
+      const found = await provider.search(upstream!, "track")
       if (!active.current || !owns() || request.current !== revision) return
       setCandidates(
-        found
-          .filter((item) => item.type === "track")
-          .slice(0, 50)
-          .map((track) => playlistTrackFromMusic(track))
+        filterPlaylistCandidates(
+          found
+            .filter((item) => item.type === "track")
+            .slice(0, 50)
+            .map((track) => playlistTrackFromMusic(track)),
+          query
+        )
       )
     } catch {
       if (active.current && owns() && request.current === revision)
@@ -570,9 +625,12 @@ export function OccurrenceResolver({
       </p>
       {row.match.status === "matched" ? (
         <p className="mt-2 text-sm">
-          {row.match.by === "manual"
-            ? "Explicitly selected"
-            : `Matched by ${row.match.by}`}
+          {evidenceLabel ??
+            (row.match.by === "manual"
+              ? "Explicitly selected"
+              : row.match.by === "mbid"
+                ? "Matched by recording ID"
+                : "Matched by metadata")}
           : {row.match.track.artist} — {row.match.track.title}
           {row.match.track.album ? ` · ${row.match.track.album}` : ""}
         </p>
@@ -652,7 +710,7 @@ export function OccurrenceResolver({
               <input
                 className={`${input} mt-1`}
                 value={query}
-                maxLength={500}
+                maxLength={256}
                 onChange={(event) => {
                   ++request.current
                   searchPending.current = null
@@ -663,12 +721,21 @@ export function OccurrenceResolver({
             </label>
             <button
               className={`${button} self-end`}
-              disabled={busy || !provider?.capabilities.search || !query.trim()}
+              disabled={
+                busy ||
+                !provider?.capabilities.search ||
+                !playlistSearchQuery(query)
+              }
               onClick={() => void search()}
             >
               {busy ? "Searching…" : "Search library"}
             </button>
           </div>
+          <p className="mt-2 text-xs text-[var(--text-secondary)]">
+            Use * for several characters or ? for one character to narrow names.
+            Include an artist or title; wildcard matches are suggestions and
+            always require your explicit selection.
+          </p>
           {candidates.length > 0 && (
             <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto">
               {candidates.map((candidate) => (
