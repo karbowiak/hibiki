@@ -63,8 +63,14 @@ export function ActivityIndicator() {
     panelId = useId()
   const [position, setPosition] = useState({ left: 0, top: 0, width: 320 })
   const bulkTasks = progress?.tasks.filter(
-    (task) => !task.task.startsWith("catchup:")
+    (task) =>
+      !task.task.startsWith("catchup:") &&
+      !(task.task.startsWith("playlist:") && task.status === "error")
   )
+  const playlistFailures =
+    progress?.tasks.filter(
+      (task) => task.task.startsWith("playlist:") && task.status === "error"
+    ).length ?? 0
   const task =
     bulkTasks?.find((task) => task.status === "error") ??
     bulkTasks?.find((task) => task.status !== "complete")
@@ -106,6 +112,21 @@ export function ActivityIndicator() {
       persistent: true,
     })
   }, [failed, context?.cacheScope, context?.connectionRevision])
+  useEffect(() => {
+    const notices = useNotificationCenterStore.getState()
+    if (!playlistFailures || !context) {
+      notices.resolve("library.playlists")
+      return
+    }
+    notices.notify({
+      id: "library.playlists",
+      title: "Some playlist contents are waiting to update",
+      message:
+        "Hibiki will retry automatically. Other library indexing continues, and any previously saved playlist version stays available.",
+      severity: "warning",
+      persistent: true,
+    })
+  }, [playlistFailures, context?.cacheScope, context?.connectionRevision])
   const activities: Activity[] = []
   if (progress && context && progress.tasks.length) {
     const paused = offline || task?.status === "paused",
@@ -147,6 +168,16 @@ export function ActivityIndicator() {
       retry: failed && !offline && !retrying ? () => void retry() : undefined,
     })
   }
+  if (context && playlistFailures) {
+    activities.push({
+      id: "catalogue-playlists",
+      busy: false,
+      state: offline ? "paused" : "error",
+      label: "Playlist contents waiting to update",
+      detail: `${playlistFailures.toLocaleString()} ${playlistFailures === 1 ? "playlist" : "playlists"} will retry automatically.\nOther indexing continues; previously saved versions stay available.`,
+      retry: !offline && !retrying ? () => void retry() : undefined,
+    })
+  }
   const incremental = progress?.incremental
   if (
     context &&
@@ -167,7 +198,7 @@ export function ActivityIndicator() {
           ? "Checking Plex for changes"
           : "Updating saved metadata",
       detail: incremental.pending
-        ? `${incremental.pending.toLocaleString()} items awaiting updates`
+        ? `${incremental.pending.toLocaleString()} ${incremental.pending === 1 ? "item" : "items"} awaiting updates`
         : "Only new or changed items are fetched.",
     })
   }

@@ -111,6 +111,35 @@ assert.match(
 await act(async () => {
   useCatalogueStore.getState().update(context, {
     ...progress,
+    tasks: [
+      { task: "playlist:7", status: "error", cursor: 200, total: 304 },
+      ...progress.tasks,
+    ],
+  })
+  await settle()
+})
+const playlistPanel = document.querySelector("[role=dialog]")!.textContent!
+assert.match(playlistPanel, /Saving your library/)
+assert.match(playlistPanel, /Tracks: 25 \/ 100/)
+assert.match(playlistPanel, /Playlist contents waiting to update/)
+assert.match(playlistPanel, /1 playlist will retry automatically/)
+assert(!playlistPanel.includes("Library indexing needs attention"))
+assert.equal(opener.title, "1 active operation")
+assert.equal(
+  useNotificationCenterStore
+    .getState()
+    .notifications.find((n) => n.id === "library.indexing")?.active,
+  undefined
+)
+assert.equal(
+  useNotificationCenterStore
+    .getState()
+    .notifications.find((n) => n.id === "library.playlists")?.active,
+  true
+)
+await act(async () => {
+  useCatalogueStore.getState().update(context, {
+    ...progress,
     tasks: [{ ...progress.tasks[0], status: "error" }],
   })
   await settle()
@@ -120,6 +149,12 @@ assert.equal(
     .getState()
     .notifications.find((n) => n.id === "library.indexing")?.active,
   true
+)
+assert.equal(
+  useNotificationCenterStore
+    .getState()
+    .notifications.find((n) => n.id === "library.playlists")?.active,
+  false
 )
 const retry = [...document.querySelectorAll("button")].find(
   (b) => b.textContent === "Retry indexing"

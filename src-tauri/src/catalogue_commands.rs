@@ -6,7 +6,7 @@ use crate::{
 };
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
 };
 use tauri::{Emitter, Manager, State};
 const PAGE: i64 = 200;
@@ -26,18 +26,24 @@ async fn background_yield(app: &tauri::AppHandle, idle_ms: u64) {
 pub struct CatalogueSync {
     worker: Arc<tokio::sync::Mutex<()>>,
     targeted: Arc<tokio::sync::Mutex<()>>,
+    playlist_worker: Arc<tokio::sync::Mutex<()>>,
+    playlists_scheduled: Mutex<HashSet<(u64, String)>>,
     targeted_scheduled: Mutex<HashSet<(u64, String)>>,
     scheduled: Mutex<HashSet<(u64, String)>>,
     verified: Mutex<HashMap<(u64, String), (std::time::Instant, i64)>>,
+    playlists: Mutex<HashMap<(String, i64), Weak<tokio::sync::Mutex<()>>>>,
 }
 impl CatalogueSync {
     pub fn new() -> Self {
         Self {
             worker: Arc::new(tokio::sync::Mutex::new(())),
             targeted: Arc::new(tokio::sync::Mutex::new(())),
+            playlist_worker: Arc::new(tokio::sync::Mutex::new(())),
+            playlists_scheduled: Mutex::new(HashSet::new()),
             targeted_scheduled: Mutex::new(HashSet::new()),
             scheduled: Mutex::new(HashSet::new()),
             verified: Mutex::new(HashMap::new()),
+            playlists: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -53,6 +59,7 @@ pub async fn catalogue_start(
     state.checked_client(&context, &guard)?;
     drop(guard);
     schedule_targeted(&app, &context)?;
+    schedule_playlists(&app, &context)?;
     let key = (context.connection_revision, context.cache_scope.clone());
     if !manager
         .scheduled
@@ -69,6 +76,31 @@ pub async fn catalogue_start(
             tracing::debug!(%error,"Plex catalogue sync stopped");
         }
         if let Ok(mut scheduled) = app.state::<CatalogueSync>().scheduled.lock() {
+            scheduled.remove(&key);
+        }
+    });
+    Ok(())
+}
+fn schedule_playlists(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<(), String> {
+    let manager = app.state::<CatalogueSync>();
+    let key = (context.connection_revision, context.cache_scope.clone());
+    if !manager
+        .playlists_scheduled
+        .lock()
+        .map_err(|_| "Playlist worker unavailable")?
+        .insert(key.clone())
+    {
+        return Ok(());
+    }
+    let lane = manager.playlist_worker.clone();
+    let app = app.clone();
+    let context = context.clone();
+    tauri::async_runtime::spawn(async move {
+        let _lane = lane.lock().await;
+        if let Err(error) = playlists(&app, &context).await {
+            tracing::debug!(%error, "Plex playlist catalogue paused");
+        }
+        if let Ok(mut scheduled) = app.state::<CatalogueSync>().playlists_scheduled.lock() {
             scheduled.remove(&key);
         }
     });
@@ -698,7 +730,6 @@ pub(crate) fn playlist_revision(item: &serde_json::Value) -> String {
         "{:x}",
         Sha256::digest(
             serde_json::to_vec(&serde_json::json!([
-                item["updatedAt"],
                 item["leafCount"],
                 item["duration"],
                 item["smart"],
@@ -708,11 +739,125 @@ pub(crate) fn playlist_revision(item: &serde_json::Value) -> String {
         )
     )
 }
-async fn playlists(
+// Plex regenerates composite artwork (and updatedAt) when reading a playlist.
+// This structural revision is a resume hint, not a membership proof: both
+// catalogue and download capture must verify ordered track/occurrence entries.
+fn playlist_lock(
+    app: &tauri::AppHandle,
+    scope: &str,
+    id: i64,
+) -> Result<Arc<tokio::sync::Mutex<()>>, String> {
+    let manager = app.state::<CatalogueSync>();
+    let mut locks = manager
+        .playlists
+        .lock()
+        .map_err(|_| "Playlist catalogue unavailable")?;
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    let key = (scope.to_owned(), id);
+    if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+        return Ok(lock);
+    }
+    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    locks.insert(key, Arc::downgrade(&lock));
+    Ok(lock)
+}
+fn begin_playlist(
+    conn: &rusqlite::Connection,
+    scope: &str,
+    id: i64,
+    revision: &str,
+    refresh: bool,
+) -> Result<sync::Task, String> {
+    let name = format!("playlist:{id}");
+    let prefix = format!("members-v2:{revision}:");
+    if let Some(task) = sync::task(conn, scope, &name)? {
+        let invalid = task.status == "error"
+            && task.error.as_deref().is_some_and(|e| {
+                e.contains("changed") || e.contains("repeated") || e.contains("Incomplete")
+            });
+        if task.generation.starts_with(&prefix)
+            && !invalid
+            && (task.status != "complete" || !refresh)
+        {
+            return Ok(task);
+        }
+    }
+    // A distinct owner also fences late checkpoints from a failed attempt
+    // whose header revision happens to be identical.
+    sync::begin(
+        conn,
+        scope,
+        &name,
+        Some(&format!("{prefix}{}", uuid::Uuid::new_v4())),
+    )
+}
+async fn verify_playlist_staging(
     app: &tauri::AppHandle,
     context: &PlexRequestContext,
-    _generation: &str,
+    client: &PlexClient,
+    id: i64,
+    task: &sync::Task,
 ) -> Result<(), String> {
+    let mut offset = 0;
+    loop {
+        let expected = save_checked(app, context, |conn| {
+            sync::playlist_staging_page(conn, &context.cache_scope, id, task, offset, PAGE)
+        })
+        .await?;
+        let page = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            client.catalogue_page(&format!("/playlists/{id}/items"), offset, PAGE, &[]),
+        )
+        .await
+        .map_err(|_| "Playlist verification timed out")?
+        .map_err(|_| "Playlist verification is unavailable")?;
+        if page.total.is_some_and(|n| n != task.cursor)
+            || !crate::plex::catalogue::playlist_membership_matches(&expected, &page.items)
+                .map_err(|_| "Invalid playlist verification")?
+        {
+            return Err("Playlist changed during catalogue sync".into());
+        }
+        offset += page.items.len() as i64;
+        if offset == task.cursor {
+            return Ok(());
+        }
+        if page.items.is_empty() || offset > task.cursor {
+            return Err("Incomplete playlist catalogue".into());
+        }
+        background_yield(app, 150).await;
+    }
+}
+pub(crate) async fn verify_playlist_documents(
+    client: &PlexClient,
+    id: i64,
+    documents: &[serde_json::Value],
+) -> Result<(), String> {
+    let mut offset = 0;
+    loop {
+        let end = (offset + PAGE as usize).min(documents.len());
+        let page = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            client.catalogue_page(&format!("/playlists/{id}/items"), offset as i64, PAGE, &[]),
+        )
+        .await
+        .map_err(|_| "Playlist verification timed out")?
+        .map_err(|_| "Playlist verification is unavailable")?;
+        if page.total.is_some_and(|n| n != documents.len() as i64)
+            || !crate::plex::catalogue::playlist_membership_matches(
+                &documents[offset..end],
+                &page.items,
+            )
+            .map_err(|_| "Invalid playlist verification")?
+        {
+            return Err("This playlist changed while preparing its download. Try again.".into());
+        }
+        if end == documents.len() {
+            return Ok(());
+        }
+        offset = end;
+    }
+}
+async fn playlists(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<(), String> {
     let mut cursor = 0;
     loop {
         let ids = save_checked(app, context, |conn| {
@@ -724,7 +869,18 @@ async fn playlists(
         }
         for id in ids {
             cursor = id;
-            sync_playlist(app, context, id, None).await?;
+            if let Err(error) = sync_playlist(app, context, id, None).await {
+                // Keep the last published snapshot and move on. The durable
+                // change lane retries this playlist independently of full
+                // metadata and waveform work. Offline/retired owners stop.
+                fresh_library(app, context).await?;
+                save_checked(app, context, |conn| {
+                    incremental::retry_playlist(conn, &context.cache_scope, id)
+                })
+                .await?;
+                tracing::debug!(%error, "Playlist catalogue deferred; other indexing continues");
+                schedule_targeted(app, context)?;
+            }
         }
     }
 }
@@ -734,22 +890,18 @@ async fn sync_playlist(
     id: i64,
     admission: Option<&incremental::Change>,
 ) -> Result<(), String> {
-    let name = format!("playlist:{id}");
+    let lane = playlist_lock(app, &context.cache_scope, id)?;
+    let _lane = if admission.is_some() {
+        // A huge playlist already being scanned must not hold up unrelated
+        // live artist/album/track changes in the incremental lane.
+        lane.try_lock()
+            .map_err(|_| "Playlist scan already running")?
+    } else {
+        lane.lock().await
+    };
     let (client, _) = verify_library(app, context).await?;
     let before = playlist_document(&client, id).await?;
     let revision = playlist_revision(&before);
-    let playlist_generation = format!("revision:{revision}");
-    if save_checked(app, context, |conn| {
-        Ok(
-            sync::task(conn, &context.cache_scope, &name)?.is_some_and(|t| {
-                t.status == "complete" && t.generation.ends_with(&format!(":{revision}"))
-            }),
-        )
-    })
-    .await?
-    {
-        return Ok(());
-    }
     save_checked(app, context, |conn| {
         if let Some(change) = admission {
             if !incremental::current(conn, &context.cache_scope, change)? {
@@ -759,7 +911,16 @@ async fn sync_playlist(
         crate::db::catalogue::save(conn, &context.cache_scope, "playlist", id, &before, true)
     })
     .await?;
-    let mut task = start_task(app, context, &name, Some(&playlist_generation)).await?;
+    let mut task = save_checked(app, context, |conn| {
+        begin_playlist(
+            conn,
+            &context.cache_scope,
+            id,
+            &revision,
+            admission.is_some(),
+        )
+    })
+    .await?;
     while task.status != "complete" {
         let operation = async {
             let (client, _) = verify_library(app, context).await?;
@@ -773,14 +934,7 @@ async fn sync_playlist(
             let total = page.total.or(task.total);
             let complete = page.items.is_empty()
                 || total.is_some_and(|total| task.cursor + page.items.len() as i64 == total);
-            if complete {
-                fresh_library(app, context).await?;
-                let after = playlist_document(&client, id).await?;
-                if playlist_revision(&after) != revision {
-                    return Err("Playlist changed during catalogue sync".into());
-                }
-            }
-            let revision = save_checked(app, context, |conn| {
+            save_checked(app, context, |conn| {
                 sync::playlist_page_checked(
                     conn,
                     &context.cache_scope,
@@ -788,8 +942,36 @@ async fn sync_playlist(
                     &task,
                     &page.items,
                     total,
-                    complete,
+                    false,
                     admission,
+                )
+            })
+            .await?;
+            task = save_checked(app, context, |conn| {
+                sync::task(conn, &context.cache_scope, &format!("playlist:{id}"))?
+                    .ok_or("Missing playlist task".into())
+            })
+            .await?;
+            if !complete {
+                return Ok(task.clone());
+            }
+            // Publishing happens only after a second, bounded ordered pass.
+            // Equal-count substitutions/reorders and duplicate occurrences
+            // remain protected even when Plex's artwork timestamp changes.
+            verify_playlist_staging(app, context, &client, id, &task).await?;
+            fresh_library(app, context).await?;
+            let after = playlist_document(&client, id).await?;
+            if playlist_revision(&after) != revision {
+                return Err("Playlist changed during catalogue sync".into());
+            }
+            let revision = save_checked(app, context, |conn| {
+                sync::playlist_finish_checked(
+                    conn,
+                    &context.cache_scope,
+                    id,
+                    &task,
+                    admission,
+                    &after,
                 )
             })
             .await?;
@@ -801,7 +983,11 @@ async fn sync_playlist(
                     vec![serde_json::json!({"kind":"playlist","id":id})],
                 );
             }
-            start_task(app, context, &name, Some(&playlist_generation)).await
+            save_checked(app, context, |conn| {
+                sync::task(conn, &context.cache_scope, &format!("playlist:{id}"))?
+                    .ok_or("Missing playlist task".into())
+            })
+            .await
         }
         .await;
         match operation {
@@ -822,8 +1008,8 @@ async fn run(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<(),
     let artists = roster(app, context, "artist").await?;
     let albums = roster(app, context, "album").await?;
     let tracks = roster(app, context, "track").await?;
-    let playlist_roster = roster(app, context, "playlist").await?;
-    playlists(app, context, &playlist_roster.generation).await?;
+    roster(app, context, "playlist").await?;
+    schedule_playlists(app, context)?;
     details(app, context, "artist", &artists.generation).await?;
     details(app, context, "album", &albums.generation).await?;
     details(app, context, "track", &tracks.generation).await?;
@@ -939,6 +1125,15 @@ pub async fn catalogue_retry(
     let guard = state.0.lock().await;
     state.checked_client(&context, &guard)?;
     drop(guard);
+    if !reset {
+        save_checked(&app, &context, |conn| {
+            let mut stmt = conn.prepare("SELECT CAST(substr(task,10) AS INTEGER) FROM plex_catalogue_tasks WHERE scope=?1 AND task LIKE 'playlist:%' AND status='error'").map_err(|_| "Cannot read playlist retries")?;
+            let ids = stmt.query_map([&context.cache_scope], |r| r.get::<_, i64>(0)).map_err(|_| "Cannot read playlist retries")?.collect::<Result<Vec<_>, _>>().map_err(|_| "Cannot read playlist retries")?;
+            for id in ids { incremental::retry_playlist(conn, &context.cache_scope, id)?; }
+            conn.execute("UPDATE plex_catalogue_changes SET attempted_at=0 WHERE scope=?1 AND kind='playlist' AND id IN (SELECT CAST(substr(task,10) AS INTEGER) FROM plex_catalogue_tasks WHERE scope=?1 AND task LIKE 'playlist:%' AND status='error')",[&context.cache_scope]).map_err(|_| "Cannot resume playlist retries")?;
+            Ok(())
+        }).await?;
+    }
     // Serialize reset with the worker so an old generation cannot republish.
     if reset {
         if manager
@@ -1189,6 +1384,226 @@ async fn analysis(app: &tauri::AppHandle, context: &PlexRequestContext) -> Resul
 mod tests {
     use super::*;
     use serde_json::json;
+    #[tokio::test]
+    #[ignore = "Explicit private Plex settings/playlist ID; read-only ordered verification in a temporary database"]
+    async fn private_playlist_artwork_churn_resume_and_publication_proof() {
+        let settings: crate::plex::PlexSettings = serde_json::from_slice(
+            &std::fs::read(
+                std::env::var("HIBIKI_CATALOGUE_PROOF_SETTINGS")
+                    .expect("Set private settings path"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let id: i64 = std::env::var("HIBIKI_PLAYLIST_PROOF_ID")
+            .expect("Set explicit playlist ID")
+            .parse()
+            .unwrap();
+        assert!(id > 0);
+        let mut client = PlexClient::new(crate::plex::PlexClientConfig {
+            base_url: settings.base_url,
+            token: settings.token,
+            client_id: settings.client_id,
+            ..Default::default()
+        })
+        .unwrap();
+        let identity = client
+            .get_identity()
+            .await
+            .expect("Private server unavailable");
+        assert!(identity.machine_identifier == settings.machine_identifier);
+        client.machine_identifier = identity.machine_identifier;
+        let section: i64 = std::env::var("HIBIKI_CATALOGUE_PROOF_SECTION")
+            .expect("Set explicit music section")
+            .parse()
+            .unwrap();
+        let sections = client
+            .get_all_sections()
+            .await
+            .expect("Private library unavailable");
+        let selected = sections
+            .iter()
+            .find(|s| s.key == section && s.section_type == "artist")
+            .expect("Private music section missing");
+        client.library_scope = client.cache_scope_for_library(section, selected.uuid.as_deref());
+        let before = playlist_document(&client, id)
+            .await
+            .expect("Private playlist unavailable");
+        let revision = playlist_revision(&before);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("playlist-proof.db");
+        let mut conn = rusqlite::Connection::open(&path).unwrap();
+        crate::db::schema::run_migrations(&conn).unwrap();
+        let scope = client.library_scope.clone();
+        let mut task = begin_playlist(&conn, &scope, id, &revision, false).unwrap();
+        let mut documents = Vec::new();
+        let mut reopened = false;
+        loop {
+            let page = client
+                .catalogue_page(&format!("/playlists/{id}/items"), task.cursor, PAGE, &[])
+                .await
+                .expect("Private playlist page unavailable");
+            assert!(
+                page.total.is_none_or(|n| n <= 10_000),
+                "Proof is bounded to 10,000 occurrences"
+            );
+            let done = page.items.is_empty()
+                || page
+                    .total
+                    .is_some_and(|n| n == task.cursor + page.items.len() as i64);
+            sync::playlist_page_checked(
+                &conn,
+                &scope,
+                id,
+                &task,
+                &page.items,
+                page.total,
+                false,
+                None,
+            )
+            .unwrap();
+            documents.extend(page.items);
+            assert!(documents.len() <= 10_000);
+            if !reopened {
+                let checkpoint = sync::task(&conn, &scope, &format!("playlist:{id}"))
+                    .unwrap()
+                    .unwrap();
+                drop(conn);
+                conn = rusqlite::Connection::open(&path).unwrap();
+                task = begin_playlist(&conn, &scope, id, &revision, false).unwrap();
+                assert_eq!(
+                    (task.generation.clone(), task.cursor),
+                    (checkpoint.generation, checkpoint.cursor)
+                );
+                reopened = true;
+            } else {
+                task = sync::task(&conn, &scope, &format!("playlist:{id}"))
+                    .unwrap()
+                    .unwrap();
+            }
+            if done {
+                break;
+            }
+        }
+        assert_eq!(
+            conn.query_row::<i64, _, _>(
+                "SELECT COUNT(*) FROM plex_catalogue_playlist_versions",
+                [],
+                |r| r.get(0)
+            )
+            .unwrap(),
+            0
+        );
+        verify_playlist_documents(&client, id, &documents)
+            .await
+            .expect("Private ordered verification failed");
+        let after = playlist_document(&client, id)
+            .await
+            .expect("Private final playlist unavailable");
+        assert_eq!(revision, playlist_revision(&after));
+        assert!(
+            sync::playlist_finish_checked(&conn, &scope, id, &task, None, &after)
+                .unwrap()
+                .is_some()
+        );
+        let page = crate::db::catalogue_query::query(
+            &conn,
+            &scope,
+            "getPlaylistItems",
+            &[json!(id.to_string()), json!(0), json!(200)],
+        )
+        .unwrap()
+        .expect("Published playlist unavailable");
+        assert!(page.complete);
+        assert_eq!(page.total, documents.len() as i64);
+        for (expected, projected) in documents.iter().zip(&page.items) {
+            assert_eq!(
+                number(&expected["ratingKey"]),
+                number(&projected["rating_key"])
+            );
+            assert_eq!(
+                number(&expected["playlistItemID"]),
+                number(&projected["playlist_item_id"])
+            );
+        }
+        eprintln!("Read-only playlist proof: {} ordered occurrences verified across database reopen and atomic publication; artwork timestamp changed: {}; no encoded audio downloaded",documents.len(),before["updatedAt"]!=after["updatedAt"]);
+    }
+    #[test]
+    fn playlist_artwork_churn_does_not_change_membership_resume_hint() {
+        let before =
+            json!({"updatedAt":1,"leafCount":988,"duration":1000,"smart":false,"composite":"/old"});
+        let mut after = before.clone();
+        after["updatedAt"] = json!(2);
+        after["composite"] = json!("/regenerated");
+        after["Image"] = json!([{"type":"coverPoster","url":"/new"}]);
+        assert_eq!(playlist_revision(&before), playlist_revision(&after));
+        for (key, value) in [
+            ("leafCount", json!(989)),
+            ("duration", json!(2000)),
+            ("smart", json!(true)),
+            ("content", json!("/new-filter")),
+        ] {
+            let mut edited = before.clone();
+            edited[key] = value;
+            assert_ne!(playlist_revision(&before), playlist_revision(&edited));
+        }
+    }
+    #[test]
+    fn playlist_retry_uses_a_fresh_owner_but_transport_interruption_resumes() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::schema::run_migrations(&conn).unwrap();
+        let scope = format!("plex-{}", "a".repeat(64));
+        let raw = json!({"type":"track","ratingKey":1,"playlistItemID":10});
+        let first = begin_playlist(&conn, &scope, 7, "same-header", false).unwrap();
+        sync::playlist_page(&conn, &scope, 7, &first, &[raw.clone()], Some(2), false).unwrap();
+        let checkpoint = sync::task(&conn, &scope, "playlist:7").unwrap().unwrap();
+        sync::stop(
+            &conn,
+            &scope,
+            &checkpoint,
+            Some("Playlist verification timed out"),
+        )
+        .unwrap();
+        let resumed = begin_playlist(&conn, &scope, 7, "same-header", false).unwrap();
+        assert_eq!(resumed.generation, first.generation);
+        assert_eq!(resumed.cursor, 1);
+        sync::stop(
+            &conn,
+            &scope,
+            &resumed,
+            Some("Playlist changed during catalogue sync"),
+        )
+        .unwrap();
+        let replaced = begin_playlist(&conn, &scope, 7, "same-header", false).unwrap();
+        assert_ne!(replaced.generation, first.generation);
+        assert_eq!(replaced.cursor, 0);
+        assert!(
+            sync::playlist_page(&conn, &scope, 7, &resumed, &[raw.clone()], Some(2), true).is_err()
+        );
+        assert!(
+            sync::playlist_staging_page(&conn, &scope, 7, &replaced, 0, 200)
+                .unwrap()
+                .is_empty()
+        );
+        sync::playlist_page(&conn, &scope, 7, &replaced, &[raw], Some(1), true).unwrap();
+        let complete = begin_playlist(&conn, &scope, 7, "same-header", false).unwrap();
+        assert_eq!(complete.status, "complete");
+        assert_eq!(complete.generation, replaced.generation);
+        // An equal-count websocket edit must be rechecked even if the header
+        // marker stayed the same, while a bulk heartbeat can reuse completion.
+        let refresh = begin_playlist(&conn, &scope, 7, "same-header", true).unwrap();
+        assert_ne!(refresh.generation, complete.generation);
+        assert_eq!(refresh.status, "pending");
+        assert_eq!(
+            conn.query_row::<String, _, _>(
+                "SELECT generation FROM plex_catalogue_playlist_versions WHERE playlist_id=7",
+                [],
+                |r| r.get(0)
+            )
+            .unwrap(),
+            complete.generation
+        );
+    }
     #[test]
     fn all_native_media_parts_and_audio_streams_have_scoped_revision_identities() {
         let mut client = PlexClient::new(crate::plex::PlexClientConfig {

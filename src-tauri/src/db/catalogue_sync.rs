@@ -54,7 +54,7 @@ pub fn begin(
         .strip_prefix("playlist:")
         .and_then(|s| s.parse::<i64>().ok())
     {
-        conn.execute("DELETE FROM plex_catalogue_playlist_members WHERE scope=?1 AND playlist_id=?2 AND generation=?3 AND generation IS NOT (SELECT generation FROM plex_catalogue_playlist_versions WHERE scope=?1 AND playlist_id=?2)",params![scope,id,generation]).map_err(|_|"Cannot retire interrupted staging")?;
+        conn.execute("DELETE FROM plex_catalogue_playlist_members WHERE scope=?1 AND playlist_id=?2 AND generation IS NOT (SELECT generation FROM plex_catalogue_playlist_versions WHERE scope=?1 AND playlist_id=?2)",params![scope,id]).map_err(|_|"Cannot retire interrupted staging")?;
     }
     conn.execute("INSERT INTO plex_catalogue_tasks(scope,task,generation,status,updated_at) VALUES(?1,?2,?3,'pending',?4)
        ON CONFLICT(scope,task) DO UPDATE SET generation=excluded.generation,status='pending',cursor=0,total=NULL,completed_at=NULL,error=NULL,scan_mode='offset',key_cursor=0,upper_id=NULL,started_at=0,lower_time=NULL,upper_time=NULL,updated_at=excluded.updated_at",params![scope,name,generation,now()]).map_err(|_|"Cannot begin catalogue sync")?;
@@ -84,7 +84,7 @@ pub fn stop(
     task: &Task,
     error: Option<&str>,
 ) -> Result<(), String> {
-    conn.execute("UPDATE plex_catalogue_tasks SET status=?4,error=?5,updated_at=?6 WHERE scope=?1 AND task=?2 AND generation=?3 AND status!='complete'",params![scope,task.task,task.generation,if error.is_some(){"error"}else{"paused"},error,now()]).map_err(|_|"Cannot pause catalogue sync")?;
+    conn.execute("UPDATE plex_catalogue_tasks SET status=?4,error=?5,updated_at=?6 WHERE scope=?1 AND task=?2 AND generation=?3 AND cursor=?7 AND status!='complete'",params![scope,task.task,task.generation,if error.is_some(){"error"}else{"paused"},error,now(),task.cursor]).map_err(|_|"Cannot pause catalogue sync")?;
     Ok(())
 }
 
@@ -233,6 +233,41 @@ pub fn playlist_page_checked(
     complete: bool,
     admission: Option<&super::catalogue_incremental::Change>,
 ) -> Result<Option<i64>, String> {
+    playlist_page_impl(
+        conn, scope, id, task, items, total, complete, admission, None,
+    )
+}
+pub fn playlist_finish_checked(
+    conn: &Connection,
+    scope: &str,
+    id: i64,
+    task: &Task,
+    admission: Option<&super::catalogue_incremental::Change>,
+    document: &Value,
+) -> Result<Option<i64>, String> {
+    playlist_page_impl(
+        conn,
+        scope,
+        id,
+        task,
+        &[],
+        Some(task.cursor),
+        true,
+        admission,
+        Some(document),
+    )
+}
+fn playlist_page_impl(
+    conn: &Connection,
+    scope: &str,
+    id: i64,
+    task: &Task,
+    items: &[Value],
+    total: Option<i64>,
+    complete: bool,
+    admission: Option<&super::catalogue_incremental::Change>,
+    document: Option<&Value>,
+) -> Result<Option<i64>, String> {
     if task.total.is_some() && total.is_some() && task.total != total {
         return Err("Playlist changed during catalogue sync".into());
     }
@@ -243,6 +278,9 @@ pub fn playlist_page_checked(
         if !super::catalogue_incremental::current(&transaction, scope, change)? {
             return Err("Catalogue change was superseded".into());
         }
+    }
+    if let Some(document) = document {
+        catalogue::save(&transaction, scope, "playlist", id, document, true)?;
     }
     let mut revision = None;
     for (index, item) in items.iter().enumerate() {
@@ -263,7 +301,16 @@ pub fn playlist_page_checked(
             return Err("Incomplete playlist catalogue".into());
         }
         let previous:Option<String>=transaction.query_row("SELECT generation FROM plex_catalogue_playlist_versions WHERE scope=?1 AND playlist_id=?2",params![scope,id],|r|r.get(0)).optional().map_err(|_|"Cannot compare playlist publication")?;
-        if previous.as_deref() != Some(&task.generation) {
+        // Retries and artwork regeneration can produce a new staging owner
+        // without changing membership. Only actual ordered occurrences wake UI.
+        let unchanged = if let Some(previous) = &previous {
+            let prior_count: i64 = transaction.query_row("SELECT COUNT(*) FROM plex_catalogue_playlist_members WHERE scope=?1 AND playlist_id=?2 AND generation=?3", params![scope,id,previous], |r| r.get(0)).map_err(|_| "Cannot compare playlist membership")?;
+            let different: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM plex_catalogue_playlist_members n LEFT JOIN plex_catalogue_playlist_members p ON p.scope=n.scope AND p.playlist_id=n.playlist_id AND p.position=n.position AND p.generation=?4 WHERE n.scope=?1 AND n.playlist_id=?2 AND n.generation=?3 AND (p.position IS NULL OR CAST(json_extract(n.document,'$.ratingKey') AS INTEGER) IS NOT CAST(json_extract(p.document,'$.ratingKey') AS INTEGER) OR CAST(json_extract(n.document,'$.playlistItemID') AS INTEGER) IS NOT CAST(json_extract(p.document,'$.playlistItemID') AS INTEGER)))",params![scope,id,task.generation,previous],|r|r.get(0)).map_err(|_| "Cannot compare playlist membership")?;
+            prior_count == cursor && !different
+        } else {
+            false
+        };
+        if !unchanged {
             revision = Some(super::catalogue_incremental::bump(&transaction, scope)?);
         }
         transaction.execute("INSERT INTO plex_catalogue_playlist_versions(scope,playlist_id,generation,total,saved_at) VALUES(?1,?2,?3,?4,?5)
@@ -284,6 +331,35 @@ pub fn playlist_page_checked(
     Ok(revision)
 }
 
+/// Bounded raw staging reads for a second membership pass. Reading the live
+/// projection here would hide occurrence changes behind newer track metadata.
+pub fn playlist_staging_page(
+    conn: &Connection,
+    scope: &str,
+    id: i64,
+    task: &Task,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<Value>, String> {
+    let current =
+        self::task(conn, scope, &format!("playlist:{id}"))?.ok_or("Missing playlist task")?;
+    if current.generation != task.generation || current.cursor != task.cursor {
+        return Err("Catalogue task was superseded".into());
+    }
+    let mut stmt = conn.prepare("SELECT document FROM plex_catalogue_playlist_members WHERE scope=?1 AND playlist_id=?2 AND generation=?3 AND position>=?4 AND position<?5 ORDER BY position").map_err(|_| "Cannot read playlist staging")?;
+    let rows = stmt
+        .query_map(
+            params![scope, id, task.generation, offset, offset + limit],
+            |r| r.get::<_, String>(0),
+        )
+        .map_err(|_| "Cannot read playlist staging")?;
+    rows.map(|row| {
+        serde_json::from_str(&row.map_err(|_| "Cannot read playlist staging")?)
+            .map_err(|_| "Invalid playlist staging".into())
+    })
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,6 +370,93 @@ mod tests {
     }
     fn item(id: i64) -> Value {
         serde_json::json!({"type":"track","ratingKey":id,"title":format!("Track {id}")})
+    }
+    #[test]
+    fn verified_playlist_publication_is_atomic_and_unchanged_membership_does_not_emit() {
+        let (conn, scope) = fixture();
+        let meta =
+            serde_json::json!({"type":"playlist","ratingKey":7,"title":"Saved","updatedAt":1});
+        let a = serde_json::json!({"type":"track","ratingKey":1,"playlistItemID":10});
+        let b = serde_json::json!({"type":"track","ratingKey":1,"playlistItemID":11});
+        let first = begin(&conn, &scope, "playlist:7", Some("first")).unwrap();
+        playlist_page(
+            &conn,
+            &scope,
+            7,
+            &first,
+            &[a.clone(), b.clone()],
+            Some(2),
+            false,
+        )
+        .unwrap();
+        let first = task(&conn, &scope, "playlist:7").unwrap().unwrap();
+        assert_eq!(
+            playlist_staging_page(&conn, &scope, 7, &first, 0, 1).unwrap(),
+            vec![a.clone()]
+        );
+        assert_eq!(
+            playlist_staging_page(&conn, &scope, 7, &first, 1, 1).unwrap(),
+            vec![b.clone()]
+        );
+        assert!(
+            playlist_finish_checked(&conn, &scope, 7, &first, None, &meta)
+                .unwrap()
+                .is_some()
+        );
+        let mut updated = meta.clone();
+        updated["updatedAt"] = serde_json::json!(2);
+        let second = begin(&conn, &scope, "playlist:7", Some("second")).unwrap();
+        playlist_page(
+            &conn,
+            &scope,
+            7,
+            &second,
+            &[a.clone(), b.clone()],
+            Some(2),
+            false,
+        )
+        .unwrap();
+        let staged = task(&conn, &scope, "playlist:7").unwrap().unwrap();
+        assert!(
+            playlist_finish_checked(&conn, &scope, 7, &staged, None, &updated)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            catalogue::get(&conn, &scope, "playlist", 7)
+                .unwrap()
+                .unwrap()["updatedAt"],
+            2
+        );
+        let third = begin(&conn, &scope, "playlist:7", Some("third")).unwrap();
+        playlist_page(&conn, &scope, 7, &third, &[b, a], Some(2), false).unwrap();
+        let staged = task(&conn, &scope, "playlist:7").unwrap().unwrap();
+        assert!(
+            playlist_finish_checked(&conn, &scope, 7, &staged, None, &updated)
+                .unwrap()
+                .is_some()
+        );
+        assert!(playlist_staging_page(&conn, &scope, 7, &first, 0, 200).is_err());
+        assert!(playlist_staging_page(
+            &conn,
+            &format!("plex-{}", "b".repeat(64)),
+            7,
+            &staged,
+            0,
+            200
+        )
+        .is_err());
+    }
+    #[test]
+    fn stale_failure_cannot_pause_a_playlist_that_has_already_advanced() {
+        let (conn, scope) = fixture();
+        let first = begin(&conn, &scope, "playlist:7", Some("first")).unwrap();
+        playlist_page(&conn, &scope, 7, &first, &[item(1)], Some(2), false).unwrap();
+        stop(&conn, &scope, &first, Some("stale failure")).unwrap();
+        assert_eq!(
+            task(&conn, &scope, "playlist:7").unwrap().unwrap().status,
+            "running"
+        );
     }
     #[test]
     fn interrupted_pages_resume_atomically_and_repeated_pages_cannot_claim_complete_coverage() {

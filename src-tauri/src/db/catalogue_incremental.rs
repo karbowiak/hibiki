@@ -107,6 +107,16 @@ pub struct Change {
     pub version: i64,
     pub state: i64,
 }
+/// Keep a failed playlist in the existing durable retry lane without replacing
+/// a newer websocket hint or turning every bulk heartbeat into a new version.
+pub fn retry_playlist(conn: &Connection, scope: &str, id: i64) -> Result<(), String> {
+    let exists: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM plex_catalogue_changes WHERE scope=?1 AND kind='playlist' AND id=?2)",params![scope,id],|r|r.get(0)).map_err(|_| "Cannot read playlist retry")?;
+    if !exists {
+        enqueue(conn, scope, "playlist", id, 5)?;
+    }
+    conn.execute("UPDATE plex_catalogue_changes SET attempted_at=?3 WHERE scope=?1 AND kind='playlist' AND id=?2",params![scope,id,now()]).map_err(|_| "Cannot defer playlist retry")?;
+    Ok(())
+}
 pub fn next(conn: &Connection, scope: &str) -> Result<Option<Change>, String> {
     let ready=conn.query_row("SELECT kind,id,version,hint_state FROM plex_catalogue_changes WHERE scope=?1 AND attempted_at<?2 ORDER BY priority,attempted_at,queued_at,id LIMIT 1",params![scope,now()-30_000],|r|Ok(Change{kind:r.get(0)?,id:r.get(1)?,version:r.get(2)?,state:r.get(3)?})).optional().map_err(|_|"Cannot read pending catalogue change")?;
     if ready.is_some() {
@@ -660,6 +670,30 @@ mod tests {
         assert_eq!(next(&conn, &scope).unwrap().unwrap().id, 100);
         defer(&conn, &scope, &processing).unwrap();
         assert_eq!(next(&conn, &scope).unwrap().unwrap().id, 100);
+    }
+    #[test]
+    fn playlist_failure_is_deferred_without_blocking_other_changes_or_replacing_newer_hints() {
+        let (conn, scope) = fixture();
+        admit(
+            &conn,
+            &scope,
+            &[Hint {
+                id: 7,
+                media_type: 15,
+                state: 1,
+            }],
+            false,
+        )
+        .unwrap();
+        let hint = next(&conn, &scope).unwrap().unwrap();
+        retry_playlist(&conn, &scope, 7).unwrap();
+        retry_playlist(&conn, &scope, 7).unwrap();
+        let (version,state):(i64,i64) = conn.query_row("SELECT version,hint_state FROM plex_catalogue_changes WHERE kind='playlist' AND id=7",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+        assert_eq!((version, state), (hint.version, 1));
+        admit(&conn, &scope, &[self::hint(8, 5)], false).unwrap();
+        assert_eq!(next(&conn, &scope).unwrap().unwrap().id, 8);
+        retry_playlist(&conn, &scope, 9).unwrap();
+        assert_eq!(progress(&conn, &scope).unwrap().pending, 3);
     }
     #[test]
     fn unchanged_event_acknowledgements_and_catchup_windows_do_not_publish_ui_revisions() {

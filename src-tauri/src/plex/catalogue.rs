@@ -441,9 +441,72 @@ impl PlexClient {
     }
 }
 
+/// Compare ordered playlist occurrences, allowing the same track more than
+/// once. Timestamps/artwork and track metadata are independent of membership.
+pub(crate) fn playlist_membership_matches(expected: &[Value], actual: &[Value]) -> Result<bool> {
+    fn identity(item: &Value) -> Result<(i64, Option<i64>)> {
+        anyhow::ensure!(
+            item["type"].as_str() == Some("track"),
+            "Invalid playlist track"
+        );
+        let track = number(&item["ratingKey"])
+            .filter(|id| *id > 0)
+            .context("Invalid playlist identity")?;
+        let occurrence = if item["playlistItemID"].is_null() {
+            None
+        } else {
+            Some(
+                number(&item["playlistItemID"])
+                    .filter(|id| *id > 0)
+                    .context("Invalid playlist occurrence")?,
+            )
+        };
+        Ok((track, occurrence))
+    }
+    if expected.len() != actual.len() {
+        return Ok(false);
+    }
+    for (expected, actual) in expected.iter().zip(actual) {
+        if identity(expected)? != identity(actual)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn playlist_membership_checks_occurrence_order_instead_of_artwork_and_timestamps() {
+        let entry = |track, occurrence| serde_json::json!({"type":"track","ratingKey":track,"playlistItemID":occurrence});
+        let a = entry(1, 10);
+        let b = entry(1, 11);
+        let mut refreshed = a.clone();
+        refreshed["ratingKey"] = serde_json::json!("1");
+        refreshed["playlistItemID"] = serde_json::json!("10");
+        refreshed["updatedAt"] = serde_json::json!(999);
+        refreshed["thumb"] = serde_json::json!("/changed-artwork");
+        assert!(
+            playlist_membership_matches(&[a.clone(), b.clone()], &[refreshed, b.clone()]).unwrap()
+        );
+        assert!(
+            !playlist_membership_matches(&[a.clone(), b.clone()], &[b.clone(), a.clone()]).unwrap()
+        );
+        assert!(
+            !playlist_membership_matches(&[a.clone(), b.clone()], &[a.clone(), entry(2, 11)])
+                .unwrap()
+        );
+        assert!(!playlist_membership_matches(&[a.clone(), b], &[a.clone()]).unwrap());
+        assert!(playlist_membership_matches(&[], &[]).unwrap());
+        assert!(playlist_membership_matches(&[a.clone()], &[entry(1, 0)]).is_err());
+        let no_occurrence = serde_json::json!({"type":"track","ratingKey":1});
+        assert!(
+            playlist_membership_matches(&[no_occurrence.clone()], &[no_occurrence.clone()])
+                .unwrap()
+        );
+        assert!(!playlist_membership_matches(&[a], &[no_occurrence]).unwrap());
+    }
     fn malformed_fixture() -> Vec<u8> {
         let mut bytes = br#"{"MediaContainer":{"offset":15000,"totalSize":15200,"Metadata":[{"ratingKey":"17","title":"Bj"#.to_vec();
         bytes.extend_from_slice("örk ".as_bytes());

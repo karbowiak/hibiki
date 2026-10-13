@@ -164,6 +164,7 @@ async fn capture(
         return Err("Plex did not return the complete collection.".into());
     }
     if kind == "playlist" {
+        crate::catalogue_commands::verify_playlist_documents(client, id, &documents).await?;
         let after: serde_json::Value = tokio::time::timeout(
             std::time::Duration::from_secs(20),
             client.get(&format!("/playlists/{id}")),
