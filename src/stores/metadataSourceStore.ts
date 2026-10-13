@@ -21,6 +21,7 @@ export type MetadataSource =
   | "coverartarchive"
   | "fanart"
   | "heya"
+  | "theaudiodb"
 
 export const SOURCE_LABELS: Record<MetadataSource, string> = {
   plex: "Plex",
@@ -32,12 +33,14 @@ export const SOURCE_LABELS: Record<MetadataSource, string> = {
   coverartarchive: "Cover Art Archive",
   fanart: "Fanart.tv",
   heya: "HeyaMetadata",
+  theaudiodb: "TheAudioDB",
 }
 
 export const SOURCE_DESCRIPTIONS: Record<MetadataSource, string> = {
   fanart:
     "Configured Fanart.tv artist backgrounds, portraits, and matched album covers",
   heya: "Metadata from your configured HeyaMetadata server, with source provenance",
+  theaudiodb: "Optional premium TheAudioDB metadata and artwork, with verified identities",
   plex: "Your Plex library metadata (always the source for names)",
   deezer: "Deezer artist images, fan counts, genres, and cover art",
   lastfm: "Last.fm biographies, tags, listener counts, and similar artists",
@@ -59,6 +62,7 @@ const DEFAULT_PRIORITY: MetadataSource[] = [
   "coverartarchive",
   "fanart",
   "heya",
+  "theaudiodb",
 ]
 
 interface MetadataSourceState {

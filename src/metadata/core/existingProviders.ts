@@ -5,6 +5,7 @@ import { useMusicBrainzMetadataStore } from "../musicbrainz/store"
 import { nativeHeyaAdapter } from "../heya/adapter"
 import { useHeyaServiceStore } from "../services/store"
 import { fanartMetadataAdapter } from "../fanart/adapter"
+import { theAudioDbAdapter } from "../theaudiodb/adapter"
 import { publicMetadataProviders } from "./publicProviders"
 import { createExistingMetadataAdapters } from "./adapters"
 import type { MetadataIdentity } from "./types"
@@ -53,6 +54,7 @@ export function existingMetadataProviders() {
     ...adapters,
     ...publicMetadataProviders(),
     fanartMetadataAdapter,
+    theAudioDbAdapter(),
     nativeHeyaAdapter(
       useHeyaServiceStore.getState().status,
       () => useHeyaServiceStore.getState().status

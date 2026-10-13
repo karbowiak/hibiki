@@ -110,6 +110,52 @@ function fixture() {
   }
 }
 describe("provider-neutral playlist previews", () => {
+  test("actual Plex provider name declares duplicate-copy limitation while other providers remain compatible", () => {
+    const provider: any = {
+      name: "Plex",
+      cacheScope: "scoped",
+      playbackSession: {},
+      capabilities: { playlists: true },
+    }
+    expect(
+      providerPlaylistAdapter(provider, { current: () => provider })
+        .capabilities.preservesDuplicateCopies
+    ).toBe(false)
+    provider.name = "Synthetic"
+    expect(
+      providerPlaylistAdapter(provider, { current: () => provider })
+        .capabilities.preservesDuplicateCopies
+    ).toBeUndefined()
+  })
+  test("known duplicate-copy limitation rejects before claim, journal or remote write; compatible adapters still export duplicates", async () => {
+    const f = fixture(),
+      approval = f.approval()
+    f.target.capabilities = {
+      ...f.target.capabilities,
+      preservesDuplicateCopies: false,
+    }
+    await expect(
+      executePlaylistCopy(approval, f.source, f.target, f.journal, f.owns)
+    ).rejects.toThrow("Plex cannot preserve repeated songs")
+    expect(f.attempts).toHaveLength(0)
+    expect(f.writes()).toBe(0)
+    f.target.capabilities = {
+      ...f.target.capabilities,
+      preservesDuplicateCopies: true,
+    }
+    expect(
+      (
+        await executePlaylistCopy(
+          approval,
+          f.source,
+          f.target,
+          f.journal,
+          f.owns
+        )
+      ).state
+    ).toBe("verified")
+    expect(f.writes()).toBe(1)
+  })
   test("JSPF round trip keeps repeated recording occurrences and order, private export is explicit", () => {
     const data = toJspf(
       "Copy",

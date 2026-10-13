@@ -248,17 +248,15 @@ impl PlexClient {
     ) -> Result<Playlist> {
         // Plex requires all params as query parameters (not a JSON body).
         // URI format: server://{machineIdentifier}/com.plexapp.plugins.library/library/metadata/{id}
-        let uri = item_ids
-            .iter()
-            .map(|id| format!(
-                "server://{}/com.plexapp.plugins.library/library/metadata/{}",
-                self.machine_identifier, id
-            ))
-            .collect::<Vec<_>>()
-            .join(",");
+        // Plex expects one library URI with an ordered comma-separated ID list.
+        // Repeating the entire URI for each ID is accepted as an empty playlist.
+        let ids = item_ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+        let uri = format!("server://{}/com.plexapp.plugins.library/library/metadata/{}",
+            self.machine_identifier, ids);
+
 
         let container: MediaContainer<Playlist> = self
-            .post_params("/playlists", &[
+            .create_playlist_once(&[
                 ("title", title),
                 ("type",  "audio"),
                 ("smart", "0"),
@@ -267,11 +265,14 @@ impl PlexClient {
             .await
             .context("Failed to create playlist")?;
 
-        container
-            .metadata
-            .into_iter()
-            .next()
-            .context("Playlist creation returned no data")
+        if container.metadata.len() != 1 {
+            anyhow::bail!("Plex did not confirm one created playlist identifier");
+        }
+        let playlist = container.metadata.into_iter().next().unwrap();
+        if playlist.rating_key <= 0 {
+            anyhow::bail!("Plex did not confirm a valid created playlist identifier");
+        }
+        Ok(playlist)
     }
 
     /// Create a smart playlist with filters
@@ -379,18 +380,11 @@ impl PlexClient {
     pub async fn add_items(&self, playlist_id: i64, item_ids: &[i64]) -> Result<()> {
         let path = format!("/playlists/{}/items", playlist_id);
 
-        let uri = item_ids
-            .iter()
-            .map(|id| format!(
-                "server://{}/com.plexapp.plugins.library/library/metadata/{}",
-                self.machine_identifier, id
-            ))
-            .collect::<Vec<_>>()
-            .join(",");
-
-        self.put_params_ok(&path, &[("uri", &uri)])
-            .await
-            .context("Failed to add items to playlist")?;
+        let ids = item_ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+        let uri = format!("server://{}/com.plexapp.plugins.library/library/metadata/{}", self.machine_identifier, ids);
+        // Appending is non-idempotent: never retry an unconfirmed request.
+        self.put_metadata_params_once(&path, &[("uri", uri.as_str())])
+            .await.context("Plex did not confirm the playlist append")?;
 
         Ok(())
     }

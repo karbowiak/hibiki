@@ -137,6 +137,29 @@ test("linked execution propagates one-side duplicate additions and only advances
   expect(h.local().items.map((item) => item.track.id)).toEqual(["a", "a"])
   expect(imported.job).toBeUndefined()
 })
+test("Plex duplicate limitation pauses before writes and preserves existing occurrences", async () => {
+  const h = harness()
+  h.initial.baseline.library = structuredClone(h.local())
+  h.services.library.preservesDuplicateOccurrences = false
+  h.changeRemote([A, B, A, A])
+  const result = await checkLinkedPlaylist(h.initial, h.services)
+  expect(result.state).toBe("conflict")
+  expect(result.paused).toBe(true)
+  expect(result.message).toContain("Plex cannot safely apply repeated songs")
+  expect(h.calls()).toBe(0)
+  expect(h.local().items.map((item) => item.track.id)).toEqual(["a", "b", "a"])
+})
+test("already identical duplicate target is read-only verified even with Plex limitation", async () => {
+  const h = harness()
+  h.initial.baseline.library = structuredClone(h.local())
+  h.services.library.preservesDuplicateOccurrences = false
+  h.changeRemote([A, B, A])
+  const result = await checkLinkedPlaylist(h.initial, h.services)
+  expect(result.state).toBe("ready")
+  expect(result.paused).toBe(false)
+  expect(result.job).toBeUndefined()
+  expect(h.calls()).toBe(0)
+})
 test("durability failure before admission sends no mutations", async () => {
   const h = harness()
   h.failSave()

@@ -1,6 +1,6 @@
 import type { MetadataSource } from "../../stores/metadataSourceStore"
 
-export type MetadataProviderSource = MetadataSource | "soulsync"
+export type MetadataProviderSource = MetadataSource | "soulsync" | "theaudiodb"
 
 export type MetadataKind = "artist" | "album" | "track"
 export interface MetadataIdentity {

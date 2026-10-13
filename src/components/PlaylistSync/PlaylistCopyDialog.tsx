@@ -9,6 +9,7 @@ import {
   PlaylistCopyApproval,
   PlaylistCopyError,
   planPlaylistCopy,
+  playlistCopyBlockReason,
   resolvePlaylistOccurrence,
   recordingMbid,
   playlistTrackFromMusic,
@@ -291,6 +292,10 @@ export function PlaylistCopyDialog({
   }
   const missing =
     plan?.rows.filter((row) => row.match.status !== "matched").length ?? 0
+  const copyBlocked =
+    plan && targetAdapter
+      ? playlistCopyBlockReason(plan, targetAdapter.capabilities)
+      : null
   return (
     <AppDialog
       title={
@@ -319,6 +324,7 @@ export function PlaylistCopyDialog({
                 loading ||
                 committing ||
                 missing > 0 ||
+                !!copyBlocked ||
                 !title.trim() ||
                 title.length > 500 ||
                 !ready
@@ -430,8 +436,16 @@ export function PlaylistCopyDialog({
           </label>
           <p className="mb-3 text-sm text-[var(--text-secondary)]">
             {plan.rows.length} ordered occurrences · {missing} need review.
-            Repeated songs remain separate.
+            Repeated songs remain separate in this preview.
           </p>
+          {copyBlocked && (
+            <p
+              role="status"
+              className="mb-3 text-sm text-[var(--text-secondary)]"
+            >
+              {copyBlocked}
+            </p>
+          )}
           <ol className="max-h-[48vh] space-y-3 overflow-y-auto pr-2">
             {plan.rows.map((row, index) => (
               <li key={row.occurrenceId}>

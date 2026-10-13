@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
+import { createRequire } from "node:module"
 
 // Execute the real workflow script against an offline GitHub mock.
 const workflow = readFileSync(
@@ -17,6 +18,7 @@ const run = new (Object.getPrototypeOf(async function () {}).constructor)(
   "github",
   "context",
   "process",
+  "require",
   script
 )
 
@@ -35,6 +37,10 @@ function mock(releases: { id: number; tag_name: string; draft: boolean }[]) {
             calls.push(args)
             return { data: { id: 99 } }
           },
+          updateRelease: async (args: unknown) => {
+            calls.push(args)
+            return { data: { id: 42 } }
+          },
         },
       },
       paginate: async (endpoint: unknown, args: unknown) => {
@@ -46,11 +52,12 @@ function mock(releases: { id: number; tag_name: string; draft: boolean }[]) {
   }
 }
 
-function execute(github: unknown) {
+function execute(github: unknown, version = "0.5.2") {
   return run(
     github,
     { repo: { owner: "owner", repo: "repo" } },
-    { env: { RELEASE_TAG: "v0.5.2", VERSION: "0.5.2" } }
+    { env: { RELEASE_TAG: `v${version}`, VERSION: version } },
+    createRequire(import.meta.url)
   )
 }
 
@@ -110,4 +117,17 @@ test("release listing failures stop before creating a release", async () => {
   }
   await expect(execute(github)).rejects.toThrow("Permission denied")
   expect(calls).toEqual([])
+})
+
+test("versioned release notes populate new drafts and refresh matching drafts only", async () => {
+  const body = readFileSync(new URL("../releases/0.6.0.md", import.meta.url), "utf8")
+  const fresh = mock([])
+  expect(await execute(fresh.github, "0.6.0")).toBe(99)
+  expect(fresh.calls).toEqual([{ owner: "owner", repo: "repo", tag_name: "v0.6.0", name: "Hibiki v0.6.0", body, draft: true, prerelease: false }])
+  const retry = mock([{ id: 42, tag_name: "v0.6.0", draft: true }])
+  expect(await execute(retry.github, "0.6.0")).toBe(42)
+  expect(retry.calls).toEqual([{ owner: "owner", repo: "repo", release_id: 42, body }])
+  const published = mock([{ id: 42, tag_name: "v0.6.0", draft: false }])
+  await expect(execute(published.github, "0.6.0")).rejects.toThrow("already published")
+  expect(published.calls).toEqual([])
 })

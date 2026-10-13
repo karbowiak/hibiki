@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import { resolve } from "node:path"
 for (const scenario of [
   "import",
+  "duplicate-blocked",
   "export",
   "retired",
   "retention",

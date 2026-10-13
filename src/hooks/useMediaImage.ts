@@ -18,6 +18,7 @@ import { resolveMetadataIdentity } from "../metadata/identity/resolve"
  */
 
 import { useHeyaArtwork } from "./useHeyaArtwork"
+import { useTheAudioDbArtwork } from "./useTheAudioDbArtwork"
 import { useFanartArtwork } from "./useFanartArtwork"
 import { useEffect, useMemo } from "react"
 import { useMetadataSourceStore } from "../stores/metadataSourceStore"
@@ -251,6 +252,13 @@ export function useArtistArtwork(
       ? savedCandidate.id
       : undefined
   )
+  const audioDb = useTheAudioDbArtwork(
+    "artist", artistName, null, artistId, role, scope, revise,
+    allowFetch && shouldWarmSource(priority, "theaudiodb", {
+      plex: plexThumb, deezer: deezerUrl, fanart: fanart.images[0]?.url ?? null,
+      heya: heya.images[0]?.url ?? null,
+    }), originalIdentity
+  )
   // Warm the Deezer cache when this artist hasn't been fetched yet.
   // Gate on hydration to avoid firing fetches before IndexedDB data loads.
   useEffect(() => {
@@ -300,7 +308,8 @@ export function useArtistArtwork(
     },
     (preference === "deezer" && (!deezerHydrated || deezerPending)) ||
       (preference === "fanart" && fanart.pending) ||
-      (preference === "heya" && heya.pending),
+      (preference === "heya" && heya.pending) ||
+      (preference === "theaudiodb" && audioDb.pending),
     {
       plex: plexTarget,
       deezer: rawDeezerUrl
@@ -317,7 +326,7 @@ export function useArtistArtwork(
         : null,
     },
     savedCandidate,
-    { fanart: fanart.images, heya: heya.images },
+    { fanart: fanart.images, heya: heya.images, theaudiodb: audioDb.images },
     failedUrls
   )
 }
@@ -509,6 +518,13 @@ export function useAlbumArtwork(
       ? savedCandidate.id
       : undefined
   )
+  const audioDb = useTheAudioDbArtwork(
+    "album", artistName, albumName, albumId, role, scope, revise,
+    allowFetch && shouldWarmSource(priority, "theaudiodb", {
+      plex: plexThumb, deezer: deezerUrl, apple: appleUrl, coverartarchive: caaUrl,
+      fanart: fanart.images[0]?.url ?? null, heya: heya.images[0]?.url ?? null,
+    }), originalIdentity
+  )
   // Warm caches when entries are missing.
   // Gate on hydration to avoid firing fetches before IndexedDB data loads.
   // An available lower-priority image must not prevent an upgrade.
@@ -615,7 +631,8 @@ export function useAlbumArtwork(
           ? reviewedCaa.pending
           : !caaHydrated || caaPending)) ||
       (preference === "fanart" && fanart.pending) ||
-      (preference === "heya" && heya.pending),
+      (preference === "heya" && heya.pending) ||
+      (preference === "theaudiodb" && audioDb.pending),
     {
       plex: plexTarget,
       coverartarchive: caaTarget,
@@ -645,7 +662,7 @@ export function useAlbumArtwork(
         : null,
     },
     savedCandidate,
-    { fanart: fanart.images, heya: heya.images },
+    { fanart: fanart.images, heya: heya.images, theaudiodb: audioDb.images },
     failedUrls
   )
 }

@@ -77,7 +77,7 @@ impl PlaylistSyncState {
                 ids.push(track_id.clone())
             }
             PlaylistSyncOperation::Move { from, to } => {
-                if *from >= ids.len() || *to >= *from {
+                if *from >= ids.len() || *to >= ids.len() || from == to {
                     bail!("Invalid playlist move")
                 };
                 let id = ids.remove(*from);
@@ -212,7 +212,11 @@ impl PlexClient {
                 let after_id = if *to == 0 {
                     "0"
                 } else {
-                    &expected.items[*to - 1].occurrence_id
+                    // Plex inserts after an occurrence in the remaining list.
+                    // Removing a source before the destination shifts that
+                    // predecessor one position forward in the original list.
+                    let predecessor = if from < to { *to } else { *to - 1 };
+                    &expected.items[predecessor].occurrence_id
                 };
                 self.mutate_params_once(
                     reqwest::Method::PUT,
@@ -378,9 +382,14 @@ mod tests {
                                 .1
                                 .parse::<i64>()
                                 .unwrap();
-                            assert_eq!(after, if *to == 0 { 0 } else { items[*to - 1].1 });
                             let item = items.remove(*from);
-                            items.insert(*to, item);
+                            // Simulate the API's actual insert-after semantics,
+                            // rather than moving to the implementation's target.
+                            let insertion = if after == 0 { 0 } else {
+                                items.iter().position(|(_, id)| *id == after)
+                                    .expect("predecessor must remain after source removal") + 1
+                            };
+                            items.insert(insertion, item);
                         }
                         PlaylistSyncOperation::Delete { index } => {
                             assert_eq!(method, "DELETE");
@@ -425,6 +434,11 @@ mod tests {
                 track_id: "1".into(),
             },
             PlaylistSyncOperation::Move { from: 2, to: 1 },
+            PlaylistSyncOperation::Move { from: 0, to: 1 },
+            PlaylistSyncOperation::Move { from: 0, to: 2 },
+            PlaylistSyncOperation::Move { from: 1, to: 0 },
+            PlaylistSyncOperation::Move { from: 1, to: 2 },
+            PlaylistSyncOperation::Move { from: 2, to: 0 },
             PlaylistSyncOperation::Delete { index: 1 },
         ] {
             let expected = state();
@@ -467,6 +481,9 @@ mod tests {
             .is_err());
         assert!(expected
             .after_ids(&PlaylistSyncOperation::Move { from: 2, to: 2 })
+            .is_err());
+        assert!(expected
+            .after_ids(&PlaylistSyncOperation::Move { from: 0, to: 3 })
             .is_err());
         assert!(expected
             .after_ids(&PlaylistSyncOperation::Delete { index: 3 })

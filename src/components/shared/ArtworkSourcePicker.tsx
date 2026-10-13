@@ -18,6 +18,8 @@ import {
 import { useDeezerMetadataStore } from "../../metadata/deezer/store"
 import { useHeyaArtworkStore } from "../../metadata/heya/artworkStore"
 import { useFanartMetadataStore } from "../../metadata/fanart/store"
+import { theAudioDb, useTheAudioDbStore } from "../../metadata/theaudiodb/store"
+import { resolveMetadataIdentity } from "../../metadata/identity/resolve"
 import {
   useFanartServiceStore,
   useHeyaServiceStore,
@@ -33,6 +35,7 @@ const labels: Record<ArtworkSource, string> = {
   coverartarchive: "Cover Art Archive",
   fanart: "Fanart.tv",
   heya: "Heya Metadata",
+  theaudiodb: "TheAudioDB",
 }
 export interface ArtworkSourcePickerProps {
   kind: ArtworkKind
@@ -63,6 +66,7 @@ export function artworkStatus(info: ArtworkResolution): string {
 function useArtworkSourceResolution(props: ArtworkSourcePickerProps) {
   const heyaRevision = useHeyaServiceStore((s) => s.status?.revision)
   const fanartRevision = useFanartServiceStore((s) => s.status?.revision)
+  const audioDbRevision = useTheAudioDbStore((s) => s.status?.revision)
   const provider = useProviderStore((s) => s.provider)
   const scope = useProviderStore((s) => s.provider?.cacheScope)
   const session = useProviderStore((s) => s.provider?.playbackSession)
@@ -132,6 +136,7 @@ function useArtworkSourceResolution(props: ArtworkSourcePickerProps) {
       plexImage,
       fanartRevision,
       heyaRevision,
+      audioDbRevision,
     ]),
   }
 }
@@ -372,6 +377,7 @@ function ArtworkSourcePanelContent({
   const serviceRevision = useRef(
     useFanartServiceStore.getState().status?.revision
   )
+  const audioDbServiceRevision = useRef(useTheAudioDbStore.getState().status?.revision)
   const current = () =>
     active.current &&
     useProviderStore.getState().provider === owner.current &&
@@ -381,6 +387,7 @@ function ArtworkSourcePanelContent({
       serviceRevision.current &&
     useHeyaServiceStore.getState().status?.revision ===
       heyaServiceRevision.current
+      && useTheAudioDbStore.getState().status?.revision === audioDbServiceRevision.current
   const deezerHydrated = useDeezerMetadataStore((s) => s._hasHydrated)
   const appleHydrated = useItunesMetadataStore((s) => s._hasHydrated)
   const caaHydrated = useCoverArtArchiveMetadataStore((s) => s._hasHydrated)
@@ -391,22 +398,38 @@ function ArtworkSourcePanelContent({
   }, [heyaStatus])
   const fanartStatus = useFanartServiceStore((s) => s.status)
   const fanartHydrated = useFanartMetadataStore((s) => s._hasHydrated)
+  const audioDbStatus = useTheAudioDbStore((s) => s.status)
+  useEffect(() => {
+    if (!audioDbStatus) void useTheAudioDbStore.getState().load()
+  }, [audioDbStatus])
   useEffect(() => {
     if (!fanartStatus) void useFanartServiceStore.getState().load()
   }, [fanartStatus])
   const sources: ArtworkSource[] = (
     props.kind === "artist"
-      ? ["plex", "deezer", "fanart", "heya"]
-      : ["plex", "deezer", "apple", "coverartarchive", "fanart", "heya"]
+      ? ["plex", "deezer", "fanart", "heya", "theaudiodb"]
+      : ["plex", "deezer", "apple", "coverartarchive", "fanart", "heya", "theaudiodb"]
   ).filter((source) =>
     source === "fanart"
       ? !!fanartStatus?.configured && fanartStatus.enabled
       : source === "heya"
         ? !!heyaStatus?.configured && heyaStatus.enabled
+        : source === "theaudiodb"
+          ? !!audioDbStatus?.configured && audioDbStatus.enabled
         : true
   ) as ArtworkSource[]
   const load = async (source: ArtworkSource, force = false) => {
     if (source === "plex") return null
+    if (source === "theaudiodb") {
+      if (!audioDbStatus?.configured || !audioDbStatus.enabled || owner.current?.isOffline || !ownerScope.current) return null
+      const original = { kind: props.kind, artist: props.artistName, title: props.albumName ?? undefined, entityId: props.entityId ?? undefined, scope: ownerScope.current }
+      const reviewed = resolveMetadataIdentity(original)
+      if (!reviewed.ready) return null
+      const identity = { ...original, artist: reviewed.lookupArtist, title: reviewed.lookupTitle }
+      const mbid = props.kind === "artist" ? reviewed.artistMbid : reviewed.releaseGroupMbid
+      if (force) theAudioDb.invalidate(identity)
+      return theAudioDb.lookup(identity, mbid)
+    }
     if (source === "heya" && (!heyaStatus?.enabled || !heyaStatus.configured))
       return null
     if (
@@ -451,6 +474,8 @@ function ArtworkSourcePanelContent({
               ? appleHydrated
               : s === "coverartarchive"
                 ? caaHydrated
+                : s === "theaudiodb"
+                  ? !!audioDbStatus?.configured && audioDbStatus.enabled
                 : s === "heya"
                   ? heyaHydrated &&
                     !!heyaStatus?.configured &&
@@ -475,6 +500,7 @@ function ArtworkSourcePanelContent({
     fanartStatus,
     heyaStatus,
     heyaHydrated,
+    audioDbStatus,
   ])
   const selectedCandidate = useArtworkPreferenceStore(
     (s) => s.candidateChoices[preferenceKey]
@@ -492,7 +518,7 @@ function ArtworkSourcePanelContent({
     <div className={props.className}>
       {props.role === "background" && (
         <p className="mb-3 text-sm text-[var(--text-secondary)]">
-          Plex and Fanart.tv background art are separate from posters. Artist
+          Provider background art is separate from posters. Artist
           images and album covers can also be reused as a background; those
           choices are labeled as reused covers.
         </p>
@@ -509,7 +535,7 @@ function ArtworkSourcePanelContent({
         <span className="font-semibold">Automatic</span>
         <span className="mt-1 block text-sm text-[var(--text-secondary)]">
           {props.role === "background"
-            ? "Prefer Plex background art, then reuse available covers. Poster choices stay separate."
+            ? "Prefer Plex background art, then follow your source order. Reused covers are labeled. Poster choices stay separate."
             : "Follow your global artwork source order."}
         </span>
       </button>
@@ -524,10 +550,10 @@ function ArtworkSourcePanelContent({
             <button
               type="button"
               key={`${source}:${image.id}`}
-              disabled={source === "heya" && !image.url}
+              disabled={(source === "heya" || source === "theaudiodb") && !image.url}
               aria-label={
                 props.role === "background"
-                  ? `Use ${labels[source]} ${["plex", "fanart", "heya"].includes(source) ? "background" : props.kind === "artist" ? "artist image as background" : "album cover as background"}${image.id === "default" ? "" : ` ${image.label ?? imageIndex + 1}`}`
+                  ? `Use ${labels[source]} ${["plex", "fanart", "heya", "theaudiodb"].includes(source) ? "background" : props.kind === "artist" ? "artist image as background" : "album cover as background"}${image.id === "default" ? "" : ` ${image.label ?? imageIndex + 1}`}`
                   : `Use ${labels[source]} artwork${image.id === "default" ? "" : ` ${image.label ?? imageIndex + 1}`}`
               }
               aria-pressed={

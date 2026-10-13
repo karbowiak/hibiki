@@ -18,15 +18,15 @@
   <screenshots>
     <screenshot type="default">
       <caption>Browse your music library</caption>
-      <image type="source" width="1863" height="1154">https://raw.githubusercontent.com/karbowiak/hibiki/v0.5.4/screenshots/main.png</image>
+      <image type="source" width="1440" height="1000">https://raw.githubusercontent.com/karbowiak/hibiki/v0.6.0/screenshots/main.png</image>
     </screenshot>
     <screenshot>
       <caption>Explore an artist and their albums</caption>
-      <image type="source" width="1863" height="1154">https://raw.githubusercontent.com/karbowiak/hibiki/v0.5.4/screenshots/artist.png</image>
+      <image type="source" width="1440" height="1000">https://raw.githubusercontent.com/karbowiak/hibiki/v0.6.0/screenshots/artist.png</image>
     </screenshot>
     <screenshot>
       <caption>Play an album from your library</caption>
-      <image type="source" width="1863" height="1154">https://raw.githubusercontent.com/karbowiak/hibiki/v0.5.4/screenshots/album.png</image>
+      <image type="source" width="1440" height="1000">https://raw.githubusercontent.com/karbowiak/hibiki/v0.6.0/screenshots/album.png</image>
     </screenshot>
   </screenshots>
   <releases><release version="@VERSION@" date="@DATE@" type="@RELEASE_TYPE@"/></releases>

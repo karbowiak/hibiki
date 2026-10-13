@@ -15,7 +15,6 @@ import { usePlayerStore } from "../../stores/playerStore"
 import { useContextMenu } from "../../hooks/useContextMenu"
 import { makeDragPayload } from "./Home"
 import { SearchDiscovery } from "./SearchDiscovery"
-import { SemanticSearchPanel } from "./SemanticSearchPanel"
 import { TrackTable } from "../shared/TrackTable"
 import { useCapability } from "../../hooks/useCapability"
 import type { ColId } from "../../hooks/useColumnPicker"
@@ -124,7 +123,6 @@ function getInfo(item: MusicItem) {
 }
 
 export function Search() {
-  const [discoveryMode, setDiscoveryMode] = useState(false)
   const { results, isSearching, error, query, search } = useSearchStore(
     useShallow((s) => ({
       results: s.results,
@@ -198,10 +196,10 @@ export function Search() {
             showResults ? "break-words text-3xl font-bold" : "discovery-title"
           }
         >
-          {discoveryMode ? "Discover by feeling" : showResults ? `Results for “${query.trim()}”` : "Search"}
+          {showResults ? `Results for “${query.trim()}”` : "Search"}
         </h1>
         <p className="mt-2 text-sm text-[var(--text-secondary)]">
-          {discoveryMode ? "Explore the descriptions and moods of music you have saved." : showResults
+          {showResults
             ? isSearching
               ? "Searching your library…"
               : error
@@ -210,11 +208,7 @@ export function Search() {
             : "Pick up where you left off, or find your next favorite."}
         </p>
       </header>
-      <div className="mb-6 flex flex-wrap gap-2" aria-label="Search mode">
-        <button type="button" aria-pressed={!discoveryMode} onClick={() => setDiscoveryMode(false)} className={`rounded-full border px-4 py-2 text-sm hover:bg-app-surface-hover ${!discoveryMode ? "border-accent text-accent" : "border-[var(--border)] text-[var(--text-secondary)]"}`}>Library search</button>
-        <button type="button" aria-pressed={discoveryMode} onClick={() => setDiscoveryMode(true)} className={`rounded-full border px-4 py-2 text-sm hover:bg-app-surface-hover ${discoveryMode ? "border-accent text-accent" : "border-[var(--border)] text-[var(--text-secondary)]"}`}>By feeling · local</button>
-      </div>
-      {discoveryMode ? <SemanticSearchPanel query={query} /> : showResults ? (
+      {showResults ? (
         <div className="space-y-6">
           {isSearching && (
             <p role="status" className="text-sm text-[var(--text-secondary)]">

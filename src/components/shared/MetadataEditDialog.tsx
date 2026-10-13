@@ -6,6 +6,7 @@ import {
 } from "../../metadata/services/store"
 import { useLastfmStore } from "../../metadata/lastfm/authStore"
 import { metadataSourceAvailable } from "../../metadata/core/availability"
+import { useTheAudioDbStore } from "../../metadata/theaudiodb/store"
 import {
   useEffect,
   useLayoutEffect,
@@ -176,6 +177,7 @@ export function MetadataEditDialog({
   const soulStatus = useSoulSyncStore((state) => state.status)
   const fanartStatus = useFanartServiceStore((state) => state.status)
   const heyaStatus = useHeyaServiceStore((state) => state.status)
+  const audioDbStatus = useTheAudioDbStore((state) => state.status)
   const lastfmApiKey = useLastfmStore((state) => state.hasApiKey)
   const adapters = useMemo(
     () =>
@@ -194,6 +196,7 @@ export function MetadataEditDialog({
             soulsync: soulStatus,
             fanart: fanartStatus,
             heya: heyaStatus,
+            theaudiodb: audioDbStatus,
           })
       ),
     [
@@ -201,6 +204,7 @@ export function MetadataEditDialog({
       soulStatus?.revision,
       fanartStatus?.revision,
       heyaStatus?.revision,
+      audioDbStatus?.revision,
       lastfmApiKey,
     ]
   )

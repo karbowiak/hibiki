@@ -16,7 +16,7 @@ test("public sources remain available without optional service configuration", (
 })
 
 test("optional services only appear once configured and enabled", () => {
-  for (const source of ["fanart", "heya", "soulsync"] as const) {
+  for (const source of ["fanart", "heya", "soulsync", "theaudiodb"] as const) {
     expect(metadataSourceAvailable(source, {})).toBe(false)
     expect(metadataSourceAvailable(source, { [source]: null })).toBe(false)
     for (const [configured, enabled] of [

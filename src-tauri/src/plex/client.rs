@@ -450,6 +450,20 @@ impl PlexClient {
         Ok(wrapper.container)
     }
 
+    /// A playlist create cannot be replayed after an unknown outcome. Keep the
+    /// response bounded so its freshly returned ID can be retained by callers.
+    pub(crate) async fn create_playlist_once<T: DeserializeOwned>(&self, params: &[(&str, &str)]) -> Result<T> {
+        if self.offline_only { anyhow::bail!("Reconnect to Plex before creating playlists."); }
+        let response = self.metadata_mutation_client.post(self.build_endpoint_url("/playlists"))
+            .header("X-Plex-Token", token_header(&self.token))
+            .header("Accept", "application/json").query(params).send().await
+            .map_err(|error| error.without_url()).context("Plex did not confirm the playlist create")?;
+        if !response.status().is_success() { anyhow::bail!("Plex did not confirm the playlist create (HTTP {})", response.status()); }
+        let wrapper = response.bounded_json::<PlexApiResponse<T>>(crate::http_response::MAX_JSON_BYTES)
+            .await.context("Plex did not confirm the created playlist identifier")?;
+        Ok(wrapper.container)
+    }
+
     /// One explicit metadata write. Do not replay an unknown outcome.
     pub(crate) async fn put_metadata_params_once(&self, path: &str, params: &[(&str, &str)]) -> Result<()> {
         self.mutate_params_once(reqwest::Method::PUT, path, params, None, None).await
@@ -863,5 +877,107 @@ mod tests {
         });
 
         assert!(result.is_ok());
+    }
+}
+
+#[cfg(test)]
+mod playlist_create_once_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    #[tokio::test]
+    async fn playlist_creates_use_one_bounded_nonredirecting_request_and_one_positive_id() {
+        for case in 0..7 {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}/proxy", listener.local_addr().unwrap());
+            let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel();
+            let server = tokio::spawn(async move {
+                let mut count = 0;
+                loop {
+                    let (mut stream, _) = tokio::select! {
+                        _ = &mut stop_rx => break,
+                        accepted = listener.accept() => accepted.unwrap(),
+                    };
+                    count += 1;
+                    let mut header = vec![]; let mut buffer = [0;4096];
+                    while !header.windows(4).any(|part| part == b"\r\n\r\n") {
+                        let size = stream.read(&mut buffer).await.unwrap(); assert!(size > 0);
+                        header.extend_from_slice(&buffer[..size]); assert!(header.len() < 65536);
+                    }
+                    let request = String::from_utf8(header).unwrap();
+                    let head = request.lines().next().unwrap().split_whitespace().collect::<Vec<_>>();
+                    assert_eq!(head[0], "POST");
+                    let url = url::Url::parse(&format!("http://synthetic{}", head[1])).unwrap();
+                    assert_eq!(url.path(), "/proxy/playlists");
+                    let query = url.query_pairs().into_owned().collect::<std::collections::BTreeMap<_,_>>();
+                    assert_eq!(query.get("title").unwrap(), "Hibiki QA fixture");
+                    assert_eq!(query.get("type").unwrap(), "audio"); assert_eq!(query.get("smart").unwrap(), "0");
+                    assert_eq!(query.get("uri").unwrap(), "server://synthetic/com.plexapp.plugins.library/library/metadata/1,2,1");
+                    assert!(!query.contains_key("includeLoudnessRamps"));
+                    assert!(request.to_lowercase().contains("x-plex-token: synthetic-token"));
+                    let status = if case == 1 {503} else if case == 2 {302} else {200};
+                    let entries = match case {
+                        4 => "[]",
+                        5 => "[{\"ratingKey\":\"41\"},{\"ratingKey\":\"42\"}]",
+                        6 => "[{\"ratingKey\":\"0\"}]",
+                        _ => "[{\"ratingKey\":\"41\",\"title\":\"Hibiki QA fixture\",\"playlistType\":\"audio\"}]",
+                    };
+                    let body = format!("{{\"MediaContainer\":{{\"Metadata\":{entries}}}}}");
+                    let length = if case == 3 {crate::http_response::MAX_JSON_BYTES + 1} else {body.len()};
+                    let response = format!("HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {length}\r\nLocation: /unexpected-redirect\r\nConnection: close\r\n\r\n{body}");
+                    stream.write_all(response.as_bytes()).await.unwrap();
+                }
+                count
+            });
+            let mut client = PlexClient::new(PlexClientConfig {base_url:base,token:"synthetic-token".into(),..Default::default()}).unwrap();
+            client.machine_identifier = "synthetic".into();
+            let outcome = tokio::time::timeout(std::time::Duration::from_secs(10), client.create_playlist("Hibiki QA fixture",5,&[1,2,1])).await;
+            let _ = stop_tx.send(());
+            assert_eq!(server.await.unwrap(),1,"create must not retry or follow redirects");
+            let result = outcome.expect("single create request did not finish");
+            if case == 0 {assert_eq!(result.unwrap().rating_key,41);}
+            else {let error=result.unwrap_err().to_string();assert!(!error.contains("synthetic-token"));}
+        }
+    }
+}
+
+#[cfg(test)]
+mod playlist_append_once_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    #[tokio::test]
+    async fn ordinary_multiitem_append_uses_one_library_uri_without_retry_or_redirect() {
+        for status in [200,503,302] {
+            let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base=format!("http://{}/proxy",listener.local_addr().unwrap());
+            let (stop,mut stopped)=tokio::sync::oneshot::channel();
+            let server=tokio::spawn(async move {
+                let mut count=0;
+                loop {
+                    let (mut stream,_)=tokio::select!{_= &mut stopped=>break, accepted=listener.accept()=>accepted.unwrap()};count+=1;
+                    let mut header=Vec::new();let mut buffer=[0u8;4096];
+                    while !header.windows(4).any(|w|w==b"\r\n\r\n") {let n=stream.read(&mut buffer).await.unwrap();assert!(n>0);header.extend_from_slice(&buffer[..n]);assert!(header.len()<65536);}
+                    let request=String::from_utf8(header).unwrap();let first=request.lines().next().unwrap().split_whitespace().collect::<Vec<_>>();assert_eq!(first[0],"PUT");
+                    let url=url::Url::parse(&format!("http://synthetic{}",first[1])).unwrap();assert_eq!(url.path(),"/proxy/playlists/42/items");
+                    let pairs=url.query_pairs().into_owned().collect::<std::collections::BTreeMap<_,_>>();assert_eq!(pairs.len(),1);assert_eq!(pairs["uri"],"server://synthetic/com.plexapp.plugins.library/library/metadata/1,2,1");
+                    assert!(request.to_lowercase().contains("x-plex-token: synthetic-token"));
+                    stream.write_all(format!("HTTP/1.1 {status} Fixture\r\nContent-Length: 0\r\nLocation: /unexpected\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+                } count
+            });
+            let mut client=PlexClient::new(PlexClientConfig{base_url:base,token:"synthetic-token".into(),..Default::default()}).unwrap();client.machine_identifier="synthetic".into();
+            let outcome=tokio::time::timeout(std::time::Duration::from_secs(10),client.add_items(42,&[1,2,1])).await.unwrap();let _=stop.send(());assert_eq!(server.await.unwrap(),1);
+            assert_eq!(outcome.is_ok(),status==200);
+        }
+    }
+}
+
+#[cfg(test)]
+impl PlexClient {
+    /// Read-only status proof for the ignored manifest-owned live QA cleanup.
+    pub(crate) async fn qa_playlist_status_once(&self, id: i64) -> Result<u16> {
+        if id <= 0 { anyhow::bail!("Invalid QA playlist ID") }
+        let response=self.metadata_mutation_client.get(self.build_endpoint_url(&format!("/playlists/{id}")))
+            .header("X-Plex-Token",token_header(&self.token)).header("Accept","application/json")
+            .send().await.map_err(|e|e.without_url()).context("QA status proof unavailable")?;
+        Ok(response.status().as_u16())
     }
 }

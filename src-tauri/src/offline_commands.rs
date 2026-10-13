@@ -4,51 +4,6 @@ use crate::db::{offline, DbState};
 use crate::plex::{PlexClient, PlexClientConfig, PlexSettings};
 use tauri::{Manager, State};
 
-#[tauri::command]
-pub async fn semantic_documents(context: PlexRequestContext,
-    state: State<'_, PlexState>, db: State<'_, DbState>) -> Result<Vec<crate::db::semantic::Document>, String> {
-    let guard = state.0.lock().await;
-    let client = state.checked_cache_client(&context, &guard)?;
-    let conn = db.0.lock().map_err(|_| "Discovery storage is unavailable")?;
-    crate::db::semantic::documents(&conn, &client.library_scope)
-}
-
-#[tauri::command]
-pub async fn semantic_put_vectors(context: PlexRequestContext, model_id: String,
-    embeddings: Vec<crate::db::semantic::Embedding>, state: State<'_, PlexState>, db: State<'_, DbState>) -> Result<(), String> {
-    let guard = state.0.lock().await;
-    let client = state.checked_cache_client(&context, &guard)?;
-    let conn = db.0.lock().map_err(|_| "Discovery storage is unavailable")?;
-    crate::db::semantic::put(&conn, &client.library_scope, &model_id, &embeddings, now()?)
-}
-
-#[tauri::command]
-pub async fn semantic_search(context: PlexRequestContext, model_id: String, query_vector: Vec<f32>, limit: usize,
-    state: State<'_, PlexState>, db: State<'_, DbState>) -> Result<Vec<crate::db::semantic::Match>, String> {
-    let guard = state.0.lock().await;
-    let client = state.checked_cache_client(&context, &guard)?;
-    let conn = db.0.lock().map_err(|_| "Discovery storage is unavailable")?;
-    crate::db::semantic::search(&conn, &client.library_scope, &model_id, &query_vector, limit)
-}
-
-#[tauri::command]
-pub async fn semantic_info(context: PlexRequestContext,
-    state: State<'_, PlexState>, db: State<'_, DbState>) -> Result<crate::db::semantic::IndexInfo, String> {
-    let guard = state.0.lock().await;
-    let client = state.checked_cache_client(&context, &guard)?;
-    let conn = db.0.lock().map_err(|_| "Discovery storage is unavailable")?;
-    crate::db::semantic::info(&conn, &client.library_scope)
-}
-
-#[tauri::command]
-pub async fn semantic_clear(context: PlexRequestContext,
-    state: State<'_, PlexState>, db: State<'_, DbState>) -> Result<(), String> {
-    let guard = state.0.lock().await;
-    let client = state.checked_cache_client(&context, &guard)?;
-    let conn = db.0.lock().map_err(|_| "Discovery storage is unavailable")?;
-    crate::db::semantic::clear(&conn, &client.library_scope)
-}
-
 fn now() -> Result<i64, String> {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
         .map(|time| time.as_millis().min(i64::MAX as u128) as i64)

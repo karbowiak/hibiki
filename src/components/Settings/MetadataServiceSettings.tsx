@@ -111,7 +111,7 @@ export function MetadataServiceSettings({
               .
             </>
           ) : (
-            "Normal metadata reads may refresh stale data on your HeyaMetadata server. New-entity discovery and catalog writes are not requested. Artwork is loaded from verified image choices through the desktop cache."
+            "Automatic lookups read existing metadata and may refresh stale data on your HeyaMetadata server. Explicit discovery in Edit → Identity can create canonical metadata and start discovery jobs on that server. These operations do not change your Plex library. Artwork is loaded from verified image choices through the desktop cache."
           )}{" "}
           Saving stores credentials privately in the desktop app and does not
           contact the service.{" "}

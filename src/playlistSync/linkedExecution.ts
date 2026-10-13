@@ -16,6 +16,7 @@ import {
 } from "./linked"
 import type { LinkedPlaylistRepository } from "./linkedJournal"
 export interface LinkedPlaylistAdapter {
+  preservesDuplicateOccurrences?: boolean
   account(): Promise<PlaylistAccount>
   read(id: string): Promise<PlaylistSnapshot>
   mutate(
@@ -182,6 +183,20 @@ export async function checkLinkedPlaylist(
       ids(targetNow),
       job.desired.map((track) => track.id)
     )
+    if (
+      operation &&
+      targetAdapter.preservesDuplicateOccurrences === false &&
+      new Set(job.desired.map((track) => track.id)).size !== job.desired.length
+    ) {
+      return save({
+        ...link,
+        paused: true,
+        state: "conflict",
+        message:
+          "Plex cannot safely apply repeated songs from this linked playlist. Sync is paused; review the link before continuing.",
+        lastCheckedAt: now(),
+      })
+    }
     if (!operation) {
       const finalLibrary = destination === "library" ? targetNow : sourceNow,
         finalRemote = destination === "listenbrainz" ? targetNow : sourceNow

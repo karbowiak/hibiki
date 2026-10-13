@@ -728,3 +728,6 @@ mod tests {
         assert!(recording_ids(&value, A).is_err());
     }
 }
+
+#[cfg(test)]
+mod live_smoke;

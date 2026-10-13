@@ -65,6 +65,12 @@ jobs:
         with:
           script: |
             const tag = process.env.RELEASE_TAG
+            const fs = require('fs')
+            const notes = `releases/${process.env.VERSION}.md`
+            const hasNotes = fs.existsSync(notes)
+            const body = hasNotes
+              ? fs.readFileSync(notes, 'utf8')
+              : '*This release was generated automatically using GitHub Actions.*'
             // Listing releases includes drafts; getReleaseByTag only promises published releases.
             const releases = await github.paginate(github.rest.repos.listReleases, {
               owner: context.repo.owner,
@@ -78,13 +84,16 @@ jobs:
               throw new Error(`Release ${tag} is already published; refusing to replace its assets. Use a new version tag.`)
             }
             const existing = matching.find(release => release.draft)
-            if (existing) return existing.id
+            if (existing) {
+              if (hasNotes) await github.rest.repos.updateRelease({ ...context.repo, release_id: existing.id, body })
+              return existing.id
+            }
             const { data } = await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: tag,
               name: `Hibiki v${process.env.VERSION}`,
-              body: '*This release was generated automatically using GitHub Actions.*',
+              body,
               draft: true,
               prerelease: false
             })

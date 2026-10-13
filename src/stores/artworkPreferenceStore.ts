@@ -1,7 +1,7 @@
 import { create } from "zustand"
 import { safePersist } from "./idbStorage"
 export type ArtworkSource =
-  "plex" | "deezer" | "apple" | "coverartarchive" | "fanart" | "heya"
+  "plex" | "deezer" | "apple" | "coverartarchive" | "fanart" | "heya" | "theaudiodb"
 export type ArtworkKind = "artist" | "album"
 export type ArtworkRole = "poster" | "background"
 export function artworkPreferenceKey(
@@ -90,6 +90,7 @@ function validKey(key: string, source: unknown) {
           "coverartarchive",
           "fanart",
           "heya",
+          "theaudiodb",
         ].includes(source as string))
     )
   } catch {

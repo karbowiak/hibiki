@@ -4,8 +4,25 @@ import {
   type PlaylistPlan,
   type PlaylistSnapshot,
   type PlaylistTrack,
+  type PlaylistCapabilities,
 } from "./types"
 export const MAX_PLAYLIST_ITEMS = 1000
+export const DUPLICATE_COPY_REASON =
+  "Plex cannot preserve repeated songs when creating this copy. No playlist will be created."
+export function playlistCopyBlockReason(
+  plan: PlaylistPlan,
+  capabilities: PlaylistCapabilities
+): string | null {
+  if (
+    capabilities.preservesDuplicateCopies !== false ||
+    plan.rows.some((row) => row.match.status !== "matched")
+  )
+    return null
+  const ids = resolvedTracks(plan).map((track) =>
+    plan.direction === "export" ? track.recordingMbid : track.id
+  )
+  return new Set(ids).size !== ids.length ? DUPLICATE_COPY_REASON : null
+}
 export function snapshotRevision(snapshot: PlaylistSnapshot): string {
   return JSON.stringify(snapshot)
 }

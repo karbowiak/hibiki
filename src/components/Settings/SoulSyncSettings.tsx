@@ -27,9 +27,9 @@ export function SoulSyncSettings() {
         <span className="text-xs text-[var(--text-muted)]">Optional</span>
       </h3>
       <p className="mt-2 text-sm text-[var(--text-secondary)]">
-        Use artist biographies and genres from your own SoulSync library.
-        Read-only; no downloads or library changes. Albums and tracks are not
-        supported yet.
+        Enrich artist, album and track metadata from your own SoulSync library,
+        including descriptions and genres where available. Lookups are
+        read-only and do not request downloads or library changes.
       </p>
       <form
         className="mt-4 flex flex-col gap-3"
@@ -82,13 +82,13 @@ export function SoulSyncSettings() {
             onChange={(event) => setEnabled(event.target.checked)}
             disabled={loading}
           />
-          Enable SoulSync artist metadata
+          Enable SoulSync metadata
         </label>
         <p className="text-xs text-[var(--text-muted)]">
           Generate a key in SoulSync Settings → SoulSync API. Saving does not
           contact the service. Enter an API key when changing the server URL or
           path; saved keys stay with their original server. Choose SoulSync for
-          an artist field in Edit to request metadata.
+          an artist, album or track field in Edit to request metadata.
         </p>
         {error && (
           <p role="alert" className="text-sm text-red-400">

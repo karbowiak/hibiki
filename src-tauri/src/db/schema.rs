@@ -14,6 +14,8 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
     let migrations: &[(i64, &str)] = &[
         (1, include_str!("migrations/V1__initial.sql")),
         (2, include_str!("migrations/V2__offline_snapshots.sql")),
+        // Retain the applied development migration for existing databases.
+        // AI discovery is deferred; no active commands read/write these rows.
         (3, include_str!("migrations/V3__semantic_vectors.sql")),
     ];
 

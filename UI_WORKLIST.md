@@ -118,3 +118,54 @@ inert audio and an offline font fallback, not connected-app playback evidence.
 
 The ignored local TODO retains future provider adapters, release publication and
 the original un-reproduced radio failure. No push or release is part of this batch.
+
+## 0.6.0 follow-up and release candidate
+
+The user selected 0.6.0 for the interface overhaul and deferred AI integration
+for a later design. Local semantic search, model installation, inference workers
+and the Transformers dependency have been removed. Existing development
+databases keep their already-applied V3 migration; no active model commands,
+workers or model assets ship with this release.
+
+Optional premium TheAudioDB V2 metadata and separate poster/background artwork
+now use the shared source interface. Private native key storage, exact returned
+identity checks, rate limits and stale-account/configuration fences are covered.
+The source remains hidden until configured; no premium key was available for a
+live service lookup.
+
+Controlled live QA exposed and fixed a real Plex contract defect: playlist
+creation and multi-item append need one library URI with comma-separated IDs,
+rather than repeating the entire URI. Both operations now make a single request.
+Occurrence reordering supports valid forward/backward moves and selects the
+predecessor after source removal. Transport tests simulate actual insert-after
+semantics rather than mirroring the requested destination index.
+
+The tested Plex server also deduplicates repeated IDs during create and append.
+Copies containing repeated Plex IDs are blocked before admission; linked updates
+requiring a nonmatching repeated sequence pause before sending changes. Existing
+duplicates remain intact, and ListenBrainz exports retain their occurrences.
+
+Two freshly created Plex QA playlists and one fresh private ListenBrainz QA
+playlist were the only remotely modified objects. Playlist title/summary edits
+and title restoration passed. The distinct-track workflow passed ordered sync
+in both directions, both-sided conflict detection without automatic writes, and
+read-only recovery after deliberately suppressing a verified frontend receipt.
+That last case simulates acknowledgement loss; it is not a claim of a real
+network outage. Five proof stages and seven workflow occurrence requests were
+retained, alongside the earlier rejected duplicate-append attempt. Existing
+music metadata, playlists and playback were not used as mutation targets.
+Reviewed cleanup deleted only those three QA playlists once each; every fresh
+post-delete read returned 404. Private manifests and proof receipts are retained.
+
+Validation: 775 frontend tests and 576 safe native unit tests passed, with live
+integrations excluded from the ordinary run. Both TypeScript projects and the
+production build passed. Chromium/WebKit renderer and editor checks passed;
+Home/artist/album/search previews use actual components with fictional data.
+The refreshed non-AI ARM AppImage validates its AppDir, desktop entry and
+AppStream metadata. It predates one later status-message wording adjustment;
+exact-commit CI and signed amd64 release checks supply final packaging evidence.
+
+The original Radio Browser failure remains unreproduced; the current native
+shelves and bounded concurrent read-only probes pass. Direct Spotify/Discogs/
+TIDAL adapters, premium TheAudioDB live verification, a duplicate-preserving Plex
+copy path, and the user's later AI design remain future work.

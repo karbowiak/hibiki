@@ -21,6 +21,9 @@
 
 ## Screenshots
 
+Home, artist, album and search previews show the 0.6 interface with a fictional
+demo library. Playlist, radio and podcast images below are from the earlier UI.
+
 <p>
   <a href="screenshots/artist.png"><img src="screenshots/artist.png" alt="Artist" width="32%" /></a>
   <a href="screenshots/album.png"><img src="screenshots/album.png" alt="Album" width="32%" /></a>
@@ -71,9 +74,12 @@
 - **Deezer** — artist images, album covers, genres, fan counts
 - **Apple / iTunes** — genres, release dates and album artwork
 - **MusicBrainz, Wikidata and Cover Art Archive** — verified identities, artist information and approved album covers
-- **Fanart.tv, HeyaMetadata and SoulSync** — optional configured enrichment sources
+- **Fanart.tv, HeyaMetadata, SoulSync and TheAudioDB** — optional configured enrichment sources; TheAudioDB requires a premium V2 key
 - Artist, album and playlist editors with source attribution, independent poster/background choices, and reviewed Plex metadata changes
-- Reviewed ListenBrainz playlist copy import/export, preserving order and duplicate occurrences
+- Reviewed ListenBrainz playlist copies and opt-in bidirectional links, with ordered verification, conflict review and recovery. Repeated-song imports into Plex are blocked to avoid server deduplication.
+- Explicit canonical MusicBrainz/Heya identity selection, Plex artwork uploads and editable tags/locks
+- Read-only browsing of visited library pages saved in account-scoped SQLite snapshots
+- Non-destructive comparison of album copies and track media versions
 - Synced lyrics display with adjustable offset
 
 See [metadata and editing](src/metadata/README.md) for source capabilities and [playlist copies](src/playlistSync/README.md) for matching and recovery behavior.
@@ -89,6 +95,8 @@ See [metadata and editing](src/metadata/README.md) for source capabilities and [
 - Card size slider
 - Compact mode
 - Reduced motion support
+- Full-window artwork, sharp heroes with blurred continuation, shared translucent navigation and independent now-playing colors
+- Background rotation every 45 seconds with pause/next controls
 - Easter eggs
 
 ### Accessibility & Usability
@@ -296,7 +304,7 @@ The Linux before-bundle hook generates `app.hibiki.client.metainfo.xml` with the
 
 AppImage bundling embeds `gh-releases-zsync|karbowiak|hibiki|latest|Hibiki_*_amd64.AppImage.zsync` before Tauri signs the installer. The companion is generated from the final installer without changing its bytes, uploaded with it, and checked against the complete SHA-1 and every rolling/MD4 block checksum. AppImageUpdate's delta-update metadata supplements the application's cryptographically verified Tauri updater; it does not replace updater signatures.
 
-Tauri CLI 2.12.1 also fixes the absolute icon and desktop symlinks reported by the [AppImage catalogue](https://github.com/AppImage/appimage.github.io/pull/7937). The catalogue entry is merged; the new metadata and update companions become available there after a future release includes these packaging changes.
+Tauri CLI 2.12.1 also fixes the absolute icon and desktop symlinks reported by the [AppImage catalogue](https://github.com/AppImage/appimage.github.io/pull/7937). The catalogue entry is merged; version 0.6.0 includes the new AppStream metadata and AppImageUpdate companions.
 
 Release tags must point to a commit with successful CI from a push to `main`. If CI is still running, wait for it to pass and retry the release workflow with the existing tag. Packaging uses that exact commit, and a changed tag or newer failed CI run blocks publication. Existing drafts can be resumed; published versions cannot be rebuilt, even when a stale draft shares their tag.
 

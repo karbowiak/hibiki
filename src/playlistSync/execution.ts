@@ -1,4 +1,9 @@
-import { snapshotRevision, resolvedTracks, deepFreeze } from "./planner"
+import {
+  snapshotRevision,
+  resolvedTracks,
+  deepFreeze,
+  playlistCopyBlockReason,
+} from "./planner"
 import {
   sameAccount,
   samePlaylistIdentity,
@@ -41,6 +46,8 @@ export async function executePlaylistCopy(
     tracks = resolvedTracks(plan)
   if (!target.capabilities.createCopy)
     throw Error("Destination does not support creating playlists")
+  const blocked = playlistCopyBlockReason(plan, target.capabilities)
+  if (blocked) throw Error(blocked)
   const [sourceAccount, targetAccount, currentSource] = await Promise.all([
     source.account(),
     target.account(),

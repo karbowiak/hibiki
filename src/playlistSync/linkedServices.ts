@@ -45,6 +45,9 @@ export async function linkedSyncServices(
     verifiedMbid: (track) => mbidFor(track.id),
   })
   const library: LinkedPlaylistAdapter = {
+    ...(provider.name.toLowerCase() === "plex"
+      ? { preservesDuplicateOccurrences: false }
+      : {}),
     account: () => libraryReader.account(),
     read: (id) => libraryReader.read(id),
     mutate: async (before, operation, expected) => {

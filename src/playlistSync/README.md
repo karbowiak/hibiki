@@ -2,7 +2,7 @@
 
 Supported integration: ListenBrainz list/read and private create-copy import/export through the current native account. Last.fm playlist APIs are **unsupported**, as stated in its [official playlist documentation](https://www.last.fm/api/playlists). Copy workflows remain independent from the explicitly enabled linked synchronization below.
 
-[ListenBrainz API](https://listenbrainz.readthedocs.io/en/latest/users/api/playlist.html) uses JSPF recording identifiers. [The actual server validator](https://github.com/metabrainz/listenbrainz-server/blob/master/listenbrainz/webserver/views/playlist_api.py) additionally requires a `public` extension. Copies always send `public: false`. No collaborators or third-party service credentials are accepted. Remote descriptions/artwork are not copied; title and ordered recording identifiers are. No external API writes are performed by tests.
+[ListenBrainz API](https://listenbrainz.readthedocs.io/en/latest/users/api/playlist.html) uses JSPF recording identifiers. [The actual server validator](https://github.com/metabrainz/listenbrainz-server/blob/master/listenbrainz/webserver/views/playlist_api.py) additionally requires a `public` extension. Copies always send `public: false`. No collaborators or third-party service credentials are accepted. Remote descriptions/artwork are not copied; title and ordered recording identifiers are. Ordinary tests use synthetic transports; the explicitly reviewed, ignored live QA runner operates only on its freshly created disposable playlists.
 
 ## UI contract
 
@@ -11,6 +11,20 @@ Supported integration: ListenBrainz list/read and private create-copy import/exp
 3. Show all ordered rows, including duplicates. Imports use exact MBID or conservative metadata matching; ambiguous/missing matches block admission. Exports require recording MBIDs. Explicitly reviewed rows can be resolved with `resolvePlaylistOccurrence`; never silently omit an unavailable track. An existing best-match MusicBrainz lookup alone is not proof that it identified the exact recording.
 4. Only after explicit user approval, run `executePlaylistCopy(new PlaylistCopyApproval(plan), sourceAdapter, targetAdapter, playlistAttemptJournal, isCurrent)`. One approval cannot be submitted twice. Both accounts and source content are checked again before admission.
 5. Refresh the current destination list only if the view still owns its connection. Server order/duplicate loss leaves a `reconcile` receipt. A copy cannot be called successful until full ordered identities and title are verified.
+
+Plex's current URI-based create path collapses repeated track IDs. Imports whose
+resolved Plex IDs repeat are disabled before approval is consumed, receipts are
+written or a playlist is created. Every occurrence remains visible in the preview;
+Hibiki never silently removes repeats. ListenBrainz exports retain repeated
+recording IDs. Unknown adapters keep their existing behavior and still require
+full ordered post-read proof.
+
+Live QA also found singleton append left an existing repeated ID unchanged on the
+tested server. Future work: investigate documented play-queue-based creation and
+require actual ordered proof plus durable destination/step receipts before enabling
+duplicate imports. Neither [Plex's API](https://developer.plex.tv/pms/) nor
+[PythonPlexAPI's playlist implementation](https://python-plexapi.readthedocs.io/en/latest/_modules/plexapi/playlist.html)
+documents a duplicate-preserving create flag; no unsupported query flag is sent.
 
 The limit is 1,000 occurrences per playlist and 100 records per page. Automatic import previews check at most 30 distinct artist/title queries with three concurrent requests and at most 50 candidates per query; remaining rows use explicit bounded local searches. They never scan all library tracks. This limit is explicit; larger playlists are rejected rather than truncated. Local page gaps, repeated occurrence IDs, changing totals and unavailable account scopes reject the preview. Neither service offers a cross-service atomic read-and-create transaction: admission checks happen before the write, and the copy uses precisely the reviewed frozen input. A source edit after admission cannot be silently merged into that copy.
 
@@ -24,6 +38,12 @@ The local adapter captures a runtime connection/session fence separately from th
 
 
 ## Explicit linked synchronization
+
+Updates into Plex pause for review if the desired ordered IDs contain repeats
+and the current destination does not already match. Existing duplicates remain
+untouched; an already equal destination can be verified without a write. This
+conservative boundary also pauses reorderings of duplicate sequences. Updates
+into ListenBrainz retain their existing occurrence-preserving behavior.
 
 Linked sync is opt-in for one regular Plex music playlist and one owned ListenBrainz playlist. Preview both ordered versions, resolve every occurrence, choose initial order, and confirm enabling before retaining a link. Recording suggestions require explicit verification; duplicate occurrences remain independent. Names, descriptions, privacy, and collaborators are not synchronized.
 

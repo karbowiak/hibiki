@@ -89,7 +89,12 @@ const provider: any = {
 useProviderStore.getState().setProvider(provider)
 const capabilities = { read: true, createCopy: true, replace: false }
 const library: PlaylistAdapter = {
-  capabilities,
+  capabilities: {
+    ...capabilities,
+    ...(scenario === "duplicate-blocked"
+      ? { preservesDuplicateCopies: false }
+      : {}),
+  },
   account: async () => local,
   read: async (id) => ({
     account: local,
@@ -218,7 +223,18 @@ async function exportRows() {
   assert.equal(button("Export this private copy").disabled, false)
 }
 document.getElementById("opener")!.focus()
-if (scenario === "import") {
+if (scenario === "duplicate-blocked") {
+  await render()
+  await click("Source playlist")
+  assert.equal(document.querySelectorAll("ol > li").length, 3)
+  assert.equal(button("Import this copy").disabled, true)
+  assert.ok(
+    document.body.textContent!.includes("Plex cannot preserve repeated songs")
+  )
+  await click("Import this copy")
+  assert.equal(writes, 0)
+  assert.equal(saved.length, 0)
+} else if (scenario === "import") {
   await render()
   assert.ok(document.body.textContent!.includes("Last.fm does not support"))
   const choice = button("Source playlist")

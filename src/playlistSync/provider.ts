@@ -61,6 +61,9 @@ export function providerPlaylistAdapter(
       read: provider.capabilities.playlists,
       createCopy: provider.capabilities.playlists,
       replace: false,
+      ...(provider.name.toLowerCase() === "plex"
+        ? { preservesDuplicateCopies: false }
+        : {}),
     },
     account: async () => {
       owns()

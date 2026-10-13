@@ -1,8 +1,4 @@
 import { PlexProvider } from "./provider"
-import {
-  activateSemanticContext,
-  scheduleSemanticIndex,
-} from "../../semantic/discovery"
 import { useOfflineStatusStore } from "../../offline/statusStore"
 import { createOfflineProvider } from "../../offline/providerCache"
 import { createSavedLibraryProvider } from "../../offline/offlineProvider"
@@ -40,7 +36,6 @@ export const useConnectionStore = createPlexConnectionStore({
   testServerConnection,
   startPlexAuth: plexAuthStart,
   clearSession: () => {
-    activateSemanticContext(null)
     useOfflineStatusStore.getState().activate(null)
     usePlayerStore.getState().stop()
     useContextMenuStore.setState({
@@ -83,7 +78,6 @@ export const useConnectionStore = createPlexConnectionStore({
           useOfflineStatusStore.getState().cached(provider.cacheScope!, notice),
         onOnlineRead: (key) => {
           useOfflineStatusStore.getState().online(provider.cacheScope!, key)
-          scheduleSemanticIndex()
         },
       }
     )
@@ -107,10 +101,6 @@ export const useConnectionStore = createPlexConnectionStore({
       await provider.disconnect()
       return
     }
-    activateSemanticContext({
-      connectionRevision: context.revision,
-      cacheScope: context.cacheScope,
-    })
     useOfflineStatusStore.getState().activate(provider.cacheScope ?? null, true)
     useProviderStore.getState().setProvider(provider)
   },
@@ -120,10 +110,6 @@ export const useConnectionStore = createPlexConnectionStore({
       activateMetadataCache(provider),
     ])
     if (!ownsRequest()) return
-    activateSemanticContext({
-      connectionRevision: context.revision,
-      cacheScope: provider.cacheScope!,
-    })
     useOfflineStatusStore.getState().activate(provider.cacheScope ?? null)
     useProviderStore.getState().setProvider(provider)
     wsManager = new PlexWebSocketManager()

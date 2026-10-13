@@ -12,6 +12,7 @@ import {
   useHeyaServiceStore,
 } from "../metadata/services/store"
 import { useSoulSyncStore } from "../metadata/soulsync/store"
+import { useTheAudioDbStore } from "../metadata/theaudiodb/store"
 import { nativeSoulSyncAdapter } from "../metadata/soulsync/adapter"
 import { useProviderStore } from "../stores/providerStore"
 import { useMetadataSourceStore } from "../stores/metadataSourceStore"
@@ -54,9 +55,11 @@ export function useMetadataSnapshot(
     (identity ? metadataSelectionFor(identity, choices) : undefined)
   const fanartStatus = useFanartServiceStore((state) => state.status)
   const heyaStatus = useHeyaServiceStore((state) => state.status)
+  const audioDbStatus = useTheAudioDbStore((state) => state.status)
   useEffect(() => {
     void useFanartServiceStore.getState().load()
     void useHeyaServiceStore.getState().load()
+    void useTheAudioDbStore.getState().load()
   }, [])
   const soulStatus = useSoulSyncStore((state) => state.status)
   const loadSoulSync = useSoulSyncStore((state) => state.load)
@@ -103,6 +106,8 @@ export function useMetadataSnapshot(
             fanartStatus?.revision &&
           useHeyaServiceStore.getState().status?.revision ===
             heyaStatus?.revision &&
+          useTheAudioDbStore.getState().status?.revision ===
+            audioDbStatus?.revision &&
           currentAuth.hasApiKey === auth.hasApiKey &&
           currentAuth.username === auth.username &&
           scope
@@ -118,6 +123,7 @@ export function useMetadataSnapshot(
     soulAdapter,
     fanartStatus?.revision,
     heyaStatus?.revision,
+    audioDbStatus?.revision,
     additionalProviders,
     reviewed?.lease,
   ])
@@ -161,6 +167,7 @@ export function useMetadataSnapshot(
     const unsubscribeServices = [
       useFanartServiceStore,
       useHeyaServiceStore,
+      useTheAudioDbStore,
     ].map((store) =>
       store.subscribe((next, previous) => {
         if (next.status?.revision !== previous.status?.revision) {

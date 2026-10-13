@@ -23,6 +23,7 @@ mod listenbrainz;
 mod listening_history;
 mod playlist_sync;
 mod soulsync;
+mod theaudiodb;
 mod mediasession;
 mod musicbrainz;
 mod public_metadata;
@@ -249,6 +250,7 @@ pub fn run() {
         .manage(PlexState::new())
         .manage(artwork_commands::ArtworkInventoryState::default())
         .manage(std::sync::Arc::new(soulsync::SoulSyncState::default()))
+        .manage(std::sync::Arc::new(theaudiodb::TheAudioDbState::default()))
         .manage(std::sync::Arc::new(metadata_services::MetadataServicesState::default()))
         .manage(shutdown::ShutdownState::default())
         .manage(listening_history::ReportingState::default())
@@ -371,11 +373,6 @@ pub fn run() {
             offline_commands::offline_cache_info,
             offline_commands::offline_cache_clear,
             offline_commands::offline_cache_invalidate,
-            offline_commands::semantic_documents,
-            offline_commands::semantic_put_vectors,
-            offline_commands::semantic_search,
-            offline_commands::semantic_info,
-            offline_commands::semantic_clear,
             // Library
             commands::get_library_sections,
             commands::search_library,
@@ -421,6 +418,9 @@ pub fn run() {
             soulsync::soulsync_status,
             soulsync::soulsync_configure,
             soulsync::soulsync_artist,
+            theaudiodb::theaudiodb_status,
+            theaudiodb::theaudiodb_configure,
+            theaudiodb::theaudiodb_lookup,
             // Play queue
             commands::create_play_queue,
             commands::get_play_queue,

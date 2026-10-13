@@ -16,7 +16,8 @@ that library; they do not rename its items or create library entries automatical
 | Cover Art Archive | — | — | Approved front covers for a verified MusicBrainz release group |
 | Fanart.tv | — | — | Multiple artist portraits/backgrounds and matched album covers; project API key required |
 | HeyaMetadata | Canonical biography, genres, tags and type | Canonical description, genres, tags and date | Canonical image references from the configured server |
-| SoulSync | Library biography and matched supplemental metadata | Not supported by this adapter yet | Not supported by this adapter yet |
+| SoulSync | Library biography and matched supplemental metadata | Matched library descriptions, genres, dates and label | Not supported by this adapter |
+| TheAudioDB | Biography, genres, origin, dates and identifiers | Description, genres, year, label and identifiers | Verified portraits, covers and separate fanart; premium V2 key required |
 
 Wikidata descriptions are short identity descriptions, not biographies. Sources
 that aggregate other providers keep the underlying field provenance visible.
@@ -47,7 +48,7 @@ selected image's cached bytes. Both operations leave unrelated images cached.
 
 ## Optional configured sources
 
-Fanart.tv, HeyaMetadata and SoulSync are optional desktop integrations configured
+Fanart.tv, HeyaMetadata, SoulSync and TheAudioDB are optional desktop integrations configured
 in Settings. Server URLs and public configuration revisions can reach the UI;
 API keys remain in private native settings files. Changing a protected server URL
 or path requires entering its key again. Disabling or changing a source retires
@@ -60,13 +61,24 @@ an otherwise configured source, and hiding a disabled service preserves its save
 item preferences for later use.
 
 HeyaMetadata uses canonical search and detail GETs. Normal stale reads and image
-GETs can cause Heya to refresh/materialize data internally. Hibiki does not submit
-new-entity discovery, catalog changes or download requests. Its artwork follows
+GETs can cause Heya to refresh/materialize data internally. Automatic lookups do
+not submit discovery or download requests. The separate identity editor offers
+explicit discovery and candidate resolution, which can create canonical data
+and jobs on that server before the user reviews and applies a local choice. Its artwork follows
 verified opaque image references through Hibiki's managed image cache; the UI
 does not receive a private server credential.
 
 SoulSync uses its existing library API. Its `/api/v1/request` endpoint schedules
 downloads and is deliberately separate from metadata lookup.
+
+TheAudioDB uses its fixed official premium V2 endpoint with a private header key,
+one request per second, a 60-second rate-limit cooldown and a bounded 15-second
+lookup. Unique artist/title and exact returned detail identity are verified;
+reviewed MusicBrainz IDs cannot fall back to names. Positive metadata is held in
+a bounded memory-only six-hour cache, negative results for one minute. No key is
+included in image or entity links. Public images use the managed image cache and
+show TheAudioDB attribution. Config/account changes retire pending results;
+unconfigured or disabled services are excluded from metadata/artwork options.
 
 ## Editing Plex
 
@@ -113,8 +125,8 @@ than an automatic retry. Playlist integration is described in
 
 ## Direct-provider review
 
-Reviewed against primary documentation on 2026-10-13. These four providers are
-**not direct Hibiki adapters**. Availability through a configured Heya server
+Reviewed against primary documentation on 2026-10-13. TheAudioDB is implemented
+as an optional direct adapter; Discogs, Spotify and TIDAL remain deferred. Availability through a configured Heya server
 depends on that server's providers and credentials; aggregation does not remove
 the original provider's attribution, licensing or retention requirements.
 
@@ -200,10 +212,10 @@ one-minute wait after exceeding them.
 and modification subject to retained notices, require source attribution for
 paid custom artwork, and require a paid subscription for app-store publication.
 They do not specify an unlimited retention licence or a numeric cache TTL.
-This is the most straightforward next optional direct adapter: user-configured
-native premium key, V2 GET-only transport, shared tier-aware gate/backoff,
-bounded identity-verified fields/images, linked provenance and an explicit
-freshness/eviction policy. Heya aggregation can avoid duplicate key management
+The optional direct adapter uses a user-configured native premium key, V2 GET-only
+transport, conservative gate/backoff, bounded identity-verified fields/images,
+linked provenance and bounded freshness/eviction. Protocol tests use local servers;
+live account-tier verification requires a configured premium key. Heya aggregation can avoid duplicate key management
 when its configured provider supplies these fields with usable provenance.
 
 Before enabling any of these sources, add capability/configuration gating,

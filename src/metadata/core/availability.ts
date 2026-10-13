@@ -6,6 +6,7 @@ export interface MetadataSourceAvailability {
   fanart?: Connection
   heya?: Connection
   soulsync?: Connection
+  theaudiodb?: Connection
 }
 
 /** Option visibility follows configuration, not a transient lookup or missing match. */
@@ -14,7 +15,7 @@ export function metadataSourceAvailable(
   settings: MetadataSourceAvailability
 ): boolean {
   if (source === "lastfm") return !!settings.lastfmApiKey
-  if (source === "fanart" || source === "heya" || source === "soulsync") {
+  if (source === "fanart" || source === "heya" || source === "soulsync" || source === "theaudiodb") {
     const connection = settings[source]
     return !!connection?.configured && connection.enabled
   }

@@ -24,6 +24,8 @@ export interface PlaylistSnapshot {
   items: readonly PlaylistOccurrence[]
 }
 export interface PlaylistCapabilities {
+  /** False only when the destination is known to collapse repeated song IDs. */
+  preservesDuplicateCopies?: boolean
   read: boolean
   createCopy: boolean
   replace: boolean
