@@ -7,6 +7,7 @@ mod cache_files;
 mod commands;
 mod db;
 mod offline_commands;
+mod offline_audio;
 mod artwork_commands;
 mod deezer;
 mod genius;
@@ -272,6 +273,7 @@ pub fn run() {
             let db_state = db::DbState::open(&db_path)
                 .map_err(|e| Box::<dyn std::error::Error>::from(e))?;
             app.manage(db_state);
+            app.manage(offline_audio::AudioDownloads::new(app.path().app_data_dir()?.join("downloads")));
             listening_history::start_worker(app.handle().clone());
 
             // Start the system Now Playing / media-key integration.
@@ -373,6 +375,12 @@ pub fn run() {
             offline_commands::offline_cache_info,
             offline_commands::offline_cache_clear,
             offline_commands::offline_cache_invalidate,
+            offline_audio::audio_prepare_plex_track,
+            offline_audio::audio_local_track,
+            offline_audio::audio_download_list,
+            offline_audio::audio_download_enqueue,
+            offline_audio::audio_download_resume,
+            offline_audio::audio_download_remove,
             // Library
             commands::get_library_sections,
             commands::search_library,

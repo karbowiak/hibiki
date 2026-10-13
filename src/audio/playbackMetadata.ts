@@ -74,6 +74,7 @@ export class PlaybackMetadata {
     let gain = finite(track.gain),
       albumGain = finite(track.albumGain)
     if (gain === null && albumGain === null) {
+      if (track.mediaInfo?.localAudio) return null
       try {
         const full = await this.fullTrack(provider, track.id)
         gain = finite(full.gain)
@@ -86,6 +87,7 @@ export class PlaybackMetadata {
   }
 
   async streamId(provider: MusicProvider, track: MusicTrack): Promise<number | null> {
+    if (track.mediaInfo?.localAudio) return null
     const valid = (value: number | null | undefined) =>
       typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null
     const inline = valid(track.mediaInfo?.audioStreamId)

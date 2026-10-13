@@ -27,6 +27,8 @@ import { Playlists } from "./Pages/Playlists"
 import clsx from "clsx"
 import { TopBar } from "./TopBar"
 import { Search } from "./Pages/Search"
+import { DownloadsPage } from "./Pages/Downloads"
+import { PlexOfflineBanner } from "./OfflineStatus"
 
 // Module-level map — persists for the app lifetime.
 const verticalScrollPositions = new Map<string, number>()
@@ -85,6 +87,7 @@ export function Page() {
     <ScrollContainerContext.Provider value={scrollRef}>
     <div className={clsx("app-page flex h-full flex-col", bgClass)}>
       <TopBar />
+      <PlexOfflineBanner />
 
       <div
         ref={scrollRef}
@@ -112,6 +115,7 @@ export function Page() {
         <Route path="/library" key="library">
           <Library />
         </Route>
+        <Route path="/downloads"><DownloadsPage /></Route>
 
         <Route path="/playlist/:id" key="playlist">
           {(params: { id?: string }) => {

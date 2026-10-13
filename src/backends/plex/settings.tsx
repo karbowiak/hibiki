@@ -338,15 +338,15 @@ export function PlexSettings() {
         )}
       </div>
 
-      {!isConnected && (
+      {(
         <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-4 text-[var(--text-primary)]">
-          <p className="text-sm">Saved pages stay on this device for the same Plex account and library. Offline browsing does not enable playback or library changes.</p>
+          <p className="text-sm">Browse saved pages and play complete cached or downloaded music without Plex. Library changes are disabled offline. Switching to saved-library mode stops current playback.</p>
           <button type="button" disabled={isLoading} className="mt-3 rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-medium hover:bg-[var(--bg-elevated)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50" onClick={async () => {
             stopPolling()
             const request = authGeneration.current
             await browseSavedLibrary()
             if (authIsCurrent(request) && useConnectionStore.getState().isOffline) navigate("/")
-          }}>{isLoading ? "Opening saved library…" : isOffline ? "Return to saved library" : "Browse saved library"}</button>
+          }}>{isLoading ? "Opening saved library…" : isOffline ? "Return to saved library" : isConnected ? "Browse offline" : "Browse saved library"}</button>
         </div>
       )}
 

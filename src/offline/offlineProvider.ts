@@ -1,12 +1,21 @@
 import type { MusicProvider } from "../providers/types"
 import type { OfflineCache } from "./providerCache"
 import { offlineKey } from "./providerCache"
+import type { TrackPlaybackInfo } from "../providers/types"
+import type { LocalAudioPage } from "./audio"
+import type { MusicTrack } from "../types/music"
 
 /** Saved browsing is deliberately separate from connected playback/mutations. */
 export function createSavedLibraryProvider(
   cacheScope: string,
   cache: OfflineCache,
-  owns: () => boolean
+  owns: () => boolean,
+  audio?: {
+    track(id: string): Promise<MusicTrack | null>
+    playback(id: string): Promise<TrackPlaybackInfo>
+    list(offset?: number, limit?: number, cached?: boolean): Promise<LocalAudioPage>
+    remove(id: string): Promise<void>
+  }
 ): MusicProvider {
   const session = Object.freeze({})
   const reads = new Set([
@@ -53,6 +62,9 @@ export function createSavedLibraryProvider(
     "editPlaylist",
     "movePlaylistItem",
     "editMetadata",
+    "editAdvancedMetadata",
+    "saveArtwork",
+    "downloadTracks",
     "createRadioQueue",
     "createSmartShuffleQueue",
     "createPlayQueue",
@@ -100,6 +112,12 @@ export function createSavedLibraryProvider(
       syncTracks: false,
     },
     isConnected: () => false,
+    ...(audio ? {
+      getPlaybackInfo: async (track: MusicTrack) => { check(); const result = await audio.playback(track.id); check(); return result },
+      getStreamUrl: async (track: MusicTrack) => { check(); const result = await audio.playback(track.id); check(); return result.url },
+      getLocalAudio: async (offset = 0, limit = 100, cached = false) => { check(); const result = await audio.list(offset, limit, cached); check(); return result },
+      removeDownload: async (id: string) => { check(); await audio.remove(id); check() },
+    } : {}),
     disconnect: async () => {
       retired = true
     },
@@ -115,6 +133,11 @@ export function createSavedLibraryProvider(
         typeof key === "string" && reads.has(key)
           ? async (...args: unknown[]) => {
               check()
+              if (key === "getTrack" && audio) {
+                const track = await audio.track(String(args[0]))
+                check()
+                if (track) return track
+              }
               const snapshot = await cache.get(offlineKey(key, args))
               check()
               if (!snapshot)
@@ -126,7 +149,7 @@ export function createSavedLibraryProvider(
           : async () => {
               check()
               throw new Error(
-                "Reconnect to Plex to play music or change your library."
+                "Reconnect to Plex to use this operation. Complete cached and downloaded tracks can be played from Downloads."
               )
             }
       functions.set(key, method)

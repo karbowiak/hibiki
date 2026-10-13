@@ -70,6 +70,19 @@ export function createPlexApi(
   // Library
   // ---------------------------------------------------------------------------
 
+  function prepareTrackAudio(trackId: number, localOnly = false): Promise<import("../../providers/types").TrackPlaybackInfo> {
+    return invoke("audio_prepare_plex_track", { trackId, localOnly })
+  }
+  function localTrack(trackId: number): Promise<import("../../types/music").MusicTrack | null> {
+    return invoke("audio_local_track", { trackId })
+  }
+  function localAudio(offset = 0, limit = 100, cached = false): Promise<import("../../offline/audio").LocalAudioPage> {
+    return invoke("audio_download_list", { offset, limit, cached })
+  }
+  function downloadTracks(trackIds: number[]): Promise<void> { return invoke("audio_download_enqueue", { trackIds }) }
+  function removeDownload(trackId: number): Promise<void> { return invoke("audio_download_remove", { trackId }) }
+  function resumeDownloads(): Promise<void> { return invoke("audio_download_resume") }
+
   /** Get all library sections on the server. */
   function getLibrarySections(): Promise<LibrarySection[]> {
     return invoke("get_library_sections")
@@ -757,6 +770,12 @@ export function createPlexApi(
 
   return {
     context: requestContext,
+    prepareTrackAudio,
+    localTrack,
+    localAudio,
+    downloadTracks,
+    removeDownload,
+    resumeDownloads,
     getLibrarySections,
     searchLibrary,
     findPlaylistCandidates,

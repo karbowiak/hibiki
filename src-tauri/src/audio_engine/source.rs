@@ -3,10 +3,11 @@
 use sha2::{Digest, Sha256};
 
 pub(crate) struct MediaSource {
-    pub(crate) request: reqwest::RequestBuilder,
+    pub(crate) request: Option<reqwest::RequestBuilder>,
     pub(crate) cache_key: String,
     pub(crate) plex_scope: Option<String>,
     pub(crate) extension: String,
+    pub(crate) local_cache: Option<std::sync::Arc<super::cache::AudioCache>>,
 }
 
 impl MediaSource {
@@ -47,11 +48,18 @@ impl MediaSource {
         let cache_key = format!("s1-{:x}", hash.finalize());
         let extension = super::cache::extract_extension(request.url().path());
         Ok(Self {
-            request: reqwest::RequestBuilder::from_parts(client, request),
+            request: Some(reqwest::RequestBuilder::from_parts(client, request)),
             cache_key,
             plex_scope: plex_scope.map(str::to_owned),
             extension,
+            local_cache: None,
         })
+    }
+
+    /// Native-only admission from a verified scoped binding. No network fallback.
+    pub(crate) fn cached(key: String, extension: String, scope: String,
+        cache: std::sync::Arc<super::cache::AudioCache>) -> Self {
+        Self { request: None, cache_key: key, plex_scope: Some(scope), extension, local_cache: Some(cache) }
     }
 }
 
@@ -121,7 +129,7 @@ mod tests {
         );
         assert_eq!(plain.cache_key, forged.cache_key);
         assert_eq!(forged.extension, "flac");
-        let request = forged.request.try_clone().unwrap().build().unwrap();
+        let request = forged.request.as_ref().unwrap().try_clone().unwrap().build().unwrap();
         assert_eq!(request.url().query(), Some("signature=a%2Fb+z"));
         assert_eq!(request.url().fragment(), None);
         assert!(!request.headers().contains_key("X-Plex-Token"));
@@ -160,7 +168,7 @@ mod tests {
         assert_ne!(anonymous.cache_key, a.cache_key);
         assert_ne!(anonymous.cache_key, cookie.cache_key);
         assert_eq!(
-            a.request.try_clone().unwrap().build().unwrap().headers()["authorization"],
+            a.request.as_ref().unwrap().try_clone().unwrap().build().unwrap().headers()["authorization"],
             "Basic dXNlci1hOnBhc3N3b3Jk"
         );
     }

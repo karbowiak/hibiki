@@ -25,6 +25,8 @@ export interface MusicMediaVersion {
 
 /** Extended audio/media details that list endpoints may not include. */
 export interface MediaInfo {
+  /** A local-audio selection must not request playback, gain or waveform from Plex. */
+  localAudio?: boolean
   /** This item came from a full metadata request, including unavailable ramps. */
   metadataComplete?: boolean
   versions?: MusicMediaVersion[]

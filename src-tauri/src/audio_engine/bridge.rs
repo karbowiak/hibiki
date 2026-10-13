@@ -40,11 +40,12 @@ pub async fn audio_play(
     context: Option<crate::commands::PlexRequestContext>,
     plex_state: State<'_, crate::commands::PlexState>,
     state: State<'_, AudioEngineState>,
+    db: State<'_, crate::db::DbState>,
+    downloads: State<'_, crate::offline_audio::AudioDownloads>,
     app: tauri::AppHandle,
 ) -> Result<u64, String> {
     let binding = reporting_binding(&app)?;
-    plex_state
-        .dispatch_audio(context.as_ref(), &url, |source| {
+    crate::offline_audio::dispatch(&plex_state, &db, &downloads, state.0.cache(), context.as_ref(), &url, rating_key, |source| {
             state.0.send(Command::Play {
                 source,
                 meta: TrackMeta {
@@ -60,8 +61,7 @@ pub async fn audio_play(
                     reporting_binding: Some(binding),
                 },
             })
-        })
-        .await
+        }).await
 }
 
 #[tauri::command]
@@ -79,11 +79,12 @@ pub async fn audio_preload_next(
     context: Option<crate::commands::PlexRequestContext>,
     plex_state: State<'_, crate::commands::PlexState>,
     state: State<'_, AudioEngineState>,
+    db: State<'_, crate::db::DbState>,
+    downloads: State<'_, crate::offline_audio::AudioDownloads>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let binding = reporting_binding(&app)?;
-    plex_state
-        .dispatch_audio(context.as_ref(), &url, |source| {
+    crate::offline_audio::dispatch(&plex_state, &db, &downloads, state.0.cache(), context.as_ref(), &url, rating_key, |source| {
             state.0.send(Command::PreloadNext {
                 source,
                 meta: TrackMeta {
@@ -99,8 +100,7 @@ pub async fn audio_preload_next(
                     reporting_binding: Some(binding),
                 },
             })
-        })
-        .await
+        }).await
         .map(|_| ())
 }
 

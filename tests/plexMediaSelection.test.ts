@@ -88,6 +88,10 @@ test("gain, quality, waveform and ramps describe the media variant selected for 
     if (command === "get_track") return source
     if (command === "get_stream_url")
       return `https://server.test${(args as any).partKey}`
+    if (command === "audio_prepare_plex_track") {
+      const media = source.media[pickBestMediaIndex(source.media)], part = media.parts[0], stream = part.streams.find(stream => stream.stream_type === 2)
+      return { url: `https://server.test${part.key}`, trackKey: 7, partId: part.id, parentKey: source.parent_key, startRamp: stream?.start_ramp, endRamp: stream?.end_ramp, plexContext: args?.context }
+    }
   }) as PlexTransport)
   await provider.connect({
     baseUrl: "https://server.test",
@@ -117,7 +121,7 @@ test("gain, quality, waveform and ramps describe the media variant selected for 
   expect(playback.startRamp).toBe("flac start")
   expect(calls.map((call) => call.command)).toEqual([
     "get_track",
-    "get_stream_url",
+    "audio_prepare_plex_track",
   ])
   await provider.disconnect()
 })

@@ -61,6 +61,7 @@ pub struct AudioCache {
     status: AtomicU8,
     limit_initialized: AtomicBool,
     entry_limit: usize,
+    evictable: bool,
 }
 
 struct CacheOwner {
@@ -114,6 +115,7 @@ pub struct CacheWriter {
     max_bytes: Arc<AtomicU64>,
     declared_size: Arc<AtomicU64>,
     entry_limit: usize,
+    evictable: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -242,7 +244,16 @@ impl AudioCache {
         Self::with_limits(cache_dir, max_bytes, MAX_CACHE_ENTRIES)
     }
 
+    /// User-requested media must never be reclaimed by an LRU policy.
+    pub(crate) fn downloads(cache_dir: PathBuf) -> Self {
+        Self::with_policy(cache_dir, Some(0), MAX_CACHE_ENTRIES, false)
+    }
+
     fn with_limits(cache_dir: PathBuf, max_bytes: Option<u64>, entry_limit: usize) -> Self {
+        Self::with_policy(cache_dir, max_bytes, entry_limit, true)
+    }
+
+    fn with_policy(cache_dir: PathBuf, max_bytes: Option<u64>, entry_limit: usize, evictable: bool) -> Self {
         let mut directory = fs::DirBuilder::new();
         directory.recursive(true);
         #[cfg(unix)]
@@ -313,6 +324,7 @@ impl AudioCache {
             status: AtomicU8::new(status as u8),
             limit_initialized: AtomicBool::new(max_bytes.is_some()),
             entry_limit,
+            evictable,
         };
         if available {
             cache.remove_crash_orphans();
@@ -375,8 +387,25 @@ impl AudioCache {
         self.lookup_file(key).map(|(path, _, _)| path)
     }
 
+    pub(crate) fn remove(&self, key: &str) -> Result<(), String> {
+        self.check_directory()?;
+        let mut idx = self.index.lock().map_err(|_| "Audio storage is unavailable")?;
+        if let Some(entry) = idx.entries.get(key) {
+            if valid_filename(key, &entry.filename) {
+                match fs::remove_file(self.cache_dir.join(&entry.filename)) {
+                    Ok(()) => {},
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                    Err(_) => return Err("Cannot remove downloaded audio. Check storage permissions.".into()),
+                }
+            }
+            let entry = idx.entries.remove(key).unwrap();
+            idx.total_bytes = idx.total_bytes.saturating_sub(entry.size_bytes);
+            idx.persist(&self.index_path())?;
+        }
+        Ok(())
+    }
+
     /// Open under the cache lock so Clear/eviction cannot race playback startup.
-    #[cfg(test)]
     pub fn open(&self, key: &str) -> Option<fs::File> {
         self.lookup_file(key).map(|(_, file, _)| file)
     }
@@ -515,6 +544,9 @@ impl AudioCache {
         // Serialize writer admission with Clear. Unindexed or invalid bytes are
         // replaced only after a complete fresh download, never reused as audio.
         let mut idx = self.index.lock().map_err(|_| "cache index poisoned")?;
+        if !self.evictable && idx.entries.len() >= self.entry_limit && !idx.entries.contains_key(key) {
+            return Err("Download storage is full. Remove some downloads before adding more.".into());
+        }
         if idx
             .entries
             .get(key)
@@ -551,6 +583,7 @@ impl AudioCache {
             max_bytes: self.max_bytes.clone(),
             declared_size: Arc::new(AtomicU64::new(0)),
             entry_limit: self.entry_limit,
+            evictable: self.evictable,
         })
     }
 
@@ -579,7 +612,7 @@ impl AudioCache {
                 return Err(error);
             }
         }
-        let result = make_room(&self.cache_dir, &mut idx, max, 0, 0, self.entry_limit);
+        let result = make_room(&self.cache_dir, &mut idx, max, 0, 0, self.entry_limit, self.evictable);
         let saved = idx.persist(&self.index_path());
         if let Err(error) = result.and(saved) {
             self.max_bytes.store(previous, Ordering::Release);
@@ -777,7 +810,7 @@ impl AudioCache {
 
     fn evict_with_index(&self, idx: &mut CacheIndex) {
         let max = self.max_bytes.load(Ordering::Relaxed);
-        let _ = make_room(&self.cache_dir, idx, max, 0, 0, self.entry_limit);
+        let _ = make_room(&self.cache_dir, idx, max, 0, 0, self.entry_limit, self.evictable);
     }
 
     fn index_path(&self) -> PathBuf {
@@ -790,6 +823,20 @@ impl AudioCache {
 // ---------------------------------------------------------------------------
 
 impl CacheWriter {
+    /// Flush and inspect the complete temporary body before publishing a download.
+    pub(crate) fn validation_file(&mut self) -> Result<fs::File, String> {
+        if self.failed || !self.owner.directory_is_current()
+            || self.generation != self.owner.generation.load(Ordering::Acquire) {
+            return Err("Download storage changed".into());
+        }
+        self.writer.as_mut().ok_or("Download writer is closed")?.flush()
+            .map_err(|_| "Cannot flush downloaded audio")?;
+        let file = open_regular_file(&self.temp_path).map_err(|_| "Cannot validate downloaded audio")?;
+        if file.metadata().map_err(|_| "Cannot validate downloaded audio")?.len() != self.bytes_written {
+            return Err("Downloaded audio is incomplete".into());
+        }
+        Ok(file)
+    }
     /// Set by the HTTP header callback before delivering body chunks. Zero
     /// means unknown; resumed bodies report the original representation size.
     pub fn declared_size(&self) -> Arc<AtomicU64> {
@@ -835,6 +882,7 @@ impl CacheWriter {
             data.len() as u64,
             0,
             self.entry_limit,
+            self.evictable,
         );
         if idx.entries.len() != before {
             idx.save(&self.owner.directory.join("index.json"));
@@ -882,6 +930,10 @@ impl CacheWriter {
             .ok_or("cache writer closed")?
             .flush()
             .map_err(|e| format!("cache flush: {e}"))?;
+        if !self.evictable {
+            self.writer.as_ref().ok_or("Download writer is closed")?.get_ref().sync_all()
+                .map_err(|_| "Cannot persist downloaded audio")?;
+        }
         // Close before rename (also works on Windows). Serialize publication
         // with lookup/eviction; every writer owns its own temporary file.
         self.writer.take();
@@ -899,6 +951,7 @@ impl CacheWriter {
             0,
             incoming,
             self.entry_limit,
+            self.evictable,
         );
         if idx.entries.len() != before {
             idx.save(&cache.index_path());
@@ -933,7 +986,15 @@ impl CacheWriter {
         );
         idx.total_bytes = total;
         cache.evict_with_index(&mut idx);
-        idx.save(&cache.index_path());
+        if self.evictable {
+            idx.save(&cache.index_path());
+        } else if idx.persist(&cache.index_path()).is_err() {
+            if let Some(entry) = idx.entries.remove(&self.key) {
+                idx.total_bytes = idx.total_bytes.saturating_sub(entry.size_bytes);
+            }
+            let _ = fs::remove_file(&self.final_path);
+            return Err("Cannot save the download index. Check storage permissions.".into());
+        }
         Ok(())
     }
 
@@ -967,6 +1028,7 @@ fn make_room(
     extra_bytes: u64,
     extra_entries: usize,
     entry_limit: usize,
+    evictable: bool,
 ) -> Result<(), String> {
     let pending = idx
         .partial_bytes
@@ -981,6 +1043,9 @@ fn make_room(
     };
     if fits(idx) {
         return Ok(());
+    }
+    if !evictable {
+        return Err("Download storage is full. Remove some downloads before adding more.".into());
     }
     let mut entries: Vec<_> = idx
         .entries
@@ -1154,6 +1219,30 @@ pub fn extract_extension(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn explicit_downloads_reject_capacity_changes_instead_of_evicting_completed_files() {
+        let dir=tempfile::tempdir().unwrap();
+        let cache=AudioCache::with_policy(dir.path().into(),Some(0),2,false);
+        for key in ["one","two"] {let mut writer=cache.begin_write(key,"wav").unwrap();writer.write_chunk(b"complete audio").unwrap();writer.finish(&cache).unwrap();}
+        assert!(cache.begin_write("three","wav").is_err());
+        assert!(cache.set_max_bytes(1).is_err());assert_eq!(cache.stats().max_bytes,0);
+        assert!(cache.lookup("one").is_some());assert!(cache.lookup("two").is_some());
+        drop(cache);
+        let cache=AudioCache::with_policy(dir.path().into(),Some(0),2,false);
+        assert_eq!(cache.stats().file_count,2);cache.remove("one").unwrap();
+        let mut writer=cache.begin_write("three","wav").unwrap();writer.write_chunk(b"new complete audio").unwrap();writer.finish(&cache).unwrap();
+        assert!(cache.lookup("two").is_some());assert!(cache.lookup("three").is_some());
+    }
+
+    #[test]
+    fn download_index_persistence_failure_cannot_report_a_completed_download() {
+        let dir=tempfile::tempdir().unwrap();let cache=AudioCache::downloads(dir.path().into());
+        let mut writer=cache.begin_write("one","wav").unwrap();writer.write_chunk(b"complete audio").unwrap();
+        std::fs::remove_file(dir.path().join("index.json")).unwrap();
+        std::fs::create_dir(dir.path().join("index.json")).unwrap();
+        assert!(writer.finish(&cache).is_err());assert!(cache.lookup("one").is_none());assert_eq!(cache.stats().total_bytes,0);
+    }
+
     fn cache_child(directory: &Path, mode: &str) {
         let result = std::process::Command::new(std::env::current_exe().unwrap())
             .args([

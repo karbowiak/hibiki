@@ -68,7 +68,7 @@ for (const [name, type] of [["Playlist", "playlist"], ["Track", "track"], ["Albu
   assert.equal(document.body.textContent!.includes("Start radio"), false)
   await key(document.activeElement as HTMLElement, "Escape"); assert.equal(menu.getState().open, false); assert.equal(document.activeElement, card)
 }
-provider.capabilities = { ...provider.capabilities, playlists: true, radio: true }
+provider.capabilities = { ...provider.capabilities, playlists: true, playlistEdit: true, radio: true }
 await act(async () => useProviderStore.getState().setProvider(provider))
 const playlistCard = document.querySelector('.media-card__primary[aria-label="Playlist"]') as HTMLElement
 await key(playlistCard, "ContextMenu")

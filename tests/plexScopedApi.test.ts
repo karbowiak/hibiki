@@ -120,7 +120,7 @@ test("an actual disconnected PlexProvider cannot delete or rate items through th
 test("playback metadata falling back after retirement cannot resolve a URL from a reconnected provider", async () => {
   const pending = deferred<Track>()
   const { calls, invoke } = transportHarness((command) => {
-    if (command === "get_track") return pending.promise
+    if (command === "audio_prepare_plex_track") return pending.promise
     if (command === "get_stream_url") return "https://server.test/file"
   })
   const provider = new PlexProvider(invoke)
@@ -133,14 +133,14 @@ test("playback metadata falling back after retirement cannot resolve a URL from 
   await provider.connect(configuration(2, "b"))
   pending.resolve(rawTrack())
   await expect(playback).rejects.toThrow("superseded")
-  expect(calls.map((call) => call.command)).toEqual(["get_track"])
+  expect(calls.map((call) => call.command)).toEqual(["audio_prepare_plex_track"])
   expect(calls[0].args.context).toEqual(context())
 })
 
 test("direct and transcoded playback URLs use the bound native client", async () => {
-  const { calls, invoke } = transportHarness((command) =>
-    command === "get_stream_url"
-      ? "https://server.test/direct"
+  const { calls, invoke } = transportHarness((command, args) =>
+    command === "audio_prepare_plex_track"
+      ? { url: "https://server.test/direct", trackKey: 7, partId: 9, parentKey: "", startRamp: null, endRamp: null, plexContext: args.context }
       : "https://server.test/transcoded"
   )
   const provider = new PlexProvider(invoke)
@@ -157,7 +157,7 @@ test("direct and transcoded playback URLs use the bound native client", async ()
   expect(transcoded.url).toBe("https://server.test/transcoded")
   expect(transcoded.plexContext).toEqual(context())
   expect(calls.map((call) => call.command)).toEqual([
-    "get_stream_url",
+    "audio_prepare_plex_track",
     "get_audio_transcode_url",
   ])
   expect(

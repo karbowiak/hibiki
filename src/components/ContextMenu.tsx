@@ -19,6 +19,9 @@ import {
 } from "./shared/ContextMenuPrimitives"
 import { getRecentPlaylistIds, recordRecentPlaylist } from "../lib/recentPlaylists"
 import type { MusicTrack, MusicAlbum, MusicArtist, MusicPlaylist } from "../types/music"
+import { downloadMedia } from "../offline/audio"
+import { useNotificationCenterStore } from "../stores/notificationCenterStore"
+import { IconDownload } from "@tabler/icons-react"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -178,7 +181,7 @@ export function ContextMenu() {
   const captureOwner = useProviderMutationOwner(provider)
   const hasRadio = useCapability("radio")
   const hasRatings = useCapability("ratings")
-  const hasPlaylists = useCapability("playlists")
+  const canEditPlaylists = useCapability("playlistEdit")
   const { playTrack, playFromUri, playRadio, addNext, addToQueue } = usePlayerStore(useShallow(s => ({
     playTrack: s.playTrack,
     playFromUri: s.playFromUri,
@@ -300,6 +303,19 @@ export function ContextMenu() {
   const track = type === "track" ? (data as MusicTrack) : null
   const album = type === "album" ? (data as MusicAlbum) : null
   const artist = type === "artist" ? (data as MusicArtist) : null
+
+  async function doDownload() {
+    if (!provider || !currentMenu() || provider.isOffline || !provider.downloadTracks || !["track", "album", "playlist"].includes(type!)) return
+    const activeProvider = provider, scope = provider.cacheScope, session = provider.playbackSession
+    const owns = () => useProviderStore.getState().provider === activeProvider && activeProvider.cacheScope === scope && activeProvider.playbackSession === session
+    close()
+    try {
+      const count = await downloadMedia(activeProvider, type as "track" | "album" | "playlist", mediaData.id, owns)
+      if (owns()) useNotificationCenterStore.getState().notify({ id: "audio.download.queued", title: "Music queued for download", message: `${count} ${count === 1 ? "track" : "tracks"} queued. View progress in Downloads.`, severity: "info", action: { label: "Downloads", run: () => navigate("/downloads") } })
+    } catch {
+      if (owns()) useNotificationCenterStore.getState().notify({ id: "audio.download.failed", title: "Could not queue every track", message: "Any queued tracks will continue downloading. Check Downloads and retry after reconnecting to Plex.", severity: "warning", action: { label: "Downloads", run: () => navigate("/downloads") } })
+    }
+  }
 
   // Deezer URLs (synchronous cache read)
   const deezerState = useDeezerMetadataStore.getState()
@@ -502,6 +518,7 @@ export function ContextMenu() {
             <>
               <Item icon={IconPlay} label="Play" onClick={doPlayPlaylist} />
               <Item icon={IconShuffle} label="Play shuffled" onClick={doShufflePlaylist} />
+              {provider?.downloadTracks && !provider.isOffline && <Item icon={<IconDownload size={16}/>} label="Download for offline playback" onClick={() => void doDownload()} />}
               {hasRadio && <Item icon={IconRadio} label="Start radio" onClick={() => {
                 if (!currentMenu()) return
                 void playRadio(playlist.id, "playlist")
@@ -510,8 +527,8 @@ export function ContextMenu() {
               {extraActions.length > 0 && <><Divider />{extraActions.map(action => <Item key={action.label} icon={IconShare} label={action.label} onClick={() => { void invokeAction(action) }} />)}</>}
               {actionsError && <p role="alert" className="px-3 py-2 text-sm text-[var(--text-primary)]">{actionsError}</p>}
               <Divider />
-              {hasPlaylists && isEditable && <Item icon={IconEdit} label="Rename" onClick={() => setRenaming(true)} />}
-              {hasPlaylists && <Item icon={IconDelete} label="Delete" onClick={() => setConfirming(true)} danger />}
+              {canEditPlaylists && isEditable && <Item icon={IconEdit} label="Rename" onClick={() => setRenaming(true)} />}
+              {canEditPlaylists && <Item icon={IconDelete} label="Delete" onClick={() => setConfirming(true)} danger />}
               {debugEnabled && (
                 <>
                   <Divider />
@@ -553,6 +570,7 @@ export function ContextMenu() {
         {(track || album) && <Item icon={IconNext} label="Play next" onClick={doAddNext} />}
         <Item icon={IconQueue} label="Add to bottom" onClick={doQueue} />
         {hasRadio && <Item icon={IconRadio} label="Start radio" onClick={doRadio} />}
+        {(track || album) && provider?.downloadTracks && !provider.isOffline && !track?.streamUrl && <Item icon={<IconDownload size={16}/>} label="Download for offline playback" onClick={() => void doDownload()} />}
 
         <Divider />
 
@@ -570,7 +588,7 @@ export function ContextMenu() {
         />}
 
         {/* Remove from playlist — when in a playlist context and track has playlistItemId */}
-        {hasPlaylists && track && ctxPlaylistId && track.playlistItemId && (
+        {canEditPlaylists && track && ctxPlaylistId && track.playlistItemId && (
           <>
             <Divider />
             <Item icon={IconRemove} label="Remove from playlist" onClick={doRemoveFromPlaylist} danger />
@@ -578,7 +596,7 @@ export function ContextMenu() {
         )}
 
         {/* Add to playlist — tracks only */}
-        {hasPlaylists && track && (
+        {canEditPlaylists && track && (
           <>
             <Divider />
             <SectionLabel label="Add to playlist" />

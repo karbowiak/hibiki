@@ -5,6 +5,7 @@
 //! deduplication.
 
 pub mod albums;
+pub mod audio;
 pub mod artists;
 pub mod kv;
 pub mod offline;

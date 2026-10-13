@@ -16,7 +16,7 @@ pub mod callback;
 pub mod command;
 pub mod crossfade;
 pub mod deck;
-mod download;
+pub(crate) mod download;
 pub mod dsp;
 pub(crate) mod event;
 pub mod loudness;
@@ -1325,6 +1325,7 @@ fn fetch_and_decode_incremental(
 ) -> Result<IncrementalDecodeResult, String> {
     use symphonia::core::io::MediaSourceStream;
 
+    let cache = source.local_cache.as_ref().unwrap_or(cache);
     let ext = &source.extension;
     let cache_key = &source.cache_key;
 
@@ -1354,7 +1355,8 @@ fn fetch_and_decode_incremental(
     debug!(rating_key, "cache miss — streaming from Plex");
 
     use self::deck::streaming::{SharedBuffer, StreamingReader};
-    let media_request = source.request.try_clone().ok_or("Cannot clone media request")?;
+    let media_request = source.request.as_ref().ok_or("This track is no longer available offline. Reconnect to download it again.")?
+        .try_clone().ok_or("Cannot clone media request")?;
     let cache_writer = cache.begin_write(cache_key, ext).ok();
     let declared_cache_size = cache_writer.as_ref().map(|writer| writer.declared_size());
     let cache_for_task = cache.clone();

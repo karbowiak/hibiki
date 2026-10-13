@@ -30,6 +30,11 @@ const raw = {
 }
 const transport: PlexTransport = async (command, args) => {
   calls.push({ command, args })
+  if (command === "audio_prepare_plex_track") {
+    if (scenario === "unavailable") throw new Error("Reconnect to Plex to download this unavailable track")
+    if (scenario === "retired") return pending
+    return {url:"https://fixture.test/owned-audio",trackKey:7,partId:100,parentKey:raw.parent_key,startRamp:"fresh start",endRamp:"fresh end",plexContext:args.context} as any
+  }
   if (command === "get_track") {
     if (scenario === "unavailable")
       throw new Error("https://private.test/file?token=secret")
@@ -71,10 +76,10 @@ if (scenario === "success") {
   assert.equal(stream, direct.url)
   const transcoded = await provider.getTranscodePlaybackInfo(cached)
   assert.equal(transcoded.partId, 100)
-  assert.equal(calls.filter((call) => call.command === "get_track").length, 3)
+  assert.equal(calls.filter((call) => call.command === "get_track").length, 2)
   assert(
     calls
-      .filter((call) => call.command !== "get_track")
+      .filter((call) => ["get_stream_url", "get_audio_transcode_url"].includes(call.command))
       .every((call) => call.args.partKey === "/library/parts/100/audio.flac")
   )
   assert(
@@ -101,7 +106,7 @@ if (scenario === "success") {
       assert(!(error instanceof TypeError))
     }
   }
-  assert(calls.every((call) => call.command === "get_track"))
+  assert(calls.every((call) => ["get_track", "audio_prepare_plex_track"].includes(call.command)))
 } else if (scenario === "retired") {
   const playback = provider.getPlaybackInfo(cached)
   await provider.disconnect()
@@ -116,6 +121,6 @@ if (scenario === "success") {
   await assert.rejects(playback, /superseded/)
   assert.deepEqual(
     calls.map((call) => call.command),
-    ["get_track"]
+    ["audio_prepare_plex_track"]
   )
 } else throw new Error("Unknown scenario")

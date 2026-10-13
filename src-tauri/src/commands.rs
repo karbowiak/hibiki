@@ -2839,7 +2839,7 @@ mod connection_tests {
             .unwrap();
         let original = queued.unwrap();
         for _ in 0..2 {
-            let retry = original.request.try_clone().unwrap().build().unwrap();
+            let retry = original.request.as_ref().unwrap().try_clone().unwrap().build().unwrap();
             assert_eq!(retry.headers()["X-Plex-Token"], "dummy-old");
             assert!(!retry
                 .url()
@@ -2892,7 +2892,7 @@ mod connection_tests {
                     assert_ne!(source.cache_key, key);
                     assert!(cache.lookup(&source.cache_key).is_none());
                     assert_eq!(cache.get_computed_gain(&source.cache_key), None);
-                    let request = source.request.build().unwrap();
+                    let request = source.request.unwrap().build().unwrap();
                     if context.is_some() {
                         assert_eq!(request.headers()["X-Plex-Token"], "dummy-new");
                     } else {
@@ -2962,7 +2962,7 @@ mod connection_tests {
                 None,
                 "https://server.test/podcast?X-Plex-Token=dummy-url",
                 |request| {
-                    let request = request.request.build().unwrap();
+                    let request = request.request.unwrap().build().unwrap();
                     assert!(!request.headers().contains_key("X-Plex-Token"));
                     assert!(!request
                         .url()

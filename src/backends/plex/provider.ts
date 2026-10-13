@@ -50,6 +50,7 @@ import {
 import { useMbidStore } from "../../metadata/musicbrainz/mbidStore"
 import { buildPlexImageUrl } from "./imageUrl"
 import { pickBestMediaIndex } from "../../lib/dedup"
+import { localAudioTrack } from "../../offline/audio"
 
 export class PlexProvider implements MusicProvider {
   private nowPlayingGeneration = 0
@@ -198,6 +199,18 @@ export class PlexProvider implements MusicProvider {
   isConnected(): boolean {
     return this._connected
   }
+
+  async getLocalAudio(offset = 0, limit = 100, cached = false) {
+    const api = this.api, base = this._baseUrl, scope = this._cacheScope!
+    const page = await api.localAudio(offset, limit, cached)
+    return { ...page, items: page.items.map(item => ({ ...item, track: item.track ? localAudioTrack(item.track, base, scope) : null })) }
+  }
+  downloadTracks(ids: string[]) { return this.api.downloadTracks(ids.map(id => {
+    if (!/^[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number(id))) throw new Error("Invalid Plex track")
+    return Number(id)
+  })) }
+  removeDownload(id: string) { return this.api.removeDownload(Number(id)) }
+  resumeDownloads() { return this.api.resumeDownloads() }
 
   getLibrarySections(): Promise<LibrarySection[]> {
     return this.api.getLibrarySections()
@@ -563,45 +576,8 @@ export class PlexProvider implements MusicProvider {
   }
 
   async getPlaybackInfo(track: MusicTrack): Promise<TrackPlaybackInfo> {
-    const api = this.api
-    const raw = track._providerData as Track | undefined
-    const original =
-      raw && Array.isArray(raw.media)
-        ? { data: raw, fetched: false }
-        : await this.playbackTrack(track, api)
-    let plexTrack = original.data
-    let idx = pickBestMediaIndex(plexTrack.media ?? [])
-    let media = plexTrack.media?.[idx]
-    let stream = media?.parts?.[0]?.streams?.find((s) => s.stream_type === 2)
-
-    // Re-fetch missing ramps only when raw metadata did not just come from the
-    // full native request. Failed optional ramps retain the originating API.
-    if (
-      !original.fetched &&
-      !track.mediaInfo?.metadataComplete &&
-      !stream?.start_ramp &&
-      !stream?.end_ramp
-    ) {
-      try {
-        plexTrack = await api.getTrack(Number(track.id))
-        idx = pickBestMediaIndex(plexTrack.media ?? [])
-        media = plexTrack.media?.[idx]
-        stream = media?.parts?.[0]?.streams?.find((s) => s.stream_type === 2)
-      } catch {
-        /* use original data */
-      }
-    }
-    const partKey = media?.parts?.[0]?.key
-    if (!partKey) throw new Error("Track has no media part")
-    return {
-      url: await api.getStreamUrl(partKey),
-      plexContext: api.context,
-      trackKey: Number(track.id),
-      partId: media?.parts?.[0]?.id ?? 0,
-      parentKey: plexTrack.parent_key ?? "",
-      startRamp: stream?.start_ramp ?? plexTrack.start_ramp ?? null,
-      endRamp: stream?.end_ramp ?? plexTrack.end_ramp ?? null,
-    }
+    if (!/^[1-9]\d*$/.test(track.id) || !Number.isSafeInteger(Number(track.id))) throw new Error("Invalid Plex track")
+    return this.api.prepareTrackAudio(Number(track.id), track.mediaInfo?.localAudio === true)
   }
 
   async getTranscodePlaybackInfo(

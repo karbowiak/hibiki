@@ -17,6 +17,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
         // Retain the applied development migration for existing databases.
         // AI discovery is deferred; no active commands read/write these rows.
         (3, include_str!("migrations/V3__semantic_vectors.sql")),
+        (4, include_str!("migrations/V4__local_audio.sql")),
     ];
 
     for &(version, sql) in migrations {
@@ -57,14 +58,14 @@ mod tests {
         let v1: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v1, 3);
+        assert_eq!(v1, 4);
 
         // Run again — should be a no-op
         run_migrations(&conn).expect("second run");
         let v2: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v2, 3);
+        assert_eq!(v2, 4);
     }
 
     #[test]

@@ -90,7 +90,8 @@ async fn restore_saved(state: &PlexState, db: &DbState, directory: &std::path::P
     let client = saved_client(&settings)?;
     {
         let conn = db.0.lock().map_err(|_| "Saved browsing storage is unavailable")?;
-        if offline::info(&conn, &client.library_scope)?.entries == 0 {
+        let audio_tracks: i64 = conn.query_row("SELECT COUNT(*) FROM local_audio WHERE scope=?1",[&client.library_scope],|row|row.get(0)).map_err(|_| "Cannot read saved audio")?;
+        if offline::info(&conn, &client.library_scope)?.entries == 0 && audio_tracks == 0 {
             return Err("There are no saved pages for this Plex music library yet.".into());
         }
     }

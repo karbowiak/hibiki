@@ -27,7 +27,7 @@ mock.module("../../src/hooks/useResizable.ts",()=>({useResizable:()=>({width:240
 const { useProviderStore } = await import("../../src/stores/providerStore")
 const { useContextMenuStore: menu } = await import("../../src/stores/contextMenuStore")
 const first=deferred<any>(),second=deferred<any>()
-function provider(name:string){return {cacheScope:name,capabilities:{playlists:true,ratings:true,stations:false,radio:false},
+function provider(name:string){return {cacheScope:name,capabilities:{playlists:true,playlistEdit:true,ratings:true,stations:false,radio:false},
  addToPlaylist:async(...args:any[])=>{calls.push(["add",name,...args]);return calls.filter(x=>x[0]==="add").length===1?first.promise:second.promise},
  editPlaylist:async(...args:any[])=>{calls.push(["rename",name,...args]);return first.promise},deletePlaylist:async(...args:any[])=>{calls.push(["delete",name,...args]);return first.promise},
  removeFromPlaylist:async(...args:any[])=>{calls.push(["remove",name,...args]);return first.promise},getAlbumTracks:async(...args:any[])=>{calls.push(["tracks",name,...args]);return first.promise},

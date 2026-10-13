@@ -21,6 +21,15 @@ function provider(scope: string, extra: Partial<MusicProvider> = {}) {
   } as unknown as MusicProvider
 }
 
+test("local audio never asks Plex for missing gain or waveform metadata", async () => {
+  const cache = new PlaybackMetadata(), backend = provider("local")
+  const local = track("42")
+  local.mediaInfo = { localAudio: true, metadataComplete: true }
+  expect(await cache.gain(backend, local, null)).toBeNull()
+  expect(await cache.streamId(backend, local)).toBeNull()
+  expect(backend.getTrack).not.toHaveBeenCalled()
+})
+
 test("the same track ID on different providers cannot share gain, waveform or playback URLs", async () => {
   const cache = new PlaybackMetadata(),
     a = provider("a"),

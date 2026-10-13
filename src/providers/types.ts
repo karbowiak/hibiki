@@ -133,6 +133,12 @@ export interface MusicProvider {
   disconnect(): Promise<void>
   isConnected(): boolean
 
+  /** Native-owned audio; availability is checked against actual complete files. */
+  getLocalAudio?(offset?: number, limit?: number, cached?: boolean): Promise<import("../offline/audio").LocalAudioPage>
+  downloadTracks?(ids: string[]): Promise<void>
+  removeDownload?(id: string): Promise<void>
+  resumeDownloads?(): Promise<void>
+
   // --- Browse ---
   search(
     query: string,

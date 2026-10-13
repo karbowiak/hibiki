@@ -154,6 +154,7 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
   const backgroundArtworkEnabled = useArtworkAppearanceStore(state => state.backgroundArtworkEnabled)
   const [location] = useLocation()
   const hasStations = useCapability("stations")
+  const canEditPlaylists = useCapability("playlistEdit")
   const playlists = useLibraryStore(s => s.playlists)
   const playPlaylist = usePlayerStore(useShallow(s => s.playPlaylist))
   const isArtExpanded = useUIStore(s => s.isArtExpanded)
@@ -374,8 +375,9 @@ export function SideBar({ onCreatePlaylist }: { onCreatePlaylist: () => void }) 
       <div className="flex-shrink-0 pb-1 pt-8 text-sm font-semibold">
         <button
           onClick={onCreatePlaylist}
+          disabled={!canEditPlaylists}
           style={artworkUiPalette(fallbackArtworkTone(savedAccent), window.getComputedStyle(document.documentElement).getPropertyValue("--bg-base"))}
-          className="shell-control-secondary group flex h-10 w-full cursor-pointer items-center gap-3 rounded border-0 bg-transparent px-3 fill-[var(--text-secondary)] text-[var(--text-secondary)] transition-colors duration-200 hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:bg-accent-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
+          className="shell-control-secondary group flex h-10 w-full cursor-pointer items-center gap-3 rounded border-0 bg-transparent px-3 fill-[var(--text-secondary)] text-[var(--text-secondary)] transition-colors duration-200 hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:bg-accent-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
         >
           <span className="shell-icon-tile flex h-6 w-6 items-center justify-center rounded-sm bg-accent/20 group-hover:bg-accent/40 transition-colors">
             <svg viewBox="0 0 16 16" width="12" height="12" xmlns="http://www.w3.org/2000/svg">
@@ -478,6 +480,7 @@ const routes1 = [
 ]
 
 const librarySubLinks = [
+  { title: "Downloads", href: "/downloads" },
   { title: "Playlists", href: "/collection/playlists" },
   { title: "Liked Songs", href: "/collection/tracks" },
   { title: "Liked Albums", href: "/collection/albums" },
