@@ -70,18 +70,36 @@ export function createPlexApi(
   // Library
   // ---------------------------------------------------------------------------
 
-  function prepareTrackAudio(trackId: number, localOnly = false): Promise<import("../../providers/types").TrackPlaybackInfo> {
+  function prepareTrackAudio(
+    trackId: number,
+    localOnly = false
+  ): Promise<import("../../providers/types").TrackPlaybackInfo> {
     return invoke("audio_prepare_plex_track", { trackId, localOnly })
   }
-  function localTrack(trackId: number): Promise<import("../../types/music").MusicTrack | null> {
+  function trackLevels(trackId: number, localOnly = false): Promise<Level[]> {
+    return invoke("audio_track_levels", { trackId, localOnly })
+  }
+  function localTrack(
+    trackId: number
+  ): Promise<import("../../types/music").MusicTrack | null> {
     return invoke("audio_local_track", { trackId })
   }
-  function localAudio(offset = 0, limit = 100, cached = false): Promise<import("../../offline/audio").LocalAudioPage> {
+  function localAudio(
+    offset = 0,
+    limit = 100,
+    cached = false
+  ): Promise<import("../../offline/audio").LocalAudioPage> {
     return invoke("audio_download_list", { offset, limit, cached })
   }
-  function downloadTracks(trackIds: number[]): Promise<void> { return invoke("audio_download_enqueue", { trackIds }) }
-  function removeDownload(trackId: number): Promise<void> { return invoke("audio_download_remove", { trackId }) }
-  function resumeDownloads(): Promise<void> { return invoke("audio_download_resume") }
+  function downloadTracks(trackIds: number[]): Promise<void> {
+    return invoke("audio_download_enqueue", { trackIds })
+  }
+  function removeDownload(trackId: number): Promise<void> {
+    return invoke("audio_download_remove", { trackId })
+  }
+  function resumeDownloads(): Promise<void> {
+    return invoke("audio_download_resume")
+  }
 
   /** Get all library sections on the server. */
   function getLibrarySections(): Promise<LibrarySection[]> {
@@ -104,8 +122,18 @@ export function createPlexApi(
     })
   }
 
-  function findPlaylistCandidates(sectionId: number, source: {title:string;artist:string;recordingMbid?:string|null}): Promise<{tracks:Track[];truncated:boolean;unavailable:boolean}> {
-    return invoke("playlist_sync_candidates", {sectionId,source:{title:source.title,artist:source.artist,recordingMbid:source.recordingMbid??null}})
+  function findPlaylistCandidates(
+    sectionId: number,
+    source: { title: string; artist: string; recordingMbid?: string | null }
+  ): Promise<{ tracks: Track[]; truncated: boolean; unavailable: boolean }> {
+    return invoke("playlist_sync_candidates", {
+      sectionId,
+      source: {
+        title: source.title,
+        artist: source.artist,
+        recordingMbid: source.recordingMbid ?? null,
+      },
+    })
   }
 
   /** Get recently added items in a section. */
@@ -354,13 +382,45 @@ export function createPlexApi(
     })
   }
 
-  function resolvePlaylistRecording(sectionId:number,track:import("../../providers/types").PlaylistRecordingTrack):Promise<import("../../providers/types").PlaylistRecordingResolution> {
-    if (!Number.isSafeInteger(Number(track.id)) || Number(track.id)<=0 || String(Number(track.id))!==track.id) return Promise.resolve({status:"unmatched",reason:"invalid-track-id"})
-    return invoke("playlist_sync_resolve_recording",{sectionId,trackId:Number(track.id),expected:{title:track.title,artist:track.artist,durationMs:track.durationMs ?? null}})
+  function resolvePlaylistRecording(
+    sectionId: number,
+    track: import("../../providers/types").PlaylistRecordingTrack
+  ): Promise<import("../../providers/types").PlaylistRecordingResolution> {
+    if (
+      !Number.isSafeInteger(Number(track.id)) ||
+      Number(track.id) <= 0 ||
+      String(Number(track.id)) !== track.id
+    )
+      return Promise.resolve({
+        status: "unmatched",
+        reason: "invalid-track-id",
+      })
+    return invoke("playlist_sync_resolve_recording", {
+      sectionId,
+      trackId: Number(track.id),
+      expected: {
+        title: track.title,
+        artist: track.artist,
+        durationMs: track.durationMs ?? null,
+      },
+    })
   }
-  function describePlaylist(playlistId:number,sectionId:number,expected:PlaylistOccurrenceState,expectedDescription:string,description:string):Promise<string> {
-    if (description.length>5000||expectedDescription.length>5000) throw Error("Playlist description is too long")
-    return invoke("playlist_sync_plex_describe",{playlistId,sectionId,expected,expectedDescription,description})
+  function describePlaylist(
+    playlistId: number,
+    sectionId: number,
+    expected: PlaylistOccurrenceState,
+    expectedDescription: string,
+    description: string
+  ): Promise<string> {
+    if (description.length > 5000 || expectedDescription.length > 5000)
+      throw Error("Playlist description is too long")
+    return invoke("playlist_sync_plex_describe", {
+      playlistId,
+      sectionId,
+      expected,
+      expectedDescription,
+      description,
+    })
   }
   /** Create a new playlist from a list of track rating keys. */
   function createPlaylist(
@@ -401,10 +461,19 @@ export function createPlexApi(
     return invoke("delete_playlist", { playlistId })
   }
 
-  function getAdvancedMetadata(sectionId: number, itemId: number, kind: "artist" | "album"): Promise<import("../../lib/metadataAdvanced").AdvancedMetadata> {
+  function getAdvancedMetadata(
+    sectionId: number,
+    itemId: number,
+    kind: "artist" | "album"
+  ): Promise<import("../../lib/metadataAdvanced").AdvancedMetadata> {
     return invoke("get_advanced_metadata", { sectionId, itemId, kind })
   }
-  function editAdvancedMetadata(sectionId: number, itemId: number, kind: "artist" | "album", patch: import("../../lib/metadataAdvanced").AdvancedMetadataPatch): Promise<void> {
+  function editAdvancedMetadata(
+    sectionId: number,
+    itemId: number,
+    kind: "artist" | "album",
+    patch: import("../../lib/metadataAdvanced").AdvancedMetadataPatch
+  ): Promise<void> {
     return invoke("edit_advanced_metadata", { sectionId, itemId, kind, patch })
   }
   function editLibraryMetadata(
@@ -430,13 +499,31 @@ export function createPlexApi(
     })
   }
 
-  function getLibraryArtwork(sectionId: number, itemId: number, kind: "artist" | "album", role: "poster" | "background"): Promise<LibraryArtworkInventory> {
+  function getLibraryArtwork(
+    sectionId: number,
+    itemId: number,
+    kind: "artist" | "album",
+    role: "poster" | "background"
+  ): Promise<LibraryArtworkInventory> {
     return invoke("get_library_artwork", { sectionId, itemId, kind, role })
   }
-  function saveLibraryArtwork(sectionId: number, itemId: number, kind: "artist" | "album", role: "poster" | "background", baseline: string,
-    change: { choice: string } | { upload: number[] }): Promise<LibraryArtworkInventory> {
-    return invoke("save_library_artwork", { sectionId, itemId, kind, role, baseline,
-      choice: "choice" in change ? change.choice : null, upload: "upload" in change ? change.upload : null })
+  function saveLibraryArtwork(
+    sectionId: number,
+    itemId: number,
+    kind: "artist" | "album",
+    role: "poster" | "background",
+    baseline: string,
+    change: { choice: string } | { upload: number[] }
+  ): Promise<LibraryArtworkInventory> {
+    return invoke("save_library_artwork", {
+      sectionId,
+      itemId,
+      kind,
+      role,
+      baseline,
+      choice: "choice" in change ? change.choice : null,
+      upload: "upload" in change ? change.upload : null,
+    })
   }
 
   /** Edit playlist metadata (title and/or summary). */
@@ -771,6 +858,7 @@ export function createPlexApi(
   return {
     context: requestContext,
     prepareTrackAudio,
+    trackLevels,
     localTrack,
     localAudio,
     downloadTracks,

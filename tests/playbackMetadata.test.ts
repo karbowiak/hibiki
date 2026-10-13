@@ -9,25 +9,67 @@ const track = (
   albumGain: number | null = null,
   streamId: number | null = null
 ) =>
-  ({ id, title: id, albumId: "album", gain, albumGain, mediaInfo: { audioStreamId: streamId } }) as MusicTrack
+  ({
+    id,
+    title: id,
+    albumId: "album",
+    gain,
+    albumGain,
+    mediaInfo: { audioStreamId: streamId },
+  }) as MusicTrack
 const info = (url: string) =>
-  ({ url, trackKey: 1, partId: 1, parentKey: "album", startRamp: null, endRamp: null }) as TrackPlaybackInfo
+  ({
+    url,
+    trackKey: 1,
+    partId: 1,
+    parentKey: "album",
+    startRamp: null,
+    endRamp: null,
+  }) as TrackPlaybackInfo
 function provider(scope: string, extra: Partial<MusicProvider> = {}) {
   return {
     cacheScope: scope,
     getTrack: mock(async (id) => track(id, -3, -5, 12)),
     getPlaybackInfo: mock(async () => info(`https://${scope}.test/track`)),
-    ...extra
+    ...extra,
   } as unknown as MusicProvider
 }
 
 test("local audio never asks Plex for missing gain or waveform metadata", async () => {
-  const cache = new PlaybackMetadata(), backend = provider("local")
+  const cache = new PlaybackMetadata(),
+    backend = provider("local")
   const local = track("42")
   local.mediaInfo = { localAudio: true, metadataComplete: true }
   expect(await cache.gain(backend, local, null)).toBeNull()
   expect(await cache.streamId(backend, local)).toBeNull()
   expect(backend.getTrack).not.toHaveBeenCalled()
+})
+
+test("local playback restores native saved waveforms without a server metadata lookup", async () => {
+  const levels = [{ loudness: -40 }, { loudness: -6 }],
+    cache = new PlaybackMetadata()
+  const backend = provider("local", {
+    getTrackLevels: mock(async () => levels),
+    getStreamLevels: mock(async () => {
+      throw new Error("Network access")
+    }),
+  })
+  const local = track("42")
+  local.mediaInfo = { localAudio: true }
+  expect(await cache.levels(backend, local)).toEqual(levels)
+  expect(backend.getTrackLevels).toHaveBeenCalledWith(local)
+  expect(backend.getTrack).not.toHaveBeenCalled()
+  expect(backend.getStreamLevels).not.toHaveBeenCalled()
+})
+
+test("retired waveform responses cannot cross a playback session", async () => {
+  const pending = deferred<{ loudness: number }[]>(),
+    cache = new PlaybackMetadata()
+  const backend = provider("a", { getTrackLevels: () => pending.promise })
+  const request = cache.levels(backend, track("42")).catch((error) => error)
+  ;(backend as any).playbackSession = {}
+  pending.resolve([{ loudness: -10 }])
+  expect(await request).toBeInstanceOf(Error)
 })
 
 test("the same track ID on different providers cannot share gain, waveform or playback URLs", async () => {
@@ -61,7 +103,9 @@ test("a pending full lookup supplies playback preparation with fresh media data"
     cache = new PlaybackMetadata()
   const p = provider("a", {
     getTrack: () => pending.promise,
-    getPlaybackInfo: mock(async (full) => info(`https://a.test/${full.mediaInfo?.audioStreamId}`))
+    getPlaybackInfo: mock(async (full) =>
+      info(`https://a.test/${full.mediaInfo?.audioStreamId}`)
+    ),
   })
   const full = cache.fullTrack(p, "1"),
     playback = cache.playbackInfo(p, track("1"))
@@ -91,7 +135,7 @@ test("transient failures remain retryable and do not become permanent unknown-ga
       getTrack: async (id) => {
         if (++calls === 1) throw new Error("Temporary failure")
         return track(id, -6, -8, 21)
-      }
+      },
     })
   expect(await cache.gain(p, track("1"), null)).toBeNull()
   expect(await cache.gain(p, track("1"), null)).toBe(-6)
@@ -105,10 +149,15 @@ test("hover URL resolution shares requests and retries failures rather than pois
       getPlaybackInfo: async () => {
         if (++calls === 1) throw new Error("Temporary failure")
         return info("https://a.test/ready")
-      }
+      },
     })
-  await expect(cache.playbackInfo(p, track("1"))).rejects.toThrow("Temporary failure")
-  const [a, b] = await Promise.all([cache.playbackInfo(p, track("1")), cache.playbackInfo(p, track("1"))])
+  await expect(cache.playbackInfo(p, track("1"))).rejects.toThrow(
+    "Temporary failure"
+  )
+  const [a, b] = await Promise.all([
+    cache.playbackInfo(p, track("1")),
+    cache.playbackInfo(p, track("1")),
+  ])
   expect(a).toBe(b)
   expect(calls).toBe(2)
 })
@@ -133,10 +182,16 @@ test("invalid gains and stream identifiers cannot reach native playback controls
 test("different media variants of one track do not reuse a previously resolved URL", async () => {
   const cache = new PlaybackMetadata(),
     p = provider("a", {
-      getPlaybackInfo: mock(async (source) => info(`https://a.test/${source.mediaInfo?.audioStreamId}`))
+      getPlaybackInfo: mock(async (source) =>
+        info(`https://a.test/${source.mediaInfo?.audioStreamId}`)
+      ),
     })
-  expect((await cache.playbackInfo(p, track("1", -3, -5, 10))).url).toBe("https://a.test/10")
-  expect((await cache.playbackInfo(p, track("1", -3, -5, 20))).url).toBe("https://a.test/20")
+  expect((await cache.playbackInfo(p, track("1", -3, -5, 10))).url).toBe(
+    "https://a.test/10"
+  )
+  expect((await cache.playbackInfo(p, track("1", -3, -5, 20))).url).toBe(
+    "https://a.test/20"
+  )
   expect(p.getPlaybackInfo).toHaveBeenCalledTimes(2)
 })
 

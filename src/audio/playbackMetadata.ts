@@ -1,4 +1,8 @@
-import type { MusicProvider, TrackPlaybackInfo } from "../providers/types"
+import type {
+  MusicProvider,
+  TrackPlaybackInfo,
+  LevelData,
+} from "../providers/types"
 import type { MusicTrack } from "../types/music"
 import { selectReplayGain } from "./playbackContext"
 import { evictMap } from "../stores/cacheUtils"
@@ -14,14 +18,18 @@ interface Session {
 
 function variantKey(track: MusicTrack): string {
   const media = (
-    track._providerData as { media?: { id?: number; parts?: { id?: number; key?: string }[] }[] } | undefined
+    track._providerData as
+      | { media?: { id?: number; parts?: { id?: number; key?: string }[] }[] }
+      | undefined
   )?.media
   return JSON.stringify([
     track.id,
     track.codec ?? null,
     track.mediaInfo?.audioStreamId ?? null,
-    media?.map((item) => [item.id ?? null, item.parts?.map((part) => [part.id ?? null, part.key ?? null])]) ??
-      null
+    media?.map((item) => [
+      item.id ?? null,
+      item.parts?.map((part) => [part.id ?? null, part.key ?? null]),
+    ]) ?? null,
   ])
 }
 
@@ -30,14 +38,18 @@ export class PlaybackMetadata {
   private sessions = new WeakMap<MusicProvider, Session>()
   private session(provider: MusicProvider) {
     let session = this.sessions.get(provider)
-    if (!session || session.scope !== provider.cacheScope || session.identity !== provider.playbackSession) {
+    if (
+      !session ||
+      session.scope !== provider.cacheScope ||
+      session.identity !== provider.playbackSession
+    ) {
       session = {
         identity: provider.playbackSession,
         scope: provider.cacheScope,
         full: new Map(),
         fullRequests: new Map(),
         info: new Map(),
-        infoRequests: new Map()
+        infoRequests: new Map(),
       }
       this.sessions.set(provider, session)
     }
@@ -53,12 +65,14 @@ export class PlaybackMetadata {
     const request = (async () => {
       const track = await provider.getTrack(id)
       if (track.id !== id) throw new Error("Server returned a different track")
-      if (this.session(provider) !== session) throw new Error("Playback metadata scope changed")
+      if (this.session(provider) !== session)
+        throw new Error("Playback metadata scope changed")
       session.full.set(id, track)
       evictMap(session.full, 500)
       return track
     })().finally(() => {
-      if (session.fullRequests.get(id) === request) session.fullRequests.delete(id)
+      if (session.fullRequests.get(id) === request)
+        session.fullRequests.delete(id)
     })
     session.fullRequests.set(id, request)
     return request
@@ -83,23 +97,55 @@ export class PlaybackMetadata {
         return null
       }
     }
-    return selectReplayGain({ albumId: track.albumId, gain, albumGain }, albumPlaybackId)
+    return selectReplayGain(
+      { albumId: track.albumId, gain, albumGain },
+      albumPlaybackId
+    )
   }
 
-  async streamId(provider: MusicProvider, track: MusicTrack): Promise<number | null> {
+  async streamId(
+    provider: MusicProvider,
+    track: MusicTrack
+  ): Promise<number | null> {
     if (track.mediaInfo?.localAudio) return null
     const valid = (value: number | null | undefined) =>
-      typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null
+      typeof value === "number" && Number.isSafeInteger(value) && value > 0
+        ? value
+        : null
     const inline = valid(track.mediaInfo?.audioStreamId)
     if (inline !== null) return inline
     try {
-      return valid((await this.fullTrack(provider, track.id)).mediaInfo?.audioStreamId)
+      return valid(
+        (await this.fullTrack(provider, track.id)).mediaInfo?.audioStreamId
+      )
     } catch {
       return null
     }
   }
 
-  playbackInfo(provider: MusicProvider, track: MusicTrack): Promise<TrackPlaybackInfo> {
+  async levels(
+    provider: MusicProvider,
+    track: MusicTrack
+  ): Promise<LevelData[]> {
+    const session = this.session(provider)
+    let levels: LevelData[]
+    if (provider.getTrackLevels) levels = await provider.getTrackLevels(track)
+    else {
+      const streamId = await this.streamId(provider, track)
+      levels =
+        streamId !== null && provider.getStreamLevels
+          ? await provider.getStreamLevels(streamId, 128)
+          : []
+    }
+    if (this.session(provider) !== session)
+      throw new Error("Playback metadata scope changed")
+    return levels
+  }
+
+  playbackInfo(
+    provider: MusicProvider,
+    track: MusicTrack
+  ): Promise<TrackPlaybackInfo> {
     const session = this.session(provider)
     const key = variantKey(track)
     const cached = session.info.get(key)
@@ -108,22 +154,27 @@ export class PlaybackMetadata {
     if (pending) return pending
     const request = (async () => {
       const candidate =
-        session.full.get(track.id) ?? (await session.fullRequests.get(track.id)?.catch(() => undefined))
+        session.full.get(track.id) ??
+        (await session.fullRequests.get(track.id)?.catch(() => undefined))
       const requestedStream = track.mediaInfo?.audioStreamId
       const full =
         candidate &&
-        (requestedStream == null || requestedStream === candidate.mediaInfo?.audioStreamId) &&
+        (requestedStream == null ||
+          requestedStream === candidate.mediaInfo?.audioStreamId) &&
         (!track.codec || !candidate.codec || track.codec === candidate.codec)
           ? candidate
           : undefined
-      if (this.session(provider) !== session) throw new Error("Playback metadata scope changed")
+      if (this.session(provider) !== session)
+        throw new Error("Playback metadata scope changed")
       const info = await provider.getPlaybackInfo(full ?? track)
-      if (this.session(provider) !== session) throw new Error("Playback metadata scope changed")
+      if (this.session(provider) !== session)
+        throw new Error("Playback metadata scope changed")
       session.info.set(key, info)
       evictMap(session.info, 500)
       return info
     })().finally(() => {
-      if (session.infoRequests.get(key) === request) session.infoRequests.delete(key)
+      if (session.infoRequests.get(key) === request)
+        session.infoRequests.delete(key)
     })
     session.infoRequests.set(key, request)
     return request

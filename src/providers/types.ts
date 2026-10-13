@@ -260,6 +260,7 @@ export interface MusicProvider {
 
   // --- Optional (capability-gated) ---
   getStreamLevels?(streamId: number, subSample?: number): Promise<LevelData[]>
+  getTrackLevels?(track: MusicTrack): Promise<LevelData[]>
   getLyrics?(trackId: string): Promise<LyricLineData[]>
   getTags?(tagType: string): Promise<{ tag: string; count: number | null }[]>
   getItemsByTag?(

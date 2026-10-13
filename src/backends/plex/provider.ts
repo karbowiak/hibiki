@@ -201,16 +201,33 @@ export class PlexProvider implements MusicProvider {
   }
 
   async getLocalAudio(offset = 0, limit = 100, cached = false) {
-    const api = this.api, base = this._baseUrl, scope = this._cacheScope!
+    const api = this.api,
+      base = this._baseUrl,
+      scope = this._cacheScope!
     const page = await api.localAudio(offset, limit, cached)
-    return { ...page, items: page.items.map(item => ({ ...item, track: item.track ? localAudioTrack(item.track, base, scope) : null })) }
+    return {
+      ...page,
+      items: page.items.map((item) => ({
+        ...item,
+        track: item.track ? localAudioTrack(item.track, base, scope) : null,
+      })),
+    }
   }
-  downloadTracks(ids: string[]) { return this.api.downloadTracks(ids.map(id => {
-    if (!/^[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number(id))) throw new Error("Invalid Plex track")
-    return Number(id)
-  })) }
-  removeDownload(id: string) { return this.api.removeDownload(Number(id)) }
-  resumeDownloads() { return this.api.resumeDownloads() }
+  downloadTracks(ids: string[]) {
+    return this.api.downloadTracks(
+      ids.map((id) => {
+        if (!/^[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number(id)))
+          throw new Error("Invalid Plex track")
+        return Number(id)
+      })
+    )
+  }
+  removeDownload(id: string) {
+    return this.api.removeDownload(Number(id))
+  }
+  resumeDownloads() {
+    return this.api.resumeDownloads()
+  }
 
   getLibrarySections(): Promise<LibrarySection[]> {
     return this.api.getLibrarySections()
@@ -253,9 +270,16 @@ export class PlexProvider implements MusicProvider {
       .filter((x): x is MusicItem => x !== null)
   }
 
-  async findPlaylistCandidates(source: import("../../providers/types").PlaylistRecordingTrack & {recordingMbid?: string|null}) {
-    const result = await this.api.findPlaylistCandidates(this.requireSection(), source)
-    return {...result, tracks:this.mapTracks(result.tracks)}
+  async findPlaylistCandidates(
+    source: import("../../providers/types").PlaylistRecordingTrack & {
+      recordingMbid?: string | null
+    }
+  ) {
+    const result = await this.api.findPlaylistCandidates(
+      this.requireSection(),
+      source
+    )
+    return { ...result, tracks: this.mapTracks(result.tracks) }
   }
 
   async getRecentlyAdded(type?: string, limit?: number): Promise<MusicItem[]> {
@@ -387,11 +411,24 @@ export class PlexProvider implements MusicProvider {
     )
   }
 
-  async resolvePlaylistRecording(track:import("../../providers/types").PlaylistRecordingTrack):Promise<import("../../providers/types").PlaylistRecordingResolution> {
-    return this.api.resolvePlaylistRecording(this.requireSection(),track)
+  async resolvePlaylistRecording(
+    track: import("../../providers/types").PlaylistRecordingTrack
+  ): Promise<import("../../providers/types").PlaylistRecordingResolution> {
+    return this.api.resolvePlaylistRecording(this.requireSection(), track)
   }
-  async describePlaylist(playlistId:string,expected:PlaylistOccurrenceState,expectedDescription:string,description:string):Promise<string> {
-    return this.api.describePlaylist(Number(playlistId),this.requireSection(),expected,expectedDescription,description)
+  async describePlaylist(
+    playlistId: string,
+    expected: PlaylistOccurrenceState,
+    expectedDescription: string,
+    description: string
+  ): Promise<string> {
+    return this.api.describePlaylist(
+      Number(playlistId),
+      this.requireSection(),
+      expected,
+      expectedDescription,
+      description
+    )
   }
   async addToPlaylist(playlistId: string, itemIds: string[]): Promise<void> {
     await this.api.addItemsToPlaylist(Number(playlistId), itemIds.map(Number))
@@ -576,8 +613,12 @@ export class PlexProvider implements MusicProvider {
   }
 
   async getPlaybackInfo(track: MusicTrack): Promise<TrackPlaybackInfo> {
-    if (!/^[1-9]\d*$/.test(track.id) || !Number.isSafeInteger(Number(track.id))) throw new Error("Invalid Plex track")
-    return this.api.prepareTrackAudio(Number(track.id), track.mediaInfo?.localAudio === true)
+    if (!/^[1-9]\d*$/.test(track.id) || !Number.isSafeInteger(Number(track.id)))
+      throw new Error("Invalid Plex track")
+    return this.api.prepareTrackAudio(
+      Number(track.id),
+      track.mediaInfo?.localAudio === true
+    )
   }
 
   async getTranscodePlaybackInfo(
@@ -637,6 +678,13 @@ export class PlexProvider implements MusicProvider {
   ): Promise<LevelData[]> {
     const levels = await this.api.getStreamLevels(streamId, subSample)
     return levels.map((l) => ({ loudness: l.loudness }))
+  }
+
+  async getTrackLevels(track: MusicTrack): Promise<LevelData[]> {
+    return this.api.trackLevels(
+      Number(track.id),
+      track.mediaInfo?.localAudio === true
+    )
   }
 
   async getLyrics(trackId: string): Promise<LyricLineData[]> {

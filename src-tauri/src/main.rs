@@ -376,6 +376,7 @@ pub fn run() {
             offline_commands::offline_cache_clear,
             offline_commands::offline_cache_invalidate,
             offline_audio::audio_prepare_plex_track,
+            offline_audio::audio_track_levels,
             offline_audio::audio_local_track,
             offline_audio::audio_download_list,
             offline_audio::audio_download_enqueue,

@@ -73,6 +73,22 @@ test("provider RPCs retain a copied connection and library context across caller
   expect(calls.every((call) => !("token" in call.args.context))).toBe(true)
 })
 
+test("saved waveform requests bind to their track and captured native library, never a bare stream ID", async () => {
+  const { calls, invoke } = transportHarness(() => [{ loudness: -4 }])
+  const backend = new PlexProvider(invoke)
+  await backend.connect(configuration())
+  expect(
+    await backend.getTrackLevels({
+      id: "42",
+      mediaInfo: { localAudio: true },
+    } as any)
+  ).toEqual([{ loudness: -4 }])
+  expect(calls.at(-1)).toEqual({
+    command: "audio_track_levels",
+    args: { context: context(), trackId: 42, localOnly: true },
+  })
+})
+
 test("retiring a provider prevents a new RPC and discards an in-flight response", async () => {
   let owns = true
   const pending = deferred<Track>()
@@ -133,14 +149,24 @@ test("playback metadata falling back after retirement cannot resolve a URL from 
   await provider.connect(configuration(2, "b"))
   pending.resolve(rawTrack())
   await expect(playback).rejects.toThrow("superseded")
-  expect(calls.map((call) => call.command)).toEqual(["audio_prepare_plex_track"])
+  expect(calls.map((call) => call.command)).toEqual([
+    "audio_prepare_plex_track",
+  ])
   expect(calls[0].args.context).toEqual(context())
 })
 
 test("direct and transcoded playback URLs use the bound native client", async () => {
   const { calls, invoke } = transportHarness((command, args) =>
     command === "audio_prepare_plex_track"
-      ? { url: "https://server.test/direct", trackKey: 7, partId: 9, parentKey: "", startRamp: null, endRamp: null, plexContext: args.context }
+      ? {
+          url: "https://server.test/direct",
+          trackKey: 7,
+          partId: 9,
+          parentKey: "",
+          startRamp: null,
+          endRamp: null,
+          plexContext: args.context,
+        }
       : "https://server.test/transcoded"
   )
   const provider = new PlexProvider(invoke)
@@ -170,7 +196,11 @@ test("paged playlist RPC preserves server totals and duplicate occurrences while
   const rows = [rawTrack(), rawTrack()]
   rows[0].playlist_item_id = 10
   rows[1].playlist_item_id = 11
-  const { calls, invoke } = transportHarness(command => command === "get_playlist_items_page" ? { items: rows, total: 500, offset: 4 } : rows)
+  const { calls, invoke } = transportHarness((command) =>
+    command === "get_playlist_items_page"
+      ? { items: rows, total: 500, offset: 4 }
+      : rows
+  )
   const api = createPlexApi(context(), invoke)
   expect(await api.getPlaylistItems(7, 2, 4)).toEqual(rows)
   const provider = new PlexProvider(invoke)
@@ -178,9 +208,13 @@ test("paged playlist RPC preserves server totals and duplicate occurrences while
   const page = await provider.getPlaylistItems("7", 4, 2)
   expect(page.total).toBe(500)
   expect(page.offset).toBe(4)
-  expect(page.items.map(item => item.playlistItemId)).toEqual(["10", "11"])
+  expect(page.items.map((item) => item.playlistItemId)).toEqual(["10", "11"])
   expect(calls.at(-1)?.command).toBe("get_playlist_items_page")
-  expect(calls.at(-1)?.args).toMatchObject({ context: context(), limit: 2, offset: 4 })
+  expect(calls.at(-1)?.args).toMatchObject({
+    context: context(),
+    limit: 2,
+    offset: 4,
+  })
   await provider.disconnect()
 })
 
@@ -197,14 +231,28 @@ test("retiring a paged playlist owner discards the delayed page", async () => {
 
 test("latest-release RPC and album mapper preserve scoped ownership and release rather than added date", async () => {
   const pending = deferred<any[]>()
-  const { calls, invoke } = transportHarness(command => command === "get_latest_releases" ? pending.promise : undefined)
+  const { calls, invoke } = transportHarness((command) =>
+    command === "get_latest_releases" ? pending.promise : undefined
+  )
   const provider = new PlexProvider(invoke)
   await provider.connect(configuration())
   const albums = provider.getLatestReleases(30)
-  pending.resolve([{ rating_key: 77, title: "Release", parent_title: "Artist", year: 2026,
-    originally_available_at: "2026-10-11", added_at: "2020-01-01T00:00:00Z", thumb: "/library/metadata/77/thumb/1" }])
+  pending.resolve([
+    {
+      rating_key: 77,
+      title: "Release",
+      parent_title: "Artist",
+      year: 2026,
+      originally_available_at: "2026-10-11",
+      added_at: "2020-01-01T00:00:00Z",
+      thumb: "/library/metadata/77/thumb/1",
+    },
+  ])
   const [album] = await albums
-  expect(calls[0]).toEqual({ command: "get_latest_releases", args: { sectionId: 1, limit: 30, context: context() } })
+  expect(calls[0]).toEqual({
+    command: "get_latest_releases",
+    args: { sectionId: 1, limit: 30, context: context() },
+  })
   expect(album.releaseDate).toBe("2026-10-11")
   expect(album.addedAt).toBe("2020-01-01T00:00:00Z")
   expect(album.thumbUrl).toContain(scope("a"))
@@ -215,15 +263,58 @@ test("latest-release RPC and album mapper preserve scoped ownership and release 
 
 test("library metadata edits retain context, baseline fields and positive scoped IDs", async () => {
   const calls: any[] = []
-  const api = createPlexApi(context(), async (command, args) => { calls.push({command,args}); return undefined as any })
-  await api.editLibraryMetadata(5, 42, "album", {title:"New",releaseDate:"2024-02-29"}, {title:"Old",releaseDate:null})
-  expect(calls).toEqual([{command:"edit_library_metadata",args:{sectionId:5,itemId:42,kind:"album",patch:{title:"New",releaseDate:"2024-02-29"},expected:{title:"Old",releaseDate:null},context:context()}}])
-  await expect(api.editLibraryMetadata(-1,42,"artist",{title:"New"},{title:"Old"})).rejects.toThrow("Invalid Plex")
+  const api = createPlexApi(context(), async (command, args) => {
+    calls.push({ command, args })
+    return undefined as any
+  })
+  await api.editLibraryMetadata(
+    5,
+    42,
+    "album",
+    { title: "New", releaseDate: "2024-02-29" },
+    { title: "Old", releaseDate: null }
+  )
+  expect(calls).toEqual([
+    {
+      command: "edit_library_metadata",
+      args: {
+        sectionId: 5,
+        itemId: 42,
+        kind: "album",
+        patch: { title: "New", releaseDate: "2024-02-29" },
+        expected: { title: "Old", releaseDate: null },
+        context: context(),
+      },
+    },
+  ])
+  await expect(
+    api.editLibraryMetadata(
+      -1,
+      42,
+      "artist",
+      { title: "New" },
+      { title: "Old" }
+    )
+  ).rejects.toThrow("Invalid Plex")
   expect(calls).toHaveLength(1)
   let owned = true
-  const barrier=deferred<void>()
-  const stale=createPlexApi(context(),async()=>{await barrier.promise;return undefined as any},()=>owned)
-  const request=stale.editLibraryMetadata(5,42,"artist",{summary:"New"},{summary:null})
-  owned=false;barrier.resolve()
+  const barrier = deferred<void>()
+  const stale = createPlexApi(
+    context(),
+    async () => {
+      await barrier.promise
+      return undefined as any
+    },
+    () => owned
+  )
+  const request = stale.editLibraryMetadata(
+    5,
+    42,
+    "artist",
+    { summary: "New" },
+    { summary: null }
+  )
+  owned = false
+  barrier.resolve()
   await expect(request).rejects.toThrow("superseded")
 })

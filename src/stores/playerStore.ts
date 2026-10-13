@@ -736,9 +736,8 @@ async function enrichCurrentTrack(track: MusicTrack, provider: MusicProvider, is
         duration: current.duration > 0 ? current.duration : full.duration}
       return {currentTrack: enriched, queue: state.queue.map((item, index) => index === state.queueIndex && item.id === track.id ? enriched : item)}
     })
-    const streamId = full.mediaInfo?.audioStreamId
-    if (streamId && provider.getStreamLevels && isCurrent()) {
-      const levels = await provider.getStreamLevels(streamId, 128)
+    if (isCurrent()) {
+      const levels = await playbackMetadata.levels(provider, full)
       if (levels.length && isCurrent()) set({waveformLevels: levels})
     }
   } catch { /* Playback continues when optional enrichment is unavailable. */ }
@@ -773,11 +772,8 @@ function _onTrackBecomesActive(track: MusicTrack, index: number, get: () => Play
       if (provider) fireAndForget(enrichCurrentTrack(track, provider, isCurrent, get, set))
     } else {
       // Track already has full data (from PlayQueue/radio) — just fetch waveform
-      fireAndForget((provider ? fetchAudioStreamId(track, provider) : Promise.resolve(null)).then(streamId => {
-        if (!isCurrent() || !streamId || !provider?.getStreamLevels) return
-        return provider.getStreamLevels(streamId, 128)
-          .then(levels => { if (isCurrent() && levels.length > 0) set({ waveformLevels: levels }) })
-      }))
+      if (provider) fireAndForget(playbackMetadata.levels(provider,track)
+        .then(levels => { if (isCurrent() && levels.length > 0) set({ waveformLevels: levels }) }))
     }
     fetchLyricsForTrack(track)
   }

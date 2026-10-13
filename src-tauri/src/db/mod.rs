@@ -6,6 +6,7 @@
 
 pub mod albums;
 pub mod audio;
+pub mod catalogue;
 pub mod artists;
 pub mod kv;
 pub mod offline;

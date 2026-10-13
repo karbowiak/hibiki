@@ -13,8 +13,13 @@ export function createSavedLibraryProvider(
   audio?: {
     track(id: string): Promise<MusicTrack | null>
     playback(id: string): Promise<TrackPlaybackInfo>
-    list(offset?: number, limit?: number, cached?: boolean): Promise<LocalAudioPage>
+    list(
+      offset?: number,
+      limit?: number,
+      cached?: boolean
+    ): Promise<LocalAudioPage>
     remove(id: string): Promise<void>
+    levels?(id: string): Promise<import("../providers/types").LevelData[]>
   }
 ): MusicProvider {
   const session = Object.freeze({})
@@ -98,7 +103,7 @@ export function createSavedLibraryProvider(
       djModes: false,
       playQueues: false,
       lyrics: false,
-      streamLevels: false,
+      streamLevels: !!audio?.levels,
       hubs: true,
       stations: false,
       tags: true,
@@ -112,12 +117,43 @@ export function createSavedLibraryProvider(
       syncTracks: false,
     },
     isConnected: () => false,
-    ...(audio ? {
-      getPlaybackInfo: async (track: MusicTrack) => { check(); const result = await audio.playback(track.id); check(); return result },
-      getStreamUrl: async (track: MusicTrack) => { check(); const result = await audio.playback(track.id); check(); return result.url },
-      getLocalAudio: async (offset = 0, limit = 100, cached = false) => { check(); const result = await audio.list(offset, limit, cached); check(); return result },
-      removeDownload: async (id: string) => { check(); await audio.remove(id); check() },
-    } : {}),
+    ...(audio
+      ? {
+          getPlaybackInfo: async (track: MusicTrack) => {
+            check()
+            const result = await audio.playback(track.id)
+            check()
+            return result
+          },
+          getStreamUrl: async (track: MusicTrack) => {
+            check()
+            const result = await audio.playback(track.id)
+            check()
+            return result.url
+          },
+          getLocalAudio: async (offset = 0, limit = 100, cached = false) => {
+            check()
+            const result = await audio.list(offset, limit, cached)
+            check()
+            return result
+          },
+          removeDownload: async (id: string) => {
+            check()
+            await audio.remove(id)
+            check()
+          },
+          ...(audio.levels
+            ? {
+                getTrackLevels: async (track: MusicTrack) => {
+                  check()
+                  const result = await audio.levels!(track.id)
+                  check()
+                  return result
+                },
+              }
+            : {}),
+        }
+      : {}),
     disconnect: async () => {
       retired = true
     },

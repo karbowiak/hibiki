@@ -41,6 +41,13 @@ impl PlexClient {
     where
         T: serde::de::DeserializeOwned + std::default::Default,
     {
+        let raw = self.sonic_document(rating_key,limit,max_distance).await?;
+        let container: MediaContainer<T> = serde_json::from_value(raw).context("Invalid sonic metadata")?;
+        Ok(container.metadata)
+    }
+
+    pub async fn sonic_document(&self, rating_key: i64, limit: Option<i32>, max_distance: Option<f64>) -> Result<serde_json::Value> {
+        anyhow::ensure!(rating_key>0 && limit.is_none_or(|n|(1..=1000).contains(&n)) && max_distance.is_none_or(|n|n.is_finite() && n>=0.0),"Invalid sonic query");
         let path = format!("/library/metadata/{}/nearest", rating_key);
         let mut params = Vec::new();
 
@@ -56,10 +63,7 @@ impl PlexClient {
 
         debug!("Sonic similarity request to {}", url);
 
-        let container: MediaContainer<T> = self.get_url(url.as_str()).await
-            .context("Failed to fetch sonic metadata")?;
-
-        Ok(container.metadata)
+        self.get_url(url.as_str()).await.context("Failed to fetch sonic metadata")
     }
 
     /// Generate a sonic adventure between two tracks
@@ -180,18 +184,17 @@ impl PlexClient {
     /// * `Result<Track>` - The track
     #[instrument(skip(self))]
     pub async fn get_track(&self, rating_key: i64) -> Result<Track> {
-        let path = format!("/library/metadata/{}", rating_key);
+        Ok(self.get_track_document(rating_key).await?.0)
+    }
 
-        debug!("Fetching track from {}", path);
-
-        let container: MediaContainer<Track> = self.get(&path).await
-            .context("Failed to fetch track")?;
-
-        container
-            .metadata
-            .into_iter()
-            .next()
-            .context("Track not found")
+    /// Keep all server fields, including GUIDs, alongside the typed UI view.
+    pub async fn get_track_document(&self, rating_key: i64) -> Result<(Track, serde_json::Value)> {
+        anyhow::ensure!(rating_key > 0, "Invalid track identity");
+        let container: serde_json::Value = self.get(&format!("/library/metadata/{rating_key}?includeGuids=1&includeLyrics=1&skipRefresh=1")).await.context("Failed to fetch track")?;
+        let raw = container["Metadata"].as_array().and_then(|items|items.first()).context("Track not found")?.clone();
+        let track: Track = serde_json::from_value(raw.clone()).context("Invalid track metadata")?;
+        anyhow::ensure!(track.rating_key == rating_key, "Plex returned a different track");
+        Ok((track,raw))
     }
 
     /// Get an artist by rating key
@@ -457,11 +460,10 @@ impl PlexClient {
 
     /// Get loudness/peak level data for a media stream.
     ///
-    /// `stream_id` is the `id` from `track.media[0].parts[0]` (or a stream ID
-    /// from the part's stream list). `sub_sample` controls the resolution
-    /// (128 = one sample per 128 audio frames, default used by PlexAmp).
+    /// `stream_id` is the audio Stream ID inside the selected Media/Part.
+    /// `sub_sample` requests that many samples, not an audio-frame interval.
     ///
-    /// Corresponds to `GET /library/streams/{id}/levels?subSample={n}`.
+    /// Corresponds to `GET /library/streams/{id}/levels?subsample={n}`.
     #[instrument(skip(self))]
     pub async fn get_stream_levels(
         &self,

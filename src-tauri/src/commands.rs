@@ -451,11 +451,14 @@ pub async fn get_track(
     context: PlexRequestContext,
     rating_key: i64,
     state: State<'_, PlexState>,
+    db: State<'_, crate::db::DbState>,
 ) -> Result<Track, String> {
     let c = client!(state, context);
-    c.get_track(rating_key)
-        .await
-        .map_err(|e| format!("{:#}", e))
+    let (track,raw) = c.get_track_document(rating_key).await.map_err(|e| format!("{e:#}"))?;
+    let guard = state.0.lock().await;
+    state.checked_client(&context,&guard)?;
+    if let Ok(conn) = db.0.lock() { let _ = crate::db::catalogue::save(&conn,&c.library_scope,"track",rating_key,&raw,true); }
+    Ok(track)
 }
 
 /// Get an artist by rating key.
@@ -1204,11 +1207,14 @@ pub async fn get_sonically_similar(
     limit: Option<i32>,
     max_distance: Option<f64>,
     state: State<'_, PlexState>,
+    db: State<'_, crate::db::DbState>,
 ) -> Result<Vec<Track>, String> {
     let c = client!(state, context);
-    c.sonically_similar::<Track>(rating_key, limit, max_distance)
-        .await
-        .map_err(|e| format!("{:#}", e))
+    let raw = c.sonic_document(rating_key,limit,max_distance).await.map_err(|e|format!("{e:#}"))?;
+    let result: crate::plex::MediaContainer<Track> = serde_json::from_value(raw.clone()).map_err(|_|"Invalid Plex sonic metadata")?;
+    let guard = state.0.lock().await; state.checked_client(&context,&guard)?;
+    if let Ok(conn) = db.0.lock() { let _ = crate::db::catalogue::save_resource(&conn,&c.library_scope,rating_key,&format!("nearest:{}",serde_json::json!([limit,max_distance])),&raw); }
+    Ok(result.metadata)
 }
 
 /// Get a track radio (mix) seeded from a track.

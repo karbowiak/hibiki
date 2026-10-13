@@ -24,6 +24,8 @@ pub struct AudioDownloads {
     worker: Arc<tokio::sync::Mutex<()>>,
     active: Mutex<Option<(String, i64, Arc<AtomicBool>)>>,
     scheduled: Mutex<HashSet<(u64, String)>>,
+    analysis: tokio::sync::Mutex<()>,
+    analysis_scheduled: Mutex<HashSet<(u64, String)>>,
 }
 impl AudioDownloads {
     pub fn new(root: std::path::PathBuf) -> Self {
@@ -32,6 +34,8 @@ impl AudioDownloads {
             worker: Arc::new(tokio::sync::Mutex::new(())),
             active: Mutex::new(None),
             scheduled: Mutex::new(HashSet::new()),
+            analysis: tokio::sync::Mutex::new(()),
+            analysis_scheduled: Mutex::new(HashSet::new()),
         }
     }
 }
@@ -48,7 +52,7 @@ fn id(value: i64) -> Result<(), String> {
 }
 
 /// The saved library is protected native state, never a renderer-supplied scope hint.
-fn library_id(app: &tauri::AppHandle, client: &PlexClient) -> Result<i64, String> {
+pub(crate) fn library_id(app: &tauri::AppHandle, client: &PlexClient) -> Result<i64, String> {
     let directory = app
         .path()
         .app_config_dir()
@@ -140,7 +144,15 @@ fn binding(
         Some(&client.library_scope),
     )?;
     let stream = part.streams.iter().find(|s| s.stream_type == Some(2));
-    let metadata = json!({
+    use sha2::{Digest, Sha256};
+    let analysis_version = format!(
+        "{:x}",
+        Sha256::digest(
+            serde_json::to_vec(&(media, track.music_analysis_version, track.updated_at))
+                .map_err(|_| "Invalid audio metadata")?
+        )
+    );
+    let mut metadata = json!({
         "id":expected.to_string(),"title":track.title,"trackNumber":track.index,"duration":track.duration,
         "albumId":parent_id(&track.parent_key),"albumName":track.parent_title,"albumYear":track.parent_year,
         "artistId":parent_id(&track.grandparent_key),"artistName":track.grandparent_title,"year":track.year,"playCount":track.view_count,
@@ -154,6 +166,8 @@ fn binding(
         "startRamp":stream.and_then(|s|s.start_ramp.as_ref()).or(track.start_ramp.as_ref()),"endRamp":stream.and_then(|s|s.end_ramp.as_ref()).or(track.end_ramp.as_ref()),
         "localParentKey":track.parent_key,"localPartId":part.id,"localPartKey":part.key,"mediaInfo":{"metadataComplete":true,"container":media.container,"fileSize":part.size}
     });
+    metadata["localAnalysisVersion"] = json!(analysis_version);
+    metadata["mediaInfo"]["audioStreamId"] = json!(stream.and_then(|s| s.id));
     let saved = Binding {
         track_id: expected,
         cache_key: source.cache_key.clone(),
@@ -279,17 +293,25 @@ pub async fn audio_prepare_plex_track(
         let section = library_id(&app, &client)?;
         match tokio::time::timeout(
             std::time::Duration::from_secs(20),
-            client.get_track(track_id),
+            client.get_track_document(track_id),
         )
         .await
         {
-            Ok(Ok(track)) => {
+            Ok(Ok((track, raw))) => {
                 let (binding, _, _) = binding(&client, section, track_id, &track)?;
                 let guard = plex.0.lock().await;
                 plex.checked_client(&context, &guard)?;
                 // Persistence failure must not break otherwise valid online playback.
                 if let Ok(conn) = db.0.lock() {
                     let _ = audio::remember(&conn, &client.library_scope, &binding, now());
+                    let _ = crate::db::catalogue::save(
+                        &conn,
+                        &client.library_scope,
+                        "track",
+                        track_id,
+                        &raw,
+                        true,
+                    );
                 }
                 let media = best_media(&track)?;
                 let url = client.direct_play_url(&media.parts[0].key);
@@ -312,6 +334,145 @@ pub async fn audio_prepare_plex_track(
     let (binding, _) = available(values, &downloads.cache, engine.0.cache())
         .ok_or("This track is not available offline. Reconnect to Plex to download it.")?;
     Ok(info(&binding, context, format!("{LOCAL_PREFIX}{track_id}")))
+}
+
+/// Read full-resolution Plex levels once per exact media/analysis revision.
+/// `/levels` contains the same 100 ms loudness series as `/loudness`, plus
+/// sample-count metadata. Keep its complete response, not just 128 UI buckets.
+async fn ensure_levels(
+    app: &tauri::AppHandle,
+    context: &PlexRequestContext,
+    binding: &Binding,
+    local_only: bool,
+) -> Result<Vec<crate::plex::Level>, String> {
+    let Some(stream_id) = binding.metadata["mediaInfo"]["audioStreamId"]
+        .as_i64()
+        .filter(|id| *id > 0)
+    else {
+        return Ok(Vec::new());
+    };
+    let Some(version) = binding.metadata["localAnalysisVersion"].as_str() else {
+        return Ok(Vec::new());
+    };
+    let downloads = app.state::<AudioDownloads>();
+    let plex = app.state::<PlexState>();
+    let db = app.state::<DbState>();
+    let client = {
+        let guard = plex.0.lock().await;
+        let client = plex.checked_cache_client(context, &guard)?;
+        let saved = crate::db::catalogue::levels(
+            &*db.0.lock().map_err(|_| "Analysis storage unavailable")?,
+            &client.library_scope,
+            &binding.cache_key,
+            stream_id,
+            version,
+        )?;
+        if let Some(saved) = saved {
+            return decode_levels(saved);
+        }
+        if local_only || client.offline_only {
+            return Ok(Vec::new());
+        }
+        client.clone()
+    };
+    // Offline/cache hits must never wait behind a network transfer. Serialize
+    // misses, then recheck so simultaneous player/download requests share data.
+    let _analysis = downloads.analysis.lock().await;
+    {
+        let guard = plex.0.lock().await;
+        plex.checked_client(context, &guard)?;
+        if let Some(saved) = crate::db::catalogue::levels(
+            &*db.0.lock().map_err(|_| "Analysis storage unavailable")?,
+            &client.library_scope,
+            &binding.cache_key,
+            stream_id,
+            version,
+        )? {
+            return decode_levels(saved);
+        }
+    }
+    let raw: Value = tokio::time::timeout(
+        std::time::Duration::from_secs(12),
+        client.get(&format!("/library/streams/{stream_id}/levels")),
+    )
+    .await
+    .map_err(|_| "Plex waveform request timed out")?
+    .map_err(|_| "Plex waveform is unavailable")?;
+    crate::db::catalogue::validate_levels(&raw)?;
+    let guard = plex.0.lock().await;
+    plex.checked_client(context, &guard)?;
+    crate::db::catalogue::save_levels(
+        &*db.0.lock().map_err(|_| "Analysis storage unavailable")?,
+        &client.library_scope,
+        &binding.cache_key,
+        stream_id,
+        version,
+        &raw,
+    )?;
+    decode_levels(raw)
+}
+fn decode_levels(raw: Value) -> Result<Vec<crate::plex::Level>, String> {
+    serde_json::from_value::<crate::plex::LevelsContainer>(raw)
+        .map(|container| container.levels)
+        .map_err(|_| "Saved Plex waveform is invalid".into())
+}
+
+#[tauri::command]
+pub async fn audio_track_levels(
+    context: PlexRequestContext,
+    track_id: i64,
+    local_only: bool,
+    app: tauri::AppHandle,
+    plex: State<'_, PlexState>,
+    db: State<'_, DbState>,
+    downloads: State<'_, AudioDownloads>,
+    engine: State<'_, crate::audio_engine::bridge::AudioEngineState>,
+) -> Result<Vec<crate::plex::Level>, String> {
+    id(track_id)?;
+    let (client, saved) = {
+        let guard = plex.0.lock().await;
+        let client = plex.checked_cache_client(&context, &guard)?;
+        let conn = db.0.lock().map_err(|_| "Analysis storage unavailable")?;
+        let saved = if local_only || client.offline_only {
+            available(
+                audio::bindings(&conn, &client.library_scope, track_id)?,
+                &downloads.cache,
+                engine.0.cache(),
+            )
+            .map(|(binding, _)| binding)
+        } else {
+            audio::latest(&conn, &client.library_scope, track_id)?
+        };
+        (client.clone(), saved)
+    };
+    let saved = if saved
+        .as_ref()
+        .is_some_and(|b| b.metadata["localAnalysisVersion"].is_string())
+        || local_only
+        || client.offline_only
+    {
+        saved
+    } else {
+        let section = library_id(&app, &client)?;
+        let (track, raw) = tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            client.get_track_document(track_id),
+        )
+        .await
+        .map_err(|_| "Plex track request timed out")?
+        .map_err(|_| "Plex track is unavailable")?;
+        let (binding, _, _) = binding(&client, section, track_id, &track)?;
+        let guard = plex.0.lock().await;
+        plex.checked_client(&context, &guard)?;
+        let conn = db.0.lock().map_err(|_| "Analysis storage unavailable")?;
+        audio::remember(&conn, &client.library_scope, &binding, now())?;
+        crate::db::catalogue::save(&conn, &client.library_scope, "track", track_id, &raw, true)?;
+        Some(binding)
+    };
+    match saved {
+        Some(binding) => ensure_levels(&app, &context, &binding, local_only).await,
+        None => Ok(Vec::new()),
+    }
 }
 
 #[derive(Serialize)]
@@ -481,6 +642,7 @@ pub async fn audio_download_enqueue(
     audio::enqueue(&conn, &client.library_scope, &track_ids, now())?;
     drop(conn);
     drop(guard);
+    start_analysis_backfill(app.clone(), context.clone());
     start_worker(app, context);
     Ok(())
 }
@@ -510,6 +672,7 @@ pub async fn audio_download_resume(
     }
     drop(active);
     drop(guard);
+    start_analysis_backfill(app.clone(), context.clone());
     start_worker(app, context);
     Ok(())
 }
@@ -539,6 +702,148 @@ pub async fn audio_download_remove(
         downloads.cache.remove(&binding.cache_key)?;
     }
     audio::remove(&conn, &client.library_scope, track_id)
+}
+
+/// Backfill existing downloads/cache entries without transferring encoded audio
+/// again. Paging by ID bounds memory even after a large playlist download.
+fn start_analysis_backfill(app: tauri::AppHandle, context: PlexRequestContext) {
+    let downloads = app.state::<AudioDownloads>();
+    let key = (context.connection_revision, context.cache_scope.clone());
+    let Ok(mut scheduled) = downloads.analysis_scheduled.lock() else {
+        return;
+    };
+    if !scheduled.insert(key.clone()) {
+        return;
+    }
+    drop(scheduled);
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = backfill_analysis(&app, &context).await {
+            tracing::debug!(%error,"Saved audio analysis backfill stopped");
+        }
+        if let Ok(mut scheduled) = app.state::<AudioDownloads>().analysis_scheduled.lock() {
+            scheduled.remove(&key);
+        }
+    });
+}
+async fn backfill_analysis(
+    app: &tauri::AppHandle,
+    context: &PlexRequestContext,
+) -> Result<(), String> {
+    let plex = app.state::<PlexState>();
+    let db = app.state::<DbState>();
+    let downloads = app.state::<AudioDownloads>();
+    let engine = app.state::<crate::audio_engine::bridge::AudioEngineState>();
+    let mut cursor = 0i64;
+    let mut failures = 0;
+    loop {
+        let (client, ids) = {
+            let guard = plex.0.lock().await;
+            let client = plex.checked_client(context, &guard)?.clone();
+            let conn = db.0.lock().map_err(|_| "Analysis storage unavailable")?;
+            let mut query = conn.prepare("SELECT DISTINCT track_id FROM local_audio WHERE scope=?1 AND track_id>?2 ORDER BY track_id LIMIT 100").map_err(|_|"Cannot read saved audio")?;
+            let ids = query
+                .query_map(rusqlite::params![client.library_scope, cursor], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .map_err(|_| "Cannot read saved audio")?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| "Cannot read saved audio")?;
+            (client, ids)
+        };
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let section = library_id(app, &client)?;
+        for track_id in ids {
+            cursor = track_id;
+            let saved = {
+                let guard = plex.0.lock().await;
+                plex.checked_client(context, &guard)?;
+                let conn = db.0.lock().map_err(|_| "Analysis storage unavailable")?;
+                let saved = available(
+                    audio::bindings(&conn, &client.library_scope, track_id)?,
+                    &downloads.cache,
+                    engine.0.cache(),
+                )
+                .map(|(binding, _)| binding);
+                match saved {
+                    Some(binding)
+                        if binding.metadata["localAnalysisVersion"].is_string()
+                            && binding.metadata["mediaInfo"]["audioStreamId"]
+                                .as_i64()
+                                .is_none() =>
+                    {
+                        None
+                    }
+                    Some(binding) => {
+                        let ready = match (
+                            binding.metadata["mediaInfo"]["audioStreamId"].as_i64(),
+                            binding.metadata["localAnalysisVersion"].as_str(),
+                        ) {
+                            (Some(stream), Some(version)) => crate::db::catalogue::levels(
+                                &conn,
+                                &client.library_scope,
+                                &binding.cache_key,
+                                stream,
+                                version,
+                            )?
+                            .is_some(),
+                            _ => false,
+                        };
+                        if ready {
+                            None
+                        } else {
+                            Some(binding)
+                        }
+                    }
+                    None => None,
+                }
+            };
+            let Some(saved) = saved else { continue };
+            let result = async {
+                let (track, raw) = tokio::time::timeout(
+                    std::time::Duration::from_secs(20),
+                    client.get_track_document(track_id),
+                )
+                .await
+                .map_err(|_| "Plex metadata request timed out")?
+                .map_err(|_| "Plex metadata unavailable")?;
+                let (fresh, _, _) = binding(&client, section, track_id, &track)?;
+                // Do not attach a replacement file's analysis to an older download.
+                if fresh.cache_key != saved.cache_key {
+                    return Ok(());
+                }
+                {
+                    let guard = plex.0.lock().await;
+                    plex.checked_client(context, &guard)?;
+                    let conn = db.0.lock().map_err(|_| "Analysis storage unavailable")?;
+                    audio::remember(&conn, &client.library_scope, &fresh, now())?;
+                    crate::db::catalogue::save(
+                        &conn,
+                        &client.library_scope,
+                        "track",
+                        track_id,
+                        &raw,
+                        true,
+                    )?;
+                }
+                // Some files have no server analysis. Keep their full metadata
+                // and continue; unavailable levels remain retryable on reconnect.
+                let _ = ensure_levels(app, context, &fresh, false).await;
+                Ok::<_, String>(())
+            }
+            .await;
+            if result.is_err() {
+                failures += 1;
+                if failures >= 3 {
+                    return Err("Plex analysis unavailable; retry on reconnect".into());
+                }
+            } else {
+                failures = 0;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    }
 }
 
 fn start_worker(app: tauri::AppHandle, context: PlexRequestContext) {
@@ -632,9 +937,9 @@ async fn worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<
         let total = Arc::new(AtomicU64::new(0));
         let transfer = async {
             let section = library_id(app, &client)?;
-            let track = tokio::time::timeout(
+            let (track, raw) = tokio::time::timeout(
                 std::time::Duration::from_secs(30),
-                client.get_track(job.track_id),
+                client.get_track_document(job.track_id),
             )
             .await
             .map_err(|_| "Plex track request timed out")?
@@ -652,9 +957,23 @@ async fn worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<
                     &binding,
                     now(),
                 )?;
+                crate::db::catalogue::save(
+                    &*db.0.lock().map_err(|_| "Download storage unavailable")?,
+                    scope,
+                    "track",
+                    job.track_id,
+                    &raw,
+                    true,
+                )?;
             }
-            if downloads.cache.lookup(&binding.cache_key).is_some() {
-                return Ok(binding);
+            // Optional analysis cannot prevent a valid audio file being saved.
+            let _ = ensure_levels(app, context, &binding, false).await;
+            if let Some(file) = downloads.cache.open(&binding.cache_key) {
+                if let Ok(metadata) = file.metadata() {
+                    received.store(metadata.len(), Ordering::Release);
+                    total.store(metadata.len(), Ordering::Release);
+                    return Ok(binding);
+                }
             }
             let cache = downloads.cache.clone();
             let automatic = app
@@ -709,12 +1028,15 @@ async fn worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<
                 job.cache_key = Some(binding.cache_key);
                 job.error = None;
             }
-            Some(Err(_)) if connected => {
+            Some(Err(error)) if connected => {
                 job.status = "error".into();
-                job.error = Some(
+                tracing::debug!(track_id=job.track_id,%error,"Plex download could not be validated");
+                job.error = Some(if error.starts_with("Downloaded audio failed validation") {
+                    "Plex's audio file contains damaged frames or does not match its reported duration. Check the file or choose another version.".into()
+                } else {
                     "Could not download this track. Check Plex and available storage, then retry."
-                        .into(),
-                );
+                        .into()
+                });
             }
             _ => {
                 job.status = "paused".into();
@@ -751,7 +1073,7 @@ async fn stage_download(
             .metadata()
             .map_err(|_| "Cannot read cached audio")?
             .len();
-        if size <= MAX_TRACK_BYTES && expected_size.is_none_or(|expected| expected == size) {
+        if size <= MAX_TRACK_BYTES {
             let mut writer = cache.begin_write(&source.cache_key, &source.extension)?;
             let extension = source.extension.clone();
             let cancellation = cancel.clone();
@@ -828,8 +1150,15 @@ async fn stage_download(
         },
     )
     .await?;
-    if expected_size.is_some_and(|expected| expected != received.load(Ordering::Acquire)) {
-        return Err("Plex audio size changed during download".into());
+    // Plex's database size can be stale after tag/file updates. The HTTP
+    // transfer validates its own length, ranges and overlap; full decoding
+    // below still rejects truncation, corruption and a different duration.
+    if expected_size.is_some_and(|reported| reported != received.load(Ordering::Acquire)) {
+        tracing::debug!(
+            reported_bytes = expected_size,
+            received_bytes = received.load(Ordering::Acquire),
+            "Plex catalogue size differs from the completed media response"
+        );
     }
     let file = writer.validation_file()?;
     let extension = source.extension.clone();
@@ -873,7 +1202,7 @@ fn validate_audio(
         || samples == 0
         || actual.abs_diff(duration) > tolerance
     {
-        return Err("Downloaded audio is incomplete or has invalid frames".into());
+        return Err(format!("Downloaded audio failed validation (decoded {actual} ms, expected {duration} ms, aborted {}, invalid frames {})",setup.aborted,setup.had_decode_errors));
     }
     Ok(())
 }
@@ -961,6 +1290,33 @@ mod tests {
         assert!(binding(&client, 1, 42, &forged).is_err());
         forged.media[0].parts[0].key = "/library/parts/10/file.wav?X-Plex-Token=forged".into();
         assert!(binding(&client, 1, 42, &forged).is_err());
+    }
+
+    #[test]
+    fn analysis_revision_follows_the_media_and_server_analysis_without_losing_stream_identity() {
+        let client = client();
+        let mut track = track();
+        track.media[0].parts[0].streams[0].id = Some(17);
+        let first = binding(&client, 1, 42, &track).unwrap().0;
+        assert_eq!(first.metadata["mediaInfo"]["audioStreamId"], 17);
+        track.music_analysis_version = Some(1);
+        let analyzed = binding(&client, 1, 42, &track).unwrap().0;
+        assert_ne!(
+            first.metadata["localAnalysisVersion"],
+            analyzed.metadata["localAnalysisVersion"]
+        );
+        assert_eq!(first.cache_key, analyzed.cache_key);
+        track.media[0].parts[0].streams[0].gain = Some(-6.0);
+        let changed = binding(&client, 1, 42, &track).unwrap().0;
+        assert_ne!(
+            analyzed.metadata["localAnalysisVersion"],
+            changed.metadata["localAnalysisVersion"]
+        );
+        track.media[0].parts[0].key = "/library/parts/10/replacement.wav".into();
+        assert_ne!(
+            changed.cache_key,
+            binding(&client, 1, 42, &track).unwrap().0.cache_key
+        );
     }
     #[test]
     fn media_selection_matches_frontend_quality_order_and_keeps_first_equal_quality_version() {
@@ -1140,8 +1496,27 @@ mod tests {
         cancel.store(true, Ordering::Release);
         assert!(validate_audio(std::fs::File::open(&path).unwrap(), "wav", 1000, &cancel).is_err());
     }
+
+    #[test]
+    #[ignore = "explicit local media validation proof; no user files read by default"]
+    fn validate_private_audio_fixture() {
+        let file = std::env::var("HIBIKI_VALIDATION_FILE").expect("explicit fixture file");
+        let extension = std::env::var("HIBIKI_VALIDATION_FORMAT").expect("explicit fixture format");
+        let duration = std::env::var("HIBIKI_VALIDATION_DURATION_MS")
+            .expect("explicit fixture duration")
+            .parse()
+            .unwrap();
+        let result = validate_audio(
+            std::fs::File::open(file).unwrap(),
+            &extension,
+            duration,
+            &AtomicBool::new(false),
+        );
+        let valid = std::env::var("HIBIKI_VALIDATION_VALID").map_or(true, |value| value == "true");
+        assert_eq!(result.is_ok(), valid, "{result:?}");
+    }
     #[tokio::test]
-    async fn http_downloads_publish_only_after_validation_and_reject_wrong_native_file_sizes() {
+    async fn http_downloads_validate_actual_audio_even_when_plex_file_size_is_stale() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         for (corrupt, wrong_size) in [(false, false), (true, false), (false, true)] {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1192,7 +1567,7 @@ mod tests {
             .expect("download/validation must terminate");
             server.await.unwrap();
             assert!(downloads.lookup(&source.cache_key).is_none());
-            if corrupt || wrong_size {
+            if corrupt {
                 assert!(result.is_err());
                 assert_eq!(downloads.stats().total_bytes, 0);
             } else {

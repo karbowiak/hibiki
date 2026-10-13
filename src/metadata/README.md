@@ -3,6 +3,32 @@
 Hibiki keeps Plex as the library and playback backend. Metadata sources enrich
 that library; they do not rename its items or create library entries automatically.
 
+## Local Plex track data
+
+Full track lookups and download preparation retain the complete native Plex
+document: every media/part/stream, server path, GUID, tag, analysis field and
+unknown field. Authentication is excluded, and this archive stays in the private
+account/server/library-scoped SQLite database. Renderer browsing DTOs are separate.
+
+Waveforms retain the full `/library/streams/{id}/levels` response, including its
+sample-count fields. Plex's official API describes one loudness sample per 100 ms;
+`subsample` requests a number of output samples, not an audio-frame interval.
+The full response is the loudness series also exposed by `/loudness`, so Hibiki
+does not download both representations. Saved levels are bound to the exact audio
+cache identity, stream ID and media/analysis revision. Download and playback reads
+share them; offline reads perform no server request. Missing analysis remains
+optional and retryable independently of a valid audio file.
+
+Plex's `musicAnalysisVersion` indicates sonic analysis availability. The current
+official API and Python-PlexAPI expose server-computed sonic neighbours and
+distances through `/nearest`; they do not document an export of the underlying
+sonic feature vectors. Hibiki archives full requested neighbour responses with
+their query parameters and retains any future analysis fields in raw metadata.
+This does not yet make Plex's sonic radio/path computation available offline.
+
+Contracts: [Plex PMS API](https://developer.plex.tv/pms/#tag/Library) and
+[Python-PlexAPI audio implementation](https://github.com/pkkid/python-plexapi/blob/master/plexapi/audio.py).
+
 ## Sources
 
 | Source | Artist metadata | Album metadata | Artwork |

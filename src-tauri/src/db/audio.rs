@@ -83,6 +83,14 @@ pub fn bindings(conn: &Connection, scope: &str, id: i64) -> Result<Vec<Binding>,
     result
 }
 
+pub fn latest(conn: &Connection, scope: &str, id: i64) -> Result<Option<Binding>, String> {
+    check(scope, id)?;
+    let key: Option<String> = conn.query_row("SELECT cache_key FROM local_audio WHERE scope=?1 AND track_id=?2 ORDER BY saved_at DESC,cache_key LIMIT 1",params![scope,id],|row|row.get(0)).optional().map_err(|_|"Cannot read local track")?;
+    Ok(bindings(conn, scope, id)?
+        .into_iter()
+        .find(|binding| Some(&binding.cache_key) == key.as_ref()))
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Job {

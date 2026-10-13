@@ -90,17 +90,35 @@ export const useConnectionStore = createPlexConnectionStore({
       connectionRevision: context.revision,
       cacheScope: context.cacheScope,
     })
-    const audio = createPlexApi({ connectionRevision: context.revision, cacheScope: context.cacheScope }, undefined, ownsRequest)
-    const project = (track: import("../../types/music").MusicTrack) => localAudioTrack(track, context.baseUrl, context.cacheScope)
+    const audio = createPlexApi(
+      { connectionRevision: context.revision, cacheScope: context.cacheScope },
+      undefined,
+      ownsRequest
+    )
+    const project = (track: import("../../types/music").MusicTrack) =>
+      localAudioTrack(track, context.baseUrl, context.cacheScope)
     const provider = createSavedLibraryProvider(
       context.cacheScope,
       cache,
       ownsRequest,
       {
-        track: async id => { const track = await audio.localTrack(Number(id)); return track ? project(track) : null },
-        playback: id => audio.prepareTrackAudio(Number(id), true),
-        list: async (offset, limit, cached) => { const page = await audio.localAudio(offset, limit, cached); return { ...page, items: page.items.map(item => ({ ...item, track: item.track ? project(item.track) : null })) } },
-        remove: id => audio.removeDownload(Number(id)),
+        track: async (id) => {
+          const track = await audio.localTrack(Number(id))
+          return track ? project(track) : null
+        },
+        playback: (id) => audio.prepareTrackAudio(Number(id), true),
+        list: async (offset, limit, cached) => {
+          const page = await audio.localAudio(offset, limit, cached)
+          return {
+            ...page,
+            items: page.items.map((item) => ({
+              ...item,
+              track: item.track ? project(item.track) : null,
+            })),
+          }
+        },
+        remove: (id) => audio.removeDownload(Number(id)),
+        levels: (id) => audio.trackLevels(Number(id), true),
       }
     )
     await Promise.all([
