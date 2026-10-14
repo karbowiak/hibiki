@@ -493,3 +493,22 @@ Current profiles follow the existing credential/endpoint-bound library cache
 identity; verified stable profile identity and migration across credential or
 endpoint renewal remain on the private roadmap. No push, tag or release occurred;
 0.6.0 remains on hold and the larger release goal stays paused.
+
+### Favorites reload compatibility and sync clarity
+
+Native remote recordings serialize missing duration and local track identity as
+null. Favorites now accept that wire format when reloading saved rows and pending
+receipts, while retaining validation of malformed durations and collection data.
+Readonly verification of the actual SQLite collection found all 2,493 rows valid;
+2,415 imported rows previously failed solely because duration was null. No reset
+or database migration is needed. The user confirmed the collection loads again
+and reported 93 matched songs; further matching improvements are deferred until
+tomorrow.
+
+Last.fm and ListenBrainz controls now say "Sync likes with" to make import and
+shared updates clear. Tauri string errors retain their underlying message instead
+of the generic sync failure. The playbar heart and rating share a centered row.
+All 35 focused favorites and player accessibility tests passed, along with
+TypeScript and diff checks. Native computer use still fails to start its pipe;
+live recovery was confirmed by the user, and the heart layout was not visually
+rechecked. No push, tag or release occurred; 0.6.0 remains on hold.

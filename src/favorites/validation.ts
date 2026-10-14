@@ -17,7 +17,7 @@ function recording(value: unknown) {
     text(value.title, 1000) &&
     text(value.artist, 1000) &&
     (value.album === undefined || text(value.album, 1000)) &&
-    (value.durationMs === undefined || number(value.durationMs)) &&
+    (value.durationMs == null || number(value.durationMs)) &&
     ["recordingMbid", "recordingMsid"].every(
       (field) => value[field] == null || !!recordingMbid(value[field])
     )

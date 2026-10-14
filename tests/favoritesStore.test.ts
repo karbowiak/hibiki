@@ -8,6 +8,7 @@ for (const scenario of [
   "dialog",
   "page",
   "corrupt",
+  "remote_reload",
   "recording",
   "heart",
 ])

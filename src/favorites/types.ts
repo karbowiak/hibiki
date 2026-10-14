@@ -6,8 +6,8 @@ export interface FavoriteRecording {
   title: string
   artist: string
   album?: string
-  durationMs?: number
-  localTrackId?: string
+  durationMs?: number | null
+  localTrackId?: string | null
   recordingMbid?: string | null
   recordingMsid?: string | null
 }

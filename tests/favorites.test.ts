@@ -15,6 +15,10 @@ import {
   type FavoriteSyncServices,
 } from "../src/favorites/sync"
 import { favoriteTracks } from "../src/favorites/collection"
+import {
+  validFavorite,
+  validFavoriteMetadata,
+} from "../src/favorites/validation"
 import type {
   FavoriteState,
   FavoriteService,
@@ -146,6 +150,57 @@ test("favorites are local by default and explicit hearts remain independent of r
   state = seedFavoriteRatings(state, [row(1), row(2)])
   expect(state.entries["local:1"].liked).toBe(false)
   expect(state.entries["local:2"].liked).toBe(true)
+})
+test("native nullable recordings survive saved favorites and pending receipt validation", () => {
+  const record = row(1, {
+    key: "lastfm:remote",
+    album: "",
+    localTrackId: null,
+    durationMs: null,
+    recordingMbid: null,
+    recordingMsid: null,
+  })
+  const state = mergeFavoriteSnapshot(
+    connected("lastfm"),
+    "lastfm",
+    [record],
+    true
+  )
+  const saved = JSON.parse(JSON.stringify(state.entries[record.key]))
+  expect(validFavorite(saved)).toBe(true)
+  expect(validFavorite({ ...saved, durationMs: undefined })).toBe(true)
+  expect(validFavorite({ ...saved, durationMs: 180000 })).toBe(true)
+  for (const durationMs of ["180000", {}, -1, NaN, Infinity])
+    expect(validFavorite({ ...saved, durationMs })).toBe(false)
+  state.bindings.lastfm!.pending = {
+    id: "pending",
+    entryId: record.key,
+    recording: record,
+    liked: true,
+    before: false,
+    state: "unknown",
+  }
+  expect(validFavoriteMetadata(JSON.parse(JSON.stringify(state)))).toBe(true)
+  state.bindings.lastfm!.pending.recording = { ...record, durationMs: -1 }
+  expect(validFavoriteMetadata(state)).toBe(false)
+})
+test("native string rejections expose the service failure and keep other sync services running", async () => {
+  const state = connected("lastfm")
+  state.settings.listenbrainz = true
+  const f = fixture(state)
+  f.services.page = async (account, offset) => {
+    if (account.service === "listenbrainz") throw "Favorite service unavailable"
+    return { rows: [], offset, total: 0 }
+  }
+  const issues: Record<string, string> = {}
+  await syncFavorites(f.repository, f.services, f.current, {
+    onIssue: (service, message) => {
+      issues[service] = message
+    },
+  })
+  expect(issues.listenbrainz).toBe("Favorite service unavailable")
+  expect(f.state.bindings.lastfm!.initialized).toBe(true)
+  expect(f.writes).toBe(0)
 })
 test("first connection is an additive merge, preserving explicit local unlikes", () => {
   let state = setFavorite(connected("lastfm"), row(1), false)

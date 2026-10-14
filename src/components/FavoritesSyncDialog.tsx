@@ -106,7 +106,9 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
                 className="rounded-xl border border-[var(--border)] bg-app-surface p-4"
               >
                 <label className="flex items-center justify-between gap-4 font-semibold">
-                  Sync to {names[service]}
+                  {service === "plex"
+                    ? "Sync likes to Plex"
+                    : `Sync likes with ${names[service]}`}
                   <input
                     type="checkbox"
                     className="h-4 w-4 shrink-0 accent-accent"

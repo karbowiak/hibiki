@@ -659,8 +659,8 @@ export function Player() {
                             )}
                           </p>
                         )}
-                        <div className="flex-shrink-0">
-                          <FavoriteButton track={currentTrack} size={14}/>
+                        <div className="flex flex-shrink-0 items-center gap-1.5">
+                          <FavoriteButton track={currentTrack} size={14} />
                           <StarRating
                             itemId={currentTrack.id}
                             userRating={currentTrack.userRating}

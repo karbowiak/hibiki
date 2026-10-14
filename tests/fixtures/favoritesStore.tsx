@@ -134,7 +134,49 @@ if (scenario === "corrupt") {
   )
 } else {
   await useFavoritesStore.getState().load()
-  if (scenario === "bulk") {
+  if (scenario === "remote_reload") {
+    const { bindFavorites, mergeFavoriteSnapshot } =
+      await import("../../src/favorites/model")
+    for (const service of ["lastfm", "listenbrainz"] as const) {
+      await useFavoritesStore.getState().update((state) => {
+        state = { ...state, settings: { ...state.settings, [service]: true } }
+        state = bindFavorites(state, service, {
+          service,
+          user: "listener",
+          revision: "lease",
+        })
+        const id = "11111111-1111-4111-8111-111111111111"
+        return mergeFavoriteSnapshot(
+          state,
+          service,
+          [
+            {
+              key: service === "lastfm" ? "lastfm:remote" : `msid:${id}`,
+              title: `Imported from ${service}`,
+              artist: "Artist",
+              album: "",
+              durationMs: null,
+              localTrackId: null,
+              recordingMbid: null,
+              recordingMsid: service === "listenbrainz" ? id : null,
+            },
+          ],
+          true
+        )
+      })
+    }
+    const saved = structuredClone(rows)
+    assert.equal(Object.keys(saved).length, 2)
+    assert(Object.values(saved).every((row) => row.durationMs === null))
+    useFavoritesStore.setState({ loaded: false })
+    await useFavoritesStore.getState().load()
+    assert.equal(useFavoritesStore.getState().loaded, true)
+    assert.equal(useFavoritesStore.getState().error, null)
+    assert.deepEqual(useFavoritesStore.getState().collection.entries, saved)
+    assert.deepEqual(rows, saved)
+    assert.equal(saves.length, 2)
+    assert.equal(calls, 0)
+  } else if (scenario === "bulk") {
     const all = Array.from({ length: 2001 }, (_, i) => ({
       ...track,
       id: String(i + 1),
@@ -219,6 +261,10 @@ if (scenario === "corrupt") {
         document.body.textContent?.includes("Create a new Liked Songs playlist")
       )
       assert(document.body.textContent?.includes("Star ratings stay separate"))
+      assert(document.body.textContent?.includes("Sync likes with Last.fm"))
+      assert(
+        document.body.textContent?.includes("Sync likes with ListenBrainz")
+      )
       assert.equal(calls, 0)
       if (scenario === "recording") {
         const choose = [...document.querySelectorAll("button")].find(

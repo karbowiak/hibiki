@@ -460,7 +460,9 @@ export async function syncFavorites(
         service,
         error instanceof Error
           ? error.message
-          : "Favorite sync could not be confirmed"
+          : typeof error === "string" && error.trim()
+            ? error
+            : "Favorite sync could not be confirmed"
       )
     }
   }
