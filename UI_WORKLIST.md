@@ -331,3 +331,23 @@ An isolated Linux ARM diagnostic AppImage from exact prior commit 7894360
 also passed source/frontend hash, AppDir, desktop and AppStream validation.
 It is not evidence for the subsequent V10/query changes, native Linux GUI/audio
 or signed amd64 release/update assets; those remain separate release gates.
+
+The subsequent exact runtime commit 21b1fb3 also passed a fresh isolated Linux
+ARM AppImage build, including AppDir/Desktop/AppStream checks. The same commit
+built an isolated macOS ARM diagnostic app and DMG: version 0.6.0, fresh staged
+frontend, verified source changes limited to four version substitutions, no
+model assets and a valid hdiutil image. Both are debug diagnostics; no production
+signing, packaged-app launch or Linux GUI/audio verification is implied. Later
+release-note/documentation changes preserve that packaged runtime. The 0.6.0
+notes now describe full-library indexing, downloads and offline audio playback.
+
+The repaired full-track detail task subsequently completed at cursor 931163
+without errors; waveform indexing and playlist refresh continue asynchronously.
+The updated native app loaded all three Radio Browser shelves with 45 station
+controls and no error while music continued. Controlled metadata saves, ordered
+sync both ways, conflict pause and simulated acknowledgement-loss recovery are
+confirmed by retained disposable-item receipts; all three cleanup reads were 404.
+TheAudioDB remains implemented but unconfigured locally. AI was deferred by the
+user, and the only available native desktop is macOS. Exact-candidate CI, actual
+signed release-matrix/published-byte verification and catalogue follow-through
+remain gated by the explicit release hold; no third-party messages were sent.
