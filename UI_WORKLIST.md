@@ -318,10 +318,14 @@ occurrences, zero counts, source documents and mutation fences.
 Validation: 923 frontend tests and 682 native application tests passed, with
 13 intentionally ignored live proofs and 73 integration tests filtered.
 Production frontend/TypeScript and default-protocol native builds passed.
-The current dev app remains playing: frontend changes are live through HMR;
-the latest native executable is built and awaits an idle restart before V10
-and its live indexing recovery can be verified. The release remains held;
-there has been no push, tag or publication.
+With the user's restart authorization, the exact dev app was quit, its process
+absence checked, and the default-protocol executable replaced with a matching
+SHA256 before native relaunch. V10 is applied to the actual database; the
+full-track detail scan advanced past its failed cursor with no error, retaining
+all four completed baselines and 55 playlist publications. Playback resumed
+automatically and continued across tracks. The playlist grid showed the current
+verified 82-song liked playlist and 369,244-song library playlist. The release
+remains held; there has been no push, tag or publication.
 
 An isolated Linux ARM diagnostic AppImage from exact prior commit 7894360
 also passed source/frontend hash, AppDir, desktop and AppStream validation.
