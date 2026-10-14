@@ -416,3 +416,9 @@ proof, so the workers are being left uninterrupted after the final restart.
 Native entity download leases/status remain per physical copy; merged download
 ownership/badges are explicitly retained as a follow-up in the private TODO.
 The release goal remains paused, and no push/tag/publication occurred.
+
+Final post-restart readback: all roster, full-detail and playlist tasks are
+complete. The native Activity panel reports "Library saved on this device"
+(463,378 items) and just one active operation: waveform collection, with 260,933
+saved, 108,250 remaining and 10 unavailable from Plex. The clean committed dev
+build is left running without further hot reloads.
