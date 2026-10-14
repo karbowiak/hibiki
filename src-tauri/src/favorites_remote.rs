@@ -10,6 +10,11 @@ static CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::none())
+        .user_agent(concat!(
+            "Hibiki/",
+            env!("CARGO_PKG_VERSION"),
+            " (https://github.com/karbowiak/hibiki)"
+        ))
         .build()
         .expect("Favorite HTTP client")
 });
@@ -93,11 +98,19 @@ fn owned(app: &tauri::AppHandle, expected: &FavoriteAccount) -> Result<Credentia
     Ok(value)
 }
 async fn response(request: reqwest::RequestBuilder) -> Result<Value> {
-    let response = request
-        .send()
-        .await
-        .map_err(|e| e.without_url())
-        .context("Favorite service unavailable")?;
+    response_guarded(request, || Ok(())).await
+}
+async fn response_guarded(
+    request: reqwest::RequestBuilder,
+    current: impl Fn() -> Result<()>,
+) -> Result<Value> {
+    let response = crate::listenbrainz_transport::send_guarded(request, current).await?;
+    if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        if response.url().host_str() == Some("api.listenbrainz.org") {
+            bail!(crate::listenbrainz_transport::COOLDOWN)
+        }
+        bail!("Favorite service is rate limited. Please try syncing later.")
+    }
     if !response.status().is_success() {
         bail!(
             "Favorite service rejected the request (HTTP {})",
@@ -176,7 +189,7 @@ fn parse_page(service: &str, value: &Value, offset: usize) -> Result<FavoritePag
         (rows, total, offset)
     };
     if actual != offset
-        || rows.len() > 100
+        || rows.len() > if service == "listenbrainz" { 1000 } else { 100 }
         || total > 100000
         || offset + rows.len() > total
         || (rows.is_empty() && offset < total)
@@ -330,6 +343,7 @@ async fn write_at(
     liked: bool,
     lb: &str,
     lf: &str,
+    current: impl Fn() -> Result<()>,
 ) -> Result<()> {
     if creds.account.service == "listenbrainz" {
         let mut payload = json!({"score":if liked {1}else{0}});
@@ -344,11 +358,12 @@ async fn write_at(
             uuid::Uuid::parse_str(id)?;
             payload["recording_msid"] = json!(id)
         };
-        let value = response(
+        let value = response_guarded(
             CLIENT
                 .post(reqwest::Url::parse(lb)?.join("recording-feedback")?)
                 .header("Authorization", format!("Token {}", creds.session))
                 .json(&payload),
+            current,
         )
         .await?;
         if value.get("status").and_then(Value::as_str) != Some("ok") {
@@ -368,7 +383,7 @@ async fn write_at(
         let sig = crate::lastfm::sign(&params, &creds.secret);
         params.insert("api_sig", &sig);
         params.insert("format", "json");
-        let value = response(CLIENT.post(lf).form(&params)).await?;
+        let value = response_guarded(CLIENT.post(lf).form(&params), current).await?;
         if !value.is_object() {
             bail!("Love change was not acknowledged")
         }
@@ -403,7 +418,7 @@ pub async fn favorites_remote_page(
                     .query(&[
                         ("score", "1"),
                         ("metadata", "true"),
-                        ("count", "100"),
+                        ("count", "1000"),
                         ("offset", &offset.to_string()),
                     ]),
             )
@@ -459,7 +474,10 @@ pub async fn favorites_remote_set(
             bail!("Favorite changed before saving")
         };
         owned(&app, &expected)?;
-        write_at(&creds, &record, liked, LB_BASE, LF_BASE).await?;
+        write_at(&creds, &record, liked, LB_BASE, LF_BASE, || {
+            owned(&app, &expected).map(|_| ())
+        })
+        .await?;
         owned(&app, &expected)?;
         let after = peek(&creds, &record).await?;
         owned(&app, &expected)?;
@@ -524,6 +542,20 @@ pub(crate) mod tests {
             .liked_at
             .is_none());
     }
+    #[test]
+    fn listenbrainz_accepts_bounded_thousand_record_pages() {
+        let rows: Vec<_> = (1..=1000).map(|id| json!({"score":1,"recording_mbid":format!("00000000-0000-4000-8000-{id:012}"),"created":1600000000})).collect();
+        let mut value = json!({"feedback":rows,"total_count":1001,"offset":0});
+        assert_eq!(
+            parse_page("listenbrainz", &value, 0).unwrap().rows.len(),
+            1000
+        );
+        value["feedback"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"score":1,"recording_mbid":"11111111-1111-4111-8111-111111111111"}));
+        assert!(parse_page("listenbrainz", &value, 0).is_err());
+    }
     pub(crate) fn loopback(
         replies: Vec<(u16, Value)>,
     ) -> (String, std::thread::JoinHandle<Vec<String>>) {
@@ -545,6 +577,7 @@ pub(crate) mod tests {
                         Err(e) => panic!("{e}"),
                     }
                 };
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(std::time::Duration::from_secs(3)))
                     .unwrap();
@@ -620,12 +653,13 @@ pub(crate) mod tests {
             ),
         ]);
         assert!(peek_at(&creds, &record, &base, &base).await.unwrap());
-        write_at(&creds, &record, false, &base, &base)
+        write_at(&creds, &record, false, &base, &base, || Ok(()))
             .await
             .unwrap();
         assert!(!peek_at(&creds, &record, &base, &base).await.unwrap());
         let requests = thread.join().unwrap();
         assert!(requests[0].starts_with("POST /user/listener/get-feedback-for-recordings"));
+        assert!(requests[0].to_lowercase().contains("user-agent: hibiki/"));
         assert!(requests[0]
             .to_lowercase()
             .contains("authorization: token session"));
@@ -650,7 +684,9 @@ pub(crate) mod tests {
             ),
         ]);
         assert!(!peek_at(&creds, &record, &base, &base).await.unwrap());
-        write_at(&creds, &record, true, &base, &base).await.unwrap();
+        write_at(&creds, &record, true, &base, &base, || Ok(()))
+            .await
+            .unwrap();
         assert!(peek_at(&creds, &record, &base, &base).await.unwrap());
         let requests = thread.join().unwrap();
         assert!(requests[0].contains("autocorrect=0"));
@@ -685,7 +721,9 @@ pub(crate) mod tests {
             (200, json!({"status":"failed"})),
         ] {
             let (base, thread) = loopback(vec![(status, body)]);
-            assert!(write_at(&creds, &record, true, &base, &base).await.is_err());
+            assert!(write_at(&creds, &record, true, &base, &base, || Ok(()))
+                .await
+                .is_err());
             assert_eq!(thread.join().unwrap().len(), 1);
         }
         let (base, thread) = loopback(vec![(

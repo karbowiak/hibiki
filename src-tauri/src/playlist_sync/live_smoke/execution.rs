@@ -527,7 +527,7 @@ pub(super) async fn execute(config: &Path, run: &str, distinct_continuation: boo
                 .context("Recording missing")
         })
         .collect::<Result<Vec<_>>>()?;
-    let id = create_from(&CLIENT, BASE, &state.account.token, state.title()?, &mbids).await?;
+    let id = create_from(&CLIENT, BASE, &state.account.token, state.title()?, &mbids, || state.guard()).await?;
     state.manifest["remoteId"] = json!(id);
     state.retain()?;
     let value = state.remote().await?;

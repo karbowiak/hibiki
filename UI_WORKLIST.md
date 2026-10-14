@@ -539,3 +539,30 @@ passed. Regression cases cover service timestamps, optional/malformed values,
 save/reload, date backfill, relikes, acknowledgement stability, combined All
 ordering and date-column sorting. Existing build warnings remain. No push/tag or
 release occurred; 0.6.0 stays on hold.
+
+### ListenBrainz pacing and rate-limit recovery
+
+Favorites, playlists, token checks and listen submissions now share a native
+ListenBrainz request budget. Requests are separated by at least one second,
+include the application User-Agent and adapt to remaining/reset headers.
+Explicit 429 rejections allow up to two additional read attempts after the
+cooldown; writes, creates and listen POSTs are never automatically replayed.
+Long cooldowns produce a clear wait message. Mutation account guards run after
+waiting, and long waits require a new preflight rather than using stale proof.
+ListenBrainz feedback pages now request up to 1,000 records, retaining complete
+stable-roster checks while reducing initial request volume.
+
+Validation: 38 focused frontend favorites tests, 18 distinct native
+transport/parser/playlist tests, TypeScript and the default-protocol native build
+passed. A macOS loopback fixture now explicitly makes accepted sockets blocking
+before its blocking reader; this fixed a sporadic WouldBlock harness failure.
+Readonly live checks confirmed Last.fm imported all 2,431 source love dates.
+The rebuilt native dev app was installed with hash verification and restarted;
+both user-enabled sync connections and the saved favorites were retained. Native
+computer use remains unavailable. No push, tag or release occurred.
+
+Post-restart readonly verification confirmed both favorite connections are
+initialized: 2,431 Last.fm source loves and 4,076 ListenBrainz source loves are
+recorded. The combined collection contains 5,698 records, including 5,636 with
+known love dates. This verifies the running app completed its ListenBrainz
+roster after the reported 429 failure; future matching improvements stay deferred.

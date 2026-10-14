@@ -94,11 +94,13 @@ fn endpoint(base: &str, segments: &[&str]) -> Result<reqwest::Url> {
     Ok(url)
 }
 async fn response(request: reqwest::RequestBuilder) -> Result<Value> {
-    let response = request
-        .send()
-        .await
-        .map_err(|error| error.without_url())
-        .context("Playlist service unavailable")?;
+    response_guarded(request, || Ok(())).await
+}
+async fn response_guarded(request: reqwest::RequestBuilder, current: impl Fn() -> Result<()>) -> Result<Value> {
+    let response = crate::listenbrainz_transport::send_guarded(request, current).await?;
+    if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        bail!(crate::listenbrainz_transport::COOLDOWN)
+    }
     if !response.status().is_success() {
         bail!(
             "Playlist service rejected the request (HTTP {})",
@@ -136,13 +138,15 @@ async fn create_from(
     token: &str,
     title: &str,
     mbids: &[String],
+    current: impl Fn() -> Result<()>,
 ) -> Result<String> {
     let payload = create_payload(title, mbids)?;
-    let value = response(
+    let value = response_guarded(
         client
             .post(endpoint(base, &["playlist", "create"])?)
             .header("Authorization", format!("Token {token}"))
             .json(&payload),
+        current,
     )
     .await?;
     if value.get("status").and_then(Value::as_str) != Some("ok") {
@@ -234,7 +238,7 @@ pub async fn playlist_sync_listenbrainz_create(
     let path = config(&app)?;
     let current = owned(&path, &expected)
         .map_err(|_| "ListenBrainz account changed. Preview again.".to_string())?;
-    let id = create_from(&CLIENT, BASE, &current.token, &title, &mbids)
+    let id = create_from(&CLIENT, BASE, &current.token, &title, &mbids, || owned(&path, &expected).map(|_| ()))
         .await
         .map_err(|_| {
             "Playlist outcome needs checking. Review ListenBrainz before retrying.".to_string()
@@ -379,11 +383,12 @@ async fn mutate_from(
         bail!("Playlist changed before update")
     }
     current()?;
-    let ack = response(
+    let ack = response_guarded(
         client
             .post(endpoint(base, &["playlist", &id, "item", verb])?)
             .header("Authorization", format!("Token {token}"))
             .json(&payload),
+        &current,
     )
     .await?;
     if ack.get("status").and_then(Value::as_str) != Some("ok") {
@@ -542,6 +547,7 @@ mod tests {
             "synthetic-token",
             "Copy",
             &[A.into(), B.into(), A.into()],
+            || Ok(()),
         )
         .await
         .unwrap();
@@ -565,7 +571,7 @@ mod tests {
             .build()
             .unwrap();
         let (base, server) = server("HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/private?token=secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into());
-        let error = create_from(&client, &base, "synthetic-token", "Copy", &[])
+        let error = create_from(&client, &base, "synthetic-token", "Copy", &[], || Ok(()))
             .await
             .unwrap_err()
             .to_string();
@@ -578,7 +584,7 @@ mod tests {
             body.len(),
             body
         ));
-        assert!(create_from(&client, &base, "synthetic-token", "Copy", &[])
+        assert!(create_from(&client, &base, "synthetic-token", "Copy", &[], || Ok(()))
             .await
             .is_err());
         server.join().unwrap();

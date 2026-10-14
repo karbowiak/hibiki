@@ -64,6 +64,14 @@ Plex's rating dates for rated songs; library-added dates remain separate. Date
 Liked is available as its own sortable column, with unknown values last in
 either direction. Existing column visibility preferences are preserved.
 
+All native ListenBrainz traffic shares a one-request-per-second budget, including
+favorites, playlists, token checks and scrobbles. Responses update pacing from
+rate-limit headers; explicit 429 responses allow bounded retries of reads only.
+Long cooldowns return a clear wait message rather than making new requests.
+Mutation account checks run after waiting for a slot, and mutations require a
+fresh preflight after a long cooldown. Mutation/create/listen POSTs are sent once.
+Feedback imports request bounded pages of up to 1,000 records to reduce traffic.
+
 Contracts: [ListenBrainz feedback API](https://listenbrainz.readthedocs.io/en/latest/users/api/recordings.html),
 [feedback JSON](https://listenbrainz.readthedocs.io/en/latest/users/feedback-json.html),
 [Last.fm loved tracks](https://www.last.fm/api/show/user.getLovedTracks),

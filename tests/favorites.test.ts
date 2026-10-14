@@ -443,6 +443,26 @@ test("disabled favorites sync never calls external services", async () => {
   expect(f.writes).toBe(0)
   expect(f.creates).toBe(0)
 })
+test("ListenBrainz large pages retain every favorite with fewer read requests", async () => {
+  const rows = Array.from({ length: 2111 }, (_, index) => row(index + 1))
+  const offsets: number[] = []
+  const roster = await readFavoriteRoster(
+    account("listenbrainz"),
+    {
+      page: async (_, offset) => {
+        offsets.push(offset)
+        return {
+          total: rows.length,
+          offset,
+          rows: rows.slice(offset, offset + 1000),
+        }
+      },
+    },
+    () => true
+  )
+  expect(roster).toEqual(rows)
+  expect(offsets).toEqual([0, 1000, 2000])
+})
 test("favorite pagination retains lists larger than 1000 and rejects repeated/incomplete pages", async () => {
   const f = fixture(connected("lastfm"))
   f.roster = Array.from({ length: 1251 }, (_, i) => row(i + 1))

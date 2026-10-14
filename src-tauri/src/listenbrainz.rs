@@ -14,6 +14,7 @@ const LB_BASE: &str = "https://api.listenbrainz.org/1";
 static LB_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
         .user_agent(concat!("Hibiki/", env!("CARGO_PKG_VERSION"), " (https://github.com/karbowiak/hibiki)"))
         .build()
         .expect("Failed to build ListenBrainz HTTP client")
@@ -60,11 +61,11 @@ pub struct ListenBrainzTokenResult {
 
 /// Validate a ListenBrainz user token and return the associated username.
 pub async fn validate_token(token: &str) -> Result<ListenBrainzTokenResult> {
-    let resp: ValidateTokenResponse = LB_CLIENT
+    let request = LB_CLIENT
         .get(format!("{}/validate-token", LB_BASE))
-        .query(&[("token", token)])
-        .send()
-        .await.map_err(|error| error.without_url())
+        .query(&[("token", token)]);
+    let resp: ValidateTokenResponse = crate::listenbrainz_transport::send(request)
+        .await
         .context("Failed to reach ListenBrainz validate-token")?
         .error_for_status().map_err(|error| error.without_url())
         .context("ListenBrainz validate-token returned error status")?
@@ -139,12 +140,12 @@ pub async fn submit_now_playing(
         }]
     });
 
-    let response = LB_CLIENT
+    let request = LB_CLIENT
         .post(format!("{}/submit-listens", LB_BASE))
         .header("Authorization", format!("Token {}", token))
-        .json(&payload)
-        .send()
-        .await.map_err(|error| error.without_url())
+        .json(&payload);
+    let response = crate::listenbrainz_transport::send(request)
+        .await
         .context("Failed to reach ListenBrainz submit-listens (now playing)")?
         .error_for_status().map_err(|error| error.without_url())
         .context("ListenBrainz submit-listens (now playing) returned error status")?;
@@ -184,12 +185,12 @@ pub async fn submit_listen(
         }]
     });
 
-    let response = LB_CLIENT
+    let request = LB_CLIENT
         .post(format!("{}/submit-listens", LB_BASE))
         .header("Authorization", format!("Token {}", token))
-        .json(&payload)
-        .send()
-        .await.map_err(|error| error.without_url())
+        .json(&payload);
+    let response = crate::listenbrainz_transport::send(request)
+        .await
         .context("Failed to reach ListenBrainz submit-listens")?
         .error_for_status().map_err(|error| error.without_url())
         .context("ListenBrainz submit-listens returned error status")?;

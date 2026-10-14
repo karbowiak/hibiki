@@ -55,13 +55,14 @@ export async function readFavoriteRoster(
   const rows: FavoriteRecording[] = [],
     seen = new Set<string>()
   let total: number | undefined
+  const pageLimit = account.service === "listenbrainz" ? 1000 : 100
   do {
     if (!current()) throw Error("Favorite owner changed")
     const page = await services.page(account, rows.length)
     if (!current()) throw Error("Favorite owner changed")
     if (
       page.offset !== rows.length ||
-      page.rows.length > 100 ||
+      page.rows.length > pageLimit ||
       !Number.isSafeInteger(page.total) ||
       page.total < 0 ||
       page.total > 100000 ||

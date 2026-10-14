@@ -24,6 +24,7 @@ mod itunes;
 mod itunes_throttle;
 mod lastfm;
 mod listenbrainz;
+mod listenbrainz_transport;
 mod listening_history;
 mod playlist_sync;
 mod favorites_commands;
