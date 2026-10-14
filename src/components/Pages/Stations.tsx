@@ -451,7 +451,7 @@ interface TagGridMixBuilderProps {
   playFromUri: (uri: string, forceShuffle?: boolean) => Promise<void>
 }
 
-function TagGridMixBuilder({
+export function TagGridMixBuilder({
   tags,
   tabType,
   sectionUuid,
@@ -462,15 +462,23 @@ function TagGridMixBuilder({
   const provider = useProviderStore((s) => s.provider)
   const [lastPlayed, setLastPlayed] = useState<string | null>(null)
   const [filterQuery, setFilterQuery] = useState("")
+  const [page, setPage] = useState(0)
+  const pageSize = 96
 
   useLayoutEffect(() => {
     setLastPlayed(null)
     setFilterQuery("")
+    setPage(0)
   }, [provider, sectionUuid, sectionId, tabType])
 
-  const filtered = filterQuery.trim()
-    ? tags.filter(t => t.tag.toLowerCase().includes(filterQuery.toLowerCase()))
-    : tags
+  const filtered = useMemo(() => {
+    const query = filterQuery.trim().toLowerCase()
+    return query ? tags.filter(t => t.tag.toLowerCase().includes(query)) : tags
+  }, [tags, filterQuery])
+  const lastPage = Math.max(0, Math.ceil(filtered.length / pageSize) - 1)
+  const currentPage = Math.min(page, lastPage)
+  const start = currentPage * pageSize
+  const visible = filtered.slice(start, start + pageSize)
 
   const handleTagClick = (tag: { tag: string; count: number | null }) => {
     if (!sectionUuid || !sectionId) return
@@ -493,7 +501,11 @@ function TagGridMixBuilder({
       <input
         type="text"
         value={filterQuery}
-        onChange={e => setFilterQuery(e.target.value)}
+        onChange={e => {
+          setFilterQuery(e.target.value)
+          setPage(0)
+        }}
+        aria-label={`Filter ${tabType}s`}
         placeholder={`Filter ${tabType}s…`}
         className="w-full max-w-xs rounded-lg bg-white/10 px-4 py-2 text-sm placeholder-white/40 outline-none focus:bg-white/15 transition-colors"
         autoComplete="off"
@@ -503,7 +515,7 @@ function TagGridMixBuilder({
         <div className="text-sm text-white/40">No {tabType}s match "{filterQuery}"</div>
       )}
       <MediaGrid gap={3}>
-        {filtered.map((tag, idx) => (
+        {visible.map((tag, idx) => (
           <ActionTile
             key={tag.tag}
             actionLabel={`Play ${tabType} mix`}
@@ -512,7 +524,7 @@ function TagGridMixBuilder({
               "relative aspect-square cursor-pointer overflow-hidden rounded-lg select-none text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent",
               "hover:brightness-110 transition-[filter]",
               lastPlayed === tag.tag && "ring-2 ring-accent",
-              colorPalette[idx % colorPalette.length]
+              colorPalette[(start + idx) % colorPalette.length]
             )}
             title={tag.count ? `${tag.tag} (${tag.count} tracks)` : tag.tag}
           >
@@ -525,6 +537,29 @@ function TagGridMixBuilder({
           </ActionTile>
         ))}
       </MediaGrid>
+      {filtered.length > pageSize && (
+        <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+          <p className="text-white/60" aria-live="polite">
+            Showing {(start + 1).toLocaleString()}–{(start + visible.length).toLocaleString()} of {filtered.length.toLocaleString()} {tabType}s
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              aria-label={`Previous ${tabType}s`}
+              disabled={currentPage === 0}
+              onClick={() => setPage(currentPage - 1)}
+              className="rounded-full border border-white/20 px-4 py-2 transition-colors hover:bg-white/10 disabled:cursor-default disabled:opacity-40"
+            >Previous</button>
+            <button
+              type="button"
+              aria-label={`Next ${tabType}s`}
+              disabled={currentPage === lastPage}
+              onClick={() => setPage(currentPage + 1)}
+              className="rounded-full border border-white/20 px-4 py-2 transition-colors hover:bg-white/10 disabled:cursor-default disabled:opacity-40"
+            >Next</button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

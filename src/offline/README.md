@@ -137,6 +137,18 @@ ownership is checked again after reads. Catalogue writes cannot hold the native
 Plex/audio admission lock while waiting for the writer. V9 shelf/tag projections
 backfill in small resumable batches; online views fall back to Plex until their
 scope is covered, while full raw documents and existing checkpoints remain intact.
+V10 deduplicates only derived tag rows before trigger insertion, including during
+full-detail UPSERTs. Plex can repeat genre/mood/style/format tags; its full raw
+document remains intact and an existing scan resumes from its saved checkpoint.
+The migration replaces two triggers without scanning or rewriting the library.
+Local tag inventories allow up to 100,000 distinct labels within 4 MiB of encoded
+DTOs; exceeding either bound fails explicitly. Complete artist/album/track
+rosters make an empty inventory authoritative. Genre/mood/style grids render at
+most 96 tiles per page and search the full inventory before pagination.
+Playlist card totals use fresh, atomically published occurrence counts for both
+local browsing and online refreshes. Staging, foreign scopes and publications
+invalidated by playlist edits cannot supply counts; the original Plex roster
+metadata remains unchanged.
 Visited snapshots use the same independent readers; access bookkeeping and
 optional snapshot saves run in the background. Reads wait for mutation
 invalidations, not unrelated saves. Online results remain usable before optional

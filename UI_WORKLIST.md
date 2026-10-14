@@ -282,3 +282,48 @@ build and TypeScript passed. Native computer use verified the source dialog,
 smart export-only setup and 90er Dakkedak's member artwork. The idle development
 bundle was rebuilt/reopened at localhost:1420 and reconnected cleanly; playback
 and settings were not used as write targets. Release remains held.
+
+### Saved-library performance and stalled indexing follow-up
+
+Foreground catalogue and visited-snapshot reads now use independent read-only
+WAL connections, with reserved playback capacity and ownership rechecks. Core
+artist/album content publishes before optional recommendations. Mutation
+invalidations retain a read barrier; unrelated snapshot saves do not. Deep
+playlist pages select occurrence positions before metadata joins, and Latest
+Releases counts use the covering date index. Bounded development-only timing
+logs separate database admission/SQL, Plex, IPC, cache, rendering and enrichment
+without library identities, arguments, paths, tokens or SQL values.
+
+Read-only profiling of the private library measured the final 200 rows of a
+369,237-occurrence playlist at 72 ms versus 2,522 ms before the range fix;
+Latest Releases counting improved from 183 ms to 13 ms. Actual dev-app core
+loader samples measured artist median 87 ms and album median 28 ms. Navigation
+and playback smoke checks succeeded, but the rare reported 30-second freeze
+has not been reproduced and is not declared universally solved.
+
+A subsequent stopped full-track detail batch reproduced a duplicate-genre
+primary-key failure in an isolated database: 49 of 50 saves passed before the
+fix, all 50 afterward. V10 replaces the derived-tag triggers, retaining raw
+metadata and all progress without a library rewrite. A V9 upgrade regression
+verifies failed-save recovery, case-distinct tags, all four tag resources,
+preserved raw metadata/checkpoints and idempotence.
+
+The local library has 14,062 distinct genres, exceeding the earlier 10,000-tag
+response limit. Bounded local inventories now retain the complete set and
+truthful coverage; genre/mood/style grids render 96 tiles per page while
+searching every label. Fresh verified playlist membership totals replace stale
+Plex roster counts in local and online responses, retaining duplicate
+occurrences, zero counts, source documents and mutation fences.
+
+Validation: 923 frontend tests and 682 native application tests passed, with
+13 intentionally ignored live proofs and 73 integration tests filtered.
+Production frontend/TypeScript and default-protocol native builds passed.
+The current dev app remains playing: frontend changes are live through HMR;
+the latest native executable is built and awaits an idle restart before V10
+and its live indexing recovery can be verified. The release remains held;
+there has been no push, tag or publication.
+
+An isolated Linux ARM diagnostic AppImage from exact prior commit 7894360
+also passed source/frontend hash, AppDir, desktop and AppStream validation.
+It is not evidence for the subsequent V10/query changes, native Linux GUI/audio
+or signed amd64 release/update assets; those remain separate release gates.

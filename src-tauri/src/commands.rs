@@ -703,11 +703,32 @@ pub async fn get_playlists(
     context: PlexRequestContext,
     section_id: i64,
     state: State<'_, PlexState>,
+    db: State<'_, crate::db::DbState>,
 ) -> Result<Vec<Playlist>, String> {
     let c = client!(state, context);
-    c.list_playlists(section_id, None)
+    let mut playlists = c
+        .list_playlists(section_id, None)
         .await
-        .map_err(|e| format!("{:#}", e))
+        .map_err(|e| format!("{:#}", e))?;
+    let scope = context.cache_scope.clone();
+    let ids = playlists.iter().map(|p| p.rating_key).collect::<Vec<_>>();
+    // Plex smart-playlist leafCount can lag behind its actual item endpoint.
+    // Use the same fresh verified totals as local browsing, also after an
+    // online refresh. Failure of this optional read preserves the Plex result.
+    let counts = db
+        .read(move |conn| {
+            crate::db::catalogue_query::published_playlist_counts(conn, &scope, &ids)
+        })
+        .await
+        .unwrap_or_default();
+    let guard = state.0.lock().await;
+    state.checked_client(&context, &guard)?;
+    for playlist in &mut playlists {
+        if let Some((count, _)) = counts.get(&playlist.rating_key) {
+            playlist.leaf_count = *count;
+        }
+    }
+    Ok(playlists)
 }
 
 /// Get tracks that have been rated (liked) by the user.

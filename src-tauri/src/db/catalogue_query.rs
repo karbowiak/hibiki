@@ -134,6 +134,36 @@ const PLAYLIST_PAGE_SQL: &str = "WITH page AS MATERIALIZED(
  SELECT page.position,page.document,c.document FROM page LEFT JOIN plex_catalogue c
  ON c.scope=page.scope AND c.kind='track' AND c.id=CAST(json_extract(page.document,'$.ratingKey') AS INTEGER)
  ORDER BY page.position";
+// Tags are small scalar DTOs, unlike tracks. Large real libraries can exceed
+// 10,000 unique genres; retain the full searchable inventory within explicit
+// row/encoded-byte bounds instead of falling back merely because of its size.
+const TAG_LIMIT: usize = 100_000;
+const TAG_BYTES: usize = 4 * 1024 * 1024;
+/// Totals come from an atomically verified occurrence publication, never its
+/// staging rows or a track-ID count (the same track may occur more than once).
+/// Apply the same membership invalidation fence as getPlaylistItems.
+pub(crate) fn published_playlist_counts(
+    conn: &Connection,
+    scope: &str,
+    ids: &[i64],
+) -> Result<std::collections::HashMap<i64, (i64, i64)>, String> {
+    super::offline::check_identity(scope, "playlist-counts")?;
+    if ids.is_empty() {
+        return Ok(Default::default());
+    }
+    if ids.len() > 1_000_000 || ids.iter().any(|id| *id <= 0) {
+        return Err("Invalid playlist count request".into());
+    }
+    let encoded = serde_json::to_string(ids).map_err(|_| "Invalid playlist count request")?;
+    let mut statement = conn.prepare("SELECT playlist_id,total,saved_at FROM plex_catalogue_playlist_versions WHERE scope=?1 AND total>=0 AND saved_at>coalesce((SELECT invalidated_at FROM plex_catalogue_invalidations WHERE scope=?1 AND method='getPlaylistItems'),-1) AND playlist_id IN (SELECT value FROM json_each(?2))").map_err(|_| "Cannot read published playlist counts")?;
+    let rows = statement
+        .query_map(params![scope, encoded], |r| {
+            Ok((r.get::<_, i64>(0)?, (r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)))
+        })
+        .map_err(|_| "Cannot read published playlist counts")?;
+    rows.collect::<Result<_, _>>()
+        .map_err(|_| "Cannot read published playlist counts".into())
+}
 /// Hot shelves/tags use compact indexed derived rows only after the bounded
 /// scope backfill is complete. Foreground read connections never write here.
 fn projections_ready(conn: &Connection, scope: &str) -> Result<bool, String> {
@@ -327,25 +357,29 @@ pub fn query(
                 Some("style") => "Style",
                 _ => return Ok(None),
             };
-            let mut stmt=conn.prepare("SELECT DISTINCT tag FROM plex_catalogue_browse_tags WHERE scope=?1 AND resource=?2 AND removed=0 ORDER BY tag COLLATE NOCASE LIMIT 10001").map_err(|_|"Cannot read local tags")?;
+            let complete: bool = conn.query_row("SELECT COUNT(*)=3 AND SUM(status='complete')=3 FROM plex_catalogue_tasks WHERE scope=?1 AND task IN ('artist','album','track')", [scope], |r| r.get(0)).map_err(|_| "Cannot verify tag coverage")?;
+            let mut stmt=conn.prepare("SELECT DISTINCT tag FROM plex_catalogue_browse_tags WHERE scope=?1 AND resource=?2 AND removed=0 ORDER BY tag COLLATE NOCASE,tag LIMIT ?3").map_err(|_|"Cannot read local tags")?;
             let rows = stmt
-                .query_map(params![scope, tag], |r| r.get::<_, String>(0))
+                .query_map(params![scope, tag, (TAG_LIMIT + 1) as i64], |r| r.get::<_, String>(0))
                 .map_err(|_| "Cannot read local tags")?;
             let mut items = Vec::new();
+            let mut bytes = 0;
             for row in rows {
-                items.push(json!({"tag":row.map_err(|_|"Cannot read local tag")?,"count":null}));
+                let item = json!({"tag":row.map_err(|_|"Cannot read local tag")?,"count":null});
+                bytes += serde_json::to_vec(&item).map_err(|_| "Invalid local tag")?.len() + 1;
+                if items.len() == TAG_LIMIT || bytes > TAG_BYTES {
+                    return Err("Saved tag inventory exceeds its response limit".into());
+                }
+                items.push(item);
             }
-            if items.len() > 10000 {
-                return Err("Saved tag inventory exceeds its response limit".into());
-            }
-            if items.is_empty() {
+            if items.is_empty() && !complete {
                 return Ok(None);
             }
             return Ok(Some(Page {
                 total: items.len() as i64,
                 items,
                 cached_at: super::catalogue::now(),
-                complete: false,
+                complete,
                 server_total: None,
             }));
         }
@@ -595,6 +629,16 @@ pub fn query(
         )?);
         cached_at = cached_at.max(saved);
     }
+    if method == "getPlaylists" {
+        let ids = items.iter().filter_map(|item| item["rating_key"].as_i64()).collect::<Vec<_>>();
+        let counts = published_playlist_counts(conn, scope, &ids)?;
+        for item in &mut items {
+            if let Some((count, saved)) = item["rating_key"].as_i64().and_then(|id| counts.get(&id)) {
+                item["leaf_count"] = json!(count);
+                cached_at = cached_at.max(*saved);
+            }
+        }
+    }
     if items.is_empty() && !complete {
         return Ok(None);
     }
@@ -778,6 +822,69 @@ mod tests {
             .iter()
             .map(|item| item["rating_key"].as_i64().unwrap())
             .collect()
+    }
+    #[test]
+    fn large_local_tag_inventory_preserves_full_searchable_coverage_and_empty_results() {
+        let (conn, scope) = fixture();
+        let other = format!("plex-{}", "b".repeat(64));
+        let tags = (0..10_002).map(|n| json!({"tag":format!("Genre {n:05}")})).collect::<Vec<_>>();
+        let raw = json!({"type":"track","ratingKey":1,"title":"Tagged","Genre":tags});
+        crate::db::catalogue::save(&conn, &scope, "track", 1, &raw, true).unwrap();
+        crate::db::catalogue::save(&conn, &other, "track", 2, &json!({"type":"track","ratingKey":2,"Genre":[{"tag":"Foreign"}]}), true).unwrap();
+        let partial = query(&conn, &scope, "getTags", &[json!("genre")]).unwrap().unwrap();
+        assert_eq!(partial.items.len(), 10_002);
+        assert!(!partial.complete);
+        for kind in ["artist", "album", "track"] {
+            let task = crate::db::catalogue_sync::begin(&conn, &scope, kind, None).unwrap();
+            crate::db::catalogue_sync::checkpoint(&conn, &scope, &task, 0, Some(0), true).unwrap();
+        }
+        let complete = query(&conn, &scope, "getTags", &[json!("genre")]).unwrap().unwrap();
+        assert!(complete.complete);
+        assert_eq!(complete.total, 10_002);
+        assert_eq!(complete.items.last().unwrap()["tag"], "Genre 10001");
+        assert_eq!(crate::db::catalogue::get(&conn, &scope, "track", 1).unwrap().unwrap(), raw);
+        conn.execute("UPDATE plex_catalogue SET removed=1 WHERE scope=?1", [&scope]).unwrap();
+        let empty = query(&conn, &scope, "getTags", &[json!("genre")]).unwrap().unwrap();
+        assert!(empty.complete);
+        assert!(empty.items.is_empty());
+        conn.execute("UPDATE plex_catalogue_tasks SET status='running' WHERE scope=?1 AND task='track'", [&scope]).unwrap();
+        assert!(query(&conn, &scope, "getTags", &[json!("genre")]).unwrap().is_none());
+    }
+    #[test]
+    fn tag_inventory_bounds_encoded_bytes_including_escaped_text() {
+        let (conn, scope) = fixture();
+        let escaped = "\u{1}".repeat(TAG_BYTES / 6 + 1);
+        conn.execute("INSERT INTO plex_catalogue_browse_tags(scope,kind,id,resource,tag,removed) VALUES(?1,'track',1,'Genre',?2,0)", params![scope, escaped]).unwrap();
+        assert_eq!(query(&conn, &scope, "getTags", &[json!("genre")]).err().as_deref(), Some("Saved tag inventory exceeds its response limit"));
+    }
+    #[test]
+    fn playlist_roster_counts_use_fresh_published_occurrences_and_preserve_server_archive() {
+        let (conn, scope) = fixture();
+        let other = format!("plex-{}", "b".repeat(64));
+        let original = json!({"type":"playlist","ratingKey":7,"title":"Smart playlist","leafCount":97,"smart":true});
+        crate::db::catalogue::save(&conn, &scope, "playlist", 7, &original, true).unwrap();
+        crate::db::catalogue::save(&conn, &scope, "playlist", 8, &json!({"type":"playlist","ratingKey":8,"title":"Unpublished","leafCount":12}), true).unwrap();
+        let task = crate::db::catalogue_sync::begin(&conn, &scope, "playlist:7", Some("verified")).unwrap();
+        let members = vec![json!({"type":"track","ratingKey":42,"playlistItemID":1}),json!({"type":"track","ratingKey":42,"playlistItemID":2})];
+        crate::db::catalogue_sync::playlist_page(&conn, &scope, 7, &task, &members, Some(2), true).unwrap();
+        conn.execute("UPDATE plex_catalogue_playlist_versions SET saved_at=200 WHERE scope=?1", [&scope]).unwrap();
+        conn.execute("INSERT INTO plex_catalogue_playlist_versions(scope,playlist_id,generation,total,saved_at) VALUES(?1,7,'foreign',999,300)", [&other]).unwrap();
+        // In-flight staging must not inflate a verified count, even when it
+        // contains more occurrences than the last complete publication.
+        let next = crate::db::catalogue_sync::begin(&conn, &scope, "playlist:7", Some("staging")).unwrap();
+        crate::db::catalogue_sync::playlist_page(&conn, &scope, 7, &next, &members, Some(3), false).unwrap();
+        assert_eq!(published_playlist_counts(&conn, &scope, &[7,8]).unwrap().get(&7), Some(&(2,200)));
+        let page = query(&conn, &scope, "getPlaylists", &[]).unwrap().unwrap();
+        assert_eq!(page.items.iter().find(|p| p["rating_key"] == 7).unwrap()["leaf_count"], 2);
+        assert_eq!(page.items.iter().find(|p| p["rating_key"] == 8).unwrap()["leaf_count"], 12);
+        assert_eq!(crate::db::catalogue::get(&conn, &scope, "playlist", 7).unwrap().unwrap(), original);
+        conn.execute("INSERT INTO plex_catalogue_invalidations(scope,method,invalidated_at) VALUES(?1,'getPlaylistItems',200)", [&scope]).unwrap();
+        assert!(published_playlist_counts(&conn, &scope, &[7]).unwrap().is_empty());
+        let stale = query(&conn, &scope, "getPlaylists", &[]).unwrap().unwrap();
+        assert_eq!(stale.items.iter().find(|p| p["rating_key"] == 7).unwrap()["leaf_count"], 97);
+        conn.execute("UPDATE plex_catalogue_playlist_versions SET saved_at=201,total=0 WHERE scope=?1", [&scope]).unwrap();
+        assert_eq!(published_playlist_counts(&conn, &scope, &[7]).unwrap().get(&7), Some(&(0,201)));
+        assert!(published_playlist_counts(&conn, &scope, &[0]).is_err());
     }
     #[test]
     fn hot_shelves_and_tags_use_latest_listing_without_losing_full_private_media() {
