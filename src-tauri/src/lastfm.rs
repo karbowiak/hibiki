@@ -262,7 +262,7 @@ pub struct LastfmAlbumInfo {
 /// Build an HMAC-free API signature as required by Last.fm:
 /// sort all params (except `format` and `callback`) alphabetically,
 /// concatenate key+value pairs, append the API secret, then MD5.
-fn sign(params: &BTreeMap<&str, &str>, api_secret: &str) -> String {
+pub(crate) fn sign(params: &BTreeMap<&str, &str>, api_secret: &str) -> String {
     let mut s = String::new();
     for (k, v) in params {
         if *k != "format" && *k != "callback" {

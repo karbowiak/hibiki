@@ -24,6 +24,7 @@ import type { ColId } from "../../hooks/useColumnPicker"
 import { ColumnPicker } from "../../hooks/useColumnPicker"
 import { SortTh } from "./SortTh"
 import { StarRating } from "./StarRating"
+import { FavoriteButton } from "./FavoriteButton"
 import { formatMs, formatDate, formatBitrate } from "../../lib/formatters"
 import { prefetchTrackAudio } from "../../stores/playerStore"
 import { useContextMenu } from "../../hooks/useContextMenu"
@@ -300,6 +301,7 @@ function TrackRowCells({
                     Radio
                   </button>
                 )}
+                <FavoriteButton track={track} size={13}/>
                 {showInlineRating && (
                   <>
                     <span className="mx-0.5 h-3 w-px bg-white/20" />

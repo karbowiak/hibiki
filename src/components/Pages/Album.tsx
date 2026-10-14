@@ -39,6 +39,7 @@ import { PageLoading } from "../shared/PageLoading"
 import { PageRecovery } from "../shared/PageRecovery"
 import { ArtworkSourcePicker } from "../shared/ArtworkSourcePicker"
 import { StarRating } from "../shared/StarRating"
+import { FavoriteButton } from "../shared/FavoriteButton"
 import { useDebugStore } from "../../stores/debugStore"
 import { useDebugPanelStore } from "../../stores/debugPanelStore"
 import { useCapability } from "../../hooks/useCapability"
@@ -933,10 +934,15 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                       className="p-2 text-right"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <HeroRating
-                        itemId={track.id}
-                        userRating={track.userRating}
-                      />
+                      <div className="flex items-center justify-end gap-2">
+                        <FavoriteButton track={track} />
+                        <HeroRating
+                          itemId={track.id}
+                          userRating={track.userRating}
+                          itemType="track"
+                          musicTrack={track}
+                        />
+                      </div>
                     </td>
                     <td className="w-36 p-2 text-right tabular-nums">
                       <span className="group-focus-within:hidden group-hover:hidden">

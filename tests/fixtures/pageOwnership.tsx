@@ -253,6 +253,7 @@ try {
       )
     )
     assert.equal(pending.length, 1)
+    if(kind==="tracks") await act(async()=>{[...document.querySelectorAll("button")].find(button=>button.textContent==="Rated")!.click()})
     assert.ok(document.querySelector('[role="status"]'))
     assert.ok(!document.body.textContent?.includes("No rated"))
     if (scenario.endsWith("provider")) {

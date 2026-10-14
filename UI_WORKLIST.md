@@ -456,3 +456,40 @@ and export-only direction. Full creation, recording review, sync and recovery
 were exercised with synthetic transports; personal playlists were not modified
 for testing. The dev app is left on this setup. Commits remain local and 0.6.0
 publication remains on hold.
+
+### Local favorites and optional two-way mirrors
+
+Liked Songs now owns a compact local SQLite collection rather than treating all
+rated Plex tracks as loves. Hearts are available in track lists, artist/album
+song rows, context menus and the player. Loved, Rated and All views preserve
+separate rating browsing. Existing high ratings are included once; an explicit
+heart overrides later star changes. Direct rating-triggered Last.fm love/unlove
+has been replaced by the opted-in favorites worker.
+
+The Sync dialog independently enables Plex, ListenBrainz and Last.fm, all off by
+default. Plex can create a regular Liked Songs mirror or use an existing regular
+playlist; ❤️ Tracks stays independent. Initial connection merges existing
+favorites. Later complete stable rosters share likes/unlikes, preserve local
+in-flight edits, retain unmatched songs and support manual library/recording-ID
+review. Native credentials, account leases, durable receipts, single verbs and
+read-back checks protect mutations and uncertain playlist creation. Distinct
+ListenBrainz MSIDs remain addressable; a still-loved alias protects shared Plex
+and Last.fm membership.
+
+Native reads use the WAL read pool and bounded metadata batches; SQLite saves
+only changed compact rows. A 12,000-record synthetic roster merge completes in
+under the three-second regression limit. Large pagination, partial failures,
+unknown writes/creation, offline local persistence, CAS, retired ownership,
+ratings, real heart controls and recording review are covered by tests. All 978
+frontend tests and 695 native unit tests passed (14 native tests ignored; live
+integration tests excluded), along with both TypeScript projects and production
+build. Real native UI review showed 78 local loved records and three disabled
+sync connections; readonly SQLite readback confirmed those counts/flags. External
+favorites were not changed for testing.
+
+The default-protocol dev executable was installed after verified process exit
+and hash readback. The app is running on localhost:1420 with the updated dialog.
+Current profiles follow the existing credential/endpoint-bound library cache
+identity; verified stable profile identity and migration across credential or
+endpoint renewal remain on the private roadmap. No push, tag or release occurred;
+0.6.0 remains on hold and the larger release goal stays paused.

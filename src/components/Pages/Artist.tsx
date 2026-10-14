@@ -43,6 +43,7 @@ import { PageLoading } from "../shared/PageLoading"
 import { PageRecovery } from "../shared/PageRecovery"
 import { ArtworkSourcePicker } from "../shared/ArtworkSourcePicker"
 import { StarRating } from "../shared/StarRating"
+import { FavoriteButton } from "../shared/FavoriteButton"
 import { useDebugStore } from "../../stores/debugStore"
 import { useDebugPanelStore } from "../../stores/debugPanelStore"
 import { useCapability } from "../../hooks/useCapability"
@@ -1050,9 +1051,12 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                       <HeroRating
                         itemId={track.id}
                         userRating={track.userRating}
+                        itemType="track"
+                        musicTrack={track}
                       />
                     </span>
                     <span className="flex w-32 flex-shrink-0 items-center justify-end gap-2">
+                      <FavoriteButton track={track} />
                       <button
                         className="flex items-center gap-0.5 text-xs text-[color:var(--text-secondary)] opacity-0 transition-colors group-focus-within:opacity-100 group-hover:opacity-100 hover:text-[color:var(--text-primary)] focus-visible:opacity-100"
                         aria-label={`Add ${track.title} to queue`}

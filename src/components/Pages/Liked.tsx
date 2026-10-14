@@ -6,6 +6,10 @@ import { formatTotalMs } from "../../lib/formatters"
 import { useTableSort } from "../../hooks/useTableSort"
 import { ALL_COLUMNS, usePlaylistColumns } from "../../hooks/useColumnPicker"
 import { TrackTable } from "../shared/TrackTable"
+import { useFavoritesStore } from "../../stores/favoritesStore"
+import { useFavoriteTracks } from "../../hooks/useFavoriteTracks"
+import { FavoritesSyncDialog } from "../FavoritesSyncDialog"
+import { useProviderStore } from "../../stores/providerStore"
 
 const LIKED_COLUMNS = ALL_COLUMNS
 const LIKED_DEFAULT_COLS = [
@@ -29,6 +33,19 @@ export function Liked() {
     }))
   )
   const { status, retry } = useLikedCollection("tracks")
+  const provider = useProviderStore((state) => state.provider)
+  const { collection, loaded, loading, error, likedTrackIds } =
+    useFavoritesStore()
+  const local = useFavoriteTracks(likedTracks)
+  const [syncOpen, setSyncOpen] = useState(false)
+  const [kind, setKind] = useState<"loved" | "rated" | "all">("loved")
+  useEffect(() => {
+    if (status === "ready" && loaded && !collection.ratingsImported)
+      void useFavoritesStore
+        .getState()
+        .seedRatings(likedTracks)
+        .catch(() => {})
+  }, [status, loaded, collection.ratingsImported, likedTracks])
 
   const { visible: visibleCols, toggle: toggleCol } = usePlaylistColumns(
     "plex-liked-columns",
@@ -44,14 +61,23 @@ export function Liked() {
     return () => clearTimeout(t)
   }, [filterQuery])
 
-  // Deduplicate by GUID (smart playlists can return the same track twice)
-  const seen = new Set<string>()
-  const dedupedTracks = likedTracks.filter((t) => {
-    const key = t.guid ?? `${t.artistId}||${t.title}`
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
+  const dedupedTracks = useMemo(() => {
+    if (kind === "loved") return local.tracks
+    const byId = new Map<string, (typeof likedTracks)[number]>()
+    if (kind === "all")
+      local.tracks.forEach((track) => byId.set(track.id, track))
+    likedTracks
+      .filter((track) => (track.userRating ?? 0) > 0)
+      .forEach((track) => {
+        if (kind === "rated" || !likedTrackIds.has(track.id))
+          byId.set(track.id, track)
+      })
+    return [...byId.values()]
+  }, [kind, local.tracks, likedTracks, likedTrackIds])
+  const visibleIds = new Set(local.tracks.map((track) => track.id))
+  const unavailable = Object.values(collection.entries).filter(
+    (item) => item.liked && !item.localTrackIds.some((id) => visibleIds.has(id))
+  ).length
 
   const filteredTracks = useMemo(() => {
     if (!debouncedQuery) return dedupedTracks
@@ -147,7 +173,13 @@ export function Liked() {
       {/* Header */}
       <div className="flex flex-wrap items-center gap-5 px-8 py-6">
         <div className="flex h-32 w-32 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-accent/70 to-accent/20 shadow-lg">
-          <svg aria-hidden="true" viewBox="0 0 24 24" width="56" height="56" fill="white">
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            width="56"
+            height="56"
+            fill="white"
+          >
             <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
           </svg>
         </div>
@@ -156,10 +188,11 @@ export function Liked() {
         <div className="flex min-w-0 flex-[1_1_14rem] flex-col gap-3">
           <div>
             <h1 className="break-words text-[clamp(1.75rem,3.2vw,3rem)] font-bold leading-tight tracking-tight">
-              Liked
+              Liked Songs
             </h1>
             <p className="mt-2 max-w-xl select-text text-sm text-gray-400">
-              All your rated tracks, in one convenient place.
+              Your favorites, saved in Hibiki. Browse star ratings separately or
+              keep your likes in sync.
             </p>
           </div>
 
@@ -170,6 +203,13 @@ export function Liked() {
               {totalMs > 0 && <> · {formatTotalMs(totalMs)}</>}
             </p>
             <div className="flex items-center gap-3">
+              <button
+                className="media-secondary"
+                disabled={!loaded || !provider?.favorites}
+                onClick={() => setSyncOpen(true)}
+              >
+                Sync
+              </button>
               {/* Play */}
               <button
                 onClick={() =>
@@ -221,14 +261,70 @@ export function Liked() {
       </div>
 
       {/* Track list */}
-      {status === "loading" ? (
+      <div
+        className="flex flex-wrap gap-2 px-8 pb-4"
+        role="group"
+        aria-label="Liked Songs filter"
+      >
+        {(["loved", "rated", "all"] as const).map((value) => (
+          <button
+            key={value}
+            aria-pressed={kind === value}
+            className={kind === value ? "media-primary" : "media-secondary"}
+            onClick={() => setKind(value)}
+          >
+            {value === "loved" ? "Loved" : value === "rated" ? "Rated" : "All"}
+          </button>
+        ))}
+      </div>
+      {unavailable > 0 && kind !== "rated" && (
+        <div className="mx-8 mb-4 rounded-lg border border-white/10 p-3 text-sm text-[var(--text-secondary)]">
+          {unavailable.toLocaleString()} favorites are saved but not available
+          in this library yet.{" "}
+          <button className="underline" onClick={() => setSyncOpen(true)}>
+            Review matches
+          </button>
+          {" · "}
+          <button
+            className="underline"
+            disabled={local.loading}
+            onClick={local.retry}
+          >
+            Load missing library details
+          </button>
+        </div>
+      )}
+      {error && (
+        <div
+          role="alert"
+          className="mx-8 mb-4 rounded-lg border border-red-400/30 p-3 text-sm text-red-400"
+        >
+          {error}{" "}
+          <button
+            className="underline"
+            onClick={() =>
+              void useFavoritesStore
+                .getState()
+                .load(provider)
+                .catch(() => {})
+            }
+          >
+            Retry local favorites
+          </button>
+        </div>
+      )}
+      {(loading ||
+        local.loading ||
+        (status === "loading" &&
+          (kind !== "loved" || !collection.ratingsImported))) &&
+      !tracks.length ? (
         <p
           role="status"
           className="px-8 py-12 text-center text-sm text-gray-400"
         >
-          Loading rated tracks…
+          Loading saved songs…
         </p>
-      ) : status === "error" ? (
+      ) : status === "error" && kind === "rated" ? (
         <div
           role="alert"
           className="mx-8 my-4 rounded-lg border border-red-400/30 p-4 text-sm text-red-400"
@@ -258,11 +354,16 @@ export function Liked() {
           searchPlaceholder="Search in liked songs…"
           filterQuery={filterQuery}
           onFilterChange={setFilterQuery}
-          defaultResetTitle="Restore default order (most recently rated)"
-          emptyMessage="No rated tracks yet. Rate a song in Plex to see it here."
+          defaultResetTitle="Restore default order"
+          emptyMessage={
+            kind === "loved"
+              ? "Tap a song’s heart to save it here, or connect your favorites in Sync."
+              : "No rated tracks yet. Rate a song to see it here."
+          }
           currentTrackId={currentTrack?.id ?? null}
         />
       )}
+      {syncOpen && <FavoritesSyncDialog onClose={() => setSyncOpen(false)} />}
     </div>
   )
 }

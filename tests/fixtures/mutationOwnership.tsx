@@ -10,6 +10,8 @@ Object.assign(globalThis, { window: dom.window, location: dom.window.location, h
 const { createRoot } = await import("react-dom/client")
 const root = createRoot(document.getElementById("root")!)
 const writes: any[] = [], calls: any[] = [], loves: any[] = []
+const localFavorites:any[]=[]
+mock.module("../../src/stores/favoritesStore.ts",()=>({useFavoritesStore:create(()=>({loaded:false,likedTrackIds:new Set(),ratingChanged:async(...args:any[])=>{localFavorites.push(args)}}))}))
 const library = create(() => ({ playlists: [{id:"same", title:"Original",smart:false}], error: null as string|null,
  invalidatePlaylistItems: (id:string)=>writes.push(["invalidate",id]), renamePlaylist:(id:string,title:string)=>writes.push(["rename",id,title]),removePlaylist:(id:string)=>writes.push(["delete",id]),onItemRated:(...args:any[])=>writes.push(["rate",...args]) }))
 const player = create(()=>({playPlaylist(){},playTrack(){},playFromUri(){},playRadio(){},addNext:(tracks:any[])=>writes.push(["next",tracks]),addToQueue:(tracks:any[])=>writes.push(["queue",tracks])}))
@@ -65,8 +67,9 @@ if(scenario.startsWith("sidebar")){
  else if(scenario==="rating-success" || scenario==="rating-love-success" || scenario==="rating-album-success"){await rate();assert.equal(calls.length,1);await resolve();assert.deepEqual(writes,[["rate","same",scenario==="rating-album-success"?"album":"track",8]]);assert.equal(closes,1)}
  else if(scenario==="rating-capability"){await act(async()=>useProviderStore.getState().setProvider({...b,capabilities:{ratings:false}}));await resolve();assert.equal(document.querySelectorAll("button").length,0);assert.deepEqual(writes,[])}
  else{await resolve();assert.deepEqual(writes,[]);assert.equal(closes,0)}
- if(scenario==="rating-love-failure")assert.deepEqual(loves,[])
- if(scenario==="rating-love-success")assert.deepEqual(loves,[["Artist","Track",true]])
+ assert.deepEqual(loves,[])
+ if(scenario==="rating-love-failure")assert.deepEqual(localFavorites,[])
+ if(scenario==="rating-love-success")assert.deepEqual(localFavorites,[["same","Track","Artist",8]])
  if(scenario!=="rating-unmount")await unmount()
 }else{
  const {ContextMenu}=await import("../../src/components/ContextMenu")

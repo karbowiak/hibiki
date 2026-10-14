@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { lastfmLoveTrack } from "../../metadata/lastfm/api"
-import { useLastfmStore } from "../../metadata/lastfm/authStore"
+import { useFavoritesStore } from "../../stores/favoritesStore"
 import { useLibraryStore } from "../../stores/libraryStore"
 import { useProviderStore } from "../../stores/providerStore"
 import { useProviderMutationOwner } from "../../hooks/useProviderMutationOwner"
@@ -24,7 +23,6 @@ export function StarRating({ itemId, itemType = "track", userRating, artist, tra
   const request = useRef(0)
   const pending = useRef(false)
   const [saving, setSaving] = useState(false)
-  const loveThreshold = useLastfmStore(s => s.loveThreshold)
   const [local, setLocal] = useState<number | null | undefined>(undefined)
   const [hoverStar, setHoverStar] = useState(0)
   const display = local !== undefined ? local : userRating
@@ -46,7 +44,7 @@ export function StarRating({ itemId, itemType = "track", userRating, artist, tra
       if (!current()) return
       useLibraryStore.getState().onItemRated(itemId, itemType, value)
       if (enableLove && artist && track) {
-        void lastfmLoveTrack(artist, track, (value ?? 0) >= loveThreshold).catch(() => {})
+        void useFavoritesStore.getState().ratingChanged(itemId,track,artist,value).catch(() => {})
       }
       onRated?.()
     }).catch(() => {

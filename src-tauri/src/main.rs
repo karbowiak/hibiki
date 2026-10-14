@@ -26,6 +26,8 @@ mod lastfm;
 mod listenbrainz;
 mod listening_history;
 mod playlist_sync;
+mod favorites_commands;
+mod favorites_remote;
 mod soulsync;
 mod theaudiodb;
 mod mediasession;
@@ -579,6 +581,16 @@ pub fn run() {
             playlist_sync::playlist_sync_listenbrainz_read,
             playlist_sync::playlist_sync_listenbrainz_create,
             playlist_sync::playlist_sync_listenbrainz_mutate,
+            favorites_commands::favorites_load,
+            favorites_commands::favorites_tracks,
+            favorites_commands::favorites_page,
+            favorites_commands::favorites_save,
+            favorites_commands::favorites_plex_read,
+            favorites_commands::favorites_plex_mutate,
+            favorites_remote::favorites_remote_account,
+            favorites_remote::favorites_remote_page,
+            favorites_remote::favorites_remote_peek,
+            favorites_remote::favorites_remote_set,
             commands::playlist_sync_plex_mutate,
             commands::playlist_sync_plex_describe,
             commands::playlist_sync_resolve_recording,

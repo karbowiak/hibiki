@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { useLocation } from "wouter"
 import { open } from "@tauri-apps/plugin-shell"
 import { useLastfmStore } from "./authStore"
 import { useLastfmMetadataStore } from "./store"
@@ -8,8 +9,12 @@ type LastfmAuthStep = "idle" | "waiting"
 
 export function LastfmSettings() {
   const {
-    isAuthenticated, isEnabled, username, loveThreshold,
-    setEnabled, completeAuth, disconnect, setLoveThreshold,
+    isAuthenticated,
+    isEnabled,
+    username,
+    setEnabled,
+    completeAuth,
+    disconnect,
   } = useLastfmStore()
 
   const lastfmMetadata = useLastfmMetadataStore()
@@ -71,43 +76,52 @@ export function LastfmSettings() {
     setTimeout(() => setClearing(false), 400)
   }
 
-  const thresholdStars = Math.round(loveThreshold / 2)
+  const [, navigate] = useLocation()
 
   return (
-    <div className="space-y-8 max-w-2xl">
+    <div className="max-w-2xl space-y-8">
       {/* Account & Auth */}
       <div className="space-y-5">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-white/30">Account</h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-white/30">
+          Account
+        </h2>
 
         {!isAuthenticated ? (
           authStep === "idle" ? (
             <div className="space-y-4">
               <p className="text-sm text-white/50">
-                Connect your Last.fm account to enable scrobbling and metadata enrichment.{" "}
+                Connect your Last.fm account to enable scrobbling and metadata
+                enrichment.{" "}
                 <button
-                  className="text-accent/80 hover:text-accent underline-offset-2 hover:underline"
-                  onClick={() => void open("https://www.last.fm/api/account/create")}
+                  className="text-accent/80 underline-offset-2 hover:text-accent hover:underline"
+                  onClick={() =>
+                    void open("https://www.last.fm/api/account/create")
+                  }
                 >
                   Get your free API key
                 </button>
               </p>
               <div className="space-y-3">
                 <div>
-                  <label className="mb-1.5 block text-xs font-medium text-white/50">API Key</label>
+                  <label className="mb-1.5 block text-xs font-medium text-white/50">
+                    API Key
+                  </label>
                   <input
                     type="text"
                     value={apiKey}
-                    onChange={e => setApiKey(e.target.value)}
+                    onChange={(e) => setApiKey(e.target.value)}
                     placeholder="32-character hex key"
                     className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder-white/20 focus:border-accent/50 focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-xs font-medium text-white/50">API Secret</label>
+                  <label className="mb-1.5 block text-xs font-medium text-white/50">
+                    API Secret
+                  </label>
                   <input
                     type="password"
                     value={apiSecret}
-                    onChange={e => setApiSecret(e.target.value)}
+                    onChange={(e) => setApiSecret(e.target.value)}
                     placeholder="32-character secret"
                     className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder-white/20 focus:border-accent/50 focus:outline-none"
                   />
@@ -117,18 +131,23 @@ export function LastfmSettings() {
               <button
                 onClick={() => void handleConnect()}
                 disabled={isConnecting || !apiKey.trim() || !apiSecret.trim()}
-                className="rounded-lg bg-accent/80 hover:bg-accent px-4 py-2 text-sm font-medium text-white transition-colors disabled:opacity-50"
+                className="rounded-lg bg-accent/80 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent disabled:opacity-50"
               >
                 {isConnecting ? "Opening browser..." : "Connect to Last.fm"}
               </button>
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="rounded-lg border border-white/10 bg-white/5 p-4 space-y-2">
-                <p className="text-sm font-medium text-white">Complete Connection</p>
-                <ol className="text-sm text-white/60 space-y-1 list-decimal list-inside">
+              <div className="space-y-2 rounded-lg border border-white/10 bg-white/5 p-4">
+                <p className="text-sm font-medium text-white">
+                  Complete Connection
+                </p>
+                <ol className="list-inside list-decimal space-y-1 text-sm text-white/60">
                   <li>Approve the request in your browser.</li>
-                  <li>Return here and click <strong className="text-white">Complete</strong>.</li>
+                  <li>
+                    Return here and click{" "}
+                    <strong className="text-white">Complete</strong>.
+                  </li>
                 </ol>
               </div>
               {error && <p className="text-sm text-red-400">{error}</p>}
@@ -136,13 +155,13 @@ export function LastfmSettings() {
                 <button
                   onClick={() => void handleComplete()}
                   disabled={isConnecting}
-                  className="rounded-lg bg-accent/80 hover:bg-accent px-4 py-2 text-sm font-medium text-white transition-colors disabled:opacity-50"
+                  className="rounded-lg bg-accent/80 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent disabled:opacity-50"
                 >
                   {isConnecting ? "Connecting..." : "Complete Connection"}
                 </button>
                 <button
                   onClick={handleCancel}
-                  className="rounded-lg border border-white/10 px-4 py-2 text-sm text-white/60 hover:text-white hover:border-white/25 transition-colors"
+                  className="rounded-lg border border-white/10 px-4 py-2 text-sm text-white/60 transition-colors hover:border-white/25 hover:text-white"
                 >
                   Cancel
                 </button>
@@ -152,7 +171,7 @@ export function LastfmSettings() {
         ) : (
           <div className="space-y-4">
             <div className="flex items-center gap-3">
-              <div className="h-8 w-8 rounded-full bg-red-600 flex items-center justify-center text-white text-xs font-bold">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-red-600 text-xs font-bold text-white">
                 lfm
               </div>
               <div>
@@ -164,7 +183,9 @@ export function LastfmSettings() {
             <div className="flex items-center justify-between py-2">
               <div>
                 <p className="text-sm font-medium text-white">Scrobbling</p>
-                <p className="text-xs text-white/40">Report what you're listening to Last.fm</p>
+                <p className="text-xs text-white/40">
+                  Report what you're listening to Last.fm
+                </p>
               </div>
               <button
                 onClick={() => void setEnabled(!isEnabled)}
@@ -182,32 +203,24 @@ export function LastfmSettings() {
               </button>
             </div>
 
-            {isEnabled && (
-              <div className="flex items-center justify-between py-2">
-                <div>
-                  <p className="text-sm font-medium text-white">Love tracks rated ≥</p>
-                  <p className="text-xs text-white/40">Automatically love/unlove tracks on Last.fm when rated</p>
-                </div>
-                <div className="flex gap-1">
-                  {[1, 2, 3, 4, 5].map(star => (
-                    <button
-                      key={star}
-                      title={`${star} star${star > 1 ? "s" : ""}`}
-                      onClick={() => void setLoveThreshold(star * 2)}
-                      className={`transition-colors ${thresholdStars >= star ? "text-accent" : "text-white/20 hover:text-accent/50"}`}
-                    >
-                      <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-                        <path d="M3.612 15.443c-.386.198-.824-.149-.746-.592l.83-4.73L.173 6.765c-.329-.314-.158-.888.283-.95l4.898-.696L7.538.792c.197-.39.73-.39.927 0l2.184 4.327 4.898.696c.441.062.612.636.282.95l-3.522 3.356.83 4.73c.078.443-.36.79-.746.592L8 13.187l-4.389 2.256z" />
-                      </svg>
-                    </button>
-                  ))}
-                </div>
+            <div className="flex items-center justify-between gap-4 py-2">
+              <div>
+                <p className="text-sm font-medium text-white">Loved tracks</p>
+                <p className="text-xs text-white/40">
+                  Configure two-way favorites sync in Liked Songs → Sync.
+                </p>
               </div>
-            )}
+              <button
+                className="media-secondary shrink-0"
+                onClick={() => navigate("/collection/tracks")}
+              >
+                Liked Songs
+              </button>
+            </div>
 
             <button
               onClick={() => void disconnect()}
-              className="text-sm text-red-400 hover:text-red-300 transition-colors"
+              className="text-sm text-red-400 transition-colors hover:text-red-300"
             >
               Disconnect
             </button>
@@ -217,25 +230,39 @@ export function LastfmSettings() {
 
       {/* Cache */}
       <div>
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-white/30 mb-4">Metadata Cache</h2>
-        <div className="rounded-xl border border-white/10 bg-white/3 divide-y divide-white/5">
+        <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-white/30">
+          Metadata Cache
+        </h2>
+        <div className="bg-white/3 divide-y divide-white/5 rounded-xl border border-white/10">
           <div className="flex items-center justify-between px-5 py-3">
             <span className="text-sm text-white/60">Artists</span>
-            <span className="text-sm font-medium text-white tabular-nums">{lastfmStats.artistCount}</span>
+            <span className="text-sm font-medium tabular-nums text-white">
+              {lastfmStats.artistCount}
+            </span>
           </div>
           <div className="flex items-center justify-between px-5 py-3">
             <span className="text-sm text-white/60">Albums</span>
-            <span className="text-sm font-medium text-white tabular-nums">{lastfmStats.albumCount}</span>
+            <span className="text-sm font-medium tabular-nums text-white">
+              {lastfmStats.albumCount}
+            </span>
           </div>
           <div className="flex items-center justify-between px-5 py-3">
             <span className="text-sm text-white/60">Tracks</span>
-            <span className="text-sm font-medium text-white tabular-nums">{lastfmStats.trackCount}</span>
+            <span className="text-sm font-medium tabular-nums text-white">
+              {lastfmStats.trackCount}
+            </span>
           </div>
         </div>
         <button
           onClick={handleClearCache}
-          disabled={clearing || (lastfmStats.artistCount + lastfmStats.albumCount + lastfmStats.trackCount === 0)}
-          className="mt-2 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 hover:border-white/20 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          disabled={
+            clearing ||
+            lastfmStats.artistCount +
+              lastfmStats.albumCount +
+              lastfmStats.trackCount ===
+              0
+          }
+          className="mt-2 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 transition-colors hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
         >
           {clearing ? "Cleared" : "Clear Cache"}
         </button>

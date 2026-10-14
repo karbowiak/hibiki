@@ -3,19 +3,23 @@ import { useLibraryStore } from "../stores/libraryStore"
 import { useProviderStore } from "../stores/providerStore"
 import { useProviderMutationOwner } from "../hooks/useProviderMutationOwner"
 import { useCapability } from "../hooks/useCapability"
+import { useFavoritesStore } from "../stores/favoritesStore"
+import type { MusicTrack } from "../types/music"
 
 interface HeroRatingProps {
   itemId: string
   userRating: number | null | undefined
   itemType?: "album" | "artist" | "track"
   onHero?: boolean
+  musicTrack?: MusicTrack
 }
 
 export function HeroRating({
   itemId,
   userRating,
-  itemType,
+  itemType = "track",
   onHero = false,
+  musicTrack,
 }: HeroRatingProps) {
   const hasRatings = useCapability("ratings")
   const provider = useProviderStore((state) => state.provider)
@@ -53,6 +57,16 @@ export function HeroRating({
       .then(() => {
         if (current() && itemType)
           useLibraryStore.getState().onItemRated(itemId, itemType, value)
+        if (current() && itemType === "track" && musicTrack)
+          void useFavoritesStore
+            .getState()
+            .ratingChanged(
+              itemId,
+              musicTrack.title,
+              musicTrack.artistName,
+              value
+            )
+            .catch(() => {})
       })
       .catch(() => {
         if (current()) setLocal(undefined)

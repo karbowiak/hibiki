@@ -26,6 +26,7 @@ import RadioPanel from "./RadioPanel"
 import PlayerPopover from "./PlayerPopover"
 import VisualizerCanvas from "./VisualizerCanvas"
 import { StarRating } from "./shared/StarRating"
+import { FavoriteButton } from "./shared/FavoriteButton"
 import { useContextMenu } from "../hooks/useContextMenu"
 import { useContextMenuStore } from "../stores/contextMenuStore"
 import { useTrackDrag } from "../hooks/useTrackDrag"
@@ -659,6 +660,7 @@ export function Player() {
                           </p>
                         )}
                         <div className="flex-shrink-0">
+                          <FavoriteButton track={currentTrack} size={14}/>
                           <StarRating
                             itemId={currentTrack.id}
                             userRating={currentTrack.userRating}

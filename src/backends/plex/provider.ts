@@ -51,6 +51,8 @@ import { useMbidStore } from "../../metadata/musicbrainz/mbidStore"
 import { buildPlexImageUrl } from "./imageUrl"
 import { pickBestMediaIndex } from "../../lib/dedup"
 import { localAudioTrack } from "../../offline/audio"
+import { createFavoritesNative } from "../../favorites/native"
+import { projectOfflineAvailability } from "../../offline/catalogue"
 
 export class PlexProvider implements MusicProvider {
   private nowPlayingGeneration = 0
@@ -102,6 +104,24 @@ export class PlexProvider implements MusicProvider {
 
   get playbackSession(): unknown {
     return this._api
+  }
+  get favorites() {
+    const api = this._api,
+      section = this._sectionId
+    if (!api || !this._connected || !section) return undefined
+    return createFavoritesNative(
+      api.context,
+      section,
+      this.transport,
+      () => this._api === api && this._connected,
+      async (rows) => {
+        const tracks = rows.map((row) => plexTrackToMusicTrack(row, this.img))
+        return (await projectOfflineAvailability(
+          api.context,
+          tracks
+        )) as MusicTrack[]
+      }
+    )
   }
   get sectionId(): number | null {
     return this._sectionId

@@ -122,6 +122,8 @@ export type PlaylistRecordingResolution =
     }
   | { status: "unmatched" | "unavailable"; reason: string }
 export interface MusicProvider {
+  /** Scoped local favorite persistence and optional Plex membership mirroring. */
+  readonly favorites?: import("../favorites/types").FavoritesNative
   /** Cached-library browsing does not claim a live server connection. */
   readonly isOffline?: boolean
   /** Runtime identity changes when this provider revokes or replaces its connection. */

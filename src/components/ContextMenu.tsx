@@ -50,6 +50,8 @@ import type {
 } from "../types/music"
 import { makeOnPlay } from "../lib/mediaPlay"
 import { DownloadMenuItems } from "./shared/DownloadMenuItems"
+import { IconHeart, IconHeartFilled } from "@tabler/icons-react"
+import { useFavoritesStore } from "../stores/favoritesStore"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -84,6 +86,7 @@ function PlaylistSection({
 }: PlaylistSectionProps) {
   const playlists = useLibraryStore((s) => s.playlists).filter((p) => !p.smart)
   const provider = useProviderStore((s) => s.provider)
+
   const captureOwner = useProviderMutationOwner(provider)
   const recentIds = getRecentPlaylistIds()
 
@@ -255,6 +258,21 @@ export function ContextMenu() {
   const debugEnabled = useDebugStore((s) => s.debugEnabled)
   const showDebugPanel = useDebugPanelStore((s) => s.show)
   const provider = useProviderStore((s) => s.provider)
+  const favoriteId =
+    type === "track" ? (data as MusicTrack | null)?.id : undefined
+  const favoriteLiked = useFavoritesStore(
+    (state) =>
+      state.provider === provider &&
+      state.session === provider?.playbackSession &&
+      !!favoriteId &&
+      state.likedTrackIds.has(favoriteId)
+  )
+  const favoritesReady = useFavoritesStore(
+    (state) =>
+      state.loaded &&
+      state.provider === provider &&
+      state.session === provider?.playbackSession
+  )
   const extraActions = useContextMenuStore((s) => s.extraActions) ?? []
   const captureOwner = useProviderMutationOwner(provider)
   const hasRadio = useCapability("radio")
@@ -515,7 +533,7 @@ export function ContextMenu() {
       close()
     } else if (album && provider) {
       const current = captureOwner()
-      void loadAlbumTracks(provider,album.id)
+      void loadAlbumTracks(provider, album.id)
         .then((tracks) => {
           if (current() && currentMenu()) {
             addNext(tracks)
@@ -533,7 +551,7 @@ export function ContextMenu() {
       close()
     } else if (album && provider) {
       const current = captureOwner()
-      void loadAlbumTracks(provider,album.id)
+      void loadAlbumTracks(provider, album.id)
         .then((tracks) => {
           if (!current() || !currentMenu()) return
           addToQueue(tracks)
@@ -876,6 +894,33 @@ export function ContextMenu() {
         <Divider />
 
         {/* Rating */}
+        {track &&
+          /^[1-9]\d*$/.test(track.id) &&
+          Number.isSafeInteger(Number(track.id)) &&
+          provider?.favorites &&
+          favoritesReady && (
+            <Item
+              icon={
+                favoriteLiked ? (
+                  <IconHeartFilled size={16} />
+                ) : (
+                  <IconHeart size={16} />
+                )
+              }
+              label={
+                favoriteLiked
+                  ? "Remove from Liked Songs"
+                  : "Save to Liked Songs"
+              }
+              onClick={() =>
+                void invokeAction({
+                  label: "Save favorite",
+                  run: () =>
+                    useFavoritesStore.getState().toggle(track, !favoriteLiked),
+                })
+              }
+            />
+          )}
         {hasRatings && (
           <StarRating
             key={generation}
