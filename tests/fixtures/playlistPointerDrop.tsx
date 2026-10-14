@@ -117,6 +117,8 @@ function provider(name: string) {
     },
     getAlbumTracks: async (...args: any[]) => {
       calls.push(["tracks", name, ...args])
+      if (scenario === "album")
+        return [{ id: "album-track-1" }, { id: "album-track-2" }]
       return first.promise
     },
     rate: async (...args: any[]) => {
@@ -240,7 +242,15 @@ if (["retired", "scope", "cancel", "release-outside"].includes(scenario)) {
   assert.deepEqual(calls, [])
   assert.equal(useDragStore.getState().isDragging, false)
 } else {
-  assert.deepEqual(calls, [["add", "a", "same", [ids[0]]]])
+  assert.deepEqual(
+    calls,
+    scenario === "album"
+      ? [
+          ["tracks", "a", ids[0]],
+          ["add", "a", "same", ["album-track-1"]],
+        ]
+      : [["add", "a", "same", [ids[0]]]]
+  )
   assert.deepEqual(results, [], "drop intent is not a successful mutation")
   if (scenario === "failure") {
     first.reject(Error("private failure"))
@@ -252,15 +262,15 @@ if (["retired", "scope", "cancel", "release-outside"].includes(scenario)) {
     )
   } else {
     await resolve()
-    if (scenario !== "album") {
-      second.resolve()
-      await settle()
-      assert.deepEqual(
-        calls.map((x) => x[3]),
-        [["1"], ["1"], ["2"]],
-        "duplicate occurrences keep order"
-      )
-    }
+    second.resolve()
+    await settle()
+    assert.deepEqual(
+      calls.filter((x) => x[0] === "add").map((x) => x[3]),
+      scenario === "album"
+        ? [["album-track-1"], ["album-track-2"]]
+        : [["1"], ["1"], ["2"]],
+      "duplicate occurrences keep order"
+    )
     assert.deepEqual(results, [{ targetPlaylistId: "same", success: true }])
     assert.deepEqual(writes, [["invalidate", "same"]])
   }

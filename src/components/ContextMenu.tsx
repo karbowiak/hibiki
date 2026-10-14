@@ -1,3 +1,4 @@
+import { loadAlbumTracks } from "../lib/albumContents"
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useLocation } from "wouter"
 import { open } from "@tauri-apps/plugin-shell"
@@ -514,8 +515,7 @@ export function ContextMenu() {
       close()
     } else if (album && provider) {
       const current = captureOwner()
-      void provider
-        .getAlbumTracks(album.id)
+      void loadAlbumTracks(provider,album.id)
         .then((tracks) => {
           if (current() && currentMenu()) {
             addNext(tracks)
@@ -533,8 +533,7 @@ export function ContextMenu() {
       close()
     } else if (album && provider) {
       const current = captureOwner()
-      void provider
-        .getAlbumTracks(album.id)
+      void loadAlbumTracks(provider,album.id)
         .then((tracks) => {
           if (!current() || !currentMenu()) return
           addToQueue(tracks)

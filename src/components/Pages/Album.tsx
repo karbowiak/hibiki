@@ -81,6 +81,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
   const { handler: ctxMenu, isTarget: isCtxTarget } = useContextMenu()
   const trackDrag = useTrackDrag()
   const pageRefreshKey = useUIStore((s) => s.pageRefreshKey)
+  const shouldDeduplicate = useUIStore((s) => s.deduplicateAlbums)
   const hasRadio = useCapability("radio")
 
   // Seed from eager-load cache for an instant first render.
@@ -180,7 +181,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     return () => {
       active = false
     }
-  }, [albumId, provider, pageRefreshKey, loadAttempt])
+  }, [albumId, provider, pageRefreshKey, loadAttempt, shouldDeduplicate])
 
   // Build set of all Plex-known tags so external tags can be filtered to only
   // those that link to something in the library (genre/mood/style stations).

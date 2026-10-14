@@ -1,3 +1,4 @@
+import { loadAlbumTracks } from "../lib/albumContents"
 import type { MusicTrack } from "../types/music"
 import type { MusicProvider } from "../providers/types"
 import { buildPlexImageUrl } from "../backends/plex/imageUrl"
@@ -102,7 +103,7 @@ export async function downloadMedia(
   }
   if (kind === "track") await add([id])
   else if (kind === "album") {
-    const tracks = await provider.getAlbumTracks(id)
+    const tracks = await loadAlbumTracks(provider,id)
     check()
     await add(tracks.map((track) => track.id))
   } else {

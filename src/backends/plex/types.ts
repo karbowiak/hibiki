@@ -57,6 +57,7 @@ export interface Track {
   key: string
   title: string
   index: number
+  parent_index?: number | null
   duration: number
   parent_key: string
   /** Album title */

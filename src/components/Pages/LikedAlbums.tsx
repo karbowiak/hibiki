@@ -1,3 +1,6 @@
+import { useMemo } from "react"
+import { useUIStore } from "../../stores/uiStore"
+import { deduplicateAlbums } from "../../lib/dedup"
 import { useLikedCollection } from "../../hooks/useLikedCollection"
 import { ArtworkImage, useArtworkFailures } from "../shared/ArtworkImage"
 import { Link } from "wouter"
@@ -49,7 +52,9 @@ export function LikedAlbums() {
   const { status, retry } = useLikedCollection("albums")
   const { handler: ctxMenu } = useContextMenu()
 
-  const count = likedAlbums.length
+  const shouldDeduplicate=useUIStore(s=>s.deduplicateAlbums)
+  const albums=useMemo(()=>shouldDeduplicate ? deduplicateAlbums(likedAlbums) : likedAlbums,[likedAlbums,shouldDeduplicate])
+  const count = albums.length
 
   return (
     <div className="pb-12">
@@ -104,7 +109,7 @@ export function LikedAlbums() {
           </div>
         ) : (
           <MediaGrid>
-            {likedAlbums.map((album) => {
+            {albums.map((album) => {
               const stars = starsFromRating(album.userRating)
               return (
                 <Link

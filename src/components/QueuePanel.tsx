@@ -1,3 +1,4 @@
+import { loadAlbumTracks } from "../lib/albumContents"
 import { ArtworkImage } from "./shared/ArtworkImage"
 import { useEffect, useRef, useState } from "react"
 import { useResizable } from "../hooks/useResizable"
@@ -316,7 +317,7 @@ export function QueuePanel() {
       const result = Promise.resolve().then(async () => {
         if (!current()) return []
         if (payload.type === "track") return [...(payload.tracks ?? [])]
-        if (payload.type === "album" && provider) return provider.getAlbumTracks(payload.ids[0])
+        if (payload.type === "album" && provider) return loadAlbumTracks(provider,payload.ids[0])
         if (payload.type === "artist" && provider) return provider.getArtistPopularTracks(payload.ids[0])
         return []
       }).then(tracks => ({ tracks, failed: false }), () => ({ tracks: [] as MusicTrack[], failed: true }))

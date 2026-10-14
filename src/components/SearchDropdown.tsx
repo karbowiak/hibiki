@@ -1,3 +1,5 @@
+import { deduplicateAlbumItems } from "../lib/dedup"
+import { useUIStore } from "../stores/uiStore"
 import "../styles/discovery.css"
 import { useArtistImage, useAlbumImage } from "../hooks/useMediaImage"
 import { ArtworkImage, useArtworkFailures } from "./shared/ArtworkImage"
@@ -196,7 +198,8 @@ export function SearchDropdown({
   )
   const playTrack = usePlayerStore((s) => s.playTrack)
 
-  const items = buildSearchItems(results)
+  const shouldDeduplicate=useUIStore(s=>s.deduplicateAlbums)
+  const items = buildSearchItems(shouldDeduplicate ? deduplicateAlbumItems(results) : results)
   const emptyQuery = !query.trim()
   const totalRows = (emptyQuery ? landingItems.length : items.length) + 1 // +1 for "See all results"
 

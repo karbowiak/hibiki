@@ -10,6 +10,7 @@ import type {
   MusicPlaylist,
 } from "../types/music"
 import { processArtistAlbums } from "../lib/dedup"
+import { loadAlbumContents } from "../lib/albumContents"
 import { startTiming } from "../lib/performance"
 
 export interface ArtistCacheEntry {
@@ -29,6 +30,7 @@ export interface AlbumCacheEntry {
   tracks: MusicTrack[]
   relatedHubs: MusicHub[]
   fetchedAt: number
+  deduplicated?: boolean
 }
 
 const STALE_MS = 30 * 60_000
@@ -160,7 +162,10 @@ export function createMetadataCache({
     string,
     { deduplicated: boolean; promise: Promise<ArtistCacheEntry> }
   >()
-  const albumRequests = new Map<string, Promise<AlbumCacheEntry>>()
+  const albumRequests = new Map<
+    string,
+    { deduplicated: boolean; promise: Promise<AlbumCacheEntry> }
+  >()
   const capture = (candidate = getProvider()): MetadataCacheSession | null =>
     candidate && candidate === provider && getProvider() === candidate
       ? { owner, provider: candidate, epoch }
@@ -195,7 +200,12 @@ export function createMetadataCache({
   const getAlbum = (id: string) => {
     if (!capture()) return undefined
     const entry = albums[id]
-    return entry && Date.now() - entry.fetchedAt < EVICT_MS ? entry : undefined
+    return entry &&
+      ((!entry.album.artistId && entry.deduplicated === undefined) ||
+        entry.deduplicated === deduplicate()) &&
+      Date.now() - entry.fetchedAt < EVICT_MS
+      ? entry
+      : undefined
   }
 
   function loadArtist(
@@ -315,23 +325,26 @@ export function createMetadataCache({
     opts: { force?: boolean; onCore?: (entry: AlbumCacheEntry) => void } = {}
   ): Promise<AlbumCacheEntry> {
     const session = capture()
+    const shouldDeduplicate = deduplicate()
     if (!session) return Promise.reject(new MetadataRequestSuperseded())
     const cached = getAlbum(id)
     if (!opts.force && cached && Date.now() - cached.fetchedAt < STALE_MS)
       return Promise.resolve(cached)
     const existing = albumRequests.get(id)
-    if (!opts.force && existing) return existing
+    if (!opts.force && existing?.deduplicated === shouldDeduplicate)
+      return existing.promise
     const request = (async () => {
       const timing = startTiming("albumPage")
       try {
         const related = session.provider.getRelatedHubs(id).catch(() => [])
-        const [album, tracks] = await Promise.all([
-          session.provider.getAlbum(id),
-          session.provider.getAlbumTracks(id),
-        ])
+        const { album, tracks } = await loadAlbumContents(
+          session.provider,
+          id,
+          shouldDeduplicate
+        )
         timing.phase("core")
         check(session)
-        if (albumRequests.get(id) !== request)
+        if (albumRequests.get(id)?.promise !== request)
           throw new MetadataRequestSuperseded()
         if (album.id !== id)
           throw new Error("Server returned a different album")
@@ -340,6 +353,7 @@ export function createMetadataCache({
           tracks,
           relatedHubs: cached?.relatedHubs ?? [],
           fetchedAt: Date.now(),
+          deduplicated: shouldDeduplicate,
         }
         if (opts.onCore) {
           albums = evict({ ...albums, [id]: core }, MAX_ALBUMS, id)
@@ -348,7 +362,7 @@ export function createMetadataCache({
         }
         const relatedHubs = await related
         check(session)
-        if (albumRequests.get(id) !== request)
+        if (albumRequests.get(id)?.promise !== request)
           throw new MetadataRequestSuperseded()
         timing.phase("recommendations")
         const entry = { ...core, relatedHubs }
@@ -359,9 +373,9 @@ export function createMetadataCache({
         timing.end("load")
       }
     })().finally(() => {
-      if (albumRequests.get(id) === request) albumRequests.delete(id)
+      if (albumRequests.get(id)?.promise === request) albumRequests.delete(id)
     })
-    albumRequests.set(id, request)
+    albumRequests.set(id, { deduplicated: shouldDeduplicate, promise: request })
     return request
   }
 
@@ -376,11 +390,20 @@ export function createMetadataCache({
       const id = String(args[0] ?? "")
       if (method === "getArtist" && artists[id])
         artists[id] = { ...artists[id], artist: payload as MusicArtist }
-      else if (method === "getAlbum" && albums[id])
-        albums[id] = { ...albums[id], album: payload as MusicAlbum }
-      else if (method === "getAlbumTracks" && albums[id])
-        albums[id] = { ...albums[id], tracks: payload as MusicTrack[] }
       else if (
+        (method === "getAlbum" || method === "getAlbumTracks") &&
+        albums[id]
+      ) {
+        if (albums[id].album._alternateIds?.length) {
+          // A raw refresh describes just one physical copy. It cannot replace
+          // the merged page. An in-flight full composition will refresh it;
+          // otherwise expire it for the next load instead of losing tracks.
+          if (!albumRequests.has(id))
+            albums[id] = { ...albums[id], fetchedAt: 0 }
+        } else if (method === "getAlbum")
+          albums[id] = { ...albums[id], album: payload as MusicAlbum }
+        else albums[id] = { ...albums[id], tracks: payload as MusicTrack[] }
+      } else if (
         (method === "getArtistPopularTracks" ||
           method === "getArtistPopularTracksInSection") &&
         artists[id]
@@ -435,11 +458,19 @@ export function createMetadataCache({
       } else {
         albumRequests.delete(id)
         delete albums[id]
+        for (const [key, entry] of Object.entries(albums)) {
+          if (entry.album._alternateIds?.includes(id)) {
+            albumRequests.delete(key)
+            delete albums[key]
+          }
+        }
         // Any in-flight artist response may contain the edited album.
         artistRequests.clear()
         for (const [key, entry] of Object.entries(artists)) {
           if (
-            [...entry.albums, ...entry.singles].some((album) => album.id === id)
+            [...entry.albums, ...entry.singles].some(
+              (album) => album.id === id || album._alternateIds?.includes(id)
+            )
           )
             delete artists[key]
         }

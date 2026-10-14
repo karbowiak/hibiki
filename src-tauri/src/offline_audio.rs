@@ -178,6 +178,7 @@ fn binding(
         "localParentKey":track.parent_key,"localPartId":part.id,"localPartKey":part.key,"mediaInfo":{"metadataComplete":true,"container":media.container,"fileSize":part.size}
     });
     metadata["localAnalysisVersion"] = json!(analysis_version);
+    metadata["discNumber"] = json!(track.parent_index.unwrap_or(1));
     metadata["mediaInfo"]["audioStreamId"] = json!(stream.and_then(|s| s.id));
     let saved = Binding {
         track_id: expected,
@@ -1522,6 +1523,9 @@ mod tests {
                     }
                     assert!(request.len() < 16384);
                 }
+                // A cancelled client can close a pooled connection before
+                // sending headers; it is not an unexpected API request.
+                if request.is_empty() { continue; }
                 let request = String::from_utf8(request).unwrap();
                 let (code, body) = if request.starts_with("PUT ") {
                     assert!(request

@@ -1,3 +1,6 @@
+import { deduplicateAlbums, deduplicateAlbumItems, deduplicateHubAlbums } from "../../lib/dedup"
+import { useUIStore } from "../../stores/uiStore"
+import { loadAlbumTracks } from "../../lib/albumContents"
 import {
   mixTitleToArtistName,
   mixThumbnailKey,
@@ -35,7 +38,7 @@ async function resolveItemsToTracks(items: MusicItem[], provider: MusicProvider)
   const results = await Promise.all(items.map(async (item) => {
     switch (item.type) {
       case "track": return [item as MusicTrack]
-      case "album": return provider.getAlbumTracks(item.id)
+      case "album": return loadAlbumTracks(provider,item.id)
       case "artist": return provider.getArtistPopularTracks(item.id, 10)
       case "playlist": return provider.getPlaylistItems(item.id, 0, 100).then(r => r.items)
       default: return []
@@ -127,13 +130,17 @@ export function makeDragPayload(item: MusicItem): DragPayload | undefined {
 export function Home() {
   // Granular selector: only re-render when recentlyAdded or hubs actually change.
   // Changes to playlistItemsCache (from background prefetch) do NOT trigger re-renders here.
-  const { recentlyAdded, latestReleases, hubs } = useLibraryStore(
+  const { recentlyAdded: rawAdded, latestReleases: rawReleases, hubs: rawHubs } = useLibraryStore(
     useShallow((s) => ({
       recentlyAdded: s.recentlyAdded,
       latestReleases: s.latestReleases,
       hubs: s.hubs,
     }))
   )
+  const shouldDeduplicate = useUIStore(s=>s.deduplicateAlbums)
+  const recentlyAdded=useMemo(()=>shouldDeduplicate ? deduplicateAlbumItems(rawAdded) : rawAdded,[rawAdded,shouldDeduplicate])
+  const latestReleases=useMemo(()=>shouldDeduplicate ? deduplicateAlbums(rawReleases) : rawReleases,[rawReleases,shouldDeduplicate])
+  const hubs=useMemo(()=>shouldDeduplicate ? rawHubs.map(deduplicateHubAlbums) : rawHubs,[rawHubs,shouldDeduplicate])
   const { isConnected, isOffline, isLoading: isConnecting } = useConnectionStore(
     useShallow((s) => ({ isConnected: s.isConnected, isOffline: s.isOffline, isLoading: s.isLoading }))
   )

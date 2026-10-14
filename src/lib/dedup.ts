@@ -7,7 +7,12 @@
  * version is selected for playback.
  */
 
-import type { MusicAlbum, MusicItem, MusicHub } from "../types/music"
+import type {
+  MusicAlbum,
+  MusicItem,
+  MusicHub,
+  MusicTrack,
+} from "../types/music"
 import type { Media } from "../backends/plex/types"
 
 // ---------------------------------------------------------------------------
@@ -15,147 +20,141 @@ import type { Media } from "../backends/plex/types"
 // ---------------------------------------------------------------------------
 
 function normalizeTitle(title: string): string {
-  return title.toLowerCase().trim().replace(/\s+/g, " ")
+  return typeof title === "string"
+    ? title.toLowerCase().trim().replace(/\s+/g, " ")
+    : ""
 }
 
 // ---------------------------------------------------------------------------
 // Album grouping / deduplication
 // ---------------------------------------------------------------------------
 
-type AlbumGroup = { key: string; albums: MusicAlbum[] }
-
-/**
- * Split albums into sub-groups where track counts are close enough to be
- * the same release (e.g. a 10-track and 11-track version are likely the same
- * album, but a 10-track album and a 1-track single are not).
- *
- * Two albums merge if |countA - countB| <= max(2, 0.3 * min(countA, countB)).
- * This allows small differences (bonus tracks, regional variants) while
- * keeping genuinely different releases apart (album vs single).
- *
- */
-function splitByTrackCount(albums: MusicAlbum[]): MusicAlbum[][] {
-  const sorted = [...albums].sort((a, b) => a.trackCount - b.trackCount)
-  const subGroups: MusicAlbum[][] = [[sorted[0]]]
-  for (let i = 1; i < sorted.length; i++) {
-    const prev = sorted[i - 1].trackCount
-    const curr = sorted[i].trackCount
-    const threshold = Math.max(2, Math.floor(0.3 * Math.min(prev, curr)))
-    if (curr - prev <= threshold) {
-      subGroups[subGroups.length - 1].push(sorted[i])
-    } else {
-      subGroups.push([sorted[i]])
+/** Group a release independently of how many of its files Plex found. */
+export function deduplicateAlbums(albums: MusicAlbum[]): MusicAlbum[] {
+  const unique = [...new Map(albums.map((album) => [album.id, album])).values()]
+  const groups: MusicAlbum[][] = []
+  const keys = new Map<string, MusicAlbum[]>()
+  for (const album of unique) {
+    const artist = normalizeTitle(album.artistName)
+    // Never combine generic titles from unrelated artists, or unknown artists.
+    const identity = album.artistId || artist || `unknown:${album.id}`
+    const title = normalizeTitle(album.title)
+    const titleKey = title
+      ? `title:${identity}|${title}|${album.year > 0 ? album.year : ""}`
+      : `id:${album.id}`
+    const guidKey = album.guid ? `guid:${identity}|${album.guid}` : null
+    const matches = [
+      ...new Set(
+        [keys.get(titleKey), guidKey ? keys.get(guidKey) : undefined].filter(
+          (group): group is MusicAlbum[] => !!group
+        )
+      ),
+    ]
+    const group = matches[0] ?? []
+    if (!matches.length) groups.push(group)
+    for (const other of matches.slice(1)) {
+      group.push(...other)
+      groups.splice(groups.indexOf(other), 1)
+      for (const [key, existing] of keys)
+        if (existing === other) keys.set(key, group)
     }
+    group.push(album)
+    keys.set(titleKey, group)
+    if (guidKey) keys.set(guidKey, group)
   }
-  return subGroups
+  return groups.map((group) => {
+    if (group.length === 1) return group[0]
+    const sorted = [...group].sort(
+      (a, b) =>
+        b.trackCount - a.trackCount ||
+        a.id.localeCompare(b.id, undefined, { numeric: true })
+    )
+    const primary = sorted[0]
+    const aliases = new Set(
+      sorted.flatMap((album) => [album.id, ...(album._alternateIds ?? [])])
+    )
+    aliases.delete(primary.id)
+    return { ...primary, _alternateIds: [...aliases] }
+  })
 }
 
-/**
- * Multi-tier album deduplication.
- *
- * Tier 1 — GUID:  group albums sharing the same non-null `guid`.
- * Tier 2 — Title+Year+Artist:  normalised exact match (year must be > 0).
- * Tier 3 — Title+Artist:  normalised exact match when year is unknown (0).
- *
- * Within each group the album with the highest `trackCount` is kept as the
- * primary entry; all other IDs are stored in `_alternateIds`.
- */
-export function deduplicateAlbums(albums: MusicAlbum[]): MusicAlbum[] {
-  // First: classic ID-dedup (handles exact API duplicates)
-  const seen = new Set<string>()
-  const unique: MusicAlbum[] = []
-  for (const a of albums) {
-    if (seen.has(a.id)) continue
-    seen.add(a.id)
-    unique.push(a)
+/** Keep distinct disc/track positions; choose the best playable copy of a song. */
+export function mergeAlbumTracks(
+  tracks: MusicTrack[],
+  albumIds: string[],
+  offline = false
+): MusicTrack[] {
+  const groups = new Map<string, MusicTrack>()
+  const quality = (track: MusicTrack) =>
+    [
+      offline
+        ? Number(
+            track.mediaInfo?.localAudio ||
+              track.mediaInfo?.offlineAvailable === true
+          )
+        : Number(track.mediaInfo?.hasAudioStream !== false),
+      Number(LOSSLESS_CODECS.has((track.codec ?? "").toLowerCase())),
+      LOSSLESS_CODECS.has((track.codec ?? "").toLowerCase())
+        ? (track.bitDepth ?? 16)
+        : 0,
+      LOSSLESS_CODECS.has((track.codec ?? "").toLowerCase())
+        ? (track.samplingRate ?? 44100)
+        : 0,
+      track.bitrate ?? 0,
+    ].map((value) => (Number.isFinite(value) ? value : 0))
+  const better = (a: MusicTrack, b: MusicTrack) => {
+    const aq = quality(a),
+      bq = quality(b)
+    for (let i = 0; i < aq.length; i++)
+      if (aq[i] !== bq[i]) return aq[i] > bq[i]
+    return a.id.localeCompare(b.id, undefined, { numeric: true }) < 0
   }
-
-  const groups: AlbumGroup[] = []
-  const guidMap = new Map<string, AlbumGroup>()
-  const titleMap = new Map<string, AlbumGroup>()
-  const assigned = new Set<string>() // album.id → already in a group
-
-  // Tier 1: group by guid
-  for (const album of unique) {
-    if (!album.guid) continue
-    let group = guidMap.get(album.guid)
-    if (!group) {
-      group = { key: album.guid, albums: [] }
-      guidMap.set(album.guid, group)
-      groups.push(group)
-    }
-    group.albums.push(album)
-    assigned.add(album.id)
+  for (const track of tracks) {
+    const disc = track.discNumber ?? 1
+    const title = normalizeTitle(track.title)
+    const position = track.trackNumber > 0 ? track.trackNumber : "unknown"
+    // A title match must also agree on disc and known track position. Repeated
+    // recordings on separate discs/slots and named live/remix versions survive.
+    const key = title ? `${disc}|${position}|${title}` : `id:${track.id}`
+    const current = groups.get(key)
+    if (!current || better(track, current)) groups.set(key, track)
   }
-
-  // Tier 2 + 3: group by title+year+artist (or title+artist if year=0)
-  for (const album of unique) {
-    if (assigned.has(album.id)) continue
-    const norm = normalizeTitle(album.title)
-    const artist = normalizeTitle(album.artistName)
-    const key =
-      album.year > 0 ? `${norm}|${album.year}|${artist}` : `${norm}||${artist}`
-
-    let group = titleMap.get(key)
-    if (!group) {
-      group = { key, albums: [] }
-      titleMap.set(key, group)
-      groups.push(group)
-    }
-    group.albums.push(album)
-    assigned.add(album.id)
-  }
-
-  // Merge each group → single album with _alternateIds.
-  // Within a group, split into sub-groups by track-count similarity so that
-  // e.g. a 10-track album and a 1-track single with the same title stay separate.
-  const result: MusicAlbum[] = []
-  for (const group of groups) {
-    if (group.albums.length === 1) {
-      result.push(group.albums[0])
-      continue
-    }
-    for (const sub of splitByTrackCount(group.albums)) {
-      if (sub.length === 1) {
-        result.push(sub[0])
-        continue
-      }
-      const sorted = [...sub].sort((a, b) => b.trackCount - a.trackCount)
-      const primary = sorted[0]
-      const aliases = new Set<string>()
-      for (const version of sorted) {
-        aliases.add(version.id)
-        for (const alias of version._alternateIds ?? []) aliases.add(alias)
-      }
-      aliases.delete(primary.id)
-      const alternateIds = [...aliases]
-      result.push({ ...primary, _alternateIds: alternateIds })
-    }
-  }
-
-  return result
+  return [...groups.values()]
+    .sort(
+      (a, b) =>
+        (a.discNumber ?? 1) - (b.discNumber ?? 1) ||
+        (a.trackNumber || Number.MAX_SAFE_INTEGER) -
+          (b.trackNumber || Number.MAX_SAFE_INTEGER) ||
+        a.title.localeCompare(b.title)
+    )
+    .map((track) => ({ ...track, _albumGroupIds: [...albumIds] }))
 }
 
 /**
  * Deduplicate album items within a MusicHub's items array.
  * Non-album items are passed through unchanged.
  */
+export function deduplicateAlbumItems(items: MusicItem[]): MusicItem[] {
+  const albums = deduplicateAlbums(
+    items.filter(
+      (item): item is MusicAlbum & { type: "album" } => item.type === "album"
+    )
+  )
+  const byId = new Map<string, MusicAlbum>()
+  for (const album of albums)
+    for (const id of [album.id, ...(album._alternateIds ?? [])])
+      byId.set(id, album)
+  const emitted = new Set<string>()
+  return items.flatMap<MusicItem>((item) => {
+    if (item.type !== "album") return [item]
+    const album = byId.get(item.id)!
+    if (emitted.has(album.id)) return []
+    emitted.add(album.id)
+    return [{ ...album, type: "album" as const }]
+  })
+}
 export function deduplicateHubAlbums(hub: MusicHub): MusicHub {
-  const albumItems: (MusicAlbum & { type: "album" })[] = []
-  const otherItems: MusicItem[] = []
-  for (const item of hub.items) {
-    if (item.type === "album") albumItems.push(item)
-    else otherItems.push(item)
-  }
-  if (albumItems.length <= 1) return hub
-  const deduped = deduplicateAlbums(albumItems)
-  return {
-    ...hub,
-    items: [
-      ...deduped.map((a) => ({ ...a, type: "album" as const })),
-      ...otherItems,
-    ],
-  }
+  return { ...hub, items: deduplicateAlbumItems(hub.items) }
 }
 
 /**
@@ -212,9 +211,12 @@ export function processArtistAlbums(
     return { albums: idDedup(albumsOnly), singles: idDedup(singleList) }
   }
 
+  const merged = deduplicateAlbums([...allAlbums, ...singleList])
+  const isSingle = (album: MusicAlbum) =>
+    [album.id, ...(album._alternateIds ?? [])].every((id) => singleIds.has(id))
   return {
-    albums: deduplicateAlbums(albumsOnly),
-    singles: deduplicateAlbums(singleList),
+    albums: merged.filter((album) => !isSingle(album)),
+    singles: merged.filter(isSingle),
   }
 }
 

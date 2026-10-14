@@ -306,6 +306,10 @@ pub struct Track {
     #[serde(default, deserialize_with = "serde_string_or_i64::deserialize")]
     pub index: i64,
 
+    /// Disc number within the album; retained for merging physical copies.
+    #[serde(rename(deserialize = "parentIndex"), default, deserialize_with = "serde_string_or_i64_opt::deserialize")]
+    pub parent_index: Option<i64>,
+
     /// Duration in milliseconds
     #[serde(default, deserialize_with = "serde_string_or_i64::deserialize")]
     pub duration: i64,
@@ -1557,6 +1561,16 @@ mod tests {
         assert_eq!(saved["art"], "/library/metadata/123/art/2");
         let legacy: super::Album = serde_json::from_str(r#"{"ratingKey":"123","thumb":"/library/metadata/123/thumb/1"}"#).unwrap();
         assert!(legacy.art.is_none());
+    }
+    #[test]
+    fn track_disc_number_survives_native_json_projection() {
+        for value in [serde_json::json!(2),serde_json::json!("2")] {
+            let track:super::Track=serde_json::from_value(serde_json::json!({"ratingKey":"42","parentIndex":value,"index":1})).unwrap();
+            assert_eq!(track.parent_index,Some(2));
+            assert_eq!(serde_json::to_value(track).unwrap()["parent_index"],2);
+        }
+        let unknown:super::Track=serde_json::from_value(serde_json::json!({"ratingKey":"42"})).unwrap();
+        assert_eq!(unknown.parent_index,None);
     }
 
 }

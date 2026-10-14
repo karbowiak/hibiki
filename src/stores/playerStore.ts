@@ -6,7 +6,7 @@ import { PlaybackKeyLookup } from "../audio/playbackKeyLookup"
 import { PlaybackJournal, startedQueueIndex } from "../audio/playbackJournal"
 import type { MusicProvider } from "../providers/types"
 import { dispatchPlaybackWhenReady } from "../audio/playbackRequests"
-import { isAlbumPlayback, preparedReplayGain } from "../audio/playbackContext"
+import { isAlbumPlayback, playbackAlbumKey, preparedReplayGain } from "../audio/playbackContext"
 import type { TransitionInfo } from "../audio/transitionInfo"
 import { engine } from "../audio/RustAudioEngine"
 import type { MusicTrack } from "../types/music"
@@ -601,7 +601,7 @@ async function sendToAudioEngine(track: MusicTrack, generation: number): Promise
     () => generation === _playGeneration && getProvider() === provider,
     async ({ info, gainDb }) => {
       rememberPlaybackKey(info.trackKey, track, "selection")
-      await engine.play(info.url, info.trackKey, track.duration, info.parentKey, preparedReplayGain(track, info, usePlayerStore.getState().albumPlaybackId, gainDb),
+      await engine.play(info.url, info.trackKey, track.duration, playbackAlbumKey(track, info.parentKey, usePlayerStore.getState().albumPlaybackId), preparedReplayGain(track, info, usePlayerStore.getState().albumPlaybackId, gainDb),
         undefined, track.startRamp ?? info.startRamp, track.endRamp ?? info.endRamp,
         isAlbumPlayback(track, usePlayerStore.getState().albumPlaybackId), info.plexContext, playbackLabels(track))
     },
@@ -667,7 +667,7 @@ async function preloadNextTrack(queue: MusicTrack[], queueIndex: number, repeat:
       () => isCurrent() && getProvider() === provider,
       async ({ info, gainDb }) => {
         rememberPlaybackKey(info.trackKey, nextTrack, "preload")
-        await engine.preloadNext(info.url, info.trackKey, nextTrack.duration, info.parentKey,
+        await engine.preloadNext(info.url, info.trackKey, nextTrack.duration, playbackAlbumKey(nextTrack, info.parentKey, usePlayerStore.getState().albumPlaybackId),
           preparedReplayGain(nextTrack, info, usePlayerStore.getState().albumPlaybackId, gainDb), undefined, nextTrack.startRamp ?? info.startRamp, nextTrack.endRamp ?? info.endRamp,
           isAlbumPlayback(nextTrack, usePlayerStore.getState().albumPlaybackId), info.plexContext, playbackLabels(nextTrack))
       },

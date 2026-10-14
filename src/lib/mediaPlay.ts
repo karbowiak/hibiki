@@ -2,6 +2,7 @@ import type { MusicItem, MusicTrack } from "../types/music"
 import type { MusicProvider } from "../providers/types"
 import { useProviderStore } from "../stores/providerStore"
 import { useAnnouncerStore } from "../stores/announcerStore"
+import { loadAlbumTracks } from "./albumContents"
 
 interface PlayStore {
   playTrack: (
@@ -101,6 +102,7 @@ export function createMediaPlayController(ownership: PlaybackOwnership) {
           )
         const uri =
           !provider.isOffline &&
+          !(item.type === "album" && typeof provider.getAlbum === "function") &&
           provider.buildItemUri?.(`/library/metadata/${item.id}`)
         if (uri)
           return play(() =>
@@ -121,7 +123,9 @@ export function createMediaPlayController(ownership: PlaybackOwnership) {
             if (!current()) return
             let tracks =
               item.type === "album"
-                ? await provider.getAlbumTracks(item.id)
+                ? typeof provider.getAlbum === "function"
+                  ? await loadAlbumTracks(provider, item.id)
+                  : await provider.getAlbumTracks(item.id)
                 : await (provider.isOffline && provider.getArtistTracks
                     ? provider.getArtistTracks(item.id)
                     : provider.getArtistPopularTracks(item.id))

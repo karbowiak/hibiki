@@ -1,4 +1,5 @@
 import "../styles/shellArtwork.css"
+import { loadAlbumTracks } from "../lib/albumContents"
 import { DownloadBadge } from "./shared/DownloadBadge"
 import { useAccentStore } from "../stores/accentStore"
 import { fallbackArtworkTone, artworkUiPalette } from "../lib/artworkUiPalette"
@@ -248,11 +249,20 @@ export function SideBar({
 
       let accepted = false
       try {
-        // Pass IDs directly — Plex resolves album/artist URIs to their tracks server-side.
-        // For tracks, add one at a time since the PUT endpoint can silently ignore
-        // comma-separated URIs.
-        const itemIds: string[] = payload.ids
-        if (payload.type === "track" && itemIds.length > 1) {
+        // A server album URI only resolves one physical copy. Expand the same
+        // logical album used by its page; append track IDs in order.
+        let itemIds: string[] = payload.ids
+        if(payload.type === "album") {
+          const tracks:string[]=[]
+          for(const albumId of itemIds) {
+            if(!currentRequest()) return
+            const items=await loadAlbumTracks(provider,albumId)
+            if(!currentRequest()) return
+            tracks.push(...items.map(track=>track.id))
+          }
+          itemIds=[...new Set(tracks)]
+        }
+        if ((payload.type === "track" || payload.type === "album") && itemIds.length > 1) {
           for (const id of itemIds) {
             if (!currentRequest()) return
             await provider.addToPlaylist(targetPlaylistId, [id])

@@ -380,3 +380,39 @@ The native Activity panel showed saved metadata, moving playlist progress and
 thousands of saved waveforms, with playback resumed. These are throughput and
 resume proofs; the entire waveform queue has not yet finished. No release work,
 push, tag or publication was performed.
+
+### Combined album browsing and playback
+
+Tiffany Day's HALO has two physical Plex entries with the same album GUID:
+tracks 2/7 and tracks 1/3/5/6/10/12/13. The previous track-count similarity
+check split partial copies, and album pages/play queues loaded only one entry.
+Release grouping now uses GUID or normalized artist/title/year, independent
+of file counts. A shared local-first composition loads all physical members,
+retains original disc/track order, and chooses playable lossless copies before
+bit depth, sample rate and bitrate. Artist identities, distinct titles/years
+without a shared release GUID, and repeated tracks in distinct disc/track
+positions remain separate.
+
+Both physical album links produce the same combined list without modifying
+Plex metadata/files. Artist, Home, library, rated-album and search presentation
+use the grouping preference. Album-card playback, queue/next actions, queue
+dragging and playlist drops use combined tracks rather than a single physical
+album URI. Explicit album intent/gain and scheduler identity span aliases while
+physical IDs still own playback, waveforms and reporting; mixes retain track
+normalization/crossfades. Native DTOs and saved audio retain disc numbers.
+Scoped caches fence preferences/retired requests, invalidate alias edits and
+prevent raw single-copy revalidation from overwriting combined contents.
+
+Validation: 932 frontend tests and 687 native tests passed (14 live proofs
+ignored; 73 integration tests filtered), with successful TypeScript/frontend
+and default-protocol native builds. The final native suite used four test
+threads while bulk indexing was active; an observed cancelled test-server
+connection now exits without being mistaken for an API request. Through native
+computer use, both HALO URLs showed all nine available tracks; Play from the
+smaller entry started EVERYTHING I'VE EVER WANTED and advanced to 17 seconds.
+The final native update was installed after verified process exit. Waveforms
+passed 192,000 saved; dev hot reloads restarted the ordered playlist verification
+proof, so the workers are being left uninterrupted after the final restart.
+Native entity download leases/status remain per physical copy; merged download
+ownership/badges are explicitly retained as a follow-up in the private TODO.
+The release goal remains paused, and no push/tag/publication occurred.

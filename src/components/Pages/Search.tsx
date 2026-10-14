@@ -1,3 +1,5 @@
+import { deduplicateAlbumItems } from "../../lib/dedup"
+import { useUIStore } from "../../stores/uiStore"
 import { Link } from "wouter"
 import "../../styles/discovery.css"
 import { useEffect, useMemo, useState } from "react"
@@ -154,7 +156,8 @@ export function Search() {
   }, [query])
 
   const showResults = query.trim().length > 0
-  const groups = useMemo(() => groupByType(results), [results])
+  const shouldDeduplicate=useUIStore(s=>s.deduplicateAlbums)
+  const groups = useMemo(() => groupByType(shouldDeduplicate ? deduplicateAlbumItems(results) : results), [results,shouldDeduplicate])
   const [storedView, setView] = useState(() => newView(results, query))
   // Scope local presentation to the actual result snapshot, including account
   // switches that reuse the same query text. No retired filter/page hides new data.

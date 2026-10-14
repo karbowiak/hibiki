@@ -98,7 +98,12 @@ export class PlaybackMetadata {
       }
     }
     return selectReplayGain(
-      { albumId: track.albumId, gain, albumGain },
+      {
+        albumId: track.albumId,
+        _albumGroupIds: track._albumGroupIds,
+        gain,
+        albumGain,
+      },
       albumPlaybackId
     )
   }

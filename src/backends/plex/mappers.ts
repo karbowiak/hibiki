@@ -88,6 +88,7 @@ export function plexTrackToMusicTrack(t: Track, img: ImgResolver): MusicTrack {
     title: t.title,
     trackNumber: t.index,
     duration: t.duration,
+    discNumber: t.parent_index ?? 1,
     albumId,
     albumName: t.parent_title ?? "",
     albumYear: t.parent_year ?? null,

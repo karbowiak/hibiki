@@ -23,7 +23,7 @@ interface UIState {
   isLyricsPinned: boolean
   /** Active tab in the pinned queue panel. Only relevant when isQueuePinned is true. */
   queueActiveTab: "queue" | "lyrics"
-  /** When true, duplicate albums on artist pages are merged into a single entry. */
+  /** Combine physical album copies across browsing, album pages and playback. */
   deduplicateAlbums: boolean
   /** When true, album art is expanded in the bottom-left corner above the player bar. */
   isArtExpanded: boolean

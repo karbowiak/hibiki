@@ -1,3 +1,4 @@
+import { deduplicateAlbums } from "../../lib/dedup"
 import { Link } from "wouter"
 import {
   IconHeart,
@@ -17,12 +18,14 @@ import { ScrollRow } from "../ScrollRow"
 export function Library() {
   const playlists = useLibraryStore((s) => s.playlists)
   const likedTracks = useLibraryStore((s) => s.likedTracks)
-  const likedAlbums = useLibraryStore((s) => s.likedAlbums)
+  const rawLikedAlbums = useLibraryStore((s) => s.likedAlbums)
   const likedArtists = useLibraryStore((s) => s.likedArtists)
   const fetchLikedTracks = useLibraryStore((s) => s.fetchLikedTracks)
   const fetchLikedAlbums = useLibraryStore((s) => s.fetchLikedAlbums)
   const fetchLikedArtists = useLibraryStore((s) => s.fetchLikedArtists)
   const provider = useProviderStore((s) => s.provider)
+  const shouldDeduplicate=useUIStore(s=>s.deduplicateAlbums)
+  const likedAlbums=useMemo(()=>shouldDeduplicate ? deduplicateAlbums(rawLikedAlbums) : rawLikedAlbums,[rawLikedAlbums,shouldDeduplicate])
   const pageRefreshKey = useUIStore((s) => s.pageRefreshKey)
 
   useEffect(() => {

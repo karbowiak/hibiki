@@ -52,6 +52,9 @@ export interface MusicTrack {
   id: string
   title: string
   trackNumber: number
+  discNumber?: number
+  /** Physical album aliases, used only with explicit album playback intent. */
+  _albumGroupIds?: string[]
   duration: number // ms
   albumId: string | null
   albumName: string
