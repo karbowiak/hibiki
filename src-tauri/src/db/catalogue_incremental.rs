@@ -565,8 +565,16 @@ pub struct Progress {
     pub phase: String,
 }
 pub fn progress(conn: &Connection, scope: &str) -> Result<Progress, String> {
-    ensure_state(conn, scope)?;
-    conn.query_row("SELECT ((SELECT COUNT(*) FROM plex_catalogue_changes WHERE scope=?1)+(SELECT COUNT(*) FROM plex_catalogue WHERE scope=?1 AND verify_missing=1 AND NOT EXISTS(SELECT 1 FROM plex_catalogue_changes q WHERE q.scope=plex_catalogue.scope AND q.kind=plex_catalogue.kind AND q.id=plex_catalogue.id))),catchup_requested,watermark,changes_revision,phase FROM plex_catalogue_incremental WHERE scope=?1",[scope],|r|Ok(Progress{pending:r.get(0)?,catch_up_requested:r.get(1)?,watermark:r.get(2)?,changes_revision:r.get(3)?,phase:r.get(4)?})).map_err(|_|"Cannot read incremental progress".into())
+    super::offline::check_identity(scope, "incremental")?;
+    conn.query_row("SELECT ((SELECT COUNT(*) FROM plex_catalogue_changes WHERE scope=?1)+(SELECT COUNT(*) FROM plex_catalogue WHERE scope=?1 AND verify_missing=1 AND NOT EXISTS(SELECT 1 FROM plex_catalogue_changes q WHERE q.scope=plex_catalogue.scope AND q.kind=plex_catalogue.kind AND q.id=plex_catalogue.id))),catchup_requested,watermark,changes_revision,phase FROM plex_catalogue_incremental WHERE scope=?1",[scope],|r|Ok(Progress{pending:r.get(0)?,catch_up_requested:r.get(1)?,watermark:r.get(2)?,changes_revision:r.get(3)?,phase:r.get(4)?})).optional().map(|p|p.unwrap_or(Progress{pending:0,catch_up_requested:false,watermark:None,changes_revision:0,phase:"idle".into()})).map_err(|_|"Cannot read incremental progress".into())
+}
+/// A completed incremental pass can restore browse freshness without another
+/// full census. Its capture began after the mutation and all admitted changes
+/// and deletion candidates have been resolved. Pending periodic requests do
+/// not invalidate an already completed pass.
+pub fn browse_reconciled_after(conn: &Connection, scope: &str, invalidated_at: i64) -> Result<bool, String> {
+    super::offline::check_identity(scope, "browse-freshness")?;
+    conn.query_row("SELECT EXISTS(SELECT 1 FROM plex_catalogue_incremental i WHERE i.scope=?1 AND i.watermark IS NOT NULL AND i.catchup_target IS NULL AND i.catchup_started>?2 AND (SELECT COUNT(*) FROM plex_catalogue_tasks t WHERE t.scope=i.scope AND t.task IN ('artist','album','track','playlist') AND t.status='complete')=4 AND (SELECT COUNT(*) FROM plex_catalogue_tasks t WHERE t.scope=i.scope AND t.task IN ('catchup:artist','catchup:album','catchup:track','catchup:playlist') AND t.status='complete' AND t.upper_time=i.watermark)=4 AND NOT EXISTS(SELECT 1 FROM plex_catalogue_changes WHERE scope=i.scope) AND NOT EXISTS(SELECT 1 FROM plex_catalogue WHERE scope=i.scope AND verify_missing=1))",params![scope,invalidated_at],|r|r.get(0)).map_err(|_|"Cannot verify incremental browse freshness".into())
 }
 pub fn phase(conn: &Connection, scope: &str, phase: &str) -> Result<(), String> {
     ensure_state(conn, scope)?;
@@ -639,6 +647,34 @@ pub fn catchup_finish(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn progress_is_a_pure_read_even_before_initialization() {
+        let (conn, scope) = fixture();
+        conn.pragma_update(None, "query_only", true).unwrap();
+        assert_eq!(progress(&conn, &scope).unwrap().pending, 0);
+        assert!(progress(&conn, &scope).unwrap().watermark.is_none());
+    }
+    #[test]
+    fn browse_freshness_requires_a_new_complete_window_and_resolved_changes() {
+        let (conn, scope) = fixture();
+        ensure_state(&conn, &scope).unwrap();
+        for kind in ["artist","album","track","playlist"] {
+            let task = sync::begin(&conn, &scope, kind, None).unwrap();
+            sync::checkpoint(&conn, &scope, &task, 0, Some(0), true).unwrap();
+            let task = sync::begin(&conn, &scope, &format!("catchup:{kind}"), None).unwrap();
+            sync::checkpoint(&conn, &scope, &task, 0, Some(0), true).unwrap();
+        }
+        conn.execute("UPDATE plex_catalogue_tasks SET upper_time=2 WHERE task LIKE 'catchup:%'",[]).unwrap();
+        conn.execute("UPDATE plex_catalogue_incremental SET watermark=2,catchup_started=2000,catchup_requested=1 WHERE scope=?1",[&scope]).unwrap();
+        assert!(browse_reconciled_after(&conn,&scope,1000).unwrap());
+        assert!(!browse_reconciled_after(&conn,&scope,2000).unwrap());
+        assert!(!browse_reconciled_after(&conn,&format!("plex-{}","b".repeat(64)),1000).unwrap());
+        enqueue(&conn,&scope,"track",1,5).unwrap();
+        assert!(!browse_reconciled_after(&conn,&scope,1000).unwrap());
+        conn.execute("DELETE FROM plex_catalogue_changes",[]).unwrap();
+        conn.execute("UPDATE plex_catalogue_tasks SET status='running' WHERE task='catchup:track'",[]).unwrap();
+        assert!(!browse_reconciled_after(&conn,&scope,1000).unwrap());
+    }
     fn fixture() -> (Connection, String) {
         let conn = Connection::open_in_memory().unwrap();
         super::super::schema::run_migrations(&conn).unwrap();

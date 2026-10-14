@@ -99,6 +99,12 @@ pub fn get(
     key: &str,
     now: i64,
 ) -> Result<Option<Snapshot>, String> {
+    let result = peek(conn, scope, key)?;
+    if result.is_some() { touch(conn, scope, key, now)?; }
+    Ok(result)
+}
+/// Reading a visited snapshot never requires the catalogue writer.
+pub fn peek(conn: &Connection, scope: &str, key: &str) -> Result<Option<Snapshot>, String> {
     check_identity(scope, key)?;
     let row: Option<(String, i64)> = conn
         .query_row(
@@ -114,12 +120,16 @@ pub fn get(
     let payload: Value =
         serde_json::from_str(&payload).map_err(|_| "Saved browsing data is invalid")?;
     check_payload(&payload, 0)?;
+    Ok(Some(Snapshot { payload, cached_at }))
+}
+pub fn touch(conn: &Connection, scope: &str, key: &str, now: i64) -> Result<(), String> {
+    check_identity(scope, key)?;
     conn.execute(
         "UPDATE offline_snapshots SET accessed_at=?3 WHERE scope=?1 AND cache_key=?2",
         params![scope, key, now],
     )
     .map_err(|_| "Cannot update saved browsing access")?;
-    Ok(Some(Snapshot { payload, cached_at }))
+    Ok(())
 }
 
 pub fn put(
@@ -195,6 +205,17 @@ pub fn invalidate(conn: &Connection, scope: &str, prefixes: &[String]) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn readonly_snapshot_lookup_does_not_write_access_bookkeeping() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::schema::run_migrations(&conn).unwrap();
+        let scope = format!("plex-{}", "a".repeat(64));
+        put(&conn, &scope, "page", &serde_json::json!({"title":"Saved"}), 1).unwrap();
+        conn.pragma_update(None, "query_only", true).unwrap();
+        assert_eq!(peek(&conn, &scope, "page").unwrap().unwrap().cached_at, 1);
+        assert!(peek(&conn, &scope, "missing").unwrap().is_none());
+        assert_eq!(conn.query_row("SELECT accessed_at FROM offline_snapshots WHERE scope=?1",[&scope],|r|r.get::<_,i64>(0)).unwrap(),1);
+    }
     fn scope(c: char) -> String {
         format!("plex-{}", c.to_string().repeat(64))
     }

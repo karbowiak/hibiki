@@ -6,6 +6,45 @@ import {
   type OfflineSnapshot,
 } from "../src/offline/providerCache"
 import type { MusicProvider } from "../src/providers/types"
+import { settle } from "./helpers/radioAudioFakes"
+
+test("optional snapshot persistence cannot hold up online results or unrelated local reads", async () => {
+  const disk = deferred<void>()
+  const provider = {
+    cacheScope: "plex-" + "a".repeat(64),
+    playbackSession: {},
+    getAlbum: async (id: string) => ({ id, title: "Online" }),
+  } as unknown as MusicProvider
+  const wrapped = createOfflineProvider(
+    provider,
+    {
+      get: async (key) =>
+        key === offlineKey("getAlbum", ["cached"])
+          ? { payload: { id: "cached", title: "Saved" }, cachedAt: 1 }
+          : null,
+      put: async () => {
+        await disk.promise
+      },
+    },
+    { localFirst: true }
+  )
+  let onlineReady = false
+  let localReady = false
+  const online = wrapped.getAlbum("missing").then(() => {
+    onlineReady = true
+  })
+  await settle()
+  const local = wrapped.getAlbum("cached").then((item) => {
+    localReady = true
+    return item
+  })
+  await settle()
+  expect(onlineReady).toBe(true)
+  expect(localReady).toBe(true)
+  expect((await local).title).toBe("Saved")
+  disk.resolve()
+  await online
+})
 function deferred<T>() {
   let resolve!: (value: T) => void
   let reject!: (error: unknown) => void

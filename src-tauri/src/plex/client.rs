@@ -283,6 +283,14 @@ impl PlexClient {
     where
         T: DeserializeOwned,
     {
+        let operation = if path.starts_with("/hubs") { "plex.hubs" }
+            else if path.starts_with("/playlists") && path.contains("/items") { "plex.playlist_items" }
+            else if path.starts_with("/playlists") { "plex.playlists" }
+            else if path.starts_with("/library/metadata/") && path.contains("/children") { "plex.children" }
+            else if path.starts_with("/library/metadata/") { "plex.metadata" }
+            else if path.starts_with("/library/sections/") { "plex.library" }
+            else { "plex.other" };
+        let mut timing = crate::performance::Timer::new(operation);
         let url = self.build_url(path);
         debug!("GET request");
 
@@ -294,6 +302,7 @@ impl PlexClient {
             .send()
             .await.map_err(request_error)
             .context("GET request failed")?;
+        timing.phase("headers");
 
         debug!("Response status: {}", response.status());
 
@@ -307,6 +316,7 @@ impl PlexClient {
             .bounded_plex_json::<PlexApiResponse<T>>(MAX_PLEX_BYTES)
             .await
             .context("Failed to parse JSON response")?;
+        timing.phase("body_decode");
 
         Ok(wrapper.container)
     }

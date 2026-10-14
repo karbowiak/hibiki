@@ -125,6 +125,20 @@ pub fn get(conn: &Connection, scope: &str, kind: &str, id: i64) -> Result<Option
         })
         .transpose()
 }
+/// Optional deferred GET archival must not overwrite a publication that
+/// arrived after the request began. Native owner fencing is the caller's job.
+pub fn save_observation(conn: &Connection, scope: &str, kind: &str, id: i64,
+    document: &Value, observed_at: i64) -> Result<bool, String> {
+    check(scope, kind, id)?;
+    if observed_at < 0 { return Err("Invalid catalogue observation time".into()); }
+    super::atomic_upsert(conn, |conn| {
+        let current: Option<i64> = conn.query_row("SELECT max(saved_at,listing_saved_at) FROM plex_catalogue WHERE scope=?1 AND kind=?2 AND id=?3",params![scope,kind,id],|r|r.get(0)).optional().map_err(|_|"Cannot fence catalogue observation")?;
+        if current.is_some_and(|at| at >= observed_at) { return Ok(false); }
+        save(conn, scope, kind, id, document, true)?;
+        Ok(true)
+    })
+}
+
 pub fn save_levels(
     conn: &Connection,
     scope: &str,
@@ -196,6 +210,22 @@ pub fn save_resource(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn delayed_track_observation_preserves_newer_details_and_listings() {
+        let conn = Connection::open_in_memory().unwrap();
+        super::super::schema::run_migrations(&conn).unwrap();
+        let scope = format!("plex-{}", "a".repeat(64));
+        let old = serde_json::json!({"type":"track","ratingKey":1,"title":"Old"});
+        let new = serde_json::json!({"type":"track","ratingKey":1,"title":"New"});
+        assert!(save_observation(&conn,&scope,"track",1,&new,now()).unwrap());
+        conn.execute("UPDATE plex_catalogue SET saved_at=200,listing_saved_at=0 WHERE scope=?1",[&scope]).unwrap();
+        assert!(!save_observation(&conn,&scope,"track",1,&old,100).unwrap());
+        assert!(!save_observation(&conn,&scope,"track",1,&old,200).unwrap());
+        conn.execute("UPDATE plex_catalogue SET saved_at=0,listing=?2,listing_saved_at=200 WHERE scope=?1",params![scope,new.to_string()]).unwrap();
+        assert!(!save_observation(&conn,&scope,"track",1,&old,100).unwrap());
+        assert_eq!(serde_json::from_str::<Value>(&conn.query_row("SELECT document FROM plex_catalogue WHERE scope=?1",[&scope],|r|r.get::<_,String>(0)).unwrap()).unwrap()["title"],"New");
+        assert!(save_observation(&conn,&scope,"track",1,&old,300).unwrap());
+    }
     #[test]
     fn full_documents_preserve_unknown_metadata_and_all_media_without_credentials() {
         let conn = Connection::open_in_memory().unwrap();

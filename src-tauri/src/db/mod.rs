@@ -215,8 +215,12 @@ impl DbState {
     ) -> Result<T, String> {
         let writer = self.0.clone();
         tauri::async_runtime::spawn_blocking(move || {
+            let mut timing = crate::performance::Timer::new("database_write");
             let conn = writer.lock().map_err(|_| "Database unavailable")?;
-            work(&conn)
+            timing.phase("writer_wait");
+            let result = work(&conn);
+            timing.phase("sql");
+            result
         })
         .await
         .map_err(|_| "Database write interrupted")?

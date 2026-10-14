@@ -8,6 +8,7 @@ import {
 import { buildPlexImageUrl } from "../backends/plex/imageUrl"
 import { sanitizeOfflineData, type OfflineSnapshot } from "./providerCache"
 import type { MusicTrack } from "../types/music"
+import { startTiming } from "../lib/performance"
 
 export interface CatalogueTask {
   task: string
@@ -62,60 +63,70 @@ export async function catalogueRead(
   key: string
 ): Promise<(OfflineSnapshot & { catalogueComplete?: boolean }) | null> {
   const [, method, args] = JSON.parse(key) as [string, string, unknown[]]
-  const decoded = args.map((value) =>
-    value && typeof value === "object" && "$undefined" in value ? null : value
-  )
-  const page = await invoke<{
-    items: PlexMedia[]
-    total: number
-    cachedAt: number
-    complete: boolean
-    serverTotal: number | null
-  } | null>("catalogue_query", { context, method, args: decoded })
-  if (!page) return null
-  if (method === "getTags")
+  const timing = startTiming(method)
+  try {
+    const decoded = args.map((value) =>
+      value && typeof value === "object" && "$undefined" in value ? null : value
+    )
+    const page = await invoke<{
+      items: PlexMedia[]
+      total: number
+      cachedAt: number
+      complete: boolean
+      serverTotal: number | null
+    } | null>("catalogue_query", { context, method, args: decoded })
+    timing.phase("catalogue_ipc")
+    if (!page) return null
+    if (method === "getTags")
+      return {
+        payload: page.items,
+        cachedAt: page.cachedAt,
+        catalogueComplete: page.complete,
+      }
+    const img: ImgResolver = (path, type, id, name, artist) =>
+      buildPlexImageUrl(
+        baseUrl,
+        "native-owned",
+        type,
+        id,
+        path,
+        name,
+        artist,
+        context.cacheScope
+      ) ?? ""
+    const items = page.items
+      .map((item) => plexMediaToMusicItem(item, img))
+      .filter((item) => item !== null)
+    let payload: unknown = items
+    if (["getTrack", "getAlbum", "getArtist"].includes(method)) {
+      if (!items[0]) return null
+      payload = items[0]
+    } else if (
+      method.startsWith("getAll") ||
+      method === "getPlaylistItems" ||
+      method === "getItemsByTag"
+    )
+      payload = {
+        items,
+        total: page.total,
+        localCoverageComplete: page.complete,
+        serverTotal: page.serverTotal,
+        offset:
+          decoded[
+            method === "getPlaylistItems"
+              ? 1
+              : method === "getItemsByTag"
+                ? 4
+                : 0
+          ] ?? 0,
+      }
     return {
-      payload: page.items,
+      payload: sanitizeOfflineData(payload),
       cachedAt: page.cachedAt,
       catalogueComplete: page.complete,
     }
-  const img: ImgResolver = (path, type, id, name, artist) =>
-    buildPlexImageUrl(
-      baseUrl,
-      "native-owned",
-      type,
-      id,
-      path,
-      name,
-      artist,
-      context.cacheScope
-    ) ?? ""
-  const items = page.items
-    .map((item) => plexMediaToMusicItem(item, img))
-    .filter((item) => item !== null)
-  let payload: unknown = items
-  if (["getTrack", "getAlbum", "getArtist"].includes(method)) {
-    if (!items[0]) return null
-    payload = items[0]
-  } else if (
-    method.startsWith("getAll") ||
-    method === "getPlaylistItems" ||
-    method === "getItemsByTag"
-  )
-    payload = {
-      items,
-      total: page.total,
-      localCoverageComplete: page.complete,
-      serverTotal: page.serverTotal,
-      offset:
-        decoded[
-          method === "getPlaylistItems" ? 1 : method === "getItemsByTag" ? 4 : 0
-        ] ?? 0,
-    }
-  return {
-    payload: sanitizeOfflineData(payload),
-    cachedAt: page.cachedAt,
-    catalogueComplete: page.complete,
+  } finally {
+    timing.end("catalogue_map")
   }
 }
 /** One IPC for a whole visible page; actual complete cache files decide admission. */

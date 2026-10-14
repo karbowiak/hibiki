@@ -137,6 +137,18 @@ ownership is checked again after reads. Catalogue writes cannot hold the native
 Plex/audio admission lock while waiting for the writer. V9 shelf/tag projections
 backfill in small resumable batches; online views fall back to Plex until their
 scope is covered, while full raw documents and existing checkpoints remain intact.
+Visited snapshots use the same independent readers; access bookkeeping and
+optional snapshot saves run in the background. Reads wait for mutation
+invalidations, not unrelated saves. Online results remain usable before optional
+storage completes. A completed incremental pass captured after an edit, with
+all admitted changes resolved, restores broad catalogue freshness. Playlist
+membership still requires its own complete, fresh published generation.
+
+Artist and album pages publish their identity, albums and tracks before waiting
+for optional related hubs, similar artists and stations. Enrichment retains the
+same account/request fences and updates only its current page. Deep playlist
+pages seek the published occurrence-position range before metadata joins, so
+skipping preceding songs does not decode them.
 
 Normalized playback fixes gain before installing a finite track, including queue
 preloads. Native preparation reuses Plex or cached gain first and can request
@@ -148,6 +160,18 @@ a complete finite file. Automatic analysis never changes an audible occurrence.
 Valid silent tracks and very short interludes use fixed unity when the completed
 scan cannot measure integrated loudness; no guessed gain is saved. Empty or
 incomplete audio still fails before playback.
+
+Development builds write bounded private `performance-*.jsonl` sessions in app
+data. The nonblocking log records fixed operation/phase names and milliseconds
+for native ownership waits, database work, Plex response headers/body decoding,
+renderer IPC/cache mapping, page core/enrichment and React render commits. It
+contains no query arguments, SQL parameters, library identities, metadata,
+URLs, tokens, paths or error strings. Each session stops at 4 MiB, admissions
+drop under pressure, and production builds create no performance log. Timing
+phases and UI observation time measure different parts of a page load; native
+SQL/projection figures alone do not establish end-to-end responsiveness.
+Run `python3 scripts/report-performance.py` to summarize the latest session, or
+pass a session filename. `--min-ms` and `--limit` narrow the outlier report.
 
 ## Incremental catalogue updates
 

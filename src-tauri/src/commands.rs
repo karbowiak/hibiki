@@ -452,13 +452,21 @@ pub async fn get_track(
     rating_key: i64,
     app: tauri::AppHandle,
     state: State<'_, PlexState>,
-    db: State<'_, crate::db::DbState>,
 ) -> Result<Track, String> {
     let c = client!(state, context);
+    let observed_at = crate::db::catalogue::now();
     let (track,raw) = c.get_track_document(rating_key).await.map_err(|e| format!("{e:#}"))?;
     let guard = state.0.lock().await;
     state.checked_client(&context,&guard)?;
-    if track.library_section_id == crate::offline_audio::library_id(&app,&c)? { if let Ok(conn) = db.0.lock() { let _ = crate::db::catalogue::save(&conn,&c.library_scope,"track",rating_key,&raw,true); } }
+    if track.library_section_id == crate::offline_audio::library_id(&app,&c)? {
+        // Optional archival cannot delay fresh playback metadata or monopolize
+        // native admission. A newer listing/event publication wins this race.
+        tauri::async_runtime::spawn(async move {
+            let _ = crate::offline_commands::owned_write(&app, &context, true, move |conn, scope| {
+                crate::db::catalogue::save_observation(conn, scope, "track", rating_key, &raw, observed_at).map(|_| ())
+            }).await;
+        });
+    }
     Ok(track)
 }
 

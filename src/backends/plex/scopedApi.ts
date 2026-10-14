@@ -7,6 +7,7 @@ import type {
 } from "../../providers/types"
 /** Plex library RPCs retain their originating native connection and library. */
 import { invoke as nativeInvoke } from "@tauri-apps/api/core"
+import { startTiming } from "../../lib/performance"
 import type {
   Album,
   Artist,
@@ -58,12 +59,17 @@ export function createPlexApi(
     args: Record<string, unknown> = {}
   ): Promise<T> {
     check()
-    const result = await transport<T>(command, {
-      ...args,
-      context: requestContext,
-    })
-    check()
-    return result
+    const timing = startTiming(command)
+    try {
+      const result = await transport<T>(command, {
+        ...args,
+        context: requestContext,
+      })
+      check()
+      return result
+    } finally {
+      timing.end("ipc")
+    }
   }
 
   // ---------------------------------------------------------------------------

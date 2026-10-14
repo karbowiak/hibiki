@@ -14,7 +14,72 @@ pub struct Page {
     pub server_total: Option<i64>,
 }
 pub(crate) fn project(kind: &str, raw: Value) -> Result<Value, String> {
-    let mut raw = super::catalogue::clean_document(&raw)?;
+    // The native archive has already sanitized and bounded its raw documents.
+    // Keep input size/depth guards without cloning unknown metadata, then apply
+    // the canonical credential/URL cleaner to only the actual renderer DTO.
+    fn input_size(value: &Value, depth: usize, exact: bool) -> Result<(usize, usize), String> {
+        const MAX: usize = 16 * 1024 * 1024;
+        if depth > 48 {
+            return Err("Plex metadata is too deeply nested".into());
+        }
+        fn text_size(text: &str, exact: bool) -> (usize, usize) {
+            let plain = text.len().saturating_add(2);
+            if !exact {
+                return (plain, text.len().saturating_mul(6).saturating_add(2));
+            }
+            let extra = text.bytes().map(|byte| match byte {
+                b'"' | b'\\' | b'\x08' | b'\x0c' | b'\n' | b'\r' | b'\t' => 1,
+                0..=31 => 5,
+                _ => 0,
+            }).sum::<usize>();
+            let size = plain.saturating_add(extra);
+            (size, size)
+        }
+        let mut size = (0usize, 0usize);
+        let mut add = |part: (usize, usize)| -> Result<(), String> {
+            size.0 = size.0.saturating_add(part.0);
+            size.1 = size.1.saturating_add(part.1).min(MAX + 1);
+            if size.0 > MAX {
+                return Err("Plex metadata document exceeds 16 MB".into());
+            }
+            Ok(())
+        };
+        match value {
+            Value::Object(values) => {
+                let delimiters = 2 + values.len().saturating_sub(1);
+                add((delimiters, delimiters))?;
+                for (key, value) in values {
+                    add(text_size(key, exact))?;
+                    add((1, 1))?;
+                    add(input_size(value, depth + 1, exact)?)?;
+                }
+            }
+            Value::Array(values) => {
+                let delimiters = 2 + values.len().saturating_sub(1);
+                add((delimiters, delimiters))?;
+                for value in values {
+                    add(input_size(value, depth + 1, exact)?)?;
+                }
+            }
+            Value::String(text) => add(text_size(text, exact))?,
+            Value::Number(number) => {
+                let length = number.to_string().len();
+                add((length, length))?;
+            }
+            Value::Null => add((4, 4))?,
+            Value::Bool(value) => {
+                let length = if *value { 4 } else { 5 };
+                add((length, length))?;
+            }
+        }
+        Ok(size)
+    }
+    // Ordinary metadata fits even its conservative escaped-size upper bound.
+    // Only near-limit inputs need the exact borrowed escape-counting pass.
+    if input_size(&raw, 0, false)?.1 > 16 * 1024 * 1024 {
+        input_size(&raw, 0, true)?;
+    }
+    let mut raw = raw;
     // PMS sometimes supplies only ratingKey fields for ancestry.
     for (id, key) in [
         ("parentRatingKey", "parentKey"),
@@ -53,9 +118,22 @@ pub(crate) fn project(kind: &str, raw: Value) -> Result<Value, String> {
         }
     }
     item["type"] = json!(kind);
-    Ok(item)
+    super::catalogue::clean_document(&item)
 }
 const DOCUMENT:&str="CASE WHEN listing_saved_at>saved_at THEN json_patch(document,json_remove(listing,'$.Media','$.Guid')) ELSE document END";
+// Disjoint NULL/date ranges let SQLite count directly from the release index,
+// rather than evaluating this shelf's OR predicate on every album's fields.
+const RELEASE_COUNT_SQL: &str = "SELECT
+ (SELECT COUNT(*) FROM plex_catalogue_browse_data INDEXED BY plex_catalogue_browse_release WHERE scope=?1 AND kind='album' AND removed=0 AND released_on IS NULL)
+ +(SELECT COUNT(*) FROM plex_catalogue_browse_data INDEXED BY plex_catalogue_browse_release WHERE scope=?1 AND kind='album' AND removed=0 AND released_on<=date('now'))";
+// Both catalogue publication and captured downloads write consecutive positions
+// from zero. Select that bounded range before joining full native track metadata.
+const PLAYLIST_PAGE_SQL: &str = "WITH page AS MATERIALIZED(
+ SELECT scope,position,document FROM plex_catalogue_playlist_members
+ WHERE scope=?1 AND playlist_id=?2 AND generation=?3 AND position>=?4 AND position<?5 ORDER BY position)
+ SELECT page.position,page.document,c.document FROM page LEFT JOIN plex_catalogue c
+ ON c.scope=page.scope AND c.kind='track' AND c.id=CAST(json_extract(page.document,'$.ratingKey') AS INTEGER)
+ ORDER BY page.position";
 /// Hot shelves/tags use compact indexed derived rows only after the bounded
 /// scope backfill is complete. Foreground read connections never write here.
 fn projections_ready(conn: &Connection, scope: &str) -> Result<bool, String> {
@@ -183,6 +261,14 @@ pub fn query(
             args.get(2).and_then(Value::as_i64).unwrap_or(200),
         );
     }
+    // A completed native catch-up can reconcile broad mutation invalidations
+    // without requiring another full census. Point details keep their own
+    // timestamp check, and playlist occurrences keep publication freshness.
+    let invalidated = match invalidated {
+        Some(at) if !matches!(method, "getTrack" | "getAlbum" | "getArtist")
+            && super::catalogue_incremental::browse_reconciled_after(conn, scope, at)? => None,
+        marker => marker,
+    };
     if method == "getAlbumTracks" {
         let roster = super::catalogue_sync::task(conn, scope, "track")?;
         let roster_fresh = roster.is_some_and(|task| {
@@ -464,9 +550,14 @@ pub fn query(
             _ => rusqlite::types::Value::Null,
         })
         .collect::<Vec<_>>();
+    let count_sql = if method == "getLatestReleases" {
+        RELEASE_COUNT_SQL.to_owned()
+    } else {
+        format!("SELECT COUNT(*) FROM {source} WHERE {filter}")
+    };
     let total: i64 = conn
         .query_row(
-            &format!("SELECT COUNT(*) FROM {source} WHERE {filter}"),
+            &count_sql,
             rusqlite::params_from_iter(&sqlvalues),
             |r| r.get(0),
         )
@@ -623,24 +714,31 @@ fn playlist(
     if id <= 0 || offset < 0 || !(1..=10000).contains(&limit) {
         return Err("Invalid playlist page".into());
     }
+    let end = offset.checked_add(limit).ok_or("Invalid playlist page")?;
     let published:Option<(String,i64,i64)>=conn.query_row("SELECT generation,total,saved_at FROM plex_catalogue_playlist_versions WHERE scope=?1 AND playlist_id=?2",params![scope,id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|_|"Cannot read playlist version")?;
     let Some((generation, total, cached_at)) = published else {
         return Ok(None);
     };
+    if total < 0 {
+        return Err("Invalid published playlist coverage".into());
+    }
     let invalidated:Option<i64>=conn.query_row("SELECT invalidated_at FROM plex_catalogue_invalidations WHERE scope=?1 AND method='getPlaylistItems'",[scope],|r|r.get(0)).optional().map_err(|_|"Cannot verify playlist freshness")?;
     if invalidated.is_some_and(|at| cached_at <= at) {
         return Ok(None);
     }
-    let mut stmt=conn.prepare("SELECT m.document,c.document FROM plex_catalogue_playlist_members m LEFT JOIN plex_catalogue c ON c.scope=m.scope AND c.kind='track' AND c.id=CAST(json_extract(m.document,'$.ratingKey') AS INTEGER) WHERE m.scope=?1 AND m.playlist_id=?2 AND m.generation=?3 ORDER BY m.position LIMIT ?4 OFFSET ?5").map_err(|_|"Cannot read playlist catalogue")?;
+    let mut stmt = conn.prepare(PLAYLIST_PAGE_SQL).map_err(|_| "Cannot read playlist catalogue")?;
     let rows = stmt
-        .query_map(params![scope, id, generation, limit, offset], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+        .query_map(params![scope, id, generation, offset, end.min(total)], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?))
         })
         .map_err(|_| "Cannot read playlist catalogue")?;
     let mut items = vec![];
     let mut bytes = 0;
     for row in rows {
-        let (member, full) = row.map_err(|_| "Cannot read playlist catalogue")?;
+        let (position, member, full) = row.map_err(|_| "Cannot read playlist catalogue")?;
+        if position != offset + items.len() as i64 {
+            return Err("Invalid published playlist coverage".into());
+        }
         let item = project("track", enrich_member(&member, full.as_deref(), None)?)?;
         bytes += serde_json::to_vec(&item)
             .map_err(|_| "Invalid playlist projection")?
@@ -651,6 +749,9 @@ fn playlist(
             );
         }
         items.push(item);
+    }
+    if items.len() as i64 != total.saturating_sub(offset).clamp(0, limit) {
+        return Err("Incomplete published playlist coverage".into());
     }
     Ok(Some(Page {
         items,
@@ -761,6 +862,62 @@ mod tests {
             .unwrap(),
             0
         );
+    }
+    #[test]
+    fn typed_renderer_cleaning_scrubs_credentials_urls_and_paths_without_changing_archive() {
+        let (conn, scope) = fixture();
+        for kind in ["track", "album", "artist", "playlist"] {
+            let raw = json!({
+                "type":kind,"ratingKey":42,"title":"Safe title",
+                "key":"/library/metadata/42?X%2DPlex%2DToken=relative-token&sig=a%2Fb#keep",
+                "thumb":"https://user:credential@example.test/art?Api_Key=url-secret&sig=a%2Fb#keep",
+                "guid":"https://user:credential@example.test/reference?access_token=guid-secret&sig=a%2Fb#keep",
+                "X-Plex-Token":"root-secret","authorization":"root-authorization",
+                "future":{"keep":{"value":17},"password":"nested-secret"},
+                "Guid":[{"id":"plex://track/native-guid","future":{"preserve":true},"token":"guid-array-secret"}],
+                "Media":[
+                    {"id":1,"future":{"preserve":true},"secret":"media-secret","Part":[{"id":8,"key":"/library/parts/8/file?token=part-secret","file":"/private/native-only.flac","Stream":[{"id":9,"streamType":2,"gain":-8.2,"key":"/library/streams/9?authorization=stream-secret&sig=a%2Fb","future":{"preserve":true},"apiKey":"nested-stream-secret"}]}]},
+                    {"id":2,"Part":[{"id":18,"file":"/private/alternate.flac","key":"/library/parts/18/file","Stream":[{"id":19,"streamType":2,"gain":1.2}]}]}
+                ]
+            });
+            crate::db::catalogue::save(&conn, &scope, kind, 42, &raw, true).unwrap();
+            let before = crate::db::catalogue::get(&conn, &scope, kind, 42).unwrap().unwrap();
+            // Project an unsanitized source as an additional privacy check;
+            // production reads use the already-clean private archive.
+            let dto = project(kind, raw).unwrap();
+            assert_eq!(dto["key"], "/library/metadata/42?sig=a%2Fb#keep");
+            assert_eq!(dto["thumb"], "https://example.test/art?sig=a%2Fb#keep");
+            assert_eq!(dto["guid"], "https://example.test/reference?sig=a%2Fb#keep");
+            let encoded = dto.to_string();
+            for forbidden in ["secret", "credential", "/private/", "X-Plex-Token", "authorization", "password", "future", "Guid"] {
+                assert!(!encoded.contains(forbidden), "Renderer retained {forbidden} for {kind}");
+            }
+            if kind == "track" {
+                assert_eq!(dto["media"].as_array().unwrap().len(), 2);
+                assert_eq!(dto["media"][0]["parts"][0]["key"], "");
+                assert!(dto["media"][0]["parts"][0].get("file").is_none());
+                assert_eq!(dto["media"][0]["parts"][0]["streams"][0]["gain"], -8.2);
+                assert_eq!(dto["media"][0]["parts"][0]["streams"][0]["key"], "/library/streams/9?sig=a%2Fb");
+            }
+            assert_eq!(crate::db::catalogue::get(&conn, &scope, kind, 42).unwrap().unwrap(), before);
+            assert_eq!(before["future"]["keep"]["value"], 17);
+            assert_eq!(before["Guid"][0]["future"]["preserve"], true);
+            assert_eq!(before["Media"][0]["Part"][0]["file"], "/private/native-only.flac");
+            assert_eq!(before["Media"][0]["Part"][0]["Stream"][0]["future"]["preserve"], true);
+        }
+    }
+    #[test]
+    fn renderer_projection_retains_depth_and_public_payload_bounds() {
+        let mut deep = json!("unknown");
+        for _ in 0..49 {
+            deep = json!({"child":deep});
+        }
+        assert!(project("track", json!({"type":"track","ratingKey":1,"future":deep})).is_err());
+        assert!(project("track", json!({"type":"track","ratingKey":1,"title":"x".repeat(16*1024*1024)})).is_err());
+        assert!(project("track", json!({"type":"track","ratingKey":1,"future":"x".repeat(16*1024*1024)})).is_err());
+        // Raw byte length alone undercounts heavily escaped ignored fields.
+        assert!(project("track", json!({"type":"track","ratingKey":1,"future":"\"".repeat(8*1024*1024)})).is_err());
+        assert!(project("track", json!({"type":"track","ratingKey":1,"future":"x".repeat(3*1024*1024)})).is_ok());
     }
     #[test]
     fn indexed_ancestry_honors_numeric_ids_native_keys_and_latest_disc_format_order() {
@@ -941,6 +1098,80 @@ mod tests {
         assert!(plan("SELECT DISTINCT tag FROM plex_catalogue_browse_tags WHERE scope=?1 AND resource='Genre' AND removed=0 ORDER BY tag COLLATE NOCASE LIMIT 10001").contains("COVERING INDEX plex_catalogue_browse_tag_inventory"));
         assert!(plan("SELECT id FROM plex_catalogue WHERE scope=?1 AND kind='track' AND removed=0 AND download_album=7").contains("plex_catalogue_download_album"));
         assert!(plan("SELECT id FROM plex_catalogue WHERE scope=?1 AND kind='track' AND removed=0 AND download_artist=8").contains("plex_catalogue_download_artist"));
+    }
+    #[test]
+    fn release_count_uses_disjoint_index_ranges_and_keeps_scope_date_removal_semantics() {
+        let (conn, scope) = fixture();
+        let other = format!("plex-{}", "b".repeat(64));
+        mark_complete(&conn, &scope, "album");
+        for (id, date) in [(1, Some("2000-01-01")), (2, None), (3, Some("invalid")), (4, Some("9999-12-31")), (5, Some("2001-01-01"))] {
+            crate::db::catalogue::save(&conn, &scope, "album", id, &json!({"type":"album","ratingKey":id,"title":format!("Album {id}"),"originallyAvailableAt":date}), true).unwrap();
+        }
+        crate::db::catalogue::save(&conn, &other, "album", 6, &json!({"type":"album","ratingKey":6,"originallyAvailableAt":"2000-01-01"}), true).unwrap();
+        conn.execute("UPDATE plex_catalogue SET removed=1 WHERE scope=?1 AND id=5", [&scope]).unwrap();
+        let page = query(&conn, &scope, "getLatestReleases", &[json!(1)]).unwrap().unwrap();
+        assert_eq!(page.total, 3);
+        assert_eq!(ids(page), vec![1]);
+        // New listing dates must change both count and page without losing the
+        // archived full document. Invalid and absent dates remain included.
+        conn.execute("UPDATE plex_catalogue SET listing=?2,listing_saved_at=saved_at+1 WHERE scope=?1 AND id=4", params![scope,json!({"originallyAvailableAt":"2002-01-01"}).to_string()]).unwrap();
+        let page = query(&conn, &scope, "getLatestReleases", &[json!(10)]).unwrap().unwrap();
+        assert_eq!(page.total, 4);
+        assert_eq!(ids(page), vec![4, 1, 2, 3]);
+        let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {RELEASE_COUNT_SQL}")).unwrap();
+        let plan = stmt.query_map([&scope], |r| r.get::<_, String>(3)).unwrap().collect::<Result<Vec<_>, _>>().unwrap().join("\n");
+        assert_eq!(plan.matches("plex_catalogue_browse_release").count(), 2);
+        assert!(plan.contains("released_on=?"));
+        assert!(plan.contains("released_on<?"));
+        assert!(!plan.contains("plex_catalogue_browse_recent"));
+    }
+    #[test]
+    fn published_playlist_pages_seek_positions_bound_overflow_and_reject_broken_coverage() {
+        let (conn, scope) = fixture();
+        let task = crate::db::catalogue_sync::begin(&conn, &scope, "playlist:7", Some("finite")).unwrap();
+        let members = (0..2000).map(|n| json!({"type":"track","ratingKey":42,"playlistItemID":n+1000,"title":"Repeated track"})).collect::<Vec<_>>();
+        crate::db::catalogue_sync::playlist_page(&conn, &scope, 7, &task, &members, Some(2000), true).unwrap();
+        let page = query(&conn, &scope, "getPlaylistItems", &[json!("7"),json!(1998),json!(200)]).unwrap().unwrap();
+        assert_eq!(page.total, 2000);
+        assert_eq!(page.items.iter().map(|item| item["playlist_item_id"].as_i64().unwrap()).collect::<Vec<_>>(), vec![2998,2999]);
+        assert!(query(&conn, &scope, "getPlaylistItems", &[json!("7"),json!(2000),json!(200)]).unwrap().unwrap().items.is_empty());
+        assert!(query(&conn, &scope, "getPlaylistItems", &[json!("7"),json!(i64::MAX),json!(1)]).is_err());
+        let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {PLAYLIST_PAGE_SQL}")).unwrap();
+        let plan = stmt.query_map(params![scope,7,"finite",1998,2000], |r| r.get::<_, String>(3)).unwrap().collect::<Result<Vec<_>, _>>().unwrap().join("\n");
+        assert!(plan.contains("MATERIALIZE page"));
+        assert!(plan.contains("position>? AND position<?"));
+        // A corrupted or foreign sparse publication must fail honestly, rather
+        // than treating its ordinal offset as a valid complete position page.
+        conn.execute("DELETE FROM plex_catalogue_playlist_members WHERE scope=?1 AND playlist_id=7 AND generation='finite' AND position=1998", [&scope]).unwrap();
+        assert!(query(&conn, &scope, "getPlaylistItems", &[json!("7"),json!(1998),json!(200)]).is_err());
+    }
+    #[test]
+    fn completed_incremental_window_reconciles_browse_and_children_but_not_playlist_publication() {
+        let (conn, scope) = fixture();
+        crate::db::catalogue::save(&conn, &scope, "track", 1, &json!({"type":"track","ratingKey":1,"parentRatingKey":7,"title":"Local track"}), true).unwrap();
+        for kind in ["artist", "album", "track", "playlist"] {
+            mark_complete(&conn, &scope, kind);
+        }
+        conn.execute("UPDATE plex_catalogue_tasks SET completed_at=100 WHERE scope=?1", [&scope]).unwrap();
+        for method in ["getAllTracks", "getAlbumTracks", "getPlaylistItems"] {
+            conn.execute("INSERT INTO plex_catalogue_invalidations(scope,method,invalidated_at) VALUES(?1,?2,500)", params![scope,method]).unwrap();
+        }
+        conn.execute("INSERT INTO plex_catalogue_playlist_versions(scope,playlist_id,generation,total,saved_at) VALUES(?1,7,'old',0,400)", [&scope]).unwrap();
+        assert!(query(&conn, &scope, "getAllTracks", &[json!(0),json!(200)]).unwrap().is_none());
+        assert!(query(&conn, &scope, "getAlbumTracks", &[json!("7")]).unwrap().is_none());
+        for kind in ["artist", "album", "track", "playlist"] {
+            mark_complete(&conn, &scope, &format!("catchup:{kind}"));
+        }
+        conn.execute("UPDATE plex_catalogue_tasks SET upper_time=2 WHERE scope=?1 AND task LIKE 'catchup:%'", [&scope]).unwrap();
+        conn.execute("INSERT INTO plex_catalogue_incremental(scope,watermark,catchup_started,catchup_requested) VALUES(?1,2,1000,1)", [&scope]).unwrap();
+        assert_eq!(ids(query(&conn, &scope, "getAllTracks", &[json!(0),json!(200)]).unwrap().unwrap()), vec![1]);
+        assert_eq!(ids(query(&conn, &scope, "getAlbumTracks", &[json!("7")]).unwrap().unwrap()), vec![1]);
+        assert!(query(&conn, &scope, "getPlaylistItems", &[json!("7"),json!(0),json!(200)]).unwrap().is_none());
+        // A later mutation and an unresolved admitted update retain the guard.
+        conn.execute("UPDATE plex_catalogue_invalidations SET invalidated_at=1500 WHERE scope=?1 AND method='getAllTracks'", [&scope]).unwrap();
+        assert!(query(&conn, &scope, "getAllTracks", &[json!(0),json!(200)]).unwrap().is_none());
+        crate::db::catalogue_incremental::enqueue(&conn, &scope, "track", 1, 5).unwrap();
+        assert!(query(&conn, &scope, "getAlbumTracks", &[json!("7")]).unwrap().is_none());
     }
     #[test]
     fn projections_are_scoped_searchable_and_keep_paths_native() {

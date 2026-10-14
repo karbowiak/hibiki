@@ -10,6 +10,7 @@ import type {
   MusicPlaylist,
 } from "../types/music"
 import { processArtistAlbums } from "../lib/dedup"
+import { startTiming } from "../lib/performance"
 
 export interface ArtistCacheEntry {
   artist: MusicArtist
@@ -199,7 +200,11 @@ export function createMetadataCache({
 
   function loadArtist(
     id: string,
-    opts: { force?: boolean; deduplicate?: boolean } = {}
+    opts: {
+      force?: boolean
+      deduplicate?: boolean
+      onCore?: (entry: ArtistCacheEntry) => void
+    } = {}
   ): Promise<ArtistCacheEntry> {
     const session = capture(),
       shouldDeduplicate = opts.deduplicate ?? deduplicate()
@@ -221,69 +226,84 @@ export function createMetadataCache({
         throw new MetadataRequestSuperseded()
     }
     request.promise = (async () => {
-      const p = session.provider
-      const [
-        artist,
-        allAlbums,
-        singleList,
-        tracks,
-        similarArtists,
-        sonicallySimilar,
-        relatedHubs,
-        stations,
-      ] = await Promise.all([
-        p.getArtist(id),
-        (p.getArtistAlbumsInSection
-          ? p.getArtistAlbumsInSection(id)
-          : p.getArtistAlbums(id)
-        ).catch((error) => {
-          if (p.isOffline) return []
-          throw error
-        }),
-        (p.getArtistAlbumsInSection
-          ? p.getArtistAlbumsInSection(id, "EP,Single")
-          : Promise.resolve([])
-        ).catch((error) => {
-          if (p.isOffline) return []
-          throw error
-        }),
-        p.isOffline && p.getArtistTracks
-          ? p.getArtistTracks(id)
-          : p.getArtistPopularTracksInSection
-            ? p.getArtistPopularTracksInSection(id, 15)
-            : p.getArtistPopularTracks(id, 15),
-        p.getArtistSimilar(id).catch(() => []),
-        p.getArtistSonicallySimilar
-          ? p.getArtistSonicallySimilar(id, 20).catch(() => [])
-          : Promise.resolve([]),
-        p.getRelatedHubs(id).catch(() => []),
-        p.getArtistStations
-          ? p.getArtistStations(id).catch(() => [])
-          : Promise.resolve([]),
-      ])
-      valid()
-      if (artist.id !== id)
-        throw new Error("Server returned a different artist")
-      const lists = processArtistAlbums(
-        allAlbums,
-        singleList,
-        shouldDeduplicate
-      )
-      const entry = {
-        artist,
-        albums: lists.albums,
-        singles: lists.singles,
-        popularTracks: unique(tracks),
-        similarArtists,
-        sonicallySimilar,
-        relatedHubs,
-        stations,
-        deduplicated: shouldDeduplicate,
-        fetchedAt: Date.now(),
+      const timing = startTiming("artistPage")
+      try {
+        const p = session.provider
+        const recommendations = Promise.all([
+          p.getArtistSimilar(id).catch(() => []),
+          p.getArtistSonicallySimilar
+            ? p.getArtistSonicallySimilar(id, 20).catch(() => [])
+            : Promise.resolve([]),
+          p.getRelatedHubs(id).catch(() => []),
+          p.getArtistStations
+            ? p.getArtistStations(id).catch(() => [])
+            : Promise.resolve([]),
+        ])
+        const [artist, allAlbums, singleList, tracks] = await Promise.all([
+          p.getArtist(id),
+          (p.getArtistAlbumsInSection
+            ? p.getArtistAlbumsInSection(id)
+            : p.getArtistAlbums(id)
+          ).catch((error) => {
+            if (p.isOffline) return []
+            throw error
+          }),
+          (p.getArtistAlbumsInSection
+            ? p.getArtistAlbumsInSection(id, "EP,Single")
+            : Promise.resolve([])
+          ).catch((error) => {
+            if (p.isOffline) return []
+            throw error
+          }),
+          p.isOffline && p.getArtistTracks
+            ? p.getArtistTracks(id)
+            : p.getArtistPopularTracksInSection
+              ? p.getArtistPopularTracksInSection(id, 15)
+              : p.getArtistPopularTracks(id, 15),
+        ])
+        timing.phase("core")
+        valid()
+        if (artist.id !== id)
+          throw new Error("Server returned a different artist")
+        const lists = processArtistAlbums(
+          allAlbums,
+          singleList,
+          shouldDeduplicate
+        )
+        const core: ArtistCacheEntry = {
+          artist,
+          albums: lists.albums,
+          singles: lists.singles,
+          popularTracks: unique(tracks),
+          similarArtists: cached?.similarArtists ?? [],
+          sonicallySimilar: cached?.sonicallySimilar ?? [],
+          relatedHubs: cached?.relatedHubs ?? [],
+          stations: cached?.stations ?? [],
+          deduplicated: shouldDeduplicate,
+          fetchedAt: Date.now(),
+        }
+        if (opts.onCore) {
+          artists = evict({ ...artists, [id]: core }, MAX_ARTISTS, id)
+          save()
+          opts.onCore(core)
+        }
+        const [similarArtists, sonicallySimilar, relatedHubs, stations] =
+          await recommendations
+        valid()
+        timing.phase("recommendations")
+        const entry = {
+          ...core,
+          similarArtists,
+          sonicallySimilar,
+          relatedHubs,
+          stations,
+        }
+        artists = evict({ ...artists, [id]: entry }, MAX_ARTISTS, id)
+        save()
+        return entry
+      } finally {
+        timing.end("load")
       }
-      artists = evict({ ...artists, [id]: entry }, MAX_ARTISTS, id)
-      save()
-      return entry
     })().finally(() => {
       if (artistRequests.get(id) === request) artistRequests.delete(id)
     })
@@ -292,7 +312,7 @@ export function createMetadataCache({
 
   function loadAlbum(
     id: string,
-    opts: { force?: boolean } = {}
+    opts: { force?: boolean; onCore?: (entry: AlbumCacheEntry) => void } = {}
   ): Promise<AlbumCacheEntry> {
     const session = capture()
     if (!session) return Promise.reject(new MetadataRequestSuperseded())
@@ -302,19 +322,42 @@ export function createMetadataCache({
     const existing = albumRequests.get(id)
     if (!opts.force && existing) return existing
     const request = (async () => {
-      const [album, tracks, relatedHubs] = await Promise.all([
-        session.provider.getAlbum(id),
-        session.provider.getAlbumTracks(id),
-        session.provider.getRelatedHubs(id).catch(() => []),
-      ])
-      check(session)
-      if (albumRequests.get(id) !== request)
-        throw new MetadataRequestSuperseded()
-      if (album.id !== id) throw new Error("Server returned a different album")
-      const entry = { album, tracks, relatedHubs, fetchedAt: Date.now() }
-      albums = evict({ ...albums, [id]: entry }, MAX_ALBUMS, id)
-      save()
-      return entry
+      const timing = startTiming("albumPage")
+      try {
+        const related = session.provider.getRelatedHubs(id).catch(() => [])
+        const [album, tracks] = await Promise.all([
+          session.provider.getAlbum(id),
+          session.provider.getAlbumTracks(id),
+        ])
+        timing.phase("core")
+        check(session)
+        if (albumRequests.get(id) !== request)
+          throw new MetadataRequestSuperseded()
+        if (album.id !== id)
+          throw new Error("Server returned a different album")
+        const core = {
+          album,
+          tracks,
+          relatedHubs: cached?.relatedHubs ?? [],
+          fetchedAt: Date.now(),
+        }
+        if (opts.onCore) {
+          albums = evict({ ...albums, [id]: core }, MAX_ALBUMS, id)
+          save()
+          opts.onCore(core)
+        }
+        const relatedHubs = await related
+        check(session)
+        if (albumRequests.get(id) !== request)
+          throw new MetadataRequestSuperseded()
+        timing.phase("recommendations")
+        const entry = { ...core, relatedHubs }
+        albums = evict({ ...albums, [id]: entry }, MAX_ALBUMS, id)
+        save()
+        return entry
+      } finally {
+        timing.end("load")
+      }
     })().finally(() => {
       if (albumRequests.get(id) === request) albumRequests.delete(id)
     })

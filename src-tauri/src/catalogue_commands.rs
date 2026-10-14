@@ -533,6 +533,7 @@ pub(crate) async fn save_checked<T>(
     context: &PlexRequestContext,
     f: impl FnOnce(&rusqlite::Connection) -> Result<T, String>,
 ) -> Result<T, String> {
+    let mut timing = crate::performance::Timer::new("catalogue_write");
     let state = app.state::<PlexState>();
     let db = app.state::<DbState>();
     loop {
@@ -542,7 +543,12 @@ pub(crate) async fn save_checked<T>(
             return Err("Catalogue request was superseded".into());
         }
         match db.0.try_lock() {
-            Ok(conn) => return f(&conn),
+            Ok(conn) => {
+                timing.phase("admission_wait");
+                let result = f(&conn);
+                timing.phase("sql");
+                return result;
+            },
             Err(std::sync::TryLockError::Poisoned(_)) => {
                 return Err("Catalogue storage unavailable".into())
             }
@@ -1129,10 +1135,12 @@ pub async fn catalogue_query(
     engine: State<'_, crate::audio_engine::bridge::AudioEngineState>,
     app: tauri::AppHandle,
 ) -> Result<Option<crate::db::catalogue_query::Page>, String> {
+    let mut timing = crate::performance::Timer::new(&method);
     let offline = {
         let guard = state.0.lock().await;
         state.checked_cache_client(&context, &guard)?.offline_only
     };
+    timing.phase("owner_wait");
     // Derived browse indexes can also finish from local data while offline.
     schedule_projections(&app, &context)?;
     let scope = context.cache_scope.clone();
@@ -1143,6 +1151,7 @@ pub async fn catalogue_query(
         "getTrack" | "getAlbum" | "getArtist" | "getPlaylistItems"
     );
     let work = move |conn: &rusqlite::Connection| {
+        let mut sql_timing = crate::performance::Timer::new(&method);
         if method == "getArtistTracks" && offline {
             let artist = args
                 .first()
@@ -1155,15 +1164,19 @@ pub async fn catalogue_query(
             })
             .map(Some);
         }
-        crate::db::catalogue_query::query(conn, &scope, &method, &args)
+        let result = crate::db::catalogue_query::query(conn, &scope, &method, &args);
+        sql_timing.phase("sql");
+        result
     };
     let result = if urgent {
         db.read_urgent(work).await?
     } else {
         db.read(work).await?
     };
+    timing.phase("database_read");
     let guard = state.0.lock().await;
     state.checked_cache_client(&context, &guard)?;
+    timing.phase("owner_recheck");
     Ok(result)
 }
 fn offline_artist_tracks(

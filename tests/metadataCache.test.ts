@@ -319,3 +319,40 @@ test("a downloaded artist remains browsable before album census coverage with it
   expect(page.singles).toEqual([])
   expect(page.popularTracks.map(track=>track.id)).toEqual(["saved"])
 })
+
+test("artist core is visible while optional recommendations are pending", async () => {
+  const recommendations = deferred<any[]>()
+  const core: string[] = []
+  const h = harness({ getRelatedHubs: () => recommendations.promise })
+  await h.activate()
+  let finished = false
+  const page = h.cache
+    .loadArtist("quick", { onCore: (entry) => core.push(entry.artist.id) })
+    .then((entry) => {
+      finished = true
+      return entry
+    })
+  await settle()
+  expect(core).toEqual(["quick"])
+  expect(h.cache.getArtist("quick")?.artist.id).toBe("quick")
+  expect(finished).toBe(false)
+  recommendations.resolve([{ identifier: "related", items: [] }])
+  expect((await page).relatedHubs).toHaveLength(1)
+})
+
+test("album core does not wait for related hubs and late enrichment cannot cross accounts", async () => {
+  const recommendations = deferred<any[]>()
+  const core: string[] = []
+  const h = harness({ getRelatedHubs: () => recommendations.promise })
+  await h.activate()
+  const page = h.cache
+    .loadAlbum("quick", { onCore: (entry) => core.push(entry.album.id) })
+    .catch((error) => error)
+  await settle()
+  expect(core).toEqual(["quick"])
+  expect(h.cache.getAlbum("quick")?.album.id).toBe("quick")
+  await h.switchTo("account-b")
+  recommendations.resolve([{ identifier: "old", items: [] }])
+  expect(await page).toBeInstanceOf(MetadataRequestSuperseded)
+  expect(h.cache.getAlbum("quick")).toBeUndefined()
+})

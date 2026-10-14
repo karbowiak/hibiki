@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core"
 import type { PlexRequestContext } from "../backends/plex/scopedApi"
 import { catalogueRead } from "./catalogue"
+import { startTiming } from "../lib/performance"
 import type { OfflineCache, OfflineSnapshot } from "./providerCache"
 
 export interface OfflineContext {
@@ -28,15 +29,34 @@ export function createNativeOfflineCache(
   const owned = Object.freeze({ ...context })
   return {
     get: async (key) => {
-      const exact = await invoke<OfflineSnapshot | null>("offline_cache_get", {
-        context: owned,
-        key,
-      })
-      if (!baseUrl) return exact
-      const catalogue = await catalogueRead(owned, baseUrl, key).catch(
-        () => null
-      )
-      return selectOfflineSnapshot(exact, catalogue)
+      const method = JSON.parse(key)[1] as string
+      const timing = startTiming(method)
+      try {
+        const exactRequest = invoke<OfflineSnapshot | null>(
+          "offline_cache_get",
+          {
+            context: owned,
+            key,
+          }
+        ).then((value) => {
+          timing.end("snapshot")
+          return value
+        })
+        if (!baseUrl) return await exactRequest
+        const catalogueRequest = catalogueRead(owned, baseUrl, key)
+          .catch(() => null)
+          .then((value) => {
+            timing.end("catalogue")
+            return value
+          })
+        const [exact, catalogue] = await Promise.all([
+          exactRequest,
+          catalogueRequest,
+        ])
+        return selectOfflineSnapshot(exact, catalogue)
+      } finally {
+        timing.end("local")
+      }
     },
     invalidate: (prefixes) =>
       invoke<void>("offline_cache_invalidate", { context: owned, prefixes }),

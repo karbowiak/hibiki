@@ -7,6 +7,7 @@ mod cache_files;
 mod commands;
 mod db;
 mod offline_commands;
+mod performance;
 mod offline_audio;
 mod catalogue_commands;
 mod download_entities;
@@ -275,6 +276,7 @@ pub fn run() {
             let db_state = db::DbState::open(&db_path)
                 .map_err(|e| Box::<dyn std::error::Error>::from(e))?;
             app.manage(db_state);
+            performance::initialize(&app.path().app_data_dir()?);
             app.manage(offline_audio::AudioDownloads::new(app.path().app_data_dir()?.join("downloads")));
             app.manage(catalogue_commands::CatalogueSync::new());
             listening_history::start_worker(app.handle().clone());
@@ -361,6 +363,7 @@ pub fn run() {
             });
         })
         .invoke_handler(tauri::generate_handler![
+            performance::record_performance,
             shutdown::shutdown_listener_ready,
             shutdown::prepare_app_shutdown,
             shutdown::complete_app_shutdown,

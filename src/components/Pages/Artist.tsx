@@ -31,6 +31,7 @@ import {
   loadArtistPage,
   captureMetadataCache,
   isMetadataCacheCurrent,
+  type ArtistCacheEntry,
 } from "../../stores/metadataCache"
 import { useArtistEnrichment } from "../../hooks/useMetadataEnrichment"
 import { formatMs } from "../../lib/formatters"
@@ -225,18 +226,24 @@ export function ArtistPage({ artistId }: { artistId: string }) {
       setIsLoading(false)
       return
     }
-    loadArtistPage(artistId, { force: true, deduplicate: shouldDedup })
-      .then((entry) => {
-        if (!current()) return
-        setArtist(entry.artist)
-        setFullAlbums(entry.albums)
-        setSingles(entry.singles)
-        setPopularTracks(entry.popularTracks)
-        setSimilarArtists(entry.similarArtists)
-        setSonicallySimilar(entry.sonicallySimilar)
-        setRelatedHubs(entry.relatedHubs)
-        setStations(entry.stations)
-      })
+    const applyEntry = (entry: ArtistCacheEntry) => {
+      if (!current()) return
+      setArtist(entry.artist)
+      setFullAlbums(entry.albums)
+      setSingles(entry.singles)
+      setPopularTracks(entry.popularTracks)
+      setSimilarArtists(entry.similarArtists)
+      setSonicallySimilar(entry.sonicallySimilar)
+      setRelatedHubs(entry.relatedHubs)
+      setStations(entry.stations)
+      setIsLoading(false)
+    }
+    loadArtistPage(artistId, {
+      force: true,
+      deduplicate: shouldDedup,
+      onCore: applyEntry,
+    })
+      .then(applyEntry)
       .catch((error) => {
         if (current()) setError(String(error))
       })

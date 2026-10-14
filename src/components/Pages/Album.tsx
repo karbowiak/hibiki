@@ -30,6 +30,7 @@ import {
   loadAlbumPage,
   captureMetadataCache,
   isMetadataCacheCurrent,
+  type AlbumCacheEntry,
 } from "../../stores/metadataCache"
 import { useAlbumEnrichment } from "../../hooks/useMetadataEnrichment"
 import { useMetadataSourceStore } from "../../stores/metadataSourceStore"
@@ -161,13 +162,15 @@ export function AlbumPage({ albumId }: { albumId: string }) {
       setIsLoading(false)
       return
     }
-    loadAlbumPage(albumId, { force: true })
-      .then((entry) => {
-        if (!current()) return
-        setAlbum(entry.album)
-        setTracks(entry.tracks)
-        setRelatedHubs(entry.relatedHubs)
-      })
+    const applyEntry = (entry: AlbumCacheEntry) => {
+      if (!current()) return
+      setAlbum(entry.album)
+      setTracks(entry.tracks)
+      setRelatedHubs(entry.relatedHubs)
+      setIsLoading(false)
+    }
+    loadAlbumPage(albumId, { force: true, onCore: applyEntry })
+      .then(applyEntry)
       .catch((error) => {
         if (current()) setError(String(error))
       })

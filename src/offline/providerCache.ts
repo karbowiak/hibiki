@@ -1,4 +1,5 @@
 import type { MusicProvider } from "../providers/types"
+import { startTiming } from "../lib/performance"
 
 export interface OfflineSnapshot {
   payload: unknown
@@ -241,6 +242,7 @@ export function createOfflineProvider<T extends MusicProvider>(
   const initialSession = provider.playbackSession
   let requestSequence = 0
   let writes: Promise<void> = Promise.resolve()
+  let invalidations: Promise<void> = Promise.resolve()
   let cacheEpoch = 0
   let fallbackSafe = true
   const revalidations = new Map<string, Promise<unknown>>()
@@ -314,6 +316,7 @@ export function createOfflineProvider<T extends MusicProvider>(
               }
             })
             writes = invalidation.catch(() => {})
+            invalidations = writes
             await invalidation
           }
           let result: unknown
@@ -352,6 +355,7 @@ export function createOfflineProvider<T extends MusicProvider>(
         return guarded
       }
       const wrapped = async (...args: unknown[]) => {
+        const timing = startTiming(property)
         const scope = target.cacheScope
         const session = target.playbackSession
         const current = () =>
@@ -370,15 +374,18 @@ export function createOfflineProvider<T extends MusicProvider>(
         const key = offlineKey(property, args)
         const readEpoch = cacheEpoch
         const version = ++requestSequence
+        let saving = false
         versions.set(key, version)
         try {
           check()
           let result: unknown
           try {
             result = await bound(...args)
+            timing.phase("upstream")
           } catch (error) {
             check()
             await writes
+            timing.phase("fallback_writes")
             check()
             if (readEpoch !== cacheEpoch)
               throw new Error("Saved library request was superseded")
@@ -409,89 +416,100 @@ export function createOfflineProvider<T extends MusicProvider>(
               )
                 await cache.put(key, sanitizeOfflineData(result))
             })
-            writes = write.catch(() => {})
-            try {
-              await write
-            } catch {
-              /* Browsing storage is optional. */
-            }
+            saving = true
+            writes = write
+              .catch(() => {})
+              .finally(() => {
+                timing.phase("persist")
+                if (versions.get(key) === version) versions.delete(key)
+              })
             check()
             if (readEpoch === cacheEpoch) options.onOnlineRead?.(key)
           }
           return result
         } finally {
-          if (versions.get(key) === version) versions.delete(key)
+          timing.end("online")
+          if (!saving && versions.get(key) === version) versions.delete(key)
         }
       }
       const localFirst = async (...args: unknown[]) => {
         if (!target.cacheScope || !options.localFirst) return wrapped(...args)
-        const scope = target.cacheScope,
-          session = target.playbackSession,
-          epoch = cacheEpoch
-        const current = () =>
-          target.cacheScope === initialScope &&
-          target.cacheScope === scope &&
-          target.playbackSession === initialSession &&
-          target.playbackSession === session &&
-          (options.owns?.() ?? true) &&
-          epoch === cacheEpoch
-        const check = () => {
-          if (!current())
-            throw new Error("Saved library request was superseded")
-        }
-        const key = offlineKey(property, args)
-        await writes
-        check()
-        const saved = fallbackSafe
-          ? await cache.get(key).catch(() => null)
-          : null
-        check()
-        if (options.isOffline?.()) {
-          if (!saved)
-            throw new Error(
-              "This content is not saved locally. Reconnect to Plex to load it."
-            )
-          options.onOfflineRead?.({ key, cachedAt: saved.cachedAt })
-          const payload = structuredClone(saved.payload)
-          const projected = options.projectOffline
-            ? await options.projectOffline(payload)
-            : payload
-          check()
-          return projected
-        }
-        const revalidate = () => {
-          let pending = revalidations.get(key)
-          if (!pending) {
-            pending = wrapped(...args)
-              .then((result) => {
-                check()
-                if (options.isOffline?.()) return result
-                const sanitized = sanitizeOfflineData(result)
-                if (
-                  saved &&
-                  JSON.stringify(sanitized) !== JSON.stringify(saved.payload)
-                )
-                  options.onRefresh?.(property, args, sanitized)
-                refreshed.delete(key)
-                refreshed.set(key, Date.now())
-                if (refreshed.size > 256)
-                  refreshed.delete(refreshed.keys().next().value!)
-                return result
-              })
-              .finally(() => {
-                if (revalidations.get(key) === pending)
-                  revalidations.delete(key)
-              })
-            revalidations.set(key, pending)
+        const timing = startTiming(property)
+        try {
+          const scope = target.cacheScope,
+            session = target.playbackSession,
+            epoch = cacheEpoch
+          const current = () =>
+            target.cacheScope === initialScope &&
+            target.cacheScope === scope &&
+            target.playbackSession === initialSession &&
+            target.playbackSession === session &&
+            (options.owns?.() ?? true) &&
+            epoch === cacheEpoch
+          const check = () => {
+            if (!current())
+              throw new Error("Saved library request was superseded")
           }
-          return pending
+          const key = offlineKey(property, args)
+          // Mutations remain a read barrier. Unrelated optional snapshot saves
+          // cannot delay local reads or the result of an online request.
+          await invalidations
+          timing.phase("write_queue")
+          check()
+          const saved = fallbackSafe
+            ? await cache.get(key).catch(() => null)
+            : null
+          timing.phase("cache_read")
+          check()
+          if (options.isOffline?.()) {
+            if (!saved)
+              throw new Error(
+                "This content is not saved locally. Reconnect to Plex to load it."
+              )
+            options.onOfflineRead?.({ key, cachedAt: saved.cachedAt })
+            const payload = structuredClone(saved.payload)
+            const projected = options.projectOffline
+              ? await options.projectOffline(payload)
+              : payload
+            check()
+            return projected
+          }
+          const revalidate = () => {
+            let pending = revalidations.get(key)
+            if (!pending) {
+              pending = wrapped(...args)
+                .then((result) => {
+                  check()
+                  if (options.isOffline?.()) return result
+                  const sanitized = sanitizeOfflineData(result)
+                  if (
+                    saved &&
+                    JSON.stringify(sanitized) !== JSON.stringify(saved.payload)
+                  )
+                    options.onRefresh?.(property, args, sanitized)
+                  refreshed.delete(key)
+                  refreshed.set(key, Date.now())
+                  if (refreshed.size > 256)
+                    refreshed.delete(refreshed.keys().next().value!)
+                  return result
+                })
+                .finally(() => {
+                  if (revalidations.get(key) === pending)
+                    revalidations.delete(key)
+                })
+              revalidations.set(key, pending)
+            }
+            return pending
+          }
+          if (saved) {
+            if (Date.now() - (refreshed.get(key) ?? 0) > 30_000)
+              void revalidate().catch(() => {})
+            return structuredClone(saved.payload)
+          }
+          return await revalidate()
+        } finally {
+          timing.end("provider_local")
         }
-        if (saved) {
-          if (Date.now() - (refreshed.get(key) ?? 0) > 30_000)
-            void revalidate().catch(() => {})
-          return structuredClone(saved.payload)
-        }
-        return revalidate()
       }
       methods.set(property, localFirst)
       return localFirst
