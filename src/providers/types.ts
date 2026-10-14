@@ -84,6 +84,9 @@ export interface TrackPlaybackInfo {
   startRamp: string | null
   /** Loudness ramp from track end (dB/time pairs, semicolon-delimited) */
   endRamp: string | null
+  /** Fresh Plex loudness values obtained during native playback preparation. */
+  trackGain?: number | null
+  albumGain?: number | null
 }
 
 export interface LevelData {
@@ -134,7 +137,11 @@ export interface MusicProvider {
   isConnected(): boolean
 
   /** Native-owned audio; availability is checked against actual complete files. */
-  getLocalAudio?(offset?: number, limit?: number, cached?: boolean): Promise<import("../offline/audio").LocalAudioPage>
+  getLocalAudio?(
+    offset?: number,
+    limit?: number,
+    cached?: boolean
+  ): Promise<import("../offline/audio").LocalAudioPage>
   downloadTracks?(ids: string[]): Promise<void>
   removeDownload?(id: string): Promise<void>
   resumeDownloads?(): Promise<void>
@@ -145,7 +152,9 @@ export interface MusicProvider {
     type?: "track" | "album" | "artist"
   ): Promise<MusicItem[]>
   /** Bounded scoped discovery only; returned metadata does not establish recording identity. */
-  findPlaylistCandidates?(track: PlaylistRecordingTrack & {recordingMbid?: string | null}): Promise<{tracks: MusicTrack[]; truncated: boolean; unavailable: boolean}>
+  findPlaylistCandidates?(
+    track: PlaylistRecordingTrack & { recordingMbid?: string | null }
+  ): Promise<{ tracks: MusicTrack[]; truncated: boolean; unavailable: boolean }>
   getRecentlyAdded(type?: string, limit?: number): Promise<MusicItem[]>
   /** Albums ordered by original release date, independently of library import date. */
   getLatestReleases?(limit?: number): Promise<MusicAlbum[]>

@@ -169,8 +169,17 @@ export class PlaybackMetadata {
       const info = await provider.getPlaybackInfo(full ?? track)
       if (this.session(provider) !== session)
         throw new Error("Playback metadata scope changed")
-      session.info.set(key, info)
-      evictMap(session.info, 500)
+      // A bounded Plex analysis request may finish on the server after its
+      // first preparation attempt. Keep missing gain eligible for refresh when
+      // this prefetched track actually reaches the player/preload deck.
+      if (!(
+        info.plexContext &&
+        info.trackGain === null &&
+        info.albumGain === null
+      )) {
+        session.info.set(key, info)
+        evictMap(session.info, 500)
+      }
       return info
     })().finally(() => {
       if (session.infoRequests.get(key) === request)

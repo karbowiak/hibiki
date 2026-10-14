@@ -1,5 +1,9 @@
 import { describe, expect, test, mock } from "bun:test"
-import { isAlbumPlayback, selectReplayGain } from "../src/audio/playbackContext"
+import {
+  isAlbumPlayback,
+  selectReplayGain,
+  preparedReplayGain,
+} from "../src/audio/playbackContext"
 import { createMediaPlayController } from "../src/lib/mediaPlay"
 import type { MusicItem, MusicTrack } from "../src/types/music"
 import type { MusicProvider } from "../src/providers/types"
@@ -23,6 +27,23 @@ describe("explicit album playback", () => {
     expect(isAlbumPlayback(track, "album-1")).toBe(true)
     expect(selectReplayGain(track, "album-1")).toBe(-5)
     expect(selectReplayGain({ ...track, albumGain: null }, "album-1")).toBe(-2)
+  })
+  test("fresh preparation gain reaches play/preload without losing deliberate album intent", () => {
+    const prepared = { trackGain: -3, albumGain: -7 }
+    expect(preparedReplayGain(track, prepared, null, null)).toBe(-3)
+    expect(preparedReplayGain(track, prepared, "album-1", -2)).toBe(-7)
+    expect(preparedReplayGain(track, prepared, "other-album", -2)).toBe(-3)
+    expect(preparedReplayGain(track, { albumGain: -7 }, null, null)).toBeNull()
+    expect(preparedReplayGain(track, { trackGain: 0 }, null, -2)).toBe(0)
+    expect(
+      preparedReplayGain(
+        track,
+        { trackGain: Infinity, albumGain: NaN },
+        "album-1",
+        -2
+      )
+    ).toBe(-2)
+    expect(preparedReplayGain(track, {}, null, Infinity)).toBeNull()
   })
   test("album card playback passes explicit intent, while artist and track actions do not", () => {
     const playFromUri = mock(async (..._args: unknown[]) => {})

@@ -7,7 +7,7 @@
 //! - Events and visualizer data sent via `crossbeam_channel::Sender`
 
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, AtomicU8, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc,Mutex};
 
 use crossbeam_channel::{Receiver, Sender};
 use tracing::debug;
@@ -31,6 +31,10 @@ mod tests;
 /// Atomics shared between the audio callback and other threads.
 /// The audio callback WRITES, other threads READ.
 pub struct SharedAtomics {
+    /// Preference observed by preparation without waiting for the render callback.
+    pub normalization_enabled: Arc<AtomicBool>,
+    /// Preparation/command admission only. Never acquired on the audio callback.
+    pub(super) normalization_admission: Mutex<()>,
     pub request_epoch: Arc<AtomicU64>,
     /// Guaranteed Stop admission, independent of ordinary command capacity.
     pub stop_revision: Arc<AtomicU64>,
@@ -65,8 +69,15 @@ pub struct SharedAtomics {
 }
 
 impl SharedAtomics {
+    pub(super) fn normalization_is_enabled(&self)->bool {
+        let _admission=self.normalization_admission.lock().unwrap_or_else(|poisoned|poisoned.into_inner());
+        self.normalization_enabled.load(Ordering::Acquire)
+    }
+
     pub fn new() -> Self {
         Self {
+            normalization_enabled: Arc::new(AtomicBool::new(true)),
+            normalization_admission: Mutex::new(()),
             request_epoch: Arc::new(AtomicU64::new(0)),
             stop_revision: Arc::new(AtomicU64::new(0)),
             preload_revision: Arc::new(AtomicU64::new(0)),
@@ -873,7 +884,7 @@ impl AudioCallbackState {
                     return;
                 }
                 let target = self.deck_mgr.deck_mut(deck);
-                if !target.loaded {
+                if !target.loaded || target.has_started_playing {
                     return;
                 }
                 let Some(meta) = target.meta.as_mut() else {

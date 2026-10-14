@@ -9,7 +9,7 @@ use crate::db::{
 use crate::plex::{PlexClient, Track};
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
@@ -26,6 +26,9 @@ pub struct AudioDownloads {
     scheduled: Mutex<HashSet<(u64, String)>>,
     analysis: tokio::sync::Mutex<()>,
     analysis_scheduled: Mutex<HashSet<(u64, String)>>,
+    loudness_jobs:
+        Mutex<HashMap<(String, i64, String), Arc<tokio::sync::Mutex<Option<std::time::Instant>>>>>,
+    loudness_slots: tokio::sync::Semaphore,
 }
 impl AudioDownloads {
     pub(crate) fn cancel_download(&self, scope: &str, track_id: i64) -> Result<(), String> {
@@ -48,6 +51,8 @@ impl AudioDownloads {
             scheduled: Mutex::new(HashSet::new()),
             analysis: tokio::sync::Mutex::new(()),
             analysis_scheduled: Mutex::new(HashSet::new()),
+            loudness_jobs: Mutex::new(HashMap::new()),
+            loudness_slots: tokio::sync::Semaphore::new(2),
         }
     }
 }
@@ -156,7 +161,8 @@ fn binding(
         Some(&client.library_scope),
     )?;
     let stream = part.streams.iter().find(|s| s.stream_type == Some(2));
-    let analysis_version = crate::plex::catalogue::analysis_revision(media, track.music_analysis_version)?;
+    let analysis_version =
+        crate::plex::catalogue::analysis_revision(media, track.music_analysis_version)?;
     let mut metadata = json!({
         "id":expected.to_string(),"title":track.title,"trackNumber":track.index,"duration":track.duration,
         "albumId":parent_id(&track.parent_key),"albumName":track.parent_title,"albumYear":track.parent_year,
@@ -217,15 +223,18 @@ pub(crate) async fn dispatch(
             return Err("Invalid local audio identity".into());
         }
         let context = context.ok_or("Local Plex audio requires its library owner")?;
-        let guard = plex.0.lock().await;
-        let client = plex.checked_cache_client(context, &guard)?;
-        let bindings = audio::bindings(
-            &*db.0.lock().map_err(|_| "Local audio storage unavailable")?,
-            &client.library_scope,
-            track_id,
-        )?;
+        {
+            let guard = plex.0.lock().await;
+            plex.checked_cache_client(context, &guard)?;
+        }
+        let scope = context.cache_scope.clone();
+        let bindings = db
+            .read_urgent(move |conn| audio::bindings(conn, &scope, track_id))
+            .await?;
         let (binding, cache) = available(bindings, &downloads.cache, automatic)
             .ok_or("This track is not available offline. Reconnect to Plex to download it.")?;
+        let guard = plex.0.lock().await;
+        let client = plex.checked_cache_client(context, &guard)?;
         send(MediaSource::cached(
             binding.cache_key,
             binding.extension,
@@ -252,6 +261,8 @@ pub struct PlaybackInfo {
     parent_key: String,
     start_ramp: Option<String>,
     end_ramp: Option<String>,
+    track_gain: Option<f64>,
+    album_gain: Option<f64>,
     plex_context: PlexRequestContext,
 }
 fn info(binding: &Binding, context: PlexRequestContext, url: String) -> PlaybackInfo {
@@ -263,7 +274,114 @@ fn info(binding: &Binding, context: PlexRequestContext, url: String) -> Playback
         parent_key: text("localParentKey").unwrap_or_default(),
         start_ramp: text("startRamp"),
         end_ramp: text("endRamp"),
+        track_gain: binding.metadata["gain"].as_f64().filter(|v| v.is_finite()),
+        album_gain: binding.metadata["albumGain"]
+            .as_f64()
+            .filter(|v| v.is_finite()),
         plex_context: context,
+    }
+}
+
+/// Queue preparation can ask recent PMS versions for missing loudness. Requests
+/// are per-track, deduplicated and bounded; failure leaves native R128 fallback
+/// to prepare a fixed gain before any samples become audible.
+async fn prepare_server_loudness(
+    client: &PlexClient,
+    context: &PlexRequestContext,
+    plex: &PlexState,
+    downloads: &AudioDownloads,
+    section: i64,
+    mut document: (Track, Value),
+    normalization_enabled: impl Fn() -> bool,
+    computed_gain_available: impl Fn(&str) -> bool,
+) -> Result<(Track, Value), String> {
+    let (before, _, _) = binding(client, section, document.0.rating_key, &document.0)?;
+    let finite = |v: &Value| v.as_f64().is_some_and(f64::is_finite);
+    if !normalization_enabled()
+        || finite(&before.metadata["gain"])
+        || finite(&before.metadata["albumGain"])
+        || computed_gain_available(&before.cache_key)
+    {
+        return Ok(document);
+    }
+    let job = {
+        let mut jobs = downloads
+            .loudness_jobs
+            .lock()
+            .map_err(|_| "Loudness preparation unavailable")?;
+        jobs.retain(|_, job| {
+            Arc::strong_count(job) > 1
+                || job.try_lock().is_ok_and(|last| {
+                    last.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(600))
+                })
+        });
+        if jobs.len() >= 512 {
+            return Ok(document);
+        }
+        jobs.entry((context.cache_scope.clone(), before.track_id, before.cache_key.clone()))
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(None)))
+            .clone()
+    };
+    let mut last = job.lock().await;
+    {
+        let guard = plex.0.lock().await;
+        plex.checked_client(context, &guard)?;
+    }
+    if !normalization_enabled() {
+        return Ok(document);
+    }
+    let recently_attempted =
+        last.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(600));
+    let _slot = match downloads.loudness_slots.try_acquire() {
+        Ok(slot) => slot,
+        Err(_) => return Ok(document),
+    };
+    if !recently_attempted {
+        *last = Some(std::time::Instant::now());
+        if !matches!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                client.put_metadata_params_once(
+                    &format!("/library/metadata/{}/analyzeLoudness", before.track_id),
+                    &[("force", "0"), ("manual", "1")]
+                )
+            )
+            .await,
+            Ok(Ok(()))
+        ) {
+            return Ok(document);
+        }
+    }
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(if recently_attempted { 1 } else { 4 });
+    loop {
+        {
+            let guard = plex.0.lock().await;
+            plex.checked_client(context, &guard)?;
+        }
+        if !normalization_enabled() {
+            return Ok(document);
+        }
+        if let Ok(Ok(next)) = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            client.get_track_document(before.track_id),
+        )
+        .await
+        {
+            let (fresh, _, _) = binding(client, section, before.track_id, &next.0)?;
+            if fresh.cache_key != before.cache_key {
+                return Err("This track changed while preparing playback. Try again.".into());
+            }
+            let ready = finite(&fresh.metadata["gain"]) || finite(&fresh.metadata["albumGain"]);
+            document = next;
+            if ready {
+                return Ok(document);
+            }
+        }
+        if recently_attempted || std::time::Instant::now() >= deadline {
+            return Ok(document);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     }
 }
 fn unavailable(error: &anyhow::Error) -> bool {
@@ -303,11 +421,25 @@ pub async fn audio_prepare_plex_track(
         .await
         {
             Ok(Ok((track, raw))) => {
+                let (track, raw) = prepare_server_loudness(
+                    &client,
+                    &context,
+                    &plex,
+                    &downloads,
+                    section,
+                    (track, raw),
+                    || engine.0.normalization_enabled(),
+                    |key| {
+                        engine.0.cache().get_computed_gain(key).is_some()
+                            || downloads.cache.get_computed_gain(key).is_some()
+                    },
+                )
+                .await?;
                 let (binding, _, _) = binding(&client, section, track_id, &track)?;
                 let guard = plex.0.lock().await;
                 plex.checked_client(&context, &guard)?;
                 // Persistence failure must not break otherwise valid online playback.
-                if let Ok(conn) = db.0.lock() {
+                if let Ok(conn) = db.0.try_lock() {
                     let _ = audio::remember(&conn, &client.library_scope, &binding, now());
                     let _ = crate::db::catalogue::save(
                         &conn,
@@ -317,6 +449,18 @@ pub async fn audio_prepare_plex_track(
                         &raw,
                         true,
                     );
+                } else {
+                    let app = app.clone();
+                    let owner = context.clone();
+                    let saved = binding.clone();
+                    let scope = client.library_scope.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let _ = crate::catalogue_commands::save_checked(&app, &owner, |conn| {
+                            audio::remember(conn, &scope, &saved, now())?;
+                            crate::db::catalogue::save(conn, &scope, "track", track_id, &raw, true)
+                        })
+                        .await;
+                    });
                 }
                 let media = best_media(&track)?;
                 let url = client.direct_play_url(&media.parts[0].key);
@@ -329,13 +473,12 @@ pub async fn audio_prepare_plex_track(
             _ => {}
         }
     }
+    let scope = context.cache_scope.clone();
+    let values = db
+        .read_urgent(move |conn| audio::bindings(conn, &scope, track_id))
+        .await?;
     let guard = plex.0.lock().await;
-    let client = plex.checked_cache_client(&context, &guard)?;
-    let values = audio::bindings(
-        &*db.0.lock().map_err(|_| "Local audio storage unavailable")?,
-        &client.library_scope,
-        track_id,
-    )?;
+    plex.checked_cache_client(&context, &guard)?;
     let (binding, _) = available(values, &downloads.cache, engine.0.cache())
         .ok_or("This track is not available offline. Reconnect to Plex to download it.")?;
     Ok(info(&binding, context, format!("{LOCAL_PREFIX}{track_id}")))
@@ -351,12 +494,37 @@ fn cached_levels(
     stream_id: i64,
     version: &str,
 ) -> Result<Option<Value>, String> {
-    if let Some(raw) = crate::db::catalogue::levels(conn, &client.library_scope, &current.cache_key, stream_id, version)? {
+    cached_levels_impl(conn, client, current, stream_id, version, true)
+}
+fn cached_levels_impl(
+    conn: &rusqlite::Connection,
+    client: &PlexClient,
+    current: &Binding,
+    stream_id: i64,
+    version: &str,
+    persist_legacy: bool,
+) -> Result<Option<Value>, String> {
+    if let Some(raw) = crate::db::catalogue::levels(
+        conn,
+        &client.library_scope,
+        &current.cache_key,
+        stream_id,
+        version,
+    )? {
         return Ok(Some(raw));
     }
-    let Some(raw) = crate::db::catalogue::get(conn, &client.library_scope, "track", current.track_id)? else { return Ok(None) };
-    let Ok(track) = serde_json::from_value::<Track>(raw) else { return Ok(None) };
-    let Ok((checked, _, _)) = binding(client, track.library_section_id, current.track_id, &track) else { return Ok(None) };
+    let Some(raw) =
+        crate::db::catalogue::get(conn, &client.library_scope, "track", current.track_id)?
+    else {
+        return Ok(None);
+    };
+    let Ok(track) = serde_json::from_value::<Track>(raw) else {
+        return Ok(None);
+    };
+    let Ok((checked, _, _)) = binding(client, track.library_section_id, current.track_id, &track)
+    else {
+        return Ok(None);
+    };
     if checked.cache_key != current.cache_key
         || checked.metadata["localAnalysisVersion"].as_str() != Some(version)
         || checked.metadata["mediaInfo"]["audioStreamId"].as_i64() != Some(stream_id)
@@ -367,10 +535,47 @@ fn cached_levels(
     // analysis version. Never select an arbitrary older waveform for a track.
     use sha2::{Digest, Sha256};
     let media = best_media(&track)?;
-    let legacy = format!("{:x}", Sha256::digest(serde_json::to_vec(&(media, track.music_analysis_version, track.updated_at)).map_err(|_| "Invalid legacy analysis revision")?));
-    let Some(levels) = crate::db::catalogue::levels(conn, &client.library_scope, &current.cache_key, stream_id, &legacy)? else { return Ok(None) };
-    crate::db::catalogue::save_levels(conn, &client.library_scope, &current.cache_key, stream_id, version, &levels)?;
+    let legacy = format!(
+        "{:x}",
+        Sha256::digest(
+            serde_json::to_vec(&(media, track.music_analysis_version, track.updated_at))
+                .map_err(|_| "Invalid legacy analysis revision")?
+        )
+    );
+    let Some(levels) = crate::db::catalogue::levels(
+        conn,
+        &client.library_scope,
+        &current.cache_key,
+        stream_id,
+        &legacy,
+    )?
+    else {
+        return Ok(None);
+    };
+    if persist_legacy {
+        crate::db::catalogue::save_levels(
+            conn,
+            &client.library_scope,
+            &current.cache_key,
+            stream_id,
+            version,
+            &levels,
+        )?;
+    }
     Ok(Some(levels))
+}
+async fn read_cached_levels(
+    db: &DbState,
+    client: &PlexClient,
+    binding: &Binding,
+    stream: i64,
+    version: &str,
+) -> Result<Option<Value>, String> {
+    let client = client.clone();
+    let binding = binding.clone();
+    let version = version.to_owned();
+    db.read_urgent(move |conn| cached_levels_impl(conn, &client, &binding, stream, &version, false))
+        .await
 }
 
 async fn ensure_levels(
@@ -393,37 +598,30 @@ async fn ensure_levels(
     let db = app.state::<DbState>();
     let client = {
         let guard = plex.0.lock().await;
-        let client = plex.checked_cache_client(context, &guard)?;
-        let saved = cached_levels(
-            &*db.0.lock().map_err(|_| "Analysis storage unavailable")?,
-            client,
-            binding,
-            stream_id,
-            version,
-        )?;
-        if let Some(saved) = saved {
-            return decode_levels(saved);
-        }
-        if local_only || client.offline_only {
-            return Ok(Vec::new());
-        }
-        client.clone()
+        plex.checked_cache_client(context, &guard)?.clone()
     };
+    let saved = read_cached_levels(&db, &client, binding, stream_id, version).await?;
+    {
+        let guard = plex.0.lock().await;
+        plex.checked_cache_client(context, &guard)?;
+    }
+    if let Some(saved) = saved {
+        return decode_levels(saved);
+    }
+    if local_only || client.offline_only {
+        return Ok(Vec::new());
+    }
     // Offline/cache hits must never wait behind a network transfer. Serialize
     // misses, then recheck so simultaneous player/download requests share data.
     let _analysis = downloads.analysis.lock().await;
     {
         let guard = plex.0.lock().await;
         plex.checked_client(context, &guard)?;
-        if let Some(saved) = cached_levels(
-            &*db.0.lock().map_err(|_| "Analysis storage unavailable")?,
-            &client,
-            binding,
-            stream_id,
-            version,
-        )? {
-            return decode_levels(saved);
-        }
+    }
+    if let Some(saved) = read_cached_levels(&db, &client, binding, stream_id, version).await? {
+        let guard = plex.0.lock().await;
+        plex.checked_client(context, &guard)?;
+        return decode_levels(saved);
     }
     let raw: Value = tokio::time::timeout(
         std::time::Duration::from_secs(12),
@@ -433,16 +631,17 @@ async fn ensure_levels(
     .map_err(|_| "Plex waveform request timed out")?
     .map_err(|_| "Plex waveform is unavailable")?;
     crate::db::catalogue::validate_levels(&raw)?;
-    let guard = plex.0.lock().await;
-    plex.checked_client(context, &guard)?;
-    crate::db::catalogue::save_levels(
-        &*db.0.lock().map_err(|_| "Analysis storage unavailable")?,
-        &client.library_scope,
-        &binding.cache_key,
-        stream_id,
-        version,
-        &raw,
-    )?;
+    crate::catalogue_commands::save_checked(app, context, |conn| {
+        crate::db::catalogue::save_levels(
+            conn,
+            &client.library_scope,
+            &binding.cache_key,
+            stream_id,
+            version,
+            &raw,
+        )
+    })
+    .await?;
     decode_levels(raw)
 }
 fn decode_levels(raw: Value) -> Result<Vec<crate::plex::Level>, String> {
@@ -463,22 +662,32 @@ pub async fn audio_track_levels(
     engine: State<'_, crate::audio_engine::bridge::AudioEngineState>,
 ) -> Result<Vec<crate::plex::Level>, String> {
     id(track_id)?;
-    let (client, saved) = {
+    let client = {
         let guard = plex.0.lock().await;
-        let client = plex.checked_cache_client(&context, &guard)?;
-        let conn = db.0.lock().map_err(|_| "Analysis storage unavailable")?;
-        let saved = if local_only || client.offline_only {
-            available(
-                audio::bindings(&conn, &client.library_scope, track_id)?,
-                &downloads.cache,
-                engine.0.cache(),
-            )
-            .map(|(binding, _)| binding)
-        } else {
-            audio::latest(&conn, &client.library_scope, track_id)?
-        };
-        (client.clone(), saved)
+        plex.checked_cache_client(&context, &guard)?.clone()
     };
+    let scope = client.library_scope.clone();
+    let offline = client.offline_only;
+    let downloaded = downloads.cache.clone();
+    let automatic = engine.0.cache().clone();
+    let saved = db
+        .read_urgent(move |conn| {
+            Ok(if local_only || offline {
+                available(
+                    audio::bindings(conn, &scope, track_id)?,
+                    &downloaded,
+                    &automatic,
+                )
+                .map(|(binding, _)| binding)
+            } else {
+                audio::latest(conn, &scope, track_id)?
+            })
+        })
+        .await?;
+    {
+        let guard = plex.0.lock().await;
+        plex.checked_cache_client(&context, &guard)?;
+    }
     let saved = if saved
         .as_ref()
         .is_some_and(|b| b.metadata["localAnalysisVersion"].is_string())
@@ -496,11 +705,11 @@ pub async fn audio_track_levels(
         .map_err(|_| "Plex track request timed out")?
         .map_err(|_| "Plex track is unavailable")?;
         let (binding, _, _) = binding(&client, section, track_id, &track)?;
-        let guard = plex.0.lock().await;
-        plex.checked_client(&context, &guard)?;
-        let conn = db.0.lock().map_err(|_| "Analysis storage unavailable")?;
-        audio::remember(&conn, &client.library_scope, &binding, now())?;
-        crate::db::catalogue::save(&conn, &client.library_scope, "track", track_id, &raw, true)?;
+        crate::catalogue_commands::save_checked(&app, &context, |conn| {
+            audio::remember(conn, &client.library_scope, &binding, now())?;
+            crate::db::catalogue::save(conn, &client.library_scope, "track", track_id, &raw, true)
+        })
+        .await?;
         Some(binding)
     };
     match saved {
@@ -1273,6 +1482,217 @@ mod tests {
         models::{Media, MediaPart, PlexStream},
         PlexClientConfig,
     };
+    struct LoudnessServer {
+        address: String,
+        puts: Arc<AtomicU64>,
+        gets: Arc<AtomicU64>,
+        stop: Arc<AtomicBool>,
+        worker: Option<std::thread::JoinHandle<()>>,
+    }
+    impl Drop for LoudnessServer {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Release);
+            self.worker.take().unwrap().join().unwrap();
+        }
+    }
+    fn loudness_server(status: u16, part: i64) -> LoudnessServer {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        let puts = Arc::new(AtomicU64::new(0));
+        let gets = Arc::new(AtomicU64::new(0));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (p, g, s) = (puts.clone(), gets.clone(), stop.clone());
+        let worker = std::thread::spawn(move || {
+            while !s.load(Ordering::Acquire) {
+                let Ok((mut socket, _)) = listener.accept() else {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                    continue;
+                };
+                socket
+                    .set_read_timeout(Some(std::time::Duration::from_secs(1)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut chunk = [0; 4096];
+                while !request.windows(4).any(|v| v == b"\r\n\r\n") {
+                    match socket.read(&mut chunk) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => request.extend_from_slice(&chunk[..n]),
+                    }
+                    assert!(request.len() < 16384);
+                }
+                let request = String::from_utf8(request).unwrap();
+                let (code, body) = if request.starts_with("PUT ") {
+                    assert!(request
+                        .lines()
+                        .next()
+                        .unwrap()
+                        .contains("/library/metadata/42/analyzeLoudness?force=0&manual=1"));
+                    p.fetch_add(1, Ordering::SeqCst);
+                    (status, String::new())
+                } else {
+                    assert!(request.starts_with("GET /library/metadata/42?"));
+                    g.fetch_add(1, Ordering::SeqCst);
+                    (200,json!({"MediaContainer":{"Metadata":[{"type":"track","ratingKey":42,"librarySectionID":1,"duration":1000,"Media":[{"audioCodec":"wav","Part":[{"id":part,"key":format!("/library/parts/{part}/file.wav"),"Stream":[{"id":17,"streamType":2,"gain":-9.0,"albumGain":-11.0}]}]}]}]}}).to_string())
+                };
+                write!(socket,"HTTP/1.1 {code} Result\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+            }
+        });
+        LoudnessServer {
+            address,
+            puts,
+            gets,
+            stop,
+            worker: Some(worker),
+        }
+    }
+    async fn loudness_fixture(
+        server: &LoudnessServer,
+    ) -> (PlexClient, PlexState, PlexRequestContext, Track) {
+        let mut client = PlexClient::new(PlexClientConfig {
+            base_url: server.address.clone(),
+            token: "fixture-token".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        client.library_scope = client.cache_scope_for_library(1, Some("fixture"));
+        let context = PlexRequestContext {
+            cache_scope: client.library_scope.clone(),
+            connection_revision: 0,
+        };
+        let plex = PlexState::new();
+        *plex.0.lock().await = Some(client.clone());
+        let mut track = track();
+        track.media[0].parts[0].streams[0].gain = None;
+        (client, plex, context, track)
+    }
+    #[tokio::test]
+    async fn server_loudness_preparation_is_single_attempt_and_returns_fresh_gain_before_dispatch()
+    {
+        let server = loudness_server(200, 10);
+        let (client, plex, context, track) = loudness_fixture(&server).await;
+        let directory = tempfile::tempdir().unwrap();
+        let downloads = AudioDownloads::new(directory.path().to_owned());
+        for _ in 0..2 {
+            let (prepared, _) = prepare_server_loudness(
+                &client,
+                &context,
+                &plex,
+                &downloads,
+                1,
+                (track.clone(), json!({})),
+                || true,
+                |_| false,
+            )
+            .await
+            .unwrap();
+            let binding = binding(&client, 1, 42, &prepared).unwrap().0;
+            assert_eq!(binding.metadata["gain"], -9.0);
+            assert_eq!(
+                info(&binding, context.clone(), "fixture".into()).album_gain,
+                Some(-11.0)
+            );
+        }
+        assert_eq!(server.puts.load(Ordering::SeqCst), 1);
+        assert_eq!(server.gets.load(Ordering::SeqCst), 2);
+    }
+    #[tokio::test]
+    async fn server_loudness_fast_paths_and_unavailable_endpoint_leave_native_fallback_intact() {
+        let server = loudness_server(404, 10);
+        let (client, plex, context, track) = loudness_fixture(&server).await;
+        let directory = tempfile::tempdir().unwrap();
+        let downloads = AudioDownloads::new(directory.path().to_owned());
+        let off = prepare_server_loudness(
+            &client,
+            &context,
+            &plex,
+            &downloads,
+            1,
+            (track.clone(), json!({})),
+            || false,
+            |_| false,
+        )
+        .await
+        .unwrap();
+        assert!(off.0.media[0].parts[0].streams[0].gain.is_none());
+        prepare_server_loudness(
+            &client,
+            &context,
+            &plex,
+            &downloads,
+            1,
+            (track.clone(), json!({})),
+            || true,
+            |_| true,
+        )
+        .await
+        .unwrap();
+        let mut known = track.clone();
+        known.media[0].parts[0].streams[0].gain = Some(0.0);
+        prepare_server_loudness(
+            &client,
+            &context,
+            &plex,
+            &downloads,
+            1,
+            (known, json!({})),
+            || true,
+            |_| false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(server.puts.load(Ordering::SeqCst), 0);
+        let fallback = prepare_server_loudness(
+            &client,
+            &context,
+            &plex,
+            &downloads,
+            1,
+            (track, json!({})),
+            || true,
+            |_| false,
+        )
+        .await
+        .unwrap();
+        assert!(fallback.0.media[0].parts[0].streams[0].gain.is_none());
+        assert_eq!(server.puts.load(Ordering::SeqCst), 1);
+        assert_eq!(server.gets.load(Ordering::SeqCst), 0);
+    }
+    #[tokio::test]
+    async fn server_loudness_rejects_replaced_files_and_retired_native_owners() {
+        let server = loudness_server(200, 11);
+        let (client, plex, context, track) = loudness_fixture(&server).await;
+        let directory = tempfile::tempdir().unwrap();
+        let downloads = AudioDownloads::new(directory.path().to_owned());
+        assert!(prepare_server_loudness(
+            &client,
+            &context,
+            &plex,
+            &downloads,
+            1,
+            (track.clone(), json!({})),
+            || true,
+            |_| false
+        )
+        .await
+        .unwrap_err()
+        .contains("changed"));
+        *plex.0.lock().await = None;
+        assert!(prepare_server_loudness(
+            &client,
+            &context,
+            &plex,
+            &downloads,
+            1,
+            (track, json!({})),
+            || true,
+            |_| false
+        )
+        .await
+        .is_err());
+        assert_eq!(server.puts.load(Ordering::SeqCst), 1);
+    }
     fn client() -> PlexClient {
         let mut client = PlexClient::new(PlexClientConfig {
             base_url: "http://127.0.0.1:1".into(),
@@ -1368,7 +1788,10 @@ mod tests {
         track.updated_at = chrono::DateTime::from_timestamp(1234567890, 0);
         track.title = "Metadata-only edit".into();
         let edited = binding(&client, 1, 42, &track).unwrap().0;
-        assert_eq!(analyzed.metadata["localAnalysisVersion"], edited.metadata["localAnalysisVersion"]);
+        assert_eq!(
+            analyzed.metadata["localAnalysisVersion"],
+            edited.metadata["localAnalysisVersion"]
+        );
         assert_eq!(analyzed.cache_key, edited.cache_key);
         track.media[0].parts[0].streams[0].gain = Some(-6.0);
         let changed = binding(&client, 1, 42, &track).unwrap().0;
@@ -1392,18 +1815,63 @@ mod tests {
         let track: Track = serde_json::from_value(raw.clone()).unwrap();
         let current = binding(&client, 1, 42, &track).unwrap().0;
         let version = current.metadata["localAnalysisVersion"].as_str().unwrap();
-        let legacy = format!("{:x}", Sha256::digest(serde_json::to_vec(&(best_media(&track).unwrap(), track.music_analysis_version, track.updated_at)).unwrap()));
+        let legacy = format!(
+            "{:x}",
+            Sha256::digest(
+                serde_json::to_vec(&(
+                    best_media(&track).unwrap(),
+                    track.music_analysis_version,
+                    track.updated_at
+                ))
+                .unwrap()
+            )
+        );
         let levels = json!({"Level":[{"v":0.4},{"v":0.8}],"futureField":"retained"});
         crate::db::catalogue::save(&conn, &client.library_scope, "track", 42, &raw, true).unwrap();
-        crate::db::catalogue::save_levels(&conn, &client.library_scope, &current.cache_key, 17, &legacy, &levels).unwrap();
-        assert!(cached_levels(&conn, &client, &current, 18, version).unwrap().is_none());
-        let mut foreign = client.clone(); foreign.library_scope = format!("plex-{}", "b".repeat(64));
-        assert!(cached_levels(&conn, &foreign, &current, 17, version).unwrap().is_none());
-        let mut different = track.clone(); different.media[0].parts[0].streams[0].gain = Some(-6.0);
+        crate::db::catalogue::save_levels(
+            &conn,
+            &client.library_scope,
+            &current.cache_key,
+            17,
+            &legacy,
+            &levels,
+        )
+        .unwrap();
+        assert!(cached_levels(&conn, &client, &current, 18, version)
+            .unwrap()
+            .is_none());
+        let mut foreign = client.clone();
+        foreign.library_scope = format!("plex-{}", "b".repeat(64));
+        assert!(cached_levels(&conn, &foreign, &current, 17, version)
+            .unwrap()
+            .is_none());
+        let mut different = track.clone();
+        different.media[0].parts[0].streams[0].gain = Some(-6.0);
         let changed = binding(&client, 1, 42, &different).unwrap().0;
-        assert!(cached_levels(&conn, &client, &changed, 17, changed.metadata["localAnalysisVersion"].as_str().unwrap()).unwrap().is_none());
-        assert_eq!(cached_levels(&conn, &client, &current, 17, version).unwrap(), Some(levels.clone()));
-        assert_eq!(crate::db::catalogue::levels(&conn, &client.library_scope, &current.cache_key, 17, version).unwrap(), Some(levels));
+        assert!(cached_levels(
+            &conn,
+            &client,
+            &changed,
+            17,
+            changed.metadata["localAnalysisVersion"].as_str().unwrap()
+        )
+        .unwrap()
+        .is_none());
+        assert_eq!(
+            cached_levels(&conn, &client, &current, 17, version).unwrap(),
+            Some(levels.clone())
+        );
+        assert_eq!(
+            crate::db::catalogue::levels(
+                &conn,
+                &client.library_scope,
+                &current.cache_key,
+                17,
+                version
+            )
+            .unwrap(),
+            Some(levels)
+        );
     }
     #[test]
     fn media_selection_matches_frontend_quality_order_and_keeps_first_equal_quality_version() {

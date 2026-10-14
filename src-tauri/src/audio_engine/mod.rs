@@ -266,9 +266,9 @@ impl AudioEngine {
         });
 
         let analysis = LoudnessAnalysis::start(
-            audio_cache.clone(), audio_cmd_tx.clone(), atomics.clone(), lifetime.0.clone(),
+            atomics.clone(), lifetime.0.clone(),
         ).map_err(|error| {
-            warn!(%error, "cannot start optional loudness analysis");
+            warn!(%error, "cannot start loudness preparation");
             error
         }).ok();
 
@@ -421,7 +421,13 @@ impl AudioEngine {
                 },
             },
             Command::SetVolume { gain } => AudioCommand::SetVolume(gain),
-            Command::SetNormalization { enabled } => AudioCommand::SetNormalization(enabled),
+            Command::SetNormalization { enabled } => {
+                let _preference_admission=self.atomics.normalization_admission.lock().map_err(|_|"Audio preference unavailable".to_string())?;
+                self.audio_cmd_tx.try_send(AudioCommand::SetNormalization(enabled))
+                    .map_err(|_|"audio callback is unavailable".to_string())?;
+                self.atomics.normalization_enabled.store(enabled, Ordering::SeqCst);
+                return Ok(epoch);
+            },
             Command::SetPreampGain { db } => AudioCommand::SetPreampGain(db),
             Command::SetEq { gains_db } => AudioCommand::SetEq(gains_db),
             Command::SetEqEnabled { enabled } => AudioCommand::SetEqEnabled(enabled),
@@ -462,6 +468,10 @@ impl AudioEngine {
     /// Access the audio file cache.
     pub(crate) fn background_indexing_delay(&self) -> bool {
         matches!(self.atomics.get_state(), types::EngineState::Playing | types::EngineState::Buffering)
+    }
+
+    pub(crate) fn normalization_enabled(&self)->bool {
+        self.atomics.normalization_is_enabled()
     }
 
     pub fn cache(&self) -> &Arc<AudioCache> {
@@ -785,8 +795,10 @@ fn handle_play(
             let source_channels = result.source_channels;
             let has_more = result.has_more;
 
-            // Use available gain immediately; missing measurements run in the background.
-            let gain_db = resolve_gain_db(meta, &source.cache_key, cache);
+            let gain_db = match prepare_gain_db(meta, source, deck, request, cache, atomics, analysis, &result) {
+                Ok(gain)=>gain,
+                Err(error)=>{if request.is_current(){let _=audio_cmd_tx.send(AudioCommand::FailPlay{request_id:request.epoch,message:format!("Could not prepare track loudness: {error}")});}return}
+            };
             if !request.is_current() {
                 return;
             }
@@ -835,11 +847,7 @@ fn handle_play(
             });
 
             wait_for_load(deck, request, atomics);
-            if gain_db.is_none() {
-                if let Some(analysis) = analysis {
-                    analysis.submit(source, deck, request.clone());
-                }
-            }
+
             // Continue decoding in background
             if let Some(decoder) = result.decoder {
                 if !request.is_current() {
@@ -947,7 +955,10 @@ fn handle_preload(
             let source_channels = result.source_channels;
             let has_more = result.has_more;
 
-            let gain_db = resolve_gain_db(meta, &source.cache_key, cache);
+            let gain_db = match prepare_gain_db(meta, source, deck, request, cache, atomics, analysis, &result) {
+                Ok(gain)=>gain,
+                Err(error)=>{if request.is_current(){atomics.preload_error_rk.store(meta.rating_key,Ordering::SeqCst);warn!(%error,"required preload loudness preparation failed");}return}
+            };
             if !request.is_current() {
                 return;
             }
@@ -997,11 +1008,7 @@ fn handle_preload(
             debug!(rating_key = meta.rating_key, "preload initial batch ready");
             // The callback schedules the preloaded track after installation.
             wait_for_load(deck, request, atomics);
-            if gain_db.is_none() {
-                if let Some(analysis) = analysis {
-                    analysis.submit(source, deck, request.clone());
-                }
-            }
+
 
             if let Some(decoder) = result.decoder {
                 if !request.is_current() {
@@ -1300,6 +1307,8 @@ fn spawn_background_decode(
 
 /// Result of fetch + incremental decode.
 struct IncrementalDecodeResult {
+    cached_stamp: Option<cache::CacheStamp>,
+    spool: Option<Arc<deck::streaming::SharedBuffer>>,
     initial_samples: Vec<f32>,
     sample_rate: u32,
     channels: u16,
@@ -1342,6 +1351,7 @@ fn fetch_and_decode_incremental(
             setup.attach_cached_file(cache.clone(), cache_key.clone(), stamp.clone());
             let mut result = decode_initial_batch(&mut setup, device_rate, device_channels)?;
             if setup.aborted || setup.had_decode_errors { return Err("cached audio contains incomplete or invalid frames".into()); }
+            result.cached_stamp = Some(stamp.clone());
             result.decoder = if setup.finished { None } else { Some(setup) };
             Ok(result)
         })();
@@ -1398,12 +1408,12 @@ fn fetch_and_decode_incremental(
                     shared_w.abort();
                     return; // Dropping the writer removes its incomplete file.
                 }
-                shared_w.finish();
                 if let Some(writer) = writer {
                     if let Err(error) = writer.finish(&cache_for_task) {
                         tracing::warn!(%error, "audio cache finalization failed");
                     }
                 }
+                shared_w.finish();
             };
             tokio::select! {
                 biased;
@@ -1415,9 +1425,10 @@ fn fetch_and_decode_incremental(
         Ok::<_, String>(shared_return)
     })?;
 
-    let reader = StreamingReader::new(shared_buf);
+    let reader = StreamingReader::new(shared_buf.clone());
     let mut setup = decode::probe_stream(reader, Some(ext)).map_err(|e| format!("{}", e))?;
     let mut result = decode_initial_batch(&mut setup, device_rate, device_channels)?;
+    result.spool = Some(shared_buf);
     result.decoder = if setup.finished { None } else { Some(setup) };
     Ok(result)
 }
@@ -1459,6 +1470,8 @@ fn decode_initial_batch(
 
     setup.output_frames_decoded = (samples.len() / out_channels.max(1) as usize) as u64;
     Ok(IncrementalDecodeResult {
+        cached_stamp: None,
+        spool: None,
         initial_samples: samples,
         sample_rate: device_rate,
         channels: out_channels,
@@ -1482,14 +1495,87 @@ fn track_ramps(meta: &TrackMeta) -> TrackRamps {
     }
 }
 
-/// Resolve available metadata/cache gain without scanning a file on the
-/// playback control thread. Missing gain is handled by the background worker.
-fn resolve_gain_db(meta: &TrackMeta, cache_key: &str, cache: &Arc<AudioCache>) -> Option<f32> {
-    meta.gain_db.filter(|value| value.is_finite()).or_else(|| {
-        cache
-            .get_computed_gain(cache_key)
-            .filter(|value| value.is_finite())
-    })
+/// Finite normalized tracks are not installed until an integrated measurement is ready.
+/// This waits on control only; CPU-heavy R128 runs on the bounded analysis worker. Request
+/// epochs, preload ownership and normalization-off cancel waits without blocking realtime controls.
+#[allow(clippy::too_many_arguments)]
+fn prepare_gain_db(
+    meta: &TrackMeta,
+    source: &MediaSource,
+    deck: DeckId,
+    request: &PlaybackRequest,
+    default_cache: &Arc<AudioCache>,
+    atomics: &Arc<SharedAtomics>,
+    analysis: Option<&LoudnessAnalysis>,
+    decoded: &IncrementalDecodeResult,
+) -> Result<Option<f32>, String> {
+    let cache = source.local_cache.as_ref().unwrap_or(default_cache);
+    if !request.is_current() {
+        return Err("request superseded".into());
+    }
+    if decoded
+        .cached_stamp
+        .as_ref()
+        .is_some_and(|stamp| !cache.stamp_is_current(&source.cache_key, stamp))
+    {
+        return Err("audio file changed during preparation".into());
+    }
+    if let Some(gain) = meta.gain_db.filter(|gain| gain.is_finite()) {
+        return Ok(Some(gain));
+    }
+    if decoded.cached_stamp.is_some() {
+        if let Some(gain) = cache
+            .get_computed_gain(&source.cache_key)
+            .filter(|gain| gain.is_finite())
+        {
+            return Ok(Some(gain));
+        }
+    }
+    // Integrated loudness is undefined before EOF for live/unknown-duration streams.
+    // Their occurrence keeps a fixed metadata gain or unity, with no late analysis update.
+    if !atomics.normalization_is_enabled() || meta.duration_ms == 0 {
+        return Ok(None);
+    }
+    let service = analysis.ok_or("Loudness preparation is unavailable. Retry playback.")?;
+    let current = || request.is_current() && atomics.normalization_is_enabled();
+    let prepared = if let Some(expected) = &decoded.cached_stamp {
+        let (file, stamp) = cache
+            .open_with_stamp(&source.cache_key)
+            .ok_or("Audio file unavailable during preparation")?;
+        if &stamp != expected {
+            return Err("Audio file changed during preparation".into());
+        }
+        Ok((file, Some(stamp)))
+    } else {
+        let spool = decoded
+            .spool
+            .as_ref()
+            .ok_or("Complete media unavailable for loudness preparation")?;
+        spool.completed_file(&current).map(|file| {
+            // Download completion is signalled after its cache writer commits. Prefer
+            // a separately opened descriptor; never share a cached decoder's file offset.
+            cache
+                .open_with_stamp(&source.cache_key)
+                .map_or((file, None), |(cached, stamp)| (cached, Some(stamp)))
+        })
+    };
+    if !request.is_current() {
+        return Err("request superseded".into());
+    }
+    if !atomics.normalization_is_enabled() {
+        return Ok(None);
+    }
+    let (file, stamp) = prepared?;
+    let accepted_stamp=stamp.clone();
+    match service.prepare(source, deck, request, cache.clone(), file, stamp) {
+        // This exact result occurs only after complete, valid decoding. Silence and
+        // clips shorter than the R128 integration window have no meaningful scalar;
+        // keep unity for this occurrence, never persist a guessed zero adjustment.
+        Err(error) if error == "No integrated loudness measurement available"
+            && request.is_current()
+            && accepted_stamp.as_ref().is_none_or(|stamp|cache.stamp_is_current(&source.cache_key,stamp)) => Ok(None),
+        result => result,
+    }
 }
 
 #[cfg(test)]
@@ -1766,17 +1852,138 @@ mod control_tests {
     }
 
     #[test]
-    fn cached_playback_is_loaded_without_waiting_for_a_blocked_loudness_scan() {
+    fn cached_play_and_preload_wait_for_required_gain_and_install_it_once() {
+        for preload in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let cache = Arc::new(AudioCache::new(dir.path().into(), None));
+            let url = "https://test.invalid/startup.wav";
+            let source =
+                MediaSource::new(crate::plex::client::public_media_request(url), None).unwrap();
+            let mut writer = cache.begin_write(&source.cache_key, "wav").unwrap();
+            writer
+                .write_chunk(&decode::tests::generate_test_wav(44100, 2, 3.0))
+                .unwrap();
+            writer.finish(&cache).unwrap();
+            let atomics = Arc::new(SharedAtomics::new());
+            atomics.request_epoch.store(1, Ordering::SeqCst);
+            let request = PlaybackRequest::new(
+                1,
+                atomics.request_epoch.clone(),
+                atomics.deck_b_load_id.clone(),
+            );
+            atomics
+                .deck_b_loaded_id
+                .store(request.load_id, Ordering::SeqCst);
+            let (commands, received) = crossbeam_channel::unbounded();
+            let (analysis_started_tx, analysis_started) = crossbeam_channel::bounded(1);
+            let (release, released) = crossbeam_channel::bounded(1);
+            let alive = Arc::new(AtomicBool::new(true));
+            let analysis = LoudnessAnalysis::with_analyzer(
+                atomics.clone(),
+                alive.clone(),
+                Arc::new(move |_, _, _| {
+                    analysis_started_tx.send(()).unwrap();
+                    released.recv().unwrap();
+                    Ok(-6.0)
+                }),
+            )
+            .unwrap();
+            let (samples, _sample_rx) = crossbeam_channel::unbounded();
+            let (events, _event_rx) = crossbeam_channel::unbounded();
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            let meta = TrackMeta {
+                rating_key: 42,
+                duration_ms: 3000,
+                parent_key: String::new(),
+                album_playback: false,
+                gain_db: None,
+                skip_crossfade: true,
+                start_ramp: None,
+                end_ramp: None,
+                labels: None,
+                reporting_binding: None,
+            };
+            std::thread::scope(|scope| {
+                let playing = scope.spawn(|| {
+                    if preload {
+                        handle_preload(
+                            &source,
+                            &meta,
+                            DeckId::B,
+                            &commands,
+                            &samples,
+                            &events,
+                            runtime.handle(),
+                            &atomics,
+                            &cache,
+                            Some(&analysis),
+                            &CrossfadeSettings::default(),
+                            44100,
+                            2,
+                            &request,
+                        )
+                    } else {
+                        handle_play(
+                            &source,
+                            &meta,
+                            DeckId::B,
+                            &commands,
+                            &samples,
+                            &events,
+                            runtime.handle(),
+                            &atomics,
+                            &cache,
+                            Some(&analysis),
+                            &CrossfadeSettings::default(),
+                            44100,
+                            2,
+                            &request,
+                        )
+                    }
+                });
+                analysis_started
+                    .recv_timeout(Duration::from_secs(2))
+                    .unwrap();
+                if preload {
+                    assert!(matches!(
+                        received.recv().unwrap(),
+                        AudioCommand::PreparePreload { .. }
+                    ));
+                }
+                assert!(
+                    received.try_recv().is_err(),
+                    "No deck or transition may install before required gain"
+                );
+                release.send(()).unwrap();
+                playing.join().unwrap();
+            });
+            assert!(
+                matches!(received.recv().unwrap(),AudioCommand::LoadDeck{norm_gain,meta,initial_samples,..} if (norm_gain-loudness::replay_gain(Some(-6.0))).abs()<1e-6 && meta.gain_db==Some(-6.0) && !initial_samples.is_empty())
+            );
+            if !preload {
+                assert!(matches!(
+                    received.recv().unwrap(),
+                    AudioCommand::TransitionToActive { .. }
+                ));
+            }
+            assert!(
+                received.try_recv().is_err(),
+                "Gain must not be updated after activation"
+            );
+            alive.store(false, Ordering::SeqCst);
+            atomics.deck_b_load_id.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn known_gain_disabled_normalization_and_live_sources_never_wait_for_full_media() {
         let dir = tempfile::tempdir().unwrap();
         let cache = Arc::new(AudioCache::new(dir.path().into(), None));
-        let url = "https://test.invalid/startup.wav";
-        let source =
-            MediaSource::new(crate::plex::client::public_media_request(url), None).unwrap();
-        let mut writer = cache.begin_write(&source.cache_key, "wav").unwrap();
-        writer
-            .write_chunk(&decode::tests::generate_test_wav(44100, 2, 3.0))
-            .unwrap();
-        writer.finish(&cache).unwrap();
+        let source = MediaSource::new(
+            crate::plex::client::public_media_request("https://fixture.invalid/never-finishes.wav"),
+            None,
+        )
+        .unwrap();
         let atomics = Arc::new(SharedAtomics::new());
         atomics.request_epoch.store(1, Ordering::SeqCst);
         let request = PlaybackRequest::new(
@@ -1784,28 +1991,171 @@ mod control_tests {
             atomics.request_epoch.clone(),
             atomics.deck_b_load_id.clone(),
         );
-        atomics
-            .deck_b_loaded_id
-            .store(request.load_id, Ordering::SeqCst);
-        let (commands, received) = crossbeam_channel::unbounded();
-        let (analysis_started_tx, analysis_started) = crossbeam_channel::bounded(1);
-        let (release, released) = crossbeam_channel::bounded(1);
-        let alive = Arc::new(AtomicBool::new(true));
-        let analysis = LoudnessAnalysis::with_analyzer(
-            cache.clone(),
-            commands.clone(),
-            atomics.clone(),
-            alive.clone(),
-            Arc::new(move |_, _, _| {
-                analysis_started_tx.send(()).unwrap();
-                released.recv().unwrap();
-                Ok(-6.0)
-            }),
+        let decoded = IncrementalDecodeResult {
+            cached_stamp: None,
+            spool: Some(deck::streaming::SharedBuffer::new(None).unwrap()),
+            initial_samples: vec![1.0, 1.0],
+            sample_rate: 44100,
+            channels: 2,
+            has_more: true,
+            decoder: None,
+            source_rate: 44100,
+            source_channels: 2,
+            aborted: false,
+        };
+        let mut meta = TrackMeta {
+            rating_key: 42,
+            duration_ms: 1000,
+            parent_key: String::new(),
+            album_playback: false,
+            gain_db: Some(-3.0),
+            skip_crossfade: true,
+            start_ramp: None,
+            end_ramp: None,
+            labels: None,
+            reporting_binding: None,
+        };
+        assert_eq!(
+            prepare_gain_db(
+                &meta,
+                &source,
+                DeckId::B,
+                &request,
+                &cache,
+                &atomics,
+                None,
+                &decoded
+            )
+            .unwrap(),
+            Some(-3.0)
+        );
+        meta.gain_db = None;
+        atomics.normalization_enabled.store(false, Ordering::SeqCst);
+        assert_eq!(
+            prepare_gain_db(
+                &meta,
+                &source,
+                DeckId::B,
+                &request,
+                &cache,
+                &atomics,
+                None,
+                &decoded
+            )
+            .unwrap(),
+            None
+        );
+        atomics.normalization_enabled.store(true, Ordering::SeqCst);
+        meta.duration_ms = 0;
+        assert_eq!(
+            prepare_gain_db(
+                &meta,
+                &source,
+                DeckId::B,
+                &request,
+                &cache,
+                &atomics,
+                None,
+                &decoded
+            )
+            .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn an_owned_offline_cached_gain_uses_the_source_cache_without_analyzer() {
+        let global_dir = tempfile::tempdir().unwrap();
+        let global = Arc::new(AudioCache::new(global_dir.path().into(), None));
+        let local_dir = tempfile::tempdir().unwrap();
+        let local = Arc::new(AudioCache::new(local_dir.path().into(), None));
+        let mut source = MediaSource::new(
+            crate::plex::client::public_media_request("https://fixture.invalid/local.wav"),
+            None,
         )
         .unwrap();
-        let (samples, _sample_rx) = crossbeam_channel::unbounded();
-        let (events, _event_rx) = crossbeam_channel::unbounded();
-        let runtime = tokio::runtime::Runtime::new().unwrap();
+        source.local_cache = Some(local.clone());
+        let mut writer = local.begin_write(&source.cache_key, "wav").unwrap();
+        writer
+            .write_chunk(&decode::tests::generate_test_wav(44100, 2, 1.0))
+            .unwrap();
+        writer.finish(&local).unwrap();
+        local.set_computed_gain(&source.cache_key, -6.0);
+        let atomics = Arc::new(SharedAtomics::new());
+        atomics.request_epoch.store(1, Ordering::SeqCst);
+        let request = PlaybackRequest::new(
+            1,
+            atomics.request_epoch.clone(),
+            atomics.deck_b_load_id.clone(),
+        );
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let decoded =
+            fetch_and_decode_incremental(&source, 42, &global, rt.handle(), 44100, 2, &request)
+                .unwrap();
+        let meta = TrackMeta {
+            rating_key: 42,
+            duration_ms: 1000,
+            parent_key: String::new(),
+            album_playback: false,
+            gain_db: None,
+            skip_crossfade: true,
+            start_ramp: None,
+            end_ramp: None,
+            labels: None,
+            reporting_binding: None,
+        };
+        assert_eq!(
+            prepare_gain_db(
+                &meta,
+                &source,
+                DeckId::B,
+                &request,
+                &global,
+                &atomics,
+                None,
+                &decoded
+            )
+            .unwrap(),
+            Some(-6.0)
+        );
+        assert!(global.get_computed_gain(&source.cache_key).is_none());
+    }
+
+    #[test]
+    fn completed_temporary_spool_can_be_normalized_when_persistent_cache_is_unavailable() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Arc::new(AudioCache::new(dir.path().into(), Some(1)));
+        let source = MediaSource::new(
+            crate::plex::client::public_media_request("https://fixture.invalid/spool.wav"),
+            None,
+        )
+        .unwrap();
+        let atomics = Arc::new(SharedAtomics::new());
+        atomics.request_epoch.store(1, Ordering::SeqCst);
+        let request = PlaybackRequest::new(
+            1,
+            atomics.request_epoch.clone(),
+            atomics.deck_b_load_id.clone(),
+        );
+        let analysis =
+            LoudnessAnalysis::start(atomics.clone(), Arc::new(AtomicBool::new(true))).unwrap();
+        let spool = deck::streaming::SharedBuffer::new(None).unwrap();
+        spool
+            .push(&decode::tests::generate_test_wav(44100, 2, 3.0))
+            .unwrap();
+        spool.finish();
+        let decoded = IncrementalDecodeResult {
+            cached_stamp: None,
+            spool: Some(spool),
+            initial_samples: vec![1.0, 1.0],
+            sample_rate: 44100,
+            channels: 2,
+            has_more: true,
+            decoder: None,
+            source_rate: 44100,
+            source_channels: 2,
+            aborted: false,
+        };
         let meta = TrackMeta {
             rating_key: 42,
             duration_ms: 3000,
@@ -1818,44 +2168,128 @@ mod control_tests {
             labels: None,
             reporting_binding: None,
         };
-        let start = std::time::Instant::now();
-        handle_play(
-            &source,
+        assert!(prepare_gain_db(
             &meta,
+            &source,
             DeckId::B,
-            &commands,
-            &samples,
-            &events,
-            runtime.handle(),
-            &atomics,
-            &cache,
-            Some(&analysis),
-            &CrossfadeSettings::default(),
-            44100,
-            2,
             &request,
+            &cache,
+            &atomics,
+            Some(&analysis),
+            &decoded
+        )
+        .unwrap()
+        .unwrap()
+        .is_finite());
+        assert!(cache.lookup(&source.cache_key).is_none());
+    }
+
+    #[test]
+    fn transient_r128_preparation_does_not_lose_the_incremental_decoder_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Arc::new(AudioCache::new(dir.path().into(), Some(1)));
+        let source = MediaSource::new(
+            crate::plex::client::public_media_request("https://fixture.invalid/transient.wav"),
+            None,
+        )
+        .unwrap();
+        let bytes = decode::tests::generate_test_wav(44100, 2, 3.0);
+        let spool = deck::streaming::SharedBuffer::new(Some(bytes.len() as u64)).unwrap();
+        spool.push(&bytes).unwrap();
+        spool.finish();
+        let mut setup = decode::probe_stream(
+            deck::streaming::StreamingReader::new(spool.clone()),
+            Some("wav"),
+        )
+        .unwrap();
+        let mut initial = decode_initial_batch(&mut setup, 44100, 2).unwrap();
+        initial.spool = Some(spool);
+        let atomics = Arc::new(SharedAtomics::new());
+        atomics.request_epoch.store(1, Ordering::SeqCst);
+        let request = PlaybackRequest::new(
+            1,
+            atomics.request_epoch.clone(),
+            atomics.deck_b_load_id.clone(),
         );
-        assert!(
-            start.elapsed() < Duration::from_secs(1),
-            "Playback must not wait for the scan to finish"
+        let analysis =
+            LoudnessAnalysis::start(atomics.clone(), Arc::new(AtomicBool::new(true))).unwrap();
+        let meta = TrackMeta {
+            rating_key: 42,
+            duration_ms: 3000,
+            parent_key: String::new(),
+            album_playback: false,
+            gain_db: None,
+            skip_crossfade: true,
+            start_ramp: None,
+            end_ramp: None,
+            labels: None,
+            reporting_binding: None,
+        };
+        assert!(prepare_gain_db(
+            &meta,
+            &source,
+            DeckId::B,
+            &request,
+            &cache,
+            &atomics,
+            Some(&analysis),
+            &initial
+        )
+        .unwrap()
+        .unwrap()
+        .is_finite());
+        let mut actual = initial.initial_samples;
+        while !setup.finished {
+            actual.extend(decode::decode_batch(&mut setup, 262144).unwrap());
+        }
+        let mut reference = decode::probe_audio(bytes).unwrap();
+        let mut expected = Vec::new();
+        while !reference.finished {
+            expected.extend(decode::decode_batch(&mut reference, 262144).unwrap());
+        }
+        assert_eq!(
+            actual, expected,
+            "Full-file measurement must not move playback's logical read cursor"
         );
-        analysis_started
-            .recv_timeout(Duration::from_secs(2))
-            .unwrap();
-        assert!(
-            matches!(received.recv().unwrap(), AudioCommand::LoadDeck { norm_gain, initial_samples, .. } if norm_gain == 1.0 && !initial_samples.is_empty())
-        );
-        assert!(matches!(
-            received.recv().unwrap(),
-            AudioCommand::TransitionToActive { .. }
-        ));
-        release.send(()).unwrap();
-        assert!(matches!(
-            received.recv_timeout(Duration::from_secs(2)).unwrap(),
-            AudioCommand::AnalyzedGain { .. }
-        ));
-        alive.store(false, Ordering::SeqCst);
-        atomics.deck_b_load_id.fetch_add(1, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn a_rejected_normalization_command_cannot_change_the_preparation_preference() {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, _commands, _callback, _events) = engine_with_callback(dir.path(), 1);
+        engine.send(Command::SetVolume { gain: 0.5 }).unwrap();
+        assert!(engine
+            .send(Command::SetNormalization { enabled: false })
+            .is_err());
+        assert!(engine.normalization_enabled());
+    }
+
+    #[test]
+    fn complete_silence_and_short_jingles_install_at_fixed_unity_but_incomplete_or_empty_files_do_not() {
+        use symphonia::core::audio::Channels;
+        let layout=Channels::FRONT_LEFT|Channels::FRONT_RIGHT;
+        let silence=decode::tests::generate_layout_wav(44100,layout,44100,|_,_|0.0);
+        let short=decode::tests::generate_layout_wav(44100,layout,4410,|frame,_|(frame as f32*0.08).sin()*0.2);
+        let mut truncated=decode::tests::generate_test_wav(44100,2,3.0);truncated.truncate(truncated.len()*3/4);
+        let empty=decode::tests::generate_test_wav(44100,2,0.0);
+        for (bytes,valid,duration_ms) in [(silence,true,1000),(short,true,100),(truncated,false,3000),(empty,false,1000)] {
+            let dir=tempfile::tempdir().unwrap();let cache=Arc::new(AudioCache::new(dir.path().into(),None));
+            let mut source=MediaSource::new(crate::plex::client::public_media_request("https://fixture.invalid/no-network.wav"),None).unwrap();source.request=None;
+            let mut writer=cache.begin_write(&source.cache_key,"wav").unwrap();writer.write_chunk(&bytes).unwrap();writer.finish(&cache).unwrap();
+            let atomics=Arc::new(SharedAtomics::new());atomics.request_epoch.store(1,Ordering::SeqCst);let request=PlaybackRequest::new(1,atomics.request_epoch.clone(),atomics.deck_b_load_id.clone());atomics.deck_b_loaded_id.store(request.load_id,Ordering::SeqCst);
+            let analysis=LoudnessAnalysis::start(atomics.clone(),Arc::new(AtomicBool::new(true))).unwrap();
+            let (commands,received)=crossbeam_channel::unbounded();let(samples,_)=crossbeam_channel::unbounded();let(events,_)=crossbeam_channel::unbounded();let rt=tokio::runtime::Runtime::new().unwrap();
+            let meta=TrackMeta{rating_key:42,duration_ms,parent_key:String::new(),album_playback:false,gain_db:None,skip_crossfade:true,start_ramp:None,end_ramp:None,labels:None,reporting_binding:None};
+            handle_play(&source,&meta,DeckId::B,&commands,&samples,&events,rt.handle(),&atomics,&cache,Some(&analysis),&CrossfadeSettings::default(),44100,2,&request);
+            let command=received.recv_timeout(Duration::from_secs(2)).unwrap();
+            if valid {
+                assert!(matches!(command,AudioCommand::LoadDeck{norm_gain,meta,initial_samples,..} if norm_gain==1.0 && meta.gain_db.is_none() && !initial_samples.is_empty()));
+                assert!(matches!(received.recv_timeout(Duration::from_secs(2)).unwrap(),AudioCommand::TransitionToActive{..}));
+                assert!(cache.lookup(&source.cache_key).is_some(),"Valid unmeasurable encoded media must remain reusable");
+            } else {assert!(matches!(command,AudioCommand::FailPlay{..}));assert!(received.try_recv().is_err());}
+            assert!(cache.get_computed_gain(&source.cache_key).is_none(),"Unity fallback must not be cached as measured gain");
+            atomics.deck_b_load_id.fetch_add(1,Ordering::SeqCst);
+        }
     }
 
     #[test]

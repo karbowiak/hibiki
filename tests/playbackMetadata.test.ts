@@ -45,6 +45,23 @@ test("local audio never asks Plex for missing gain or waveform metadata", async 
   expect(backend.getTrack).not.toHaveBeenCalled()
 })
 
+test("prefetched missing Plex gain is refreshed when later server analysis becomes available", async () => {
+  const cache = new PlaybackMetadata()
+  let gain: number | null = null
+  const fetch = mock(async () => ({
+    ...info("https://fixture.test/track"),
+    plexContext: { cacheScope: "scope", connectionRevision: 1 },
+    trackGain: gain,
+    albumGain: null,
+  }))
+  const backend = provider("scope", { getPlaybackInfo: fetch })
+  expect((await cache.playbackInfo(backend, track("1"))).trackGain).toBeNull()
+  gain = -4
+  expect((await cache.playbackInfo(backend, track("1"))).trackGain).toBe(-4)
+  expect((await cache.playbackInfo(backend, track("1"))).trackGain).toBe(-4)
+  expect(fetch).toHaveBeenCalledTimes(2)
+})
+
 test("local playback restores native saved waveforms without a server metadata lookup", async () => {
   const levels = [{ loudness: -40 }, { loudness: -6 }],
     cache = new PlaybackMetadata()

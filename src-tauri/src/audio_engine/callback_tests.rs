@@ -1469,23 +1469,9 @@ fn analysis_callback() -> AudioCallbackState {
 }
 
 #[test]
-fn analyzed_gain_fades_smoothly_on_the_owned_track_and_keeps_play_pause_independent() {
-    let mut cb = analysis_callback();
-    cb.handle_command(AudioCommand::AnalyzedGain {
-        deck: DeckId::A,
-        load_id: 7,
-        gain_db: -6.0206,
-    });
-    let mut empty = DeckState::new(DeckId::B);
-    let deck = cb.deck_mgr.active_deck_mut();
-    deck.samples = vec![1.0; FADE_SAMPLES + 2];
-    let mut output = vec![0.0; FADE_SAMPLES + 2];
-    mixer::mix_decks(deck, &mut empty, &mut output, 2, false);
-    assert_eq!(output[0], 1.0);
-    assert!(output.windows(2).all(|pair| pair[1] <= pair[0]));
-    assert!((output[FADE_SAMPLES / 2] - 0.75).abs() < 1e-5);
-    assert!((output[FADE_SAMPLES] - 0.5).abs() < 1e-5);
-    assert!(deck.norm_fade.is_none());
+fn late_analysis_cannot_change_an_already_audible_occurrence() {
+    let mut cb=analysis_callback();cb.handle_command(AudioCommand::AnalyzedGain{deck:DeckId::A,load_id:7,gain_db:-6.0206});
+    let deck=cb.deck_mgr.active_deck();assert_eq!(deck.norm_gain,1.0);assert!(deck.norm_fade.is_none());assert!(deck.meta.as_ref().unwrap().gain_db.is_none());
 }
 
 #[test]
@@ -1520,23 +1506,11 @@ fn analysis_for_a_previous_load_cannot_change_a_replacement_or_override_plex_gai
 }
 
 #[test]
-fn an_analysis_completed_while_normalization_is_off_is_available_for_later_enable() {
-    let mut cb = analysis_callback();
-    cb.handle_command(AudioCommand::SetNormalization(false));
-    cb.handle_command(AudioCommand::AnalyzedGain {
-        deck: DeckId::A,
-        load_id: 7,
-        gain_db: -6.0206,
-    });
-    assert_eq!(cb.deck_mgr.active_deck().norm_gain, 1.0);
+fn normalization_toggle_does_not_adopt_a_late_automatic_measurement() {
+    let mut cb=analysis_callback();cb.handle_command(AudioCommand::SetNormalization(false));
+    cb.handle_command(AudioCommand::AnalyzedGain{deck:DeckId::A,load_id:7,gain_db:-6.0206});
     cb.handle_command(AudioCommand::SetNormalization(true));
-    let mut empty = DeckState::new(DeckId::B);
-    let deck = cb.deck_mgr.active_deck_mut();
-    deck.samples = vec![1.0; FADE_SAMPLES + 2];
-    let mut output = vec![0.0; FADE_SAMPLES + 2];
-    mixer::mix_decks(deck, &mut empty, &mut output, 2, false);
-    assert_eq!(output[0], 1.0);
-    assert!((output[FADE_SAMPLES] - 0.5).abs() < 1e-5);
+    assert_eq!(cb.deck_mgr.active_deck().norm_gain,1.0);assert!(cb.deck_mgr.active_deck().meta.as_ref().unwrap().gain_db.is_none());
 }
 
 #[test]

@@ -102,6 +102,48 @@ impl SharedBuffer {
         self.inner.lock().unwrap().aborted
     }
 
+    /// A required integrated measurement needs real EOF, never a prefix or Content-Length guess.
+    /// The playback decoder is paused during analysis; StreamingReader seeks its independent
+    /// logical position before every read, so this descriptor's shared OS offset is harmless.
+    pub(in crate::audio_engine) fn completed_file(
+        &self,
+        current: impl Fn() -> bool,
+    ) -> Result<std::fs::File, String> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| "Audio preparation unavailable".to_string())?;
+        while !inner.done {
+            if !current() {
+                return Err("Audio preparation cancelled".into());
+            }
+            inner = self
+                .condvar
+                .wait_timeout(inner, std::time::Duration::from_millis(10))
+                .map_err(|_| "Audio preparation unavailable".to_string())?
+                .0;
+        }
+        if !current() {
+            return Err("Audio preparation cancelled".into());
+        }
+        if inner.aborted {
+            return Err("Incomplete media cannot be normalized".into());
+        }
+        if inner
+            .content_length
+            .is_some_and(|len| len != inner.downloaded_len)
+        {
+            return Err("Incomplete media cannot be normalized".into());
+        }
+        let mut file = inner
+            .file
+            .try_clone()
+            .map_err(|_| "Audio preparation file unavailable".to_string())?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(|_| "Audio preparation file unavailable".to_string())?;
+        Ok(file)
+    }
+
     /// Set the content length once known (from HTTP Content-Length header).
     pub fn set_content_length(&self, len: u64) {
         let mut inner = self.inner.lock().unwrap();
@@ -393,5 +435,39 @@ mod tests {
         reader.read_to_string(&mut out).unwrap();
         writer.join().unwrap();
         assert_eq!(out, "0123456789");
+    }
+    #[test]
+    fn required_file_waits_for_real_eof_and_preserves_playback_reader_position() {
+        let buffer = SharedBuffer::new(Some(6)).unwrap();
+        buffer.push(b"abc").unwrap();
+        let mut reader = StreamingReader::new(buffer.clone());
+        let mut first = [0; 1];
+        reader.read_exact(&mut first).unwrap();
+        assert_eq!(first, b"a"[0..1]);
+        let current = AtomicBool::new(true);
+        std::thread::scope(|scope| {
+            let waiting = scope.spawn(|| buffer.completed_file(|| current.load(Ordering::SeqCst)));
+            buffer.push(b"def").unwrap();
+            buffer.finish();
+            let mut file = waiting.join().unwrap().unwrap();
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes).unwrap();
+            assert_eq!(bytes, b"abcdef");
+        });
+        let mut rest = Vec::new();
+        reader.read_to_end(&mut rest).unwrap();
+        assert_eq!(rest, b"bcdef");
+    }
+    #[test]
+    fn required_file_rejects_abort_truncation_and_cancelled_wait() {
+        let buffer = SharedBuffer::new(Some(6)).unwrap();
+        buffer.push(b"abc").unwrap();
+        buffer.finish();
+        assert!(buffer.completed_file(|| true).is_err());
+        let buffer = SharedBuffer::new(None).unwrap();
+        buffer.abort();
+        assert!(buffer.completed_file(|| true).is_err());
+        let buffer = SharedBuffer::new(None).unwrap();
+        assert!(buffer.completed_file(|| false).is_err());
     }
 }

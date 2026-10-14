@@ -129,6 +129,26 @@ duplicate occurrences. Removing a collection or removing/re-adding it retires
 its revision, so outstanding batch admission cannot resurrect cancelled jobs.
 Individual-song removal excludes that song from any remaining pending batches.
 
+## Responsive browsing and playback preparation
+
+Browsing and playback point lookups use separate read-only WAL connections on
+bounded blocking workers. Playback has reserved reader capacity, and scoped
+ownership is checked again after reads. Catalogue writes cannot hold the native
+Plex/audio admission lock while waiting for the writer. V9 shelf/tag projections
+backfill in small resumable batches; online views fall back to Plex until their
+scope is covered, while full raw documents and existing checkpoints remain intact.
+
+Normalized playback fixes gain before installing a finite track, including queue
+preloads. Native preparation reuses Plex or cached gain first and can request
+`/library/metadata/{id}/analyzeLoudness` once per scoped file with bounded polling.
+If Plex cannot supply gain, complete encoded bytes are measured by the cancellable
+R128 worker before sound. Known-gain and normalization-off tracks still stream
+immediately; live streams use a fixed gain because integrated loudness requires
+a complete finite file. Automatic analysis never changes an audible occurrence.
+Valid silent tracks and very short interludes use fixed unity when the completed
+scan cannot measure integrated loudness; no guessed gain is saved. Empty or
+incomplete audio still fails before playback.
+
 ## Incremental catalogue updates
 
 Plex WebSocket hints enter `catalogue_notify` in batches of at most 200. Only
