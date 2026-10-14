@@ -20,9 +20,18 @@ export interface SyncCreationIntent {
   sourceSnapshot: PlaylistSnapshot
   title: string
   weeklyEdition?: WeeklyEdition
+  /** Older receipts created Plex destinations. */
+  direction?: "import" | "export"
   state: "admitting" | "created" | "linked" | "reconcile" | "cancelled"
   destinationId?: string
   linkId?: string
+}
+export function syncCreationAccounts(
+  intent: Pick<SyncCreationIntent, "direction" | "target" | "sourceSnapshot">
+) {
+  return intent.direction === "export"
+    ? { library: intent.sourceSnapshot.account, listenbrainz: intent.target }
+    : { library: intent.target, listenbrainz: intent.sourceSnapshot.account }
 }
 export interface SyncCreationJournal {
   load(): Promise<SyncCreationIntent[]>
@@ -60,6 +69,12 @@ function valid(intent: SyncCreationIntent) {
     !intent.target.service ||
     !intent.target.user ||
     !intent.target.revision ||
+    (intent.direction !== undefined &&
+      !["import", "export"].includes(intent.direction)) ||
+    (intent.direction === "export" &&
+      (intent.target.service !== "listenbrainz" ||
+        !intent.sourceSnapshot.account.service.startsWith("library:") ||
+        intent.weeklyEdition !== undefined)) ||
     intent.key !==
       syncCreationKey(
         intent.sourceSnapshot,
@@ -92,6 +107,7 @@ export function retainSyncCreation(
   if (
     old &&
     (old.key !== intent.key ||
+      (old.direction ?? "import") !== (intent.direction ?? "import") ||
       old.title !== intent.title ||
       snapshotRevision(old.sourceSnapshot) !==
         snapshotRevision(intent.sourceSnapshot) ||
@@ -147,6 +163,7 @@ export const syncCreationJournal: SyncCreationJournal = {
   },
 }
 export interface SyncCreationServices {
+  direction?: "import" | "export"
   source: PlaylistAdapter
   target: PlaylistAdapter
   journal: SyncCreationJournal
@@ -163,6 +180,7 @@ export async function createLinkedSync(
 ): Promise<{ intent: SyncCreationIntent; link: LinkedPlaylist }> {
   const source = await services.source.read(sourceId),
     target = await services.target.account()
+  const direction = services.direction ?? "import"
   validateSnapshot(source)
   if (
     source.id !== sourceId ||
@@ -170,7 +188,11 @@ export async function createLinkedSync(
     services.admissionCurrent?.() === false ||
     !services.target.capabilities.createCopy ||
     !title.trim() ||
-    title.trim().length > 500
+    title.trim().length > 500 ||
+    (direction === "export" &&
+      (target.service !== "listenbrainz" ||
+        !source.account.service.startsWith("library:") ||
+        weeklyEdition !== undefined))
   )
     throw Error("Sync creation owner or title changed")
   if (
@@ -180,18 +202,24 @@ export async function createLinkedSync(
   )
     throw Error("Review the weekly source identity before creating a playlist")
   const existing = await services.links.load()
+  const accounts = syncCreationAccounts({
+    direction,
+    target,
+    sourceSnapshot: source,
+  })
   if (
-    existing.some(
-      (link) =>
-        samePlaylistIdentity(link.library, target) &&
-        samePlaylistIdentity(link.listenbrainz, source.account) &&
-        (weeklyEdition
-          ? link.weeklySource?.family === weeklyEdition.family
-          : link.listenbrainzPlaylistId === source.id)
+    existing.some((link) =>
+      direction === "export"
+        ? samePlaylistIdentity(link.library, accounts.library) &&
+          link.libraryPlaylistId === source.id
+        : samePlaylistIdentity(link.listenbrainz, accounts.listenbrainz) &&
+          (weeklyEdition
+            ? link.weeklySource?.family === weeklyEdition.family
+            : link.listenbrainzPlaylistId === source.id)
     )
   )
     throw Error(
-      "This source already has a library playlist; configure its existing sync"
+      "This source already has a linked playlist; configure its existing sync"
     )
   let intent: SyncCreationIntent = {
     id: crypto.randomUUID(),
@@ -201,6 +229,7 @@ export async function createLinkedSync(
     sourceSnapshot: structuredClone(source),
     title: title.trim(),
     weeklyEdition,
+    direction,
     state: "admitting",
   }
   if (services.admissionCurrent?.() === false)
@@ -233,7 +262,7 @@ export async function createLinkedSync(
     }
     if (!services.current())
       throw new SyncCreationError(
-        "The playlist was created in the original library. Inspect its retained receipt before continuing.",
+        "The playlist was created in the original destination. Inspect its retained receipt before continuing.",
         intent
       )
     return await reconcileSyncCreation(intent, services)
@@ -271,6 +300,8 @@ export async function reconcileSyncCreation(
       intent
     )
   const retained = await services.links.load()
+  const accounts = syncCreationAccounts(intent)
+  const exporting = intent.direction === "export"
   if (
     !services.current() ||
     !samePlaylistIdentity(
@@ -283,10 +314,12 @@ export async function reconcileSyncCreation(
     throw new SyncCreationError("Creation account changed", intent)
   const existing = retained.find(
     (link) =>
-      link.libraryPlaylistId === intent.destinationId &&
-      samePlaylistIdentity(link.library, intent.target) &&
-      link.listenbrainzPlaylistId === intent.sourceSnapshot.id &&
-      samePlaylistIdentity(link.listenbrainz, intent.sourceSnapshot.account)
+      link.libraryPlaylistId ===
+        (exporting ? intent.sourceSnapshot.id : intent.destinationId) &&
+      samePlaylistIdentity(link.library, accounts.library) &&
+      link.listenbrainzPlaylistId ===
+        (exporting ? intent.destinationId : intent.sourceSnapshot.id) &&
+      samePlaylistIdentity(link.listenbrainz, accounts.listenbrainz)
   )
   if (existing) {
     const completed = {
@@ -314,25 +347,32 @@ export async function reconcileSyncCreation(
     version: 1,
     revision: 0,
     id: crypto.randomUUID(),
-    library: intent.target,
-    listenbrainz: source.account,
-    libraryPlaylistId: destination.id,
-    listenbrainzPlaylistId: source.id,
+    library: accounts.library,
+    listenbrainz: accounts.listenbrainz,
+    libraryPlaylistId: exporting ? source.id : destination.id,
+    listenbrainzPlaylistId: exporting ? destination.id : source.id,
     enabled: true,
-    paused: false,
-    direction: "import",
+    paused: exporting,
+    direction: exporting ? "export" : "import",
     automatic: !!intent.weeklyEdition,
-    baseline: { library: destination, listenbrainz: source },
+    baseline: exporting
+      ? { library: source, listenbrainz: destination }
+      : { library: destination, listenbrainz: source },
     mappings: [],
     state: "ready",
-    incomplete: {
-      sourceSnapshot: source,
-      missingOccurrenceIds: source.items.map((item) => item.occurrenceId),
-      matchedCount: 0,
-      total: source.items.length,
-      matchingCursor: 0,
-      matchingDone: false,
-    },
+    message: exporting
+      ? "Review recording matches before the first export. The new ListenBrainz playlist is retained."
+      : undefined,
+    incomplete: exporting
+      ? undefined
+      : {
+          sourceSnapshot: source,
+          missingOccurrenceIds: source.items.map((item) => item.occurrenceId),
+          matchedCount: 0,
+          total: source.items.length,
+          matchingCursor: 0,
+          matchingDone: false,
+        },
     ...(intent.weeklyEdition
       ? {
           weeklySource: {

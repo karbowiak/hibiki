@@ -53,6 +53,16 @@ but importing into them or altering their rules is prohibited by the UI, journal
 fresh execution checks and native preflight. Read-only/generated ListenBrainz
 feeds similarly cannot become export destinations.
 
+Per-playlist Setup can create a new private ListenBrainz destination instead of
+requiring an existing remote playlist. The full local source is journaled before
+one empty create, and the export link then opens recording review. Automatic
+checks remain off until configured. Export creation shares the durable intent
+and read-only recovery path with import creation; old intents default to import.
+An unknown user-selected destination is inspected for the expected account,
+title and empty contents before its ID is retained, so a typo cannot pin recovery
+to an unrelated playlist. Creating a destination does not resolve recordings or
+discard songs lacking verified MBIDs.
+
 Sync requires fresh online roster and member reads. Ordinary browsing may use
 saved data on a network failure, but sync never uses that fallback to authorize
 an export or update. Membership and bounds come from actual item-page totals,
@@ -70,6 +80,21 @@ Plex `mbid` identifies a recording. The final matcher still checks version,
 duration, artist evidence and conflicting IDs. Same-labelled source recordings
 keep independent recording-ID lookup keys. Unresolved songs are not declared
 absent from the library merely because these bounded searches did not find them.
+
+Background matching visits all query batches even when individual lookups fail.
+Available matches are filled in source order; unavailable lookups and unsupported
+repeats remain in the full source manifest and per-playlist review. The same
+repeat-aware progress calculation is used during lookup, revalidation and writes.
+Completed partial results remain ready for explicit rematching, rather than being
+classified as content conflicts. Weekly following can archive those unresolved
+occurrences when admitting a newer edition. Genuine conflicts, manual pauses and
+unknown mutations keep their write gates.
+
+Matching progress stays in Sync settings. Verified partial completion emits a
+dismissible result notice; a bounded local list of hashed outcome receipts avoids
+repeating that completion after restart. Session event keys also suppress polling,
+reconnect and remount repeats while refreshing current notification actions.
+Notice retention is independent of sync revisions and never blocks music matching.
 
 One-sided verified changes propagate; changes on both sides pause for review. The app checks eligible links every two minutes while online, with at most 20 occurrence mutations per cycle. Each append/move/delete has a durable admission record, exact preflight, one non-retrying authenticated request, and ordered post-read proof. No playlist-wide clear or unreviewed replacement is used. Providers do not expose transactional compare-and-swap: an external editor can race the final preflight. This limitation is explicit, and failed postproof stops further writes as an unknown outcome.
 

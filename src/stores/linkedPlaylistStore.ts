@@ -20,6 +20,7 @@ import {
 import {
   SyncCreationError,
   syncCreationJournal,
+  syncCreationAccounts,
   type SyncCreationIntent,
 } from "../playlistSync/creation"
 interface State {
@@ -31,7 +32,8 @@ interface State {
     summary: PlaylistSnapshot,
     title: string,
     current?: () => boolean,
-    weeklyEdition?: WeeklyEdition
+    weeklyEdition?: WeeklyEdition,
+    direction?: "import" | "export"
   ): Promise<{ intent: SyncCreationIntent; link: LinkedPlaylist }>
   recoverCreation(
     id: string,
@@ -85,14 +87,29 @@ export const useLinkedPlaylistStore = create<State>((set, get) => ({
       ],
     })
   },
-  async createSync(summary, title, ownsView = () => true, weeklyEdition) {
+  async createSync(
+    summary,
+    title,
+    ownsView = () => true,
+    weeklyEdition,
+    direction = "import"
+  ) {
     const provider = useProviderStore.getState().provider
     if (!provider || provider.isOffline || get().error || !ownsView())
       throw Error("Connect the original library before creating sync")
     const scope = provider.cacheScope,
       session = provider.playbackSession,
       auth = useListenBrainzStore.getState()
-    if (!auth.isAuthenticated || auth.username !== summary.account.user)
+    if (
+      !auth.isAuthenticated ||
+      !auth.username ||
+      (direction === "import"
+        ? auth.username !== summary.account.user
+        : !samePlaylistIdentity(
+            summary.account,
+            providerPlaylistAccount(provider)
+          ))
+    )
       throw Error("ListenBrainz account changed")
     let active = true
     const unsubProvider = useProviderStore.subscribe((next, old) => {
@@ -122,16 +139,25 @@ export const useLinkedPlaylistStore = create<State>((set, get) => ({
     const admittedIds = new Set<string>()
     try {
       const { createLinkedSync } = await import("../playlistSync/creation")
-      const { listenBrainzPlaylistAdapter } =
+      const { listenBrainzPlaylistAdapter, nativeListenBrainzPlaylists } =
         await import("../playlistSync/listenbrainz")
       const { providerPlaylistAdapter } =
         await import("../playlistSync/provider")
+      const lbAccount =
+        direction === "export"
+          ? await nativeListenBrainzPlaylists.account()
+          : summary.account
+      if (!current() || lbAccount.user !== auth.username)
+        throw Error("Creation account changed")
+      const library = providerPlaylistAdapter(provider),
+        remote = listenBrainzPlaylistAdapter(lbAccount)
       const result = await createLinkedSync(
         summary.id,
         title,
         {
-          source: listenBrainzPlaylistAdapter(summary.account),
-          target: providerPlaylistAdapter(provider),
+          source: direction === "export" ? library : remote,
+          target: direction === "export" ? remote : library,
+          direction,
           journal: {
             load: syncCreationJournal.load,
             save: async (intent) => {
@@ -162,7 +188,7 @@ export const useLinkedPlaylistStore = create<State>((set, get) => ({
         },
         weeklyEdition
       )
-      if (current())
+      if (current() && result.link.incomplete)
         void get()
           .matchIncomplete(result.link.id)
           .catch(() => {})
@@ -214,14 +240,17 @@ export const useLinkedPlaylistStore = create<State>((set, get) => ({
       get().creationIntents.find((item) => item.id === id) ??
       (await syncCreationJournal.load()).find((item) => item.id === id)
     const provider = useProviderStore.getState().provider
+    const accounts = intent ? syncCreationAccounts(intent) : undefined
     if (
       !intent ||
       !provider ||
       provider.isOffline ||
       !ownsView() ||
-      !samePlaylistIdentity(providerPlaylistAccount(provider), intent.target) ||
-      useListenBrainzStore.getState().username !==
-        intent.sourceSnapshot.account.user
+      !samePlaylistIdentity(
+        providerPlaylistAccount(provider),
+        accounts!.library
+      ) ||
+      useListenBrainzStore.getState().username !== accounts!.listenbrainz.user
     )
       throw Error("Recover this creation in its original accounts")
     if (!intent.destinationId && (!destinationId || !acknowledgedUnknown))
@@ -236,7 +265,7 @@ export const useLinkedPlaylistStore = create<State>((set, get) => ({
       throw Error("Known creation destination cannot change")
     const scope = provider.cacheScope,
       session = provider.playbackSession,
-      username = intent.sourceSnapshot.account.user
+      username = accounts!.listenbrainz.user
     let active = true
     const unsubscribeProvider = useProviderStore.subscribe((next, old) => {
       if (
@@ -266,9 +295,41 @@ export const useLinkedPlaylistStore = create<State>((set, get) => ({
       activeCreationIds: { ...state.activeCreationIds, [id]: true },
     }))
     try {
+      const { reconcileSyncCreation } = await import("../playlistSync/creation")
+      const { listenBrainzPlaylistAdapter, nativeListenBrainzPlaylists } =
+        await import("../playlistSync/listenbrainz")
+      const { providerPlaylistAdapter } =
+        await import("../playlistSync/provider")
+      const lbAccount = await nativeListenBrainzPlaylists.account()
+      if (
+        !current() ||
+        !samePlaylistIdentity(lbAccount, accounts!.listenbrainz)
+      )
+        throw Error("Creation account changed")
+      const library = providerPlaylistAdapter(provider),
+        remote = listenBrainzPlaylistAdapter(lbAccount)
+      const target = intent.direction === "export" ? remote : library
+      let candidateId = intent.destinationId ?? destinationId!
+      if (intent.direction === "export") {
+        const { playlistId } = await import("../playlistSync/jspf")
+        candidateId = playlistId(candidateId)
+      }
+      if (!intent.destinationId) {
+        const inspected = await target.read(candidateId)
+        if (
+          !current() ||
+          inspected.id !== candidateId ||
+          !samePlaylistIdentity(inspected.account, intent.target) ||
+          inspected.title !== intent.title ||
+          inspected.items.length
+        )
+          throw Error(
+            "Inspect the expected empty destination before adopting its ID"
+          )
+      }
       const recoveredIntent = {
         ...intent,
-        destinationId: intent.destinationId ?? destinationId,
+        destinationId: candidateId,
       }
       await syncCreationJournal.save(recoveredIntent)
       set((state) => ({
@@ -284,14 +345,9 @@ export const useLinkedPlaylistStore = create<State>((set, get) => ({
             ? null
             : state.error,
       }))
-      const { reconcileSyncCreation } = await import("../playlistSync/creation")
-      const { listenBrainzPlaylistAdapter } =
-        await import("../playlistSync/listenbrainz")
-      const { providerPlaylistAdapter } =
-        await import("../playlistSync/provider")
       const result = await reconcileSyncCreation(recoveredIntent, {
-        source: listenBrainzPlaylistAdapter(intent.sourceSnapshot.account),
-        target: providerPlaylistAdapter(provider),
+        source: intent.direction === "export" ? library : remote,
+        target,
         journal: syncCreationJournal,
         links: {
           load: linkedPlaylistRepository.load,
@@ -300,7 +356,7 @@ export const useLinkedPlaylistStore = create<State>((set, get) => ({
         current,
       })
       await get().loadCreationIntents()
-      if (current())
+      if (current() && result.link.incomplete)
         void get()
           .matchIncomplete(result.link.id)
           .catch(() => {})

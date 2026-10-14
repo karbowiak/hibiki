@@ -422,3 +422,37 @@ complete. The native Activity panel reports "Library saved on this device"
 (463,378 items) and just one active operation: waveform collection, with 260,933
 saved, 108,250 remaining and 10 unavailable from Plex. The clean committed dev
 build is left running without further hot reloads.
+
+### Playlist matching and new ListenBrainz destinations
+
+Background imports now continue through unavailable lookups and use the same
+repeat-aware mapping calculation across batches, revalidation and filling.
+Reliable songs are saved in source order; unresolved and unsupported repeated
+occurrences remain in Sync review. Completed partial results are ready for
+rematching, and weekly following can admit newer editions without treating a
+missing match as a content conflict. Manual pauses, account changes, destination
+drift and unknown mutations retain their gates. Successful background matching
+clears stale session errors, and interrupted final fills remain resumable.
+
+Matching completion now produces a dismissible notice once per outcome, with
+hashed local receipts preventing restart repeats. Progress remains in playlist
+settings, and notification actions refresh safely after reconnects. Native
+review showed Weekly Jams with 31/50 matched and 19 review songs, and Weekly
+Exploration with 26/50 matched and 24 review songs, without persistent matching
+warnings.
+
+Per-playlist Setup now defaults to creating a new private ListenBrainz
+destination for local exports, including smart playlists such as ❤️ Tracks.
+The playlist name is prefilled; existing destinations remain selectable.
+Creation retains its source and receipt before a single empty create, then opens
+recording review. Export intents and recovery have their own account orientation;
+unknown destination IDs are canonicalized and inspected before durable adoption.
+Recovery can reconnect the original account and never replays creation.
+
+Validation: 947 frontend tests, seven native ListenBrainz transport tests,
+both TypeScript projects and the production frontend build passed. Native UI
+verification confirmed the ready ❤️ Tracks creation setup, its prefilled name
+and export-only direction. Full creation, recording review, sync and recovery
+were exercised with synthetic transports; personal playlists were not modified
+for testing. The dev app is left on this setup. Commits remain local and 0.6.0
+publication remains on hold.

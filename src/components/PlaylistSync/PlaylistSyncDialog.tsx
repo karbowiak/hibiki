@@ -356,9 +356,8 @@ export function PlaylistSyncDialog({
               role="status"
               className="mb-4 rounded-xl border border-[var(--border)] p-4"
             >
-              The retained playlist link was recovered. Matching can continue in
-              the background; open the playlist’s Sync review for any songs
-              needing a choice.
+              The retained playlist link was recovered. Open the playlist’s Sync
+              review to continue and check any songs needing a choice.
             </p>
           )}
           {remote && (

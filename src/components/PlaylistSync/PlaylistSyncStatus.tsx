@@ -6,6 +6,7 @@ import { useListenBrainzStore } from "../../metadata/listenbrainz/authStore"
 import { useNotificationCenterStore } from "../../stores/notificationCenterStore"
 import { providerPlaylistAccount } from "../../playlistSync/provider"
 import { samePlaylistIdentity } from "../../playlistSync/types"
+import { syncCreationAccounts } from "../../playlistSync/creation"
 import {
   matchingResultNotice,
   claimMatchingNotice,
@@ -38,10 +39,11 @@ export function PlaylistSyncStatus() {
     if (provider?.cacheScope && authenticated) {
       const account = providerPlaylistAccount(provider)
       for (const intent of intents) {
+        const creationOwner = syncCreationAccounts(intent)
         if (
           activeCreations[intent.id] ||
-          !samePlaylistIdentity(intent.target, account) ||
-          intent.sourceSnapshot.account.user !== username ||
+          !samePlaylistIdentity(creationOwner.library, account) ||
+          creationOwner.listenbrainz.user !== username ||
           ((intent.state === "linked" || intent.state === "cancelled") &&
             !unretained[intent.id])
         )
@@ -59,7 +61,7 @@ export function PlaylistSyncStatus() {
           action: {
             label: "Open playlist sync",
             run: () => {
-              if (owns()) navigate("/playlists")
+              if (owns()) navigate("/collection/playlists")
             },
           },
         })
@@ -97,18 +99,17 @@ export function PlaylistSyncStatus() {
               ?.eventKey === input.eventKey
           )
         }
-        if (input.severity === "warning") notices.notify(notification)
-        else
+        const existing = useNotificationCenterStore
+          .getState()
+          .notifications.some(
+            (entry) => entry.id === id && entry.eventKey === input.eventKey
+          )
+        if (input.severity === "warning" || existing)
+          notices.notify(notification)
+        if (input.severity !== "warning")
           void claimMatchingNotice(input.eventKey!, currentResult).then(
             (first) => {
-              // Existing session history can refresh its action quietly after reconnect.
-              const existing = useNotificationCenterStore
-                .getState()
-                .notifications.some(
-                  (entry) =>
-                    entry.id === id && entry.eventKey === input.eventKey
-                )
-              if (currentResult() && (first || existing))
+              if (currentResult() && first && !existing)
                 notices.notify(notification)
             }
           )

@@ -5,7 +5,10 @@ import { useListenBrainzStore } from "../../metadata/listenbrainz/authStore"
 import { providerPlaylistAccount } from "../../playlistSync/provider"
 import { samePlaylistIdentity } from "../../playlistSync/types"
 import type { MusicPlaylist } from "../../types/music"
-import type { SyncCreationIntent } from "../../playlistSync/creation"
+import {
+  syncCreationAccounts,
+  type SyncCreationIntent,
+} from "../../playlistSync/creation"
 import { useCopyOwner } from "./useCopyOwner"
 const button =
   "rounded-lg border border-[var(--border)] px-3 py-2 text-sm hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
@@ -43,10 +46,10 @@ export function PlaylistCreationRecovery({
           (intent) =>
             !activeCreations[intent.id] &&
             samePlaylistIdentity(
-              intent.target,
+              syncCreationAccounts(intent).library,
               providerPlaylistAccount(provider)
             ) &&
-            intent.sourceSnapshot.account.user === username &&
+            syncCreationAccounts(intent).listenbrainz.user === username &&
             ((intent.state !== "linked" && intent.state !== "cancelled") ||
               unretained[intent.id])
         )
@@ -59,8 +62,8 @@ export function PlaylistCreationRecovery({
     >
       <h3 className="font-semibold">Creation needs inspection</h3>
       <p className="text-sm text-[var(--text-secondary)]">
-        A previous create may have reached Plex. Recover its original
-        destination before requesting another playlist.
+        A previous create may have reached Plex or ListenBrainz. Recover its
+        original destination before requesting another playlist.
       </p>
       {error && <p role="alert">{error}</p>}
       {rows.map((intent) => (
@@ -132,25 +135,40 @@ function RecoveryRow({
       ) : (
         <>
           <label className="mt-3 block text-sm">
-            Inspect and select the original destination
-            <select
-              className={`${button} mt-1 w-full bg-app-surface`}
-              value={destination}
-              disabled={busy}
-              onChange={(event) => {
-                setDestination(event.target.value)
-                setAcknowledged(false)
-              }}
-            >
-              <option value="">Choose an inspected playlist</option>
-              {playlists
-                .filter((item) => !item.smart)
-                .map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.title}
-                  </option>
-                ))}
-            </select>
+            {intent.direction === "export"
+              ? "Inspect and enter the original ListenBrainz playlist ID"
+              : "Inspect and select the original destination"}
+            {intent.direction === "export" ? (
+              <input
+                className={`${button} mt-1 w-full bg-app-surface`}
+                placeholder="Playlist ID from its ListenBrainz URL"
+                value={destination}
+                disabled={busy}
+                onChange={(event) => {
+                  setDestination(event.target.value.trim())
+                  setAcknowledged(false)
+                }}
+              />
+            ) : (
+              <select
+                className={`${button} mt-1 w-full bg-app-surface`}
+                value={destination}
+                disabled={busy}
+                onChange={(event) => {
+                  setDestination(event.target.value)
+                  setAcknowledged(false)
+                }}
+              >
+                <option value="">Choose an inspected playlist</option>
+                {playlists
+                  .filter((item) => !item.smart)
+                  .map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.title}
+                    </option>
+                  ))}
+              </select>
+            )}
           </label>
           <label className="mt-3 flex items-start gap-2 text-sm">
             <input

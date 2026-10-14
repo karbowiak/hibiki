@@ -26,25 +26,28 @@ mock.module("../../src/metadata/listenbrainz/authStore", () => ({
   useListenBrainzStore: auth,
 }))
 const scenario = process.argv[2]
+const exporting = scenario.endsWith("-export")
+const known = scenario.startsWith("known")
 const intent: any = {
   id: "intent",
   title: "Retained playlist",
   state: "reconcile",
-  target: account,
+  target: exporting ? sourceAccount : account,
+  ...(exporting ? { direction: "export" } : {}),
   sourceSnapshot: {
-    account: sourceAccount,
+    account: exporting ? account : sourceAccount,
     id: "remote",
     title: "Remote",
     items: [],
   },
-  ...(scenario === "known" ? { destinationId: "original" } : {}),
+  ...(known ? { destinationId: "original" } : {}),
 }
 let calls: any[] = [],
   loads = 0
 const gate = deferred<any>()
 const store = create(() => ({
   creationIntents: [intent],
-  unretainedCreations: scenario === "known" ? { intent } : {},
+  unretainedCreations: known ? { intent } : {},
   links: [],
   activeCreationIds: {},
   loadCreationIntents: async () => {
@@ -75,6 +78,10 @@ const { useNotificationCenterStore } =
 const { PlaylistCreationRecovery } =
   await import("../../src/components/PlaylistSync/PlaylistCreationRecovery")
 const { createRoot } = await import("react-dom/client")
+async function waitForNotice(check: () => boolean) {
+  for (let i = 0; i < 100 && !check(); i++)
+    await new Promise((resolve) => setTimeout(resolve, 2))
+}
 let root = createRoot(document.getElementById("root")!)
 let recovered: string[] = []
 if (scenario === "notices") {
@@ -251,6 +258,9 @@ if (scenario === "notices") {
       ],
     } as any)
     await settle()
+    await waitForNotice(
+      () => matchingNotice()?.title === "Playlist matches saved"
+    )
   })
   const review = matchingNotice()!
   assert.equal(review.title, "Playlist matches saved")
@@ -332,6 +342,7 @@ if (scenario === "notices") {
       ],
     } as any)
     await settle()
+    await waitForNotice(() => !!matchingNotice()?.toastVisible)
   })
   assert.equal(
     matchingNotice()!.toastVisible,
@@ -368,7 +379,7 @@ const button = () =>
     b.textContent!.includes("Recover without creating")
   )!
 assert.equal(loads, 1)
-if (scenario === "known") {
+if (known) {
   assert.equal(
     document.querySelector("select"),
     null,
@@ -384,10 +395,27 @@ if (scenario === "known") {
   assert.deepEqual(recovered, ["original"])
 } else {
   assert.equal(button().disabled, true)
-  const select = document.querySelector<HTMLSelectElement>("select")!
+  const select = exporting
+    ? document.querySelector<HTMLInputElement>(
+        'input[placeholder="Playlist ID from its ListenBrainz URL"]'
+      )!
+    : document.querySelector<HTMLSelectElement>("select")!
+  if (exporting)
+    assert.equal(
+      document.querySelector("select"),
+      null,
+      "Export recovery cannot select a Plex destination"
+    )
   await act(async () => {
-    select.value = "original"
-    select.dispatchEvent(new dom.window.Event("change", { bubbles: true }))
+    if (exporting)
+      Object.getOwnPropertyDescriptor(
+        dom.window.HTMLInputElement.prototype,
+        "value"
+      )!.set!.call(select, "original")
+    else select.value = "original"
+    select.dispatchEvent(
+      new dom.window.Event(exporting ? "input" : "change", { bubbles: true })
+    )
     await settle()
   })
   assert.equal(

@@ -27,7 +27,11 @@ const source = {
     },
   ],
 }
-function harness() {
+function harness(exporting = false) {
+  const selectedSource = exporting
+    ? { ...source, account: local, id: "local", readOnly: true }
+    : source
+  const destinationAccount = exporting ? remote : local
   let intents: SyncCreationIntent[] = [],
     links: LinkedPlaylist[] = [],
     creates = 0,
@@ -37,21 +41,22 @@ function harness() {
     view = true
   const events: string[] = []
   const services: SyncCreationServices = {
+    direction: exporting ? "export" : "import",
     current: () => current,
     admissionCurrent: () => view,
     source: {
       capabilities: { read: true, createCopy: false, replace: false },
-      account: async () => remote,
-      read: async () => structuredClone(source),
+      account: async () => selectedSource.account,
+      read: async () => structuredClone(selectedSource),
       createCopy: async () => {
         throw Error("No source writes")
       },
     },
     target: {
       capabilities: { read: true, createCopy: true, replace: false },
-      account: async () => local,
+      account: async () => destinationAccount,
       read: async (id) => ({
-        account: local,
+        account: destinationAccount,
         id,
         title: "Destination",
         items: [],
@@ -82,6 +87,7 @@ function harness() {
     },
   }
   return {
+    source: selectedSource,
     services,
     events,
     creates: () => creates,
@@ -101,6 +107,61 @@ function harness() {
     },
   }
 }
+test("smart library exports create one remote destination and retain the source for song review", async () => {
+  const h = harness(true)
+  const result = await createLinkedSync(h.source.id, "Destination", h.services)
+  expect(h.events.slice(0, 2)).toEqual(["admitting", "create"])
+  expect(h.creates()).toBe(1)
+  expect(result.intent.direction).toBe("export")
+  expect(result.intent.sourceSnapshot).toEqual(h.source)
+  expect(result.link.libraryPlaylistId).toBe("local")
+  expect(result.link.listenbrainzPlaylistId).toBe("new")
+  expect(result.link.library).toEqual(local)
+  expect(result.link.listenbrainz).toEqual(remote)
+  expect(result.link.baseline.library.readOnly).toBe(true)
+  expect(result.link.baseline.listenbrainz.items).toHaveLength(0)
+  expect(result.link.direction).toBe("export")
+  expect(result.link.automatic).toBe(false)
+  expect(result.link.paused).toBe(true)
+  expect(result.link.incomplete).toBeUndefined()
+  h.services.admissionCurrent = () => true
+  await expect(
+    createLinkedSync(h.source.id, "Destination", h.services)
+  ).rejects.toThrow("already has a linked playlist")
+  expect(h.creates()).toBe(1)
+})
+test("export creation retains unknown and failed receipts and recovers by reads without another create", async () => {
+  for (const failure of ["unknown", "receipt", "retired"] as const) {
+    const h = harness(true)
+    if (failure === "unknown") h.unknown()
+    if (failure === "receipt") h.receiptFailure()
+    if (failure === "retired") {
+      const create = h.services.target.createCopy
+      h.services.target.createCopy = async (...args) => {
+        const result = await create(...args)
+        h.retire()
+        return result
+      }
+    }
+    let caught: SyncCreationError | undefined
+    try {
+      await createLinkedSync(h.source.id, "Destination", h.services)
+    } catch (error) {
+      caught = error as SyncCreationError
+    }
+    expect(caught).toBeInstanceOf(SyncCreationError)
+    expect(caught!.intent.sourceSnapshot).toEqual(h.source)
+    expect(h.links()).toHaveLength(0)
+    h.repair()
+    h.services.current = () => true
+    const intent = { ...caught!.intent, destinationId: "new" }
+    await h.services.journal.save(intent)
+    const recovered = await reconcileSyncCreation(intent, h.services)
+    expect(recovered.link.direction).toBe("export")
+    expect(recovered.link.paused).toBe(true)
+    expect(h.creates()).toBe(1)
+  }
+})
 test("creation admits the full source before exactly one empty create and continues after its view closes", async () => {
   const h = harness(),
     result = await createLinkedSync(source.id, "Destination", h.services)

@@ -61,9 +61,16 @@ import {
 } from "../../playlistSync/weekly"
 import type { MusicProvider } from "../../providers/types"
 import type { MusicPlaylist } from "../../types/music"
+import {
+  createLinkedSync,
+  syncCreationJournal,
+  type SyncCreationJournal,
+} from "../../playlistSync/creation"
+const NEW_REMOTE = "__new_listenbrainz_playlist__"
 const button =
   "rounded-lg border border-[var(--border)] bg-app-surface px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
 export interface LinkedPlaylistManagerServices {
+  creationJournal?: SyncCreationJournal
   account(): Promise<PlaylistAccount>
   library(provider: MusicProvider, link?: LinkedPlaylist): PlaylistAdapter
   remote(account: PlaylistAccount): PlaylistAdapter & {
@@ -101,6 +108,7 @@ export const linkedPlaylistManagerServices: LinkedPlaylistManagerServices = {
   remote: (account) => listenBrainzPlaylistAdapter(account),
   sync: linkedSyncServices,
   repository: linkedPlaylistRepository,
+  creationJournal: syncCreationJournal,
 }
 interface Preview {
   library: PlaylistSnapshot
@@ -142,7 +150,9 @@ export function LinkedPlaylistManager({
     [libraries, setLibraries] = useState<MusicPlaylist[]>([]),
     [remotes, setRemotes] = useState<PlaylistSnapshot[]>([])
   const [libraryId, setLibraryId] = useState(playlistId ?? ""),
-    [remoteId, setRemoteId] = useState(selectedRemote?.id ?? ""),
+    [remoteId, setRemoteId] = useState(
+      selectedRemote?.id ?? (initialDirection === "import" ? "" : NEW_REMOTE)
+    ),
     [source, setSource] = useState<SyncSide>(
       initialDirection === "import" ? "listenbrainz" : "library"
     ),
@@ -167,6 +177,12 @@ export function LinkedPlaylistManager({
   const admission = useRef(false),
     request = useRef(0),
     lease = useRef<PlaylistAccount | null>(null)
+  const createdRemoteIds = useRef(new Set<string>())
+  const [newRemoteTitle, setNewRemoteTitle] = useState<string | null>(null)
+  const newTitle =
+    newRemoteTitle ??
+    libraries.find((item) => item.id === libraryId)?.title ??
+    ""
   const [recoveryViews, setRecoveryViews] = useState<
     Record<string, PlaylistSnapshot>
   >({})
@@ -178,6 +194,7 @@ export function LinkedPlaylistManager({
     return () => onBusyChange?.(false)
   }, [busy, onBusyChange])
   const remoteWritable = (id: string) => {
+    if (id === NEW_REMOTE || createdRemoteIds.current.has(id)) return true
     const summary =
       selectedRemote?.id === id
         ? selectedRemote
@@ -398,7 +415,7 @@ export function LinkedPlaylistManager({
       return
     }
     if (
-      !remoteWritable(remoteId || preview?.remote.id || "") &&
+      !remoteWritable(existing?.listenbrainzPlaylistId ?? remoteId ?? "") &&
       direction !== "import"
     ) {
       setError(
@@ -479,6 +496,75 @@ export function LinkedPlaylistManager({
       admission.current = false
       if (owns()) setBusy(false)
     }
+  }
+  async function createRemote() {
+    if (
+      !provider ||
+      !libraryId ||
+      !newTitle.trim() ||
+      admission.current ||
+      direction !== "export"
+    )
+      return
+    admission.current = true
+    const owns = capture()
+    setBusy(true)
+    setError(null)
+    let created: LinkedPlaylist | undefined
+    try {
+      const account = await services.account()
+      if (
+        !owns() ||
+        !lease.current ||
+        !samePlaylistIdentity(account, lease.current)
+      )
+        throw Error("Creation account changed")
+      const result =
+        services === linkedPlaylistManagerServices
+          ? await useLinkedPlaylistStore
+              .getState()
+              .createSync(
+                {
+                  account: providerPlaylistAccount(provider),
+                  id: libraryId,
+                  title: newTitle,
+                  items: [],
+                },
+                newTitle,
+                owns,
+                undefined,
+                "export"
+              )
+          : await createLinkedSync(libraryId, newTitle, {
+              direction: "export",
+              source: services.library(provider),
+              target: services.remote(account),
+              journal: services.creationJournal ?? syncCreationJournal,
+              links: services.repository,
+              current: owns,
+              admissionCurrent: owns,
+            })
+      if (!owns()) return
+      created = result.link
+      createdRemoteIds.current.add(created.listenbrainzPlaylistId)
+      setRemotes((previous) => [
+        created!.baseline.listenbrainz,
+        ...previous.filter(
+          (item) => item.id !== created!.listenbrainzPlaylistId
+        ),
+      ])
+      setRemoteId(created.listenbrainzPlaylistId)
+      publish(created)
+    } catch {
+      if (owns())
+        setError(
+          "Creation was not confirmed. Check Playlists → Sync for its recovery receipt before requesting another playlist."
+        )
+    } finally {
+      admission.current = false
+      if (owns()) setBusy(false)
+    }
+    if (created && owns()) await prepare(created)
   }
   async function enable() {
     if (
@@ -891,6 +977,7 @@ export function LinkedPlaylistManager({
                       disabled={busy || resolving}
                       onChange={(event) => {
                         setLibraryId(event.target.value)
+                        setNewRemoteTitle(null)
                         if (smartLibrary(event.target.value)) {
                           setDirection("export")
                           setSource("library")
@@ -912,9 +999,19 @@ export function LinkedPlaylistManager({
                       className={`${button} mt-1 w-full`}
                       value={remoteId}
                       disabled={busy || resolving}
-                      onChange={(event) => setRemoteId(event.target.value)}
+                      onChange={(event) => {
+                        setRemoteId(event.target.value)
+                        if (event.target.value === NEW_REMOTE) {
+                          setDirection("export")
+                          setSource("library")
+                          setAutomatic(false)
+                        }
+                      }}
                     >
                       <option value="">Choose your playlist</option>
+                      <option value={NEW_REMOTE}>
+                        Create new ListenBrainz playlist
+                      </option>
                       {remotes.map((item) => (
                         <option
                           key={item.id}
@@ -929,6 +1026,20 @@ export function LinkedPlaylistManager({
                     </select>
                   </label>
                 </div>
+                {remoteId === NEW_REMOTE && (
+                  <label className="block text-sm">
+                    New ListenBrainz playlist name
+                    <input
+                      className={`${button} mt-1 w-full`}
+                      value={newTitle}
+                      maxLength={500}
+                      disabled={busy || resolving}
+                      onChange={(event) =>
+                        setNewRemoteTitle(event.target.value)
+                      }
+                    />
+                  </label>
+                )}
                 {total > 50 && (
                   <div className="flex gap-2">
                     <button
@@ -965,13 +1076,20 @@ export function LinkedPlaylistManager({
                     <option value="export" disabled={!remoteWritable(remoteId)}>
                       Plex → ListenBrainz
                     </option>
-                    <option value="import" disabled={smartLibrary(libraryId)}>
+                    <option
+                      value="import"
+                      disabled={
+                        smartLibrary(libraryId) || remoteId === NEW_REMOTE
+                      }
+                    >
                       ListenBrainz → Plex
                     </option>
                     <option
                       value="bidirectional"
                       disabled={
-                        !remoteWritable(remoteId) || smartLibrary(libraryId)
+                        !remoteWritable(remoteId) ||
+                        smartLibrary(libraryId) ||
+                        remoteId === NEW_REMOTE
                       }
                     >
                       Two-way
@@ -999,6 +1117,7 @@ export function LinkedPlaylistManager({
                       busy ||
                       resolving ||
                       !remoteWritable(remoteId) ||
+                      remoteId === NEW_REMOTE ||
                       smartLibrary(libraryId)
                     }
                     onChange={(event) =>
@@ -1017,7 +1136,7 @@ export function LinkedPlaylistManager({
                   <input
                     type="checkbox"
                     checked={automatic}
-                    disabled={busy || resolving}
+                    disabled={busy || resolving || remoteId === NEW_REMOTE}
                     onChange={(event) => setAutomatic(event.target.checked)}
                   />
                   {weeklySource
@@ -1028,7 +1147,9 @@ export function LinkedPlaylistManager({
                   {weeklySource
                     ? "Weekly following is opt-in. New editions update while Hibiki is open, or on the next launch; Hibiki cannot run scheduled updates while closed."
                     : "Automatic updates are off by default."}{" "}
-                  Saving a link retains the reviewed plan; use Sync to run it.
+                  {remoteId === NEW_REMOTE
+                    ? "Create a private ListenBrainz playlist, then review its recordings before syncing."
+                    : "Saving a link retains the reviewed plan; use Sync to run it."}
                 </p>
                 <label className="block text-sm">
                   Initial version to keep
@@ -1048,10 +1169,24 @@ export function LinkedPlaylistManager({
                 </label>
                 <button
                   className={button}
-                  disabled={busy || resolving || !libraryId || !remoteId}
-                  onClick={() => void prepare()}
+                  disabled={
+                    busy ||
+                    resolving ||
+                    !libraryId ||
+                    !remoteId ||
+                    (remoteId === NEW_REMOTE &&
+                      (!newTitle.trim() ||
+                        links.some(
+                          (link) => link.libraryPlaylistId === libraryId
+                        )))
+                  }
+                  onClick={() =>
+                    void (remoteId === NEW_REMOTE ? createRemote() : prepare())
+                  }
                 >
-                  Preview link
+                  {remoteId === NEW_REMOTE
+                    ? "Create ListenBrainz playlist"
+                    : "Preview link"}
                 </button>
               </section>
             )}

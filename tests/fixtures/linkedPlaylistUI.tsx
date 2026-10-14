@@ -21,7 +21,11 @@ const { useListenBrainzStore } =
 const { retainLink } = await import("../../src/playlistSync/linkedJournal")
 const { applySequenceOperation } = await import("../../src/playlistSync/linked")
 await settle()
-const smart = process.argv[2] === "smart"
+const smart = process.argv[2]?.includes("smart") ?? false
+const newRemote = process.argv[2]?.startsWith("new") ?? false
+let creates = 0,
+  intents: any[] = []
+const { retainSyncCreation } = await import("../../src/playlistSync/creation")
 const A = "11111111-1111-4111-8111-111111111111",
   remoteId = "22222222-2222-4222-8222-222222222222"
 const account = (service: string) => ({
@@ -86,9 +90,24 @@ const remoteAdapter = {
   ...library,
   account: async () => account("listenbrainz"),
   read: async () => structuredClone(remote),
-  list: async () => ({ items: [structuredClone(remote)], total: 1 }),
+  list: async () => ({
+    items: newRemote ? [] : [structuredClone(remote)],
+    total: newRemote ? 0 : 1,
+  }),
+  createCopy: async (title: string, tracks: any[]) => {
+    creates++
+    assert.equal(tracks.length, 0)
+    remote = { ...remote, title }
+    return { id: remoteId }
+  },
 }
 const services: any = {
+  creationJournal: {
+    load: async () => structuredClone(intents),
+    save: async (intent: any) => {
+      intents = retainSyncCreation(intents, intent)
+    },
+  },
   account: async () => account("listenbrainz"),
   library: () => library,
   remote: () => remoteAdapter,
@@ -190,8 +209,22 @@ if (smart) {
     )
   )
 }
-await select("ListenBrainz playlist", remoteId)
-await click("Preview link")
+if (newRemote) {
+  assert.equal(input("New ListenBrainz playlist name").value, "Local")
+  assert.equal(button("Create ListenBrainz playlist").disabled, false)
+  saveGate.resolve()
+  await click("Create ListenBrainz playlist")
+  assert.equal(creates, 1)
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].paused, true)
+  assert.equal(rows[0].direction, "export")
+  assert.equal(rows[0].incomplete, undefined)
+  assert.deepEqual(intents[0].sourceSnapshot.items, local.items)
+  assert.ok(document.body.textContent!.includes("Review 1 ordered occurrences"))
+} else {
+  await select("ListenBrainz playlist", remoteId)
+  await click("Preview link")
+}
 assert.equal(mutations, 0)
 const mbid = input("Recording MBID for occurrence 1")
 await act(async () => {
@@ -216,7 +249,7 @@ await act(async () => {
   button("Save reviewed link").click()
   await settle()
 })
-assert.equal(saveCalls, 1)
+assert.equal(saveCalls, newRemote ? 2 : 1)
 assert.equal(mutations, 0)
 const close = document.querySelector(
   'button[aria-label="Close dialog"]'
@@ -243,8 +276,8 @@ assert.equal(
   "Explicit pause cannot inherit unmatched rollover permission"
 )
 assert.equal(mutations, 1)
-if (smart) {
-  assert.equal(rows[0].baseline.library.readOnly, true)
+if (smart || newRemote) {
+  assert.equal(rows[0].baseline.library.readOnly, smart ? true : undefined)
   assert.equal(rows[0].direction, "export")
   assert.equal(
     mutations,
