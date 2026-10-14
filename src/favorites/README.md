@@ -51,6 +51,19 @@ unchanged observations do not rewrite the collection. Browsing publishes saved
 metadata in native batches of 200 with a bounded Plex fallback. Offline hearts
 remain editable; playback still requires complete cached/downloaded audio.
 
+Original love dates are retained in milliseconds: Last.fm's `date.uts` and
+ListenBrainz's feedback `created` timestamp. Each service observation keeps its
+own date. Continuous imported loves use the earliest known date across sources;
+sync acknowledgements and matching do not bump it. Explicit local hearts retain
+their local date, and an unlike followed by a new love starts a new date. Legacy
+imports can acquire dates on the next complete roster without a reset. Missing
+service dates stay unknown rather than being replaced with an import timestamp.
+
+Loved defaults to newest known love first. All combines that chronology with
+Plex's rating dates for rated songs; library-added dates remain separate. Date
+Liked is available as its own sortable column, with unknown values last in
+either direction. Existing column visibility preferences are preserved.
+
 Contracts: [ListenBrainz feedback API](https://listenbrainz.readthedocs.io/en/latest/users/api/recordings.html),
 [feedback JSON](https://listenbrainz.readthedocs.io/en/latest/users/feedback-json.html),
 [Last.fm loved tracks](https://www.last.fm/api/show/user.getLovedTracks),

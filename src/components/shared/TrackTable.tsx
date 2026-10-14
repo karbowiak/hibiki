@@ -301,7 +301,7 @@ function TrackRowCells({
                     Radio
                   </button>
                 )}
-                <FavoriteButton track={track} size={13}/>
+                <FavoriteButton track={track} size={13} />
                 {showInlineRating && (
                   <>
                     <span className="mx-0.5 h-3 w-px bg-white/20" />
@@ -394,6 +394,11 @@ function TrackRowCells({
       {visibleCols.has("rated_at") && (
         <td className="whitespace-nowrap p-2">
           {formatDate(track.lastRatedAt ?? null)}
+        </td>
+      )}
+      {visibleCols.has("liked_at") && (
+        <td className="whitespace-nowrap p-2">
+          {formatDate(track.likedAt ?? null)}
         </td>
       )}
       <td className="p-2 text-right tabular-nums">
@@ -825,6 +830,16 @@ export function TrackTable({
                         align="left"
                       />
                     )}
+                    {visibleCols.has("liked_at") && (
+                      <SortTh
+                        col="liked_at"
+                        label="Date Liked"
+                        active={sortCol}
+                        dir={sortDir}
+                        onSort={onSort}
+                        align="left"
+                      />
+                    )}
                     <SortTh
                       col="duration"
                       label="Duration"
@@ -1003,6 +1018,16 @@ export function TrackTable({
                   <SortTh
                     col="rated_at"
                     label="Date Rated"
+                    active={sortCol}
+                    dir={sortDir}
+                    onSort={onSort}
+                    align="left"
+                  />
+                )}
+                {visibleCols.has("liked_at") && (
+                  <SortTh
+                    col="liked_at"
+                    label="Date Liked"
                     active={sortCol}
                     dir={sortDir}
                     onSort={onSort}

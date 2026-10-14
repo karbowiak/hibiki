@@ -29,6 +29,9 @@ pub struct FavoriteRecording {
     pub album: String,
     #[serde(default)]
     pub duration_ms: Option<i64>,
+    /// Original service love/feedback time in Unix milliseconds, when available.
+    #[serde(default)]
+    pub liked_at: Option<i64>,
     #[serde(default)]
     pub recording_mbid: Option<String>,
     #[serde(default)]
@@ -137,6 +140,12 @@ fn label_key(artist: &str, title: &str) -> String {
         json!([artist.trim().to_lowercase(), title.trim().to_lowercase()])
     )
 }
+fn liked_at(value: Option<&Value>) -> Option<i64> {
+    let seconds = value.and_then(|v| v.as_i64().or_else(|| v.as_str()?.parse().ok()))?;
+    let millis = seconds.checked_mul(1000)?;
+    // Unknown or malformed dates must not prevent importing an otherwise valid love.
+    (millis > 0 && millis <= 8_640_000_000_000_000).then_some(millis)
+}
 fn parse_page(service: &str, value: &Value, offset: usize) -> Result<FavoritePage> {
     let (rows, total, actual) = if service == "listenbrainz" {
         (
@@ -194,6 +203,7 @@ fn parse_page(service: &str, value: &Value, offset: usize) -> Result<FavoritePag
                     artist: text(metadata.and_then(|m| m.get("artist_name"))),
                     album: text(metadata.and_then(|m| m.get("release_name"))),
                     duration_ms: None,
+                    liked_at: liked_at(row.get("created")),
                     recording_mbid: mbid,
                     recording_msid: msid,
                     local_track_id: None,
@@ -211,6 +221,7 @@ fn parse_page(service: &str, value: &Value, offset: usize) -> Result<FavoritePag
                     artist,
                     album: String::new(),
                     duration_ms: None,
+                    liked_at: liked_at(row.get("date").and_then(|date| date.get("uts"))),
                     recording_mbid: None,
                     recording_msid: None,
                     local_track_id: None,
@@ -480,6 +491,39 @@ pub(crate) mod tests {
         )
         .is_err());
     }
+    #[test]
+    fn love_dates_are_preserved_in_milliseconds_with_optional_legacy_values() {
+        let id = "11111111-1111-4111-8111-111111111111";
+        let lb = json!({"feedback":[{"score":1,"recording_mbid":id,"created":1600000000}],"total_count":1,"offset":0});
+        let lf = json!({"lovedtracks":{"track":[{"name":"Song","artist":{"name":"Artist"},"date":{"uts":"1500000000"}}],"@attr":{"page":"1","total":"1"}}});
+        assert_eq!(
+            parse_page("listenbrainz", &lb, 0).unwrap().rows[0].liked_at,
+            Some(1600000000000)
+        );
+        let page = parse_page("lastfm", &lf, 0).unwrap();
+        assert_eq!(page.rows[0].liked_at, Some(1500000000000));
+        assert_eq!(
+            serde_json::to_value(&page.rows[0]).unwrap()["likedAt"],
+            1500000000000_i64
+        );
+        for raw in [
+            json!(null),
+            json!(0),
+            json!(-1),
+            json!("invalid"),
+            json!({}),
+            json!(1.5),
+            json!(i64::MAX),
+        ] {
+            assert_eq!(liked_at(Some(&raw)), None);
+        }
+        assert_eq!(liked_at(None), None);
+        let legacy = json!({"key":"old","title":"Song","artist":"Artist"});
+        assert!(serde_json::from_value::<FavoriteRecording>(legacy)
+            .unwrap()
+            .liked_at
+            .is_none());
+    }
     pub(crate) fn loopback(
         replies: Vec<(u16, Value)>,
     ) -> (String, std::thread::JoinHandle<Vec<String>>) {
@@ -554,6 +598,7 @@ pub(crate) mod tests {
                 artist: "Artist".into(),
                 album: String::new(),
                 duration_ms: None,
+                liked_at: None,
                 recording_mbid: Some("11111111-1111-4111-8111-111111111111".into()),
                 recording_msid: None,
                 local_track_id: None,

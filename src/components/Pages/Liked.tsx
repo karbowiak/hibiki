@@ -4,18 +4,24 @@ import { useShallow } from "zustand/react/shallow"
 import { useLibraryStore, usePlayerStore } from "../../stores"
 import { formatTotalMs } from "../../lib/formatters"
 import { useTableSort } from "../../hooks/useTableSort"
-import { ALL_COLUMNS, usePlaylistColumns } from "../../hooks/useColumnPicker"
+import {
+  ALL_COLUMNS,
+  LIKED_DATE_COLUMN,
+  usePlaylistColumns,
+} from "../../hooks/useColumnPicker"
+import { sortLikedTracks } from "../../favorites/collection"
 import { TrackTable } from "../shared/TrackTable"
 import { useFavoritesStore } from "../../stores/favoritesStore"
 import { useFavoriteTracks } from "../../hooks/useFavoriteTracks"
 import { FavoritesSyncDialog } from "../FavoritesSyncDialog"
 import { useProviderStore } from "../../stores/providerStore"
 
-const LIKED_COLUMNS = ALL_COLUMNS
+const LIKED_COLUMNS = [...ALL_COLUMNS, LIKED_DATE_COLUMN]
 const LIKED_DEFAULT_COLS = [
   "album" as const,
   "rating" as const,
   "rated_at" as const,
+  "liked_at" as const,
 ]
 
 export function Liked() {
@@ -72,7 +78,8 @@ export function Liked() {
         if (kind === "rated" || !likedTrackIds.has(track.id))
           byId.set(track.id, track)
       })
-    return [...byId.values()]
+    const tracks = [...byId.values()]
+    return kind === "all" ? sortLikedTracks(tracks) : tracks
   }, [kind, local.tracks, likedTracks, likedTrackIds])
   const visibleIds = new Set(local.tracks.map((track) => track.id))
   const unavailable = Object.values(collection.entries).filter(
@@ -104,9 +111,10 @@ export function Liked() {
     | "added_at"
     | "rating"
     | "rated_at"
+    | "liked_at"
     | "duration"
   const { sortCol, sortDir, handleSort } = useTableSort<SortCol>({
-    descByDefault: ["rating"],
+    descByDefault: ["rating", "liked_at", "rated_at"],
   })
 
   const tracks = useMemo(() => {
@@ -154,6 +162,14 @@ export function Liked() {
           cmp =
             (a.lastRatedAt ? +new Date(a.lastRatedAt) : 0) -
             (b.lastRatedAt ? +new Date(b.lastRatedAt) : 0)
+          break
+        }
+        case "liked_at": {
+          const at = Date.parse(a.likedAt ?? ""),
+            bt = Date.parse(b.likedAt ?? "")
+          if (!Number.isFinite(at) || !Number.isFinite(bt))
+            return Number.isFinite(at) ? -1 : Number.isFinite(bt) ? 1 : 0
+          cmp = at - bt
           break
         }
         case "duration":

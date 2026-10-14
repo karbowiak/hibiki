@@ -512,3 +512,30 @@ All 35 focused favorites and player accessibility tests passed, along with
 TypeScript and diff checks. Native computer use still fails to start its pipe;
 live recovery was confirmed by the user, and the heart layout was not visually
 rechecked. No push, tag or release occurred; 0.6.0 remains on hold.
+
+### Original like dates and an explicitly requested fresh import
+
+Native imports now retain Last.fm date.uts and ListenBrainz feedback.created as
+Unix milliseconds. Saved favorites and service observations keep those dates
+separate from local edit/sync state. Repeated syncs, acknowledgements and matching
+preserve chronology; explicit local relikes get a new date. Legacy imports can
+backfill dates, and unavailable dates stay unknown. Loved sorts by love date,
+All combines love/rating chronology, and a Date Liked column supports either
+direction with unknown dates last. Library-added/rating dates stay separate.
+
+At the user's request, the exact development app was stopped and a private
+favorites-only SQLite backup was created and read back. Reset removed 2,415
+remote-import entries, retained 78 local favorites, cleared Last.fm/ListenBrainz
+observations/bindings, and disabled those two sync switches. Plex catalogue,
+ratings, audio and service credentials were not part of this reset. The rebuilt
+default-protocol executable was installed with hash verification and reopened;
+readonly database checks confirmed 78 retained favorites, both sync switches off
+and no remote bindings. Re-enabling sync and personal matching remain for the
+user, as requested. Native computer use still fails to start its pipe.
+
+Validation: 38 focused frontend tests, five native favorites transport/parser
+tests, both TypeScript projects and the production frontend/native dev builds
+passed. Regression cases cover service timestamps, optional/malformed values,
+save/reload, date backfill, relikes, acknowledgement stability, combined All
+ordering and date-column sorting. Existing build warnings remain. No push/tag or
+release occurred; 0.6.0 stays on hold.

@@ -197,6 +197,7 @@ async fn snapshot(
                     artist: track.grandparent_title,
                     album: track.parent_title,
                     duration_ms: Some(track.duration),
+                    liked_at: None,
                     local_track_id: Some(id),
                     recording_mbid: None,
                     recording_msid: None,

@@ -8,6 +8,8 @@ export interface FavoriteRecording {
   album?: string
   durationMs?: number | null
   localTrackId?: string | null
+  /** Actual love time in Unix milliseconds; missing service dates remain unknown. */
+  likedAt?: number | null
   recordingMbid?: string | null
   recordingMsid?: string | null
 }
@@ -17,7 +19,15 @@ export interface FavoriteEntry extends FavoriteRecording {
   explicit: boolean
   localTrackIds: string[]
   sources: Partial<
-    Record<FavoriteService, { key: string; liked: boolean; desired?: boolean }>
+    Record<
+      FavoriteService,
+      {
+        key: string
+        liked: boolean
+        desired?: boolean
+        likedAt?: number | null
+      }
+    >
   >
   changedAt: number
   matchCheckedAt?: number

@@ -85,6 +85,8 @@ export interface MusicTrack {
   ratingCount?: number | null
   parentStudio?: string | null
   lastRatedAt?: string | null
+  /** Local favorites love time; independent of Plex library/rating dates. */
+  likedAt?: string | null
   providerKey?: string | null
   rawThumbPath?: string | null
   startRamp?: string | null

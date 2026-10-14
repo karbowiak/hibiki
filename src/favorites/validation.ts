@@ -5,10 +5,16 @@ const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value)
 const text = (value: unknown, max = 2048): value is string =>
   typeof value === "string" && value.length <= max
-const number = (value: unknown) =>
+const number = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value) && value >= 0
 const localId = (value: unknown) =>
   text(value) && /^[1-9]\d*$/.test(value) && Number.isSafeInteger(Number(value))
+const timestamp = (value: unknown) =>
+  value == null ||
+  (number(value) &&
+    Number.isSafeInteger(value) &&
+    value > 0 &&
+    value <= 8640000000000000)
 function recording(value: unknown) {
   return (
     object(value) &&
@@ -18,6 +24,7 @@ function recording(value: unknown) {
     text(value.artist, 1000) &&
     (value.album === undefined || text(value.album, 1000)) &&
     (value.durationMs == null || number(value.durationMs)) &&
+    timestamp(value.likedAt) &&
     ["recordingMbid", "recordingMsid"].every(
       (field) => value[field] == null || !!recordingMbid(value[field])
     )
@@ -42,6 +49,7 @@ export function validFavorite(value: unknown): value is FavoriteEntry {
         object(source) &&
         text(source.key) &&
         typeof source.liked === "boolean" &&
+        timestamp(source.likedAt) &&
         (source.desired === undefined || typeof source.desired === "boolean")
     )
   )

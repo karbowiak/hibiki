@@ -27,6 +27,16 @@ function labels(row: FavoriteRecording) {
 export function lastfmFavoriteKey(row: FavoriteRecording) {
   return `lastfm:${JSON.stringify([row.artist.toLowerCase().trim(), row.title.toLowerCase().trim()])}`
 }
+export function favoriteLikedAt(item: FavoriteEntry): number | undefined {
+  // Older explicit hearts already have the actual local edit time. Import times
+  // on non-explicit entries are not evidence of when the song was loved.
+  return item.likedAt ?? (item.explicit ? item.changedAt : undefined)
+}
+function earliestLike(first?: number | null, second?: number | null) {
+  return first && second
+    ? Math.min(first, second)
+    : first || second || undefined
+}
 /** Index compact identities once for bulk imports, rather than scanning N rows per recording. */
 function favoriteIndex(entries: FavoriteState["entries"]) {
   const strong = new Map<string, FavoriteEntry>(),
@@ -127,6 +137,13 @@ export function setFavorite(
       artist: row.artist || previous?.artist || "Unknown artist",
       album: row.album || previous?.album,
       durationMs: row.durationMs || previous?.durationMs,
+      likedAt: liked
+        ? previous?.liked
+          ? (favoriteLikedAt(previous) ?? row.likedAt ?? Date.now())
+          : explicit
+            ? Date.now()
+            : (row.likedAt ?? Date.now())
+        : previous?.likedAt,
       liked,
       explicit,
       localTrackIds: [
@@ -154,6 +171,9 @@ export function seedFavoriteRatings(
     const next = {
       ...(previous ?? entry(row, true, false)),
       liked: true,
+      likedAt: previous
+        ? (favoriteLikedAt(previous) ?? row.likedAt)
+        : row.likedAt,
       localTrackIds: [
         ...new Set([
           ...(previous?.localTrackIds ?? []),
@@ -211,6 +231,13 @@ export function mergeFavoriteSnapshot(
           : row.artist,
       album: previous?.album || row.album,
       durationMs: previous?.durationMs || row.durationMs,
+      likedAt: incoming
+        ? previous?.liked
+          ? previous.explicit
+            ? favoriteLikedAt(previous)
+            : earliestLike(favoriteLikedAt(previous), row.likedAt)
+          : (row.likedAt ?? undefined)
+        : previous?.likedAt,
       recordingMbid:
         previous?.recordingMbid || recordingMbid(row.recordingMbid),
       recordingMsid: previous?.recordingMsid || row.recordingMsid,
@@ -227,6 +254,7 @@ export function mergeFavoriteSnapshot(
           key: row.key,
           liked: true,
           desired: incoming === true ? incoming : previousDesired,
+          likedAt: row.likedAt ?? (before?.liked ? before.likedAt : undefined),
         },
       },
     }
@@ -328,7 +356,15 @@ export function acknowledgeFavorite(
         ...previous,
         sources: {
           ...previous.sources,
-          [service]: { key, liked, desired: liked },
+          [service]: {
+            key,
+            liked,
+            desired: liked,
+            likedAt:
+              liked && previous.sources[service]?.liked
+                ? previous.sources[service]?.likedAt
+                : undefined,
+          },
         },
       },
     },

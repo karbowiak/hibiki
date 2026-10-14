@@ -316,7 +316,14 @@ export const useFavoritesStore = create<State>((set, get) => ({
           .filter(
             (track) => (track.userRating ?? 0) >= state.settings.ratingThreshold
           )
-          .map(favoriteReference)
+          .map((track) => {
+            const likedAt = Date.parse(track.lastRatedAt ?? "")
+            return {
+              ...favoriteReference(track),
+              likedAt:
+                Number.isFinite(likedAt) && likedAt > 0 ? likedAt : undefined,
+            }
+          })
       )
     })
   },

@@ -8,13 +8,14 @@ import {
   findFavorite,
   seedFavoriteRatings,
   lastfmFavoriteKey,
+  favoriteLikedAt,
 } from "../src/favorites/model"
 import {
   readFavoriteRoster,
   syncFavorites,
   type FavoriteSyncServices,
 } from "../src/favorites/sync"
-import { favoriteTracks } from "../src/favorites/collection"
+import { favoriteTracks, sortLikedTracks } from "../src/favorites/collection"
 import {
   validFavorite,
   validFavoriteMetadata,
@@ -170,6 +171,18 @@ test("native nullable recordings survive saved favorites and pending receipt val
   expect(validFavorite(saved)).toBe(true)
   expect(validFavorite({ ...saved, durationMs: undefined })).toBe(true)
   expect(validFavorite({ ...saved, durationMs: 180000 })).toBe(true)
+  expect(validFavorite({ ...saved, likedAt: 1500000000000 })).toBe(true)
+  expect(validFavorite({ ...saved, likedAt: null })).toBe(true)
+  for (const likedAt of [
+    "1500000000000",
+    -1,
+    0,
+    NaN,
+    Infinity,
+    1.5,
+    8640000000000001,
+  ])
+    expect(validFavorite({ ...saved, likedAt })).toBe(false)
   for (const durationMs of ["180000", {}, -1, NaN, Infinity])
     expect(validFavorite({ ...saved, durationMs })).toBe(false)
   state.bindings.lastfm!.pending = {
@@ -183,6 +196,114 @@ test("native nullable recordings survive saved favorites and pending receipt val
   expect(validFavoriteMetadata(JSON.parse(JSON.stringify(state)))).toBe(true)
   state.bindings.lastfm!.pending.recording = { ...record, durationMs: -1 }
   expect(validFavoriteMetadata(state)).toBe(false)
+})
+test("original service like dates backfill old imports and survive repeated syncs and mirrors", () => {
+  const imported = row(1, { key: "lastfm:old", localTrackId: null })
+  let state = mergeFavoriteSnapshot(
+    connected("lastfm"),
+    "lastfm",
+    [imported],
+    true
+  )
+  expect(favoriteLikedAt(state.entries[imported.key])).toBeUndefined()
+  const changedAt = state.entries[imported.key].changedAt
+  const date = 1500000000000
+  state = mergeFavoriteSnapshot(
+    state,
+    "lastfm",
+    [{ ...imported, likedAt: date }],
+    true
+  )
+  expect(state.entries[imported.key].likedAt).toBe(date)
+  expect(state.entries[imported.key].changedAt).toBe(changedAt)
+  expect(state.entries[imported.key].sources.lastfm!.likedAt).toBe(date)
+  state.settings.listenbrainz = true
+  state = bindFavorites(state, "listenbrainz", account("listenbrainz"))
+  state = mergeFavoriteSnapshot(
+    state,
+    "listenbrainz",
+    [{ ...imported, key: "listenbrainz:new", likedAt: date + 100000 }],
+    true
+  )
+  expect(state.entries[imported.key].likedAt).toBe(date)
+  state = acknowledgeFavorite(state, "lastfm", imported.key, true, imported.key)
+  expect(state.entries[imported.key].sources.lastfm!.likedAt).toBe(date)
+  const repeated = mergeFavoriteSnapshot(
+    state,
+    "lastfm",
+    [{ ...imported, likedAt: date }],
+    true
+  )
+  expect(repeated.entries[imported.key]).toBe(state.entries[imported.key])
+  state = mergeFavoriteSnapshot(state, "lastfm", [], true)
+  state = mergeFavoriteSnapshot(
+    state,
+    "lastfm",
+    [{ ...imported, likedAt: date + 200000 }],
+    true
+  )
+  expect(state.entries[imported.key].likedAt).toBe(date + 200000)
+})
+test("local relikes get their actual new time while unchanged hearts retain their date", () => {
+  let state = setFavorite(emptyFavorites(), row(1), true)
+  const first = state.entries["local:1"].likedAt!
+  state = setFavorite(state, row(1), true)
+  expect(state.entries["local:1"].likedAt).toBe(first)
+  state.entries["local:1"] = {
+    ...state.entries["local:1"],
+    likedAt: 1500000000000,
+  }
+  state = setFavorite(state, row(1), false)
+  state = setFavorite(state, state.entries["local:1"], true)
+  expect(state.entries["local:1"].likedAt!).toBeGreaterThan(1500000000000)
+  const reliked = state.entries["local:1"].likedAt
+  state.settings.lastfm = true
+  state = bindFavorites(state, "lastfm", account("lastfm"))
+  state = mergeFavoriteSnapshot(
+    state,
+    "lastfm",
+    [row(1, { likedAt: 1500000000000 })],
+    true
+  )
+  expect(state.entries["local:1"].likedAt).toBe(reliked)
+})
+test("favorites and the All view sort by love or rating date, retaining unknown dates at the end", () => {
+  let state = connected("lastfm")
+  state = mergeFavoriteSnapshot(
+    state,
+    "lastfm",
+    [
+      row(1, { likedAt: 1500000000000 }),
+      row(2, { likedAt: 1600000000000 }),
+      row(3),
+    ],
+    true
+  )
+  const available = new Map(
+    [1, 2, 3].map((id) => [
+      String(id),
+      {
+        id: String(id),
+        addedAt: "2026-01-01",
+        lastRatedAt: null,
+      } as MusicTrack,
+    ])
+  )
+  const tracks = favoriteTracks(state, available)
+  expect(tracks.map((track) => track.id)).toEqual(["2", "1", "3"])
+  expect(tracks[0].likedAt).toBe(new Date(1600000000000).toISOString())
+  expect(tracks[2].likedAt).toBeNull()
+  const rated = {
+    id: "4",
+    lastRatedAt: new Date(1550000000000).toISOString(),
+  } as MusicTrack
+  expect(sortLikedTracks([...tracks, rated]).map((track) => track.id)).toEqual([
+    "2",
+    "4",
+    "1",
+    "3",
+  ])
+  expect(available.get("2")?.likedAt).toBeUndefined()
 })
 test("native string rejections expose the service failure and keep other sync services running", async () => {
   const state = connected("lastfm")

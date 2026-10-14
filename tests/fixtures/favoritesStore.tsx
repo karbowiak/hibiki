@@ -156,6 +156,7 @@ if (scenario === "corrupt") {
               artist: "Artist",
               album: "",
               durationMs: null,
+              likedAt: 1500000000000,
               localTrackId: null,
               recordingMbid: null,
               recordingMsid: service === "listenbrainz" ? id : null,
@@ -320,7 +321,13 @@ if (scenario === "corrupt") {
       await useFavoritesStore.getState().toggle(track, true)
       const library = create(() => ({
         likedTracks: [
-          { ...track, id: "44", title: "Low rated song", userRating: 2 },
+          {
+            ...track,
+            id: "44",
+            title: "Low rated song",
+            userRating: 2,
+            lastRatedAt: "2019-01-01T00:00:00.000Z",
+          },
         ],
       }))
       mock.module("../../src/stores", () => ({
@@ -337,14 +344,26 @@ if (scenario === "corrupt") {
       }))
       mock.module("../../src/hooks/useFavoriteTracks", () => ({
         useFavoriteTracks: () => ({
-          tracks: [track],
+          tracks: [
+            { ...track, likedAt: "2017-01-01T00:00:00.000Z" },
+            {
+              ...track,
+              id: "46",
+              title: "Older love",
+              likedAt: "2015-01-01T00:00:00.000Z",
+            },
+            { ...track, id: "45", title: "Unknown love", likedAt: null },
+          ],
           loading: false,
           retry: () => {},
         }),
       }))
       mock.module("../../src/components/shared/TrackTable", () => ({
-        TrackTable: ({ tracks }: any) => (
+        TrackTable: ({ tracks, onSort, columns }: any) => (
           <div data-testid="tracks">
+            {columns.some((column: any) => column.id === "liked_at") && (
+              <button onClick={() => onSort("liked_at")}>Date Liked</button>
+            )}
             {tracks.map((track: any) => (
               <span key={track.id}>{track.title}</span>
             ))}
@@ -365,6 +384,37 @@ if (scenario === "corrupt") {
           .querySelector('[data-testid="tracks"]')
           ?.textContent?.includes("Low rated")
       )
+      const all = [...document.querySelectorAll("button")].find(
+        (button) => button.textContent === "All"
+      )!
+      await act(async () => all.click())
+      const titles = () =>
+        [...document.querySelectorAll('[data-testid="tracks"] span')].map(
+          (node) => node.textContent
+        )
+      assert.deepEqual(titles(), [
+        "Low rated song",
+        "Local song",
+        "Older love",
+        "Unknown love",
+      ])
+      const date = [...document.querySelectorAll("button")].find(
+        (button) => button.textContent === "Date Liked"
+      )!
+      await act(async () => date.click())
+      assert.deepEqual(titles(), [
+        "Local song",
+        "Older love",
+        "Low rated song",
+        "Unknown love",
+      ])
+      await act(async () => date.click())
+      assert.deepEqual(titles(), [
+        "Older love",
+        "Local song",
+        "Low rated song",
+        "Unknown love",
+      ])
       const rated = [...document.querySelectorAll("button")].find(
         (button) => button.textContent === "Rated"
       )!

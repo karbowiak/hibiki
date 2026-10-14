@@ -18,6 +18,7 @@ export type ColId =
   | "added_at"
   | "rating"
   | "rated_at"
+  | "liked_at"
   | "downloads"
 
 export const ALL_COLUMNS: { id: ColId; label: string; defaultOn: boolean }[] = [
@@ -35,6 +36,14 @@ export const ALL_COLUMNS: { id: ColId; label: string; defaultOn: boolean }[] = [
   { id: "downloads", label: "Download status", defaultOn: true },
 ]
 
+export const LIKED_DATE_COLUMN = {
+  id: "liked_at" as const,
+  label: "Date Liked",
+  defaultOn: true,
+}
+const knownColumn = (id: unknown) =>
+  id === LIKED_DATE_COLUMN.id || ALL_COLUMNS.some((column) => column.id === id)
+
 const columnPreferences = new Map<string, ScalarPreference<ColId[]>>()
 const downloadPreferences = new Map<string, ScalarPreference<boolean>>()
 
@@ -49,10 +58,7 @@ export function usePlaylistColumns(storageKey: string, defaultCols?: ColId[]) {
       defaults,
       (raw) => {
         const saved: unknown = JSON.parse(raw)
-        if (
-          !Array.isArray(saved) ||
-          saved.some((id) => !ALL_COLUMNS.some((column) => column.id === id))
-        )
+        if (!Array.isArray(saved) || saved.some((id) => !knownColumn(id)))
           throw new Error("Invalid column preferences")
         return [...new Set(saved)].filter((id) => id !== "downloads") as ColId[]
       },
@@ -81,7 +87,7 @@ export function usePlaylistColumns(storageKey: string, defaultCols?: ColId[]) {
     downloadPreference.snapshot
   )
   function toggle(id: ColId) {
-    if (!ALL_COLUMNS.some((column) => column.id === id)) return
+    if (!knownColumn(id)) return
     if (id === "downloads") {
       downloadPreference!.set(!downloadPreference!.snapshot())
       return

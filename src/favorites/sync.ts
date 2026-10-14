@@ -41,6 +41,7 @@ function reference(item: FavoriteRecording): FavoriteRecording {
     artist: item.artist,
     album: item.album ?? "",
     durationMs: item.durationMs,
+    likedAt: item.likedAt,
     recordingMbid: item.recordingMbid,
     recordingMsid: item.recordingMsid,
     localTrackId: item.localTrackId,
