@@ -65,7 +65,8 @@ export function ActivityIndicator() {
   const bulkTasks = progress?.tasks.filter(
     (task) =>
       !task.task.startsWith("catchup:") &&
-      !(task.task.startsWith("playlist:") && task.status === "error")
+      !task.task.startsWith("analysis:") &&
+      !task.task.startsWith("playlist:")
   )
   const playlistFailures =
     progress?.tasks.filter(
@@ -130,12 +131,10 @@ export function ActivityIndicator() {
   const activities: Activity[] = []
   if (progress && context && progress.tasks.length) {
     const paused = offline || task?.status === "paused",
-      busy = !paused && !failed && (!!task || progress.analysisPending > 0)
+      busy = !paused && !failed && !!task
     const phase = task
-      ? `${phaseLabel(task.task)}${task.total != null ? `: ${task.cursor.toLocaleString()} / ${task.total.toLocaleString()}` : ""}`
-      : progress.analysisPending
-        ? `${progress.analysisPending.toLocaleString()} waveforms remaining`
-        : ""
+      ? `${task.scanMode === "verify" ? "Verifying playlist contents" : phaseLabel(task.task)}${task.total != null ? `: ${(task.scanMode === "verify" ? (task.keyCursor ?? 0) : task.cursor).toLocaleString()} / ${task.total.toLocaleString()}` : ""}`
+      : ""
     activities.push({
       id: "catalogue",
       busy,
@@ -155,12 +154,75 @@ export function ActivityIndicator() {
             : "Library saved on this device",
       detail: [
         phase,
-        `${progress.entities.toLocaleString()} items saved · ${progress.waveforms.toLocaleString()} waveforms`,
-        progress.analysisUnavailable
-          ? `${progress.analysisUnavailable.toLocaleString()} waveforms unavailable`
-          : null,
+        `${progress.entities.toLocaleString()} items saved`,
         progress.incremental?.watermark
           ? `Changes last checked ${new Date(progress.incremental.watermark * 1000).toLocaleTimeString()}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      retry: failed && !offline && !retrying ? () => void retry() : undefined,
+    })
+  }
+  const playlistTask = progress?.tasks.find(
+    (task) =>
+      task.task.startsWith("playlist:") &&
+      !["complete", "error"].includes(task.status)
+  )
+  if (progress && context && playlistTask) {
+    const paused = offline || playlistTask.status === "paused"
+    const verifying = playlistTask.scanMode === "verify"
+    activities.push({
+      id: "catalogue-playlist-progress",
+      label: paused
+        ? "Playlist saving paused"
+        : verifying
+          ? "Verifying playlist contents"
+          : "Saving playlist contents",
+      busy: !paused,
+      state: paused ? "paused" : undefined,
+      detail: `${verifying ? "Verifying playlist contents" : "Playlist contents"}${playlistTask.total != null ? `: ${(verifying ? (playlistTask.keyCursor ?? 0) : playlistTask.cursor).toLocaleString()} / ${playlistTask.total.toLocaleString()}` : ""}`,
+    })
+  }
+  const waveformTask = progress?.tasks.find(
+    (task) => task.task.startsWith("analysis:") && task.status !== "complete"
+  )
+  if (
+    progress &&
+    context &&
+    (waveformTask ||
+      progress.analysisPending ||
+      progress.waveforms ||
+      progress.analysisUnavailable)
+  ) {
+    const paused = offline || waveformTask?.status === "paused"
+    const failed = waveformTask?.status === "error"
+    const busy =
+      !paused && !failed && (!!waveformTask || progress.analysisPending > 0)
+    activities.push({
+      id: "catalogue-waveforms",
+      label: failed
+        ? "Waveform collection needs attention"
+        : paused
+          ? "Waveform collection paused"
+          : busy
+            ? "Saving waveforms"
+            : "Waveforms saved on this device",
+      busy,
+      state: failed
+        ? "error"
+        : paused
+          ? "paused"
+          : busy
+            ? undefined
+            : "complete",
+      detail: [
+        waveformTask?.task === "analysis:discover"
+          ? "Checking saved audio streams"
+          : null,
+        `${progress.waveforms.toLocaleString()} saved · ${progress.analysisPending.toLocaleString()} remaining`,
+        progress.analysisUnavailable
+          ? `${progress.analysisUnavailable.toLocaleString()} unavailable from Plex`
           : null,
       ]
         .filter(Boolean)

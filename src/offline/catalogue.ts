@@ -18,7 +18,7 @@ export interface CatalogueTask {
   total: number | null
   completedAt: number | null
   error: string | null
-  scanMode?: "keyset" | "offset"
+  scanMode?: "keyset" | "offset" | "verify"
   keyCursor?: number
   upperId?: number | null
   startedAt?: number | null

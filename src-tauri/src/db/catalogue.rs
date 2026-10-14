@@ -135,7 +135,7 @@ pub fn save_observation(conn: &Connection, scope: &str, kind: &str, id: i64,
         let current: Option<i64> = conn.query_row("SELECT max(saved_at,listing_saved_at) FROM plex_catalogue WHERE scope=?1 AND kind=?2 AND id=?3",params![scope,kind,id],|r|r.get(0)).optional().map_err(|_|"Cannot fence catalogue observation")?;
         if current.is_some_and(|at| at >= observed_at) { return Ok(false); }
         save(conn, scope, kind, id, document, true)?;
-        Ok(true)
+        Ok(conn.changes() > 0)
     })
 }
 
@@ -225,6 +225,18 @@ mod tests {
         assert!(!save_observation(&conn,&scope,"track",1,&old,100).unwrap());
         assert_eq!(serde_json::from_str::<Value>(&conn.query_row("SELECT document FROM plex_catalogue WHERE scope=?1",[&scope],|r|r.get::<_,String>(0)).unwrap()).unwrap()["title"],"New");
         assert!(save_observation(&conn,&scope,"track",1,&old,300).unwrap());
+    }
+    #[test]
+    fn older_server_revision_observation_does_not_claim_a_publication() {
+        let conn=Connection::open_in_memory().unwrap();
+        super::super::schema::run_migrations(&conn).unwrap();
+        let scope=format!("plex-{}","a".repeat(64));
+        let new=serde_json::json!({"type":"track","ratingKey":1,"updatedAt":20});
+        let old=serde_json::json!({"type":"track","ratingKey":1,"updatedAt":10});
+        save(&conn,&scope,"track",1,&new,true).unwrap();
+        conn.execute("UPDATE plex_catalogue SET saved_at=1,listing_saved_at=0",[]).unwrap();
+        assert!(!save_observation(&conn,&scope,"track",1,&old,100).unwrap());
+        assert_eq!(get(&conn,&scope,"track",1).unwrap(),Some(new));
     }
     #[test]
     fn full_documents_preserve_unknown_metadata_and_all_media_without_credentials() {

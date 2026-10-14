@@ -10,6 +10,9 @@ use std::{
 };
 use tauri::{Emitter, Manager, State};
 const PAGE: i64 = 200;
+const PLAYLIST_VERIFY_PAGE: i64 = 500;
+const ANALYSIS_BATCH: usize = 24;
+const ANALYSIS_CONCURRENCY: usize = 4;
 async fn background_yield(app: &tauri::AppHandle, idle_ms: u64) {
     let active = app
         .state::<crate::audio_engine::bridge::AudioEngineState>()
@@ -904,15 +907,22 @@ async fn verify_playlist_staging(
     id: i64,
     task: &sync::Task,
 ) -> Result<(), String> {
+    // Verification restarts at zero after interruption: an earlier half must
+    // never serve as proof of the current ordered membership.
     let mut offset = 0;
+    save_checked(app, context, |conn| {
+        sync::playlist_verification_progress(conn, &context.cache_scope, task, 0)
+    }).await?;
     loop {
-        let expected = save_checked(app, context, |conn| {
-            sync::playlist_staging_page(conn, &context.cache_scope, id, task, offset, PAGE)
-        })
-        .await?;
+        let scope = context.cache_scope.clone();
+        let captured = task.clone();
+        let expected = app.state::<DbState>().read(move |conn| {
+            sync::playlist_staging_identities(conn, &scope, id, &captured, offset, PLAYLIST_VERIFY_PAGE)
+        }).await?;
+        self::client(app, context).await?;
         let page = tokio::time::timeout(
             std::time::Duration::from_secs(30),
-            client.catalogue_page(&format!("/playlists/{id}/items"), offset, PAGE, &[]),
+            client.catalogue_page(&format!("/playlists/{id}/items"), offset, PLAYLIST_VERIFY_PAGE, &[]),
         )
         .await
         .map_err(|_| "Playlist verification timed out")?
@@ -924,13 +934,18 @@ async fn verify_playlist_staging(
             return Err("Playlist changed during catalogue sync".into());
         }
         offset += page.items.len() as i64;
+        save_checked(app, context, |conn| {
+            sync::playlist_verification_progress(conn, &context.cache_scope, task, offset)
+        }).await?;
         if offset == task.cursor {
             return Ok(());
         }
         if page.items.is_empty() || offset > task.cursor {
             return Err("Incomplete playlist catalogue".into());
         }
-        background_yield(app, 150).await;
+        // Membership reads are small; a playback-dependent 600 ms delay per
+        // 200 entries made large playlists spend minutes doing no work.
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 }
 pub(crate) async fn verify_playlist_documents(
@@ -1365,7 +1380,7 @@ fn media_identities(
     }
     Ok(identities)
 }
-fn discover_media(
+pub(crate) fn discover_media(
     conn: &rusqlite::Connection,
     client: &PlexClient,
     id: i64,
@@ -1449,9 +1464,10 @@ async fn analysis(app: &tauri::AppHandle, context: &PlexRequestContext) -> Resul
     let mut task = start_task(app, context, "analysis:discover", Some(&generation)).await?;
     while task.status != "complete" {
         let (client, _) = verify_library(app, context).await?;
-        let rows=save_checked(app,context,|conn|{
-            let mut stmt=conn.prepare("SELECT id,document FROM plex_catalogue WHERE scope=?1 AND kind='track' AND detail=1 AND removed=0 AND id>?2 ORDER BY id LIMIT 50").map_err(|_|"Cannot read analysis discovery")?;
-            let rows=stmt.query_map(rusqlite::params![context.cache_scope,task.cursor],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?))).map_err(|_|"Cannot read analysis discovery")?.collect::<Result<Vec<_>,_>>().map_err(|_|"Cannot read analysis discovery")?;Ok(rows)
+        let scope = context.cache_scope.clone();
+        let cursor = task.cursor;
+        let rows = app.state::<DbState>().read(move |conn| {
+            crate::db::catalogue_analysis::discovery_page(conn, &scope, cursor)
         }).await?;
         let mut documents = Vec::new();
         for (id, text) in &rows {
@@ -1485,47 +1501,124 @@ async fn analysis(app: &tauri::AppHandle, context: &PlexRequestContext) -> Resul
         background_yield(app, 150).await;
     }
     save_checked(app,context,|conn|{conn.execute("UPDATE plex_catalogue_media SET status='pending' WHERE scope=?1 AND stream_id>0 AND status='unavailable' AND attempted_at<?2",rusqlite::params![context.cache_scope,crate::db::catalogue::now()-24*60*60*1000]).map_err(|_|"Cannot resume analysis")?;Ok(())}).await?;
+    let fetching = start_task(app, context, "analysis:fetch", Some(&generation)).await?;
     loop {
-        let next=save_checked(app,context,|conn|{
-            use rusqlite::OptionalExtension;
-            conn.query_row("SELECT track_id,cache_key,stream_id,version FROM plex_catalogue_media WHERE scope=?1 AND active=1 AND stream_id>0 AND status='pending' ORDER BY track_id LIMIT 1",rusqlite::params![context.cache_scope],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?,r.get::<_,String>(3)?))).optional().map_err(|_|"Cannot read pending analysis".into())
+        let scope = context.cache_scope.clone();
+        let next = app.state::<DbState>().read(move |conn| {
+            crate::db::catalogue_analysis::pending(conn, &scope, ANALYSIS_BATCH)
         }).await?;
-        let Some((id, key, stream, version)) = next else {
+        if next.is_empty() {
+            save_checked(app, context, |conn| {
+                sync::checkpoint(conn, &context.cache_scope, &fetching, fetching.cursor, None, true)
+            }).await?;
             return Ok(());
-        };
-        let (client, _) = verify_library(app, context).await?;
-        let raw = tokio::time::timeout(
-            std::time::Duration::from_secs(12),
-            client.get::<serde_json::Value>(&format!("/library/streams/{stream}/levels")),
-        )
-        .await;
-        let saved = match raw {
-            Ok(Ok(raw)) => crate::db::catalogue::validate_levels(&raw)
-                .ok()
-                .map(|_| raw),
-            _ => None,
-        };
-        // A transport failure pauses bulk work instead of labeling the entire
-        // remaining catalogue as having no analysis.
-        if saved.is_none() {
-            verify_library(app, context).await?;
         }
-        save_checked(app,context,|conn|{
-            let tx=conn.unchecked_transaction().map_err(|_|"Cannot save catalogue analysis")?;
-            if let Some(raw)=&saved {crate::db::catalogue::save_levels(&tx,&context.cache_scope,&key,stream,&version,raw)?;}
-            tx.execute("UPDATE plex_catalogue_media SET status=?6,attempted_at=?7 WHERE scope=?1 AND track_id=?2 AND cache_key=?3 AND stream_id=?4 AND version=?5",rusqlite::params![context.cache_scope,id,key,stream,version,if saved.is_some(){"saved"}else{"unavailable"},crate::db::catalogue::now()]).map_err(|_|"Cannot checkpoint catalogue analysis")?;
-            tx.commit().map_err(|_|"Cannot commit catalogue analysis".to_owned())
+        save_checked(app, context, |conn| {
+            sync::checkpoint(conn, &context.cache_scope, &fetching, fetching.cursor, None, false)
         }).await?;
-        // Small serial requests yield between streams; encoded audio is never
-        // downloaded here and player waveform/cache reads use their own lane.
-        background_yield(app, 250).await;
+        let (client, _) = verify_library(app, context).await?;
+        let saved = fetch_analysis_batch(&client, next).await;
+        // Commit successful siblings even if one request failed. Timeouts,
+        // authentication/rate limits and malformed responses remain pending;
+        // only an authoritative 404 means analysis is unavailable.
+        save_checked(app, context, |conn| {
+            crate::db::catalogue_analysis::publish(conn, &context.cache_scope, &saved)
+        }).await?;
+        if saved.iter().any(|(_, result)| result.is_err()) {
+            let error = "Plex waveform collection paused; unfinished requests will retry";
+            pause_task(app, context, &fetching, error).await;
+            return Err(error.into());
+        }
+        // Four bounded metadata requests, then one short transaction. Full
+        // native levels are retained; this does not download encoded audio.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
+}
+
+async fn fetch_analysis_batch(
+    client: &PlexClient,
+    pending: Vec<crate::db::catalogue_analysis::Pending>,
+) -> Vec<(crate::db::catalogue_analysis::Pending, Result<Option<serde_json::Value>, String>)> {
+    use futures::{stream, StreamExt};
+    stream::iter(pending.into_iter().map(|item| async move {
+        let result = if item.cached {
+            Ok(None)
+        } else {
+            tokio::time::timeout(std::time::Duration::from_secs(12), client.catalogue_levels(item.stream_id))
+                .await.map_err(|_| "Plex waveform request timed out".to_owned())
+                .and_then(|result| result.map_err(|_| "Plex waveform request failed".to_owned()))
+        };
+        (item, result)
+    })).buffer_unordered(ANALYSIS_CONCURRENCY).collect().await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+    #[tokio::test]
+    async fn waveform_batch_bounds_concurrency_and_does_not_poison_transient_failures() {
+        use tokio::io::{AsyncReadExt,AsyncWriteExt};
+        use std::sync::atomic::{AtomicUsize,Ordering};
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address=listener.local_addr().unwrap();
+        let active=Arc::new(AtomicUsize::new(0));let peak=Arc::new(AtomicUsize::new(0));
+        let inflight=active.clone();let maximum=peak.clone();
+        let server=tokio::spawn(async move {
+            let mut handles=Vec::new();
+            for _ in 0..8 {
+                let (mut socket,_)=listener.accept().await.unwrap();
+                let active=inflight.clone();let peak=maximum.clone();
+                handles.push(tokio::spawn(async move {
+                    let mut bytes=vec![0;4096];let count=socket.read(&mut bytes).await.unwrap();
+                    let request=std::str::from_utf8(&bytes[..count]).unwrap();
+                    let path=request.lines().next().unwrap().split_whitespace().nth(1).unwrap().split('?').next().unwrap();
+                    let id=path.strip_prefix("/library/streams/").unwrap().strip_suffix("/levels").unwrap().parse::<i64>().unwrap();
+                    let current=active.fetch_add(1,Ordering::SeqCst)+1;peak.fetch_max(current,Ordering::SeqCst);
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    let (status,body)=match id {
+                        2 => ("404 Not Found","{}".to_owned()),
+                        3 => ("401 Unauthorized","{}".to_owned()),
+                        4 => ("200 OK",json!({"MediaContainer":{"Level":[{"v":"invalid"}]}}).to_string()),
+                        _ => ("200 OK",json!({"MediaContainer":{"Level":[{"v":0.25}],"future":"retain"}}).to_string()),
+                    };
+                    socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+                    active.fetch_sub(1,Ordering::SeqCst);
+                }));
+            }
+            for handle in handles { handle.await.unwrap(); }
+        });
+        let client=PlexClient::new(crate::plex::PlexClientConfig{base_url:format!("http://{address}"),token:"fixture".into(),..Default::default()}).unwrap();
+        let jobs=(1..=9).map(|id|crate::db::catalogue_analysis::Pending {track_id:id,cache_key:format!("key-{id}"),stream_id:id,version:"v1".into(),cached:id==9}).collect();
+        let mut result=fetch_analysis_batch(&client,jobs).await;result.sort_by_key(|(item,_)|item.track_id);
+        server.await.unwrap();
+        assert_eq!(peak.load(Ordering::SeqCst),4);
+        assert_eq!(result.len(),9);
+        assert_eq!(result[0].1.as_ref().unwrap().as_ref().unwrap()["future"],"retain");
+        assert_eq!(result[1].1.as_ref().unwrap(),&None);
+        assert!(result[2].1.is_err());assert!(result[3].1.is_err());
+        assert_eq!(result[8].1.as_ref().unwrap(),&None);
+    }
+    #[tokio::test]
+    #[ignore = "Explicit private Plex settings and DB paths; read-only waveform throughput proof"]
+    async fn private_waveform_batch_throughput_proof() {
+        let settings:crate::plex::PlexSettings=serde_json::from_slice(&std::fs::read(std::env::var("HIBIKI_CATALOGUE_PROOF_SETTINGS").unwrap()).unwrap()).unwrap();
+        let mut client=PlexClient::new(crate::plex::PlexClientConfig{base_url:settings.base_url,token:settings.token,client_id:settings.client_id,..Default::default()}).unwrap();
+        assert_eq!(client.get_identity().await.unwrap().machine_identifier,settings.machine_identifier);
+        client.machine_identifier=settings.machine_identifier;
+        let section=client.get_all_sections().await.unwrap().into_iter().find(|s|s.key==settings.section_id&&s.uuid.as_deref()==Some(&settings.section_uuid)&&s.section_type=="artist").unwrap();
+        client.library_scope=client.cache_scope_for_library(settings.section_id,section.uuid.as_deref());
+        let conn=rusqlite::Connection::open_with_flags(std::env::var("HIBIKI_CATALOGUE_PROOF_DB").unwrap(),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let jobs=crate::db::catalogue_analysis::pending(&conn,&client.library_scope,ANALYSIS_BATCH).unwrap();
+        assert_eq!(jobs.len(),ANALYSIS_BATCH);
+        let start=std::time::Instant::now();
+        let result=fetch_analysis_batch(&client,jobs).await;
+        let valid=result.iter().filter(|(_,r)|r.as_ref().is_ok_and(|v|v.is_some())).count();
+        let absent=result.iter().filter(|(j,r)|!j.cached&&matches!(r,Ok(None))).count();
+        let failed=result.iter().filter(|(_,r)|r.is_err()).count();
+        eprintln!("Read-only waveform batch: {} requests, {valid} valid, {absent} absent, {failed} failed, {} ms; no DB writes",result.len(),start.elapsed().as_millis());
+        assert_eq!(failed,0);
+    }
     #[tokio::test]
     #[ignore = "Explicit private Plex settings/playlist ID; read-only ordered verification in a temporary database"]
     async fn private_playlist_artwork_churn_resume_and_publication_proof() {

@@ -333,6 +333,7 @@ fn playlist_page_impl(
 
 /// Bounded raw staging reads for a second membership pass. Reading the live
 /// projection here would hide occurrence changes behind newer track metadata.
+#[cfg(test)]
 pub fn playlist_staging_page(
     conn: &Connection,
     scope: &str,
@@ -358,6 +359,23 @@ pub fn playlist_staging_page(
             .map_err(|_| "Invalid playlist staging".into())
     })
     .collect()
+}
+
+pub fn playlist_staging_identities(conn: &Connection, scope: &str, id: i64, task: &Task, offset: i64, limit: i64) -> Result<Vec<Value>, String> {
+    let current=self::task(conn,scope,&format!("playlist:{id}"))?.ok_or("Missing playlist task")?;
+    if current.generation!=task.generation || current.cursor!=task.cursor { return Err("Catalogue task was superseded".into()); }
+    let mut stmt=conn.prepare("SELECT CAST(json_extract(document,'$.ratingKey') AS INTEGER),occurrence FROM plex_catalogue_playlist_members WHERE scope=?1 AND playlist_id=?2 AND generation=?3 AND position>=?4 AND position<?5 ORDER BY position").map_err(|_| "Cannot read playlist verification")?;
+    let rows=stmt.query_map(params![scope,id,task.generation,offset,offset+limit],|r|Ok(serde_json::json!({"type":"track","ratingKey":r.get::<_,i64>(0)?,"playlistItemID":r.get::<_,Option<i64>>(1)?}))).map_err(|_| "Cannot read playlist verification")?.collect::<Result<Vec<_>,_>>().map_err(|_| "Cannot read playlist verification".to_owned());
+    rows
+}
+
+/// Display-only progress. The verification itself always starts from zero;
+/// durable partial progress is never reused as an ordered membership proof.
+pub fn playlist_verification_progress(conn:&Connection,scope:&str,task:&Task,offset:i64)->Result<(),String> {
+    if offset<0 || offset>task.cursor || !task.task.starts_with("playlist:") { return Err("Invalid playlist verification progress".into()); }
+    let changed=conn.execute("UPDATE plex_catalogue_tasks SET scan_mode='verify',key_cursor=?4,updated_at=?5 WHERE scope=?1 AND task=?2 AND generation=?3 AND cursor=?6 AND status!='complete'",params![scope,task.task,task.generation,offset,now(),task.cursor]).map_err(|_| "Cannot save playlist verification progress")?;
+    if changed!=1 { return Err("Catalogue task was superseded".into()); }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -398,6 +416,15 @@ mod tests {
             playlist_staging_page(&conn, &scope, 7, &first, 1, 1).unwrap(),
             vec![b.clone()]
         );
+        let identities=playlist_staging_identities(&conn,&scope,7,&first,0,500).unwrap();
+        assert!(crate::plex::catalogue::playlist_membership_matches(&identities,&[a.clone(),b.clone()]).unwrap());
+        assert!(!crate::plex::catalogue::playlist_membership_matches(&identities,&[b.clone(),a.clone()]).unwrap());
+        playlist_verification_progress(&conn,&scope,&first,1).unwrap();
+        assert_eq!(task(&conn,&scope,"playlist:7").unwrap().unwrap().key_cursor,1);
+        // Restarted verification reports zero, never trusts the old prefix.
+        playlist_verification_progress(&conn,&scope,&first,0).unwrap();
+        assert_eq!(task(&conn,&scope,"playlist:7").unwrap().unwrap().key_cursor,0);
+        assert!(playlist_verification_progress(&conn,&scope,&first,3).is_err());
         assert!(
             playlist_finish_checked(&conn, &scope, 7, &first, None, &meta)
                 .unwrap()
@@ -437,6 +464,8 @@ mod tests {
                 .is_some()
         );
         assert!(playlist_staging_page(&conn, &scope, 7, &first, 0, 200).is_err());
+        assert!(playlist_staging_identities(&conn,&scope,7,&first,0,500).is_err());
+        assert!(playlist_verification_progress(&conn,&scope,&first,0).is_err());
         assert!(playlist_staging_page(
             &conn,
             &format!("plex-{}", "b".repeat(64)),

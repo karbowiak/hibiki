@@ -92,7 +92,18 @@ paths and audio URLs. Full `/levels` responses are indexed for every available
 audio stream under exact scoped source and analysis identities. Missing analysis
 is explicitly unavailable/retryable; it does not imply exported sonic vectors.
 The Activity dropdown reports saved entities, the current indexing phase,
-waveforms and missing analysis; failures use the shared notification center.
+playlist verification, and waveform collection separately. Library metadata
+can be complete while playlists or waveforms are still being saved. Ordered
+playlist verification reports its actual second-pass progress and restarts that
+proof from zero after interruption. Compact local membership reads and 500-item
+remote verification pages avoid repeatedly decoding full track documents.
+Waveforms use four bounded concurrent metadata requests and 24-result atomic
+batches, retaining full native samples. Completed media discovery is reused;
+deferred track observations discover their exact media identities atomically.
+Existing foreground waveforms are reused without another request, retired media
+results cannot publish, and transport/authentication/rate-limit failures remain
+retryable rather than being marked unavailable. Failures use Activity and the
+shared notification center.
 A large initial scan can take time: partial local browse reports local counts
 separately from server totals, and children require verified coverage.
 Very large unpaged DTO collections fail explicitly at 32 MiB instead of silently

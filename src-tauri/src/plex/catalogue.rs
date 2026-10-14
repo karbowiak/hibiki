@@ -302,6 +302,19 @@ fn parse_page(
 }
 
 impl PlexClient {
+    /// Full native levels, preserving unknown fields. A 404 is absence; an
+    /// outage/rate limit must remain retryable instead of poisoning the queue.
+    pub async fn catalogue_levels(&self, stream: i64) -> Result<Option<Value>> {
+        anyhow::ensure!(stream>0,"Invalid Plex audio stream");
+        let response=self.client.get(self.build_url(&format!("/library/streams/{stream}/levels")))
+            .header("X-Plex-Token",token_header(&self.token)).header("Accept","application/json")
+            .send().await.map_err(request_error)?;
+        if response.status()==reqwest::StatusCode::NOT_FOUND { return Ok(None); }
+        let raw:Value=response.bounded_plex_json(16*1024*1024).await?;
+        let container=raw.get("MediaContainer").context("Missing Plex waveform container")?.clone();
+        crate::db::catalogue::validate_levels(&container).map_err(|_| anyhow::anyhow!("Invalid Plex waveform samples"))?;
+        Ok(Some(container))
+    }
     /// Path and filters are native constants, never renderer-provided URLs.
     pub async fn catalogue_page(
         &self,

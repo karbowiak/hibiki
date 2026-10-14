@@ -463,7 +463,12 @@ pub async fn get_track(
         // native admission. A newer listing/event publication wins this race.
         tauri::async_runtime::spawn(async move {
             let _ = crate::offline_commands::owned_write(&app, &context, true, move |conn, scope| {
-                crate::db::catalogue::save_observation(conn, scope, "track", rating_key, &raw, observed_at).map(|_| ())
+                crate::db::atomic_upsert(conn, |conn| {
+                    if crate::db::catalogue::save_observation(conn, scope, "track", rating_key, &raw, observed_at)? {
+                        crate::catalogue_commands::discover_media(conn, &c, rating_key, &raw, None)?;
+                    }
+                    Ok(())
+                })
             }).await;
         });
     }

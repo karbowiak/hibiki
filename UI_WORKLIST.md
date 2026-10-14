@@ -351,3 +351,32 @@ TheAudioDB remains implemented but unconfigured locally. AI was deferred by the
 user, and the only available native desktop is macOS. Exact-candidate CI, actual
 signed release-matrix/published-byte verification and catalogue follow-through
 remain gated by the explicit release hold; no third-party messages were sent.
+
+### Waveform and playlist background throughput
+
+The user's scoped follow-up was handled while the release goal remained paused.
+All entity rosters and full-detail passes were already complete. The remaining
+worker unnecessarily rediscovered every track before fetching any waveforms;
+playback added a one-second delay per stream and 600 ms per 200-entry playlist
+verification page. Discovery now skips atomically recorded identities using a
+covering active-media index (V11). Deferred track GET observations also discover
+media atomically, and stale server revisions cannot claim a publication.
+
+Full waveforms now use four concurrent GETs and 24-result transactions, with
+exact scope/media/revision guards, foreground reuse and retryable failures.
+Playlist verification uses compact local ordered identities, 500-entry pages
+and visible progress; interruption still restarts the complete second proof.
+Activity separates saved library metadata, playlist verification and waveforms.
+
+Validation: 686 native tests passed, 14 live proofs ignored and 73 integration
+tests filtered; 923 frontend tests passed, with the final Activity adjustment
+also passing its mounted regression. Frontend/TypeScript and default-protocol
+native builds passed. A read-only native Plex probe fetched 24 full waveforms
+in 151 ms, all valid. After the authorized dev restart, schema V11 applied,
+discovery completed and a 40-second live measurement averaged 64 streams/sec
+(about 94 minutes estimated for the remaining 360,273 at that moment). Playlist
+verification advanced from 99,500 to 149,500 during that same measurement.
+The native Activity panel showed saved metadata, moving playlist progress and
+thousands of saved waveforms, with playback resumed. These are throughput and
+resume proofs; the entire waveform queue has not yet finished. No release work,
+push, tag or publication was performed.

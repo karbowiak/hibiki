@@ -63,7 +63,7 @@ assert(
   "background progress is not a global banner"
 )
 const opener = document.querySelector("button")!
-assert.equal(opener.title, "1 active operation")
+assert.equal(opener.title, "2 active operations")
 await act(async () => {
   opener.click()
   await settle()
@@ -75,7 +75,11 @@ assert.match(
 )
 assert.match(
   document.querySelector("[role=dialog]")!.textContent!,
-  /25 items saved · 3 waveforms/
+  /25 items saved/
+)
+assert.match(
+  document.querySelector("[role=dialog]")!.textContent!,
+  /3 saved · 10 remaining/
 )
 await act(async () => {
   useCatalogueStore.getState().update(context, {
@@ -102,7 +106,7 @@ assert.match(
   document.querySelector("[role=dialog]")!.textContent!,
   /3 items awaiting updates/
 )
-assert.equal(opener.title, "2 active operations")
+assert.equal(opener.title, "3 active operations")
 assert.match(
   document.querySelector("[role=dialog]")!.textContent!,
   /Tracks: 25 \/ 100/,
@@ -124,7 +128,7 @@ assert.match(playlistPanel, /Tracks: 25 \/ 100/)
 assert.match(playlistPanel, /Playlist contents waiting to update/)
 assert.match(playlistPanel, /1 playlist will retry automatically/)
 assert(!playlistPanel.includes("Library indexing needs attention"))
-assert.equal(opener.title, "1 active operation")
+assert.equal(opener.title, "2 active operations")
 assert.equal(
   useNotificationCenterStore
     .getState()
@@ -136,6 +140,69 @@ assert.equal(
     .getState()
     .notifications.find((n) => n.id === "library.playlists")?.active,
   true
+)
+await act(async () => {
+  useCatalogueStore.getState().update(context, {
+    ...progress,
+    tasks: [
+      { ...progress.tasks[0], status: "complete" },
+      { task: "analysis:fetch", status: "running", cursor: 0, total: null },
+    ],
+  })
+  await settle()
+})
+assert.match(
+  document.querySelector("[role=dialog]")!.textContent!,
+  /Library saved on this device/
+)
+assert.match(
+  document.querySelector("[role=dialog]")!.textContent!,
+  /Saving waveforms/
+)
+assert(
+  !document
+    .querySelector("[role=dialog]")!
+    .textContent!.includes("Saving your library")
+)
+assert.equal(opener.title, "1 active operation")
+await act(async () => {
+  useCatalogueStore.getState().update(context, {
+    ...progress,
+    tasks: [
+      {
+        task: "playlist:7",
+        status: "running",
+        cursor: 304,
+        total: 304,
+        scanMode: "verify",
+        keyCursor: 150,
+      },
+    ],
+  })
+  await settle()
+})
+assert.match(
+  document.querySelector("[role=dialog]")!.textContent!,
+  /Verifying playlist contents: 150 \/ 304/
+)
+await act(async () => {
+  useCatalogueStore.getState().update(context, {
+    ...progress,
+    tasks: [
+      { ...progress.tasks[0], status: "complete" },
+      { task: "analysis:fetch", status: "error", cursor: 0, total: null },
+    ],
+  })
+  await settle()
+})
+assert.match(
+  document.querySelector("[role=dialog]")!.textContent!,
+  /Waveform collection needs attention/
+)
+assert(
+  !document
+    .querySelector("[role=dialog]")!
+    .textContent!.includes("Library indexing needs attention")
 )
 await act(async () => {
   useCatalogueStore.getState().update(context, {
