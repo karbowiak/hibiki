@@ -2,6 +2,27 @@
 
 use rusqlite::Connection;
 
+const MIGRATIONS: &[(i64, &str)] = &[
+    (1, include_str!("migrations/V1__initial.sql")),
+    (2, include_str!("migrations/V2__offline_snapshots.sql")),
+    // Retain the applied development migration for existing databases.
+    // AI discovery is deferred; no active commands read/write these rows.
+    (3, include_str!("migrations/V3__semantic_vectors.sql")),
+    (4, include_str!("migrations/V4__local_audio.sql")),
+    (5, include_str!("migrations/V5__plex_catalogue.sql")),
+    (6, include_str!("migrations/V6__catalogue_sync.sql")),
+    (7, include_str!("migrations/V7__download_entities.sql")),
+    (8, include_str!("migrations/V8__catalogue_incremental.sql")),
+    (
+        9,
+        include_str!("migrations/V9__catalogue_browse_projections.sql"),
+    ),
+    (
+        10,
+        include_str!("migrations/V10__catalogue_tag_duplicates.sql"),
+    ),
+];
+
 /// Run all pending migrations against the given connection.
 ///
 /// Uses a simple `schema_version` pragma to track which migrations have run.
@@ -11,24 +32,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), String> {
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(|e| format!("Failed to read schema version: {e}"))?;
 
-    let migrations: &[(i64, &str)] = &[
-        (1, include_str!("migrations/V1__initial.sql")),
-        (2, include_str!("migrations/V2__offline_snapshots.sql")),
-        // Retain the applied development migration for existing databases.
-        // AI discovery is deferred; no active commands read/write these rows.
-        (3, include_str!("migrations/V3__semantic_vectors.sql")),
-        (4, include_str!("migrations/V4__local_audio.sql")),
-        (5, include_str!("migrations/V5__plex_catalogue.sql")),
-        (6, include_str!("migrations/V6__catalogue_sync.sql")),
-        (7, include_str!("migrations/V7__download_entities.sql")),
-        (8, include_str!("migrations/V8__catalogue_incremental.sql")),
-        (
-            9,
-            include_str!("migrations/V9__catalogue_browse_projections.sql"),
-        ),
-    ];
-
-    for &(version, sql) in migrations {
+    for &(version, sql) in MIGRATIONS {
         if current_version < version {
             apply_migration(conn, version, sql)?;
         }
@@ -57,6 +61,83 @@ mod tests {
     use super::*;
 
     #[test]
+    fn v9_upgrade_resumes_duplicate_tag_saves_without_rewriting_metadata_or_progress() {
+        let conn = Connection::open_in_memory().unwrap();
+        for &(version, sql) in MIGRATIONS.iter().filter(|(version, _)| *version <= 9) {
+            apply_migration(&conn, version, sql).unwrap();
+        }
+        let scope = format!("plex-{}", "a".repeat(64));
+        let original = serde_json::json!({"type":"track","ratingKey":42,"title":"Original","updatedAt":1,"Genre":[{"tag":"Rock"}],"future":{"preserve":true}});
+        crate::db::catalogue::save(&conn, &scope, "track", 42, &original, false).unwrap();
+        let task = crate::db::catalogue_sync::begin(&conn, &scope, "details:track", Some("resume"))
+            .unwrap();
+        crate::db::catalogue_sync::checkpoint(&conn, &scope, &task, 41, None, false).unwrap();
+        let next = serde_json::json!({"type":"track","ratingKey":42,"title":"Full detail","updatedAt":2,"Genre":[{"tag":"Rock"},{"tag":"Rock"},{"tag":"rock"}],"Mood":[{"tag":"Calm"},{"tag":"Calm"}],"Style":[{"tag":"Heavy"},{"tag":"Heavy"}],"Format":[{"tag":"Single"},{"tag":"Single"}],"future":{"preserve":true}});
+        // This mirrors the live stalled batch: the full GET repeats a tag that
+        // the earlier listing did not. V9's trigger fails inside the UPSERT.
+        assert!(crate::db::catalogue::save(&conn, &scope, "track", 42, &next, true).is_err());
+        run_migrations(&conn).unwrap();
+        assert_eq!(
+            crate::db::catalogue::get(&conn, &scope, "track", 42)
+                .unwrap()
+                .unwrap(),
+            original
+        );
+        let resumed = crate::db::catalogue_sync::task(&conn, &scope, "details:track")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                resumed.generation.as_str(),
+                resumed.cursor,
+                resumed.status.as_str()
+            ),
+            ("resume", 41, "running")
+        );
+        assert_eq!(
+            conn.query_row::<i64, _, _>(
+                "SELECT count(*) FROM plex_catalogue_browse_tags",
+                [],
+                |r| r.get(0)
+            )
+            .unwrap(),
+            1
+        );
+        crate::db::catalogue::save(&conn, &scope, "track", 42, &next, true).unwrap();
+        assert_eq!(
+            crate::db::catalogue::get(&conn, &scope, "track", 42)
+                .unwrap()
+                .unwrap(),
+            next
+        );
+        assert_eq!(
+            conn.query_row::<i64, _, _>(
+                "SELECT count(*) FROM plex_catalogue_browse_tags",
+                [],
+                |r| r.get(0)
+            )
+            .unwrap(),
+            5
+        );
+        let page = crate::db::catalogue_query::query(
+            &conn,
+            &scope,
+            "getTrack",
+            &[serde_json::json!("42")],
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(page.items[0]["title"], "Full detail");
+        run_migrations(&conn).unwrap();
+        assert_eq!(
+            crate::db::catalogue::get(&conn, &scope, "track", 42)
+                .unwrap()
+                .unwrap(),
+            next
+        );
+    }
+
+    #[test]
     fn test_migrations_are_idempotent() {
         let conn = Connection::open_in_memory().unwrap();
         conn.pragma_update(None, "foreign_keys", "ON").unwrap();
@@ -66,14 +147,14 @@ mod tests {
         let v1: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v1, 9);
+        assert_eq!(v1, 10);
 
         // Run again — should be a no-op
         run_migrations(&conn).expect("second run");
         let v2: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v2, 9);
+        assert_eq!(v2, 10);
     }
 
     #[test]
