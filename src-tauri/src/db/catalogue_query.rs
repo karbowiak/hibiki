@@ -56,6 +56,85 @@ pub(crate) fn project(kind: &str, raw: Value) -> Result<Value, String> {
     Ok(item)
 }
 const DOCUMENT:&str="CASE WHEN listing_saved_at>saved_at THEN json_patch(document,json_remove(listing,'$.Media','$.Guid')) ELSE document END";
+/// Hot shelves/tags use compact indexed derived rows only after the bounded
+/// scope backfill is complete. Foreground read connections never write here.
+fn projections_ready(conn: &Connection, scope: &str) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT complete FROM plex_catalogue_browse_state WHERE scope=?1",
+        [scope],
+        |r| r.get(0),
+    )
+    .optional()
+    .map(|ready| ready.unwrap_or(true))
+    .map_err(|_| "Cannot read browse projection coverage".into())
+}
+/// Runs on the native background writer. The source rows and their full raw
+/// metadata never change. A finite original rowid boundary plus composite-key
+/// checkpoints survive restart; concurrent new rows are covered by triggers.
+pub(crate) fn backfill_projections(
+    conn: &Connection,
+    scope: &str,
+    limit: usize,
+) -> Result<bool, String> {
+    super::offline::check_identity(scope, "browse-backfill")?;
+    if !(1..=200).contains(&limit) {
+        return Err("Invalid browse backfill batch".into());
+    }
+    let state:Option<(String,i64,i64,bool)>=conn.query_row("SELECT cursor_kind,cursor_id,upper_rowid,complete FROM plex_catalogue_browse_state WHERE scope=?1",[scope],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(|_|"Cannot read browse backfill")?;
+    let Some((kind, id, upper, complete)) = state else {
+        return Ok(true);
+    };
+    if complete {
+        return Ok(true);
+    }
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|_| "Cannot start browse backfill")?;
+    let fields=format!("json_extract({DOCUMENT},'$.parentRatingKey','$.parentKey','$.grandparentRatingKey','$.grandparentKey','$.parentIndex','$.index','$.year','$.ratingCount','$.userRating','$.addedAt','$.lastRatedAt','$.originallyAvailableAt','$.parentTitle','$.title')");
+    let tags = format!("json_extract({DOCUMENT},'$.Genre','$.Mood','$.Style','$.Format')");
+    let mut stmt=tx.prepare(&format!("SELECT kind,id,rowid,removed,{fields},{tags} FROM plex_catalogue WHERE scope=?1 AND (kind,id)>(?2,?3) AND rowid<=?4 ORDER BY kind,id LIMIT ?5")).map_err(|_|"Cannot select browse backfill batch")?;
+    let rows = stmt
+        .query_map(params![scope, kind, id, upper, limit as i64], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+            ))
+        })
+        .map_err(|_| "Cannot read browse backfill batch")?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| "Cannot read browse backfill row")?;
+    drop(stmt);
+    for (kind, id, rowid, removed, fields, tags) in &rows {
+        tx.execute("INSERT OR IGNORE INTO plex_catalogue_browse_data(scope,kind,id,catalogue_rowid,removed,fields) VALUES(?1,?2,?3,?4,?5,?6)",params![scope,kind,id,rowid,removed,fields]).map_err(|_|"Cannot save browse projection")?;
+        tx.execute("INSERT OR IGNORE INTO plex_catalogue_browse_tags(scope,kind,id,resource,tag,removed) SELECT ?1,?2,?3,CASE CAST(resources.key AS INTEGER) WHEN 0 THEN 'Genre' WHEN 1 THEN 'Mood' WHEN 2 THEN 'Style' ELSE 'Format' END,CASE WHEN t.type='object' THEN json_extract(t.value,'$.tag') END,?4 FROM json_each(?5) resources,json_each(CASE WHEN resources.type='array' THEN resources.value ELSE '[]' END) t WHERE CASE WHEN t.type='object' THEN json_type(t.value,'$.tag')='text' ELSE 0 END",params![scope,kind,id,removed,tags]).map_err(|_|"Cannot save browse tag projection")?;
+    }
+    let complete = rows.is_empty();
+    let (next_kind, next_id) = rows
+        .last()
+        .map(|row| (row.0.as_str(), row.1))
+        .unwrap_or((&kind, id));
+    tx.execute("UPDATE plex_catalogue_browse_state SET cursor_kind=?2,cursor_id=?3,complete=?4 WHERE scope=?1",params![scope,next_kind,next_id,complete]).map_err(|_|"Cannot checkpoint browse backfill")?;
+    tx.commit().map_err(|_| "Cannot commit browse backfill")?;
+    Ok(complete)
+}
+fn projection_page_sql(filter: &str, order: &str, limit: i64, offset: i64) -> String {
+    let columns = order
+        .split(',')
+        .map(|field| field.split_whitespace().next().unwrap_or("id"))
+        .filter(|field| *field != "id")
+        .collect::<Vec<_>>()
+        .join(",");
+    let page_order = order
+        .split(',')
+        .map(|field| format!("page.{field}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("WITH page AS MATERIALIZED(SELECT scope,kind,id,{columns} FROM plex_catalogue_browse_data WHERE {filter} ORDER BY {order} LIMIT {limit} OFFSET {offset}) SELECT c.kind,CASE WHEN c.listing_saved_at>c.saved_at THEN json_patch(c.document,json_remove(c.listing,'$.Media','$.Guid')) ELSE c.document END,max(c.saved_at,c.listing_saved_at) FROM page JOIN plex_catalogue c ON c.scope=page.scope AND c.kind=page.kind AND c.id=page.id ORDER BY {page_order}")
+}
 pub fn query(
     conn: &Connection,
     scope: &str,
@@ -63,6 +142,24 @@ pub fn query(
     args: &[Value],
 ) -> Result<Option<Page>, String> {
     super::offline::check_identity(scope, method)?;
+    let uses_projection = matches!(
+        method,
+        "getTags"
+            | "getItemsByTag"
+            | "getLikedTracks"
+            | "getLikedAlbums"
+            | "getLikedArtists"
+            | "getRecentlyAdded"
+            | "getLatestReleases"
+    );
+    if uses_projection && !projections_ready(conn, scope)? {
+        return Ok(None);
+    }
+    let source = if uses_projection {
+        "plex_catalogue_browse_data"
+    } else {
+        "plex_catalogue"
+    };
     let invalidated: Option<i64> = conn
         .query_row(
             "SELECT invalidated_at FROM plex_catalogue_invalidations WHERE scope=?1 AND method=?2",
@@ -144,9 +241,9 @@ pub fn query(
                 Some("style") => "Style",
                 _ => return Ok(None),
             };
-            let mut stmt=conn.prepare(&format!("SELECT DISTINCT json_extract(t.value,'$.tag') FROM plex_catalogue c,json_each(json_extract(c.document,'$.{tag}')) t WHERE c.scope=?1 AND c.removed=0 AND json_extract(t.value,'$.tag') IS NOT NULL ORDER BY json_extract(t.value,'$.tag') COLLATE NOCASE LIMIT 10001")).map_err(|_|"Cannot read local tags")?;
+            let mut stmt=conn.prepare("SELECT DISTINCT tag FROM plex_catalogue_browse_tags WHERE scope=?1 AND resource=?2 AND removed=0 ORDER BY tag COLLATE NOCASE LIMIT 10001").map_err(|_|"Cannot read local tags")?;
             let rows = stmt
-                .query_map([scope], |r| r.get::<_, String>(0))
+                .query_map(params![scope, tag], |r| r.get::<_, String>(0))
                 .map_err(|_| "Cannot read local tags")?;
             let mut items = Vec::new();
             for row in rows {
@@ -179,7 +276,7 @@ pub fn query(
                 Some("style") => "Style",
                 _ => return Ok(None),
             };
-            condition=format!("EXISTS(SELECT 1 FROM json_each(json_extract(document,'$.{tag}')) WHERE json_extract(value,'$.tag')=?2)");
+            condition=format!("id IN(SELECT id FROM plex_catalogue_browse_tags WHERE scope=?1 AND kind='{kind}' AND resource='{tag}' AND removed=0 AND tag=?2)");
             bindings.push(json!(strarg(1).ok_or("Invalid local tag name")?));
             limit = intarg(3, 100);
             offset = intarg(4, 0);
@@ -227,16 +324,16 @@ pub fn query(
                 "album"
             };
             require_complete = true;
-            condition="CAST(json_extract(document,'$.parentRatingKey') AS INTEGER)=?2 OR json_extract(document,'$.parentKey')=?3".into();
+            condition = "download_album=?2".into();
             let id = strarg(0)
                 .and_then(|s| s.parse::<i64>().ok())
                 .ok_or("Invalid parent ID")?;
-            bindings.extend([json!(id), json!(format!("/library/metadata/{id}"))]);
+            bindings.push(json!(id));
             limit = 1000000;
             order = if kind == "track" {
-                "CAST(json_extract(document,'$.parentIndex') AS INTEGER),CAST(json_extract(document,'$.index') AS INTEGER),id"
+                "CAST(json_extract(CASE WHEN listing_saved_at>saved_at THEN json_patch(document,json_remove(listing,'$.Media','$.Guid')) ELSE document END,'$.parentIndex') AS INTEGER),CAST(json_extract(CASE WHEN listing_saved_at>saved_at THEN json_patch(document,json_remove(listing,'$.Media','$.Guid')) ELSE document END,'$.index') AS INTEGER),id"
             } else {
-                "json_extract(document,'$.year') DESC,title COLLATE NOCASE,id"
+                "json_extract(CASE WHEN listing_saved_at>saved_at THEN json_patch(document,json_remove(listing,'$.Media','$.Guid')) ELSE document END,'$.year') DESC,title COLLATE NOCASE,id"
             };
             if kind == "album" {
                 if let Some(format) = strarg(1).filter(|s| !s.is_empty()) {
@@ -244,7 +341,7 @@ pub fn query(
                         .strip_prefix('!')
                         .map(|s| (true, s))
                         .unwrap_or((false, format));
-                    condition=format!("({condition}) AND {} EXISTS(SELECT 1 FROM json_each(json_extract(document,'$.Format')) WHERE json_extract(value,'$.tag') IN (SELECT value FROM json_each(?4)))",if negate{"NOT"}else{""});
+                    condition=format!("({condition}) AND {} EXISTS(SELECT 1 FROM json_each(json_extract(CASE WHEN listing_saved_at>saved_at THEN json_patch(document,json_remove(listing,'$.Media','$.Guid')) ELSE document END,'$.Format')) WHERE json_extract(value,'$.tag') IN (SELECT value FROM json_each(?3)))",if negate{"NOT"}else{""});
                     bindings.push(json!(serde_json::to_string(
                         &format.split(',').collect::<Vec<_>>()
                     )
@@ -258,17 +355,17 @@ pub fn query(
             let id = strarg(0)
                 .and_then(|s| s.parse::<i64>().ok())
                 .ok_or("Invalid artist ID")?;
-            condition="CAST(json_extract(document,'$.grandparentRatingKey') AS INTEGER)=?2 OR json_extract(document,'$.grandparentKey')=?3".into();
-            bindings.extend([json!(id), json!(format!("/library/metadata/{id}"))]);
+            condition = "download_artist=?2".into();
+            bindings.push(json!(id));
             limit = if method == "getArtistTracks" {
                 1000000
             } else {
                 intarg(1, 100).clamp(1, 500)
             };
             order = if method == "getArtistTracks" {
-                "json_extract(document,'$.parentTitle') COLLATE NOCASE,CAST(json_extract(document,'$.parentIndex') AS INTEGER),CAST(json_extract(document,'$.index') AS INTEGER),id"
+                "json_extract(CASE WHEN listing_saved_at>saved_at THEN json_patch(document,json_remove(listing,'$.Media','$.Guid')) ELSE document END,'$.parentTitle') COLLATE NOCASE,CAST(json_extract(CASE WHEN listing_saved_at>saved_at THEN json_patch(document,json_remove(listing,'$.Media','$.Guid')) ELSE document END,'$.parentIndex') AS INTEGER),CAST(json_extract(CASE WHEN listing_saved_at>saved_at THEN json_patch(document,json_remove(listing,'$.Media','$.Guid')) ELSE document END,'$.index') AS INTEGER),id"
             } else {
-                "CAST(json_extract(document,'$.ratingCount') AS INTEGER) DESC,id"
+                "CAST(json_extract(CASE WHEN listing_saved_at>saved_at THEN json_patch(document,json_remove(listing,'$.Media','$.Guid')) ELSE document END,'$.ratingCount') AS INTEGER) DESC,id"
             };
         }
         "getLikedTracks" | "getLikedAlbums" | "getLikedArtists" => {
@@ -277,9 +374,9 @@ pub fn query(
                 "getLikedArtists" => "artist",
                 _ => "track",
             };
-            condition = "CAST(json_extract(document,'$.userRating') AS REAL)>0".into();
+            condition = "user_rating>0".into();
             limit = 1000000;
-            order = "json_extract(document,'$.lastRatedAt') DESC,id";
+            order = "last_rated_at DESC,id";
         }
         "getRecentlyAdded" => {
             kind = match strarg(0) {
@@ -289,13 +386,13 @@ pub fn query(
                 _ => return Ok(None),
             };
             limit = intarg(1, 50);
-            order = "json_extract(document,'$.addedAt') DESC,id";
+            order = "added_at DESC,id";
         }
         "getLatestReleases" => {
             kind = "album";
             limit = intarg(0, 30).clamp(1, 50);
-            condition="(date(json_extract(document,'$.originallyAvailableAt')) IS NULL OR date(json_extract(document,'$.originallyAvailableAt'))<=date('now'))".into();
-            order = "date(json_extract(document,'$.originallyAvailableAt')) DESC,id";
+            condition = "released_on IS NULL OR released_on<=date('now')".into();
+            order = "released_on DESC,id";
         }
         "search" => {
             kind = match strarg(1) {
@@ -369,7 +466,7 @@ pub fn query(
         .collect::<Vec<_>>();
     let total: i64 = conn
         .query_row(
-            &format!("SELECT COUNT(*) FROM plex_catalogue WHERE {filter}"),
+            &format!("SELECT COUNT(*) FROM {source} WHERE {filter}"),
             rusqlite::params_from_iter(&sqlvalues),
             |r| r.get(0),
         )
@@ -377,7 +474,12 @@ pub fn query(
     if total == 0 && !complete {
         return Ok(None);
     }
-    let mut statement=conn.prepare(&format!("SELECT kind,{DOCUMENT},max(saved_at,listing_saved_at) FROM plex_catalogue WHERE {filter} ORDER BY {order} LIMIT {limit} OFFSET {offset}")).map_err(|_|"Cannot query catalogue")?;
+    let sql = if uses_projection {
+        projection_page_sql(&filter, order, limit, offset)
+    } else {
+        format!("SELECT kind,{DOCUMENT},max(saved_at,listing_saved_at) FROM {source} WHERE {filter} ORDER BY {order} LIMIT {limit} OFFSET {offset}")
+    };
+    let mut statement = conn.prepare(&sql).map_err(|_| "Cannot query catalogue")?;
     let rows = statement
         .query_map(rusqlite::params_from_iter(&sqlvalues), |r| {
             Ok((
@@ -561,6 +663,285 @@ fn playlist(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn fixture() -> (Connection, String) {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::schema::run_migrations(&conn).unwrap();
+        (conn, format!("plex-{}", "a".repeat(64)))
+    }
+    fn mark_complete(conn: &Connection, scope: &str, kind: &str) {
+        let task = crate::db::catalogue_sync::begin(conn, scope, kind, None).unwrap();
+        crate::db::catalogue_sync::checkpoint(conn, scope, &task, 0, Some(0), true).unwrap();
+    }
+    fn ids(page: Page) -> Vec<i64> {
+        page.items
+            .iter()
+            .map(|item| item["rating_key"].as_i64().unwrap())
+            .collect()
+    }
+    #[test]
+    fn hot_shelves_and_tags_use_latest_listing_without_losing_full_private_media() {
+        let (conn, scope) = fixture();
+        let other = format!("plex-{}", "b".repeat(64));
+        let full = json!({"type":"track","ratingKey":1,"title":"Original","userRating":0,"addedAt":10,"Genre":[{"tag":"Old"}],"Media":[{"id":7,"Part":[{"id":8,"file":"/private/native-only.flac","key":"/library/parts/8/file.flac","Stream":[{"id":9,"streamType":2,"gain":1.2}]}]}],"unknownFuture":{"keep":true}});
+        crate::db::catalogue::save(&conn, &scope, "track", 1, &full, true).unwrap();
+        let listing = json!({"type":"track","ratingKey":1,"title":"Latest","userRating":3.5,"lastRatedAt":20,"addedAt":30,"Genre":[{"tag":"New"}],"Mood":[{"tag":"Calm"}],"Media":[{"id":7}]});
+        conn.execute("UPDATE plex_catalogue SET listing=?2,listing_saved_at=saved_at+1 WHERE scope=?1 AND id=1",params![scope,listing.to_string()]).unwrap();
+        let mut foreign = full.clone();
+        foreign["ratingKey"] = json!(2);
+        foreign["userRating"] = json!(5);
+        foreign["addedAt"] = json!(999);
+        crate::db::catalogue::save(&conn, &other, "track", 2, &foreign, true).unwrap();
+        let liked = query(&conn, &scope, "getLikedTracks", &[])
+            .unwrap()
+            .unwrap();
+        assert_eq!(liked.total, 1);
+        assert_eq!(liked.items[0]["title"], "Latest");
+        assert_eq!(
+            liked.items[0]["media"][0]["parts"][0]["streams"][0]["id"],
+            9
+        );
+        assert!(!liked.items[0].to_string().contains("/private/"));
+        assert_eq!(
+            ids(query(
+                &conn,
+                &scope,
+                "getRecentlyAdded",
+                &[json!("track"), json!(1)]
+            )
+            .unwrap()
+            .unwrap()),
+            vec![1]
+        );
+        let tags = query(&conn, &scope, "getTags", &[json!("genre")])
+            .unwrap()
+            .unwrap();
+        assert_eq!(tags.items, vec![json!({"tag":"New","count":null})]);
+        assert_eq!(
+            ids(query(
+                &conn,
+                &scope,
+                "getItemsByTag",
+                &[
+                    json!("mood"),
+                    json!("Calm"),
+                    json!("track"),
+                    json!(10),
+                    json!(0)
+                ]
+            )
+            .unwrap()
+            .unwrap()),
+            vec![1]
+        );
+        assert_eq!(
+            crate::db::catalogue::get(&conn, &scope, "track", 1)
+                .unwrap()
+                .unwrap(),
+            full
+        );
+        conn.execute(
+            "UPDATE plex_catalogue SET removed=1 WHERE scope=?1 AND id=1",
+            [&scope],
+        )
+        .unwrap();
+        assert!(query(&conn, &scope, "getTags", &[json!("genre")])
+            .unwrap()
+            .is_none());
+        conn.execute(
+            "DELETE FROM plex_catalogue WHERE scope=?1 AND id=1",
+            [&scope],
+        )
+        .unwrap();
+        assert_eq!(
+            conn.query_row::<i64, _, _>(
+                "SELECT COUNT(*) FROM plex_catalogue_browse_data WHERE scope=?1",
+                [&scope],
+                |r| r.get(0)
+            )
+            .unwrap(),
+            0
+        );
+    }
+    #[test]
+    fn indexed_ancestry_honors_numeric_ids_native_keys_and_latest_disc_format_order() {
+        let (conn, scope) = fixture();
+        mark_complete(&conn, &scope, "track");
+        mark_complete(&conn, &scope, "album");
+        for (id, disc, index) in [(1, 2, 1), (2, 1, 5), (3, 1, 1)] {
+            let raw = json!({"type":"track","ratingKey":id,"title":format!("Track {id}"),"parentKey":"/library/metadata/7","grandparentKey":"/library/metadata/8","parentIndex":disc,"index":index,"ratingCount":id});
+            crate::db::catalogue::save(&conn, &scope, "track", id, &raw, true).unwrap();
+        }
+        assert_eq!(
+            ids(query(&conn, &scope, "getAlbumTracks", &[json!("7")])
+                .unwrap()
+                .unwrap()),
+            vec![3, 2, 1]
+        );
+        conn.execute("UPDATE plex_catalogue SET listing=?2,listing_saved_at=saved_at+1 WHERE scope=?1 AND id=1",params![scope,json!({"type":"track","ratingKey":1,"parentRatingKey":"9","parentKey":"/library/metadata/9","grandparentRatingKey":"10","grandparentKey":"/library/metadata/10","parentIndex":1,"index":0,"ratingCount":99}).to_string()]).unwrap();
+        assert_eq!(
+            ids(query(&conn, &scope, "getAlbumTracks", &[json!("7")])
+                .unwrap()
+                .unwrap()),
+            vec![3, 2]
+        );
+        assert_eq!(
+            ids(query(
+                &conn,
+                &scope,
+                "getArtistPopularTracks",
+                &[json!("10"), json!(10)]
+            )
+            .unwrap()
+            .unwrap()),
+            vec![1]
+        );
+        for id in [11, 12] {
+            crate::db::catalogue::save(&conn,&scope,"album",id,&json!({"type":"album","ratingKey":id,"title":format!("Album {id}"),"parentKey":"/library/metadata/8","year":2000}),true).unwrap();
+        }
+        conn.execute("UPDATE plex_catalogue SET listing=?2,listing_saved_at=saved_at+1 WHERE scope=?1 AND id=12",params![scope,json!({"type":"album","ratingKey":12,"year":2020,"Format":[{"tag":"Single"}]}).to_string()]).unwrap();
+        assert_eq!(
+            ids(query(
+                &conn,
+                &scope,
+                "getArtistAlbumsInSection",
+                &[json!("8"), json!("Single")]
+            )
+            .unwrap()
+            .unwrap()),
+            vec![12]
+        );
+        assert_eq!(
+            ids(
+                query(&conn, &scope, "getArtistAlbumsInSection", &[json!("8")])
+                    .unwrap()
+                    .unwrap()
+            ),
+            vec![12, 11]
+        );
+    }
+    #[test]
+    fn bounded_scope_projection_backfill_resumes_and_covers_new_changes_without_writing_raw() {
+        let conn = Connection::open_in_memory().unwrap();
+        for sql in [
+            include_str!("migrations/V1__initial.sql"),
+            include_str!("migrations/V2__offline_snapshots.sql"),
+            include_str!("migrations/V3__semantic_vectors.sql"),
+            include_str!("migrations/V4__local_audio.sql"),
+            include_str!("migrations/V5__plex_catalogue.sql"),
+            include_str!("migrations/V6__catalogue_sync.sql"),
+            include_str!("migrations/V7__download_entities.sql"),
+            include_str!("migrations/V8__catalogue_incremental.sql"),
+        ] {
+            conn.execute_batch(sql).unwrap();
+        }
+        let scope = format!("plex-{}", "a".repeat(64));
+        let other = format!("plex-{}", "b".repeat(64));
+        for id in [1, 2, 3] {
+            crate::db::catalogue::save(&conn,&scope,"track",id,&json!({"type":"track","ratingKey":id,"title":format!("Track {id}"),"addedAt":id,"Genre":[{"tag":"Existing"}],"future":{"keep":true}}),true).unwrap();
+        }
+        crate::db::catalogue::save(
+            &conn,
+            &other,
+            "track",
+            4,
+            &json!({"type":"track","ratingKey":4,"title":"Other"}),
+            true,
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", 8).unwrap();
+        crate::db::schema::run_migrations(&conn).unwrap();
+        assert!(!projections_ready(&conn, &scope).unwrap());
+        assert!(query(&conn, &scope, "getRecentlyAdded", &[json!("track")])
+            .unwrap()
+            .is_none());
+        let original = crate::db::catalogue::get(&conn, &scope, "track", 2)
+            .unwrap()
+            .unwrap();
+        assert!(!backfill_projections(&conn, &scope, 1).unwrap());
+        assert_eq!(
+            conn.query_row::<i64, _, _>(
+                "SELECT COUNT(*) FROM plex_catalogue_browse_data WHERE scope=?1",
+                [&scope],
+                |r| r.get(0)
+            )
+            .unwrap(),
+            1
+        );
+        crate::db::catalogue::save(&conn,&scope,"artist",9,&json!({"type":"artist","ratingKey":9,"title":"Concurrent arrival","Genre":[{"tag":"New"}]}),true).unwrap();
+        conn.execute("UPDATE plex_catalogue SET listing=?2,listing_saved_at=saved_at+1 WHERE scope=?1 AND id=3",params![scope,json!({"type":"track","ratingKey":3,"addedAt":100,"Genre":[{"tag":"Updated"}]}).to_string()]).unwrap();
+        let mut batches = 0;
+        while !backfill_projections(&conn, &scope, 1).unwrap() {
+            batches += 1;
+            assert!(batches < 10)
+        }
+        assert!(projections_ready(&conn, &scope).unwrap());
+        assert!(!projections_ready(&conn, &other).unwrap());
+        assert_eq!(
+            crate::db::catalogue::get(&conn, &scope, "track", 2)
+                .unwrap()
+                .unwrap(),
+            original
+        );
+        assert_eq!(
+            ids(query(
+                &conn,
+                &scope,
+                "getRecentlyAdded",
+                &[json!("track"), json!(1)]
+            )
+            .unwrap()
+            .unwrap()),
+            vec![3]
+        );
+        let tags = query(&conn, &scope, "getTags", &[json!("genre")])
+            .unwrap()
+            .unwrap();
+        assert_eq!(tags.items.len(), 3);
+        assert_eq!(
+            conn.query_row::<i64, _, _>(
+                "SELECT COUNT(*) FROM plex_catalogue_browse_data WHERE scope=?1",
+                [&scope],
+                |r| r.get(0)
+            )
+            .unwrap(),
+            4
+        );
+        assert!(backfill_projections(&conn, &scope, 0).is_err());
+        assert!(backfill_projections(&conn, &scope, 201).is_err());
+    }
+    #[test]
+    fn hot_query_plans_select_indexed_page_before_reading_private_documents() {
+        let (conn, scope) = fixture();
+        let plan = |sql: &str| {
+            let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+            stmt.query_map([&scope], |r| r.get::<_, String>(3))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+        };
+        let recent = plan(&projection_page_sql(
+            "scope=?1 AND kind='album' AND removed=0",
+            "added_at DESC,id",
+            50,
+            0,
+        ));
+        assert!(recent.contains("MATERIALIZE page"));
+        assert!(recent.contains("plex_catalogue_browse_recent"));
+        assert!(recent.contains("sqlite_autoindex_plex_catalogue_1"));
+        let liked = plan(&projection_page_sql(
+            "scope=?1 AND kind='track' AND removed=0 AND user_rating>0",
+            "last_rated_at DESC,id",
+            100,
+            0,
+        ));
+        assert!(liked.contains("plex_catalogue_browse_liked"));
+        let releases=plan(&projection_page_sql("scope=?1 AND kind='album' AND removed=0 AND (released_on IS NULL OR released_on<=date('now'))","released_on DESC,id",30,0));
+        assert!(releases.contains("plex_catalogue_browse_release"));
+        assert!(plan("SELECT DISTINCT tag FROM plex_catalogue_browse_tags WHERE scope=?1 AND resource='Genre' AND removed=0 ORDER BY tag COLLATE NOCASE LIMIT 10001").contains("COVERING INDEX plex_catalogue_browse_tag_inventory"));
+        assert!(plan("SELECT id FROM plex_catalogue WHERE scope=?1 AND kind='track' AND removed=0 AND download_album=7").contains("plex_catalogue_download_album"));
+        assert!(plan("SELECT id FROM plex_catalogue WHERE scope=?1 AND kind='track' AND removed=0 AND download_artist=8").contains("plex_catalogue_download_artist"));
+    }
     #[test]
     fn projections_are_scoped_searchable_and_keep_paths_native() {
         let conn = Connection::open_in_memory().unwrap();

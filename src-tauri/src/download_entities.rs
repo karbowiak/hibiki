@@ -329,64 +329,72 @@ pub async fn download_entity_status(
     for entity in &entities {
         intents::check(&context.cache_scope, &entity.kind, entity.id)?;
     }
-    let guard = state.0.lock().await;
-    let client = state.checked_cache_client(&context, &guard)?;
-    let conn = db.0.lock().map_err(|_| "Download storage unavailable")?;
-    let mut jobs = HashMap::new();
-    let mut stmt = conn
+    {
+        let guard = state.0.lock().await;
+        state.checked_cache_client(&context, &guard)?;
+    }
+    let scope = context.cache_scope.clone();
+    let cache = downloads.cache.clone();
+    let result = db
+        .read(move |conn| {
+            let mut jobs = HashMap::new();
+            let mut stmt = conn
         .prepare(
             "SELECT track_id,status,cache_key FROM audio_download_jobs WHERE scope=?1 LIMIT 100001",
         )
         .map_err(|_| "Cannot read downloads")?;
-    let rows = stmt
-        .query_map([&client.library_scope], |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, Option<String>>(2)?,
-            ))
-        })
-        .map_err(|_| "Cannot read downloads")?;
-    for row in rows {
-        let (id, status, key) = row.map_err(|_| "Cannot read downloads")?;
-        let ready = key
-            .as_ref()
-            .is_some_and(|key| downloads.cache.lookup(key).is_some());
-        jobs.insert(id, (status, ready));
-        if jobs.len() > 100000 {
-            return Err("Download inventory needs maintenance before showing status".into());
-        }
-    }
-    let mut statuses = vec![];
-    for entity in entities {
-        let (ids, known, requested) =
-            entity_members(&conn, &client.library_scope, &entity.kind, entity.id)?;
-        let mut downloaded = 0;
-        let mut pending = 0;
-        let mut failed = 0;
-        for id in &ids {
-            if let Some((status, ready)) = jobs.get(id) {
-                if *ready {
-                    downloaded += 1
-                } else if matches!(status.as_str(), "queued" | "downloading" | "paused") {
-                    pending += 1
-                } else {
-                    failed += 1
+            let rows = stmt
+                .query_map([&scope], |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, Option<String>>(2)?,
+                    ))
+                })
+                .map_err(|_| "Cannot read downloads")?;
+            for row in rows {
+                let (id, status, key) = row.map_err(|_| "Cannot read downloads")?;
+                let ready = key.as_ref().is_some_and(|key| cache.lookup(key).is_some());
+                jobs.insert(id, (status, ready));
+                if jobs.len() > 100000 {
+                    return Err("Download inventory needs maintenance before showing status".into());
                 }
             }
-        }
-        statuses.push(Status {
-            kind: entity.kind,
-            id: entity.id,
-            known,
-            total: ids.len(),
-            downloaded,
-            pending,
-            failed,
-            requested,
-        });
-    }
-    Ok(statuses)
+            let mut statuses = vec![];
+            for entity in entities {
+                let (ids, known, requested) =
+                    entity_members(conn, &scope, &entity.kind, entity.id)?;
+                let mut downloaded = 0;
+                let mut pending = 0;
+                let mut failed = 0;
+                for id in &ids {
+                    if let Some((status, ready)) = jobs.get(id) {
+                        if *ready {
+                            downloaded += 1
+                        } else if matches!(status.as_str(), "queued" | "downloading" | "paused") {
+                            pending += 1
+                        } else {
+                            failed += 1
+                        }
+                    }
+                }
+                statuses.push(Status {
+                    kind: entity.kind,
+                    id: entity.id,
+                    known,
+                    total: ids.len(),
+                    downloaded,
+                    pending,
+                    failed,
+                    requested,
+                });
+            }
+            Ok(statuses)
+        })
+        .await?;
+    let guard = state.0.lock().await;
+    state.checked_cache_client(&context, &guard)?;
+    Ok(result)
 }
 #[tauri::command]
 pub async fn remove_entity_download(

@@ -27,6 +27,8 @@ pub struct CatalogueSync {
     worker: Arc<tokio::sync::Mutex<()>>,
     targeted: Arc<tokio::sync::Mutex<()>>,
     playlist_worker: Arc<tokio::sync::Mutex<()>>,
+    projection_worker: Arc<tokio::sync::Mutex<()>>,
+    projections_scheduled: Mutex<HashSet<(u64, String)>>,
     playlists_scheduled: Mutex<HashSet<(u64, String)>>,
     targeted_scheduled: Mutex<HashSet<(u64, String)>>,
     scheduled: Mutex<HashSet<(u64, String)>>,
@@ -39,6 +41,8 @@ impl CatalogueSync {
             worker: Arc::new(tokio::sync::Mutex::new(())),
             targeted: Arc::new(tokio::sync::Mutex::new(())),
             playlist_worker: Arc::new(tokio::sync::Mutex::new(())),
+            projection_worker: Arc::new(tokio::sync::Mutex::new(())),
+            projections_scheduled: Mutex::new(HashSet::new()),
             playlists_scheduled: Mutex::new(HashSet::new()),
             targeted_scheduled: Mutex::new(HashSet::new()),
             scheduled: Mutex::new(HashSet::new()),
@@ -60,6 +64,7 @@ pub async fn catalogue_start(
     drop(guard);
     schedule_targeted(&app, &context)?;
     schedule_playlists(&app, &context)?;
+    schedule_projections(&app, &context)?;
     let key = (context.connection_revision, context.cache_scope.clone());
     if !manager
         .scheduled
@@ -76,6 +81,91 @@ pub async fn catalogue_start(
             tracing::debug!(%error,"Plex catalogue sync stopped");
         }
         if let Ok(mut scheduled) = app.state::<CatalogueSync>().scheduled.lock() {
+            scheduled.remove(&key);
+        }
+    });
+    Ok(())
+}
+fn schedule_projections(
+    app: &tauri::AppHandle,
+    context: &PlexRequestContext,
+) -> Result<(), String> {
+    let manager = app.state::<CatalogueSync>();
+    let key = (context.connection_revision, context.cache_scope.clone());
+    if !manager
+        .projections_scheduled
+        .lock()
+        .map_err(|_| "Browse index unavailable")?
+        .insert(key.clone())
+    {
+        return Ok(());
+    }
+    let lane = manager.projection_worker.clone();
+    let app = app.clone();
+    let context = context.clone();
+    tauri::async_runtime::spawn(async move {
+        let _lane = lane.lock().await;
+        let operation = async {
+            let scope = context.cache_scope.clone();
+            let needed = app
+                .state::<DbState>()
+                .read(move |conn| {
+                    use rusqlite::OptionalExtension;
+                    conn.query_row(
+                        "SELECT complete=0 FROM plex_catalogue_browse_state WHERE scope=?1",
+                        [scope],
+                        |r| r.get::<_, bool>(0),
+                    )
+                    .optional()
+                    .map(|needed| needed.unwrap_or(false))
+                    .map_err(|_| "Cannot read browse index".into())
+                })
+                .await?;
+            if !needed {
+                return Ok::<(), String>(());
+            }
+            loop {
+                let owner = app.clone();
+                let captured = context.clone();
+                let done = app
+                    .state::<DbState>()
+                    .write(move |conn| {
+                        let state = owner.state::<PlexState>();
+                        let Ok(guard) = state.0.try_lock() else {
+                            return Ok(false);
+                        };
+                        state.checked_cache_client(&captured, &guard)?;
+                        crate::db::catalogue_query::backfill_projections(
+                            conn,
+                            &captured.cache_scope,
+                            64,
+                        )
+                    })
+                    .await?;
+                if done {
+                    let owner = app.clone();
+                    let captured = context.clone();
+                    let revision = app
+                        .state::<DbState>()
+                        .write(move |conn| {
+                            let state = owner.state::<PlexState>();
+                            if !state.is_current(captured.connection_revision) {
+                                return Err("Browse index owner retired".into());
+                            }
+                            incremental::bump(conn, &captured.cache_scope)
+                        })
+                        .await?;
+                    updated(&app, &context, revision, vec![]);
+                    return Ok(());
+                }
+                background_yield(&app, 40).await;
+            }
+        }
+        .await;
+        if let Err(error) = operation {
+            tracing::debug!(%error,"Browse index paused");
+        }
+        if let Ok(mut scheduled) = app.state::<CatalogueSync>().projections_scheduled.lock() {
             scheduled.remove(&key);
         }
     });
@@ -438,20 +528,30 @@ pub(crate) async fn fresh_library(
         .remove(&(context.connection_revision, context.cache_scope.clone()));
     verify_library(app, context).await
 }
-async fn save_checked<T>(
+pub(crate) async fn save_checked<T>(
     app: &tauri::AppHandle,
     context: &PlexRequestContext,
     f: impl FnOnce(&rusqlite::Connection) -> Result<T, String>,
 ) -> Result<T, String> {
     let state = app.state::<PlexState>();
-    let guard = state.0.lock().await;
-    let client = state.checked_client(context, &guard)?;
-    if client.library_scope != context.cache_scope {
-        return Err("Catalogue request was superseded".into());
-    }
     let db = app.state::<DbState>();
-    let conn = db.0.lock().map_err(|_| "Catalogue storage unavailable")?;
-    f(&conn)
+    loop {
+        let guard = state.0.lock().await;
+        let client = state.checked_client(context, &guard)?;
+        if client.library_scope != context.cache_scope {
+            return Err("Catalogue request was superseded".into());
+        }
+        match db.0.try_lock() {
+            Ok(conn) => return f(&conn),
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err("Catalogue storage unavailable".into())
+            }
+            Err(std::sync::TryLockError::WouldBlock) => {}
+        }
+        // Never monopolize native audio admission while waiting for SQLite.
+        drop(guard);
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
 }
 async fn start_task(
     app: &tauri::AppHandle,
@@ -1027,23 +1127,44 @@ pub async fn catalogue_query(
     db: State<'_, DbState>,
     downloads: State<'_, crate::offline_audio::AudioDownloads>,
     engine: State<'_, crate::audio_engine::bridge::AudioEngineState>,
+    app: tauri::AppHandle,
 ) -> Result<Option<crate::db::catalogue_query::Page>, String> {
+    let offline = {
+        let guard = state.0.lock().await;
+        state.checked_cache_client(&context, &guard)?.offline_only
+    };
+    // Derived browse indexes can also finish from local data while offline.
+    schedule_projections(&app, &context)?;
+    let scope = context.cache_scope.clone();
+    let downloaded = downloads.cache.clone();
+    let automatic = engine.0.cache().clone();
+    let urgent = matches!(
+        method.as_str(),
+        "getTrack" | "getAlbum" | "getArtist" | "getPlaylistItems"
+    );
+    let work = move |conn: &rusqlite::Connection| {
+        if method == "getArtistTracks" && offline {
+            let artist = args
+                .first()
+                .and_then(serde_json::Value::as_str)
+                .and_then(|s| s.parse::<i64>().ok())
+                .filter(|id| *id > 0)
+                .ok_or("Invalid offline artist ID")?;
+            return offline_artist_tracks(conn, &scope, artist, |key| {
+                downloaded.lookup(key).is_some() || automatic.lookup(key).is_some()
+            })
+            .map(Some);
+        }
+        crate::db::catalogue_query::query(conn, &scope, &method, &args)
+    };
+    let result = if urgent {
+        db.read_urgent(work).await?
+    } else {
+        db.read(work).await?
+    };
     let guard = state.0.lock().await;
-    let client = state.checked_cache_client(&context, &guard)?;
-    let conn = db.0.lock().map_err(|_| "Catalogue storage unavailable")?;
-    if method == "getArtistTracks" && client.offline_only {
-        let artist = args
-            .first()
-            .and_then(serde_json::Value::as_str)
-            .and_then(|s| s.parse::<i64>().ok())
-            .filter(|id| *id > 0)
-            .ok_or("Invalid offline artist ID")?;
-        return offline_artist_tracks(&conn, &client.library_scope, artist, |key| {
-            downloads.cache.lookup(key).is_some() || engine.0.cache().lookup(key).is_some()
-        })
-        .map(Some);
-    }
-    crate::db::catalogue_query::query(&conn, &client.library_scope, &method, &args)
+    state.checked_cache_client(&context, &guard)?;
+    Ok(result)
 }
 fn offline_artist_tracks(
     conn: &rusqlite::Connection,
@@ -1091,9 +1212,13 @@ pub async fn catalogue_progress(
     state: State<'_, PlexState>,
     db: State<'_, DbState>,
 ) -> Result<serde_json::Value, String> {
-    let guard = state.0.lock().await;
-    state.checked_cache_client(&context, &guard)?;
-    let conn = db.0.lock().map_err(|_| "Catalogue storage unavailable")?;
+    {
+        let guard = state.0.lock().await;
+        state.checked_cache_client(&context, &guard)?;
+    }
+    let read_context = context.clone();
+    let result = db.read(move |conn| {
+    let context = read_context;
     let mut stmt = conn
         .prepare("SELECT task FROM plex_catalogue_tasks WHERE scope=?1 ORDER BY task")
         .map_err(|_| "Cannot read catalogue progress")?;
@@ -1113,6 +1238,10 @@ pub async fn catalogue_progress(
     Ok(
         serde_json::json!({"tasks":tasks,"incremental":incremental::progress(&conn,&context.cache_scope)?,"entities":count("SELECT COUNT(*) FROM plex_catalogue WHERE scope=?1 AND removed=0")?,"details":count("SELECT COUNT(*) FROM plex_catalogue WHERE scope=?1 AND removed=0 AND detail=1")?,"waveforms":count("SELECT COUNT(*) FROM plex_catalogue_media WHERE scope=?1 AND active=1 AND status='saved'")?,"analysisPending":count("SELECT COUNT(*) FROM plex_catalogue_media WHERE scope=?1 AND active=1 AND status='pending'")?,"analysisUnavailable":count("SELECT COUNT(*) FROM plex_catalogue_media WHERE scope=?1 AND active=1 AND status='unavailable'")?}),
     )
+    }).await?;
+    let guard = state.0.lock().await;
+    state.checked_cache_client(&context, &guard)?;
+    Ok(result)
 }
 #[tauri::command]
 pub async fn catalogue_retry(
@@ -2051,22 +2180,34 @@ pub async fn catalogue_availability(
     if items.len() > 1000 {
         return Err("Offline availability batch exceeds its limit".into());
     }
-    let guard = state.0.lock().await;
-    let client = state.checked_cache_client(&context, &guard)?;
-    let conn = db.0.lock().map_err(|_| "Local audio storage unavailable")?;
-    let mut result = Vec::new();
-    for item in items {
-        let id = item
-            .id
-            .parse::<i64>()
-            .ok()
-            .filter(|id| *id > 0)
-            .ok_or("Invalid offline collection ID")?;
-        let available = group_available(&conn, &client.library_scope, &item.kind, id, |key| {
-            downloads.cache.lookup(key).is_some() || engine.0.cache().lookup(key).is_some()
-        })?;
-        result.push(serde_json::json!({"kind":item.kind,"id":item.id,"available":available}));
+    {
+        let guard = state.0.lock().await;
+        state.checked_cache_client(&context, &guard)?;
     }
+    let scope = context.cache_scope.clone();
+    let downloaded = downloads.cache.clone();
+    let automatic = engine.0.cache().clone();
+    let result = db
+        .read(move |conn| {
+            let mut result = Vec::new();
+            for item in items {
+                let id = item
+                    .id
+                    .parse::<i64>()
+                    .ok()
+                    .filter(|id| *id > 0)
+                    .ok_or("Invalid offline collection ID")?;
+                let available = group_available(conn, &scope, &item.kind, id, |key| {
+                    downloaded.lookup(key).is_some() || automatic.lookup(key).is_some()
+                })?;
+                result
+                    .push(serde_json::json!({"kind":item.kind,"id":item.id,"available":available}));
+            }
+            Ok(result)
+        })
+        .await?;
+    let guard = state.0.lock().await;
+    state.checked_cache_client(&context, &guard)?;
     Ok(result)
 }
 
