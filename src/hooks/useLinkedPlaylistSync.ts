@@ -7,6 +7,7 @@ import { samePlaylistIdentity } from "../playlistSync/types"
 import {
   canAdvancePartialWeekly,
   linkedAutomaticSync,
+  isCompletedPartialMatch,
 } from "../playlistSync/linked"
 /** Explicit links only; no auto-linking, no whole-library scan, no overlapping ticks. */
 export function useLinkedPlaylistSync() {
@@ -48,8 +49,9 @@ export function useLinkedPlaylistSync() {
           if (
             !link.enabled ||
             (!linkedAutomaticSync(link) &&
-              !(link.incomplete && !link.incomplete.matchingDone)) ||
+              !(link.incomplete && !isCompletedPartialMatch(link))) ||
             (link.paused && !canAdvancePartialWeekly(link)) ||
+            (isCompletedPartialMatch(link) && !canAdvancePartialWeekly(link)) ||
             useLinkedPlaylistStore.getState().holds[link.id] ||
             useLinkedPlaylistStore.getState().running[link.id] ||
             !samePlaylistIdentity(link.library, account) ||

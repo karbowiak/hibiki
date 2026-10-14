@@ -454,6 +454,7 @@ export const useLinkedPlaylistStore = create<State>((set, get) => ({
         },
         current
       )
+      if (current()) get().checkError(id, null)
     } catch {
       if (current())
         get().checkError(

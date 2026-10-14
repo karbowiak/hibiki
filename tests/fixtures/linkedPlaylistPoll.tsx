@@ -213,7 +213,21 @@ assert.equal(
 )
 await act(async () => root.unmount())
 useLinkedPlaylistStore.setState({
-  links: [{ ...link, automatic: false, incomplete: { matchingDone: true } }],
+  links: [
+    {
+      ...link,
+      automatic: true,
+      state: "ready",
+      message:
+        "0 of 1 songs matched. Review unmatched songs; every original occurrence is retained.",
+      incomplete: {
+        matchingDone: true,
+        missingOccurrenceIds: ["one"],
+        matchedCount: 0,
+        total: 1,
+      },
+    },
+  ],
 })
 root = createRoot(document.getElementById("root")!)
 await act(async () => {
@@ -221,5 +235,36 @@ await act(async () => {
   await settle()
 })
 assert.equal(resumed, 1, "unmatched completed imports await explicit Review")
+assert.equal(
+  servicesCalls,
+  4,
+  "Automatic completed partials do not repeatedly sync the same result"
+)
+await act(async () => root.unmount())
+const completedLink = useLinkedPlaylistStore.getState().links[0]
+for (const pending of [
+  { ...completedLink, job: { completedSteps: 1 } },
+  {
+    ...completedLink,
+    message: "Matching the selected playlist in bounded background batches.",
+  },
+]) {
+  const previousCalls = servicesCalls
+  useLinkedPlaylistStore.setState({
+    links: [{ ...pending, automatic: false } as any],
+  })
+  root = createRoot(document.getElementById("root")!)
+  await act(async () => {
+    root.render(<Probe />)
+    await settle()
+  })
+  assert.equal(
+    servicesCalls,
+    previousCalls + 1,
+    "An admitted final fill resumes after interruption, even with completed lookups"
+  )
+  await act(async () => root.unmount())
+}
+root = createRoot(document.getElementById("root")!)
 await act(async () => root.unmount())
 dom.window.close()

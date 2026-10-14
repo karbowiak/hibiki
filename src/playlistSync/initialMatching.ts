@@ -8,7 +8,8 @@ import {
 } from "./candidateRetrieval"
 import { samePlaylistIdentity, type PlaylistTrack } from "./types"
 import {
-  mapLinkedTracks,
+  mapImportTracks,
+  isCompletedPartialMatch,
   type LinkedPlaylist,
   type LinkedTrackMapping,
 } from "./linked"
@@ -40,15 +41,24 @@ export async function matchInitialSync(
     return link
   }
   let link = await load()
-  if (!link.enabled || link.paused || !link.incomplete) return
+  if (
+    !link.enabled ||
+    link.paused ||
+    !link.incomplete ||
+    isCompletedPartialMatch(link)
+  )
+    return
   const source = link.incomplete.sourceSnapshot
+  const preservesDuplicates = (await servicesFor(link)).library
+    .preservesDuplicateOccurrences
+  owns()
   // New safety rules must not inherit an older automatic decision as verified identity.
   // Retained jobs remain immutable until their admitted operations are reconciled.
   if (!link.job) {
     const mappings = revalidateAutomaticMappings(link)
     if (mappings.length !== link.mappings.length) {
       owns()
-      const mapped = mapLinkedTracks("listenbrainz", source, mappings)
+      const mapped = mapImportTracks(source, mappings, preservesDuplicates)
       link = await repository.save(
         {
           ...link,
@@ -58,6 +68,8 @@ export async function matchInitialSync(
             matchingCursor: 0,
             matchingDone: false,
             matchedCount: mapped.desired.length,
+            unsupportedRepeatOccurrenceIds:
+              mapped.unsupportedRepeatOccurrenceIds,
             missingOccurrenceIds: mapped.missing.map(
               (index) => source.items[index].occurrenceId
             ),
@@ -121,8 +133,7 @@ export async function matchInitialSync(
     }
     const start = link.incomplete.matchingCursor,
       batch = queries.slice(start, start + 30)
-    let next = 0,
-      failed = false
+    let next = 0
     const results = new Map<string, PlaylistTrack[]>()
     const issues = new Map<string, "truncated" | "unavailable">()
     await Promise.all(
@@ -141,7 +152,7 @@ export async function matchInitialSync(
             results.set(key, candidates)
           } catch {
             owns()
-            failed = true
+            issues.set(key, "unavailable")
           }
         }
       })
@@ -172,9 +183,9 @@ export async function matchInitialSync(
           score: match.score,
         })
     }
-    const mapped = mapLinkedTracks("listenbrainz", source, mappings)
-    const cursor = failed ? start : start + batch.length,
-      done = !failed && cursor >= queries.length
+    const mapped = mapImportTracks(source, mappings, preservesDuplicates)
+    const cursor = start + batch.length,
+      done = cursor >= queries.length
     link = await repository.save(
       {
         ...link,
@@ -211,59 +222,34 @@ export async function matchInitialSync(
             ],
           ],
           matchedCount: mapped.desired.length,
+          unsupportedRepeatOccurrenceIds: mapped.unsupportedRepeatOccurrenceIds,
           missingOccurrenceIds: mapped.missing.map(
             (index) => source.items[index].occurrenceId
           ),
         },
         state: "ready",
         paused: false,
-        message: failed
-          ? "Some lookups could not be confirmed. Matched songs and every source occurrence are retained; retry matching or review this playlist."
-          : "Matching the selected playlist in bounded background batches.",
+        message:
+          "Matching the selected playlist in bounded background batches.",
       },
       link.revision
     )
     owns()
     await fill()
-    if (failed) {
-      if (!link.paused && link.incomplete) {
-        link = await repository.save(
-          {
-            ...link,
-            paused: true,
-            state: "error",
-            message:
-              "Some lookups could not be confirmed. Reliable matched songs were added; every source occurrence is retained. Retry matching or review the remaining songs.",
-          },
-          link.revision
-        )
-      }
-      return
-    }
     if (!batch.length) return
   }
-  if (link.incomplete && link.incomplete.matchingDone && !link.paused)
+  if (
+    link.incomplete &&
+    link.incomplete.matchingDone &&
+    !link.paused &&
+    !isCompletedPartialMatch(link)
+  )
     await fill()
 }
 
 /** Explicit re-match admission recognizes an engine result, never an ownership/content conflict. */
 export function canRematchIncomplete(link: LinkedPlaylist): boolean {
-  const partial = link.incomplete
-  if (
-    !link.enabled ||
-    !partial?.matchingDone ||
-    !partial.missingOccurrenceIds.length ||
-    link.job ||
-    link.state !== "conflict" ||
-    link.pauseReason === "manual"
-  )
-    return false
-  return (
-    link.message ===
-      `${partial.matchedCount} of ${partial.total} songs matched. Review unmatched songs; every original occurrence is retained.` ||
-    link.message ===
-      "No reliable matches were found. Review the retained source songs before filling the playlist."
-  )
+  return link.enabled && isCompletedPartialMatch(link)
 }
 /** Lookup retry cannot acknowledge an unknown write or override a content conflict. */
 export function resumeInitialMatching(link: LinkedPlaylist): LinkedPlaylist {

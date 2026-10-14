@@ -7,6 +7,7 @@ import { OccurrenceResolver } from "./PlaylistCopyDialog"
 import { linkedMatchEvidenceLabel } from "./matchEvidence"
 import { WeeklyEditionHistory } from "./WeeklyEditionHistory"
 import { canRematchIncomplete } from "../../playlistSync/initialMatching"
+import { isCompletedPartialMatch } from "../../playlistSync/linked"
 import { useCopyOwner } from "./useCopyOwner"
 import { useProviderStore } from "../../stores/providerStore"
 import { useListenBrainzStore } from "../../metadata/listenbrainz/authStore"
@@ -1327,11 +1328,13 @@ export function LinkedPlaylistManager({
                       {link.listenbrainz.user} ·{" "}
                       {!link.enabled
                         ? "Disabled"
-                        : link.paused
-                          ? "Paused"
-                          : link.job
-                            ? `Syncing · ${link.job.completedSteps} verified steps`
-                            : "Enabled"}
+                        : isCompletedPartialMatch(link)
+                          ? "Matches saved · review available"
+                          : link.paused
+                            ? "Paused"
+                            : link.job
+                              ? `Syncing · ${link.job.completedSteps} verified steps`
+                              : "Enabled"}
                     </p>
                     <p className="mt-1 text-xs text-[var(--text-secondary)]">
                       {linkedAutomaticSync(link)
@@ -1347,10 +1350,12 @@ export function LinkedPlaylistManager({
                     )}
                     {link.incomplete && (
                       <p className="mt-2 text-sm" role="status">
-                        {link.paused ||
+                        {(!isCompletedPartialMatch(link) && link.paused) ||
                         !link.enabled ||
                         link.state === "error" ||
-                        link.state === "conflict" ||
+                        (!isCompletedPartialMatch(link) &&
+                          link.state === "conflict") ||
+                        link.state === "unknown" ||
                         checkedErrors[link.id]
                           ? "Background matching is paused. Retry lookups or review the retained update."
                           : link.incomplete.matchingDone

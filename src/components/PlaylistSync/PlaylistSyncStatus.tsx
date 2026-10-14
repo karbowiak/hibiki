@@ -6,6 +6,10 @@ import { useListenBrainzStore } from "../../metadata/listenbrainz/authStore"
 import { useNotificationCenterStore } from "../../stores/notificationCenterStore"
 import { providerPlaylistAccount } from "../../playlistSync/provider"
 import { samePlaylistIdentity } from "../../playlistSync/types"
+import {
+  matchingResultNotice,
+  claimMatchingNotice,
+} from "../../playlistSync/matchingNotices"
 import { useCopyOwner } from "./useCopyOwner"
 /** Session presentation of durable, account-owned sync receipts and matching progress. */
 export function PlaylistSyncStatus() {
@@ -67,31 +71,12 @@ export function PlaylistSyncStatus() {
           !link.incomplete
         )
           continue
-        const id = `playlist.matching.${link.id}`,
-          progress = link.incomplete
-        const missing = progress.missingOccurrenceIds.length
-        const blocked =
-          link.paused ||
-          !link.enabled ||
-          link.state === "error" ||
-          link.state === "conflict" ||
-          !!checkedErrors?.[link.id]
-        if (progress.matchingDone && !missing && !blocked) continue
+        const input = matchingResultNotice(link, !!checkedErrors?.[link.id])
+        if (!input) continue
+        const id = input.id
         next.add(id)
-        notices.notify({
-          id,
-          title: blocked
-            ? "Playlist matching paused"
-            : progress.matchingDone
-              ? "Playlist songs need review"
-              : "Matching playlist songs",
-          message: blocked
-            ? "Matching is paused. Open this playlist's Sync review to retry lookups or inspect a retained update. Every source song is still retained."
-            : progress.matchingDone
-              ? `${missing} ${missing === 1 ? "song needs" : "songs need"} a choice. Every unresolved song remains in the playlist's Sync review.`
-              : `${progress.matchedCount} of ${progress.total} songs matched. You can browse while matching continues.`,
-          severity: blocked || progress.matchingDone ? "warning" : "info",
-          persistent: true,
+        const notification = {
+          ...input,
           action: {
             label: "Open playlist",
             run: () => {
@@ -101,7 +86,32 @@ export function PlaylistSyncStatus() {
                 )
             },
           },
-        })
+        }
+        const currentResult = () => {
+          if (!owns()) return false
+          const state = useLinkedPlaylistStore.getState()
+          const latest = state.links.find((item) => item.id === link.id)
+          return (
+            !!latest &&
+            matchingResultNotice(latest, !!state.checkedErrors?.[link.id])
+              ?.eventKey === input.eventKey
+          )
+        }
+        if (input.severity === "warning") notices.notify(notification)
+        else
+          void claimMatchingNotice(input.eventKey!, currentResult).then(
+            (first) => {
+              // Existing session history can refresh its action quietly after reconnect.
+              const existing = useNotificationCenterStore
+                .getState()
+                .notifications.some(
+                  (entry) =>
+                    entry.id === id && entry.eventKey === input.eventKey
+                )
+              if (currentResult() && (first || existing))
+                notices.notify(notification)
+            }
+          )
       }
     }
     for (const id of published.current) if (!next.has(id)) notices.resolve(id)

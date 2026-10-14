@@ -337,6 +337,8 @@ test("automatic weekly rollover archives nineteen unmatched occurrences without 
     paused: true,
     pauseReason: "unmatched",
     state: "conflict",
+    message:
+      "31 of 50 songs matched. Review unmatched songs; every original occurrence is retained.",
     baseline: {
       ...h.initial.baseline,
       library: h.local(),
@@ -352,6 +354,20 @@ test("automatic weekly rollover archives nineteen unmatched occurrences without 
     },
   }
   expect(canAdvancePartialWeekly(partial)).toBe(true)
+  expect(
+    canAdvancePartialWeekly({
+      ...partial,
+      paused: false,
+      state: "ready",
+      pauseReason: undefined,
+    })
+  ).toBe(true)
+  expect(
+    canAdvancePartialWeekly({
+      ...partial,
+      message: "Destination changed during sync. Review both versions.",
+    })
+  ).toBe(false)
   const nextSource = snap(true, E2, [A, B]),
     nextEdition = edition(E2, "2026-10-12T05:00:00Z")
   const next = retainWeeklyEdition(
@@ -428,6 +444,8 @@ test("a thirty-third unresolved weekly archive refuses rebinding without discard
     paused: true,
     pauseReason: "unmatched",
     state: "conflict",
+    message:
+      "1 of 2 songs matched. Review unmatched songs; every original occurrence is retained.",
     baseline: { library: h.local(), listenbrainz: source },
     weeklySource: { ...h.initial.weeklySource!, previousEditions: receipts },
     incomplete: {

@@ -188,6 +188,56 @@ export function mapLinkedTracks(
   })
   return { desired, missing }
 }
+/** Keep unsupported repeats in review using the same progress calculation as writes. */
+export function mapImportTracks(
+  snapshot: PlaylistSnapshot,
+  mappings: readonly LinkedTrackMapping[],
+  preservesDuplicateOccurrences?: boolean
+) {
+  const mapped = mapLinkedTracks("listenbrainz", snapshot, mappings)
+  const unsupportedRepeatOccurrenceIds: string[] = []
+  if (preservesDuplicateOccurrences === false) {
+    const missing = new Set(mapped.missing),
+      seen = new Set<string>()
+    const distinct: typeof mapped.desired = []
+    let cursor = 0
+    for (let index = 0; index < snapshot.items.length; index++) {
+      if (missing.has(index)) continue
+      const item = mapped.desired[cursor++]
+      if (seen.has(item.id)) {
+        missing.add(index)
+        unsupportedRepeatOccurrenceIds.push(snapshot.items[index].occurrenceId)
+      } else {
+        seen.add(item.id)
+        distinct.push(item)
+      }
+    }
+    mapped.desired = distinct
+    mapped.missing = [...missing].sort((a, b) => a - b)
+  }
+  return { ...mapped, unsupportedRepeatOccurrenceIds }
+}
+/** Recognize ordinary partial results, including older engine-created unmatched pauses. */
+export function isCompletedPartialMatch(link: LinkedPlaylist): boolean {
+  const partial = link.incomplete
+  if (
+    !partial?.matchingDone ||
+    !partial.missingOccurrenceIds.length ||
+    link.job ||
+    link.pauseReason === "manual"
+  )
+    return false
+  const resultMessage =
+    link.message ===
+      `${partial.matchedCount} of ${partial.total} songs matched. Review unmatched songs; every original occurrence is retained.` ||
+    link.message ===
+      "No reliable matches were found. Review the retained source songs before filling the playlist."
+  return (
+    resultMessage &&
+    ((link.state === "ready" && !link.paused) ||
+      (link.state === "conflict" && link.paused))
+  )
+}
 export function decideLinkedSync(
   link: LinkedPlaylist,
   library: PlaylistSnapshot,
@@ -316,16 +366,12 @@ export function nextSequenceOperation(
     : null
 }
 
-/** Only the engine's completed unmatched pause can follow a new weekly edition. */
+/** Completed partial editions may roll over; safety and manual pauses cannot. */
 export function canAdvancePartialWeekly(link: LinkedPlaylist): boolean {
   return (
     !!link.weeklySource &&
     link.automatic === true &&
     link.enabled &&
-    link.paused &&
-    link.pauseReason === "unmatched" &&
-    link.state === "conflict" &&
-    !!link.incomplete?.matchingDone &&
-    !link.job
+    isCompletedPartialMatch(link)
   )
 }

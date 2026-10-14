@@ -11,6 +11,8 @@ export interface NotificationInput {
   message: string
   severity: NotificationSeverity
   persistent?: boolean
+  /** One announcement per event in this app session, including after history is cleared. */
+  eventKey?: string
   action?: NotificationAction
 }
 export interface NotificationEntry extends NotificationInput {
@@ -64,6 +66,7 @@ export function createNotificationCenterStore({
     return kept
   }
   let toastSequence = 0
+  const announcedEvents = new Set<string>()
   const actionRuns = new Map<
     string,
     { token: symbol; promise: Promise<void> }
@@ -76,10 +79,18 @@ export function createNotificationCenterStore({
           (entry) => entry.id === input.id
         )
         const persistent = input.persistent ?? previous?.persistent ?? false
+        const event =
+          input.eventKey === undefined
+            ? undefined
+            : JSON.stringify([input.id, input.eventKey])
+        const announced = event !== undefined && announcedEvents.has(event)
+        // Clearing history must not resurrect a dismissed result on the next poll.
+        if (announced && !previous) return state
+        if (event !== undefined) announcedEvents.add(event)
         const ongoing = persistent && previous?.active
         const escalate =
           previous && priority[input.severity] > priority[previous.severity]
-        const newToast = !ongoing || !!escalate
+        const newToast = !announced && (!ongoing || !!escalate)
         const timestamp = now()
         const entry: NotificationEntry = {
           ...input,
@@ -88,7 +99,8 @@ export function createNotificationCenterStore({
           updatedAt: timestamp,
           unread: newToast ? true : previous!.unread,
           active: persistent,
-          occurrences: (previous?.occurrences ?? 0) + (ongoing ? 0 : 1),
+          occurrences:
+            (previous?.occurrences ?? 0) + (ongoing || announced ? 0 : 1),
           toastVisible: newToast ? true : previous!.toastVisible,
           toastRevision: newToast ? ++toastSequence : previous!.toastRevision,
           actionPending: actionRuns.has(input.id),

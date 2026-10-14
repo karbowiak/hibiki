@@ -8,6 +8,7 @@ import {
   decideLinkedSync,
   linkedSyncDirection,
   mapLinkedTracks,
+  mapImportTracks,
   linkedOwner,
   nextSequenceOperation,
   playlistContent,
@@ -122,35 +123,18 @@ export async function checkLinkedPlaylist(
             "The weekly source has no verified songs yet. The empty local playlist remains retained for review.",
         }
       else {
-        const mapped = mapLinkedTracks("listenbrainz", remote, link.mappings)
-        const unsupportedRepeatOccurrenceIds: string[] = []
-        if (services.library.preservesDuplicateOccurrences === false) {
-          const missing = new Set(mapped.missing),
-            seen = new Set<string>()
-          const distinct: typeof mapped.desired = []
-          let cursor = 0
-          for (let index = 0; index < remote.items.length; index++) {
-            if (missing.has(index)) continue
-            const item = mapped.desired[cursor++]
-            if (seen.has(item.id)) {
-              missing.add(index)
-              unsupportedRepeatOccurrenceIds.push(
-                remote.items[index].occurrenceId
-              )
-            } else {
-              seen.add(item.id)
-              distinct.push(item)
-            }
-          }
-          mapped.desired = distinct
-          mapped.missing = [...missing].sort((a, b) => a - b)
-        }
+        const mapped = mapImportTracks(
+          remote,
+          link.mappings,
+          services.library.preservesDuplicateOccurrences
+        )
         link = {
           ...link,
           incomplete: {
             ...link.incomplete,
             matchedCount: mapped.desired.length,
-            unsupportedRepeatOccurrenceIds,
+            unsupportedRepeatOccurrenceIds:
+              mapped.unsupportedRepeatOccurrenceIds,
             missingOccurrenceIds: mapped.missing.map(
               (index) => remote.items[index].occurrenceId
             ),
@@ -159,11 +143,9 @@ export async function checkLinkedPlaylist(
         if (!mapped.desired.length && mapped.missing.length)
           return save({
             ...link,
-            paused: link.incomplete!.matchingDone,
-            pauseReason: link.incomplete!.matchingDone
-              ? "unmatched"
-              : undefined,
-            state: link.incomplete!.matchingDone ? "conflict" : "ready",
+            paused: false,
+            pauseReason: undefined,
+            state: "ready",
             message: link.incomplete!.matchingDone
               ? "No reliable matches were found. Review the retained source songs before filling the playlist."
               : "Matching source songs in the background; the new playlist is retained.",
@@ -526,10 +508,9 @@ export async function checkLinkedPlaylist(
             }
           : {}),
         incomplete: partial ? link.incomplete : undefined,
-        paused: partial && !!link.incomplete?.matchingDone,
-        pauseReason:
-          partial && link.incomplete?.matchingDone ? "unmatched" : undefined,
-        state: partial && link.incomplete?.matchingDone ? "conflict" : "ready",
+        paused: false,
+        pauseReason: undefined,
+        state: "ready",
         message: partial
           ? `${link.incomplete!.matchedCount} of ${link.incomplete!.total} songs matched. ${link.incomplete!.matchingDone ? "Review unmatched songs; every original occurrence is retained." : "Background matching continues."}`
           : undefined,

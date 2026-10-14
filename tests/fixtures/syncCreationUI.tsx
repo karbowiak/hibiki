@@ -75,7 +75,7 @@ const { useNotificationCenterStore } =
 const { PlaylistCreationRecovery } =
   await import("../../src/components/PlaylistSync/PlaylistCreationRecovery")
 const { createRoot } = await import("react-dom/client")
-const root = createRoot(document.getElementById("root")!)
+let root = createRoot(document.getElementById("root")!)
 let recovered: string[] = []
 if (scenario === "notices") {
   store.setState({ activeCreationIds: { intent: true } } as any)
@@ -136,6 +136,13 @@ if (scenario === "notices") {
           listenbrainz: sourceAccount,
           libraryPlaylistId: "local",
           incomplete: {
+            sourceSnapshot: {
+              id: "remote",
+              items: ["one", "two", "three"].map((id) => ({
+                occurrenceId: id,
+                track: { id },
+              })),
+            },
             matchingCursor: 1,
             total: 3,
             matchingDone: false,
@@ -147,27 +154,45 @@ if (scenario === "notices") {
     } as any)
     await settle()
   })
-  const progress = useNotificationCenterStore
-    .getState()
-    .notifications.find((n) => n.id === "playlist.matching.link")!
-  assert.equal(progress.severity, "info")
+  const matchingNotice = () =>
+    useNotificationCenterStore
+      .getState()
+      .notifications.find((n) => n.id === "playlist.matching.link")
+  assert.equal(
+    matchingNotice(),
+    undefined,
+    "Active matching has no persistent notification"
+  )
   await act(async () => {
     store.setState({
       links: [
-        { ...(store.getState().links[0] as any), paused: true, state: "error" },
+        {
+          ...(store.getState().links[0] as any),
+          paused: true,
+          state: "unknown",
+        },
       ],
     } as any)
     await settle()
   })
-  const paused = useNotificationCenterStore
-    .getState()
-    .notifications.find((n) => n.id === progress.id)!
+  const paused = matchingNotice()!
   assert.equal(paused.severity, "warning")
-  assert.equal(paused.title, "Playlist matching paused")
+  assert.equal(paused.title, "Playlist sync needs attention")
+  assert.equal(paused.active, false)
+  const centerNow = useNotificationCenterStore.getState()
+  centerNow.dismissToast(paused.id)
+  centerNow.markAllRead()
+  await act(async () => {
+    store.setState({ links: [...store.getState().links] })
+    await settle()
+  })
   assert.equal(
-    paused.message.includes("browse while matching continues"),
-    false
+    matchingNotice()!.toastVisible,
+    false,
+    "A repeated blocked result stays dismissed"
   )
+  assert.equal(matchingNotice()!.unread, false)
+  assert.equal(matchingNotice()!.occurrences, 1)
   await act(async () => {
     store.setState({
       links: [
@@ -180,32 +205,138 @@ if (scenario === "notices") {
     } as any)
     await settle()
   })
-  useNotificationCenterStore.getState().dismissToast(progress.id)
+  assert.equal(
+    matchingNotice()!.action,
+    undefined,
+    "Resumed matching retires the stale result action"
+  )
   await act(async () => {
+    const previous = store.getState().links[0] as any
     store.setState({
       links: [
         {
-          ...(store.getState().links[0] as any),
+          ...previous,
+          message:
+            "Matching the selected playlist in bounded background batches.",
           incomplete: {
+            ...previous.incomplete,
             matchingCursor: 3,
-            total: 3,
             matchingDone: true,
-            matchedCount: 1,
-            missingOccurrenceIds: ["two", "three"],
           },
         },
       ],
     } as any)
     await settle()
   })
-  const review = useNotificationCenterStore
-    .getState()
-    .notifications.find((n) => n.id === progress.id)!
-  assert.equal(review.severity, "warning")
+  assert.equal(
+    matchingNotice()!.toastVisible,
+    false,
+    "Completing lookups must not announce songs saved before the final fill is verified"
+  )
+  assert.equal(matchingNotice()!.title, "Playlist sync needs attention")
+  await act(async () => {
+    const previous = store.getState().links[0] as any
+    store.setState({
+      links: [
+        {
+          ...previous,
+          message:
+            "1 of 3 songs matched. Review unmatched songs; every original occurrence is retained.",
+          incomplete: {
+            ...previous.incomplete,
+            matchingCursor: 3,
+            matchingDone: true,
+          },
+        },
+      ],
+    } as any)
+    await settle()
+  })
+  const review = matchingNotice()!
+  assert.equal(review.title, "Playlist matches saved")
+  assert.equal(review.severity, "info")
+  assert.equal(review.active, false)
   assert.equal(
     review.toastVisible,
     true,
-    "Completed unresolved review escalates once"
+    "Completed partial result announces once"
+  )
+  useNotificationCenterStore.getState().dismissToast(review.id)
+  useNotificationCenterStore.getState().markAllRead()
+  await act(async () => {
+    store.setState({ links: [...store.getState().links] })
+    await settle()
+  })
+  assert.equal(matchingNotice()!.toastVisible, false)
+  assert.equal(matchingNotice()!.unread, false)
+  const retiredAction = matchingNotice()!.action!
+  await act(async () => {
+    useProviderStore.setState({
+      provider: { ...provider, cacheScope: "other" },
+    })
+    useProviderStore.setState({ provider })
+    await settle()
+  })
+  retiredAction.run()
+  assert.deepEqual(
+    navigations,
+    [],
+    "Retired matching actions cannot navigate replacement views"
+  )
+  assert.equal(
+    matchingNotice()!.toastVisible,
+    false,
+    "Reconnect does not repeat the completed result"
+  )
+  matchingNotice()!.action!.run()
+  assert.deepEqual(
+    navigations,
+    ["/playlist/local"],
+    "Current result action is refreshed after reconnect"
+  )
+  await act(async () => root.unmount())
+  root = createRoot(document.getElementById("root")!)
+  await act(async () => {
+    root.render(<PlaylistSyncStatus />)
+    await settle()
+  })
+  assert.equal(
+    matchingNotice()!.toastVisible,
+    false,
+    "Remount does not repeat the completed result"
+  )
+  useNotificationCenterStore.getState().clearHistory()
+  await act(async () => {
+    store.setState({ links: [...store.getState().links] })
+    await settle()
+  })
+  assert.equal(
+    matchingNotice(),
+    undefined,
+    "Cleared matching history stays cleared during polling"
+  )
+  await act(async () => {
+    const previous = store.getState().links[0] as any
+    store.setState({
+      links: [
+        {
+          ...previous,
+          message:
+            "2 of 3 songs matched. Review unmatched songs; every original occurrence is retained.",
+          incomplete: {
+            ...previous.incomplete,
+            matchedCount: 2,
+            missingOccurrenceIds: ["three"],
+          },
+        },
+      ],
+    } as any)
+    await settle()
+  })
+  assert.equal(
+    matchingNotice()!.toastVisible,
+    true,
+    "A genuinely new matching result can announce"
   )
   await act(async () => {
     store.setState({ links: [] })
@@ -213,7 +344,7 @@ if (scenario === "notices") {
   })
   const resolved = useNotificationCenterStore
     .getState()
-    .notifications.find((n) => n.id === progress.id)!
+    .notifications.find((n) => n.id === "playlist.matching.link")!
   assert.equal(resolved.active, false)
   assert.equal(resolved.action, undefined)
   await act(() => root.unmount())

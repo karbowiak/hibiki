@@ -22,7 +22,8 @@ function harness(count = 40, repeats = false) {
     maxActive = 0,
     calls = 0,
     current = true,
-    writes = 0
+    writes = 0,
+    settledSaves = 0
   const remote = { service: "listenbrainz", user: "owner", revision: "remote" }
   const provider = {
     name: "Plex",
@@ -105,6 +106,12 @@ function harness(count = 40, repeats = false) {
   const repository = {
     load: async () => structuredClone(rows),
     save: async (link: LinkedPlaylist, revision: number | null) => {
+      if (
+        link.incomplete?.matchingDone &&
+        !link.job &&
+        link.message?.includes("Review unmatched songs;")
+      )
+        settledSaves++
       rows = retainLink(rows, link, revision)
       return structuredClone(rows[0])
     },
@@ -164,6 +171,7 @@ function harness(count = 40, repeats = false) {
     calls: () => calls,
     maxActive: () => maxActive,
     writes: () => writes,
+    settledSaves: () => settledSaves,
   }
 }
 test("selected forty-song imports continue through batches, bound concurrency, and retain unmatched songs", async () => {
@@ -181,8 +189,9 @@ test("selected forty-song imports continue through batches, bound concurrency, a
   expect(h.link().incomplete?.matchingDone).toBe(true)
   expect(h.link().incomplete?.matchingCursor).toBe(40)
   expect(h.link().incomplete?.missingOccurrenceIds).toEqual(["39"])
-  expect(h.link().paused).toBe(true)
+  expect(h.link().paused).toBe(false)
   expect(h.link().incomplete?.sourceSnapshot.items).toHaveLength(40)
+  expect(h.settledSaves()).toBe(1)
 })
 test("Plex fills reliable distinct occurrences while retaining repeats as unsupported review rows", async () => {
   const h = harness(3, true)
@@ -199,7 +208,95 @@ test("Plex fills reliable distinct occurrences while retaining repeats as unsupp
     "repeat",
   ])
   expect(h.link().incomplete?.matchedCount).toBe(2)
-  expect(h.link().paused).toBe(true)
+  expect(h.link().paused).toBe(false)
+})
+test("multi-batch imports retain repeated occurrences without corrupting progress", async () => {
+  const h = harness(40, true)
+  await matchInitialSync(
+    "link",
+    h.provider,
+    h.repository,
+    h.current,
+    h.services
+  )
+  expect(h.local().items).toHaveLength(39)
+  expect(h.link().incomplete?.matchedCount).toBe(39)
+  expect(h.link().incomplete?.missingOccurrenceIds).toEqual(["39", "repeat"])
+  expect(h.link().incomplete?.unsupportedRepeatOccurrenceIds).toEqual([
+    "repeat",
+  ])
+  expect(h.link().incomplete?.sourceSnapshot.items).toHaveLength(41)
+  expect(h.link().paused).toBe(false)
+  // Revalidation must use the same repeat-aware progress calculation.
+  h.replace(resumeInitialMatching(h.link()))
+  h.link().mappings[0].libraryTrack.album = "Song 0 (Remix)"
+  await matchInitialSync(
+    "link",
+    h.provider,
+    h.repository,
+    h.current,
+    h.services
+  )
+  expect(h.local().items).toHaveLength(39)
+  expect(h.link().incomplete?.missingOccurrenceIds).toEqual(["39", "repeat"])
+})
+test("unavailable early lookups do not stop later batches and can be retried explicitly", async () => {
+  const h = harness(40),
+    original = h.provider.search
+  h.provider.search = async (...args) => {
+    if (args[0].endsWith(" 1")) throw Error("Temporary search failure")
+    return original(...args)
+  }
+  await matchInitialSync(
+    "link",
+    h.provider,
+    h.repository,
+    h.current,
+    h.services
+  )
+  expect(h.local().items).toHaveLength(38)
+  expect(h.local().items.at(-1)?.track.id).toBe("38")
+  expect(h.link().incomplete?.matchingCursor).toBe(40)
+  expect(h.link().incomplete?.matchingDone).toBe(true)
+  expect(h.link().incomplete?.missingOccurrenceIds).toEqual(["1", "39"])
+  expect(h.link().incomplete?.lookupLimits).toContainEqual({
+    sourceTrackId: h.source.items[1].track.id,
+    reason: "unavailable",
+  })
+  expect(h.link().state).toBe("ready")
+  expect(h.link().paused).toBe(false)
+  h.provider.search = original
+  h.replace(resumeInitialMatching(h.link()))
+  await matchInitialSync(
+    "link",
+    h.provider,
+    h.repository,
+    h.current,
+    h.services
+  )
+  expect(h.local().items).toHaveLength(39)
+  expect(h.local().items.map((item) => item.track.id)).toEqual(
+    Array.from({ length: 39 }, (_, i) => String(i))
+  )
+  expect(h.link().incomplete?.lookupLimits).toEqual([])
+  expect(h.link().incomplete?.missingOccurrenceIds).toEqual(["39"])
+})
+test("zero matches complete as a reviewable result without a sync conflict", async () => {
+  const h = harness(2)
+  h.provider.search = async () => []
+  await matchInitialSync(
+    "link",
+    h.provider,
+    h.repository,
+    h.current,
+    h.services
+  )
+  expect(h.link().incomplete?.matchingDone).toBe(true)
+  expect(h.link().incomplete?.missingOccurrenceIds).toEqual(["0", "1"])
+  expect(h.link().state).toBe("ready")
+  expect(h.link().paused).toBe(false)
+  expect(canRematchIncomplete(h.link())).toBe(true)
+  expect(h.writes()).toBe(0)
 })
 test("late search responses from a retired owner cannot retain mappings or issue writes", async () => {
   const h = harness(3),
@@ -287,10 +384,14 @@ test("a failed lookup cannot prevent reliable matches in its batch from being fi
   )
   expect(h.local().items.map((item) => item.track.id)).toEqual(["0", "2"])
   expect(h.link().incomplete?.missingOccurrenceIds).toEqual(["1", "3"])
-  expect(h.link().incomplete?.matchingCursor).toBe(0)
-  expect(h.link().incomplete?.matchingDone).toBe(false)
-  expect(h.link().paused).toBe(true)
-  expect(h.link().state).toBe("error")
+  expect(h.link().incomplete?.matchingCursor).toBe(4)
+  expect(h.link().incomplete?.matchingDone).toBe(true)
+  expect(h.link().paused).toBe(false)
+  expect(h.link().state).toBe("ready")
+  expect(h.link().incomplete?.lookupLimits).toContainEqual({
+    sourceTrackId: h.source.items[1].track.id,
+    reason: "unavailable",
+  })
 })
 test("title fallback finds a reliable track when combined search returns unrelated nonempty results", async () => {
   const h = harness(2),
@@ -335,7 +436,7 @@ test("failed combined queries recover with title lookups and continue every sele
   expect(h.local().items).toHaveLength(39)
   expect(h.link().incomplete?.matchingCursor).toBe(40)
   expect(h.link().incomplete?.matchingDone).toBe(true)
-  expect(h.link().state).toBe("conflict")
+  expect(h.link().state).toBe("ready")
   expect(h.link().incomplete?.missingOccurrenceIds).toEqual(["39"])
 })
 test("retry lookup preserves cursor and never resumes unknown writes or content conflicts", () => {
@@ -494,7 +595,9 @@ test("explicit completed-partial rematch preserves manual mappings, resets looku
     h.services
   )
   expect(h.local().items).toHaveLength(2)
-  expect(h.link().pauseReason).toBe("unmatched")
+  expect(h.link().pauseReason).toBeUndefined()
+  expect(h.link().paused).toBe(false)
+  expect(canRematchIncomplete(h.link())).toBe(true)
 })
 test("explicit rematch never writes when the fresh source differs from the admitted edition", async () => {
   const h = harness(3),

@@ -24,6 +24,47 @@ const fixture = () => {
     entry: () => store.getState().notifications[0],
   }
 }
+test("one-time result events update actions quietly, survive history clearing, and announce new results", async () => {
+  const h = fixture()
+  let opened = 0
+  const event = notice({
+    persistent: false,
+    eventKey: "edition-one",
+    severity: "info",
+  })
+  h.state().notify(event)
+  expect(h.entry().active).toBe(false)
+  h.state().dismissToast(event.id)
+  h.state().markAllRead()
+  h.state().notify({
+    ...event,
+    action: {
+      label: "Open",
+      run: () => {
+        opened++
+      },
+    },
+  })
+  expect(h.entry()).toMatchObject({
+    toastVisible: false,
+    unread: false,
+    occurrences: 1,
+  })
+  await h.state().runAction(event.id)
+  expect(opened).toBe(1)
+  h.state().resolve(event.id)
+  h.state().notify(event)
+  expect(h.entry().toastVisible).toBe(false)
+  h.state().clearHistory()
+  h.state().notify(event)
+  expect(h.state().notifications).toHaveLength(0)
+  h.state().notify({ ...event, eventKey: "edition-two" })
+  expect(h.entry()).toMatchObject({
+    toastVisible: true,
+    unread: true,
+    active: false,
+  })
+})
 
 test("status polling updates message and action without repeating dismissed or read notifications", () => {
   const h = fixture(),
