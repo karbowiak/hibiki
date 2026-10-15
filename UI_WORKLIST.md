@@ -629,3 +629,19 @@ and listening-history row, and removed only the matching per-track device IDs.
 Plex returned online in its existing pod with zero container restarts. API
 readback confirms zero duplicate history clients and the original device and
 account authorization intact.
+
+### Stationary waveform during playback
+
+The playbar's proportional elapsed-time label resized slightly as clock digits
+changed. Its flex sibling was the waveform canvas, so each width change could
+change the bar count and resample the waveform into visibly different heights.
+Both clocks now reserve non-shrinking, tabular-digit columns sized for the track's
+duration. The same sizing also accommodates long durations in the fullscreen
+visualizer. The waveform may still resize with an intentional window/layout
+change, while playback progress only advances its played-color overlay.
+
+Five focused waveform/canvas/player accessibility tests, both TypeScript projects
+and the production frontend build passed. Native computer use is working again:
+the exact development app was inspected during real playback, with the same
+waveform retaining its geometry as the clock advanced. The frontend update is
+live through Vite without restarting playback. No push, tag or release occurred.

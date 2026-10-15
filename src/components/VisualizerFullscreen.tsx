@@ -91,6 +91,7 @@ export default function VisualizerFullscreen() {
     })),
   )
   const [seekHoverPct, setSeekHoverPct] = useState<number | null>(null)
+  const timeColumnWidth = `${Math.max(5, formatMs(currentTrack?.duration ?? 0).length)}ch`
   const [isNativeFullscreen, setIsNativeFullscreen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -637,7 +638,7 @@ export default function VisualizerFullscreen() {
 
         {/* Seek bar with waveform */}
         <div className="flex items-center gap-2 flex-1 min-w-0">
-          <span className="text-[0.625rem] text-white/50 tabular-nums shrink-0 w-8 text-right">
+          <span className="text-[0.625rem] text-white/50 tabular-nums shrink-0 whitespace-nowrap text-right" style={{ width: timeColumnWidth }}>
             {formatMs(seekHoverPct !== null ? (currentTrack?.duration ?? 0) * seekHoverPct / 100 : positionMs)}
           </span>
           <div
@@ -669,7 +670,7 @@ export default function VisualizerFullscreen() {
               aria-label="Seek"
             />
           </div>
-          <span className="text-[0.625rem] text-white/50 tabular-nums shrink-0 w-8">
+          <span className="text-[0.625rem] text-white/50 tabular-nums shrink-0 whitespace-nowrap" style={{ width: timeColumnWidth }}>
             {formatMs(currentTrack?.duration ?? 0)}
           </span>
         </div>

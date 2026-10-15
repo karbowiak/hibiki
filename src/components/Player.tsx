@@ -496,6 +496,8 @@ export function Player() {
   const progressPct = currentTrack?.duration
     ? (positionMs / currentTrack.duration) * 100
     : 0
+  // Clock glyph widths must not resize/resample the waveform on every tick.
+  const timeColumnWidth = `${Math.max(5, formatMs(currentTrack?.duration ?? 0).length)}ch`
 
   const repeatActive = repeat > 0
   const shuffleActive = shuffle
@@ -818,13 +820,13 @@ export function Player() {
 
               {/* Progress / seek bar */}
               <div className="mt-1.5 flex w-full items-center gap-x-2 pointer-events-auto">
-                <div className="text-[0.688rem] text-white text-opacity-70">
+                <div className="shrink-0 whitespace-nowrap text-right text-[0.688rem] tabular-nums text-white text-opacity-70" style={{ width: timeColumnWidth }}>
                   {formatMs(seekHoverPct !== null
                     ? (currentTrack?.duration ?? 0) * seekHoverPct / 100
                     : positionMs)}
                 </div>
                 <div
-                  className={`relative flex-1 h-7 select-none ${currentTrack ? "cursor-pointer" : "cursor-default opacity-40"}`}
+                  className={`relative min-w-0 flex-1 h-7 select-none ${currentTrack ? "cursor-pointer" : "cursor-default opacity-40"}`}
                   onMouseMove={e => {
                     if (!currentTrack) return
                     const rect = e.currentTarget.getBoundingClientRect()
@@ -855,7 +857,7 @@ export function Player() {
                     aria-label="Seek"
                   />
                 </div>
-                <div className="text-[0.688rem] text-white text-opacity-70">
+                <div className="shrink-0 whitespace-nowrap text-[0.688rem] tabular-nums text-white text-opacity-70" style={{ width: timeColumnWidth }}>
                   {formatMs(currentTrack?.duration ?? 0)}
                 </div>
               </div>
