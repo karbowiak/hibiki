@@ -1197,14 +1197,7 @@ pub async fn report_timeline(
         _ => PlaybackState::Stopped,
     };
     let c = client!(plex_state, context);
-    let client_id = c.client_id.clone();
-    c.report_timeline(
-        rating_key,
-        playback_state,
-        time_ms,
-        duration_ms,
-        Some(&client_id),
-    )
+    c.report_timeline(rating_key, playback_state, time_ms, duration_ms)
     .await
     .map_err(|e| format!("{:#}", e))
 }

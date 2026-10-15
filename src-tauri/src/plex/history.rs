@@ -404,7 +404,6 @@ impl PlexClient {
     /// * `state` - Playback state (playing, paused, buffering, stopped)
     /// * `time` - Current position in milliseconds
     /// * `duration` - Total duration in milliseconds
-    /// * `client_id` - Client identifier (optional, defaults to "hibiki")
     ///
     /// # Returns
     /// * `Result<()>` - Success or error
@@ -414,7 +413,7 @@ impl PlexClient {
     /// # use plex::{PlexClient, PlexClientConfig, PlaybackState};
     /// # tokio_test::block_on(async {
     /// let client = PlexClient::new(PlexClientConfig::default()).unwrap();
-    /// client.report_timeline(12345, PlaybackState::Playing, 30000, 180000, None).await?;
+    /// client.report_timeline(12345, PlaybackState::Playing, 30000, 180000).await?;
     /// # Ok::<(), anyhow::Error>(())
     /// # });
     /// ```
@@ -425,10 +424,38 @@ impl PlexClient {
         state: PlaybackState,
         time: i64,
         duration: i64,
-        client_id: Option<&str>,
     ) -> Result<()> {
-        let client_identifier = client_id.unwrap_or("hibiki");
+        self.send_timeline(rating_key, state, time, duration, None)
+            .await
+    }
 
+    /// A retained listen is a historical playback session, never another device.
+    pub(crate) async fn report_retained_timeline(
+        &self,
+        rating_key: i64,
+        time: i64,
+        duration: i64,
+        session: &str,
+        updated: u64,
+    ) -> Result<()> {
+        self.send_timeline(
+            rating_key,
+            PlaybackState::Stopped,
+            time,
+            duration,
+            Some((session, updated)),
+        )
+        .await
+    }
+
+    async fn send_timeline(
+        &self,
+        rating_key: i64,
+        state: PlaybackState,
+        time: i64,
+        duration: i64,
+        retained: Option<(&str, u64)>,
+    ) -> Result<()> {
         // Serialize the state to lowercase string
         let state_str = match state {
             PlaybackState::Playing => "playing",
@@ -438,31 +465,51 @@ impl PlexClient {
         };
 
         // hasMDE=1 is required by PMS 1.29+ — without it the server returns 400.
-        let path = format!(
-            "/:/timeline?hasMDE=1&ratingKey={}&key=/library/metadata/{}&state={}&time={}&duration={}&identifier=com.plexapp.plugins.library&clientIdentifier={}",
-            rating_key, rating_key, state_str, time, duration, client_identifier
-        );
-        let url = self.build_url(&path);
-
-        debug!("Reporting timeline: {}", url);
-
-        let response = self
+        let query = [
+            ("hasMDE", "1".to_owned()),
+            ("ratingKey", rating_key.to_string()),
+            ("key", format!("/library/metadata/{rating_key}")),
+            ("state", state_str.to_owned()),
+            ("time", time.to_string()),
+            ("duration", duration.to_string()),
+            ("identifier", "com.plexapp.plugins.library".to_owned()),
+            ("clientIdentifier", self.client_id.clone()),
+        ];
+        let mut request = self
             .client
-            .get(&url)
+            .post(self.build_url("/:/timeline"))
+            .query(&query)
             .header("X-Plex-Token", token_header(&self.token))
-            .header("X-Plex-Client-Identifier", client_identifier)
-            .header("Accept", "application/json")
+            .header("X-Plex-Client-Identifier", &self.client_id)
+            .header("Accept", "application/json");
+        // Plex documents session identity separately from installation identity.
+        // Offline reports must not become the player's current live timeline.
+        if let Some((session, updated)) = retained {
+            request = request
+                .header("X-Plex-Session-Identifier", session)
+                .query(&[
+                    ("offline", "1".to_owned()),
+                    ("updated", updated.to_string()),
+                ]);
+        }
+        debug!(
+            rating_key,
+            state_str,
+            historical = retained.is_some(),
+            "Reporting timeline"
+        );
+        let response = request
             .send()
-            .await.map_err(request_error)
+            .await
+            .map_err(request_error)
             .context("Failed to report timeline")?;
 
         debug!("Response status: {}", response.status());
 
         if !response.status().is_success() {
             return Err(anyhow::anyhow!(
-                "HTTP error: {} for URL: {}",
-                response.status(),
-                url
+                "Plex timeline returned HTTP {}",
+                response.status()
             ));
         }
 
@@ -696,7 +743,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_report_timeline() {
         let client = get_client();
-        if let Err(e) = client.report_timeline(999999, PlaybackState::Playing, 30000, 180000, None).await {
+        if let Err(e) = client.report_timeline(999999, PlaybackState::Playing, 30000, 180000).await {
             println!("Report timeline failed (may be expected for invalid rating key): {}", e);
         }
     }

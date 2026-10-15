@@ -596,3 +596,36 @@ The rebuilt dev app was installed after verified process exit/hash readback and
 reopened. No real overnight soak or native visual recheck has been completed;
 computer use remains unavailable. No library/favorites reset, push, tag or release
 occurred; 0.6.0 remains on hold.
+
+### Stable Plex device identity for retained listening reports
+
+Normal requests already reuse the saved installation UUID. The retained native
+listening outbox incorrectly used an installation-plus-job hash as the client
+identifier, registering a new server device for every completed track. Readonly
+inspection found 415 such records initially, then 416 before the fix was installed.
+The account's separate Authorized Devices list contains one correct Hibiki client.
+
+All timelines now use the installation identity, with no caller override. Retained
+reports use Plex's documented X-Plex-Session-Identifier and offline/updated fields
+to isolate historical playback from the live player. New retained records save
+their end timestamp; old records use their saved start timestamp. Live/shutdown
+timelines retain their normal behavior. Timeline requests use the documented POST
+method and encode query values through the HTTP client.
+
+Validation: all 702 native unit tests passed (14 ignored, live integration tests
+excluded), including actual loopback HTTP requests for live playback, repeated
+historical delivery, distinct sessions, shutdown, recreated clients and legacy
+outbox rows. The native build passed and was installed into the exact development
+bundle with exit/hash verification. No push, tag or release occurred.
+
+At the user's request, the 416 server-side history devices were consolidated into
+the existing installation record. Plex's device API does not support deleting
+these records. A consistent 3.2 GB database backup and a rollback rehearsal
+preceded the cleanup. An exact affected-row recovery backup was captured during
+a brief stop of the supervised Plex process; the Flux-owned Deployment, replica
+count and sidecar were unchanged. One checked transaction reassigned 2,080
+bandwidth-statistic rows and 2,080 media-statistic rows, retained every statistics
+and listening-history row, and removed only the matching per-track device IDs.
+Plex returned online in its existing pod with zero container restarts. API
+readback confirms zero duplicate history clients and the original device and
+account authorization intact.

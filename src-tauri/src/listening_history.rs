@@ -315,6 +315,8 @@ struct Report {
     started_at: u64,
     labels: TrackLabels,
     #[serde(default)]
+    ended_at: u64,
+    #[serde(default)]
     attempts: u32,
     #[serde(default)]
     retry_at: u64,
@@ -343,6 +345,7 @@ fn reports(record: &Completed, labels: &TrackLabels) -> Vec<Report> {
             end: record.end.clone(),
             started_at: record.started_at,
             labels: labels.clone(),
+            ended_at: unix_time(),
             attempts: 0,
             retry_at: 0,
         })
@@ -475,19 +478,15 @@ fn count_reports(conn: &rusqlite::Connection) -> Result<usize, String> {
     .map(|count| count.max(0) as usize)
     .map_err(|_| "Listening queue unavailable".into())
 }
-fn timeline_client_identifier(primary: &str, job: &str, current_shutdown: bool) -> String {
+fn timeline_session_identifier(job: &str) -> String {
     use sha2::{Digest, Sha256};
-    if current_shutdown {
-        primary.to_owned()
-    } else {
-        format!("{primary}-history-{:x}", Sha256::digest(job.as_bytes()))
-    }
+    format!("history-{:x}", Sha256::digest(job.as_bytes()))
 }
 async fn submit(
     report: &Report,
     settings: &crate::plex::PlexSettings,
     client: Option<&crate::plex::PlexClient>,
-    timeline_client: Option<&str>,
+    historical_session: Option<&str>,
 ) -> Result<bool, String> {
     let current = Binding::capture(settings, client.map(|client| client.library_scope.clone()));
     if !report.matches_binding(&current) {
@@ -498,16 +497,35 @@ async fn submit(
         Service::PlexTimeline | Service::PlexPlayed => {
             let client = client.ok_or("Original Plex library is not connected")?;
             if matches!(report.service, Service::PlexTimeline) {
-                client
-                    .report_timeline(
-                        report.end.rating_key,
-                        crate::plex::PlaybackState::Stopped,
-                        report.end.position_ms.min(i64::MAX as u64) as i64,
-                        report.end.duration_ms.min(i64::MAX as u64) as i64,
-                        Some(timeline_client.unwrap_or(&client.client_id)),
-                    )
-                    .await
-                    .map_err(|_| "Plex progress is retained for retry")?;
+                let position = report.end.position_ms.min(i64::MAX as u64) as i64;
+                let duration = report.end.duration_ms.min(i64::MAX as u64) as i64;
+                let result = if let Some(session) = historical_session {
+                    // Older retained rows only know when playback started.
+                    let updated = if report.ended_at > 0 {
+                        report.ended_at
+                    } else {
+                        report.started_at
+                    };
+                    client
+                        .report_retained_timeline(
+                            report.end.rating_key,
+                            position,
+                            duration,
+                            session,
+                            updated.min(unix_time()),
+                        )
+                        .await
+                } else {
+                    client
+                        .report_timeline(
+                            report.end.rating_key,
+                            crate::plex::PlaybackState::Stopped,
+                            position,
+                            duration,
+                        )
+                        .await
+                };
+                result.map_err(|_| "Plex progress is retained for retry")?;
             } else {
                 client
                     .mark_played(report.end.rating_key)
@@ -595,16 +613,14 @@ pub async fn drain(app: &tauri::AppHandle) -> Result<OutboxStatus, String> {
                 key.starts_with(&format!("{PREFIX}{}/", engine.0.history.session))
                     && engine.0.primary_timeline_allowed(&report.end)
             });
-        let timeline_client = client
-            .as_ref()
-            .map(|client| timeline_client_identifier(&client.client_id, &key, primary));
+        let historical_session = (!primary).then(|| timeline_session_identifier(&key));
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(8),
             submit(
                 &report,
                 &settings,
                 client.as_ref(),
-                timeline_client.as_deref(),
+                historical_session.as_deref(),
             ),
         )
         .await
@@ -955,47 +971,106 @@ mod tests {
         assert_eq!(history.pending().unwrap().len(), 1);
     }
     #[tokio::test]
-    async fn historical_progress_uses_a_separate_actual_header_and_shutdown_uses_primary() {
+    async fn timeline_reports_share_one_device_and_isolate_retained_playback_sessions() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let historical = timeline_client_identifier("primary-client", "retained-job", false);
-        assert_ne!(historical, "primary-client");
-        assert_eq!(
-            timeline_client_identifier("primary-client", "retained-job", true),
-            "primary-client"
-        );
+        let first = timeline_session_identifier("retained-job-a");
+        let second = timeline_session_identifier("retained-job-b");
+        assert_eq!(first, timeline_session_identifier("retained-job-a"));
+        assert_ne!(first, second);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
-        let expected = historical.clone();
+        let expected = [
+            None,
+            Some(first.clone()),
+            Some(first.clone()),
+            Some(second.clone()),
+            None,
+            None,
+            Some(first.clone()),
+        ];
         let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut bytes = [0_u8; 4096];
-            let size = socket.read(&mut bytes).await.unwrap();
-            let request = String::from_utf8_lossy(&bytes[..size]).to_lowercase();
-            assert!(request.contains(&format!("x-plex-client-identifier: {}", expected)));
-            assert!(request.contains(&format!("clientidentifier={}", expected)));
-            assert!(request.contains("x-plex-token: dummy-native-token"));
-            socket
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-                .await
-                .unwrap();
+            for (index, session) in expected.into_iter().enumerate() {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                while !bytes.ends_with(b"\r\n\r\n") {
+                    let mut chunk = [0_u8; 4096];
+                    let size = socket.read(&mut chunk).await.unwrap();
+                    assert!(size > 0 && bytes.len() + size <= 16_384);
+                    bytes.extend_from_slice(&chunk[..size]);
+                }
+                let request = String::from_utf8(bytes).unwrap();
+                let headers = request.to_lowercase();
+                let target = request
+                    .lines()
+                    .next()
+                    .unwrap()
+                    .split_whitespace()
+                    .collect::<Vec<_>>();
+                assert_eq!(target[0], "POST");
+                let url = reqwest::Url::parse(&format!("http://fixture{}", target[1])).unwrap();
+                let query = url
+                    .query_pairs()
+                    .collect::<std::collections::HashMap<_, _>>();
+                assert_eq!(url.path(), "/:/timeline");
+                assert_eq!(query["clientIdentifier"], "primary-client");
+                assert_eq!(query["hasMDE"], "1");
+                assert!(headers.contains("\r\nx-plex-client-identifier: primary-client\r\n"));
+                assert!(headers.contains("x-plex-token: dummy-native-token"));
+                if let Some(session) = session {
+                    assert!(
+                        headers.contains(&format!("\r\nx-plex-session-identifier: {session}\r\n"))
+                    );
+                    assert_eq!(query["state"], "stopped");
+                    assert_eq!(query["offline"], "1");
+                    assert_eq!(
+                        query["updated"],
+                        if index == 6 { "1234" } else { "1700000001" }
+                    );
+                } else {
+                    assert!(!headers.contains("x-plex-session-identifier:"));
+                    assert!(!query.contains_key("offline"));
+                }
+                socket
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await
+                    .unwrap();
+            }
         });
-        let client = crate::plex::PlexClient::new(crate::plex::PlexClientConfig {
+        let config = crate::plex::PlexClientConfig {
             base_url: base,
             token: "dummy-native-token".into(),
             client_id: "primary-client".into(),
             ..Default::default()
-        })
-        .unwrap();
+        };
+        let mut client = crate::plex::PlexClient::new(config.clone()).unwrap();
+        client.library_scope = "original-library".into();
+        let mut report = reports(&completed(1, 100_000), &labels()).remove(0);
+        report.ended_at = 1_700_000_001;
         client
-            .report_timeline(
-                42,
-                crate::plex::PlaybackState::Stopped,
-                9000,
-                180000,
-                Some(&historical),
-            )
+            .report_timeline(42, crate::plex::PlaybackState::Playing, 9000, 180000)
             .await
             .unwrap();
+        for session in [&first, &first, &second] {
+            assert!(submit(&report, &settings(), Some(&client), Some(session))
+                .await
+                .unwrap());
+        }
+        assert!(submit(&report, &settings(), Some(&client), None)
+            .await
+            .unwrap());
+        // Recreating the HTTP client (reconnect/restart) retains installation identity.
+        let replacement = crate::plex::PlexClient::new(config).unwrap();
+        replacement
+            .report_timeline(43, crate::plex::PlaybackState::Playing, 0, 180000)
+            .await
+            .unwrap();
+        let mut legacy = serde_json::to_value(&report).unwrap();
+        legacy.as_object_mut().unwrap().remove("ended_at");
+        let legacy: Report = serde_json::from_value(legacy).unwrap();
+        assert_eq!(legacy.ended_at, 0);
+        assert!(submit(&legacy, &settings(), Some(&client), Some(&first))
+            .await
+            .unwrap());
         server.await.unwrap();
     }
 
