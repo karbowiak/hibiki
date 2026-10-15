@@ -168,6 +168,36 @@ assert.equal(opener.title, "1 active operation")
 await act(async () => {
   useCatalogueStore.getState().update(context, {
     ...progress,
+    tasks: progress.tasks.map((task: any) => ({ ...task, status: "complete" })),
+    analysisPending: 0,
+    incremental: {
+      pending: 0,
+      catchUpRequested: true,
+      watermark: 1770000000,
+      changesRevision: 2,
+      phase: "idle",
+    },
+  })
+  await settle()
+})
+assert.equal(opener.title, "No active operations")
+assert.match(
+  document.querySelector("[role=dialog]")!.textContent!,
+  /Library update scheduled/
+)
+assert(
+  !document
+    .querySelector("[role=dialog]")!
+    .textContent!.includes("Checking Plex for changes")
+)
+assert.equal(
+  document.querySelectorAll(".animate-spin").length,
+  0,
+  "a queued future check must not spin as active work"
+)
+await act(async () => {
+  useCatalogueStore.getState().update(context, {
+    ...progress,
     tasks: [
       {
         task: "playlist:7",

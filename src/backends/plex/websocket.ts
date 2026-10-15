@@ -256,7 +256,7 @@ export class PlexWebSocketManager {
 
     // Keep UI shelf refreshes quiet during scans, but never discard catalogue
     // hints: state 1 is also terminal when a library has no metadata agent.
-    if (this._isScanning) return
+    if (this._isScanning || this.notifyCatalogue) return
 
     const needsRefresh = relevant.some((e) =>
       [0, 1, 5, 9].includes(Number(e.state))
@@ -287,7 +287,7 @@ export class PlexWebSocketManager {
         this.setScanning(false)
         this.requestCatchUp()
         // Single refresh after scan completes — bypass cooldown
-        this.scheduleRefresh(true)
+        if (!this.notifyCatalogue) this.scheduleRefresh(true)
       }
     }
   }

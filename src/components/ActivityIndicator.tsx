@@ -7,6 +7,7 @@ import {
   IconAlertCircle,
   IconCheck,
   IconPlayerPause,
+  IconClock,
 } from "@tabler/icons-react"
 import { useLibraryStore } from "../stores"
 import { useCatalogueStore } from "../offline/catalogueStore"
@@ -19,7 +20,7 @@ interface Activity {
   label: string
   detail?: string
   busy?: boolean
-  state?: "paused" | "error" | "complete"
+  state?: "paused" | "error" | "complete" | "waiting"
   retry?: () => void
 }
 function phaseLabel(task: string) {
@@ -248,20 +249,25 @@ export function ActivityIndicator() {
       incremental.catchUpRequested ||
       incremental.phase !== "idle")
   ) {
-    const catchingUp =
-      incremental.catchUpRequested || incremental.phase === "catchingUp"
+    const catchingUp = incremental.phase === "catchingUp"
+    const busy = !offline && incremental.phase !== "idle"
     activities.push({
       id: "catalogue-updates",
-      busy: !offline,
-      state: offline ? "paused" : undefined,
+      busy,
+      state: offline ? "paused" : !busy ? "waiting" : undefined,
       label: offline
         ? "Library updates paused"
-        : catchingUp
-          ? "Checking Plex for changes"
-          : "Updating saved metadata",
-      detail: incremental.pending
-        ? `${incremental.pending.toLocaleString()} ${incremental.pending === 1 ? "item" : "items"} awaiting updates`
-        : "Only new or changed items are fetched.",
+        : !busy
+          ? "Library update scheduled"
+          : catchingUp
+            ? "Checking Plex for changes"
+            : "Updating saved metadata",
+      detail:
+        !busy && !offline
+          ? "Waiting for the next background check. Browsing and playback are ready."
+          : incremental.pending
+            ? `${incremental.pending.toLocaleString()} ${incremental.pending === 1 ? "item" : "items"} awaiting updates`
+            : "Only new or changed items are fetched.",
     })
   }
   if (libraryScanning)
@@ -390,9 +396,11 @@ export function ActivityIndicator() {
                       ? IconAlertCircle
                       : activity.state === "paused"
                         ? IconPlayerPause
-                        : activity.busy
-                          ? IconLoader2
-                          : IconCheck
+                        : activity.state === "waiting"
+                          ? IconClock
+                          : activity.busy
+                            ? IconLoader2
+                            : IconCheck
                   return (
                     <li
                       key={activity.id}

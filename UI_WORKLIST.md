@@ -566,3 +566,33 @@ initialized: 2,431 Last.fm source loves and 4,076 ListenBrainz source loves are
 recorded. The combined collection contains 5,698 records, including 5,636 with
 known love dates. This verifies the running app completed its ListenBrainz
 roster after the reported 429 failure; future matching improvements stay deferred.
+
+### Long-session background refresh stability
+
+The reported reload affects page contents while the shell and player remain
+visible. Readonly inspection of the 15-hour development process found all saved
+library/waveform tasks complete, no queued item changes and an idle incremental
+worker. A requested future catch-up was incorrectly presented as running work.
+Activity now distinguishes scheduled checks from active work. Failed native
+catch-ups return to idle while retaining their resumable window.
+
+Native WebSocket hints now refresh through committed catalogue events instead of
+also refreshing immediately. Event and polling revisions share a serialized,
+coalesced refresh queue with a ten-second minimum between starts. Background
+metadata callbacks refresh only their visible artist/album page; unchanged JSON
+with different object-field ordering no longer counts as a metadata change.
+Artist/album refreshes preserve expanded descriptions and open artwork/edit
+dialogs, including after cache eviction. Real navigation still resets the page.
+Connection heartbeat intervals use monotonic time, and development module
+retirement disposes old monitors, sockets and pending page refreshes.
+
+Validation: 108 focused frontend tests and 16 native incremental catalogue tests
+passed, along with both TypeScript projects, the production frontend build and
+default-protocol native build. Tests include a simulated 24-hour event stream,
+slow overlapping reads, duplicate signals, offline/retired ownership, field-order
+comparison and mounted artist/album controls. The existing page-ownership fixture
+now supplies the Date Liked column introduced by the previous favorites work.
+The rebuilt dev app was installed after verified process exit/hash readback and
+reopened. No real overnight soak or native visual recheck has been completed;
+computer use remains unavailable. No library/favorites reset, push, tag or release
+occurred; 0.6.0 remains on hold.

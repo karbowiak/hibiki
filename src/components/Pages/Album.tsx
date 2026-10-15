@@ -95,6 +95,9 @@ export function AlbumPage({ albumId }: { albumId: string }) {
   const [isLoading, setIsLoading] = useState(!cached)
   const [error, setError] = useState<string | null>(null)
   const [loadAttempt, setLoadAttempt] = useState(0)
+  const pageOwner = useRef<{ provider: typeof provider; id: string } | null>(
+    null
+  )
 
   // UI state
   const [descExpanded, setDescExpanded] = useState(false)
@@ -141,10 +144,16 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     const session = captureMetadataCache(provider)
     const current = () => active && isMetadataCacheCurrent(session)
     setError(null)
-    setDescExpanded(false)
-    setShowImageModal(false)
-    setEditOpen(false)
-    setVersionsOpen(false)
+    const changedPage =
+      pageOwner.current?.provider !== provider ||
+      pageOwner.current?.id !== albumId
+    pageOwner.current = { provider, id: albumId }
+    if (changedPage) {
+      setDescExpanded(false)
+      setShowImageModal(false)
+      setEditOpen(false)
+      setVersionsOpen(false)
+    }
 
     // Seed ALL state from persistent cache — avoids loading flash.
     const freshCache = getCachedAlbum(albumId)
@@ -153,7 +162,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
       setTracks(freshCache.tracks)
       setRelatedHubs(freshCache.relatedHubs)
       setIsLoading(false)
-    } else {
+    } else if (changedPage) {
       setAlbum(null)
       setTracks([])
       setRelatedHubs([])

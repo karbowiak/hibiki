@@ -227,6 +227,7 @@ try {
     }))
     mock.module("../../src/hooks/useColumnPicker", () => ({
       ALL_COLUMNS: [],
+      LIKED_DATE_COLUMN: { id: "liked_at", label: "Date Liked", defaultOn: true },
       usePlaylistColumns: () => ({ visible: [], toggle() {} }),
     }))
     mock.module("../../src/components/shared/TrackTable", () => ({

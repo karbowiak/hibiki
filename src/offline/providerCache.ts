@@ -163,6 +163,31 @@ export function sanitizeOfflineData(value: unknown, depth = 0): unknown {
   throw new Error("Unsupported saved browsing data")
 }
 
+/** Native JSON can reorder object fields; only values and array order matter. */
+function sameOfflineData(left: unknown, right: unknown): boolean {
+  if (left === right) return true
+  if (!left || !right || typeof left !== "object" || typeof right !== "object")
+    return false
+  if (Array.isArray(left) || Array.isArray(right))
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => sameOfflineData(value, right[index]))
+    )
+  const a = left as Record<string, unknown>,
+    b = right as Record<string, unknown>
+  const keys = Object.keys(a)
+  return (
+    keys.length === Object.keys(b).length &&
+    keys.every(
+      (key) =>
+        Object.prototype.hasOwnProperty.call(b, key) &&
+        sameOfflineData(a[key], b[key])
+    )
+  )
+}
+
 export function isUnavailable(error: unknown): boolean {
   const message =
     error instanceof Error
@@ -482,10 +507,7 @@ export function createOfflineProvider<T extends MusicProvider>(
                   check()
                   if (options.isOffline?.()) return result
                   const sanitized = sanitizeOfflineData(result)
-                  if (
-                    saved &&
-                    JSON.stringify(sanitized) !== JSON.stringify(saved.payload)
-                  )
+                  if (saved && !sameOfflineData(sanitized, saved.payload))
                     options.onRefresh?.(property, args, sanitized)
                   refreshed.delete(key)
                   refreshed.set(key, Date.now())

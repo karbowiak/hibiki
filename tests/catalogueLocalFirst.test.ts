@@ -113,6 +113,48 @@ test("unchanged sanitized metadata never creates refresh loops", async () => {
   expect(f.calls).toBe(1)
   expect(f.updates).toEqual([])
 })
+test("native JSON field ordering never turns unchanged nested metadata into refreshes", async () => {
+  const f = fixture(async () => ({
+    id: "42",
+    title: "Same",
+    media: { codec: "flac", channels: 2 },
+    tracks: [
+      { id: "1", title: "First" },
+      { id: "2", title: "Second" },
+    ],
+  }))
+  f.saved.set(offlineKey("getAlbum", ["42"]), {
+    cachedAt: 1,
+    payload: {
+      tracks: [
+        { title: "First", id: "1" },
+        { title: "Second", id: "2" },
+      ],
+      media: { channels: 2, codec: "flac" },
+      title: "Same",
+      id: "42",
+    },
+  })
+  await f.wrapped.getAlbum("42")
+  await tick()
+  expect(f.updates).toEqual([])
+})
+for (const [label, before, after] of [
+  ["track order", { tracks: ["1", "2"] }, { tracks: ["2", "1"] }],
+  ["nested value", { media: { channels: 2 } }, { media: { channels: 6 } }],
+  ["removed field", { title: "Old", summary: null }, { title: "Old" }],
+  ["null value", { summary: null }, { summary: "Updated" }],
+])
+  test(`local-first still publishes a genuine change in ${label}`, async () => {
+    const f = fixture(async () => after)
+    f.saved.set(offlineKey("getAlbum", ["42"]), {
+      cachedAt: 1,
+      payload: before,
+    })
+    await f.wrapped.getAlbum("42")
+    await tick()
+    expect(f.updates).toEqual([["getAlbum", ["42"], after]])
+  })
 test("cold misses coalesce and retired remote completions cannot publish or refresh", async () => {
   const remote = deferred<unknown>(),
     f = fixture(() => remote.promise)

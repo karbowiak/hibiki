@@ -169,7 +169,26 @@ test("failed admission retries without overwriting newer hints or losing reconne
   h.sockets[1].onopen!()
   await clock.advance(2000)
   expect(notify.mock.calls.at(-1)).toEqual([[], true])
+  expect(h.store.refreshAll).toHaveBeenCalledTimes(0)
+  expect(h.store.invalidateLibraryTTLs).toHaveBeenCalledTimes(0)
   h.manager.disconnect()
+})
+
+test("native catalogue hints wait for commits while the socket-only fallback still refreshes", async () => {
+  const clock = virtualClock(),
+    native = harness(async () => {}, clock),
+    fallback = harness(undefined, clock)
+  native.manager.connect("https://server.test", "dummy-token", 7)
+  fallback.manager.connect("https://server.test", "dummy-token", 7)
+  sendTimeline(native.sockets[0], [entry(42)])
+  sendTimeline(fallback.sockets[0], [entry(42)])
+  await clock.advance(5000)
+  expect(native.store.refreshAll).toHaveBeenCalledTimes(0)
+  expect(native.store.invalidateLibraryTTLs).toHaveBeenCalledTimes(0)
+  expect(fallback.store.refreshAll).toHaveBeenCalledTimes(1)
+  expect(fallback.store.invalidateLibraryTTLs).toHaveBeenCalledTimes(1)
+  native.manager.disconnect()
+  fallback.manager.disconnect()
 })
 
 test("large bursts are bounded batches and overflow requests authoritative catch-up", async () => {

@@ -7,7 +7,11 @@ import {
   projectOfflineAvailability,
 } from "../../offline/catalogue"
 import { useCatalogueStore } from "../../offline/catalogueStore"
-import { watchCatalogueUpdates } from "../../offline/catalogueUpdates"
+import {
+  watchCatalogueUpdates,
+  createCatalogueRefreshQueue,
+  metadataRefreshAffectsPage,
+} from "../../offline/catalogueUpdates"
 import type { MusicProvider } from "../../providers/types"
 import type { PlexRequestContext } from "./scopedApi"
 import { PlexProvider } from "./provider"
@@ -26,6 +30,7 @@ import {
   activateMetadataCache,
   disconnectMetadataCache,
   refreshMetadataCache,
+  getCachedAlbum,
 } from "../../stores/metadataCache"
 import { useSearchStore } from "../../stores/searchStore"
 import { useLibraryStore } from "../../stores/libraryStore"
@@ -45,6 +50,27 @@ import { createPlexConnectionStore } from "./connectionLifecycle"
 
 let wsManager: PlexWebSocketManager | null = null
 let stopMonitor: (() => void) | null = null
+let pageTimer: ReturnType<typeof setTimeout> | null = null
+let pageSession: unknown
+function refreshPageInBackground(session: unknown) {
+  if (useProviderStore.getState().provider?.playbackSession !== session) return
+  pageSession = session
+  if (pageTimer) return
+  pageTimer = setTimeout(() => {
+    pageTimer = null
+    if (useProviderStore.getState().provider?.playbackSession === pageSession)
+      useUIStore.getState().incrementPageRefreshKey()
+    pageSession = undefined
+  }, 1000)
+}
+if (import.meta.hot)
+  import.meta.hot.dispose(() => {
+    stopMonitor?.()
+    wsManager?.disconnect()
+    if (pageTimer) clearTimeout(pageTimer)
+    pageTimer = null
+    pageSession = undefined
+  })
 function savedProvider(
   context: PlexRequestContext,
   baseUrl: string,
@@ -92,6 +118,9 @@ export const useConnectionStore = createPlexConnectionStore({
   testServerConnection,
   startPlexAuth: plexAuthStart,
   clearSession: () => {
+    if (pageTimer) clearTimeout(pageTimer)
+    pageTimer = null
+    pageSession = undefined
     stopMonitor?.()
     stopMonitor = null
     useCatalogueStore.getState().activate(null)
@@ -147,7 +176,12 @@ export const useConnectionStore = createPlexConnectionStore({
         projectOffline: (payload) =>
           projectOfflineAvailability(requestContext, payload),
         onRefresh: (method, args, payload) => {
-          if (!owns()) return
+          if (
+            !owns() ||
+            useProviderStore.getState().provider?.playbackSession !==
+              provider.playbackSession
+          )
+            return
           useLibraryStore.getState().acceptLocalRefresh(method, args, payload)
           if (method === "search" && args[1] == null)
             useSearchStore
@@ -158,10 +192,19 @@ export const useConnectionStore = createPlexConnectionStore({
                 String(args[0]),
                 payload as import("../../types/music").MusicItem[]
               )
-          if (method === "getItemsByTag")
-            useUIStore.getState().incrementPageRefreshKey()
-          if (refreshMetadataCache(method, args, payload))
-            useUIStore.getState().incrementPageRefreshKey()
+          const changed = refreshMetadataCache(method, args, payload)
+          const path = window.location.pathname
+          const albumId = /^\/album\/([^/]+)/.exec(path)?.[1]
+          if (
+            (method === "getItemsByTag" || changed) &&
+            metadataRefreshAffectsPage(
+              method,
+              args,
+              path,
+              albumId ? getCachedAlbum(albumId)?.album._alternateIds : undefined
+            )
+          )
+            refreshPageInBackground(provider.playbackSession)
         },
         onOfflineRead: (notice) =>
           useOfflineStatusStore.getState().cached(provider.cacheScope!, notice),
@@ -210,53 +253,48 @@ export const useConnectionStore = createPlexConnectionStore({
     useCatalogueStore.getState().activate(captured)
     let retired = false,
       running = false,
-      lastStart = 0,
-      lastCatchUp = 0
-    let lastChangeRevision: number | null = null
-    const refreshCommitted = (revision: number) => {
-      if (
-        retired ||
-        !ownsRequest() ||
-        useOfflineStatusStore.getState().offlineMode ||
-        (lastChangeRevision != null && revision <= lastChangeRevision)
-      )
-        return
-      lastChangeRevision = revision
-      useLibraryStore.getState().invalidateLibraryTTLs()
-      useUIStore.getState().incrementPageRefreshKey()
-      void useLibraryStore
-        .getState()
-        .refreshAll()
-        .catch(() => {})
-      const query = useSearchStore.getState().query
-      if (query.trim())
-        void catalogueRead(
-          captured,
-          context.baseUrl,
-          offlineKey("search", [query])
-        )
-          .then((snapshot) => {
-            if (
-              !retired &&
-              ownsRequest() &&
-              snapshot &&
-              snapshot.catalogueComplete !== false
-            )
-              useSearchStore
-                .getState()
-                .acceptLocalRefresh(
-                  captured.cacheScope,
-                  provider.playbackSession,
-                  query,
-                  snapshot.payload as import("../../types/music").MusicItem[]
-                )
-          })
-          .catch(() => {})
-    }
+      lastStart = -Infinity,
+      lastCatchUp = -Infinity
+    const refreshes = createCatalogueRefreshQueue(
+      () =>
+        !retired &&
+        ownsRequest() &&
+        !useOfflineStatusStore.getState().offlineMode,
+      async () => {
+        useLibraryStore.getState().invalidateLibraryTTLs()
+        await useLibraryStore.getState().refreshAll()
+        if (retired || !ownsRequest()) return
+        refreshPageInBackground(provider.playbackSession)
+        const query = useSearchStore.getState().query
+        if (query.trim())
+          await catalogueRead(
+            captured,
+            context.baseUrl,
+            offlineKey("search", [query])
+          )
+            .then((snapshot) => {
+              if (
+                !retired &&
+                ownsRequest() &&
+                snapshot &&
+                snapshot.catalogueComplete !== false
+              )
+                useSearchStore
+                  .getState()
+                  .acceptLocalRefresh(
+                    captured.cacheScope,
+                    provider.playbackSession,
+                    query,
+                    snapshot.payload as import("../../types/music").MusicItem[]
+                  )
+            })
+            .catch(() => {})
+      }
+    )
     const stopUpdates = watchCatalogueUpdates(
       captured,
       () => !retired && ownsRequest(),
-      (update) => refreshCommitted(update.changesRevision)
+      (update) => refreshes.offer(update.changesRevision)
     )
     const startSocket = () => {
       const socket = new PlexWebSocketManager(
@@ -276,6 +314,7 @@ export const useConnectionStore = createPlexConnectionStore({
       retired = true
       clearInterval(timer)
       stopUpdates()
+      refreshes.stop()
     }
     const probe = async () => {
       if (retired || running || !ownsRequest()) return
@@ -307,16 +346,15 @@ export const useConnectionStore = createPlexConnectionStore({
         if (!retired && ownsRequest())
           useCatalogueStore.getState().update(captured, progress)
         if (progress.incremental) {
-          if (lastChangeRevision == null)
-            lastChangeRevision = progress.incremental.changesRevision
-          else refreshCommitted(progress.incremental.changesRevision)
+          refreshes.baseline(progress.incremental.changesRevision)
+          refreshes.offer(progress.incremental.changesRevision)
         }
-        if (healthy && Date.now() - lastStart > 60_000) {
-          lastStart = Date.now()
+        if (healthy && performance.now() - lastStart > 60_000) {
+          lastStart = performance.now()
           await catalogueStart(captured)
         }
-        if (healthy && Date.now() - lastCatchUp > 5 * 60_000) {
-          lastCatchUp = Date.now()
+        if (healthy && performance.now() - lastCatchUp > 5 * 60_000) {
+          lastCatchUp = performance.now()
           // Also catches missed events if WebSocket setup/reconnect is unavailable.
           wsManager?.requestCatchUp()
         }

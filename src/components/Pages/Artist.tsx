@@ -155,6 +155,9 @@ export function ArtistPage({ artistId }: { artistId: string }) {
   const [isLoading, setIsLoading] = useState(!cached)
   const [error, setError] = useState<string | null>(null)
   const [loadAttempt, setLoadAttempt] = useState(0)
+  const pageOwner = useRef<{ provider: typeof provider; id: string } | null>(
+    null
+  )
 
   // UI state
   const [bioExpanded, setBioExpanded] = useState(false)
@@ -190,11 +193,17 @@ export function ArtistPage({ artistId }: { artistId: string }) {
     const session = captureMetadataCache(provider)
     const current = () => active && isMetadataCacheCurrent(session)
     setError(null)
-    setBioExpanded(false)
-    setShowImageModal(false)
-    setEditOpen(false)
-    setVersionAlbum(null)
-    setShowHeroModal(false)
+    const changedPage =
+      pageOwner.current?.provider !== provider ||
+      pageOwner.current?.id !== artistId
+    pageOwner.current = { provider, id: artistId }
+    if (changedPage) {
+      setBioExpanded(false)
+      setShowImageModal(false)
+      setEditOpen(false)
+      setVersionAlbum(null)
+      setShowHeroModal(false)
+    }
 
     // Seed ALL state from persistent cache — avoids loading flash AND layout shift.
     // useState(initialValue) only runs on mount, so navigating between artists
@@ -210,7 +219,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
       setRelatedHubs(freshCache.relatedHubs)
       setStations(freshCache.stations)
       setIsLoading(false)
-    } else {
+    } else if (changedPage) {
       // No cache — clear stale data from previous artist, show loading spinner.
       setArtist(null)
       setFullAlbums([])

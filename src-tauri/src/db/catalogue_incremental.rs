@@ -578,7 +578,7 @@ pub fn browse_reconciled_after(conn: &Connection, scope: &str, invalidated_at: i
 }
 pub fn phase(conn: &Connection, scope: &str, phase: &str) -> Result<(), String> {
     ensure_state(conn, scope)?;
-    conn.execute("UPDATE plex_catalogue_incremental SET phase=CASE WHEN catchup_target IS NOT NULL THEN 'catchingUp' ELSE ?2 END WHERE scope=?1",params![scope,phase]).map_err(|_|"Cannot update catalogue phase")?;
+    conn.execute("UPDATE plex_catalogue_incremental SET phase=CASE WHEN ?2='updating' AND catchup_target IS NOT NULL THEN 'catchingUp' ELSE ?2 END WHERE scope=?1",params![scope,phase]).map_err(|_|"Cannot update catalogue phase")?;
     Ok(())
 }
 pub fn catchup_needed(conn: &Connection, scope: &str) -> Result<bool, String> {
@@ -653,6 +653,18 @@ mod tests {
         conn.pragma_update(None, "query_only", true).unwrap();
         assert_eq!(progress(&conn, &scope).unwrap().pending, 0);
         assert!(progress(&conn, &scope).unwrap().watermark.is_none());
+    }
+    #[test]
+    fn failed_catchup_becomes_idle_without_discarding_its_resumable_window() {
+        let (conn, scope) = fixture();
+        request_catchup(&conn, &scope).unwrap();
+        let window = catchup_begin(&conn, &scope, 2000).unwrap();
+        phase(&conn, &scope, "updating").unwrap();
+        assert_eq!(progress(&conn, &scope).unwrap().phase, "catchingUp");
+        phase(&conn, &scope, "idle").unwrap();
+        assert_eq!(progress(&conn, &scope).unwrap().phase, "idle");
+        assert!(catchup_needed(&conn, &scope).unwrap());
+        assert_eq!(catchup_begin(&conn, &scope, 3000).unwrap(), window);
     }
     #[test]
     fn browse_freshness_requires_a_new_complete_window_and_resolved_changes() {
