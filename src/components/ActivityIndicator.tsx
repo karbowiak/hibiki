@@ -10,9 +10,6 @@ import {
   IconClock,
 } from "@tabler/icons-react"
 import { useLibraryStore } from "../stores"
-import { useCatalogueStore } from "../offline/catalogueStore"
-import { catalogueRetry } from "../offline/catalogue"
-import { useOfflineStatusStore } from "../offline/statusStore"
 import { useNotificationCenterStore } from "../stores/notificationCenterStore"
 
 interface Activity {
@@ -22,21 +19,6 @@ interface Activity {
   busy?: boolean
   state?: "paused" | "error" | "complete" | "waiting"
   retry?: () => void
-}
-function phaseLabel(task: string) {
-  if (task.startsWith("catchup:")) return "Checking for changes"
-  if (task.startsWith("playlist:")) return "Playlist contents"
-  if (task.startsWith("details:")) return "Full music metadata"
-  return (
-    (
-      {
-        artist: "Artists",
-        album: "Albums",
-        track: "Tracks",
-        playlist: "Playlists",
-      } as Record<string, string>
-    )[task] ?? "Audio analysis"
-  )
 }
 export function ActivityIndicator() {
   const {
@@ -54,222 +36,23 @@ export function ActivityIndicator() {
       libraryScanProgress: s.libraryScanProgress,
     }))
   )
-  const progress = useCatalogueStore((state) => state.progress),
-    context = useCatalogueStore((state) => state.context)
-  const offline = useOfflineStatusStore((state) => state.offlineMode)
-  const [isOpen, setIsOpen] = useState(false),
-    [retrying, setRetrying] = useState(false)
+  const [isOpen, setIsOpen] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null),
     buttonRef = useRef<HTMLButtonElement>(null),
     panelId = useId()
   const [position, setPosition] = useState({ left: 0, top: 0, width: 320 })
-  const bulkTasks = progress?.tasks.filter(
-    (task) =>
-      !task.task.startsWith("catchup:") &&
-      !task.task.startsWith("analysis:") &&
-      !task.task.startsWith("playlist:")
-  )
-  const playlistFailures =
-    progress?.tasks.filter(
-      (task) => task.task.startsWith("playlist:") && task.status === "error"
-    ).length ?? 0
-  const task =
-    bulkTasks?.find((task) => task.status === "error") ??
-    bulkTasks?.find((task) => task.status !== "complete")
-  const failed = task?.status === "error"
-  const owns = () =>
-    !!context &&
-    context.connectionRevision ===
-      useCatalogueStore.getState().context?.connectionRevision &&
-    context.cacheScope === useCatalogueStore.getState().context?.cacheScope
-  async function retry() {
-    if (!context || retrying || offline) return
-    setRetrying(true)
-    try {
-      await catalogueRetry(context)
-    } catch {
-      if (owns())
-        useNotificationCenterStore.getState().notify({
-          id: "library.indexing.retry",
-          title: "Could not resume library indexing",
-          message: "Check your Plex connection and try again.",
-          severity: "warning",
-        })
-    } finally {
-      setRetrying(false)
-    }
-  }
+  // Retire notifications from the former full-library mirror. Downloads keep
+  // their own status on the affected entity; Plex scanning is still shown here.
   useEffect(() => {
     const notices = useNotificationCenterStore.getState()
-    if (!failed || !context) {
-      notices.resolve("library.indexing")
-      return
-    }
-    notices.notify({
-      id: "library.indexing",
-      title: "Library indexing paused",
-      message:
-        "Hibiki could not finish saving your library. Check your Plex connection and retry from Activity.",
-      severity: "warning",
-      persistent: true,
-    })
-  }, [failed, context?.cacheScope, context?.connectionRevision])
-  useEffect(() => {
-    const notices = useNotificationCenterStore.getState()
-    if (!playlistFailures || !context) {
-      notices.resolve("library.playlists")
-      return
-    }
-    notices.notify({
-      id: "library.playlists",
-      title: "Some playlist contents are waiting to update",
-      message:
-        "Hibiki will retry automatically. Other library indexing continues, and any previously saved playlist version stays available.",
-      severity: "warning",
-      persistent: true,
-    })
-  }, [playlistFailures, context?.cacheScope, context?.connectionRevision])
+    for (const id of [
+      "library.indexing",
+      "library.indexing.retry",
+      "library.playlists",
+    ])
+      notices.resolve(id)
+  }, [])
   const activities: Activity[] = []
-  if (progress && context && progress.tasks.length) {
-    const paused = offline || task?.status === "paused",
-      busy = !paused && !failed && !!task
-    const phase = task
-      ? `${task.scanMode === "verify" ? "Verifying playlist contents" : phaseLabel(task.task)}${task.total != null ? `: ${(task.scanMode === "verify" ? (task.keyCursor ?? 0) : task.cursor).toLocaleString()} / ${task.total.toLocaleString()}` : ""}`
-      : ""
-    activities.push({
-      id: "catalogue",
-      busy,
-      state: failed
-        ? "error"
-        : paused
-          ? "paused"
-          : busy
-            ? undefined
-            : "complete",
-      label: failed
-        ? "Library indexing needs attention"
-        : paused
-          ? "Library indexing paused"
-          : busy
-            ? "Saving your library"
-            : "Library saved on this device",
-      detail: [
-        phase,
-        `${progress.entities.toLocaleString()} items saved`,
-        progress.incremental?.watermark
-          ? `Changes last checked ${new Date(progress.incremental.watermark * 1000).toLocaleTimeString()}`
-          : null,
-      ]
-        .filter(Boolean)
-        .join("\n"),
-      retry: failed && !offline && !retrying ? () => void retry() : undefined,
-    })
-  }
-  const playlistTask = progress?.tasks.find(
-    (task) =>
-      task.task.startsWith("playlist:") &&
-      !["complete", "error"].includes(task.status)
-  )
-  if (progress && context && playlistTask) {
-    const paused = offline || playlistTask.status === "paused"
-    const verifying = playlistTask.scanMode === "verify"
-    activities.push({
-      id: "catalogue-playlist-progress",
-      label: paused
-        ? "Playlist saving paused"
-        : verifying
-          ? "Verifying playlist contents"
-          : "Saving playlist contents",
-      busy: !paused,
-      state: paused ? "paused" : undefined,
-      detail: `${verifying ? "Verifying playlist contents" : "Playlist contents"}${playlistTask.total != null ? `: ${(verifying ? (playlistTask.keyCursor ?? 0) : playlistTask.cursor).toLocaleString()} / ${playlistTask.total.toLocaleString()}` : ""}`,
-    })
-  }
-  const waveformTask = progress?.tasks.find(
-    (task) => task.task.startsWith("analysis:") && task.status !== "complete"
-  )
-  if (
-    progress &&
-    context &&
-    (waveformTask ||
-      progress.analysisPending ||
-      progress.waveforms ||
-      progress.analysisUnavailable)
-  ) {
-    const paused = offline || waveformTask?.status === "paused"
-    const failed = waveformTask?.status === "error"
-    const busy =
-      !paused && !failed && (!!waveformTask || progress.analysisPending > 0)
-    activities.push({
-      id: "catalogue-waveforms",
-      label: failed
-        ? "Waveform collection needs attention"
-        : paused
-          ? "Waveform collection paused"
-          : busy
-            ? "Saving waveforms"
-            : "Waveforms saved on this device",
-      busy,
-      state: failed
-        ? "error"
-        : paused
-          ? "paused"
-          : busy
-            ? undefined
-            : "complete",
-      detail: [
-        waveformTask?.task === "analysis:discover"
-          ? "Checking saved audio streams"
-          : null,
-        `${progress.waveforms.toLocaleString()} saved · ${progress.analysisPending.toLocaleString()} remaining`,
-        progress.analysisUnavailable
-          ? `${progress.analysisUnavailable.toLocaleString()} unavailable from Plex`
-          : null,
-      ]
-        .filter(Boolean)
-        .join("\n"),
-      retry: failed && !offline && !retrying ? () => void retry() : undefined,
-    })
-  }
-  if (context && playlistFailures) {
-    activities.push({
-      id: "catalogue-playlists",
-      busy: false,
-      state: offline ? "paused" : "error",
-      label: "Playlist contents waiting to update",
-      detail: `${playlistFailures.toLocaleString()} ${playlistFailures === 1 ? "playlist" : "playlists"} will retry automatically.\nOther indexing continues; previously saved versions stay available.`,
-      retry: !offline && !retrying ? () => void retry() : undefined,
-    })
-  }
-  const incremental = progress?.incremental
-  if (
-    context &&
-    incremental &&
-    (incremental.pending > 0 ||
-      incremental.catchUpRequested ||
-      incremental.phase !== "idle")
-  ) {
-    const catchingUp = incremental.phase === "catchingUp"
-    const busy = !offline && incremental.phase !== "idle"
-    activities.push({
-      id: "catalogue-updates",
-      busy,
-      state: offline ? "paused" : !busy ? "waiting" : undefined,
-      label: offline
-        ? "Library updates paused"
-        : !busy
-          ? "Library update scheduled"
-          : catchingUp
-            ? "Checking Plex for changes"
-            : "Updating saved metadata",
-      detail:
-        !busy && !offline
-          ? "Waiting for the next background check. Browsing and playback are ready."
-          : incremental.pending
-            ? `${incremental.pending.toLocaleString()} ${incremental.pending === 1 ? "item" : "items"} awaiting updates`
-            : "Only new or changed items are fetched.",
-    })
-  }
   if (libraryScanning)
     activities.push({
       id: "library-scan",
@@ -350,11 +133,9 @@ export function ActivityIndicator() {
         aria-controls={panelId}
         aria-haspopup="dialog"
         title={
-          failed
-            ? "Activity · library indexing needs attention"
-            : active
-              ? `${active} active operation${active === 1 ? "" : "s"}`
-              : "No active operations"
+          active
+            ? `${active} active operation${active === 1 ? "" : "s"}`
+            : "No active operations"
         }
         className={`relative flex h-8 w-8 items-center justify-center rounded-full text-[var(--text-secondary)] transition-colors hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${isOpen ? "bg-app-surface-hover" : "bg-app-surface"}`}
       >
@@ -364,12 +145,6 @@ export function ActivityIndicator() {
           className={active ? "animate-spin text-accent" : ""}
           style={active ? { animationDuration: "2s" } : undefined}
         />
-        {failed && (
-          <span
-            aria-hidden="true"
-            className="absolute right-0 top-0 h-2 w-2 rounded-full bg-amber-400"
-          />
-        )}
       </button>
       {isOpen &&
         createPortal(
@@ -428,14 +203,6 @@ export function ActivityIndicator() {
                           >
                             Retry indexing
                           </button>
-                        )}
-                        {activity.id === "catalogue" && retrying && (
-                          <p
-                            role="status"
-                            className="mt-2 text-xs text-[var(--text-secondary)]"
-                          >
-                            Resuming…
-                          </p>
                         )}
                       </div>
                     </li>

@@ -485,6 +485,9 @@ export function createMetadataCache({
       const saved = (await loading) as
         { artists?: unknown; albums?: unknown } | undefined
       if (activation !== epoch || provider !== next) return
+      // Hydrate offline pages through the saved provider's file availability
+      // projection, rather than reusing online DTOs with stale/absent flags.
+      if (next.isOffline) return
       artists = evict(
         { ...restoreArtists(saved?.artists), ...artists },
         MAX_ARTISTS

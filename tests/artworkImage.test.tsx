@@ -2,17 +2,38 @@ import { afterAll, afterEach, beforeEach, expect, test } from "bun:test"
 import { JSDOM } from "jsdom"
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
-import { ArtworkImage, useArtworkFailures } from "../src/components/shared/ArtworkImage"
+import {
+  ArtworkImage,
+  useArtworkFailures,
+} from "../src/components/shared/ArtworkImage"
 const dom = new JSDOM("<div id='root'></div>")
-const previous = { document: globalThis.document, window: globalThis.window, timeout: globalThis.setTimeout, clear: globalThis.clearTimeout, act: (globalThis as any).IS_REACT_ACT_ENVIRONMENT }
+const previous = {
+  document: globalThis.document,
+  window: globalThis.window,
+  timeout: globalThis.setTimeout,
+  clear: globalThis.clearTimeout,
+  act: (globalThis as any).IS_REACT_ACT_ENVIRONMENT,
+}
 let root: Root
 let nextId = 0
 let timers: Map<number, { run: () => void; delay: number }>
 let failed: string[]
 async function render(src = "image://localhost/album/fixture?src=fixture") {
-  await act(() => root.render(<ArtworkImage src={src} className="cover" onFailure={url => failed.push(url)} />))
+  await act(() =>
+    root.render(
+      <ArtworkImage
+        src={src}
+        className="cover"
+        onFailure={(url) => failed.push(url)}
+      />
+    )
+  )
 }
-async function error() { await act(() => document.querySelector("img")!.dispatchEvent(new dom.window.Event("error"))) }
+async function error() {
+  await act(() =>
+    document.querySelector("img")!.dispatchEvent(new dom.window.Event("error"))
+  )
+}
 async function retry() {
   const [id, timer] = [...timers][0]
   timers.delete(id)
@@ -24,12 +45,24 @@ beforeEach(() => {
   ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   timers = new Map()
   failed = []
-  globalThis.setTimeout = ((run: () => void, delay: number) => { timers.set(++nextId, { run, delay }); return nextId }) as any
+  globalThis.setTimeout = ((run: () => void, delay: number) => {
+    timers.set(++nextId, { run, delay })
+    return nextId
+  }) as any
   globalThis.clearTimeout = ((id: number) => timers.delete(id)) as any
   root = createRoot(document.getElementById("root")!)
 })
-afterEach(async () => { await act(() => root.unmount()); globalThis.setTimeout = previous.timeout; globalThis.clearTimeout = previous.clear })
-afterAll(() => { globalThis.document = previous.document; globalThis.window = previous.window; (globalThis as any).IS_REACT_ACT_ENVIRONMENT = previous.act; dom.window.close() })
+afterEach(async () => {
+  await act(() => root.unmount())
+  globalThis.setTimeout = previous.timeout
+  globalThis.clearTimeout = previous.clear
+})
+afterAll(() => {
+  globalThis.document = previous.document
+  globalThis.window = previous.window
+  ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = previous.act
+  dom.window.close()
+})
 test("gallery art loads lazily and retries admission failure twice before failing over", async () => {
   await render()
   expect(document.querySelector("img")!.getAttribute("loading")).toBe("lazy")
@@ -62,7 +95,9 @@ test("source change cancels the old retry and restores its own retry budget", as
 test("failed-source state resets synchronously when an entity or Plex scope changes", async () => {
   function Harness({ scope }: { scope: string }) {
     const { failures, onFailure } = useArtworkFailures(scope)
-    return <button onClick={() => onFailure("broken")}>{failures.join(",")}</button>
+    return (
+      <button onClick={() => onFailure("broken")}>{failures.join(",")}</button>
+    )
   }
   await act(() => root.render(<Harness scope="account-one:album" />))
   await act(() => document.querySelector("button")!.click())
@@ -75,7 +110,9 @@ test("a successful load cancels an already scheduled retry", async () => {
   await error()
   expect(timers.size).toBe(1)
   expect(document.querySelector("img")!.style.visibility).toBe("hidden")
-  await act(() => document.querySelector("img")!.dispatchEvent(new dom.window.Event("load")))
+  await act(() =>
+    document.querySelector("img")!.dispatchEvent(new dom.window.Event("load"))
+  )
   expect(document.querySelector("img")!.style.visibility).toBe("")
   expect(timers.size).toBe(0)
   expect(failed).toEqual([])
@@ -85,10 +122,51 @@ test("hidden banner detectors remain hidden after retry exhaustion", async () =>
   style.textContent = ".block { display: block; } .hidden { display: none; }"
   document.head.append(style)
   try {
-    await act(() => root.render(<ArtworkImage src="banner" className="hidden" loading="eager" />))
-    await error(); await retry(); await error(); await retry(); await error()
+    await act(() =>
+      root.render(
+        <ArtworkImage src="banner" className="hidden" loading="eager" />
+      )
+    )
+    await error()
+    await retry()
+    await error()
+    await retry()
+    await error()
     const placeholder = document.querySelector("span")!
     expect(dom.window.getComputedStyle(placeholder).display).toBe("none")
     expect(placeholder.style.display).toBe("")
-  } finally { style.remove() }
+  } finally {
+    style.remove()
+  }
+})
+
+test("persistent artwork recovers after exhaustion when connectivity returns", async () => {
+  await act(() => root.render(<ArtworkImage src="sidebar" loading="eager" />))
+  await error()
+  await retry()
+  await error()
+  await retry()
+  await error()
+  expect(document.querySelector("img")).toBeNull()
+  expect([...timers.values()][0].delay).toBe(60_000)
+  await act(() => window.dispatchEvent(new dom.window.Event("online")))
+  expect(document.querySelector("img")!.getAttribute("src")).toBe("sidebar")
+  expect(timers.size).toBe(0)
+  await error()
+  await retry()
+  await error()
+  await retry()
+  await error()
+  expect([...timers.values()][0].delay).toBe(120_000)
+  await retry()
+  expect(document.querySelector("img")).not.toBeNull()
+  await act(() =>
+    document.querySelector("img")!.dispatchEvent(new dom.window.Event("load"))
+  )
+  await error()
+  await retry()
+  await error()
+  await retry()
+  await error()
+  expect([...timers.values()][0].delay).toBe(60_000)
 })

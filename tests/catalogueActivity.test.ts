@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { resolve } from "node:path"
-test("library progress lives in Activity; errors use notifications and offline retries stay blocked", async () => {
+test("retired mirror progress never appears or runs; actual Plex scanning remains visible", async () => {
   const child = Bun.spawn(
     [process.execPath, "tests/fixtures/catalogueActivity.tsx"],
     { cwd: resolve(import.meta.dir, ".."), stdout: "pipe", stderr: "pipe" }

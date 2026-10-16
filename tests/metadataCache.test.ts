@@ -356,3 +356,12 @@ test("album core does not wait for related hubs and late enrichment cannot cross
   expect(await page).toBeInstanceOf(MetadataRequestSuperseded)
   expect(h.cache.getAlbum("quick")).toBeUndefined()
 })
+
+test("offline activation never restores online detail DTOs without file availability", async () => {
+  const h = harness({ getArtist: async (id) => artist(id, "Online") })
+  await h.activate()
+  await h.cache.loadArtist("same")
+  await h.switchTo("account-a", {isOffline:true,getArtist:async (id) => ({...artist(id,"Offline"),offlineAvailable:true})})
+  expect(h.cache.getArtist("same")).toBeUndefined()
+  expect((await h.cache.loadArtist("same")).artist.offlineAvailable).toBe(true)
+})

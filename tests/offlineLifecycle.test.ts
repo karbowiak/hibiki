@@ -126,3 +126,28 @@ test("saved-only provider returns exact cached model pages, blocks writes/playba
   await expect(provider.getAlbum("1")).rejects.toThrow("superseded")
   expect(requests).toHaveLength(2)
 })
+
+test("saved library preserves Hibiki-owned favorite reads and writes without enabling Plex edits", async () => {
+  const writes: unknown[] = []
+  const favorites = {
+    load: async () => ({ revision: 1 }),
+    save: async (...args: unknown[]) => {
+      writes.push(args)
+      return 2
+    },
+  } as any
+  const provider = createSavedLibraryProvider(
+    context(1).cacheScope,
+    { get: async () => null, put: async () => {} },
+    () => true,
+    undefined,
+    favorites
+  )
+  expect((await provider.favorites!.load()).revision).toBe(1)
+  expect(await provider.favorites!.save(1, {} as any, [])).toBe(2)
+  expect(writes).toHaveLength(1)
+  expect(provider.capabilities.playlistEdit).toBe(false)
+  await expect(provider.editPlaylist("1", {} as any)).rejects.toThrow(
+    "Reconnect"
+  )
+})

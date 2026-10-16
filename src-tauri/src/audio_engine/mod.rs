@@ -465,11 +465,6 @@ impl AudioEngine {
             .map_err(|_| "audio callback is unavailable".into())
     }
 
-    /// Access the audio file cache.
-    pub(crate) fn background_indexing_delay(&self) -> bool {
-        matches!(self.atomics.get_state(), types::EngineState::Playing | types::EngineState::Buffering)
-    }
-
     pub(crate) fn normalization_enabled(&self)->bool {
         self.atomics.normalization_is_enabled()
     }

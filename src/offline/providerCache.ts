@@ -458,6 +458,44 @@ export function createOfflineProvider<T extends MusicProvider>(
         }
       }
       const localFirst = async (...args: unknown[]) => {
+        if (options.isOffline?.()) {
+          const current = () =>
+            target.cacheScope === initialScope &&
+            target.playbackSession === initialSession &&
+            (options.owns?.() ?? true)
+          const check = () => {
+            if (!current())
+              throw new Error("Saved library request was superseded")
+          }
+          check()
+          const local =
+            options.offlineProvider &&
+            Reflect.get(options.offlineProvider, property)
+          if (typeof local === "function") {
+            const result = await local(...args)
+            check()
+            return result
+          }
+          await invalidations
+          check()
+          const key = offlineKey(property, args),
+            epoch = cacheEpoch
+          const saved = fallbackSafe ? await cache.get(key) : null
+          check()
+          if (!saved || epoch !== cacheEpoch)
+            throw new Error(
+              "This content is not saved locally. Reconnect to Plex to load it."
+            )
+          const payload = structuredClone(saved.payload)
+          const result = options.projectOffline
+            ? await options.projectOffline(payload)
+            : payload
+          check()
+          if (epoch !== cacheEpoch)
+            throw new Error("Saved library request was superseded")
+          options.onOfflineRead?.({ key, cachedAt: saved.cachedAt })
+          return result
+        }
         if (!target.cacheScope || !options.localFirst) return wrapped(...args)
         const timing = startTiming(property)
         try {

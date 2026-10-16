@@ -495,3 +495,42 @@ test("fresh sync reads retire delayed scope/session/owner completions without sa
     await expect(read).rejects.toThrow("superseded")
   }
 })
+
+test("Plex-first browsing bypasses persistent reads online and delegates locally while offline", async () => {
+  const calls: string[] = []
+  let offline = false
+  const provider = {
+    cacheScope: "scope",
+    playbackSession: {},
+    getAlbum: async () => {
+      calls.push("plex")
+      return { id: "1", title: "Fresh" }
+    },
+  } as any
+  const wrapped = createOfflineProvider(
+    provider,
+    {
+      get: async () => {
+        calls.push("cache-read")
+        return { payload: { title: "Stale" }, cachedAt: 1 }
+      },
+      put: async () => {
+        calls.push("snapshot-write")
+      },
+    },
+    {
+      isOffline: () => offline,
+      offlineProvider: {
+        getAlbum: async () => {
+          calls.push("offline")
+          return { id: "1", title: "Downloaded" }
+        },
+      } as any,
+    }
+  )
+  expect((await wrapped.getAlbum("1")).title).toBe("Fresh")
+  expect(calls).not.toContain("cache-read")
+  offline = true
+  expect((await wrapped.getAlbum("1")).title).toBe("Downloaded")
+  expect(calls.filter((c) => c === "plex")).toHaveLength(1)
+})

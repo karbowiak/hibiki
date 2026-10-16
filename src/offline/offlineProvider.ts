@@ -20,7 +20,8 @@ export function createSavedLibraryProvider(
     ): Promise<LocalAudioPage>
     remove(id: string): Promise<void>
     levels?(id: string): Promise<import("../providers/types").LevelData[]>
-  }
+  },
+  favorites?: MusicProvider["favorites"]
 ): MusicProvider {
   const session = Object.freeze({})
   const reads = new Set([
@@ -91,6 +92,7 @@ export function createSavedLibraryProvider(
   const target = {
     name: "Plex (saved library)",
     cacheScope,
+    favorites,
     playbackSession: session,
     isOffline: true,
     capabilities: {

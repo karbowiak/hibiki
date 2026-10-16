@@ -1,26 +1,20 @@
 import {
-  catalogueStart,
   catalogueHealth,
-  catalogueProgress,
-  catalogueNotify,
-  catalogueRead,
   projectOfflineAvailability,
 } from "../../offline/catalogue"
 import { useCatalogueStore } from "../../offline/catalogueStore"
-import {
-  watchCatalogueUpdates,
-  createCatalogueRefreshQueue,
-  metadataRefreshAffectsPage,
-} from "../../offline/catalogueUpdates"
+import { createCatalogueRefreshQueue } from "../../offline/catalogueUpdates"
 import type { MusicProvider } from "../../providers/types"
 import type { PlexRequestContext } from "./scopedApi"
 import { PlexProvider } from "./provider"
 import { useOfflineStatusStore } from "../../offline/statusStore"
 import { createOfflineProvider } from "../../offline/providerCache"
-import { offlineKey } from "../../offline/providerCache"
 import { createSavedLibraryProvider } from "../../offline/offlineProvider"
 import { createPlexApi } from "./scopedApi"
 import { localAudioTrack } from "../../offline/audio"
+import { createFavoritesNative } from "../../favorites/native"
+import { plexTrackToMusicTrack } from "./mappers"
+import { buildPlexImageUrl } from "./imageUrl"
 import {
   createNativeOfflineCache,
   restoreOfflineContext,
@@ -29,10 +23,10 @@ import { useProviderStore } from "../../stores/providerStore"
 import {
   activateMetadataCache,
   disconnectMetadataCache,
-  refreshMetadataCache,
+  clearMetadataCache,
+  invalidateMetadataItem,
   getCachedAlbum,
 } from "../../stores/metadataCache"
-import { useSearchStore } from "../../stores/searchStore"
 import { useLibraryStore } from "../../stores/libraryStore"
 import { useUIStore } from "../../stores/uiStore"
 import { useContextMenuStore } from "../../stores/contextMenuStore"
@@ -74,7 +68,8 @@ if (import.meta.hot)
 function savedProvider(
   context: PlexRequestContext,
   baseUrl: string,
-  owns: () => boolean
+  owns: () => boolean,
+  sectionId: number
 ): MusicProvider {
   const native = createNativeOfflineCache(context, baseUrl)
   const cache = {
@@ -89,25 +84,52 @@ function savedProvider(
   const audio = createPlexApi(context, undefined, owns)
   const project = (track: import("../../types/music").MusicTrack) =>
     localAudioTrack(track, baseUrl, context.cacheScope)
-  return createSavedLibraryProvider(context.cacheScope, cache, owns, {
-    track: async (id) => {
-      const track = await audio.localTrack(Number(id))
-      return track ? project(track) : null
+  return createSavedLibraryProvider(
+    context.cacheScope,
+    cache,
+    owns,
+    {
+      track: async (id) => {
+        const track = await audio.localTrack(Number(id))
+        return track ? project(track) : null
+      },
+      playback: (id) => audio.prepareTrackAudio(Number(id), true),
+      list: async (offset, limit, cached) => {
+        const page = await audio.localAudio(offset, limit, cached)
+        return {
+          ...page,
+          items: page.items.map((item) => ({
+            ...item,
+            track: item.track ? project(item.track) : null,
+          })),
+        }
+      },
+      remove: (id) => audio.removeDownload(Number(id)),
+      levels: (id) => audio.trackLevels(Number(id), true),
     },
-    playback: (id) => audio.prepareTrackAudio(Number(id), true),
-    list: async (offset, limit, cached) => {
-      const page = await audio.localAudio(offset, limit, cached)
-      return {
-        ...page,
-        items: page.items.map((item) => ({
-          ...item,
-          track: item.track ? project(item.track) : null,
-        })),
-      }
-    },
-    remove: (id) => audio.removeDownload(Number(id)),
-    levels: (id) => audio.trackLevels(Number(id), true),
-  })
+    createFavoritesNative(context, sectionId, undefined, owns, async (rows) => {
+      const tracks = rows.map((row) =>
+        plexTrackToMusicTrack(
+          row,
+          (path, type, id, name, artist) =>
+            buildPlexImageUrl(
+              baseUrl,
+              "native-owned",
+              type,
+              id,
+              path,
+              name,
+              artist,
+              context.cacheScope
+            ) ?? ""
+        )
+      )
+      return (await projectOfflineAvailability(
+        context,
+        tracks
+      )) as import("../../types/music").MusicTrack[]
+    })
+  )
 }
 
 export const useConnectionStore = createPlexConnectionStore({
@@ -162,50 +184,23 @@ export const useConnectionStore = createPlexConnectionStore({
     const owns = () =>
       provider.isConnected() &&
       provider.cacheScope === requestContext.cacheScope
-    const local = savedProvider(requestContext, context.baseUrl, owns)
+    const local = savedProvider(
+      requestContext,
+      context.baseUrl,
+      owns,
+      Number(section.key)
+    )
     return createOfflineProvider(
       provider,
-      createNativeOfflineCache(requestContext, context.baseUrl),
+      createNativeOfflineCache(requestContext),
       {
         owns,
-        localFirst: true,
         isOffline: () =>
           useOfflineStatusStore.getState().scope === provider.cacheScope &&
           useOfflineStatusStore.getState().offlineMode,
         offlineProvider: local,
         projectOffline: (payload) =>
           projectOfflineAvailability(requestContext, payload),
-        onRefresh: (method, args, payload) => {
-          if (
-            !owns() ||
-            useProviderStore.getState().provider?.playbackSession !==
-              provider.playbackSession
-          )
-            return
-          useLibraryStore.getState().acceptLocalRefresh(method, args, payload)
-          if (method === "search" && args[1] == null)
-            useSearchStore
-              .getState()
-              .acceptLocalRefresh(
-                provider.cacheScope!,
-                provider.playbackSession,
-                String(args[0]),
-                payload as import("../../types/music").MusicItem[]
-              )
-          const changed = refreshMetadataCache(method, args, payload)
-          const path = window.location.pathname
-          const albumId = /^\/album\/([^/]+)/.exec(path)?.[1]
-          if (
-            (method === "getItemsByTag" || changed) &&
-            metadataRefreshAffectsPage(
-              method,
-              args,
-              path,
-              albumId ? getCachedAlbum(albumId)?.album._alternateIds : undefined
-            )
-          )
-            refreshPageInBackground(provider.playbackSession)
-        },
         onOfflineRead: (notice) =>
           useOfflineStatusStore.getState().cached(provider.cacheScope!, notice),
         onOnlineRead: (key) =>
@@ -220,13 +215,12 @@ export const useConnectionStore = createPlexConnectionStore({
       cacheScope: context.cacheScope,
     }
     useCatalogueStore.getState().activate(captured)
-    void catalogueProgress(captured)
-      .then((progress) => {
-        if (ownsRequest())
-          useCatalogueStore.getState().update(captured, progress)
-      })
-      .catch(() => {})
-    const provider = savedProvider(captured, context.baseUrl, ownsRequest)
+    const provider = savedProvider(
+      captured,
+      context.baseUrl,
+      ownsRequest,
+      context.sectionId
+    )
     await Promise.all([
       useLibraryStore.getState().activateProvider(provider),
       activateMetadataCache(provider),
@@ -253,8 +247,7 @@ export const useConnectionStore = createPlexConnectionStore({
     useCatalogueStore.getState().activate(captured)
     let retired = false,
       running = false,
-      lastStart = -Infinity,
-      lastCatchUp = -Infinity
+      revision = 0
     const refreshes = createCatalogueRefreshQueue(
       () =>
         !retired &&
@@ -263,46 +256,34 @@ export const useConnectionStore = createPlexConnectionStore({
       async () => {
         useLibraryStore.getState().invalidateLibraryTTLs()
         await useLibraryStore.getState().refreshAll()
-        if (retired || !ownsRequest()) return
-        refreshPageInBackground(provider.playbackSession)
-        const query = useSearchStore.getState().query
-        if (query.trim())
-          await catalogueRead(
-            captured,
-            context.baseUrl,
-            offlineKey("search", [query])
-          )
-            .then((snapshot) => {
-              if (
-                !retired &&
-                ownsRequest() &&
-                snapshot &&
-                snapshot.catalogueComplete !== false
-              )
-                useSearchStore
-                  .getState()
-                  .acceptLocalRefresh(
-                    captured.cacheScope,
-                    provider.playbackSession,
-                    query,
-                    snapshot.payload as import("../../types/music").MusicItem[]
-                  )
-            })
-            .catch(() => {})
+        // Shelf refreshes must not remount the current detail page, search
+        // results or editor whenever unrelated music is added to Plex.
       }
-    )
-    const stopUpdates = watchCatalogueUpdates(
-      captured,
-      () => !retired && ownsRequest(),
-      (update) => refreshes.offer(update.changesRevision)
     )
     const startSocket = () => {
       const socket = new PlexWebSocketManager(
         undefined,
         undefined,
-        async (changes, catchUp) => {
+        async (changes) => {
           if (retired || !ownsRequest()) return
-          await catalogueNotify(captured, changes, catchUp)
+          for (const change of changes) {
+            const kind =
+              change.type === 8 ? "artist" : change.type === 9 ? "album" : null
+            if (!kind) continue
+            const id = String(change.id)
+            const path = window.location.pathname
+            const album = /^\/album\/([^/]+)/.exec(path)?.[1]
+            const affectsPage =
+              path === `/${kind}/${id}` ||
+              (kind === "album" &&
+                !!album &&
+                getCachedAlbum(album)?.album._alternateIds?.includes(id))
+            invalidateMetadataItem(kind, id)
+            if (affectsPage) refreshPageInBackground(provider.playbackSession)
+          }
+          // Plex events invalidate the small in-memory browse caches. They no
+          // longer schedule a mirror, catch-up census or waveform crawl.
+          refreshes.offer(++revision)
         }
       )
       socket.connect(context.baseUrl, context.token, section.key)
@@ -313,7 +294,6 @@ export const useConnectionStore = createPlexConnectionStore({
     stopMonitor = () => {
       retired = true
       clearInterval(timer)
-      stopUpdates()
       refreshes.stop()
     }
     const probe = async () => {
@@ -332,6 +312,7 @@ export const useConnectionStore = createPlexConnectionStore({
           // Same playback owner/session survives network loss; consumers receive
           // reactive capabilities and availability while active audio continues.
           useProviderStore.getState().setProvider(provider)
+          clearMetadataCache()
           useLibraryStore.getState().invalidateCache()
           useUIStore.getState().incrementPageRefreshKey()
           if (!healthy) {
@@ -341,22 +322,6 @@ export const useConnectionStore = createPlexConnectionStore({
             wsManager = startSocket()
             void provider.resumeDownloads?.().catch(() => {})
           }
-        }
-        const progress = await catalogueProgress(captured)
-        if (!retired && ownsRequest())
-          useCatalogueStore.getState().update(captured, progress)
-        if (progress.incremental) {
-          refreshes.baseline(progress.incremental.changesRevision)
-          refreshes.offer(progress.incremental.changesRevision)
-        }
-        if (healthy && performance.now() - lastStart > 60_000) {
-          lastStart = performance.now()
-          await catalogueStart(captured)
-        }
-        if (healthy && performance.now() - lastCatchUp > 5 * 60_000) {
-          lastCatchUp = performance.now()
-          // Also catches missed events if WebSocket setup/reconnect is unavailable.
-          wsManager?.requestCatchUp()
         }
       } catch {
         /* A retired native revision cannot alter availability. */

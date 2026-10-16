@@ -325,6 +325,17 @@ pub async fn connect_plex(
         .get_all_sections()
         .await
         .map_err(|_| "Plex authentication or library access failed".to_string())?;
+    let known = crate::plex::load_settings(&config_dir).map_err(|_| "Cannot read saved Plex endpoints")?;
+    let mut endpoints = known.all_urls;
+    endpoints.push(known.base_url);
+    let libraries = sections.iter().map(|section|(section.key,section.uuid.clone())).collect::<Vec<_>>();
+    let mut restored = client.clone();
+    let db = app.state::<crate::db::DbState>();
+    client = db.read(move |conn| {
+        crate::plex::cache_scope::restore_endpoint_aliases(&mut restored,conn,&libraries,&endpoints)?;
+        Ok(restored)
+    }).await?;
+    if !state.is_current(revision) { return Err("Plex connection was superseded".into()); }
     let machine_identifier = client.machine_identifier.clone();
     let cache_scopes = sections
         .iter()
@@ -450,28 +461,12 @@ pub async fn get_section_tags(
 pub async fn get_track(
     context: PlexRequestContext,
     rating_key: i64,
-    app: tauri::AppHandle,
     state: State<'_, PlexState>,
 ) -> Result<Track, String> {
     let c = client!(state, context);
-    let observed_at = crate::db::catalogue::now();
-    let (track,raw) = c.get_track_document(rating_key).await.map_err(|e| format!("{e:#}"))?;
+    let track = c.get_track(rating_key).await.map_err(|e| format!("{e:#}"))?;
     let guard = state.0.lock().await;
-    state.checked_client(&context,&guard)?;
-    if track.library_section_id == crate::offline_audio::library_id(&app,&c)? {
-        // Optional archival cannot delay fresh playback metadata or monopolize
-        // native admission. A newer listing/event publication wins this race.
-        tauri::async_runtime::spawn(async move {
-            let _ = crate::offline_commands::owned_write(&app, &context, true, move |conn, scope| {
-                crate::db::atomic_upsert(conn, |conn| {
-                    if crate::db::catalogue::save_observation(conn, scope, "track", rating_key, &raw, observed_at)? {
-                        crate::catalogue_commands::discover_media(conn, &c, rating_key, &raw, None)?;
-                    }
-                    Ok(())
-                })
-            }).await;
-        });
-    }
+    state.checked_client(&context, &guard)?;
     Ok(track)
 }
 
@@ -708,31 +703,11 @@ pub async fn get_playlists(
     context: PlexRequestContext,
     section_id: i64,
     state: State<'_, PlexState>,
-    db: State<'_, crate::db::DbState>,
 ) -> Result<Vec<Playlist>, String> {
     let c = client!(state, context);
-    let mut playlists = c
-        .list_playlists(section_id, None)
-        .await
-        .map_err(|e| format!("{:#}", e))?;
-    let scope = context.cache_scope.clone();
-    let ids = playlists.iter().map(|p| p.rating_key).collect::<Vec<_>>();
-    // Plex smart-playlist leafCount can lag behind its actual item endpoint.
-    // Use the same fresh verified totals as local browsing, also after an
-    // online refresh. Failure of this optional read preserves the Plex result.
-    let counts = db
-        .read(move |conn| {
-            crate::db::catalogue_query::published_playlist_counts(conn, &scope, &ids)
-        })
-        .await
-        .unwrap_or_default();
+    let playlists = c.list_playlists(section_id, None).await.map_err(|e| format!("{e:#}"))?;
     let guard = state.0.lock().await;
     state.checked_client(&context, &guard)?;
-    for playlist in &mut playlists {
-        if let Some((count, _)) = counts.get(&playlist.rating_key) {
-            playlist.leaf_count = *count;
-        }
-    }
     Ok(playlists)
 }
 

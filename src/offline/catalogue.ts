@@ -43,20 +43,9 @@ export interface CatalogueChange {
   type: 8 | 9 | 10 | 15
   state: 0 | 1 | 5 | 9
 }
-/** Events are hints; native code verifies identity and reads authoritative Plex data. */
-export const catalogueNotify = (
-  context: PlexRequestContext,
-  changes: CatalogueChange[],
-  catchUp = false
-) => invoke<void>("catalogue_notify", { context, changes, catchUp })
-export const catalogueStart = (context: PlexRequestContext) =>
-  invoke<void>("catalogue_start", { context })
+/** Connectivity only: this does not start a catalogue or analysis worker. */
 export const catalogueHealth = (context: PlexRequestContext) =>
   invoke<boolean>("catalogue_health", { context })
-export const catalogueProgress = (context: PlexRequestContext) =>
-  invoke<CatalogueProgress>("catalogue_progress", { context })
-export const catalogueRetry = (context: PlexRequestContext, reset = false) =>
-  invoke<void>("catalogue_retry", { context, reset })
 export async function catalogueRead(
   context: PlexRequestContext,
   baseUrl: string,

@@ -109,6 +109,8 @@ pub struct PlexClient {
     pub client_id: String,
     pub machine_identifier: String,
     pub library_scope: String,
+    /// Verified endpoint aliases share an existing account/library cache owner.
+    pub(crate) scope_bases: std::collections::BTreeMap<String, String>,
     /// Restored cached-library contexts must never dispatch server requests.
     pub offline_only: bool,
     pub client: ClientWithMiddleware,
@@ -262,6 +264,7 @@ impl PlexClient {
             client_id: config.client_id,
             machine_identifier: String::new(),
             library_scope: String::new(),
+            scope_bases: Default::default(),
             offline_only: false,
             client,
             media_client,
@@ -615,7 +618,8 @@ impl PlexClient {
     pub fn cache_scope_for_library(&self, id: i64, uuid: Option<&str>) -> String {
         let library = uuid.filter(|value| !value.is_empty())
             .map(str::to_string).unwrap_or_else(|| id.to_string());
-        super::cache_scope::library_scope(&self.machine_identifier, &self.token, &library, &self.base_url)
+        super::cache_scope::library_scope(&self.machine_identifier, &self.token, &library,
+            self.scope_bases.get(&library).unwrap_or(&self.base_url))
     }
 
     pub fn base_url(&self) -> &str {

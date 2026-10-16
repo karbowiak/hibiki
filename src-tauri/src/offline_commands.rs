@@ -120,16 +120,9 @@ pub async fn offline_cache_invalidate(
     let guard = state.0.lock().await;
     state.checked_client(&context, &guard)?;
     drop(guard);
-    owned_write(&app, &context, true, move |conn, scope| crate::db::atomic_upsert(conn, |conn| {
-    offline::invalidate(conn, scope, &prefixes)?;
-    for prefix in &prefixes {
-        if let Some(method)=prefix.split('"').nth(3) {
-            conn.execute("INSERT INTO plex_catalogue_invalidations(scope,method,invalidated_at) VALUES(?1,?2,?3) ON CONFLICT(scope,method) DO UPDATE SET invalidated_at=excluded.invalidated_at",rusqlite::params![scope,method,now()?]).map_err(|_|"Cannot invalidate catalogue")?;
-        }
-    }
-    crate::db::catalogue_incremental::request_catchup(conn, scope)?;
-    Ok(())
-    })).await
+    owned_write(&app, &context, true, move |conn, scope| {
+        offline::invalidate(conn, scope, &prefixes)
+    }).await
 }
 
 #[tauri::command]
@@ -213,11 +206,15 @@ async fn restore_saved(
     }
     let settings = crate::plex::load_settings(directory)
         .map_err(|_| "Cannot read the saved Plex connection")?;
-    let client = saved_client(&settings)?;
+    let mut client = saved_client(&settings)?;
     {
         let conn =
             db.0.lock()
                 .map_err(|_| "Saved browsing storage is unavailable")?;
+        let mut endpoints = settings.all_urls.clone();
+        endpoints.push(settings.base_url.clone());
+        crate::plex::cache_scope::restore_endpoint_aliases(&mut client,&conn,&[(settings.section_id,Some(settings.section_uuid.clone()))],&endpoints)?;
+        client.library_scope = client.cache_scope_for_library(settings.section_id,Some(&settings.section_uuid));
         let audio_tracks: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM local_audio WHERE scope=?1",
@@ -242,7 +239,9 @@ async fn restore_saved(
     // A settings edit/logout during restoration cannot resurrect an older account.
     let latest = crate::plex::load_settings(directory)
         .map_err(|_| "Cannot read the saved Plex connection")?;
-    if saved_client(&latest)?.library_scope != client.library_scope {
+    let mut latest_client = saved_client(&latest)?;
+    latest_client.scope_bases = client.scope_bases.clone();
+    if latest_client.cache_scope_for_library(latest.section_id,Some(&latest.section_uuid)) != client.library_scope {
         return Err("The saved Plex music library changed. Try again.".into());
     }
     let response = OfflineContext {

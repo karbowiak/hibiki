@@ -645,3 +645,49 @@ and the production frontend build passed. Native computer use is working again:
 the exact development app was inspected during real playback, with the same
 waveform retaining its geometry as the clock advanced. The frontend update is
 live through Vite without restarting playback. No push, tag or release occurred.
+
+
+## Plex-first browsing and focused offline storage (2026-10-16)
+
+Connected reads now use Plex and bounded visited-page snapshots (32 MiB per
+scope, 128 MiB globally), alongside existing in-memory navigation caches. Removed
+the full native catalogue, playlist-membership and waveform workers, IPC start/
+retry/event entry points and catalogue Activity notices. Plex events refresh
+shelves and invalidate relevant details without restarting unrelated pages.
+
+Offline storage retains explicit entity membership, complete cached/downloaded
+audio metadata, exact waveform/media revisions, requested sonic responses and
+favorite references. Favorites and chronology, provider/artwork choices, sync
+receipts/settings and audio intentions are preserved. Missing favorite metadata
+loads in bounded Plex batches. Offline activation reprojects file availability
+instead of restoring online UI flags, and retains local favorites access. Known
+endpoint aliases recover an existing scope only with the same credential,
+server identity and library UUID; they do not merge accounts or libraries.
+
+Sidebar download icons now mean an explicit playlist download intention.
+Shared cached tracks no longer produce partial/error badges on other playlists.
+Persistent artwork retries after connectivity/focus recovery with bounded
+backoff. Detailed download failures remain on the entity page.
+
+The stopped development database was fully backed up and reduced from
+17,660,665,856 to 148,545,536 bytes. Protected-table checksums and every retained
+raw metadata/analysis/playlist row matched the backup; quick_check passed.
+Preserved 5,698 favorite records and 83 explicit download entities. Subsequent
+playback naturally adds small working-set records. The full private backup is
+retained outside the repository. scripts/compact-local-library.py supplies the
+same transactional, backup-verified maintenance for V12 development databases.
+
+Validation: 1,002 frontend tests, 702 native unit tests (10 ignored, 73 live
+integration tests excluded), both TypeScript projects and production frontend
+build pass. Native online QA opened the small ❤️ Tracks playlist and started
+playback in about a second; progress advanced and sidebar artwork rendered.
+Activity showed the server's actual Plex scan rather than Hibiki indexing.
+Picard-style metadata editing is documented as a deferred, opt-in workspace.
+No push, tag or release.
+
+Native offline readback also passed after the final build: Browse offline showed
+the Plex-unavailable banner, ❤️ Tracks retained its explicit download badge,
+its Play action worked, local audio advanced from 0 to 10 seconds, and Liked
+Songs remained available. Endpoint fallback initially exposed an existing
+credential/server/library-equivalent scope split; the verified alias resolver
+now recovers the original downloads/favorites owner without merging accounts.

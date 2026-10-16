@@ -3,9 +3,40 @@
 Hibiki keeps Plex as the library and playback backend. Metadata sources enrich
 that library; they do not rename its items or create library entries automatically.
 
+## Browsing and storage
+
+Connected browsing reads Plex directly. Native browsing snapshots cover visited
+pages only, bounded to 32 MiB per account/library and 128 MiB globally, with a
+1 MiB per-page cap. They provide offline fallback rather than a second library.
+The existing memory caches still coalesce requests and speed up navigation.
+Plex events invalidate affected details and refresh shelves without a native
+catalogue scan or unrelated page remount. The connectivity probe gates remote
+writes and enables the offline banner/cached-audio availability checks.
+
+Full-library artist/album/track, playlist-membership and waveform crawls have
+been retired. Private native track documents and exact analysis follow explicit
+downloads, existing audio cache files and a small recent audio working set.
+Favorite references keep their own metadata; missing favorites are hydrated in
+bounded batches from Plex. Favorites and timestamps, sync receipts/settings,
+artwork choices and provider bindings remain Hibiki-owned and are not pruned.
+Offline Plex edits remain blocked. Known Plex endpoint aliases reuse an existing
+scope only when its hash proves the same server, credential and library UUID.
+Changing accounts/credentials or libraries still selects a distinct scope; full
+stable user identity and credential-renewal migration remain future work.
+
+For pre-0.6 development databases, stop Hibiki and run
+`python3 scripts/compact-local-library.py --db <private-db-path>` to make a
+verified full backup, retire the old mirror and reclaim its SQLite pages.
+The tool checks protected data and surviving raw documents against the backup;
+it never removes audio files. Normal reconnect maintenance then bounds evicted
+audio metadata and retires unrelated analysis without fetching music metadata.
+
+A future Picard-style editor is an optional, explicitly selected metadata
+workspace. It is deferred and does not justify an always-on full-library mirror.
+
 ## Local Plex track data
 
-Full track lookups and download preparation retain the complete native Plex
+Audio preparation and downloads retain the complete native Plex
 document: every media/part/stream, server path, GUID, tag, analysis field and
 unknown field. Authentication is excluded, and this archive stays in the private
 account/server/library-scoped SQLite database. Renderer browsing DTOs are separate.

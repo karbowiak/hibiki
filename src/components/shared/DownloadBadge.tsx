@@ -36,35 +36,41 @@ export function DownloadBadge({
   kind,
   id,
   className = "",
+  intentOnly = false,
 }: {
   kind: DownloadKind
   id: string
+  intentOnly?: boolean
   className?: string
 }) {
   const offline = useProviderStore((state) => state.provider?.isOffline)
   const status = useEntityDownloadStatus(kind, id),
     label = status ? downloadLabel(status, offline) : null
-  if (!status || !label) return null
-  const Icon = status.pending
-    ? offline
-      ? IconPlayerPause
-      : IconLoader2
-    : status.failed && status.downloaded < status.total
-      ? IconAlertCircle
-      : status.known && status.total > 0 && status.downloaded === status.total
-        ? IconDownload
-        : IconCircleDashed
+  if (!status || !label || (intentOnly && !status.requested)) return null
+  const Icon = intentOnly
+    ? IconDownload
+    : status.pending
+      ? offline
+        ? IconPlayerPause
+        : IconLoader2
+      : status.failed && status.downloaded < status.total
+        ? IconAlertCircle
+        : status.known && status.total > 0 && status.downloaded === status.total
+          ? IconDownload
+          : IconCircleDashed
   return (
     <span
-      title={label}
-      aria-label={label}
+      title={intentOnly ? "Saved for offline listening" : label}
+      aria-label={intentOnly ? "Saved for offline listening" : label}
       role="img"
       className={`inline-flex shrink-0 items-center justify-center text-[var(--text-primary)] ${className}`}
     >
       <Icon
         aria-hidden="true"
         size={16}
-        className={status.pending && !offline ? "animate-spin" : ""}
+        className={
+          !intentOnly && status.pending && !offline ? "animate-spin" : ""
+        }
       />
     </span>
   )

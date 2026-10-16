@@ -407,7 +407,11 @@ export function createLibraryStore({
         const initial = get()
         const saved = await loading
         if (epoch === activation && activeProvider === provider) {
-          const restored = restoreLibrary(saved),
+          // Online DTOs do not prove current file availability. Offline reads
+          // must go through the saved provider, which projects actual cache files.
+          const restored = provider.isOffline
+            ? { recentMixes: restoreLibrary(saved).recentMixes ?? [] }
+            : restoreLibrary(saved),
             now = get()
           const patch = Object.fromEntries(
             Object.entries(restored).filter(([key]) => now[key] === initial[key])

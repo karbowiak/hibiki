@@ -629,3 +629,14 @@ test("repeated occurrence IDs are rejected while valid duplicate track occurrenc
   expect(h.state().currentPlaylistItems.map(track => track.playlistItemId)).toEqual(["first-occurrence", "second-occurrence"])
   expect(h.state().playlistIsFullyLoaded.occurrences).toBe(true)
 })
+
+test("offline activation rechecks saved playlists instead of restoring online availability and TTLs", async () => {
+  const online = { ...playlist("downloaded"), offlineAvailable: undefined }
+  const h = harness({getPlaylists:async () => [online]})
+  await h.activate()
+  await h.state().fetchPlaylists()
+  await h.switchTo("account-a", {isOffline:true,getPlaylists:async () => [{...online,offlineAvailable:true}]})
+  expect(h.state().playlists).toEqual([])
+  await h.state().fetchPlaylists()
+  expect(h.state().playlists[0].offlineAvailable).toBe(true)
+})

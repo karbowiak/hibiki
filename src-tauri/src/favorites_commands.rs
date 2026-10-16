@@ -65,35 +65,66 @@ pub async fn favorites_save(
     })
     .await
 }
-/// Bounded primary-key reads; opening Liked Songs must not refetch every song from Plex.
+/// Favorites have their own small metadata working set. Resolve only missing
+/// IDs from Plex; a whole-library catalogue is never required to open this page.
 #[tauri::command]
 pub async fn favorites_tracks(
     context: PlexRequestContext,
     ids: Vec<i64>,
     state: State<'_, PlexState>,
     db: State<'_, DbState>,
+    app: tauri::AppHandle,
 ) -> Result<Vec<Value>, String> {
     if ids.len() > 200 || ids.iter().any(|id| *id <= 0) {
         return Err("Invalid favorite track page".into());
     }
     let owner = client(&state, &context, false).await?;
-    let scope = owner.library_scope;
-    let rows = db
-        .read(move |conn| {
-            let mut rows = Vec::new();
-            for id in ids {
-                if let Some(page) = crate::db::catalogue_query::query(
-                    conn,
-                    &scope,
-                    "getTrack",
-                    &[serde_json::json!(id.to_string())],
-                )? {
-                    rows.extend(page.items)
-                }
+    let scope = owner.library_scope.clone();
+    let requested = ids.clone();
+    let mut rows = db.read(move |conn| {
+        let mut rows = Vec::new();
+        for id in requested {
+            if let Some(raw) = crate::db::catalogue::get(conn, &scope, "track", id)? {
+                rows.push(crate::db::catalogue_query::project("track", raw)?);
             }
-            Ok(rows)
-        })
-        .await?;
+        }
+        Ok(rows)
+    }).await?;
+    let found = rows.iter().filter_map(|r| r["rating_key"].as_i64()).collect::<HashSet<_>>();
+    let missing = ids.into_iter().filter(|id| !found.contains(id)).collect::<Vec<_>>();
+    if !owner.offline_only {
+        let section = crate::offline_audio::library_id(&app, &owner)?;
+        for batch in missing.chunks(50) {
+            let documents = match tokio::time::timeout(std::time::Duration::from_secs(15), owner.catalogue_details(batch)).await {
+                Ok(Ok(documents)) => documents,
+                // A failed optional hydration must not hide already saved
+                // favorites; the connectivity probe owns offline transitions.
+                _ => break,
+            };
+            client(&state, &context, true).await?;
+            for raw in &documents {
+                if crate::plex::catalogue::number(&raw["librarySectionID"]) != Some(section)
+                    || raw["type"].as_str() != Some("track") {
+                    return Err("Plex returned a favorite from a different library".into());
+                }
+                rows.push(crate::db::catalogue_query::project("track", raw.clone())?);
+            }
+            crate::offline_commands::owned_write(&app, &context, true, move |conn, scope| {
+                crate::db::atomic_upsert(conn, |conn| {
+                    let favorite_ids = crate::db::focused_library::favorite_ids(conn, scope)?;
+                    for raw in &documents {
+                        let id = crate::plex::catalogue::number(&raw["ratingKey"]).ok_or("Invalid favorite identity")?;
+                        if favorite_ids.contains(&id) {
+                            crate::db::catalogue::save(conn, scope, "track", id, raw, true)?;
+                        }
+                    }
+                    Ok(())
+                })
+            }).await.unwrap_or_else(|error| {
+                tracing::debug!(%error,"Optional favorite metadata cache write failed");
+            });
+        }
+    }
     client(&state, &context, false).await?;
     Ok(rows)
 }

@@ -941,6 +941,15 @@ pub async fn audio_download_resume(
     }
     drop(active);
     drop(guard);
+    let owner = context.clone();
+    let application = app.clone();
+    let downloaded = downloads.cache.clone();
+    let automatic = app.state::<crate::audio_engine::bridge::AudioEngineState>().0.cache().clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = crate::offline_commands::owned_write(&application, &owner, false, move |conn, scope| {
+            crate::db::focused_library::maintain(conn, scope, |key| downloaded.lookup(key).is_some() || automatic.lookup(key).is_some())
+        }).await;
+    });
     start_analysis_backfill(app.clone(), context.clone());
     start_worker(app, context);
     Ok(())

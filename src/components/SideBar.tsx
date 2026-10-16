@@ -189,7 +189,7 @@ function SortablePlaylistItem({
         <span className="min-w-0 flex-1 truncate text-sm font-normal">
           {playlist.title}
         </span>
-        <DownloadBadge kind="playlist" id={playlist.id} className="mr-1" />
+        <DownloadBadge intentOnly kind="playlist" id={playlist.id} className="mr-1" />
       </Link>
     </li>
   )

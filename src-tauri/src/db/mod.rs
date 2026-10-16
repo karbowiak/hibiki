@@ -15,6 +15,7 @@ pub mod catalogue_sync;
 pub mod download_entities;
 pub mod kv;
 pub mod favorites;
+pub mod focused_library;
 pub mod offline;
 pub mod playlists;
 pub mod schema;

@@ -32,7 +32,7 @@ mock.module("@tauri-apps/api/core", () => ({
             downloaded: ready ? 2 : 1,
             pending: 0,
             failed: ready ? 0 : 1,
-            requested: true,
+            requested: item.id !== 102,
           }))
     if (command === "download_entity" || command === "remove_entity_download")
       return 2
@@ -73,6 +73,8 @@ const render = () =>
       <DownloadBadge kind="album" id="42" />
       <DownloadBadge kind="album" id="42" />
       <DownloadBadge kind="artist" id="generated" />
+      <DownloadBadge intentOnly kind="playlist" id="101" />
+      <DownloadBadge intentOnly kind="playlist" id="102" />
       <DownloadMenuItems
         kind="artist"
         id="8"
@@ -105,6 +107,12 @@ assert.equal(
     '[role=img][aria-label="Downloaded · 2 tracks available offline"]'
   ).length,
   2
+)
+assert.equal(
+  document.querySelectorAll('[aria-label="Saved for offline listening"]')
+    .length,
+  1,
+  "shared cached tracks must not put download badges on an unrequested playlist"
 )
 assert.match(document.body.textContent!, /2.0 GB/)
 assert(
@@ -155,12 +163,10 @@ await act(async () => {
   await settle()
 })
 await act(async () => {
-  useProviderStore
-    .getState()
-    .setProvider({
-      cacheScope: `plex-${"b".repeat(64)}`,
-      capabilities: {},
-    } as any)
+  useProviderStore.getState().setProvider({
+    cacheScope: `plex-${"b".repeat(64)}`,
+    capabilities: {},
+  } as any)
   await settle()
 })
 assert.equal(document.querySelector("[role=img]"), null)
