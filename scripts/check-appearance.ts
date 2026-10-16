@@ -11,6 +11,107 @@ import { artworkContrast } from "../src/lib/artworkTone"
 const root = resolve(import.meta.dir, "..")
 const output = await mkdtemp(join(tmpdir(), "hibiki-appearance-"))
 const artifacts = resolve(root, ".tmp/appearance-checks")
+async function checkOverlayMaterial(page: Page, browser: string) {
+  await page.setViewportSize({ width: 1440, height: 850 })
+  await page.evaluate(() => {
+    ;(window as any).fixtureAppearance.apply({ theme: "dark", background: true })
+    ;(window as any).fixtureAppearance.route("/artist/fixture-artist")
+  })
+  await page.locator('.app-artwork-shell[data-artwork-background="ready"]').waitFor()
+  await page.keyboard.press("Control+k")
+  const popup = page.getByRole("listbox", { name: "Search suggestions", exact: true })
+  await popup.waitFor()
+  assert.match(await popup.evaluate(element => getComputedStyle(element).backdropFilter), /blur\(18px\)/)
+  assert.equal(await page.locator(".app-topbar").evaluate(element => getComputedStyle(element).backdropFilter), "none")
+  // A real pixel check: computed blur alone passes even when an ancestor's
+  // backdrop root prevents the dropdown from sampling the page underneath it.
+  const clip = await popup.evaluate(element => {
+    const r = element.getBoundingClientRect()
+    const probe = document.createElement("div")
+    probe.id = "overlay-blur-probe"
+    Object.assign(probe.style, { position: "fixed", inset: "0", pointerEvents: "none",
+      background: "repeating-linear-gradient(90deg, #000 0px, #000 4px, #fff 4px, #fff 8px)" })
+    document.querySelector(".app-page-content")!.append(probe)
+    const style = document.createElement("style")
+    style.id = "overlay-blur-probe-style"
+    style.textContent = ".discovery-search-popup > * { visibility: hidden !important; }"
+    document.head.append(style)
+    return { x: Math.ceil(r.left + 30), y: Math.ceil(r.top + 60), width: 200, height: 100 }
+  })
+  async function edgeEnergy() {
+    const png = await page.screenshot({ clip })
+    return page.evaluate(async base64 => {
+      const image = new Image()
+      image.src = `data:image/png;base64,${base64}`
+      await image.decode()
+      const canvas = document.createElement("canvas")
+      canvas.width = image.width; canvas.height = image.height
+      const ctx = canvas.getContext("2d")!
+      ctx.drawImage(image, 0, 0)
+      const data = ctx.getImageData(0, 0, image.width, image.height).data
+      let energy = 0
+      for (let y = 0; y < image.height; y++) for (let x = 1; x < image.width; x++) {
+        const i = (y * image.width + x) * 4
+        energy += Math.abs(data[i] - data[i - 4])
+      }
+      return energy / ((image.width - 1) * image.height)
+    }, png.toString("base64"))
+  }
+  const blurred = await edgeEnergy()
+  await popup.evaluate(element => {
+    const style = (element as HTMLElement).style
+    style.setProperty("backdrop-filter", "none", "important")
+    style.setProperty("-webkit-backdrop-filter", "none", "important")
+  })
+  const sharp = await edgeEnergy()
+  await popup.evaluate(element => {
+    ;(element as HTMLElement).style.removeProperty("backdrop-filter")
+    ;(element as HTMLElement).style.removeProperty("-webkit-backdrop-filter")
+    document.getElementById("overlay-blur-probe")!.remove()
+    document.getElementById("overlay-blur-probe-style")!.remove()
+  })
+  // Playwright's headless WebKit does not render backdrop blur even in a bare
+  // HTML reproduction. Verify pixels in Chromium and the native Mac app; keep
+  // WebKit's production-style, geometry and keyboard assertions here.
+  if (browser === "chromium")
+    assert.ok(sharp > 2 && blurred < sharp * 0.2, `${browser}: search backdrop not blurred (${blurred} vs ${sharp})`)
+  await page.screenshot({ path: join(artifacts, `${browser}-search-glass.png`) })
+  await page.keyboard.press("Escape")
+  for (const [width, height, theme, textSize, debug] of [
+    [1440, 850, "dark", 16, false], [800, 650, "light", 20, true],
+  ] as const) {
+    await page.setViewportSize({ width, height })
+    await page.evaluate(({ theme, textSize, debug }) => {
+      ;(window as any).fixtureAppearance.apply({ theme, textSize })
+      ;(window as any).fixtureAppearance.trackInfo(debug)
+    }, { theme, textSize, debug })
+    const trigger = page.getByRole("button", { name: "Track info", exact: true })
+    await trigger.click()
+    const panel = page.getByRole("dialog", { name: "Track info", exact: true })
+    await panel.waitFor()
+    const layout = await panel.evaluate(element => {
+      const rect = element.getBoundingClientRect()
+      const sections = [...element.querySelectorAll("dl")].map(dl => dl.getBoundingClientRect())
+      const body = element.querySelector<HTMLElement>(".track-info-body")!
+      const style = getComputedStyle(body)
+      const contentWidth = body.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+      return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom,
+        viewport: innerWidth, fullWidth: sections.every(s => Math.abs(s.width - contentWidth) < 1),
+        overflow: element.scrollWidth > element.clientWidth,
+        canScroll: element.scrollHeight > element.clientHeight }
+    })
+    assert.ok(layout.left >= 7 && layout.right <= layout.viewport - 7 && layout.top >= 7, `${browser}: track info outside window`)
+    assert.equal(layout.fullWidth, true, `${browser}: track info reserves an empty column`)
+    assert.equal(layout.overflow, false, `${browser}: track info scrolls horizontally`)
+    if (debug) assert.equal(layout.canScroll, true, `${browser}: long info panel is not vertically scrollable`)
+    await panel.getByRole("region", { name: "Next transition" }).waitFor()
+    await page.screenshot({ path: join(artifacts, `${browser}-${width}-track-info.png`) })
+    await page.keyboard.press("Escape")
+    await panel.waitFor({ state: "detached" })
+    assert.equal(await trigger.evaluate(element => element === document.activeElement), true)
+  }
+  await page.evaluate(() => (window as any).fixtureAppearance.trackInfo(false))
+}
 async function checkBackgroundFraming(page: Page, name: string) {
   // A portrait's upper subject must survive real shell crops on all detail routes.
   await page.evaluate(async () => {
@@ -237,6 +338,12 @@ try {
         `${origin}/tests/fixtures/libraryLayout/index.html?appearance=1&player=1&discovery=1`
       )
       await page.waitForFunction(() => (window as any).visualFixtureReady)
+      if (process.argv.includes("--overlay-material-only")) {
+        await checkOverlayMaterial(page, name)
+        assert.deepEqual(errors, [], `${name}: renderer errors`)
+        console.log(`${name}: shared glass styles and responsive track info passed${name === "chromium" ? " (pixel blur verified)" : ""}`)
+        continue
+      }
       if (process.argv.includes("--background-focus-only")) {
         await checkBackgroundFraming(page, name)
         assert.deepEqual(errors, [], `${name}: renderer errors`)
@@ -249,6 +356,7 @@ try {
         console.log(`${name}: search overlay stays above content and clear of the playbar across routes, themes and widths`)
         continue
       }
+      await checkOverlayMaterial(page, name)
       for (const scenario of [
         {
           width: 1440,

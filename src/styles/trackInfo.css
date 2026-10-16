@@ -1,0 +1,49 @@
+.track-info-panel {
+  width: min(25rem, calc(100vw - 16px));
+  max-width: 100%;
+  color: var(--text-primary);
+}
+.track-info-header {
+  display: flex;
+  align-items: start;
+  gap: 0.75rem;
+  padding: 1rem 1rem 0.75rem;
+}
+.track-info-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.track-info-caption {
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+.track-info-close {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  color: var(--text-secondary);
+}
+.track-info-close:hover { background: var(--bg-surface-hover); color: var(--text-primary); }
+.track-info-close:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+.track-info-body { padding: 0 1rem 1rem; }
+.track-info-values { font-size: 0.75rem; line-height: 1.5; }
+.track-info-values > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  align-items: baseline;
+  gap: 1rem;
+  padding-block: 0.375rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.track-info-values > div:last-child { border-bottom: 0; }
+.track-info-values dt { color: var(--text-secondary); overflow-wrap: anywhere; }
+.track-info-values dd { text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.track-info-values--technical dd { font-family: var(--font-mono, monospace); }
+.track-info-section { margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--border); }
+.track-info-section h4 { margin-bottom: 0.375rem; font-size: 0.75rem; font-weight: 600; }

@@ -12,8 +12,8 @@
     var(--shell-surface) calc(max(0.68, var(--interface-opacity, 0.76)) * 100%),
     transparent
   );
-  backdrop-filter: blur(var(--glass-blur, 18px)) saturate(var(--glass-saturation, 0.95));
   -webkit-backdrop-filter: blur(var(--glass-blur, 18px)) saturate(var(--glass-saturation, 0.95));
+  backdrop-filter: blur(var(--glass-blur, 18px)) saturate(var(--glass-saturation, 0.95));
 }
 .shell-artwork-player > .shell-artwork-player-inner {
   background: transparent;
@@ -57,8 +57,8 @@
   [data-artwork-background="ready"]
     .shell-artwork-surface[data-shell-transparency="enabled"] {
     background: var(--shell-surface);
-    backdrop-filter: none;
     -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }
 @supports not (background: color-mix(in srgb, black, transparent)) {
@@ -77,6 +77,40 @@
   margin-bottom: 0;
   border-bottom: 1px solid var(--border);
   gap: 12px;
+}
+/* Keep the toolbar's glass behind its controls. A backdrop-filter on the
+   toolbar itself makes a backdrop root, preventing its dropdowns from blurring
+   page content outside the toolbar (particularly visible in WebKit). */
+[data-artwork-background="ready"]
+  .app-topbar[data-shell-transparency="enabled"] {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.app-topbar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+[data-artwork-background="ready"]
+  .app-topbar[data-shell-transparency="enabled"]::before {
+  -webkit-backdrop-filter: blur(var(--glass-blur, 18px)) saturate(var(--glass-saturation, 0.95));
+  backdrop-filter: blur(var(--glass-blur, 18px)) saturate(var(--glass-saturation, 0.95));
+}
+@media (prefers-reduced-transparency: reduce) {
+  [data-artwork-background="ready"]
+    .app-topbar[data-shell-transparency="enabled"]::before {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+@supports not (background: color-mix(in srgb, black, transparent)) {
+  [data-artwork-background="ready"]
+    .app-topbar[data-shell-transparency="enabled"]::before {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
 }
 /* Page-local artwork, sticky headers and popovers stay below toolbar overlays. */
 .app-page-content {

@@ -22,6 +22,7 @@ import { SideBar } from "../../../src/components/SideBar.tsx"
 import { useLibraryStore } from "../../../src/stores/libraryStore.ts"
 import { useProviderStore } from "../../../src/stores/providerStore.ts"
 import { usePlayerStore } from "../../../src/stores/playerStore.ts"
+import { useDebugStore } from "../../../src/stores/debugStore.ts"
 import { useMetadataSourceStore } from "../../../src/stores/metadataSourceStore.ts"
 import { activateMetadataCache, clearMetadataCache } from "../../../src/stores/metadataCache.ts"
 import { useDeezerMetadataStore } from "../../../src/metadata/deezer/store.ts"
@@ -257,6 +258,12 @@ async function setup() {
     getRelatedHubs: async () => [],
     getAlbum: async () => { await loadingGate; return album },
     getAlbumTracks: async () => tracks,
+    getTrack: async (id: string) => ({ ...tracks.find(t => t.id === id)!,
+      bitDepth: 24, samplingRate: 44100, channels: 2, gain: -3.4,
+      albumGain: -3.4, loudness: -15, peak: 0.965,
+      mediaInfo: { fileSize: 9200000, container: "m4a" },
+      _providerData: { media: [{ parts: [{ file: "/synthetic/An exceptionally long directory name/An exceptionally long album name/Opening Track.m4a" }] }] },
+    }),
     getLikedTracks: async () => tracks,
     getLikedAlbums: async () => albums,
     getLikedArtists: async () => [artist],
@@ -430,6 +437,13 @@ async function setup() {
       dispatchEvent(new PopStateEvent("popstate"))
     },
     interactions: () => interactions,
+    trackInfo: (debug = false) => {
+      useDebugStore.setState({ debugEnabled: debug })
+      usePlayerStore.setState({ transitionInfo: {
+        outgoing_rating_key: 1, incoming_rating_key: 2, mode: "mixRamp",
+        reason: null, start_time_ms: 170000, duration_ms: 15000,
+      } })
+    },
     resetInteractions: () => {
       interactions.length = 0
     },

@@ -6,8 +6,7 @@ import type { MusicTrack } from "../types/music"
 import { useTrackEnrichment } from "../hooks/useMetadataEnrichment"
 import { useDebugStore } from "../stores/debugStore"
 import { transitionRows } from "../audio/transitionInfo"
-
-
+import "../styles/trackInfo.css"
 interface Props {
   onClose: () => void
 }
@@ -118,29 +117,25 @@ export default function TrackInfoPanel({ onClose }: Props) {
   }
 
   const SectionTable = ({ rows: r, mono }: { rows: [string, string][]; mono?: boolean }) => (
-    <table className="w-full text-xs">
-      <tbody>
-        {r.map(([label, value]) => (
-          <tr key={label} className="border-b border-[var(--border-subtle)] last:border-0">
-            <td className={`py-1.5 pr-3 whitespace-nowrap ${mono ? "text-[color:var(--text-muted)] font-mono text-[11px]" : "text-[color:var(--text-muted)]"}`}>{label}</td>
-            <td className={`py-1.5 text-right ${mono ? "text-[color:var(--text-secondary)] font-mono text-[11px] break-all" : "text-[color:var(--text-secondary)]"}`}>{value}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <dl className={`track-info-values${mono ? " track-info-values--technical" : ""}`}>
+      {r.map(([label, value]) => (
+        <div key={label}>
+          <dt>{label}</dt>
+          <dd>{value}</dd>
+        </div>
+      ))}
+    </dl>
   )
 
   const hasAnalysis = analysisRows.length > 0
   const hasDebug = debugRows.length > 0
-  const extraPanels = (hasAnalysis ? 1 : 0) + (hasDebug ? 1 : 0)
-
   return (
-    <div style={{ width: extraPanels > 0 ? 280 + extraPanels * 260 : 300, maxWidth: "calc(100vw - 24px)" }}>
+    <div className="track-info-panel">
       {/* Header */}
-      <div className="px-4 pt-3 pb-1 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <h3 className="text-xs font-semibold uppercase tracking-widest text-[color:var(--text-muted)]">Track Info</h3>
-          <p className="text-sm font-medium text-[color:var(--text-primary)] truncate">{track.title}</p>
+      <div className="track-info-header">
+        <div className="min-w-0 flex-1">
+          <h3 className="track-info-title">{track.title}</h3>
+          <p className="track-info-caption">Track information</p>
         </div>
         <div className="flex items-center gap-2">
           {debugEnabled && (
@@ -151,7 +146,7 @@ export default function TrackInfoPanel({ onClose }: Props) {
               {copied ? "Copied!" : "Copy JSON"}
             </button>
           )}
-          <button onClick={onClose} aria-label="Close track info" className="text-[color:var(--text-muted)] hover:text-[color:var(--text-secondary)] transition-colors">
+          <button type="button" onClick={onClose} aria-label="Close track info" className="track-info-close">
             <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
               <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/>
             </svg>
@@ -159,29 +154,23 @@ export default function TrackInfoPanel({ onClose }: Props) {
         </div>
       </div>
 
-      {/* Panels side by side */}
-      <div className="flex flex-wrap gap-0 px-2 pb-3">
-        {/* Panel 1: Track Info — always visible */}
-        <div className={`px-2 ${extraPanels > 0 ? "min-w-[260px]" : "flex-1"}`}>
-          <SectionTable rows={rows} />
-        </div>
+      <div className="track-info-body">
+        <SectionTable rows={rows} />
 
         {/* Panel 2: Smart Crossfade */}
         {hasAnalysis && (
-          <div className="min-w-[240px] flex-1 border-l border-[var(--border-subtle)] px-3">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-[color:var(--text-muted)] mb-1">
-              Next transition
-            </p>
+          <section className="track-info-section" aria-label="Next transition">
+            <h4>Next transition</h4>
             <SectionTable rows={analysisRows} mono />
-          </div>
+          </section>
         )}
 
         {/* Panel 3: Debug */}
         {hasDebug && (
-          <div className="min-w-[220px] flex-1 border-l border-[var(--border-subtle)] px-3">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-[color:var(--text-muted)] mb-1">Debug</p>
+          <section className="track-info-section" aria-label="Debug">
+            <h4>Debug</h4>
             <SectionTable rows={debugRows} mono />
-          </div>
+          </section>
         )}
       </div>
     </div>

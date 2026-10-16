@@ -1,5 +1,26 @@
 # Hibiki visual polish
 
+## Search glass and track information
+
+- [x] Move toolbar backdrop filtering to a background pseudo-element so nested
+  search results can blur page content, while retaining the shared toolbar tint.
+- [x] Keep standard backdrop-filter declarations after their WebKit prefixes;
+  production CSS minification otherwise drops the standard property and leaves
+  Chromium overlays without blur. Apply this to shared overlays and shell glass.
+- [x] Replace track info's wrapping multi-panel layout with one compact column.
+  Align metadata and transition rows to the full content width, wrap long titles
+  and values, and keep debug details within a vertically scrollable popover.
+- [x] Verify the search and track-info overlays in the native development app.
+  Add production-renderer coverage for actual search blur pixels in Chromium,
+  shared styles, window bounds, full-width sections, long debug content, and
+  Escape/focus restoration at normal and enlarged text sizes in both engines.
+
+Validation: full Chromium/WebKit appearance checks, focused search/player
+accessibility tests and production build pass.
+Playwright's headless WebKit omits backdrop blur even in a bare HTML reproduction,
+so its checks cover styles, layout and behavior; native Mac review confirms the
+rendered glass. No playback, metadata, account or release changes are included.
+
 ## Background framing and refresh recovery
 
 - [x] Fit background images to the complete client window rather than the short
