@@ -14,9 +14,11 @@ import { PlaybackPaletteContext } from "../lib/playbackPaletteContext"
 export function PlaybackPalette({
   src,
   children,
+  className = "",
 }: {
   src: string | null
   children: ReactNode
+  className?: string
 }) {
   const sampled = useArtworkTone(src)
   const accent = useAccentStore((s) => s.accent)
@@ -45,7 +47,7 @@ export function PlaybackPalette({
     <PlaybackPaletteContext.Provider value={palette}>
       <ArtworkPaletteContext.Provider value={revision}>
         <div
-          className="playback-palette"
+          className={`playback-palette ${className}`}
           data-playback-palette={sampled ? "artwork" : "accent"}
           style={palette}
         >

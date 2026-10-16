@@ -271,13 +271,22 @@ export function QueuePanel() {
     queueActiveTab: s.queueActiveTab,
     setQueueActiveTab: s.setQueueActiveTab,
   })))
-  const { width: queueWidth, onMouseDown: onResizeMouseDown, isDragging: isResizing } = useResizable({
+  const queueResize = useResizable({
     key: "plex-queue-width",
     defaultWidth: 320,
     minWidth: 240,
     maxWidth: 600,
     direction: "left",
   })
+  const lyricsResize = useResizable({
+    key: "plex-docked-lyrics-width",
+    defaultWidth: typeof window !== "undefined" && window.innerWidth < 1100 ? 320 : 440,
+    minWidth: 240,
+    maxWidth: 600,
+    direction: "left",
+  })
+  const { width: queueWidth, onMouseDown: onResizeMouseDown, isDragging: isResizing } =
+    isQueuePinned && queueActiveTab === "lyrics" ? lyricsResize : queueResize
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
@@ -552,7 +561,7 @@ export function QueuePanel() {
             onMouseDown={onResizeMouseDown}
           />
           {header}
-          {queueActiveTab === "lyrics" ? <LyricsContent /> : list}
+          {queueActiveTab === "lyrics" ? (isQueueOpen && <LyricsContent />) : list}
         </div>
       </div>
     )

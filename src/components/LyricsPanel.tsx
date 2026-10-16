@@ -8,6 +8,10 @@ import { useLyricsOffsetStore } from "../stores/lyricsOffsetStore"
 import { useLyricsStore } from "../stores/lyricsStore"
 import { useResizable } from "../hooks/useResizable"
 import { useCapability } from "../hooks/useCapability"
+import { useAlbumImage } from "../hooks/useMediaImage"
+import { ArtworkImage } from "./shared/ArtworkImage"
+import { PlaybackPalette } from "./PlaybackPalette"
+import "../styles/lyrics.css"
 
 /** Format offset for display: 0ms, +200ms, -1.5s, etc. */
 function formatOffset(ms: number): string {
@@ -23,7 +27,7 @@ function LyricsOffsetBar({ hidden }: { hidden?: boolean }) {
   const { offsetMs, setOffset, resetOffset } = useLyricsOffsetStore()
   if (hidden) return null
   return (
-    <div className="flex items-center gap-3 border-t border-[var(--border)] bg-[var(--bg-surface)] px-4 py-3 shrink-0">
+    <div className="lyrics-timing flex items-center gap-3 border-t border-[var(--border)] px-4 py-3 shrink-0">
       <span className="shrink-0 text-[10px] font-medium uppercase tracking-wider text-[color:var(--text-muted)]">
         Timing
       </span>
@@ -141,12 +145,17 @@ export function LyricsContent() {
     useShallow(s => ({ lyricsLines: s.lyricsLines, positionMs: s.positionMs, currentTrack: s.currentTrack }))
   )
   const offsetMs = useLyricsOffsetStore(s => s.offsetMs)
+  const artworkEnabled = useArtworkAppearanceStore(s => s.backgroundArtworkEnabled)
+  const albumArtwork = useAlbumImage(currentTrack?.artistName ?? null, currentTrack?.albumName ?? null,
+    currentTrack?.albumThumbUrl ?? currentTrack?.thumbUrl ?? null, currentTrack?.albumId)
+  const artwork = albumArtwork ?? currentTrack?.artistThumbUrl ?? null
   const activeSource = useLyricsStore(s => {
     const src = s.sources.find(src => src.id === s.activeSourceId)
     return src ?? null
   })
   const isSynced = activeSource?.isSynced ?? true
   const activeRef = useRef<HTMLButtonElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
   const lastIndexRef = useRef(0)
 
   // Reset scan position when the lyrics data changes (new track)
@@ -185,14 +194,42 @@ export function LyricsContent() {
 
   useEffect(() => {
     if (isSynced && activeRef.current) {
-      activeRef.current.scrollIntoView({ behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "center" })
+      const container = scrollRef.current
+      if (!container) return
+      const line = activeRef.current
+      // Layout coordinates stay stable while emphasis scales the painted text.
+      // Scroll only the lyric viewport; never shift the album page or toolbar.
+      const center = (smooth = false) => container.scrollTo?.({
+        top: line.offsetTop + line.offsetHeight / 2 - container.clientHeight / 2,
+        behavior: smooth && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "smooth" : "auto",
+      })
+      center(true)
+      const observer = typeof ResizeObserver === "function" ? new ResizeObserver(() => center()) : null
+      observer?.observe(container)
+      observer?.observe(line)
+      return () => observer?.disconnect()
     }
-  }, [activeIndex, isSynced])
+  }, [activeIndex, isSynced, lyricsLines])
 
   return (
-    <>
+    <PlaybackPalette src={artwork} className="lyrics-palette">
+    <div className="lyrics-content" data-lyrics-synced={isSynced}>
+      {artworkEnabled && artwork && (
+        <div className="lyrics-artwork" aria-hidden="true">
+          <ArtworkImage src={artwork} alt="" loading="eager" />
+        </div>
+      )}
+      {currentTrack && (
+        <div className="lyrics-track">
+          <ArtworkImage src={artwork} alt="" className="lyrics-track-cover" />
+          <div className="min-w-0">
+            <p className="lyrics-track-title" title={currentTrack.title}>{currentTrack.title}</p>
+            <p className="lyrics-track-artist" title={currentTrack.artistName}>{currentTrack.artistName}</p>
+          </div>
+        </div>
+      )}
       <LyricsSourceSelector />
-      <div className="flex-1 overflow-y-auto px-6 py-4 lyrics-scroll scrollbar scrollbar-w-1 scrollbar-track-transparent scrollbar-thumb-[var(--bg-surface)] hover:scrollbar-thumb-[var(--bg-surface-hover)]">
+      <div ref={scrollRef} className="lyrics-scroll scrollbar scrollbar-w-1 scrollbar-track-transparent scrollbar-thumb-[var(--scrollbar-thumb)] hover:scrollbar-thumb-[var(--scrollbar-thumb-hover)]">
         {!currentTrack ? (
           <div className="flex items-center justify-center h-full px-3"><p role="status" className="text-[color:var(--text-secondary)] text-sm text-center">Play a track to see its lyrics</p></div>
         ) : !lyricsLines ? (
@@ -204,7 +241,7 @@ export function LyricsContent() {
             <p role="status" className="text-[color:var(--text-secondary)] text-sm text-center">No lyrics available</p>
           </div>
         ) : (
-          <div className="flex flex-col gap-2">
+          <div className="lyrics-lines">
             {lyricsLines.map((line, i) => {
               const isActive = i === activeIndex
               if (!line.text) return <div key={i} className="h-4" />
@@ -212,18 +249,11 @@ export function LyricsContent() {
                 <button
                   key={i}
                   disabled={!isSynced}
+                  aria-current={isActive ? "true" : undefined}
                   aria-label={isSynced ? `Seek to ${line.text}` : undefined}
                   ref={isActive ? activeRef : undefined}
                   type="button"
-                  className={`-mx-2 rounded-lg px-2 text-left text-2xl font-bold transition-all duration-300 select-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
-                    isSynced ? "cursor-pointer" : "cursor-default"
-                  } ${
-                    isActive
-                      ? "text-accent"
-                      : isSynced
-                        ? "text-[color:var(--text-secondary)] hover:text-[color:var(--text-primary)] hover:bg-[var(--accent-tint-hover)]"
-                        : "text-[color:var(--text-secondary)]"
-                  }`}
+                  className={`lyrics-line ${isActive ? "lyrics-line--active" : ""}`}
                   onClick={() => {
                     if (isSynced) usePlayerStore.getState().seekTo(line.startMs)
                   }}
@@ -236,7 +266,8 @@ export function LyricsContent() {
         )}
       </div>
       <LyricsOffsetBar hidden={!isSynced} />
-    </>
+    </div>
+    </PlaybackPalette>
   )
 }
 
@@ -266,10 +297,9 @@ export default function LyricsPanel() {
     setLyricsOpen: s.setLyricsOpen,
     setLyricsPinned: s.setLyricsPinned,
   })))
-  const currentTrack = usePlayerStore(s => s.currentTrack)
   const { width: lyricsWidth, onMouseDown: onResizeMouseDown, isDragging: isResizing } = useResizable({
     key: "plex-lyrics-width",
-    defaultWidth: 320,
+    defaultWidth: typeof window !== "undefined" && window.innerWidth < 1100 ? 320 : 440,
     minWidth: 240,
     maxWidth: 600,
     direction: "left",
@@ -315,17 +345,6 @@ export default function LyricsPanel() {
           </button>
         </div>
       </div>
-      {currentTrack && (
-        <div
-          className="mx-4 mt-3 rounded-lg border border-accent/10 p-3"
-          style={{ background: "var(--accent-tint-subtle)" }}
-        >
-          <p className="truncate text-sm font-bold text-[color:var(--text-primary)]">{currentTrack.title}</p>
-          {currentTrack.artistName && (
-            <p className="truncate text-xs text-[color:var(--text-secondary)]">{currentTrack.artistName}</p>
-          )}
-        </div>
-      )}
     </div>
   )
 
@@ -351,7 +370,7 @@ export default function LyricsPanel() {
             onMouseDown={onResizeMouseDown}
           />
           {header}
-          <LyricsContent />
+          {isLyricsOpen && <LyricsContent />}
         </div>
       </div>
     )
@@ -374,7 +393,7 @@ export default function LyricsPanel() {
         }`}
       >
         {header}
-        <LyricsContent />
+        {isLyricsOpen && <LyricsContent />}
       </div>
     </>
   )

@@ -1,5 +1,31 @@
 # Hibiki visual polish
 
+## Background modes and immersive lyrics
+
+- [x] Give the shell an explicit global/detail background mode. General browsing
+  pages always render fully blurred artwork, including retained and retiring
+  frames while a new image loads. Artist, album and playlist pages keep their
+  sharp, focal-point-aligned hero and matching blurred continuation.
+- [x] Apply the selected immersive lyrics direction: playing-album artwork and
+  palette, a compact cover/title/artist header, calmer surrounding lyrics and a
+  larger current-line emphasis, with soft scroll edges and existing timing and
+  source controls. Support light mode, plain lyrics and reduced motion.
+- [x] Keep line layout stable while emphasis changes, center the current lyric
+  within its own viewport, and allow enough leading/trailing space to center the
+  first and last lines. Seeking never scrolls the album page.
+- [x] Give the docked Lyrics tab its own saved width, initially 440 px on larger
+  windows, without changing the queue's saved width. Preserve resizability and
+  keep standalone/overlay lyrics responsive. Mount lyrics artwork only while
+  the corresponding panel is open.
+
+Validation: native development-app review confirms fully blurred Home artwork
+and the new docked lyrics. Renderer coverage includes navigation with a delayed
+image, global/detail routes, dark/light lyrics, enlarged text, first/middle/last
+line centering, plain lyrics, seeking and independent queue/lyrics widths.
+Full Chromium/WebKit appearance checks, focused artwork, rotation, interaction
+and accessibility tests, and the production build pass. Playback engine and
+release state are unchanged.
+
 ## Search glass and track information
 
 - [x] Move toolbar backdrop filtering to a background pseudo-element so nested

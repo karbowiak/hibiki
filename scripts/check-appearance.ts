@@ -11,6 +11,99 @@ import { artworkContrast } from "../src/lib/artworkTone"
 const root = resolve(import.meta.dir, "..")
 const output = await mkdtemp(join(tmpdir(), "hibiki-appearance-"))
 const artifacts = resolve(root, ".tmp/appearance-checks")
+let artworkGate: Promise<void> | null = null
+async function checkBackgroundSeparation(page: Page, name: string) {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.evaluate(async () => {
+    ;(window as any).fixtureAppearance.apply({})
+    ;(window as any).fixtureAppearance.route("/search")
+    await (window as any).fixtureArtwork.detailBackground("detail-mode.svg")
+    ;(window as any).fixtureAppearance.route("/artist/fixture-artist")
+  })
+  await page.locator('.app-artwork-frame:not(.app-artwork-frame--retiring) .app-artwork-sharp').waitFor()
+  await page.locator('.app-artwork-frame:not(.app-artwork-frame--retiring)[data-artwork-origin="detail"]').waitFor()
+  await page.waitForFunction(() => document.querySelector<HTMLImageElement>('.app-artwork-frame:not(.app-artwork-frame--retiring) img')?.src.includes("detail-mode.svg"))
+  let release!: () => void
+  artworkGate = new Promise<void>(resolve => { release = resolve })
+  try {
+    await page.evaluate(() => {
+      ;(window as any).fixtureArtwork.replace("mode-delayed.svg")
+      ;(window as any).fixtureAppearance.route("/")
+    })
+    await page.locator('.app-artwork-shell[data-artwork-mode="global"]').waitFor()
+    assert.equal(await page.locator('.app-artwork-sharp').count(), 0, `${name}: retained detail hero leaks onto Home while its image loads`)
+    assert.ok(await page.locator('.app-artwork-frame[data-artwork-origin="detail"]').count() > 0, `${name}: delayed-image regression did not retain the prior detail frame`)
+  } finally { release(); artworkGate = null }
+  for (const path of ["/library", "/search", "/collection/playlists", "/stations", "/podcasts"]) {
+    await page.evaluate(value => (window as any).fixtureAppearance.route(value), path)
+    await page.locator('.app-artwork-shell[data-artwork-mode="global"]').waitFor()
+    assert.equal(await page.locator('.app-artwork-sharp').count(), 0, `${name}/${path}: a general page has a sharp hero`)
+    assert.match(await page.locator('.app-artwork-pixels').first().evaluate(element => getComputedStyle(element).filter), /blur\(28px\)/)
+  }
+  await page.evaluate(() => (window as any).fixtureArtwork.detailBackground("cover.svg"))
+  for (const path of ["/album/fixture-album", "/playlist/fixture-playlist-0"]) {
+    await page.evaluate(value => (window as any).fixtureAppearance.route(value), path)
+    await page.locator('.app-artwork-shell[data-artwork-mode="detail"]').waitFor()
+    await page.locator('.app-artwork-frame:not(.app-artwork-frame--retiring) .app-artwork-sharp').waitFor()
+  }
+}
+async function checkLyricsDesign(page: Page, name: string) {
+  const settleDock = () => page.waitForFunction(() => {
+    const dock = document.querySelector<HTMLElement>('.app-docked-panel')
+    if (!dock?.parentElement) return false
+    const r = dock.getBoundingClientRect(), wrapper = dock.parentElement.getBoundingClientRect()
+    return Math.abs(r.width - wrapper.width) < 0.5 && r.right <= innerWidth + 0.5
+  })
+  for (const [width, height, theme, textSize] of [[1440, 900, "dark", 16], [1100, 850, "light", 20]] as const) {
+    await page.setViewportSize({ width, height })
+    await page.evaluate(({ theme, textSize }) => {
+      ;(window as any).fixtureAppearance.apply({ theme, textSize })
+      ;(window as any).fixtureAppearance.route("/album/fixture-album")
+      ;(window as any).fixtureAppearance.panel("queue", true)
+      ;(window as any).fixtureAppearance.lyricsPreview()
+    }, { theme, textSize })
+    await settleDock()
+    const queueWidth = await page.locator('.app-docked-panel').evaluate(element => element.getBoundingClientRect().width)
+    await page.getByRole("button", { name: "Lyrics", exact: true }).first().click()
+    await settleDock()
+    const active = page.locator('.lyrics-line[aria-current="true"]')
+    await active.waitFor()
+    const centered = () => page.waitForFunction(() => {
+      const line = document.querySelector<HTMLElement>('.lyrics-line[aria-current="true"]')!
+      const scroller = document.querySelector<HTMLElement>('.lyrics-scroll')!
+      const r = scroller.getBoundingClientRect(), row = line.getBoundingClientRect()
+      return Math.abs(row.top + row.height / 2 - r.top - r.height / 2) < 2
+    })
+    await centered()
+    for (const position of [0, 84000, 42000]) {
+      await page.evaluate(value => (window as any).fixtureAppearance.lyricsPreview(false, value), position)
+      await centered()
+    }
+    const metrics = await page.locator('.lyrics-content').evaluate(element => ({
+      overflow: element.scrollWidth > element.clientWidth,
+      title: element.querySelector('.lyrics-track-title')?.textContent,
+      mask: getComputedStyle(element.querySelector('.lyrics-scroll')!).maskImage,
+    }))
+    assert.equal(metrics.overflow, false, `${name}: lyrics overflow the dock`)
+    assert.ok(metrics.title?.includes("Long Opening"), `${name}: playing song identity missing`)
+    assert.notEqual(metrics.mask, "none", `${name}: lyrics scroll edge fades missing`)
+    await page.screenshot({ path: join(artifacts, `${name}-${theme}-immersive-lyrics.png`) })
+    const scrollBefore = await page.locator('.app-page-content').evaluate(element => element.scrollTop)
+    await active.click()
+    assert.equal(await page.locator('.app-page-content').evaluate(element => element.scrollTop), scrollBefore, `${name}: lyric seeking scrolls the album page`)
+    await page.evaluate(() => (window as any).fixtureAppearance.lyricsPreview(true))
+    assert.equal(await page.locator('.lyrics-line[aria-current="true"]').count(), 0)
+    assert.equal(await page.getByRole("slider", { name: "Lyrics timing offset" }).count(), 0)
+    assert.equal(await page.locator('.lyrics-line:enabled').count(), 0)
+    await page.getByRole("button", { name: "Queue", exact: true }).first().click()
+    await settleDock()
+    assert.equal(await page.locator('.app-docked-panel').evaluate(element => element.getBoundingClientRect().width), queueWidth, `${name}: lyrics changed the saved queue width`)
+  }
+  await page.evaluate(() => {
+    ;(window as any).fixtureAppearance.panel(null)
+    ;(window as any).fixtureAppearance.lyricsPreview()
+  })
+}
 async function checkOverlayMaterial(page: Page, browser: string) {
   await page.setViewportSize({ width: 1440, height: 850 })
   await page.evaluate(() => {
@@ -278,6 +371,7 @@ try {
     port: 0,
     async fetch(request) {
       const path = new URL(request.url).pathname
+      if (path.includes("mode-delayed")) await artworkGate
       if (path === "/synthetic-artwork/portrait.svg")
         return new Response(
           '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="720"><rect width="480" height="720" fill="#202030"/><rect x="180" y="50" width="120" height="120" fill="#be7855"/><rect x="160" y="500" width="160" height="150" fill="#aaa"/></svg>',
@@ -338,6 +432,13 @@ try {
         `${origin}/tests/fixtures/libraryLayout/index.html?appearance=1&player=1&discovery=1`
       )
       await page.waitForFunction(() => (window as any).visualFixtureReady)
+      if (process.argv.includes("--background-lyrics-only")) {
+        await checkBackgroundSeparation(page, name)
+        await checkLyricsDesign(page, name)
+        assert.deepEqual(errors, [], `${name}: renderer errors`)
+        console.log(`${name}: global/detail background separation and immersive lyrics passed`)
+        continue
+      }
       if (process.argv.includes("--overlay-material-only")) {
         await checkOverlayMaterial(page, name)
         assert.deepEqual(errors, [], `${name}: renderer errors`)
@@ -357,6 +458,8 @@ try {
         continue
       }
       await checkOverlayMaterial(page, name)
+      await checkBackgroundSeparation(page, name)
+      await checkLyricsDesign(page, name)
       for (const scenario of [
         {
           width: 1440,
@@ -688,6 +791,7 @@ try {
         assert.ok(alignment.bottom <= 1 && alignment.tint, `${name}/${panel}: docked header or tint differs from the toolbar/sidebar ${JSON.stringify(alignment)}`)
         const handle = region.locator(".cursor-ew-resize").first()
         const box = await handle.boundingBox()
+        const beforeWidth = await region.evaluate(element => element.getBoundingClientRect().width)
         assert.ok(box, `${name}/${panel}: resize handle missing`)
         await page.mouse.move(box.x + 2, box.y + 50)
         await page.mouse.down()
@@ -698,7 +802,7 @@ try {
           (element) => element.getBoundingClientRect().width
         )
         assert.ok(
-          width >= 460 && width <= 480,
+          Math.abs(width - Math.min(600, beforeWidth + 152)) <= 1,
           `${name}/${panel}: resize failed (${width})`
         )
         await page.screenshot({

@@ -34,6 +34,7 @@ type ReadyArtwork = {
 /** A single image owner and palette for the complete desktop window. */
 export function ArtworkShell({ children }: { children: ReactNode }) {
   const [route] = useLocation()
+  const mode = /^\/(artist|album|playlist)\/[^/?#]+/.test(route) ? "detail" : "global"
   const { artwork, onFailure, next, canRotate, playlistOwners } =
     useAmbientArtwork(route)
   const provider = useProviderStore((state) => state.provider),
@@ -125,6 +126,7 @@ export function ArtworkShell({ children }: { children: ReactNode }) {
         <div
           className="app-artwork-shell"
           data-artwork-background={frame ? "ready" : "empty"}
+          data-artwork-mode={mode}
           data-artwork-colors={palette ? "on" : "off"}
           style={
             { ...palette, "--interface-opacity": opacity } as CSSProperties
@@ -135,10 +137,11 @@ export function ArtworkShell({ children }: { children: ReactNode }) {
               <BackdropFrame
                 key={`previous-${previous.artwork.src}`}
                 ready={previous}
+                mode={mode}
                 retiring
               />
             )}
-            {frame && <BackdropFrame key={frame.artwork.src} ready={frame} />}
+            {frame && <BackdropFrame key={frame.artwork.src} ready={frame} mode={mode} />}
             {enabled && artwork && artwork.src !== ready?.artwork.src && (
               <ArtworkImage
                 key={artwork.src}
@@ -228,9 +231,11 @@ export function ArtworkShell({ children }: { children: ReactNode }) {
 
 function BackdropFrame({
   ready,
+  mode,
   retiring = false,
 }: {
   ready: ReadyArtwork
+  mode: "global" | "detail"
   retiring?: boolean
 }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -259,7 +264,9 @@ function BackdropFrame({
     }
   }, [])
   const { artwork } = ready
-  const align = artwork.align
+  // Route mode also applies to retained/fading images: an old detail frame
+  // must never expose a sharp hero on a general browsing page.
+  const align = mode === "detail" ? artwork.align : undefined
   const fullHeroHeight = align
     ? Math.max(1, align.heroTop - size.top + align.heroH)
     : size.height

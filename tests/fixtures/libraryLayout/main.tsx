@@ -23,6 +23,7 @@ import { useLibraryStore } from "../../../src/stores/libraryStore.ts"
 import { useProviderStore } from "../../../src/stores/providerStore.ts"
 import { usePlayerStore } from "../../../src/stores/playerStore.ts"
 import { useDebugStore } from "../../../src/stores/debugStore.ts"
+import { useLyricsStore } from "../../../src/stores/lyricsStore.ts"
 import { useMetadataSourceStore } from "../../../src/stores/metadataSourceStore.ts"
 import { activateMetadataCache, clearMetadataCache } from "../../../src/stores/metadataCache.ts"
 import { useDeezerMetadataStore } from "../../../src/metadata/deezer/store.ts"
@@ -388,6 +389,14 @@ async function setup() {
   }
   setHome(5)
   w.fixtureAppearance = {
+    lyricsPreview: (plain = false, positionMs = 42000) => {
+      const lines = ["The city lights are fading", "We're following the tide", "Every road is open",
+        "With you here by my side", "Let the night keep moving", "Till the morning comes around",
+        "We'll remember every moment", "Every rhythm, every sound"].map((text, i) => ({ text,
+          startMs: i * 12000, endMs: (i + 1) * 12000 }))
+      useLyricsStore.setState({ sources: [{ id: "fixture", label: "Plex", lines, isSynced: !plain }], activeSourceId: "fixture", geniusHits: [] })
+      usePlayerStore.setState({ currentTrack: tracks[0], lyricsLines: lines, positionMs })
+    },
     apply: ({
       font = "circular",
       cardSize = 160,
@@ -472,6 +481,11 @@ async function setup() {
       }),
   }
   w.fixtureArtwork = {
+    detailBackground: async (name: string) => {
+      w.fixtureArtwork.replace("cover.svg")
+      artist.artUrl = album.artUrl = location.origin + "/synthetic-artwork/" + name
+      await clearMetadataCache()
+    },
     focusBackground: async () => {
       const src = location.origin + "/synthetic-artwork/portrait.svg"
       artist.artUrl = artist.thumbUrl = album.artUrl = album.thumbUrl = album.artistThumbUrl = src
