@@ -1,5 +1,6 @@
 import { makeOnPlay } from "../../lib/mediaPlay"
 import { DownloadMenuItems } from "../shared/DownloadMenuItems"
+import { metadataRefreshMessage, retryMetadataRefresh } from "../../lib/metadataLoadError"
 import { DownloadBadge } from "../shared/DownloadBadge"
 import "../../styles/media-detail-controls.css"
 import { ArtworkImage, useArtworkFailures } from "../shared/ArtworkImage"
@@ -13,7 +14,6 @@ import { usePlayerStore, useUIStore, useLibraryStore } from "../../stores"
 import { useProviderStore } from "../../stores/providerStore"
 import { prefetchTrackAudio } from "../../stores/playerStore"
 import { useContextMenu } from "../../hooks/useContextMenu"
-import { useFocalPoint } from "../../lib/focalPoint"
 import type {
   MusicArtist,
   MusicAlbum,
@@ -248,11 +248,11 @@ export function ArtistPage({ artistId }: { artistId: string }) {
       setStations(entry.stations)
       setIsLoading(false)
     }
-    loadArtistPage(artistId, {
+    retryMetadataRefresh(() => loadArtistPage(artistId, {
       force: true,
       deduplicate: shouldDedup,
       onCore: applyEntry,
-    })
+    }), current)
       .then(applyEntry)
       .catch((error) => {
         if (current()) setError(String(error))
@@ -280,7 +280,6 @@ export function ArtistPage({ artistId }: { artistId: string }) {
     artistId,
     failures
   )
-  const heroBgPos = useFocalPoint(artUrl ?? thumbUrl)
 
   // Map from lowercase artist name → library artist for "Fans Also Like" linking.
   // Covers both Plex-similar and sonically-similar artists that are in the library.
@@ -467,7 +466,6 @@ export function ArtistPage({ artistId }: { artistId: string }) {
       <MediaBackdrop
         src={artUrl ?? thumbUrl}
         heroRef={heroRef}
-        position={heroBgPos}
         onFailure={onFailure}
       />
       {/* ── Hero ── */}
@@ -887,10 +885,10 @@ export function ArtistPage({ artistId }: { artistId: string }) {
         )}
       </dl>
       <div className="flex flex-col gap-10 p-8">
-        {error && (
+        {error && metadataRefreshMessage(error, "artist") && (
           <PageRecovery
             title="Couldn't refresh this artist"
-            description="Showing saved artist information. Try again when your connection is available."
+            description={metadataRefreshMessage(error, "artist")!}
             onRetry={() => setLoadAttempt((n) => n + 1)}
           />
         )}

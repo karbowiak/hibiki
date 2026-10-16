@@ -1,5 +1,36 @@
 # Hibiki visual polish
 
+## Background framing and refresh recovery
+
+- [x] Fit background images to the complete client window rather than the short
+  hero panel. Matching aspect ratios retain the whole image; mismatches crop only
+  the excess required to fill the window. Remove the obsolete mirrored extension.
+- [x] Share focal framing across artist, album and playlist backgrounds. Replace
+  the global saliency centroid with a local detail region and an upper-subject
+  preference. Center actual image coordinates rather than treating them as CSS
+  alignment percentages; retain the minimum cover scale.
+- [x] Sample the loaded image at 100×100, cache up to 256 successful results, and
+  finish analysis before the crossfade. Tainted native canvases can read the same
+  cached image bytes within 500 ms; external sources are not refetched. No model,
+  dependency or bulk metadata work is added. This remains a framing heuristic,
+  not guaranteed face detection.
+- [x] Measure the background before paint and use identical placement for the
+  sharp hero and blurred continuation, including scrolling and resized windows.
+- [x] Retry a current detail read once when local invalidation supersedes it;
+  never retry real service failures or restart retired-page work. Give actual
+  failures sanitized explanations for access, missing items, timeouts, rate
+  limits and unreadable responses, without assuming the entire connection is down.
+
+Validation: 1,015 frontend tests and production build passed. Chromium and WebKit
+passed the complete appearance suite plus isolated portrait framing on artist,
+album and playlist pages at 800/1440 px, sharp/blur alignment and full-window
+coverage. Geometry tests cover matching aspect ratios and a 4:3 image in a 16:9
+client. Native review confirmed the affected artist and disappearance of its
+refresh warning; all four artist-page Plex reads returned HTTP 200 in roughly
+40–130 ms. That live check establishes current server health, not the cause of
+the earlier generic warning. No audio-engine or native-backend changes, push or
+release are included.
+
 ## Library switching and interface consistency
 
 - [x] Add a grouped music-library picker to the toolbar, with equal-height

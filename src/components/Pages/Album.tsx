@@ -1,4 +1,5 @@
 import { DownloadMenuItems } from "../shared/DownloadMenuItems"
+import { metadataRefreshMessage, retryMetadataRefresh } from "../../lib/metadataLoadError"
 import { DownloadBadge } from "../shared/DownloadBadge"
 import "../../styles/media-detail-controls.css"
 import { ArtworkImage, useArtworkFailures } from "../shared/ArtworkImage"
@@ -180,7 +181,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
       setRelatedHubs(entry.relatedHubs)
       setIsLoading(false)
     }
-    loadAlbumPage(albumId, { force: true, onCore: applyEntry })
+    retryMetadataRefresh(() => loadAlbumPage(albumId, { force: true, onCore: applyEntry }), current)
       .then(applyEntry)
       .catch((error) => {
         if (current()) setError(String(error))
@@ -816,10 +817,10 @@ export function AlbumPage({ albumId }: { albumId: string }) {
       </dl>
       {/* Track list */}
       <div className="px-8">
-        {error && (
+        {error && metadataRefreshMessage(error, "album") && (
           <PageRecovery
             title="Couldn't refresh this album"
-            description="Showing saved album information. Try again when your connection is available."
+            description={metadataRefreshMessage(error, "album")!}
             onRetry={() => setLoadAttempt((n) => n + 1)}
           />
         )}

@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -18,12 +19,15 @@ import { AmbientArtworkControlsContext } from "../lib/ambientArtworkContext"
 import { ArtworkPaletteContext } from "../lib/artworkPaletteContext"
 import { artworkUiPalette } from "../lib/artworkUiPalette"
 import { artworkPlacement } from "../lib/artworkLayout"
+import { detectFocalPoint } from "../lib/focalPoint"
+import type { FocalPoint } from "../lib/artworkFocus"
 import { ArtworkImage } from "./shared/ArtworkImage"
 
 type ReadyArtwork = {
   artwork: AmbientArtwork
   width: number
   height: number
+  focus: FocalPoint
   provider: ReturnType<typeof useProviderStore.getState>["provider"]
   scope: string | undefined
 }
@@ -55,6 +59,8 @@ export function ArtworkShell({ children }: { children: ReactNode }) {
     previous: ReadyArtwork | null
   }>({ current: null, previous: null })
   const currentRequest = useRef({ artwork, provider, scope, enabled })
+  const analysis = useRef<AbortController | null>(null)
+  useEffect(() => () => analysis.current?.abort(), [])
   currentRequest.current = { artwork, provider, scope, enabled }
   const belongsToPlaylist = (ready: ReadyArtwork | null) =>
     playlistOwners === undefined ||
@@ -152,7 +158,7 @@ export function ArtworkShell({ children }: { children: ReactNode }) {
                   )
                     onFailure(src)
                 }}
-                onLoad={(event) => {
+                onLoad={async (event) => {
                   const current = currentRequest.current
                   if (
                     !current.enabled ||
@@ -163,10 +169,41 @@ export function ArtworkShell({ children }: { children: ReactNode }) {
                     provider?.cacheScope !== scope
                   )
                     return
+                  const image = event.currentTarget
+                  const width = image.naturalWidth,
+                    height = image.naturalHeight
+                  analysis.current?.abort()
+                  const controller = new AbortController()
+                  analysis.current = controller
+                  const focus = await detectFocalPoint(
+                    artwork.src,
+                    controller.signal,
+                    {
+                      image,
+                      timeoutMs: 500,
+                      // Portraits and square covers put heads above their midpoint.
+                      fallback: {
+                        x: 0.5,
+                        y: width / height < 1.5 ? 0.25 : 0.5,
+                      },
+                    }
+                  )
+                  const latest = currentRequest.current
+                  if (
+                    controller.signal.aborted ||
+                    !latest.enabled ||
+                    latest.artwork?.src !== artwork.src ||
+                    latest.provider !== provider ||
+                    latest.scope !== scope ||
+                    useProviderStore.getState().provider !== provider ||
+                    provider?.cacheScope !== scope
+                  )
+                    return
                   const next = {
-                    artwork: current.artwork,
-                    width: event.currentTarget.naturalWidth,
-                    height: event.currentTarget.naturalHeight,
+                    artwork: latest.artwork,
+                    width,
+                    height,
+                    focus,
                     provider,
                     scope,
                   }
@@ -198,7 +235,7 @@ function BackdropFrame({
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ width: 0, height: 0, top: 0 })
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = ref.current
     if (!element) return
     const measure = () => {
@@ -231,11 +268,12 @@ function BackdropFrame({
     .map((value) => parseFloat(value) / 100)
   const placement = artworkPlacement(
     size.width,
-    fullHeroHeight,
+    size.height,
     ready.width,
     ready.height,
-    x,
-    y
+    artwork.position === "50% 50%" ? ready.focus.x : x,
+    artwork.position === "50% 50%" ? ready.focus.y : y,
+    fullHeroHeight
   )
   const picture = placement
     ? { position: "absolute" as const, ...placement, maxWidth: "none" }
@@ -257,18 +295,6 @@ function BackdropFrame({
             loading="eager"
             style={picture}
           />
-          {placement && placement.top + placement.height < size.height && (
-            <ArtworkImage
-              src={artwork.src}
-              alt=""
-              loading="eager"
-              style={{
-                ...picture,
-                top: placement.top + placement.height,
-                transform: "scaleY(-1)",
-              }}
-            />
-          )}
         </div>
         <div className="app-artwork-wash" />
       </div>

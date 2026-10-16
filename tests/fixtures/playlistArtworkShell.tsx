@@ -12,6 +12,10 @@ Object.assign(globalThis, {
   getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
   IS_REACT_ACT_ENVIRONMENT: true,
 })
+// Pixel analysis is covered separately; this fixture exercises frame ownership.
+mock.module("../../src/lib/focalPoint", () => ({
+  detectFocalPoint: async () => ({ x: 0.5, y: 0.25 }),
+}))
 let route = "/home",
   selected: any = null,
   owners: string[] | undefined = undefined
@@ -91,9 +95,10 @@ const load = async () => {
     naturalWidth: { value: 1000 },
     naturalHeight: { value: 1000 },
   })
-  await act(() =>
+  await act(async () => {
     image.dispatchEvent(new dom.window.Event("load", { bubbles: true }))
-  )
+    await Promise.resolve()
+  })
 }
 try {
   selected = art("unrelated", "ambient-pool")

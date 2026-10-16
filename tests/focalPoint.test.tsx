@@ -235,6 +235,25 @@ test("saliency still follows a visible feature and blank artwork uses the center
   expect(await blank).toEqual(center)
 })
 
+test("a displayed image is analyzed without another request or decode", async () => {
+  const point = await detectFocalPoint("https://fixture.test/displayed.png", undefined, {
+    image: {} as HTMLImageElement, timeoutMs: 500, fallback: center,
+  })
+  expect(point.x).toBeGreaterThan(0.65)
+  expect(requests).toHaveLength(0)
+  expect(images).toHaveLength(0)
+})
+
+test("a tainted external image uses the portrait fallback without refetching upstream", async () => {
+  throwCanvas = true
+  const fallback = { x: 0.5, y: 0.25 }
+  expect(await detectFocalPoint("https://fixture.test/tainted.png", undefined, {
+    image: {} as HTMLImageElement, timeoutMs: 500, fallback,
+  })).toEqual(fallback)
+  expect(requests).toHaveLength(0)
+  expect(images).toHaveLength(0)
+})
+
 test("changing artist centers the new artwork immediately and cancels old analysis", async () => {
   root = createRoot(document.getElementById("root")!)
   await act(async () => {

@@ -458,6 +458,16 @@ async function setup() {
       }),
   }
   w.fixtureArtwork = {
+    focusBackground: async () => {
+      const src = location.origin + "/synthetic-artwork/portrait.svg"
+      artist.artUrl = artist.thumbUrl = album.artUrl = album.thumbUrl = album.artistThumbUrl = src
+      for (const track of tracks) track.thumbUrl = src
+      // All eligible member sources must use the portrait: playlist rotation
+      // legitimately chooses either artist or album artwork.
+      w.fixtureArtwork.replace("portrait.svg")
+      useLibraryStore.setState({ playlistItemsCache: {}, playlistIsFullyLoaded: {}, currentPlaylistItems: [...tracks] })
+      await clearMetadataCache()
+    },
     replace: (name: string) => {
       const src = location.origin + "/synthetic-artwork/" + name
       const library = useLibraryStore.getState()

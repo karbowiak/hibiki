@@ -11,6 +11,105 @@ import { artworkContrast } from "../src/lib/artworkTone"
 const root = resolve(import.meta.dir, "..")
 const output = await mkdtemp(join(tmpdir(), "hibiki-appearance-"))
 const artifacts = resolve(root, ".tmp/appearance-checks")
+async function checkBackgroundFraming(page: Page, name: string) {
+  // A portrait's upper subject must survive real shell crops on all detail routes.
+  await page.evaluate(async () => {
+    ;(window as any).fixtureAppearance.route("/search")
+    await (window as any).fixtureArtwork.focusBackground()
+  })
+  for (const width of [1440, 800]) {
+    await page.setViewportSize({ width, height: 850 })
+    for (const path of [
+      "/artist/fixture-artist",
+      "/album/fixture-album",
+      "/playlist/fixture-playlist-0",
+    ]) {
+      await page.evaluate(
+        (value) => (window as any).fixtureAppearance.route(value),
+        path
+      )
+      const title = path.startsWith("/artist/")
+        ? "The Midnight Ensemble and the City Orchestra"
+        : path.startsWith("/album/")
+          ? "Live at the Concert Hall: The Complete Deluxe Edition"
+          : "An exceptionally long synthetic playlist title for gallery truncation"
+      await page
+        .getByRole("heading", { level: 1, name: title, exact: true })
+        .waitFor()
+      try {
+        await page.waitForFunction(() => document.querySelector<HTMLImageElement>(
+          ".app-artwork-frame:not(.app-artwork-frame--retiring) .app-artwork-sharp img"
+        )?.src.endsWith("portrait.svg"), undefined, { timeout: 5000 })
+      } catch (error) {
+        const state = await page.evaluate(() => ({
+          path: location.pathname,
+          images: [...document.querySelectorAll<HTMLImageElement>('.app-artwork-background img')].map(i => ({src:i.src,complete:i.complete,width:i.naturalWidth})),
+          background: document.querySelector('.app-artwork-shell')?.getAttribute('data-artwork-background'),
+        }))
+        throw new Error(`${name}/${width}/${path}: focus image not ready ${JSON.stringify(state)}`, { cause: error })
+      }
+      await page.waitForFunction(
+        () => {
+          const scroller = document.querySelector(
+            "#layout-fixture main .app-page-content"
+          )!
+          scroller.scrollTop = 0
+          return (
+            document
+              .querySelector(".media-detail-hero")!
+              .getBoundingClientRect().top >= 0
+          )
+        },
+        undefined,
+        { timeout: 5000 }
+      )
+      const crop = await page.evaluate(() => {
+        const hero = document
+          .querySelector(".media-detail-hero")!
+          .getBoundingClientRect()
+        const sharp = document.querySelector<HTMLImageElement>(
+          ".app-artwork-frame:not(.app-artwork-frame--retiring) .app-artwork-sharp img"
+        )!
+        const ambient = document.querySelector<HTMLImageElement>(
+          ".app-artwork-frame:not(.app-artwork-frame--retiring) .app-artwork-ambient img"
+        )!
+        const rect = sharp.getBoundingClientRect()
+        const ambientRect = ambient.getBoundingClientRect()
+        return {
+          subjectY: rect.top + (rect.height * 110) / 720,
+          top: hero.top,
+          bottom: hero.bottom,
+          sharpFilter: getComputedStyle(sharp).filter,
+          aligned: (["left", "top", "width", "height"] as const).every(
+            (key) => Math.abs(rect[key] - ambientRect[key]) < 1
+          ),
+          coversWindow:
+            rect.width >= innerWidth - 1 && rect.height >= innerHeight - 1,
+        }
+      })
+      assert.ok(
+        crop.subjectY > crop.top + 30 && crop.subjectY < crop.bottom - 30,
+        `${name}/${width}/${path}: upper subject cropped out ${JSON.stringify(crop)}`
+      )
+      assert.equal(crop.sharpFilter, "none")
+      assert.equal(
+        crop.aligned,
+        true,
+        `${name}: sharp/blur focal geometry differs ${JSON.stringify(crop)}`
+      )
+      assert.equal(
+        crop.coversWindow,
+        true,
+        `${name}: image fitted to the hero instead of the client`
+      )
+      if (path.startsWith("/album/"))
+        await page.screenshot({
+          path: join(artifacts, `${name}-${width}-portrait-focus.png`),
+        })
+    }
+  }
+}
+
 async function checkSearchOverlay(page: Page, browser: string) {
   for (const [width, height, theme, background] of [
     [1440, 850, "dark", true],
@@ -78,6 +177,11 @@ try {
     port: 0,
     async fetch(request) {
       const path = new URL(request.url).pathname
+      if (path === "/synthetic-artwork/portrait.svg")
+        return new Response(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="720"><rect width="480" height="720" fill="#202030"/><rect x="180" y="50" width="120" height="120" fill="#be7855"/><rect x="160" y="500" width="160" height="150" fill="#aaa"/></svg>',
+          { headers: { "Content-Type": "image/svg+xml" } }
+        )
       if (path.startsWith("/synthetic-artwork/"))
         return new Response(
           `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="480"><rect width="480" height="480" fill="${path.includes("replacement") ? "#0891b2" : path.includes("next") ? "#f97316" : "#7c3aed"}"/></svg>`,
@@ -97,6 +201,7 @@ try {
     ["chromium", chromium],
     ["webkit", webkit],
   ] as const) {
+    if (process.argv.includes("--webkit-only") && name !== "webkit") continue
     const browser = await type.launch({ headless: true })
     try {
       const context = await browser.newContext()
@@ -132,6 +237,12 @@ try {
         `${origin}/tests/fixtures/libraryLayout/index.html?appearance=1&player=1&discovery=1`
       )
       await page.waitForFunction(() => (window as any).visualFixtureReady)
+      if (process.argv.includes("--background-focus-only")) {
+        await checkBackgroundFraming(page, name)
+        assert.deepEqual(errors, [], `${name}: renderer errors`)
+        console.log(`${name}: full-window fitting, focal crops and sharp/blur alignment passed`)
+        continue
+      }
       await checkSearchOverlay(page, name)
       if (process.argv.includes("--search-overlay-only")) {
         assert.deepEqual(errors, [], `${name}: renderer errors`)
@@ -863,6 +974,7 @@ try {
         "seek",
         `${name}: waveform changes broke keyboard seeking`
       )
+      await checkBackgroundFraming(page, name)
       await page.evaluate(() =>
         (window as any).fixtureAppearance.apply({ background: false })
       )
