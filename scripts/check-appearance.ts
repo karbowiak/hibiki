@@ -12,6 +12,72 @@ const root = resolve(import.meta.dir, "..")
 const output = await mkdtemp(join(tmpdir(), "hibiki-appearance-"))
 const artifacts = resolve(root, ".tmp/appearance-checks")
 let artworkGate: Promise<void> | null = null
+async function checkFullscreenVisualizer(page: Page, name: string) {
+  for (const [width, height, theme, textSize] of [[1440, 900, "dark", 16], [900, 720, "light", 20], [620, 620, "dark", 16]] as const) {
+    await page.setViewportSize({ width, height })
+    await page.evaluate(({ theme, textSize }) => {
+      ;(window as any).fixtureAppearance.apply({ theme, textSize, background: true })
+      ;(window as any).fixtureAppearance.route("/")
+      ;(window as any).fixtureAppearance.panel("queue", true)
+      ;(window as any).fixtureAppearance.visualizer("spectrum")
+    }, { theme, textSize })
+    await page.locator('.app-artwork-shell[data-artwork-background="ready"]').waitFor()
+    const opener = page.getByRole("button", { name: "Open fullscreen visualizer", exact: true })
+    await opener.click()
+    const dialog = page.getByRole("dialog", { name: "Music visualization" })
+    await dialog.waitFor()
+    assert.equal(await dialog.evaluate(element => element.parentElement === document.body), true, `${name}: visualizer is trapped inside the filtered playbar`)
+    assert.equal(await page.locator('#root').evaluate(element => element.hasAttribute('inert')), true)
+    const playerAccent = await page.locator('[data-player-bar]').evaluate(element => getComputedStyle(element).getPropertyValue('--accent'))
+    assert.equal(await dialog.evaluate(element => getComputedStyle(element).getPropertyValue('--accent')), playerAccent, `${name}: portalling lost the playing album palette`)
+    await page.keyboard.press('?')
+    const help = page.getByRole('dialog', { name: 'Keyboard Shortcuts', exact: true })
+    await help.waitFor()
+    assert.equal(await help.evaluate(element => element.parentElement === document.body && element.contains(document.activeElement)), true, `${name}: shortcut help is trapped behind the viewer`)
+    assert.ok(await help.evaluate(element => Number(getComputedStyle(element).zIndex)) > await dialog.evaluate(element => Number(getComputedStyle(element).zIndex)))
+    await page.keyboard.press('Escape')
+    await help.waitFor({ state: 'detached' })
+    assert.equal(await dialog.evaluate(element => element === document.activeElement), true)
+    for (const mode of ["Spectrum", "Oscilloscope", "Vu", "Starfield", "Milkdrop"]) {
+      await dialog.getByRole("button", { name: new RegExp(`^${mode}$`, "i") }).click()
+      const layout = await dialog.evaluate(element => {
+        const bounds = element.getBoundingClientRect()
+        const stage = element.querySelector('.fullscreen-visualizer-stage')!.getBoundingClientRect()
+        const controls = element.querySelector('.fullscreen-visualizer-controls')!.getBoundingClientRect()
+        const visibleControls = [...element.querySelectorAll<HTMLElement>('button, input')].filter(control => control.getClientRects().length > 0)
+        return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
+          stageHeight: stage.height, stageBottom: stage.bottom, controlsTop: controls.top,
+          overflow: element.scrollWidth > element.clientWidth || element.scrollHeight > element.clientHeight,
+          outOfBounds: visibleControls.some(control => { const r = control.getBoundingClientRect(); return r.left < 0 || r.right > innerWidth + 1 || r.top < 0 || r.bottom > innerHeight + 1 }),
+          background: getComputedStyle(element).backgroundColor }
+      })
+      assert.deepEqual([layout.x, layout.y, layout.width, layout.height], [0, 0, width, height], `${name}/${mode}: visualizer does not fill the viewport`)
+      assert.equal(layout.overflow || layout.outOfBounds, false, `${name}/${mode}/${width}: controls overflow`)
+      assert.ok(layout.stageHeight > height / 2 && layout.stageBottom <= layout.controlsTop + 1, `${name}/${mode}: canvas and controls overlap`)
+      assert.equal(layout.background, "rgb(0, 0, 0)", `${name}: light theme leaked into the immersive stage`)
+    }
+    await page.screenshot({ path: join(artifacts, `${name}-${width}-fullscreen-visualizer.png`) })
+    await dialog.getByRole('button', { name: /^spectrum$/i }).click()
+    await page.setViewportSize({ width: width + 40, height: height + 40 })
+    await page.waitForFunction(() => {
+      const canvas = document.querySelector<HTMLCanvasElement>('.fullscreen-visualizer-stage canvas')!
+      return canvas.width === Math.round(canvas.clientWidth * devicePixelRatio)
+        && canvas.height === Math.round(canvas.clientHeight * devicePixelRatio)
+    })
+    // The keyboard stays in the viewer, then returns to its trigger on close.
+    await dialog.getByRole('button', { name: 'Close visualizer' }).focus()
+    await page.keyboard.press('Shift+Tab')
+    assert.equal(await dialog.getByRole('button', { name: /^milkdrop$/i }).evaluate(element => element === document.activeElement), true)
+    await page.keyboard.press('Escape')
+    await dialog.waitFor({ state: 'detached' })
+    assert.equal(await page.locator('#root').evaluate(element => element.hasAttribute('inert')), false)
+    assert.equal(await opener.evaluate(element => element === document.activeElement), true)
+  }
+  await page.evaluate(() => {
+    ;(window as any).fixtureAppearance.panel(null)
+    ;(window as any).fixtureAppearance.apply({})
+  })
+}
 async function checkBackgroundSeparation(page: Page, name: string) {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.evaluate(async () => {
@@ -432,6 +498,12 @@ try {
         `${origin}/tests/fixtures/libraryLayout/index.html?appearance=1&player=1&discovery=1`
       )
       await page.waitForFunction(() => (window as any).visualFixtureReady)
+      if (process.argv.includes("--visualizer-only")) {
+        await checkFullscreenVisualizer(page, name)
+        assert.deepEqual(errors, [], `${name}: renderer errors`)
+        console.log(`${name}: fullscreen visualization sizing, modes, palette, resizing and focus passed`)
+        continue
+      }
       if (process.argv.includes("--background-lyrics-only")) {
         await checkBackgroundSeparation(page, name)
         await checkLyricsDesign(page, name)
@@ -457,6 +529,7 @@ try {
         console.log(`${name}: search overlay stays above content and clear of the playbar across routes, themes and widths`)
         continue
       }
+      await checkFullscreenVisualizer(page, name)
       await checkOverlayMaterial(page, name)
       await checkBackgroundSeparation(page, name)
       await checkLyricsDesign(page, name)

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react"
+import { createPortal } from "react-dom"
 import { IS_MACOS } from "../lib/platform"
 import { isCompositionKey } from "../lib/keyboard"
 
@@ -67,7 +68,9 @@ export function HotkeyHelpModal({ context = "player", onClose }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
+    const previousFocus = document.activeElement as HTMLElement | null
     rootRef.current?.focus()
+    return () => { if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true }) }
   }, [])
 
   useEffect(() => {
@@ -88,11 +91,14 @@ export function HotkeyHelpModal({ context = "player", onClose }: Props) {
       ? [playbackGroup, visualizerGroup, milkdropGroup]
       : [playbackGroup, navigationGroup]
 
-  return (
+  return createPortal(
     <div
       ref={rootRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Keyboard Shortcuts"
       tabIndex={-1}
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      className="fixed inset-0 z-[600] flex items-center justify-center bg-black/60 backdrop-blur-sm"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
       <div className="app-overlay-surface w-full max-w-lg rounded-xl border border-[var(--border)] bg-app-card p-6 shadow-2xl">
@@ -124,6 +130,7 @@ export function HotkeyHelpModal({ context = "player", onClose }: Props) {
           ))}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

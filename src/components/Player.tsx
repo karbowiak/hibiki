@@ -941,7 +941,7 @@ export function Player() {
 
                 {/* Fullscreen visualizer expand */}
                 <button
-                  onClick={openFullscreen}
+                  onClick={event => { event.currentTarget.focus({ preventScroll: true }); openFullscreen() }}
                   title="Open fullscreen visualizer"
                   className="flex-shrink-0 flex h-8 w-8 items-center justify-center transition-colors text-white/40 hover:text-white/70"
                   aria-label="Open fullscreen visualizer"

@@ -72,7 +72,7 @@ dom.window.HTMLCanvasElement.prototype.getContext = (() => canvas) as any
 const core = await import("@tauri-apps/api/core")
 mock.module("@tauri-apps/api/core", () => ({
   ...core,
-  isTauri: () => scenario === "native",
+  isTauri: () => scenario === "native" || scenario === "fullscreen-window",
   invoke: async () => undefined,
 }))
 mock.module("idb-keyval", () => ({
@@ -156,8 +156,17 @@ globalThis.AudioContext = AudioContextMock as any
 const minimizeQueries: ReturnType<typeof deferred<boolean>>[] = []
 const nativeCallbacks: (() => void)[] = []
 let nativeUnlistens = 0
+let nativeFullscreen = false
+let fullscreenFailure = false
+const fullscreenChanges: boolean[] = []
 mock.module("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
+    async isFullscreen() { return nativeFullscreen },
+    async setFullscreen(value: boolean) {
+      if (fullscreenFailure) throw new Error("Fullscreen rejected")
+      nativeFullscreen = value
+      fullscreenChanges.push(value)
+    },
     isMinimized() {
       const query = deferred<boolean>()
       minimizeQueries.push(query)
@@ -338,6 +347,36 @@ if (scenario === "compact") {
   assert.equal(AudioContextMock.instances[1].closes, 1)
   assert.equal(context.closes, 1)
   assert.equal(timers.size, 0)
+} else if (scenario === "fullscreen-window") {
+  const opener = document.createElement("button")
+  document.body.append(opener)
+  opener.focus()
+  await render(<Fullscreen />)
+  assert.equal(document.querySelector('[aria-label="Music visualization"]')?.parentElement, document.body)
+  assert.equal(opener.hasAttribute("inert"), true)
+  await act(async () => {
+    document.querySelector<HTMLButtonElement>('[aria-label="Enter fullscreen"]')!.click()
+    await tick()
+  })
+  assert.equal(nativeFullscreen, true)
+  assert.ok(document.querySelector('[aria-label="Exit fullscreen"]'))
+  await render(null)
+  assert.deepEqual(fullscreenChanges, [true, false], "Closing the visualizer restores the window")
+  assert.equal(opener.hasAttribute("inert"), false)
+  assert.equal(document.activeElement, opener)
+  nativeFullscreen = true
+  await render(<Fullscreen />)
+  await render(null)
+  assert.equal(nativeFullscreen, true, "An already-fullscreen window remains fullscreen on close")
+  nativeFullscreen = false
+  fullscreenFailure = true
+  await render(<Fullscreen />)
+  await act(async () => {
+    document.querySelector<HTMLButtonElement>('[aria-label="Enter fullscreen"]')!.click()
+    await tick()
+  })
+  assert.match(document.querySelector('[role="status"]')?.textContent ?? "", /Couldn't change fullscreen/)
+  await act(() => root.unmount())
 } else if (scenario === "cancel-meta" || scenario === "cancel-packs") {
   await render(<Fullscreen />)
   const before = presets

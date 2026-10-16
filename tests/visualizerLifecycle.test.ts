@@ -5,6 +5,7 @@ for (const scenario of [
   "compact",
   "bridge",
   "milkdrop",
+  "fullscreen-window",
   "cancel-meta",
   "cancel-packs",
   "native",

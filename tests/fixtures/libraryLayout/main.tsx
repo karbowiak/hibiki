@@ -1,6 +1,7 @@
 import { usePodcastStore } from "../../../src/backends/podcast/store.ts"
 import { useRadioStreamStore } from "../../../src/stores/radioStreamStore.ts"
 import { useGlobalHotkeys } from "../../../src/hooks/useGlobalHotkeys.ts"
+import { HotkeyHelpModal } from "../../../src/components/HotkeyHelpModal.tsx"
 import { ContextMenu } from "../../../src/components/ContextMenu.tsx"
 import React from "react"
 import { createRoot } from "react-dom/client"
@@ -22,6 +23,7 @@ import { SideBar } from "../../../src/components/SideBar.tsx"
 import { useLibraryStore } from "../../../src/stores/libraryStore.ts"
 import { useProviderStore } from "../../../src/stores/providerStore.ts"
 import { usePlayerStore } from "../../../src/stores/playerStore.ts"
+import { useVisualizerStore, type FullscreenVisualizerMode } from "../../../src/stores/visualizerStore.ts"
 import { useDebugStore } from "../../../src/stores/debugStore.ts"
 import { useLyricsStore } from "../../../src/stores/lyricsStore.ts"
 import { useMetadataSourceStore } from "../../../src/stores/metadataSourceStore.ts"
@@ -73,6 +75,8 @@ async function setup() {
       if (command === "podcast_lookup") return { feed_url: podcastFeed }
       if (command === "plugin:app|version") return "0.5.3"
       if (command === "plugin:window|is_minimized") return false
+      if (command === "plugin:window|is_fullscreen") return false
+      if (command === "plugin:window|set_fullscreen") return null
       if (command === "audio_get_waveform") return []
       if (command === "get_image_cache_info")
         return { files: 0, bytes: 0, max_files: 4096, max_bytes: 536870912 }
@@ -389,6 +393,8 @@ async function setup() {
   }
   setHome(5)
   w.fixtureAppearance = {
+    visualizer: (fullscreenMode: FullscreenVisualizerMode) =>
+      useVisualizerStore.setState({ fullscreenMode, autoCycleEnabled: false }),
     lyricsPreview: (plain = false, positionMs = 42000) => {
       const lines = ["The city lights are fading", "We're following the tide", "Every road is open",
         "With you here by my side", "Let the night keep moving", "Till the morning comes around",
@@ -728,11 +734,12 @@ async function setup() {
 void setup()
 
 function InteractionHarness({ children }: { children: React.ReactNode }) {
-  useGlobalHotkeys()
+  const { hotkeyHelpOpen, setHotkeyHelpOpen } = useGlobalHotkeys()
   return (
     <ArtworkShell>
       {children}
       <ContextMenu />
+      {hotkeyHelpOpen && <HotkeyHelpModal context="visualizer" onClose={() => setHotkeyHelpOpen(false)} />}
     </ArtworkShell>
   )
 }

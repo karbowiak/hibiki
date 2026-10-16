@@ -1,5 +1,27 @@
 # Hibiki visual polish
 
+## Fullscreen visualization
+
+- [x] Render the visualizer at document level so the playbar's backdrop filter
+  cannot confine it to the bottom strip. Carry the playing album's palette
+  through the portal and keep the immersive stage dark in either app theme.
+- [x] Separate transport and visualization options into responsive rows. Keep
+  track text, waveform, preset controls, mode buttons and close/fullscreen
+  controls within the window at normal and enlarged text sizes.
+- [x] Observe canvas size changes for both 2D and Milkdrop renderers, including
+  window resizing and control wrapping. Retire observers with their renderer.
+- [x] Use Tauri's window fullscreen API in the desktop app, with the required
+  narrow window permissions, error feedback and restoration on viewer close.
+- [x] Isolate background controls while the viewer is open, restore focus on
+  close, and keep keyboard help accessible above the viewer.
+
+Validation: native development-app playback confirms full-window Milkdrop and
+native fullscreen entry/exit. Full Chromium/WebKit appearance checks pass;
+focused viewer checks cover all five modes, dark/light themes, enlarged text,
+620/900/1440 px windows, resizing, palette continuity, help, Escape and focus.
+The 24 focused visualization and keyboard tests, production build, native debug
+build and local app bundle pass. No release was published.
+
 ## Background modes and immersive lyrics
 
 - [x] Give the shell an explicit global/detail background mode. General browsing

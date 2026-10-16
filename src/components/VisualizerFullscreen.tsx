@@ -1,5 +1,10 @@
 import { ArtworkImage } from "./shared/ArtworkImage"
-import { useEffect, useRef, useState, useCallback } from "react"
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react"
+import { createPortal } from "react-dom"
+import { IconX } from "@tabler/icons-react"
+import { isTauri } from "@tauri-apps/api/core"
+import { getCurrentWindow } from "@tauri-apps/api/window"
+import { usePlaybackPalette } from "../lib/playbackPaletteContext"
 import { useVisualizerStore, type FullscreenVisualizerMode } from "../stores/visualizerStore"
 import { usePlayerStore } from "../stores/playerStore"
 import { useShallow } from "zustand/react/shallow"
@@ -30,6 +35,7 @@ function randomStarHue(): number {
 }
 
 export default function VisualizerFullscreen() {
+  const palette = usePlaybackPalette()
   const {
     closeFullscreen,
     fullscreenMode,
@@ -93,7 +99,28 @@ export default function VisualizerFullscreen() {
   const [seekHoverPct, setSeekHoverPct] = useState<number | null>(null)
   const timeColumnWidth = `${Math.max(5, formatMs(currentTrack?.duration ?? 0).length)}ch`
   const [isNativeFullscreen, setIsNativeFullscreen] = useState(false)
+  const [fullscreenError, setFullscreenError] = useState<string | null>(null)
+  const restoreFullscreenRef = useRef<(() => void) | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    const container = containerRef.current!
+    const previousFocus = document.activeElement as HTMLElement | null
+    const background = [...document.body.children]
+      .filter(element => element !== container)
+      .map(element => ({ element, inert: element.getAttribute("inert") }))
+    background.forEach(({ element }) => element.setAttribute("inert", ""))
+    container.focus({ preventScroll: true })
+    return () => {
+      restoreFullscreenRef.current?.()
+      if (document.fullscreenElement === container) void document.exitFullscreen().catch(() => {})
+      background.forEach(({ element, inert }) => {
+        if (inert === null) element.removeAttribute("inert")
+        else element.setAttribute("inert", inert)
+      })
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
+    }
+  }, [])
 
   // Separate canvases: 2D canvas for spectrum/oscilloscope/vu, WebGL canvas for milkdrop.
   // A canvas cannot share WebGL and 2D contexts — using one canvas causes getContext("2d")
@@ -131,18 +158,51 @@ export default function VisualizerFullscreen() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const vizRef = useRef<any>(null)
 
-  // Native fullscreen listener
+  // Desktop WebKit does not consistently expose the browser Fullscreen API.
+  // Use the actual Tauri window in the app and the document API in a browser.
   useEffect(() => {
+    if (isTauri()) {
+      const win = getCurrentWindow()
+      let active = true
+      let revision = 0
+      const update = () => {
+        const request = ++revision
+        void win.isFullscreen().then(value => {
+          if (active && revision === request) setIsNativeFullscreen(value)
+        }).catch(() => {})
+      }
+      update()
+      const listener = win.onResized(update)
+      return () => {
+        active = false
+        void listener.then(unlisten => unlisten()).catch(() => {})
+      }
+    }
     const onFsChange = () => setIsNativeFullscreen(!!document.fullscreenElement)
     document.addEventListener("fullscreenchange", onFsChange)
     return () => document.removeEventListener("fullscreenchange", onFsChange)
   }, [])
 
-  const toggleNativeFullscreen = useCallback(() => {
-    if (document.fullscreenElement) {
-      void document.exitFullscreen()
-    } else {
-      void containerRef.current?.requestFullscreen()
+  const toggleNativeFullscreen = useCallback(async () => {
+    setFullscreenError(null)
+    try {
+      if (isTauri()) {
+        const win = getCurrentWindow()
+        const fullscreen = await win.isFullscreen()
+        await win.setFullscreen(!fullscreen)
+        if (!containerRef.current && !fullscreen) {
+          await win.setFullscreen(false)
+          return
+        }
+        restoreFullscreenRef.current = fullscreen ? null : () => { void win.setFullscreen(false).catch(() => {}) }
+        setIsNativeFullscreen(!fullscreen)
+      } else if (document.fullscreenElement) {
+        await document.exitFullscreen()
+      } else {
+        await containerRef.current?.requestFullscreen()
+      }
+    } catch {
+      setFullscreenError("Couldn't change fullscreen mode. Try again.")
     }
   }, [])
 
@@ -162,8 +222,13 @@ export default function VisualizerFullscreen() {
       canvas.height = Math.round(h * dpr)
     }
     resize()
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(resize) : null
+    observer?.observe(canvas)
     window.addEventListener("resize", resize)
-    return () => window.removeEventListener("resize", resize)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener("resize", resize)
+    }
   }, [fullscreenMode])
 
   // Setup/teardown butterchurn when entering milkdrop mode
@@ -178,10 +243,12 @@ export default function VisualizerFullscreen() {
     let context: AudioContext | null = null
     let processor: ScriptProcessorNode | null = null
     let mute: GainNode | null = null
+    let resizeObserver: ResizeObserver | null = null
     let visualizer: any = null
     const dispose = () => {
       if (disposed) return
       disposed = true
+      resizeObserver?.disconnect()
       if (processor) {
         processor.onaudioprocess = null
         processor.disconnect()
@@ -229,6 +296,13 @@ export default function VisualizerFullscreen() {
       viz.connectAudio(processor)
       visualizer = viz
       vizRef.current = viz
+      const resize = () => {
+        const width = Math.max(1, canvas.clientWidth)
+        const height = Math.max(1, canvas.clientHeight)
+        viz.setRendererSize(width, height)
+      }
+      resizeObserver = typeof ResizeObserver === "function" ? new ResizeObserver(resize) : null
+      resizeObserver?.observe(canvas)
       setMilkdropReady(value => value + 1)
 
       // Load all preset packs in background
@@ -559,22 +633,43 @@ export default function VisualizerFullscreen() {
   const isMilkdrop = fullscreenMode === "milkdrop"
   const currentIsFav = currentPresetName ? isFavorite(currentPresetName) : false
 
-  return (
-    <div ref={containerRef} className="fixed inset-0 z-50 bg-black flex flex-col hero-overlay">
+  // A filtered playbar establishes a containing block for fixed descendants.
+  // Render at the document level and carry the playing album's palette across.
+  return createPortal(
+    <div ref={containerRef} role="dialog" aria-modal="true" aria-label="Music visualization"
+      tabIndex={-1} style={palette} className="fullscreen-visualizer hero-overlay"
+      onKeyDown={event => {
+        if (event.key === "Escape" && !event.nativeEvent.isComposing) {
+          event.preventDefault()
+          event.stopPropagation()
+          if (presetBrowserOpen) setPresetBrowserOpen(false)
+          else closeFullscreen()
+          return
+        }
+        if (event.key !== "Tab") return
+        const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)')]
+          .filter(element => element.getClientRects().length > 0)
+        const first = controls[0], last = controls.at(-1)
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === event.currentTarget)) {
+          event.preventDefault(); last?.focus()
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault(); first?.focus()
+        }
+      }}>
       {/* Drag region — invisible strip at the top so the window can be moved */}
       <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-10 z-10" />
 
       {/* Close button — top right corner */}
       <button
         onClick={closeFullscreen}
-        className="absolute top-4 right-4 z-20 text-white/30 hover:text-white text-xl transition-colors"
+        className="fullscreen-visualizer-close absolute top-4 right-4 z-20"
         aria-label="Close visualizer"
       >
-        ✕
+        <IconX size={20} aria-hidden="true" />
       </button>
 
       {/* Canvas area — two canvases, only one visible at a time */}
-      <div className="flex-1 relative">
+      <div className="fullscreen-visualizer-stage relative min-h-0 flex-1">
         <canvas
           ref={canvas2dRef}
           className="absolute inset-0 w-full h-full"
@@ -591,9 +686,10 @@ export default function VisualizerFullscreen() {
       </div>
 
       {/* Bottom bar — track info + playback + mode pills + preset controls */}
-      <div className="flex items-center gap-4 px-5 py-3 bg-black/80 z-10">
+      <div className="fullscreen-visualizer-controls relative z-10">
+        <div className="fullscreen-visualizer-transport">
         {/* Track info — fixed width so layout doesn't shift */}
-        <div className="flex items-center gap-3 w-[220px] shrink-0">
+        <div className="fullscreen-visualizer-track flex min-w-0 items-center gap-3">
           {thumbUrl && (
             <ArtworkImage loading="eager" src={thumbUrl} className="w-10 h-10 rounded object-cover shrink-0" alt="" />
           )}
@@ -637,7 +733,7 @@ export default function VisualizerFullscreen() {
         </div>
 
         {/* Seek bar with waveform */}
-        <div className="flex items-center gap-2 flex-1 min-w-0">
+        <div className="fullscreen-visualizer-seek flex items-center gap-2 flex-1 min-w-0">
           <span className="text-[0.625rem] text-white/50 tabular-nums shrink-0 whitespace-nowrap text-right" style={{ width: timeColumnWidth }}>
             {formatMs(seekHoverPct !== null ? (currentTrack?.duration ?? 0) * seekHoverPct / 100 : positionMs)}
           </span>
@@ -675,24 +771,38 @@ export default function VisualizerFullscreen() {
           </span>
         </div>
 
-        {/* Visualizer-specific settings (between waveform and mode pills) */}
+        {/* Native fullscreen toggle stays next to the transport at every width. */}
+        <button
+          onClick={toggleNativeFullscreen}
+          className="fullscreen-visualizer-expand text-white/70 hover:text-white transition-colors"
+          aria-label={isNativeFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+          title="Fullscreen"
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+            {isNativeFullscreen ? <path d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3" />
+              : <path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3" />}
+          </svg>
+        </button>
+        </div>
+        <div className="fullscreen-visualizer-options">
+        <div className="fullscreen-visualizer-settings">
+        {/* Visualizer-specific settings */}
         {fullscreenMode === "starfield" && (
           <>
-            <span className="text-white/10">|</span>
-            <div className="flex items-center gap-4 text-white/60 text-xs">
+            <div className="flex flex-wrap items-center gap-4 text-white/70 text-xs">
               <label className="flex items-center gap-2">
-                <span className="text-white/40 whitespace-nowrap">Reactivity</span>
+                <span className="text-white/70 whitespace-nowrap">Reactivity</span>
                 <input type="range" min={0} max={100} value={starfieldReactivity}
                   onChange={(e) => setStarfieldReactivity(Number(e.target.value))}
                   className="w-24 accent-[var(--accent)]" />
-                <span className="text-white/30 w-8 text-right">{starfieldReactivity}%</span>
+                <span className="text-white/60 w-8 text-right">{starfieldReactivity}%</span>
               </label>
               <label className="flex items-center gap-2">
-                <span className="text-white/40 whitespace-nowrap">Speed</span>
+                <span className="text-white/70 whitespace-nowrap">Speed</span>
                 <input type="range" min={1} max={10} step={0.5} value={starfieldBaseSpeed}
                   onChange={(e) => setStarfieldBaseSpeed(Number(e.target.value))}
                   className="w-20 accent-[var(--accent)]" />
-                <span className="text-white/30 w-4 text-right">{starfieldBaseSpeed}</span>
+                <span className="text-white/60 w-4 text-right">{starfieldBaseSpeed}</span>
               </label>
             </div>
           </>
@@ -700,8 +810,7 @@ export default function VisualizerFullscreen() {
 
         {isMilkdrop && getAllNames().length > 0 && (
           <>
-            <span className="text-white/10">|</span>
-            <div className="flex items-center gap-2 text-white/60 text-sm">
+            <div className="flex min-w-0 flex-wrap items-center gap-2 text-white/70 text-sm">
               <button
                 onClick={() => { const n = getNextPresetName(-1); if (n) setCurrentPreset(n) }}
                 className="hover:text-white" aria-label="Previous preset"
@@ -764,46 +873,30 @@ export default function VisualizerFullscreen() {
           </>
         )}
 
-        {/* Separator */}
-        <span className="text-white/10">|</span>
-
-        {/* Native fullscreen toggle */}
-        <button
-          onClick={toggleNativeFullscreen}
-          className="text-white/50 hover:text-white transition-colors shrink-0"
-          aria-label={isNativeFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-          title="Fullscreen (F)"
-        >
-          {isNativeFullscreen ? (
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3" />
-            </svg>
-          ) : (
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3" />
-            </svg>
-          )}
-        </button>
-
-        <span className="text-white/10">|</span>
+        </div>
 
         {/* Mode pills — far right */}
-        <div className="flex gap-1.5 shrink-0">
+        <div className="fullscreen-visualizer-modes flex flex-wrap gap-1.5" role="group" aria-label="Visualization mode">
           {MODES.map(m => (
             <button
               key={m}
               onClick={() => setFullscreenMode(m)}
+              aria-pressed={fullscreenMode === m}
               className={`rounded-full px-3 py-1 text-xs capitalize transition-colors ${
                 fullscreenMode === m
-                  ? "bg-accent text-black font-semibold"
+                  ? "bg-accent font-semibold"
                   : "bg-white/10 text-white/70 hover:bg-white/20"
               }`}
+              style={fullscreenMode === m ? { color: "var(--artwork-ink, #000)" } : undefined}
             >
               {m}
             </button>
           ))}
         </div>
+        </div>
+        {fullscreenError && <p role="status" className="mt-3 text-sm text-white/70">{fullscreenError}</p>}
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
