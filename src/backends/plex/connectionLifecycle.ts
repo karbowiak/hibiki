@@ -81,7 +81,8 @@ export interface ConnectionState {
     allUrls?: string[],
     savedSectionId?: number,
     acceptInvalidCerts?: boolean,
-    expectedMachineIdentifier?: string
+    expectedMachineIdentifier?: string,
+    expectedSectionUuid?: string
   ): Promise<void>
   selectLibrary(section: LibrarySection): Promise<void>
   switchLibrary(section: LibrarySection): Promise<void>
@@ -200,7 +201,8 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
       allUrls?: string[],
       savedSectionId?: number,
       acceptInvalidCerts?: boolean,
-      expectedMachineIdentifier?: string
+      expectedMachineIdentifier?: string,
+      expectedSectionUuid?: string
     ) {
       check(request)
       const info = await deps.connectPlex(
@@ -225,6 +227,12 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
         cacheScopes: info.cacheScopes ?? {},
         sections,
       }
+      const section =
+        sections.length === 1
+          ? sections[0]
+          : sections.find((section) => section.key === savedSectionId)
+      if (expectedSectionUuid && section?.uuid !== expectedSectionUuid)
+        throw new Error("This music library changed. Refresh the library picker before switching.")
       await save(request, connection)
       const saved = await deps.loadSettings()
       check(request)
@@ -236,10 +244,6 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
         tlsExceptions: saved.tls_exceptions ?? [],
         availableMusicSections: sections,
       })
-      const section =
-        sections.length === 1
-          ? sections[0]
-          : sections.find((section) => section.key === savedSectionId)
       if (section) await chooseLibrary(request, connection, section)
       else set({ isLoading: false, needsLibraryPick: true })
     }
@@ -415,7 +419,8 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
         allUrls,
         savedSectionId,
         acceptInvalidCerts,
-        expectedMachineIdentifier
+        expectedMachineIdentifier,
+        expectedSectionUuid
       ) => {
         const request = begin()
         try {
@@ -428,7 +433,8 @@ export function createPlexConnectionStore(deps: ConnectionDependencies) {
             allUrls,
             savedSectionId,
             acceptInvalidCerts,
-            expectedMachineIdentifier
+            expectedMachineIdentifier,
+            expectedSectionUuid
           )
         } catch (error) {
           await failed(request, error)

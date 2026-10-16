@@ -22,7 +22,7 @@
   margin: 0;
   font-size: clamp(1.9rem, 3.8vw, 3.4rem);
   line-height: 1.12;
-  letter-spacing: -0.045em;
+  letter-spacing: -0.03em;
   font-weight: 700;
   overflow-wrap: anywhere;
 }
@@ -76,7 +76,7 @@
   min-width: 7rem;
 }
 .discovery-ledger dt {
-  font-size: 0.67rem;
+  font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--text-secondary);
@@ -118,12 +118,10 @@
 .discovery-overview-icon {
   display: grid;
   place-items: center;
-  width: 2.5rem;
-  height: 2.5rem;
+  width: 1.5rem;
+  height: 1.5rem;
   flex-shrink: 0;
-  border-radius: 0.7rem;
-  color: var(--artwork-primary, var(--accent));
-  background: rgb(var(--artwork-primary-rgb, var(--accent-rgb)) / 0.1);
+  color: var(--text-secondary);
 }
 .discovery-overview-card strong {
   display: block;
@@ -135,19 +133,10 @@
   display: block;
   margin-top: 0.25rem;
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: 0.8125rem;
 }
 .discovery-command-head {
-  border: 1px solid var(--border);
-  border-radius: 1rem;
-  padding: 1.4rem;
-  background:
-    linear-gradient(
-      120deg,
-      rgb(var(--artwork-primary-rgb, var(--accent-rgb)) / 0.06),
-      transparent 80%
-    ),
-    var(--bg-surface);
+  padding-block: 0.5rem;
 }
 .discovery-command-head .discovery-title {
   font-size: clamp(1.7rem, 3.2vw, 2.6rem);
@@ -156,7 +145,6 @@
   border: 1px solid var(--border);
   background: var(--bg-surface);
   color: var(--text-primary);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 .discovery-search-input::placeholder {
   color: var(--text-secondary);
@@ -172,7 +160,7 @@
 .discovery-search-caption {
   padding: 0.8rem 1rem 0.45rem;
   color: var(--text-secondary);
-  font-size: 0.65rem;
+  font-size: 0.75rem;
   letter-spacing: 0.13em;
   text-transform: uppercase;
 }
@@ -183,7 +171,7 @@
   padding: 0.7rem 1rem;
   border-top: 1px solid var(--border);
   color: var(--text-secondary);
-  font-size: 0.65rem;
+  font-size: 0.75rem;
 }
 .discovery-search-hints kbd {
   color: var(--text-secondary);

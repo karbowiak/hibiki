@@ -290,7 +290,6 @@ export function PodcastsPage() {
       {/* Header */}
       <div className="broadcast-header">
         <div>
-          <p className="broadcast-eyebrow">Listen and explore</p>
           <h1 className="broadcast-title">Podcasts</h1>
           <p className="broadcast-subtitle">
             Your subscriptions and new voices to discover.

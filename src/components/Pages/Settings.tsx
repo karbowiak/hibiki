@@ -181,7 +181,7 @@ function SettingRow({
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
           <p className="text-sm font-medium text-white/80">{label}</p>
-          {description && <p className="text-xs text-white/35 mt-0.5">{description}</p>}
+          {description && <p className="text-xs text-[var(--text-secondary)] mt-0.5">{description}</p>}
         </div>
         <div className="flex-shrink-0">{children}</div>
       </div>
@@ -190,7 +190,7 @@ function SettingRow({
   return (
     <div>
       <p className="text-sm font-medium text-white/80 mb-1.5">{label}</p>
-      {description && <p className="text-xs text-white/35 mb-2.5">{description}</p>}
+      {description && <p className="text-xs text-[var(--text-secondary)] mb-2.5">{description}</p>}
       {children}
     </div>
   )
@@ -217,14 +217,14 @@ function SettingCard({
       )}
     >
       <div className="flex items-center gap-3 mb-4">
-        <h3 className="text-sm font-semibold text-white">{title}</h3>
+        <h2 className="text-sm font-semibold text-white">{title}</h2>
         {badge && (
-          <span className="rounded-full bg-white/8 px-2 py-0.5 text-[10px] font-medium text-white/40">
+          <span className="rounded-full bg-white/8 px-2 py-0.5 text-xs font-medium text-[var(--text-secondary)]">
             {badge}
           </span>
         )}
       </div>
-      {description && <p className="text-xs text-white/35 -mt-2.5 mb-4">{description}</p>}
+      {description && <p className="text-xs text-[var(--text-secondary)] -mt-2.5 mb-4">{description}</p>}
       {children}
     </div>
   )
@@ -286,7 +286,7 @@ function AppearanceSection() {
             return (
               <div key={cat}>
                 {cat !== "default" && (
-                  <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-white/25 mb-1.5">
+                  <p className="text-xs font-bold uppercase tracking-[0.15em] text-[var(--text-secondary)] mb-1.5">
                     {cat === "sans-serif" ? "Sans-serif" : "Monospace"}
                   </p>
                 )}
@@ -343,7 +343,7 @@ function AppearanceSection() {
                     </svg>
                   )}
                 </span>
-                <span className={`text-[10px] transition-colors ${active ? "text-white" : "text-white/40 group-hover:text-white/70"}`}>
+                <span className={`text-xs transition-colors ${active ? "text-white" : "text-[var(--text-secondary)] group-hover:text-white/70"}`}>
                   {preset.name}
                 </span>
               </button>
@@ -358,7 +358,7 @@ function AppearanceSection() {
             style={{ backgroundColor: /^#[0-9a-fA-F]{6}$/.test(custom) ? custom : accent }}
           />
           <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-white/30 select-none">#</span>
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[var(--text-secondary)] select-none">#</span>
             <input
               type="text"
               value={custom.replace(/^#/, "")}
@@ -370,7 +370,7 @@ function AppearanceSection() {
               }`}
             />
           </div>
-          <span className="text-xs text-white/30">
+          <span className="text-xs text-[var(--text-secondary)]">
             {isCustom ? "Custom colour active" : "Enter a custom hex value"}
           </span>
         </div>
@@ -379,7 +379,7 @@ function AppearanceSection() {
         <div className="mt-4">
           <button
             onClick={() => setShowPicker(!showPicker)}
-            className="flex items-center gap-2 text-xs text-white/40 hover:text-white/70 transition-colors"
+            className="flex items-center gap-2 text-xs text-[var(--text-secondary)] hover:text-white/70 transition-colors"
           >
             <svg
               viewBox="0 0 16 16" width="10" height="10" fill="currentColor"
@@ -398,7 +398,7 @@ function AppearanceSection() {
 
         {/* Live preview strip */}
         <div className="mt-6 rounded-xl bg-accent-tint-subtle p-4 flex items-center gap-4 border border-white/5">
-          <span className="text-xs text-white/40 w-16 flex-shrink-0">Preview</span>
+          <span className="text-xs text-[var(--text-secondary)] w-16 flex-shrink-0">Preview</span>
           <div className="flex items-center gap-3 flex-wrap">
             <button className="flex h-8 w-8 items-center justify-center rounded-full text-black text-sm font-bold shadow-md" style={{ backgroundColor: accent }}>
               <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><polygon points="3,2 13,8 3,14" /></svg>
@@ -427,8 +427,8 @@ function AppearanceSection() {
           <span className="text-sm font-mono text-white/60 w-14 text-right">{cardSize}px</span>
         </div>
         <div className="flex justify-between mt-1">
-          <span className="text-xs text-white/25">Small</span>
-          <span className="text-xs text-white/25">Large</span>
+          <span className="text-xs text-[var(--text-secondary)]">Small</span>
+          <span className="text-xs text-[var(--text-secondary)]">Large</span>
         </div>
       </SettingCard>
 
@@ -466,7 +466,7 @@ function AppearanceSection() {
           {customColorsEnabled && Object.keys(overrides).length > 0 && (
             <button
               onClick={resetCustomColors}
-              className="text-xs text-white/40 hover:text-white/70 transition-colors"
+              className="text-xs text-[var(--text-secondary)] hover:text-white/70 transition-colors"
             >
               Reset all
             </button>
@@ -474,7 +474,7 @@ function AppearanceSection() {
         </div>
         <button
           onClick={() => setShowCustomColors(!showCustomColors)}
-          className="flex items-center gap-2 text-xs text-white/40 hover:text-white/70 transition-colors"
+          className="flex items-center gap-2 text-xs text-[var(--text-secondary)] hover:text-white/70 transition-colors"
         >
           <svg
             viewBox="0 0 16 16" width="10" height="10" fill="currentColor"
@@ -489,7 +489,7 @@ function AppearanceSection() {
             {(Object.keys(SEMANTIC_COLOR_LABELS) as SemanticColor[]).map((key, idx) => (
               <React.Fragment key={key}>
                 {idx === UI_COLOR_COUNT && (
-                  <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-white/25 mt-2 mb-0.5">System</p>
+                  <p className="text-xs font-bold uppercase tracking-[0.15em] text-[var(--text-secondary)] mt-2 mb-0.5">System</p>
                 )}
               <div className="flex items-center gap-3">
                 <input
@@ -503,7 +503,7 @@ function AppearanceSection() {
                 {overrides[key] && (
                   <button
                     onClick={() => setOverride(key, null)}
-                    className="text-[10px] text-white/30 hover:text-white/60"
+                    className="text-xs text-[var(--text-secondary)] hover:text-white/60"
                   >
                     Reset
                   </button>
@@ -556,23 +556,23 @@ function HighlightCard() {
         <span className="text-sm font-mono text-white/60 w-14 text-right">{pct}%</span>
       </div>
       <div className="flex justify-between mt-1">
-        <span className="text-xs text-white/25">Subtle</span>
-        <span className="text-xs text-white/25">Vivid</span>
+        <span className="text-xs text-[var(--text-secondary)]">Subtle</span>
+        <span className="text-xs text-[var(--text-secondary)]">Vivid</span>
       </div>
 
       {/* Live preview */}
       <div className="mt-5 rounded-xl bg-white/5 p-4 border border-white/5">
-        <span className="text-xs text-white/40 block mb-3">Preview</span>
+        <span className="text-xs text-[var(--text-secondary)] block mb-3">Preview</span>
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center gap-3 px-3 py-2 rounded-md bg-hl-card">
             <div className="h-8 w-8 rounded bg-white/10 flex-shrink-0" />
             <div>
               <div className="text-xs font-medium text-white">Card hover</div>
-              <div className="text-[10px] text-white/40">Album or artist card</div>
+              <div className="text-xs text-[var(--text-secondary)]">Album or artist card</div>
             </div>
           </div>
           <div className="flex items-center gap-3 px-3 py-1.5 rounded bg-hl-row">
-            <div className="text-xs text-white/50 w-4 text-center">1</div>
+            <div className="text-xs text-[var(--text-secondary)] w-4 text-center">1</div>
             <div className="h-7 w-7 rounded-sm bg-white/10 flex-shrink-0" />
             <div className="text-xs font-medium text-white">Track row highlight</div>
           </div>
@@ -590,7 +590,7 @@ function HighlightCard() {
       {/* Advanced per-category sliders */}
       <button
         onClick={() => setShowAdvanced(o => !o)}
-        className="mt-4 flex items-center gap-1.5 text-xs text-white/40 hover:text-white/70 transition-colors"
+        className="mt-4 flex items-center gap-1.5 text-xs text-[var(--text-secondary)] hover:text-white/70 transition-colors"
       >
         <svg
           viewBox="0 0 16 16" width="10" height="10" fill="currentColor"
@@ -610,7 +610,7 @@ function HighlightCard() {
               <div key={key}>
                 <div className="flex items-baseline justify-between mb-1">
                   <span className="text-xs font-medium text-white/70">{label}</span>
-                  <span className="text-[10px] text-white/30">{desc}</span>
+                  <span className="text-xs text-[var(--text-secondary)]">{desc}</span>
                 </div>
                 <div className="flex items-center gap-3">
                   <input
@@ -622,11 +622,11 @@ function HighlightCard() {
                     onChange={e => setCategory(key, parseInt(e.target.value, 10) / 100)}
                     className="flex-1 range-styled accent-[var(--accent)] cursor-pointer"
                   />
-                  <span className="text-xs font-mono text-white/50 w-10 text-right">{Math.round(val * 100)}%</span>
+                  <span className="text-xs font-mono text-[var(--text-secondary)] w-10 text-right">{Math.round(val * 100)}%</span>
                   {val !== defVal && (
                     <button
                       onClick={() => setCategory(key, defVal)}
-                      className="text-[10px] text-white/30 hover:text-white/60 transition-colors"
+                      className="text-xs text-[var(--text-secondary)] hover:text-white/60 transition-colors"
                       title="Reset to default"
                     >
                       Reset
@@ -643,7 +643,7 @@ function HighlightCard() {
       {!isDefault && (
         <button
           onClick={reset}
-          className="mt-4 text-xs text-white/40 hover:text-white/70 transition-colors underline underline-offset-2"
+          className="mt-4 text-xs text-[var(--text-secondary)] hover:text-white/70 transition-colors underline underline-offset-2"
         >
           Reset all to defaults
         </button>
@@ -693,7 +693,7 @@ function VisualizerColorsCard() {
               setVizColorMid(VIZ_COLOR_DEFAULTS.mid)
               setVizColorHigh(VIZ_COLOR_DEFAULTS.high)
             }}
-            className="text-xs text-white/40 hover:text-white/70 transition-colors ml-auto"
+            className="text-xs text-[var(--text-secondary)] hover:text-white/70 transition-colors ml-auto"
           >
             Reset
           </button>
@@ -761,7 +761,7 @@ function CacheSection() {
         <div className="flex items-center gap-4">
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-white">Library Data</p>
-            <p className="text-xs text-white/40 mt-0.5">
+            <p className="text-xs text-[var(--text-secondary)] mt-0.5">
               {playlistCount} playlists · {hubCount} hubs · {recentlyAddedCount} recently added · {playlistCacheCount} playlist caches · {mixCacheCount} mix caches
             </p>
           </div>
@@ -780,7 +780,7 @@ function CacheSection() {
         <div className="flex items-center gap-4">
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-white">Metadata Entries</p>
-            <p className="text-xs text-white/40 mt-0.5">
+            <p className="text-xs text-[var(--text-secondary)] mt-0.5">
               {metaStats.artistCount} artists · {metaStats.albumCount} albums
             </p>
           </div>
@@ -834,7 +834,7 @@ function GeneralSection() {
             </button>
           ))}
         </div>
-        <p className="mt-2 text-xs text-white/30">More languages coming soon. Contribute translations on GitHub.</p>
+        <p className="mt-2 text-xs text-[var(--text-secondary)]">More languages coming soon. Contribute translations on GitHub.</p>
       </SettingCard>
 
       <SettingCard title="Preferences">
@@ -897,7 +897,7 @@ function GeneralSection() {
       </SettingCard>
 
       <SettingCard title="AI" disabled badge="Coming soon">
-        <p className="text-sm text-white/40">Sonic recommendations, radio tuning and smart mix settings will appear here.</p>
+        <p className="text-sm text-[var(--text-secondary)]">Sonic recommendations, radio tuning and smart mix settings will appear here.</p>
       </SettingCard>
     </div>
   )
@@ -959,9 +959,9 @@ function CapabilityGrid({ caps, labels }: { caps: { [k: string]: boolean }; labe
                 <path d="M20 6L9 17l-5-5" />
               </svg>
             ) : (
-              <span className="text-white/20 flex-shrink-0 text-xs font-bold w-3.5 text-center">-</span>
+              <span className="text-[var(--text-secondary)] flex-shrink-0 text-xs font-bold w-3.5 text-center">-</span>
             )}
-            <span className={`text-xs ${supported ? "text-white/70" : "text-white/25"}`}>{label}</span>
+            <span className={`text-xs ${supported ? "text-white/70" : "text-[var(--text-secondary)]"}`}>{label}</span>
           </div>
         )
       })}
@@ -981,7 +981,6 @@ function PlexSection() {
     <div className="max-w-2xl space-y-6">
       {/* Plex connection settings */}
       <div>
-        <h3 className="text-xs font-bold uppercase tracking-widest text-white/25 mb-4">Settings</h3>
         <plexBackend.SettingsComponent />
       </div>
 
@@ -1005,7 +1004,7 @@ function MetadataListView({ setSection }: { setSection: (s: Section) => void }) 
 
       {/* Listening integrations keep their dedicated account settings. */}
       <div>
-        <h3 className="text-xs font-bold uppercase tracking-widest text-white/25 mb-4">Listening &amp; Lyrics</h3>
+        <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--text-secondary)] mb-4">Listening &amp; Lyrics</h3>
         <div className="space-y-3">
           {metadataBackends.filter(mb => mb.id === "genius" || mb.id === "listenbrainz").map(mb => {
             const enabled = mb.useIsEnabled()
@@ -1021,15 +1020,15 @@ function MetadataListView({ setSection }: { setSection: (s: Section) => void }) 
                   <span className="text-sm font-semibold text-white">{mb.name}</span>
                   <span className="ml-auto flex items-center gap-1.5 text-xs">
                     <span className={`h-2 w-2 rounded-full ${enabled ? "bg-accent" : "bg-white/20"}`} />
-                    <span className={enabled ? "text-accent" : "text-white/30"}>
+                    <span className={enabled ? "text-accent" : "text-[var(--text-secondary)]"}>
                       {enabled ? (mb.id === "lastfm" ? "Enabled" : "Always on") : "Disabled"}
                     </span>
                   </span>
-                  <svg height="14" width="14" viewBox="0 0 24 24" fill="currentColor" className="text-white/20 group-hover:text-white/40 transition-colors">
+                  <svg height="14" width="14" viewBox="0 0 24 24" fill="currentColor" className="text-[var(--text-secondary)] group-hover:text-[var(--text-secondary)] transition-colors">
                     <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" />
                   </svg>
                 </div>
-                <p className="mt-1.5 text-xs text-white/35">{mb.description}</p>
+                <p className="mt-1.5 text-xs text-[var(--text-secondary)]">{mb.description}</p>
               </button>
             )
           })}
@@ -1045,11 +1044,11 @@ function MetadataSubPage({ backendId, goBack }: { backendId: string; goBack: () 
   if (!metaBackend) {
     return (
       <div className="max-w-2xl">
-        <button onClick={goBack} className="mb-6 flex items-center gap-1.5 text-sm text-white/50 hover:text-white transition-colors">
+        <button onClick={goBack} className="mb-6 flex items-center gap-1.5 text-sm text-[var(--text-secondary)] hover:text-white transition-colors">
           <svg height="16" width="16" viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" /></svg>
           Back to Metadata
         </button>
-        <p className="text-sm text-white/50">Metadata source not found.</p>
+        <p className="text-sm text-[var(--text-secondary)]">Metadata source not found.</p>
       </div>
     )
   }
@@ -1061,7 +1060,7 @@ function MetadataSubPage({ backendId, goBack }: { backendId: string; goBack: () 
     <div className="max-w-2xl space-y-8">
       {/* Back button + header */}
       <div>
-        <button onClick={goBack} className="mb-4 flex items-center gap-1.5 text-sm text-white/50 hover:text-white transition-colors">
+        <button onClick={goBack} className="mb-4 flex items-center gap-1.5 text-sm text-[var(--text-secondary)] hover:text-white transition-colors">
           <svg height="16" width="16" viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" /></svg>
           Back to Metadata
         </button>
@@ -1073,7 +1072,6 @@ function MetadataSubPage({ backendId, goBack }: { backendId: string; goBack: () 
 
       {/* Settings */}
       <div>
-        <h3 className="text-xs font-bold uppercase tracking-widest text-white/25 mb-4">Settings</h3>
         <Settings />
       </div>
       <SupportedFeatures>
@@ -1092,119 +1090,6 @@ function CreditLink({ href, children }: { href: string; children: React.ReactNod
     <button onClick={() => void open(href)} className="text-accent hover:underline text-left">
       {children}
     </button>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Floating orbs background animation for the About section
-// ---------------------------------------------------------------------------
-
-function FloatingOrbs() {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext("2d")
-    if (!ctx) return
-
-    let raf: number
-    let w = 0
-    let h = 0
-
-    const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#d946ef"
-
-    // Parse accent hex to r,g,b
-    const hexToRgb = (hex: string) => {
-      const c = hex.replace("#", "")
-      return [parseInt(c.slice(0, 2), 16), parseInt(c.slice(2, 4), 16), parseInt(c.slice(4, 6), 16)] as const
-    }
-    const [ar, ag, ab] = hexToRgb(accent)
-
-    interface Orb { x: number; y: number; r: number; vx: number; vy: number; hue: number; alpha: number; pulse: number; pulseSpeed: number }
-
-    const orbs: Orb[] = []
-    const ORB_COUNT = 7
-
-    const resize = () => {
-      const dpr = window.devicePixelRatio || 1
-      w = canvas.clientWidth
-      h = canvas.clientHeight
-      canvas.width = w * dpr
-      canvas.height = h * dpr
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    }
-
-    const init = () => {
-      resize()
-      orbs.length = 0
-      for (let i = 0; i < ORB_COUNT; i++) {
-        orbs.push({
-          x: Math.random() * w,
-          y: Math.random() * h,
-          r: 60 + Math.random() * 120,
-          vx: (Math.random() - 0.5) * 0.4,
-          vy: (Math.random() - 0.5) * 0.4,
-          hue: Math.random() * 60 - 30, // offset from accent hue
-          alpha: 0.08 + Math.random() * 0.08,
-          pulse: Math.random() * Math.PI * 2,
-          pulseSpeed: 0.003 + Math.random() * 0.005,
-        })
-      }
-    }
-
-    const draw = () => {
-      ctx.clearRect(0, 0, w, h)
-      for (const orb of orbs) {
-        orb.x += orb.vx
-        orb.y += orb.vy
-        orb.pulse += orb.pulseSpeed
-
-        // Bounce off edges softly
-        if (orb.x < -orb.r) orb.x = w + orb.r
-        if (orb.x > w + orb.r) orb.x = -orb.r
-        if (orb.y < -orb.r) orb.y = h + orb.r
-        if (orb.y > h + orb.r) orb.y = -orb.r
-
-        const pulseFactor = 1 + Math.sin(orb.pulse) * 0.25
-        const currentR = orb.r * pulseFactor
-        const currentAlpha = orb.alpha * (0.7 + Math.sin(orb.pulse * 0.7) * 0.3)
-
-        // Shift accent colour slightly per orb
-        const shift = orb.hue / 60
-        const r = Math.min(255, Math.max(0, ar + shift * 40))
-        const g = Math.min(255, Math.max(0, ag + shift * 20))
-        const b = Math.min(255, Math.max(0, ab - shift * 20))
-
-        const grad = ctx.createRadialGradient(orb.x, orb.y, 0, orb.x, orb.y, currentR)
-        grad.addColorStop(0, `rgba(${r},${g},${b},${currentAlpha})`)
-        grad.addColorStop(0.6, `rgba(${r},${g},${b},${currentAlpha * 0.4})`)
-        grad.addColorStop(1, `rgba(${r},${g},${b},0)`)
-
-        ctx.beginPath()
-        ctx.arc(orb.x, orb.y, currentR, 0, Math.PI * 2)
-        ctx.fillStyle = grad
-        ctx.fill()
-      }
-      raf = requestAnimationFrame(draw)
-    }
-
-    init()
-    draw()
-
-    window.addEventListener("resize", resize)
-    return () => {
-      cancelAnimationFrame(raf)
-      window.removeEventListener("resize", resize)
-    }
-  }, [])
-
-  return (
-    <canvas
-      ref={canvasRef}
-      className="pointer-events-none absolute inset-0 h-full w-full"
-      style={{ filter: "blur(50px)" }}
-    />
   )
 }
 
@@ -1241,7 +1126,7 @@ function TechBadge({ item }: { item: typeof TECH_STACK[number] }) {
   return (
     <button
       onClick={() => void open(item.href)}
-      className="group relative rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-white/60 transition-all duration-200 hover:border-accent/30 hover:bg-accent/10 hover:text-accent hover:scale-105"
+      className="group relative rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-white/60 transition-all duration-200 hover:border-accent/30 hover:bg-accent/10 hover:text-accent"
     >
       {item.label}
     </button>
@@ -1269,7 +1154,6 @@ function AboutSection() {
     <div className="max-w-3xl space-y-8">
       {/* ── Hero card with animated background ── */}
       <div className="relative overflow-hidden rounded-2xl border border-white/[0.08]">
-        <FloatingOrbs />
 
         {/* Glassmorphism overlay */}
         <div className="relative z-10 flex flex-col items-center py-14 px-8 text-center">
@@ -1285,12 +1169,12 @@ function AboutSection() {
 
           {/* App name */}
           <h1 className="text-3xl font-bold tracking-tight text-white">Hibiki</h1>
-          <p className="mt-1 text-sm text-white/40">A Plex music client</p>
+          <p className="mt-1 text-sm text-[var(--text-secondary)]">A Plex music client</p>
 
           {/* Version pill */}
           <div className="mt-4 flex items-center gap-2">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.08] px-3 py-1 text-xs font-medium text-white/60 ring-1 ring-white/[0.06]">
-              <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
+              <span className="h-1.5 w-1.5 rounded-full bg-accent" />
               v{version || "\u2026"}
             </span>
           </div>
@@ -1318,7 +1202,7 @@ function AboutSection() {
       {/* ── Updates ── */}
       <div className="rounded-2xl border border-white/[0.06] bg-white/[0.025] p-5">
         <div className="flex items-center gap-3 mb-4">
-          <svg height="16" width="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white/40"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          <svg height="16" width="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--text-secondary)]"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
           <h3 className="text-sm font-semibold text-white">Updates</h3>
         </div>
 
@@ -1343,7 +1227,7 @@ function AboutSection() {
             <div className="rounded-xl bg-accent/10 border border-accent/20 px-4 py-3 flex items-center justify-between">
               <div>
                 <p className="text-sm font-semibold text-accent">Version {update.version} available</p>
-                {update.body && <p className="text-xs text-white/40 mt-0.5 line-clamp-1">{update.body}</p>}
+                {update.body && <p className="text-xs text-[var(--text-secondary)] mt-0.5 line-clamp-1">{update.body}</p>}
               </div>
               <button
                 onClick={() => setShowDialog(true)}
@@ -1355,7 +1239,7 @@ function AboutSection() {
           )}
 
           {!checking && !update && !error && lastChecked && (
-            <p className="text-xs text-white/40">You're on the latest version.</p>
+            <p className="text-xs text-[var(--text-secondary)]">You're on the latest version.</p>
           )}
 
           {!checking && error && (
@@ -1367,12 +1251,12 @@ function AboutSection() {
       {/* ── Built With ── */}
       <div className="rounded-2xl border border-white/[0.06] bg-white/[0.025] p-6">
         <h3 className="text-sm font-semibold text-white mb-1">Built With</h3>
-        <p className="text-xs text-white/35 mb-5">The open-source projects that power Hibiki.</p>
+        <p className="text-xs text-[var(--text-secondary)] mb-5">The open-source projects that power Hibiki.</p>
 
         <div className="space-y-5">
           {categories.map((cat) => (
             <div key={cat.key}>
-              <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-white/25 mb-2.5">{cat.label}</p>
+              <p className="text-xs font-bold uppercase tracking-[0.15em] text-[var(--text-secondary)] mb-2.5">{cat.label}</p>
               <div className="flex flex-wrap gap-2">
                 {cat.items.map((item) => (
                   <TechBadge key={item.label} item={item} />
@@ -1393,23 +1277,23 @@ function AboutSection() {
             </div>
             <div>
               <CreditLink href="https://www.plex.tv">Plex</CreditLink>
-              <p className="text-xs text-white/30 mt-0.5">The media server that makes it all possible.</p>
+              <p className="text-xs text-[var(--text-secondary)] mt-0.5">The media server that makes it all possible.</p>
             </div>
           </div>
           <div className="flex items-start gap-3 rounded-xl bg-white/[0.04] p-4 ring-1 ring-white/[0.06] transition-colors hover:bg-white/[0.06]">
-            <div className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-white/[0.08] text-white/50">
+            <div className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-white/[0.08] text-[var(--text-secondary)]">
               <svg height="16" width="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
             </div>
             <div>
               <CreditLink href="https://github.com/agmmnn/tauri-spotify-clone">@agmmnn</CreditLink>
-              <p className="text-xs text-white/30 mt-0.5">Original Spotify-clone UI design inspiration.</p>
+              <p className="text-xs text-[var(--text-secondary)] mt-0.5">Original Spotify-clone UI design inspiration.</p>
             </div>
           </div>
         </div>
       </div>
 
       {/* ── Footer ── */}
-      <p className="text-center text-[11px] text-white/20 pb-4">
+      <p className="text-center text-xs text-[var(--text-secondary)] pb-4">
         Made with love and way too much coffee.
       </p>
     </div>
@@ -1486,7 +1370,7 @@ export function SettingsPage({ section: sectionProp }: { section?: string }) {
     <div className="flex h-full">
       {/* Inner sidebar */}
       <aside className="w-40 flex-shrink-0 border-r border-white/5 p-3 pt-8 lg:w-52 lg:p-6">
-        <p className="mb-4 text-[11px] font-bold uppercase tracking-widest text-white/25">Settings</p>
+        <p className="mb-4 text-xs font-bold uppercase tracking-widest text-[var(--text-secondary)]">Settings</p>
         <nav aria-label="Settings sections">
           <ul className="space-y-0.5">
             {navItems.map(item => {
@@ -1500,14 +1384,10 @@ export function SettingsPage({ section: sectionProp }: { section?: string }) {
                       "relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
                       active
                         ? "bg-white/10 text-white"
-                        : "text-white/50 hover:bg-white/5 hover:text-white"
+                        : "text-[var(--text-secondary)] hover:bg-white/5 hover:text-white"
                     )}
                   >
-                    {/* Accent left bar for active item */}
-                    {active && (
-                      <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-r-full bg-accent" />
-                    )}
-                    <span className={clsx("flex-shrink-0 transition-colors", active ? "text-accent" : "text-white/40")}>
+                    <span className={clsx("flex-shrink-0 transition-colors", active ? "text-accent" : "text-[var(--text-secondary)]")}>
                       {item.icon}
                     </span>
                     {item.label}

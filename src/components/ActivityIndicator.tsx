@@ -137,7 +137,7 @@ export function ActivityIndicator() {
             ? `${active} active operation${active === 1 ? "" : "s"}`
             : "No active operations"
         }
-        className={`relative flex h-8 w-8 items-center justify-center rounded-full text-[var(--text-secondary)] transition-colors hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${isOpen ? "bg-app-surface-hover" : "bg-app-surface"}`}
+        className={`topbar-control topbar-icon-control relative flex items-center justify-center rounded-full text-[var(--text-secondary)] transition-colors hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${isOpen ? "bg-app-surface-hover" : "bg-app-surface"}`}
       >
         <IconDisc
           aria-hidden="true"
@@ -154,7 +154,7 @@ export function ActivityIndicator() {
             role="dialog"
             aria-label="Activity"
             style={position}
-            className="fixed z-[9999] max-h-[calc(100vh-140px)] overflow-y-auto rounded-xl border border-[var(--border)] bg-app-surface shadow-2xl"
+            className="app-overlay-surface fixed z-[9999] max-h-[calc(100vh-140px)] overflow-y-auto rounded-xl border border-[var(--border)] bg-app-surface shadow-2xl"
           >
             <div className="border-b border-[var(--border)] px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
               Activity

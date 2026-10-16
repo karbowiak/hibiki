@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react"
+import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react"
 
 import {
   booleanPreference,
@@ -113,19 +113,42 @@ export function ColumnPicker({
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const panel = useRef<HTMLDivElement>(null)
+  const panelId = useId()
+  useLayoutEffect(() => {
+    if (open) panel.current?.querySelector<HTMLInputElement>("input")?.focus()
+  }, [open])
 
   useEffect(() => {
     if (!open) return
     function onPointerDown(e: PointerEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault()
+        e.stopPropagation()
+        setOpen(false)
+        trigger.current?.focus()
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") setOpen(false)
+    }
+    document.addEventListener("keydown", onKeyDown)
     document.addEventListener("pointerdown", onPointerDown)
-    return () => document.removeEventListener("pointerdown", onPointerDown)
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown)
+      document.removeEventListener("keydown", onKeyDown)
+    }
   }, [open])
 
   return (
     <div ref={ref} className="relative inline-block">
       <button
+        ref={trigger}
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls={open ? panelId : undefined}
         onClick={() => setOpen((o) => !o)}
         className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-gray-400 transition-colors hover:bg-hl-menu hover:text-white"
       >
@@ -135,7 +158,7 @@ export function ColumnPicker({
         Columns
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-30 mt-1 w-52 rounded-md border border-white/10 bg-app-surface py-1 shadow-xl">
+        <div ref={panel} id={panelId} role="dialog" aria-label="Visible song columns" className="app-overlay-surface absolute right-0 top-full z-30 mt-1 w-56 max-h-96 overflow-y-auto rounded-lg bg-app-surface py-1 shadow-xl">
           {columns.map((col) => (
             <label
               key={col.id}

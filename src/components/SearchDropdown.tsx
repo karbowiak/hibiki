@@ -299,7 +299,7 @@ export function SearchDropdown({
       aria-busy={isSearching}
       onKeyDown={(event) => event.stopPropagation()}
       style={{ maxHeight: Math.min(480, maxHeight), width: panelWidth }}
-      className="discovery-search-popup absolute left-0 top-full z-50 mt-2 w-full max-w-[calc(100vw-24px)] overflow-y-auto overscroll-contain rounded-xl border border-[var(--border)] bg-app-card py-1 text-[var(--text-primary)] shadow-2xl"
+      className="app-overlay-surface discovery-search-popup absolute left-0 top-full z-50 mt-2 w-full max-w-[calc(100vw-24px)] overflow-y-auto overscroll-contain rounded-xl border border-[var(--border)] bg-app-card py-1 text-[var(--text-primary)] shadow-2xl"
     >
       <div className="discovery-search-caption">
         {emptyQuery ? "A shortcut to your music" : "Search your library"}

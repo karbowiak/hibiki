@@ -52,7 +52,7 @@
     box-shadow 140ms ease;
 }
 .broadcast-input::placeholder {
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 .broadcast-input:focus-visible {
   border-color: var(--text-secondary);

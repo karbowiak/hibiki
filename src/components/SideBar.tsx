@@ -1,8 +1,8 @@
 import "../styles/shellArtwork.css"
+import "../styles/sidebar.css"
 import { loadAlbumTracks } from "../lib/albumContents"
 import { DownloadBadge } from "./shared/DownloadBadge"
 import { useAccentStore } from "../stores/accentStore"
-import { fallbackArtworkTone, artworkUiPalette } from "../lib/artworkUiPalette"
 import { useArtworkAppearanceStore } from "../stores/artworkAppearanceStore"
 import { ArtworkImage } from "./shared/ArtworkImage"
 import { Link, useLocation } from "wouter"
@@ -147,7 +147,7 @@ function SortablePlaylistItem({
         }}
         onContextMenu={ctxMenu("playlist", playlist)}
         className={clsx(
-          "group flex cursor-default items-center gap-3 rounded-md px-1 py-[5px] no-underline transition-colors duration-200 hover:bg-accent-tint hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
+          "sidebar-playlist-link group flex cursor-default items-center gap-3 rounded-md px-1 py-[5px] no-underline transition-colors duration-200 hover:bg-accent-tint hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
           location !== href
             ? "text-[color:var(--text-secondary)]"
             : "bg-accent-tint-strong text-[color:var(--text-primary)]",
@@ -186,7 +186,7 @@ function SortablePlaylistItem({
             </svg>
           </button>
         </div>
-        <span className="min-w-0 flex-1 truncate text-sm font-normal">
+        <span title={playlist.title} className="sidebar-playlist-title min-w-0 flex-1 truncate text-sm font-normal">
           {playlist.title}
         </span>
         <DownloadBadge intentOnly kind="playlist" id={playlist.id} className="mr-1" />
@@ -380,7 +380,7 @@ export function SideBar({
         className="absolute bottom-0 right-0 top-0 z-10 w-1 cursor-ew-resize transition-colors hover:bg-white/10"
         onMouseDown={onMouseDown}
       />
-      <ul className="flex-shrink-0 pt-1 text-sm font-semibold">
+      <ul className="sidebar-navigation flex-shrink-0 pt-1 text-sm font-medium">
         {routes1
           .filter((i) => i.href !== "/stations" || hasStations)
           .map((i, index) => {
@@ -392,7 +392,7 @@ export function SideBar({
               <li key={`${i.href}-${index}`}>
                 <div
                   className={clsx(
-                    "flex items-center rounded",
+                    "sidebar-nav-row flex items-center rounded-md",
                     isActive && "shell-nav-active bg-accent-tint-strong"
                   )}
                 >
@@ -408,15 +408,15 @@ export function SideBar({
                       }
                     }}
                     className={clsx(
-                      "shell-nav-link flex h-10 min-w-0 flex-1 cursor-pointer items-center gap-3 rounded px-3 no-underline transition-colors duration-200 hover:bg-accent-tint hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
+                      "shell-nav-link sidebar-nav-link flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded px-3 no-underline transition-colors duration-200 hover:bg-accent-tint hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
                       !isActive
                         ? "fill-[var(--text-secondary)] text-[var(--text-secondary)]"
                         : "fill-accent text-accent"
                     )}
                   >
                     <svg
-                      height="24"
-                      width="24"
+                      height="20"
+                      width="20"
                       viewBox="0 0 24 24"
                       className="shrink-0"
                     >
@@ -463,7 +463,7 @@ export function SideBar({
                 {i.href === "/library" && libraryExpanded && (
                   <ul
                     id="sidebar-library-links"
-                    className="mb-0.5 ml-10 mt-0.5 space-y-0.5 text-sm font-normal"
+                    className="sidebar-library-links mb-2 ml-8 mt-1 space-y-0.5 text-sm font-normal"
                   >
                     {librarySubLinks.map((sub) => (
                       <li key={sub.href}>
@@ -490,19 +490,14 @@ export function SideBar({
           })}
       </ul>
 
-      <div className="flex-shrink-0 pb-1 pt-8 text-sm font-semibold">
+      <div className="sidebar-create-wrap flex-shrink-0 pb-1 pt-4 text-sm font-medium">
         <button
           onClick={onCreatePlaylist}
           disabled={!canEditPlaylists}
-          style={artworkUiPalette(
-            fallbackArtworkTone(savedAccent),
-            window
-              .getComputedStyle(document.documentElement)
-              .getPropertyValue("--bg-base")
-          )}
-          className="shell-control-secondary group flex h-10 w-full cursor-pointer items-center gap-3 rounded border-0 bg-transparent fill-[var(--text-secondary)] px-3 text-[var(--text-secondary)] transition-colors duration-200 hover:bg-accent-tint hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
+          style={{ "--playlist-create-accent": savedAccent } as React.CSSProperties}
+          className="sidebar-create group flex w-full items-center gap-3 rounded-md px-3 text-[var(--text-primary)] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
         >
-          <span className="shell-icon-tile flex h-6 w-6 items-center justify-center rounded-sm bg-accent/20 transition-colors group-hover:bg-accent/40">
+          <span className="sidebar-create-icon flex h-5 w-5 items-center justify-center">
             <svg
               viewBox="0 0 16 16"
               width="12"
@@ -517,7 +512,11 @@ export function SideBar({
         </button>
       </div>
 
-      <div className="scrollbar-track-[var(--bg-base)] scrollbar-thumb-[var(--bg-surface)] hover:scrollbar-thumb-[var(--bg-surface-hover)] mt-2 min-h-0 flex-1 overflow-y-scroll scrollbar scrollbar-w-1">
+      <div className="sidebar-playlists-heading">
+        <span>Playlists</span>
+        <span aria-label={`${sortedPlaylists.length} playlists`}>{sortedPlaylists.length}</span>
+      </div>
+      <div className="sidebar-playlists scrollbar-track-[var(--bg-base)] scrollbar-thumb-[var(--bg-surface)] hover:scrollbar-thumb-[var(--bg-surface-hover)] mt-2 min-h-0 flex-1 overflow-y-scroll scrollbar scrollbar-w-1">
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}

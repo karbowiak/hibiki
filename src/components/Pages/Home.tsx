@@ -256,10 +256,6 @@ export function Home() {
     <div className="discovery-page space-y-6 pb-4">
       <header className="discovery-head">
         <div>
-          <p className="discovery-eyebrow">
-            Your music ·{" "}
-            {new Date().toLocaleDateString(undefined, { weekday: "long" })}
-          </p>
           <h1 className="discovery-title">
             {new Date().getHours() < 12
               ? "Good morning"

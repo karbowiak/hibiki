@@ -1,0 +1,41 @@
+/* Navigation stays quiet so the user's collection and artwork lead. */
+.sidebar-navigation { display: grid; gap: 2px; }
+.sidebar-nav-link { min-height: 2.25rem; border-radius: 6px; }
+.sidebar-library-links .shell-nav-link { min-height: 2rem; height: auto; padding-block: 0.35rem; }
+.app-sidebar .shell-nav-active {
+  background: color-mix(in srgb, var(--bg-surface) 88%, var(--artwork-primary, var(--accent)));
+  color: var(--text-primary);
+}
+.app-sidebar .shell-nav-active > .shell-nav-link { color: var(--text-primary); fill: currentColor; }
+.sidebar-create {
+  min-height: 2.25rem;
+  background: var(--bg-surface);
+  text-align: left;
+}
+.sidebar-create-icon { flex-shrink: 0; color: var(--playlist-create-accent, var(--accent)); }
+.sidebar-create:hover:not(:disabled) { background: var(--bg-surface-hover); }
+.sidebar-playlists-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding: 0 0.25rem 0.45rem;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.sidebar-playlists-heading > :last-child { font-variant-numeric: tabular-nums; font-weight: 400; }
+.app-sidebar .sidebar-playlists { margin-top: 0; scrollbar-gutter: stable; }
+.sidebar-playlist-link { min-height: 3rem; }
+.sidebar-playlist-link:hover { color: var(--text-primary); }
+.sidebar-playlist-link[aria-current="page"] { background: var(--bg-surface); color: var(--text-primary); }
+.sidebar-playlist-title { line-height: 1.4; }
+.sidebar-create:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+
+/* Treat an expandable navigation row as a single surface. */
+.app-sidebar .sidebar-nav-row:hover {
+  background: color-mix(in srgb, var(--bg-surface) 90%, var(--artwork-secondary, var(--accent)));
+}
+.app-sidebar .sidebar-nav-row .shell-nav-link:hover { background: transparent; }
+.app-sidebar .sidebar-nav-row > button:hover { background: var(--border-subtle); }

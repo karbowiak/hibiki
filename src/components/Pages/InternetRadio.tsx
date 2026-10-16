@@ -307,7 +307,6 @@ export function InternetRadioPage() {
           </svg>
         </div>
         <div>
-          <p className="broadcast-eyebrow">Around the world</p>
           <h1 className="broadcast-title">Internet Radio</h1>
           <p className="broadcast-subtitle">
             Find a station, save a favorite, and tune in.

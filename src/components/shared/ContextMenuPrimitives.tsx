@@ -32,7 +32,7 @@ export function MenuDivider() {
 
 export function MenuSectionLabel({ label }: { label: string }) {
   return (
-    <div className="px-3 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+    <div className="px-3 pb-0.5 pt-2 text-xs font-semibold text-[var(--text-secondary)]">
       {label}
     </div>
   )

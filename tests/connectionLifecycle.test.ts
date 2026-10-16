@@ -298,3 +298,9 @@ test("cache hydration publishes only the provider whose activation still owns th
   expect(published).toEqual(["https://new.test"])
   expect(disconnected).toHaveBeenCalledTimes(1)
 })
+
+test("an explicitly selected remote library UUID must still match before activation", async () => {
+  const h = harness()
+  await expect(h.store.getState().connect("https://server.test","token",[],1,undefined,"server","deleted-library-uuid")).rejects.toThrow("music library changed")
+  expect(h.store.getState().isConnected).toBe(false)
+})

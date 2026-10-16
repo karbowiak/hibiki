@@ -53,7 +53,6 @@ export function Library() {
     <div className="discovery-page space-y-8">
       <header className="discovery-head">
         <div>
-          <p className="discovery-eyebrow">Collected by you</p>
           <h1 className="discovery-title">Your Library</h1>
           <p className="discovery-subtitle">
             Your playlists, rated favorites, and the music you keep coming back

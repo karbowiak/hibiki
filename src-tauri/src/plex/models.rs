@@ -1238,6 +1238,14 @@ pub struct PlexSettings {
     #[serde(default)]
     pub token: String,
 
+    /// Account credential for discovering other owned/shared servers. Native only.
+    #[serde(default)]
+    pub plex_account_token: String,
+
+    /// Remember verified server endpoints when switching between servers.
+    #[serde(default)]
+    pub plex_server_urls: std::collections::BTreeMap<String, Vec<String>>,
+
     /// Stable per-installation UUID sent as X-Plex-Client-Identifier.
     /// Generated on first launch and preserved across saves.
     #[serde(default)]
@@ -1465,7 +1473,8 @@ mod tests {
     #[test]
     fn settings_public_view_never_returns_private_service_credentials() {
         let settings = super::PlexSettings {
-            token: "public-plex-token".into(), lastfm_api_secret: "private-lastfm-secret".into(),
+            token: "public-plex-token".into(),
+            plex_account_token: "private-account-token".into(), lastfm_api_secret: "private-lastfm-secret".into(),
             lastfm_session_key: "private-lastfm-session".into(), genius_client_secret: "private-genius-secret".into(),
             listenbrainz_token: "private-listenbrainz-token".into(), ..Default::default()
         };
@@ -1475,6 +1484,8 @@ mod tests {
         assert_eq!(public["has_listenbrainz_token"], true);
         assert!(!public.to_string().contains("private-"));
         for field in [
+            "plex_account_token",
+            "plex_server_urls",
             "lastfm_api_secret",
             "lastfm_session_key",
             "genius_client_secret",

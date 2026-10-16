@@ -10,6 +10,7 @@ mod offline_commands;
 mod performance;
 mod offline_audio;
 mod catalogue_commands;
+mod library_picker;
 mod download_entities;
 mod artwork_commands;
 mod deezer;
@@ -282,6 +283,7 @@ pub fn run() {
             performance::initialize(&app.path().app_data_dir()?);
             app.manage(offline_audio::AudioDownloads::new(app.path().app_data_dir()?.join("downloads")));
             app.manage(catalogue_commands::CatalogueSync::new());
+            app.manage(library_picker::LibraryPicker::default());
             listening_history::start_worker(app.handle().clone());
 
             // Start the system Now Playing / media-key integration.
@@ -388,6 +390,9 @@ pub fn run() {
             download_entities::download_entity,
             download_entities::download_entity_status,
             download_entities::remove_entity_download,
+            library_picker::library_picker_servers,
+            library_picker::library_picker_sections,
+            library_picker::library_picker_resolve,
             catalogue_commands::catalogue_query,
             catalogue_commands::catalogue_health,
             catalogue_commands::catalogue_availability,

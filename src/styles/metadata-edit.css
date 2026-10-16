@@ -11,7 +11,7 @@ dialog.metadata-edit-dialog {
 }
 .metadata-edit-dialog .app-dialog-header h2 {
   color: rgb(255 255 255 / 0.78);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   font-weight: 600;
@@ -165,7 +165,7 @@ dialog.metadata-edit-dialog {
   margin-bottom: 18px;
   border-bottom: 1px solid var(--border);
   color: var(--text-secondary);
-  font-size: 0.65rem;
+  font-size: 0.75rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   font-weight: 650;

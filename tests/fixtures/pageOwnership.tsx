@@ -42,6 +42,7 @@ mock.module("../../src/stores/index.ts", () => ({
     isConnected: true,
   })),
 }))
+mock.module("../../src/components/MusicLibraryPicker", () => ({ MusicLibraryPicker: () => null }))
 mock.module("../../src/stores/metadataCache", () => ({
   prefetchAlbum() {},
   prefetchArtist() {},

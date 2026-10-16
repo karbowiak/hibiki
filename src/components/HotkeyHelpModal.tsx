@@ -95,7 +95,7 @@ export function HotkeyHelpModal({ context = "player", onClose }: Props) {
       className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div className="w-full max-w-lg rounded-xl border border-[var(--border)] bg-app-card p-6 shadow-2xl">
+      <div className="app-overlay-surface w-full max-w-lg rounded-xl border border-[var(--border)] bg-app-card p-6 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-[color:var(--text-primary)]">Keyboard Shortcuts</h2>
           <span className="text-xs text-[color:var(--text-muted)]">Press Esc to close</span>

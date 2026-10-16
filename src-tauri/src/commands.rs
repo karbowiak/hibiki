@@ -52,6 +52,7 @@ impl PlexState {
             crate::plex::update_settings(directory, |settings| {
                 settings.base_url.clear();
                 settings.token.clear();
+                settings.plex_account_token.clear();
                 settings.all_urls.clear();
                 settings.machine_identifier.clear();
                 settings.section_id = 0;
@@ -95,6 +96,24 @@ impl PlexState {
             settings.token = client.token.clone();
             settings.machine_identifier = client.machine_identifier.clone();
             settings.all_urls = urls;
+            let mut endpoints = vec![client.base_url().to_string()];
+            endpoints.extend(settings.all_urls.clone());
+            let mut seen = std::collections::HashSet::new();
+            endpoints.retain(|url| seen.insert(url.clone()));
+            endpoints.truncate(32);
+            settings
+                .plex_server_urls
+                .insert(client.machine_identifier.clone(), endpoints);
+            if settings.plex_server_urls.len() > 32 {
+                if let Some(key) = settings
+                    .plex_server_urls
+                    .keys()
+                    .find(|key| *key != &client.machine_identifier)
+                    .cloned()
+                {
+                    settings.plex_server_urls.remove(&key);
+                }
+            }
             settings.section_id = section_id.unwrap_or(0);
             settings.section_uuid = section_uuid.unwrap_or_default();
             Ok(())
@@ -259,6 +278,9 @@ pub async fn disconnect_plex(
         .path()
         .app_config_dir()
         .map_err(|error| format!("{error:#}"))?;
+    if let Some(picker) = app.try_state::<crate::library_picker::LibraryPicker>() {
+        picker.clear();
+    }
     state
         .reset_with_audio_revocation(clear_saved.then_some(directory.as_path()), || {
             if let Some(audio) = app.try_state::<crate::audio_engine::bridge::AudioEngineState>() {
@@ -328,6 +350,9 @@ pub async fn connect_plex(
     let known = crate::plex::load_settings(&config_dir).map_err(|_| "Cannot read saved Plex endpoints")?;
     let mut endpoints = known.all_urls;
     endpoints.push(known.base_url);
+    if let Some(previous) = known.plex_server_urls.get(&client.machine_identifier) {
+        endpoints.extend(previous.clone());
+    }
     let libraries = sections.iter().map(|section|(section.key,section.uuid.clone())).collect::<Vec<_>>();
     let mut restored = client.clone();
     let db = app.state::<crate::db::DbState>();
@@ -1500,14 +1525,28 @@ pub async fn plex_auth_poll(pin_id: u64, app: tauri::AppHandle) -> Result<Option
 pub async fn plex_get_resources(
     token: String,
     app: tauri::AppHandle,
+    state: State<'_, PlexState>,
 ) -> Result<Vec<crate::plextv::PlexResource>, String> {
     use tauri::Manager;
-    let config_dir = app.path().app_config_dir().map_err(|e| format!("{:#}", e))?;
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("{:#}", e))?;
     let settings = crate::plex::load_settings(&config_dir).map_err(|e| format!("{:#}", e))?;
 
-    crate::plextv::get_resources(&settings.client_id, &token)
+    let revision = state.1.load(Ordering::SeqCst);
+    let resources = crate::plextv::get_resources(&settings.client_id, &token)
         .await
-        .map_err(|e| format!("{:#}", e))
+        .map_err(|e| format!("{e:#}"))?;
+    let _guard = state.0.lock().await;
+    if state.is_current(revision) {
+        crate::plex::update_settings(&config_dir, |settings| {
+            settings.plex_account_token = token;
+            Ok(())
+        })
+        .map_err(|_| "Cannot save Plex account connection")?;
+    }
+    Ok(resources)
 }
 
 /// Fetch parsed lyrics for a track. Returns an empty list if the track has no lyrics.

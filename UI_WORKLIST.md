@@ -1,5 +1,53 @@
 # Hibiki visual polish
 
+## Library switching and interface consistency
+
+- [x] Add a grouped music-library picker to the toolbar, with equal-height
+  search, selector and action controls, keyboard navigation, retry states and
+  explicit switching through the existing connection lifecycle.
+- [x] Discover shared servers with their own resource credentials; verify server
+  identity before authentication and try public routes alongside private ones.
+  Retain the account discovery credential privately when switching servers.
+- [x] Tighten sidebar spacing, playlist selection/hover treatment and navigation
+  hierarchy; keep Create Playlist on the saved accent.
+- [x] Add a top-bar light/dark toggle using the existing Appearance preference.
+- [x] Share a tinted translucent material across dropdowns, context menus,
+  notifications, player popovers and dialogs, including opaque fallbacks for
+  reduced-transparency preferences and unsupported browsers.
+- [x] Give docked Queue/Lyrics the navigation material and align their header to
+  the measured toolbar, including text scaling and wrapping. Use rounded buttons
+  for Queue/Lyrics; improve queue spacing, badges, duration alignment, focus and
+  context menus. Closing a docked queue retains the docking preference.
+- [x] Remove decorative settings animation and redundant labels; simplify
+  provider rows, improve small-text contrast and respect reduced motion.
+- [x] Fix narrow song-table overflow and column-picker focus/Escape behavior.
+- [x] Record the user-confirmed product brief in `PRODUCT.md`, choose code-first,
+  and install Impeccable's project skill and enabled Codex hook manifests. Local
+  consent, runtime state and downloaded engine binaries stay untracked. Codex
+  may require the user to approve the new definition through `/hooks`.
+
+Validation: 1,005 frontend tests; both TypeScript projects and production build;
+704 native unit tests (10 explicitly ignored, 73 live integrations excluded).
+Chromium and WebKit appearance checks cover themes, text scaling, narrow/wide
+layouts, equal toolbar control heights, docked-header alignment, shared dock tint,
+artwork transitions, seeking, keyboard actions, context menus and actual pointer
+drag/drop. Native review covered Home, search, library, Stations, podcasts, radio,
+settings, the small ❤️ Tracks playlist, artist/album pages, artwork and metadata
+dialogs, notifications and docked queue in light/dark mode.
+
+All four account-visible servers responded to library discovery. The three shared
+servers exposed no accessible music sections for this account; switching to the
+other music section on the current server worked. Music was restored and native
+playback progressed across tracks. Alternate-server playback remains unverified
+because no other server exposed a music library. Two earlier full test runs hit
+bounded loudness-fixture timing failures; the focused checks and final full native
+run passed without changing production timeouts or playback behavior.
+
+The Impeccable source detector reported one advisory on an `animate-bounce`
+selector inside the reduced-motion rule that disables animation, not an actual
+bounce effect. Native WKWebView review supplies visual evidence; no CDP-based
+rendered detector run is claimed. These changes remain local; 0.6.0 is on hold.
+
 ## Active goal
 
 Make artwork and its colors carry through the entire application while preserving readable controls, appearance preferences, playback and seeking.

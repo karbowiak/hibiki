@@ -459,7 +459,7 @@ export function ContextMenu() {
           aria-modal="true"
           aria-label={`${data.title} actions`}
           style={{ left: menuPos.left, top: menuPos.top }}
-          className="fixed z-[9999] w-60 select-none rounded-lg border border-[var(--border)] bg-app-card py-1 text-sm shadow-2xl"
+          className="app-overlay-surface fixed z-[9999] w-60 select-none rounded-lg border border-[var(--border)] bg-app-card py-1 text-sm shadow-2xl"
         >
           {actionData.actions.map((action, index) => (
             <Item
@@ -734,7 +734,7 @@ export function ContextMenu() {
           aria-modal="true"
           aria-label={`${data.title} actions`}
           style={{ left: menuPos.left, top: menuPos.top }}
-          className="fixed z-[9999] w-60 select-none rounded-lg border border-white/10 bg-app-card py-1 text-sm shadow-2xl"
+          className="app-overlay-surface fixed z-[9999] w-60 select-none rounded-lg border border-white/10 bg-app-card py-1 text-sm shadow-2xl"
         >
           {renaming ? (
             <InlineRenameInput
@@ -859,7 +859,7 @@ export function ContextMenu() {
         aria-modal="true"
         aria-label={`${data.title} actions`}
         style={{ left: menuPos.left, top: menuPos.top }}
-        className="fixed z-[9999] w-60 select-none rounded-lg border border-white/10 bg-app-card py-1 text-sm shadow-2xl"
+        className="app-overlay-surface fixed z-[9999] w-60 select-none rounded-lg border border-white/10 bg-app-card py-1 text-sm shadow-2xl"
       >
         {/* Play */}
         <Item

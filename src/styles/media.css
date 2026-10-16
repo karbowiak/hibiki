@@ -9,11 +9,10 @@
   border: 1px solid var(--border-subtle);
   border-radius: 0.65rem;
   background: var(--bg-surface);
-  transition: border-color 160ms ease, box-shadow 160ms ease;
+  transition: border-color 160ms ease;
 }
 .media-card:hover, .media-card:focus-within {
   border-color: var(--border);
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.1);
 }
 .media-card__art, .media-card__image, .media-card__fallback {
   position: absolute;
@@ -66,7 +65,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: rgb(255 255 255 / 0.8);
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   line-height: 1.35;
 }
 .media-card__primary {

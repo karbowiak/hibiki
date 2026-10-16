@@ -55,7 +55,7 @@ export function UpdateDialog() {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div
-        className="w-[400px] rounded-xl bg-app-surface p-7 shadow-2xl"
+        className="app-overlay-surface w-[400px] rounded-xl bg-app-surface p-7 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

@@ -114,7 +114,7 @@ export default function PlayerPopover({
           role="dialog"
           aria-label={label}
           tabIndex={-1}
-          className="playback-popover fixed overflow-auto outline-none z-[300] rounded-xl bg-app-card border border-[var(--border)] shadow-2xl shadow-black/40 backdrop-blur-lg select-none"
+          className="app-overlay-surface playback-popover fixed overflow-auto outline-none z-[300] rounded-xl bg-app-card border border-[var(--border)] shadow-2xl shadow-black/40 backdrop-blur-lg select-none"
           style={{
             ...palette,
             bottom: pos.bottom,

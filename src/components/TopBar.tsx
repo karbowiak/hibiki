@@ -4,7 +4,7 @@ import "../styles/discovery.css"
 import { getRecentSearches } from "../lib/recentSearches"
 import { useProviderStore } from "../stores/providerStore"
 import { useLocation } from "wouter"
-import { useEffect, useId, useRef, useState } from "react"
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 import {
   useSearchStore,
@@ -14,6 +14,8 @@ import {
 } from "../stores"
 import { metadataBackends } from "../metadata"
 import { clearImageCache } from "../lib/imageCache"
+import { ThemeToggle } from "./ThemeToggle"
+import { MusicLibraryPicker } from "./MusicLibraryPicker"
 import { ActivityIndicator } from "./ActivityIndicator"
 import {
   SearchDropdown,
@@ -25,6 +27,25 @@ import { NotificationCenter } from "./NotificationCenter"
 import { useOfflineStatusStore } from "../offline/statusStore"
 
 export function TopBar() {
+  const toolbar = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const element = toolbar.current
+    if (!element) return
+    const shell = element.closest<HTMLElement>(".app-artwork-shell") ?? document.documentElement
+    const update = () => {
+      const height = element.getBoundingClientRect().height
+      if (!height) return
+      const computed = getComputedStyle(element)
+      shell.style.setProperty("--app-toolbar-height", `${height}px`)
+      shell.style.setProperty("--app-toolbar-padding-start", computed.paddingTop)
+      shell.style.setProperty("--app-toolbar-padding-end", computed.paddingBottom)
+    }
+    update()
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(update) : null
+    observer?.observe(element)
+    window.addEventListener("resize", update)
+    return () => { observer?.disconnect(); window.removeEventListener("resize", update) }
+  }, [])
   const backgroundArtworkEnabled = useArtworkAppearanceStore(state => state.backgroundArtworkEnabled)
   const provider = useProviderStore((s) => s.provider)
   const offlineMode = useOfflineStatusStore(s => s.offlineMode)
@@ -207,6 +228,7 @@ export function TopBar() {
   return (
     // macOS keeps its 32px traffic-light clearance within the tinted toolbar.
     <div
+      ref={toolbar}
       data-tauri-drag-region
       data-shell-transparency={backgroundArtworkEnabled ? "enabled" : undefined}
       data-shell-platform={IS_MACOS ? "mac" : undefined}
@@ -216,13 +238,13 @@ export function TopBar() {
     >
       <div
         data-tauri-drag-region
-        className="flex min-w-0 flex-[1_1_12rem] flex-row items-center gap-4"
+        className="topbar-navigation flex min-w-0 flex-[1_1_18rem] flex-row items-center gap-2"
       >
         {/* Back button */}
         <button
           onClick={() => window.history.back()}
           aria-label="Go back"
-          className="shell-control-secondary h-fit rounded-full bg-app-surface p-2 transition-colors hover:bg-app-surface-hover"
+          className="topbar-control topbar-icon-control shell-control-secondary rounded-full bg-app-surface transition-colors hover:bg-app-surface-hover"
         >
           <svg
             role="img"
@@ -239,7 +261,7 @@ export function TopBar() {
         <button
           onClick={() => window.history.forward()}
           aria-label="Go forward"
-          className="shell-control-secondary h-fit rounded-full bg-app-surface p-2 transition-colors hover:bg-app-surface-hover"
+          className="topbar-control topbar-icon-control shell-control-secondary rounded-full bg-app-surface transition-colors hover:bg-app-surface-hover"
         >
           <svg
             role="img"
@@ -283,7 +305,7 @@ export function TopBar() {
             onBlur={handleInputBlur}
             onKeyDown={handleInputKeyDown}
             placeholder="What do you want to listen to?"
-            className="discovery-search-input h-[40px] w-full min-w-0 rounded-full pl-10 pr-9 focus:outline-none"
+            className="topbar-search discovery-search-input w-full min-w-0 rounded-full pl-10 pr-9 focus:outline-none"
           />
           {localQuery && (
             <button
@@ -321,8 +343,9 @@ export function TopBar() {
         </div>
       </div>
 
-      <div className="ml-auto flex shrink-0 items-center gap-2">
-        {(offlineMode || savedCount > 0) && <button type="button" className="shell-control-secondary rounded-full px-3 py-1.5 text-xs" onClick={() => navigate("/settings")} title="Previously saved pages; open connection settings">
+      <div className="topbar-actions ml-auto flex shrink-0 items-center gap-2">
+        <MusicLibraryPicker />
+        {(offlineMode || savedCount > 0) && <button type="button" className="topbar-control shell-control-secondary rounded-full px-3 text-xs" onClick={() => navigate("/settings")} title="Previously saved pages; open connection settings">
           {offlineMode ? "Saved library" : "Saved copy"}
         </button>}
         <AmbientArtworkControls />
@@ -334,7 +357,7 @@ export function TopBar() {
           onClick={() => void handleRefresh()}
           disabled={isRefreshing || !isConnected}
           title="Refresh library (⌘R)"
-          className="shell-control-secondary flex h-8 w-8 items-center justify-center rounded-full bg-app-surface transition-colors hover:bg-app-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
+          className="topbar-control topbar-icon-control shell-control-secondary flex items-center justify-center rounded-full bg-app-surface transition-colors hover:bg-app-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
         >
           <svg
             height="15"
@@ -348,6 +371,7 @@ export function TopBar() {
         </button>
 
         <NotificationCenter />
+        <ThemeToggle />
         {/* Settings toggle — click again to go back */}
         <button
           onClick={() =>
@@ -356,7 +380,8 @@ export function TopBar() {
               : navigate("/settings")
           }
           aria-pressed={location.startsWith("/settings")}
-          className={`shell-control-secondary flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+          aria-label={location.startsWith("/settings") ? "Close Settings" : "Settings"}
+          className={`topbar-control topbar-settings shell-control-secondary flex items-center gap-2 rounded-full px-3 text-sm font-semibold transition-colors ${
             location.startsWith("/settings")
               ? "border border-accent/30 bg-accent/15 hover:bg-accent/25"
               : "bg-app-surface hover:bg-app-surface-hover"
@@ -388,11 +413,11 @@ export function TopBar() {
             <path d="M12 15.5A3.5 3.5 0 0 1 8.5 12 3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5 3.5 3.5 0 0 1-3.5 3.5m7.43-2.92c.04-.34.07-.68.07-1.08s-.03-.73-.07-1.08l2.32-1.8c.21-.16.27-.44.14-.67l-2.2-3.81c-.13-.24-.41-.31-.65-.24l-2.74 1.1c-.57-.44-1.18-.81-1.86-1.09l-.42-2.9c-.04-.26-.26-.44-.52-.44H9.5c-.26 0-.48.18-.52.44l-.42 2.9c-.68.28-1.29.65-1.86 1.09l-2.74-1.1c-.24-.07-.52 0-.65.24l-2.2 3.81c-.13.24-.07.52.14.67l2.32 1.8c-.04.35-.07.69-.07 1.08s.03.73.07 1.08L2.25 14.3c-.21.16-.27.44-.14.67l2.2 3.81c.13.24.41.31.65.24l2.74-1.1c.57.44 1.18.81 1.86 1.09l.42 2.9c.04.26.26.44.52.44h4.4c.26 0 .48-.18.52-.44l.42-2.9c.68-.28 1.29-.65 1.86-1.09l2.74 1.1c.24.07.52 0 .65-.24l2.2-3.81c.13-.24.07-.52-.14-.67l-2.32-1.8z" />
           </svg>
           <span
-            className={
+            className={`topbar-settings-label ${
               location.startsWith("/settings")
                 ? "text-accent"
                 : "text-[color:var(--text-primary)]"
-            }
+            }`}
           >
             Settings
           </span>

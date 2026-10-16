@@ -655,6 +655,7 @@ export function TrackTable({
               value={filterQuery}
               onChange={(e) => onFilterChange(e.target.value)}
               placeholder={searchPlaceholder}
+              aria-label={searchPlaceholder}
               className="w-56 rounded border border-white/10 bg-white/5 py-1 pl-7 pr-2 text-sm text-gray-300 transition-colors placeholder:text-gray-600 focus:border-accent/50 focus:bg-white/[0.07] focus:outline-none"
             />
           </div>
@@ -668,7 +669,7 @@ export function TrackTable({
 
       <div
         className={
-          compact ? "min-w-0" : "track-table-scroll max-w-full overflow-x-auto"
+          compact ? "min-w-0" : "track-table-scroll relative max-w-full overflow-x-auto"
         }
         data-keyboard-scroll={compact ? undefined : "true"}
         role={compact ? undefined : "region"}

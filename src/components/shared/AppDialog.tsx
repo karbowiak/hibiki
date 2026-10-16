@@ -154,7 +154,7 @@ export function AppDialog({
         if (event.target === event.currentTarget && current.current.canClose)
           current.current.onClose()
       }}
-      className={`fixed inset-0 m-auto max-h-[min(90dvh,900px)] w-[calc(100%-2rem)] overflow-hidden rounded-2xl border border-[var(--border)] bg-app-card p-0 text-[var(--text-primary)] shadow-2xl backdrop:bg-black/65 ${className}`}
+      className={`app-overlay-surface fixed inset-0 m-auto max-h-[min(90dvh,900px)] w-[calc(100%-2rem)] overflow-hidden rounded-2xl border border-[var(--border)] bg-app-card p-0 text-[var(--text-primary)] shadow-2xl backdrop:bg-black/65 ${className}`}
     >
       <div
         className="flex max-h-[min(90dvh,900px)] flex-col"

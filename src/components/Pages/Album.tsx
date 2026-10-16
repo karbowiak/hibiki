@@ -584,7 +584,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                         onClick={() => setMenuOpen(false)}
                       />
                       <div
-                        className="fixed z-[9999] max-h-[70vh] w-56 overflow-y-auto rounded-lg border border-[var(--border)] bg-app-surface py-1 shadow-xl"
+                        className="app-overlay-surface fixed z-[9999] max-h-[70vh] w-56 overflow-y-auto rounded-lg border border-[var(--border)] bg-app-surface py-1 shadow-xl"
                         style={{
                           top: (rect?.bottom ?? 0) + 4,
                           right: window.innerWidth - (rect?.right ?? 0),
@@ -673,7 +673,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                         <hr className="my-1 border-t border-[var(--border)]" />
 
                         {/* Share */}
-                        <div className="px-3 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wider text-white/30">
+                        <div className="px-3 pb-0.5 pt-2 text-xs font-semibold text-[var(--text-secondary)]">
                           Share
                         </div>
                         <button
@@ -757,7 +757,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                         {debugEnabled && (
                           <>
                             <hr className="my-1 border-t border-[var(--border)]" />
-                            <div className="px-3 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wider text-white/30">
+                            <div className="px-3 pb-0.5 pt-2 text-xs font-semibold text-[var(--text-secondary)]">
                               Debug
                             </div>
                             <button

@@ -204,7 +204,7 @@ export function NotificationCenter() {
         aria-controls={open ? panelId : undefined}
         title="Notifications"
         onClick={() => setOpen((value) => !value)}
-        className={`relative flex h-8 w-8 items-center justify-center rounded-full transition-colors ${open ? "bg-accent/15 text-accent" : "bg-app-surface text-[color:var(--text-secondary)] hover:bg-app-surface-hover"}`}
+        className={`topbar-control topbar-icon-control shell-control-secondary relative flex items-center justify-center rounded-full transition-colors ${open ? "bg-accent/15 text-accent" : "bg-app-surface text-[color:var(--text-secondary)] hover:bg-app-surface-hover"}`}
       >
         <IconBell size={17} stroke={1.7} aria-hidden="true" />
         {unread > 0 && (
@@ -226,7 +226,7 @@ export function NotificationCenter() {
             aria-labelledby={titleId}
             tabIndex={-1}
             style={position}
-            className="fixed z-[12000] flex flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-app-card text-white shadow-2xl outline-none"
+            className="app-overlay-surface fixed z-[12000] flex flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-app-card text-white shadow-2xl outline-none"
             onKeyDown={(event) => {
               event.stopPropagation()
               if (event.key === "Escape") {
@@ -265,7 +265,7 @@ export function NotificationCenter() {
                   {history.map((notification) => (
                     <li key={notification.id} className="px-4 py-4">
                       <NotificationContent notification={notification} />
-                      <div className="ml-8 mt-2 flex items-center gap-2 text-[10px] text-white/40">
+                      <div className="ml-8 mt-2 flex items-center gap-2 text-xs text-[var(--text-secondary)]">
                         <time
                           dateTime={new Date(
                             notification.updatedAt
@@ -333,7 +333,7 @@ function NotificationToast({
   return (
     <div
       role="status"
-      className="pointer-events-auto relative rounded-xl border border-[var(--border)] bg-app-card p-4 pr-10 text-white shadow-xl"
+      className="app-overlay-surface pointer-events-auto relative rounded-xl border border-[var(--border)] bg-app-card p-4 pr-10 text-white shadow-xl"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
       onFocus={() => setPaused(true)}

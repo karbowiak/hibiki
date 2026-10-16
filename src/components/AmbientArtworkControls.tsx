@@ -21,7 +21,7 @@ export function AmbientArtworkControls() {
             ? "Resume background rotation (every 45 seconds)"
             : "Pause background rotation"
         }
-        className="shell-control-secondary flex h-8 w-8 items-center justify-center rounded-full"
+        className="topbar-control topbar-icon-control shell-control-secondary flex items-center justify-center rounded-full"
       >
         {paused ? (
           <IconPlayerPlay size={14} aria-hidden="true" />
@@ -34,7 +34,7 @@ export function AmbientArtworkControls() {
         onClick={next}
         aria-label="Next background image"
         title="Next background image"
-        className="shell-control-secondary flex h-8 w-8 items-center justify-center rounded-full"
+        className="topbar-control topbar-icon-control shell-control-secondary flex items-center justify-center rounded-full"
       >
         <IconPhoto size={16} aria-hidden="true" />
       </button>

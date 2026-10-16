@@ -191,9 +191,6 @@ export function Search() {
   return (
     <div className="min-w-0 pb-12 text-[var(--text-primary)]">
       <header className={showResults ? "mb-6" : "discovery-command-head mb-6"}>
-        {!showResults && (
-          <p className="discovery-eyebrow">Find your next favorite</p>
-        )}
         <h1
           className={
             showResults ? "break-words text-3xl font-bold" : "discovery-title"

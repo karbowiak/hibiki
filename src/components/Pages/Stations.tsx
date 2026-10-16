@@ -507,7 +507,7 @@ export function TagGridMixBuilder({
         }}
         aria-label={`Filter ${tabType}s`}
         placeholder={`Filter ${tabType}s…`}
-        className="w-full max-w-xs rounded-lg bg-white/10 px-4 py-2 text-sm placeholder-white/40 outline-none focus:bg-white/15 transition-colors"
+        className="w-full max-w-xs rounded-lg bg-app-surface px-4 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] transition-colors"
         autoComplete="off"
         spellCheck={false}
       />
@@ -715,7 +715,8 @@ export function StationsPage() {
   if (!hasStations) return null
 
   return (
-    <div className="space-y-10 pb-8">
+    <div className="discovery-page space-y-8 pb-8">
+      <header className="discovery-head"><h1 className="discovery-title">Stations</h1></header>
       {playError && <p role="alert" className="text-sm text-red-400">Could not play this mix. Please try again.</p>}
 
       {/* Mixes for You */}
@@ -752,7 +753,7 @@ export function StationsPage() {
 
       {/* Stations */}
       <div>
-        <div className="mb-4 text-2xl font-bold">Stations</div>
+        <h2 className="mb-4 text-xl font-bold">Library stations</h2>
         {!stationsLoaded && (
           <div><span role="status" className="sr-only">Loading stations…</span><MediaShelfSkeleton /></div>
         )}
@@ -787,7 +788,7 @@ export function StationsPage() {
       {/* Recent Mixes */}
       {recentMixes.length > 0 && (
         <div>
-          <div className="mb-4 text-2xl font-bold">Recent Mixes</div>
+          <h2 className="mb-4 text-xl font-bold">Recent Mixes</h2>
           <MediaGrid gap={3}>
             {recentMixes.map(mix => (
               <RecentMixCard
@@ -804,13 +805,14 @@ export function StationsPage() {
 
       {/* Build a Mix */}
       <div>
-        <div className="mb-4 text-2xl font-bold">Build a Mix</div>
+        <h2 className="mb-4 text-xl font-bold">Build a Mix</h2>
 
         {/* Tab bar */}
-        <div className="mb-6 flex gap-1 rounded-lg bg-white/5 p-1 w-fit">
+        <div role="group" aria-label="Mix source" className="mb-6 flex w-fit max-w-full flex-wrap gap-1 rounded-lg bg-app-surface p-1">
           {BUILDER_TABS.map(tab => (
             <button
               key={tab.key}
+              aria-pressed={activeTab === tab.key}
               onClick={() => setActiveTab(tab.key)}
               className={clsx(
                 "rounded-md px-4 py-1.5 text-sm font-medium transition-colors",

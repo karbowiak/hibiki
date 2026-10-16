@@ -1,3 +1,5 @@
+import "../styles/shellArtwork.css"
+import { useArtworkAppearanceStore } from "../stores/artworkAppearanceStore"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 import { usePlayerStore } from "../stores/playerStore"
@@ -183,7 +185,7 @@ export function LyricsContent() {
 
   useEffect(() => {
     if (isSynced && activeRef.current) {
-      activeRef.current.scrollIntoView({ behavior: "smooth", block: "center" })
+      activeRef.current.scrollIntoView({ behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "center" })
     }
   }, [activeIndex, isSynced])
 
@@ -222,7 +224,6 @@ export function LyricsContent() {
                         ? "text-[color:var(--text-secondary)] hover:text-[color:var(--text-primary)] hover:bg-[var(--accent-tint-hover)]"
                         : "text-[color:var(--text-secondary)]"
                   }`}
-                  style={isActive ? { filter: "drop-shadow(0 0 8px rgb(var(--accent-rgb) / 0.15))" } : undefined}
                   onClick={() => {
                     if (isSynced) usePlayerStore.getState().seekTo(line.startMs)
                   }}
@@ -253,6 +254,7 @@ const CloseIcon = () => (
 )
 
 export default function LyricsPanel() {
+  const backgroundArtworkEnabled = useArtworkAppearanceStore(state => state.backgroundArtworkEnabled)
   const hasLyrics = useCapability("lyrics")
   const {
     isLyricsOpen, isLyricsPinned, isQueuePinned,
@@ -287,7 +289,7 @@ export default function LyricsPanel() {
 
   const header = (
     <div className="shrink-0">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)]">
+      <div className={`${isLyricsPinned ? "app-docked-header " : ""}flex items-center justify-between px-4 py-3 border-b border-[var(--border)]`}>
         <span className="text-xs font-semibold text-[color:var(--text-muted)] uppercase tracking-wider">
           Lyrics
         </span>
@@ -295,7 +297,7 @@ export default function LyricsPanel() {
           <button
             onClick={() => setLyricsPinned(!isLyricsPinned)}
             title={isLyricsPinned ? "Unpin lyrics" : "Pin lyrics to sidebar"}
-            className={`flex h-7 w-7 items-center justify-center rounded transition-colors ${
+            className={`panel-toolbar-button panel-toolbar-icon flex items-center justify-center rounded-full transition-colors ${
               isLyricsPinned
                 ? "text-accent hover:text-accent/70"
                 : "text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)]"
@@ -306,7 +308,7 @@ export default function LyricsPanel() {
           </button>
           <button
             onClick={() => setLyricsOpen(false)}
-            className="flex h-7 w-7 items-center justify-center rounded text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)] transition-colors"
+            className="panel-toolbar-button panel-toolbar-icon flex items-center justify-center rounded-full text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)] transition-colors"
             aria-label="Close lyrics"
           >
             <CloseIcon />
@@ -337,7 +339,8 @@ export default function LyricsPanel() {
         style={{ width: isLyricsOpen ? lyricsWidth : 0 }}
       >
         <div
-          className={`relative flex h-full flex-col bg-app-bg border-l border-[var(--border)] transition-transform duration-300 ease-in-out ${
+          data-shell-transparency={backgroundArtworkEnabled ? "enabled" : undefined}
+          className={`app-docked-panel shell-artwork-surface relative flex h-full flex-col bg-app-bg border-l border-[var(--border)] transition-transform duration-300 ease-in-out ${
             isLyricsOpen ? "translate-x-0" : "translate-x-full"
           }`}
           style={{ width: lyricsWidth }}
@@ -366,7 +369,7 @@ export default function LyricsPanel() {
       <div
         aria-hidden={!isLyricsOpen}
         inert={!isLyricsOpen}
-        className={`fixed right-0 top-0 bottom-24 z-50 w-80 flex flex-col bg-app-bg border-l border-[var(--border)] shadow-2xl rounded-l-2xl overflow-hidden transition-transform duration-300 ease-in-out ${
+        className={`app-overlay-surface fixed right-0 top-0 bottom-24 z-50 w-80 flex flex-col bg-app-bg border-l border-[var(--border)] shadow-2xl rounded-l-2xl overflow-hidden transition-transform duration-300 ease-in-out ${
           isLyricsOpen ? "translate-x-0" : "translate-x-full"
         }`}
       >

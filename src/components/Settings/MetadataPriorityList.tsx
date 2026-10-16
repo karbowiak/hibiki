@@ -84,7 +84,7 @@ export function MetadataPriorityList() {
     <>
       <div
         ref={list}
-        className="flex flex-col gap-2"
+        className="flex flex-col divide-y divide-[var(--border)]"
         onPointerMove={(event) => {
           if (dragging !== null) {
             const index = hovered(event.clientY)
@@ -109,12 +109,12 @@ export function MetadataPriorityList() {
             key={item}
             data-metadata-source={item}
             className={clsx(
-              "flex flex-wrap items-center gap-3 rounded-xl border p-3 transition-colors sm:flex-nowrap",
+              "flex flex-wrap items-center gap-3 py-4 transition-colors sm:flex-nowrap",
               dragging === index
-                ? "border-accent/60 bg-accent/15"
+                ? "bg-accent/15"
                 : hover === index && dragging !== null
-                  ? "border-accent/50 bg-accent/10"
-                  : "border-[var(--border)] bg-app-surface"
+                  ? "bg-accent/10"
+                  : "bg-transparent"
             )}
           >
             <button

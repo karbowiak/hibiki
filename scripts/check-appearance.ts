@@ -217,8 +217,10 @@ try {
               titleWidth: r.width,
               family,
               rowColor: rowTitle ? getComputedStyle(rowTitle).color : null,
+              toolbarHeights: [...document.querySelectorAll<HTMLElement>(".app-topbar .topbar-control, .app-topbar .topbar-search")].map(e => e.getBoundingClientRect().height),
             }
           })
+          assert.ok(metrics.toolbarHeights.length > 4 && Math.max(...metrics.toolbarHeights) - Math.min(...metrics.toolbarHeights) < 1, `${slug}: toolbar control heights differ ${metrics.toolbarHeights}`)
           if (metrics.overflow > 1) {
             await page.screenshot({
               path: join(
@@ -457,6 +459,14 @@ try {
         const region = close.locator(
           "xpath=ancestor::div[contains(@class,'relative')][1]"
         )
+        const alignment = await page.evaluate(() => {
+          const toolbar = document.querySelector(".app-topbar")!.getBoundingClientRect()
+          const panel = document.querySelector(".app-docked-header")!.getBoundingClientRect()
+          const dock = document.querySelector(".app-docked-panel")!
+          const nav = document.querySelector(".app-sidebar")!
+          return { bottom: Math.abs(toolbar.bottom - panel.bottom), tint: getComputedStyle(dock).backgroundColor === getComputedStyle(nav).backgroundColor }
+        })
+        assert.ok(alignment.bottom <= 1 && alignment.tint, `${name}/${panel}: docked header or tint differs from the toolbar/sidebar ${JSON.stringify(alignment)}`)
         const handle = region.locator(".cursor-ew-resize").first()
         const box = await handle.boundingBox()
         assert.ok(box, `${name}/${panel}: resize handle missing`)
@@ -686,7 +696,11 @@ try {
       const stableCreate = await page
         .getByRole("button", { name: "Create Playlist", exact: true })
         .evaluate((e) =>
-          getComputedStyle(e).getPropertyValue("--artwork-primary")
+          JSON.stringify({
+            background: getComputedStyle(e).backgroundColor,
+            foreground: getComputedStyle(e).color,
+            icon: getComputedStyle(e.querySelector(".sidebar-create-icon")!).color,
+          })
         )
       await page.evaluate(() =>
         (window as any).fixtureArtwork.replace("replacement.svg")
@@ -735,9 +749,11 @@ try {
       assert.equal(
         await page
           .getByRole("button", { name: "Create Playlist", exact: true })
-          .evaluate((e) =>
-            getComputedStyle(e).getPropertyValue("--artwork-primary")
-          ),
+          .evaluate((e) => JSON.stringify({
+            background: getComputedStyle(e).backgroundColor,
+            foreground: getComputedStyle(e).color,
+            icon: getComputedStyle(e.querySelector(".sidebar-create-icon")!).color,
+          })),
         stableCreate,
         `${name}: page changed Create Playlist color`
       )

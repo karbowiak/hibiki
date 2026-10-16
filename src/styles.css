@@ -1,5 +1,6 @@
 @import "@fontsource-variable/inter";
 @import "./styles/media.css";
+@import "./styles/overlaySurfaces.css";
 @import "./styles/detailMedia.css";
 @import "./styles/ambientArtwork.css";
 @import "@fontsource-variable/geist";
@@ -50,7 +51,7 @@
   /* Text */
   --text-primary:   #ffffff;
   --text-secondary: rgba(255, 255, 255, 0.70);
-  --text-muted:     rgba(255, 255, 255, 0.40);
+  --text-muted:     rgba(255, 255, 255, 0.60);
 
   /* Borders */
   --border:        rgba(255, 255, 255, 0.10);
@@ -107,7 +108,7 @@
   --bg-surface-hover: #d4d4d4;
   --text-primary:   #0d0d0d;
   --text-secondary: rgba(0, 0, 0, 0.65);
-  --text-muted:     rgba(0, 0, 0, 0.40);
+  --text-muted:     rgba(0, 0, 0, 0.65);
   --border:        rgba(0, 0, 0, 0.10);
   --border-subtle: rgba(0, 0, 0, 0.05);
   --scrollbar-thumb: #b0b0b0;
@@ -688,11 +689,16 @@ body {
    Reduced motion — respect user preference
    --------------------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 0.001ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important;
+  /* Keep immediate state and color feedback; remove travel and decorative loops. */
+  .animate-pulse, .animate-bounce, .animate-spin, .animate-in, .vinyl-record {
+    animation: none !important;
   }
+  .transition-all, .transition-transform {
+    transition-property: color, background-color, border-color, opacity !important;
+  }
+  .hover\:scale-105:hover, .group:hover .group-hover\:scale-105,
+  .group:hover .group-hover\:scale-110 { transform: none; }
+  html { scroll-behavior: auto; }
 }
 
 .scroll-row-grid > * {
@@ -755,4 +761,13 @@ body {
     flex-direction: column;
     align-items: flex-end;
   }
+}
+
+/* Native browser surfaces follow the active palette as well. */
+::selection { background: var(--accent-tint-strong); color: var(--text-primary); }
+input, textarea { caret-color: var(--artwork-accent-text, var(--text-primary)); }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible,
+textarea:focus-visible, [role="slider"]:focus-visible {
+  outline: 2px solid var(--artwork-accent-text, var(--text-primary));
+  outline-offset: 2px;
 }

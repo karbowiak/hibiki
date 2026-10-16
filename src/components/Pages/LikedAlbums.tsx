@@ -32,7 +32,7 @@ function AlbumThumb({
         src={resolved}
         alt={title}
         loading="lazy"
-        className="h-full w-full object-cover transition-transform group-hover:scale-105"
+        className="h-full w-full object-cover"
       />
     )
   }
@@ -60,8 +60,8 @@ export function LikedAlbums() {
     <div className="pb-12">
       {/* Header */}
       <div className="flex flex-wrap items-center gap-5 px-8 py-6">
-        <div className="flex h-32 w-32 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-green-700 to-teal-500 shadow-lg">
-          <svg aria-hidden="true" viewBox="0 0 24 24" width="56" height="56" fill="white">
+        <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center text-[var(--text-secondary)]">
+          <svg aria-hidden="true" viewBox="0 0 24 24" width="28" height="28" fill="currentColor">
             <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
           </svg>
         </div>

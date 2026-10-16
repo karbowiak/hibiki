@@ -172,7 +172,7 @@ export function CreatePlaylist({
       }}
     >
       <div
-        className="w-[400px] rounded-xl bg-app-surface p-7 shadow-2xl"
+        className="app-overlay-surface w-[400px] rounded-xl bg-app-surface p-7 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-5 flex items-center justify-between">

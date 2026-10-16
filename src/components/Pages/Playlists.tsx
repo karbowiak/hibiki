@@ -19,13 +19,13 @@ export function Playlists() {
     <div className="pb-12">
       {/* Header */}
       <div className="flex flex-wrap items-center gap-5 px-8 py-6">
-        <div className="flex h-32 w-32 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-700 to-purple-500 shadow-lg">
+        <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center text-[var(--text-secondary)]">
           <svg
             aria-hidden="true"
             viewBox="0 0 24 24"
-            width="56"
-            height="56"
-            fill="white"
+            width="28"
+            height="28"
+            fill="currentColor"
           >
             <path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z" />
           </svg>

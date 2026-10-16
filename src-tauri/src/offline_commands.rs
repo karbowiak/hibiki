@@ -213,6 +213,9 @@ async fn restore_saved(
                 .map_err(|_| "Saved browsing storage is unavailable")?;
         let mut endpoints = settings.all_urls.clone();
         endpoints.push(settings.base_url.clone());
+        if let Some(previous) = settings.plex_server_urls.get(&client.machine_identifier) {
+            endpoints.extend(previous.clone());
+        }
         crate::plex::cache_scope::restore_endpoint_aliases(&mut client,&conn,&[(settings.section_id,Some(settings.section_uuid.clone()))],&endpoints)?;
         client.library_scope = client.cache_scope_for_library(settings.section_id,Some(&settings.section_uuid));
         let audio_tracks: i64 = conn

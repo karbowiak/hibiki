@@ -1,3 +1,6 @@
+import "../styles/shellArtwork.css"
+import { useArtworkAppearanceStore } from "../stores/artworkAppearanceStore"
+import { useContextMenu } from "../hooks/useContextMenu"
 import { loadAlbumTracks } from "../lib/albumContents"
 import { ArtworkImage } from "./shared/ArtworkImage"
 import { useEffect, useRef, useState } from "react"
@@ -40,18 +43,19 @@ interface TrackRowProps {
   durationMs: number
   isGuestDj: boolean
   isRadio: boolean
+  onContextMenu?: (event: React.MouseEvent) => void
 }
 
 function TrackBadges({ isGuestDj, isRadio }: { isGuestDj: boolean; isRadio: boolean }) {
   return (
     <>
       {isGuestDj && (
-        <span className="flex-shrink-0 rounded px-1 py-0.5 text-[0.55rem] font-bold uppercase tracking-wide bg-purple-500/20 text-purple-300">
+        <span className="queue-track-badge">
           DJ
         </span>
       )}
       {isRadio && !isGuestDj && (
-        <span className="flex-shrink-0 rounded px-1 py-0.5 text-[0.55rem] font-bold uppercase tracking-wide bg-orange-500/20 text-orange-300">
+        <span className="queue-track-badge">
           Radio
         </span>
       )}
@@ -61,10 +65,11 @@ function TrackBadges({ isGuestDj, isRadio }: { isGuestDj: boolean; isRadio: bool
 
 /* --- Played track (static, faded, no drag/remove) --- */
 
-function PlayedRow({ thumb, title, artist, durationMs, isGuestDj, isRadio, onJump }: TrackRowProps & { onJump: () => void }) {
+function PlayedRow({ thumb, title, artist, durationMs, isGuestDj, isRadio, onJump, onContextMenu }: TrackRowProps & { onJump: () => void }) {
   return (
     <div
-      className="flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer hover:bg-hl-queue opacity-50"
+      className="queue-track-row queue-track-row--played flex items-center gap-2 rounded-md cursor-pointer hover:bg-hl-queue"
+      onContextMenu={onContextMenu}
       onClick={onJump}
     >
       <span className="w-5 flex-shrink-0" />
@@ -76,20 +81,20 @@ function PlayedRow({ thumb, title, artist, durationMs, isGuestDj, isRadio, onJum
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5 min-w-0">
           <button type="button" onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onJump() }} aria-label={`Play ${title}`} className="truncate text-left text-sm text-[var(--text-primary)] rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">{title}</button>
-          <TrackBadges isGuestDj={isGuestDj} isRadio={isRadio} />
         </div>
-        <div className="truncate text-xs text-[var(--text-muted)]">{artist}</div>
+        <div className="queue-track-meta"><span className="truncate">{artist}</span><TrackBadges isGuestDj={isGuestDj} isRadio={isRadio} /></div>
       </div>
       <span className="flex-shrink-0 text-xs tabular-nums text-[var(--text-muted)]">{formatMs(durationMs)}</span>
+      <span className="queue-remove-spacer" aria-hidden="true" />
     </div>
   )
 }
 
 /* --- Now Playing track (static, accent styling, no drag/remove) --- */
 
-function NowPlayingRow({ thumb, title, artist, durationMs, isGuestDj, isRadio }: TrackRowProps) {
+function NowPlayingRow({ thumb, title, artist, durationMs, isGuestDj, isRadio, onContextMenu }: TrackRowProps) {
   return (
-    <div className="flex items-center gap-2 px-3 py-2 border-l-2 border-accent">
+    <div className="queue-track-row queue-track-row--current flex items-center gap-2 rounded-md" onContextMenu={onContextMenu}>
       <span className="w-5 flex-shrink-0 text-center">
         <svg viewBox="0 0 16 16" width="10" height="10" style={{ fill: "var(--accent)" }} className="mx-auto">
           <polygon points="3,2 13,8 3,14" />
@@ -103,11 +108,11 @@ function NowPlayingRow({ thumb, title, artist, durationMs, isGuestDj, isRadio }:
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5 min-w-0">
           <span className="truncate text-sm text-accent font-medium">{title}</span>
-          <TrackBadges isGuestDj={isGuestDj} isRadio={isRadio} />
         </div>
-        <div className="truncate text-xs text-[var(--text-muted)]">{artist}</div>
+        <div className="queue-track-meta"><span className="truncate">{artist}</span><TrackBadges isGuestDj={isGuestDj} isRadio={isRadio} /></div>
       </div>
       <span className="flex-shrink-0 text-xs tabular-nums text-[var(--text-muted)]">{formatMs(durationMs)}</span>
+      <span className="queue-remove-spacer" aria-hidden="true" />
     </div>
   )
 }
@@ -121,7 +126,7 @@ interface SortableUpcomingProps extends TrackRowProps {
   onRemove: () => void
 }
 
-function SortableUpcomingItem({ id, index, thumb, title, artist, durationMs, isGuestDj, isRadio, onJump, onRemove }: SortableUpcomingProps) {
+function SortableUpcomingItem({ id, index, thumb, title, artist, durationMs, isGuestDj, isRadio, onJump, onRemove, onContextMenu }: SortableUpcomingProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
     animateLayoutChanges: () => false,
@@ -139,7 +144,8 @@ function SortableUpcomingItem({ id, index, thumb, title, artist, durationMs, isG
     <div
       ref={setNodeRef}
       style={style}
-      className="flex items-center gap-2 px-3 py-2 rounded-md cursor-grab active:cursor-grabbing hover:bg-hl-queue group"
+      className="queue-track-row flex items-center gap-2 rounded-md cursor-grab active:cursor-grabbing hover:bg-hl-queue group"
+      onContextMenu={onContextMenu}
       onClick={() => { if (wasDragging.current) { wasDragging.current = false; return } onJump() }}
       {...attributes}
       {...listeners}
@@ -160,15 +166,14 @@ function SortableUpcomingItem({ id, index, thumb, title, artist, durationMs, isG
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5 min-w-0">
           <button type="button" onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onJump() }} aria-label={`Play ${title}`} className="truncate text-left text-sm text-[var(--text-primary)] rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">{title}</button>
-          <TrackBadges isGuestDj={isGuestDj} isRadio={isRadio} />
         </div>
-        <div className="truncate text-xs text-[var(--text-muted)]">{artist}</div>
+        <div className="queue-track-meta"><span className="truncate">{artist}</span><TrackBadges isGuestDj={isGuestDj} isRadio={isRadio} /></div>
       </div>
 
       <span className="flex-shrink-0 text-xs tabular-nums text-[var(--text-muted)]">{formatMs(durationMs)}</span>
 
       <button
-        className="flex-shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)] opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent transition-opacity p-0.5"
+        className="flex-shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)] opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent transition-opacity queue-remove-button"
         onClick={e => { e.stopPropagation(); onRemove() }}
         type="button"
         onPointerDown={e => e.stopPropagation()}
@@ -190,7 +195,7 @@ function SortableUpcomingItem({ id, index, thumb, title, artist, durationMs, isG
 function SectionHeader({ label, right }: { label: string; right?: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between px-3 pt-3 pb-1">
-      <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-[var(--text-muted)]">{label}</span>
+      <span className="text-xs font-semibold text-[var(--text-secondary)]">{label}</span>
       {right}
     </div>
   )
@@ -246,6 +251,8 @@ function ShuffleIcon() {
 /* ------------------------------------------------------------------ */
 
 export function QueuePanel() {
+  const { handler: contextMenu } = useContextMenu()
+  const backgroundArtworkEnabled = useArtworkAppearanceStore(state => state.backgroundArtworkEnabled)
   const { queue, queueIndex, reorderQueue, removeFromQueue, jumpToQueueItem, repeat, shuffle, clearUpcoming } = usePlayerStore(useShallow(s => ({
     queue: s.queue,
     queueIndex: s.queueIndex,
@@ -360,26 +367,20 @@ export function QueuePanel() {
   const upcomingTracks = queue.slice(queueIndex + 1)
 
   const header = (
-    <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)] flex-shrink-0">
+    <div className={`${isQueuePinned ? "app-docked-header " : ""}flex items-center justify-between px-4 py-3 border-b border-[var(--border)] flex-shrink-0`}>
       {isQueuePinned ? (
-        <div className="flex items-center gap-4 flex-1 min-w-0">
+        <div role="group" aria-label="Player panel" className="flex items-center gap-1.5 flex-1 min-w-0">
           <button
             onClick={() => setQueueActiveTab("queue")}
-            className={`text-sm font-semibold pb-0.5 transition-colors border-b-2 ${
-              queueActiveTab === "queue"
-                ? "text-[color:var(--text-primary)] border-accent"
-                : "text-[color:var(--text-muted)] border-transparent hover:text-[color:var(--text-secondary)]"
-            }`}
+            aria-pressed={queueActiveTab === "queue"}
+            className="panel-toolbar-button shell-control-secondary px-3 text-sm font-medium"
           >
             Queue
           </button>
           <button
             onClick={() => setQueueActiveTab("lyrics")}
-            className={`text-sm font-semibold pb-0.5 transition-colors border-b-2 ${
-              queueActiveTab === "lyrics"
-                ? "text-[color:var(--text-primary)] border-accent"
-                : "text-[color:var(--text-muted)] border-transparent hover:text-[color:var(--text-secondary)]"
-            }`}
+            aria-pressed={queueActiveTab === "lyrics"}
+            className="panel-toolbar-button shell-control-secondary px-3 text-sm font-medium"
           >
             Lyrics
           </button>
@@ -389,9 +390,9 @@ export function QueuePanel() {
       )}
       <div className="flex items-center gap-0.5">
         <button
-          onClick={() => setQueuePinned(!isQueuePinned)}
+          onClick={() => { setQueuePinned(!isQueuePinned); setQueueOpen(true) }}
           title={isQueuePinned ? "Unpin queue" : "Pin queue to sidebar"}
-          className={`flex h-7 w-7 items-center justify-center rounded transition-colors ${
+          className={`panel-toolbar-button panel-toolbar-icon flex items-center justify-center rounded-full transition-colors ${
             isQueuePinned ? "text-accent hover:text-accent/70" : "text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)]"
           }`}
           aria-label={isQueuePinned ? "Unpin queue" : "Pin queue"}
@@ -401,11 +402,8 @@ export function QueuePanel() {
           </svg>
         </button>
         <button
-          onClick={() => {
-            if (isQueuePinned) setQueuePinned(false)
-            else setQueueOpen(false)
-          }}
-          className="flex h-7 w-7 items-center justify-center rounded text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)] transition-colors"
+          onClick={() => setQueueOpen(false)}
+          className="panel-toolbar-button panel-toolbar-icon flex items-center justify-center rounded-full text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)] transition-colors"
           aria-label="Close queue"
         >
           <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
@@ -432,8 +430,9 @@ export function QueuePanel() {
   }, [queueIndex, isQueueOpen, queueActiveTab])
 
   const list = queue.length === 0 ? (
-    <div className="flex flex-1 items-center justify-center text-sm text-[var(--text-muted)]">
-      Queue is empty
+    <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-10 text-center text-sm">
+      <p className="font-medium text-[var(--text-primary)]">Your queue is empty</p>
+      <p className="text-[var(--text-secondary)]">Play a song to add it here.</p>
     </div>
   ) : (
     <div ref={scrollRef} className="flex-1 overflow-y-auto py-2">
@@ -450,6 +449,7 @@ export function QueuePanel() {
               durationMs={track.duration}
               isGuestDj={isDjGenerated(track.id)}
               isRadio={isRadioGenerated(track.id)}
+              onContextMenu={contextMenu("track", track)}
               onJump={() => jumpToQueueItem(i)}
             />
           ))}
@@ -468,6 +468,7 @@ export function QueuePanel() {
               durationMs={currentTrack.duration}
               isGuestDj={isDjGenerated(currentTrack.id)}
               isRadio={isRadioGenerated(currentTrack.id)}
+              onContextMenu={contextMenu("track", currentTrack)}
             />
           </div>
           {repeat === 1 && (
@@ -484,7 +485,7 @@ export function QueuePanel() {
             right={
               <button
                 onClick={clearUpcoming}
-                className="text-[0.65rem] font-semibold uppercase tracking-wider text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+                className="rounded-md px-2 py-1 text-xs text-[var(--text-secondary)] hover:bg-app-surface-hover hover:text-[var(--text-primary)] transition-colors"
               >
                 Clear
               </button>
@@ -516,6 +517,7 @@ export function QueuePanel() {
                     isGuestDj={isDjGenerated(track.id)}
                     isRadio={isRadioGenerated(track.id)}
                     onJump={() => jumpToQueueItem(absoluteIndex)}
+                    onContextMenu={contextMenu("track", track)}
                     onRemove={() => removeFromQueue(absoluteIndex)}
                   />
                 )
@@ -541,7 +543,8 @@ export function QueuePanel() {
       >
         <div
           data-queue-drop-target
-          className={`relative flex h-full flex-col bg-app-bg border-l border-[var(--border)] transition-shadow duration-200 ${isHoveredDrop ? "ring-2 ring-inset ring-accent/60" : ""} ${dropFlash ? "ring-2 ring-inset ring-green-500/60" : ""}`}
+          data-shell-transparency={backgroundArtworkEnabled ? "enabled" : undefined}
+          className={`app-docked-panel shell-artwork-surface relative flex h-full flex-col bg-app-bg border-l border-[var(--border)] transition-shadow duration-200 ${isHoveredDrop ? "ring-2 ring-inset ring-accent/60" : ""} ${dropFlash ? "ring-2 ring-inset ring-green-500/60" : ""}`}
           style={{ width: queueWidth, minWidth: queueWidth }}
         >
           <div
@@ -568,7 +571,7 @@ export function QueuePanel() {
         aria-hidden={!isQueueOpen}
         inert={!isQueueOpen}
         data-queue-drop-target
-        className={`fixed right-0 top-0 bottom-24 z-50 w-80 flex flex-col bg-app-bg border-l border-[var(--border)] shadow-2xl rounded-l-2xl overflow-hidden transition-[transform,box-shadow] duration-300 ease-in-out ${
+        className={`app-overlay-surface fixed right-0 top-0 bottom-24 z-50 w-80 flex flex-col bg-app-bg border-l border-[var(--border)] shadow-2xl rounded-l-2xl overflow-hidden transition-[transform,box-shadow] duration-300 ease-in-out ${
           isQueueOpen ? "translate-x-0" : "translate-x-full"
         } ${isHoveredDrop ? "ring-2 ring-inset ring-accent/60" : ""} ${dropFlash ? "ring-2 ring-inset ring-green-500/60" : ""}`}
       >
