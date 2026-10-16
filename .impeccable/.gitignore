@@ -1,0 +1,14 @@
+config.local.json
+hook.cache.json
+hook.pending.json
+history/
+live/server.json
+live/codex-worker.json
+live/codex-worker.log
+live/sessions/
+live/previews/
+live/annotations/
+live/artifacts/
+live/accept-receipts/
+live/locks/
+live/cache/
