@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react"
-import { createPortal } from "react-dom"
+import { useEffect } from "react"
+import { AppDialog } from "./shared/AppDialog"
 import { IS_MACOS } from "../lib/platform"
 import { isCompositionKey } from "../lib/keyboard"
 
@@ -65,14 +65,6 @@ interface Props {
 }
 
 export function HotkeyHelpModal({ context = "player", onClose }: Props) {
-  const rootRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const previousFocus = document.activeElement as HTMLElement | null
-    rootRef.current?.focus()
-    return () => { if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true }) }
-  }, [])
-
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.defaultPrevented || e.repeat || isCompositionKey(e)) return
@@ -91,23 +83,9 @@ export function HotkeyHelpModal({ context = "player", onClose }: Props) {
       ? [playbackGroup, visualizerGroup, milkdropGroup]
       : [playbackGroup, navigationGroup]
 
-  return createPortal(
-    <div
-      ref={rootRef}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Keyboard Shortcuts"
-      tabIndex={-1}
-      className="fixed inset-0 z-[600] flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      onClick={e => { if (e.target === e.currentTarget) onClose() }}
-    >
-      <div className="app-overlay-surface w-full max-w-lg rounded-xl border border-[var(--border)] bg-app-card p-6 shadow-2xl">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-[color:var(--text-primary)]">Keyboard Shortcuts</h2>
-          <span className="text-xs text-[color:var(--text-muted)]">Press Esc to close</span>
-        </div>
-
-        <div className="space-y-5 max-h-[60vh] overflow-y-auto pr-1">
+  return (
+    <AppDialog title="Keyboard Shortcuts" onClose={onClose} className="max-w-lg">
+        <div className="space-y-5">
           {groups.map(group => (
             <div key={group.title}>
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-[color:var(--text-muted)]">
@@ -129,8 +107,6 @@ export function HotkeyHelpModal({ context = "player", onClose }: Props) {
             </div>
           ))}
         </div>
-      </div>
-    </div>,
-    document.body
+    </AppDialog>
   )
 }

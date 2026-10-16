@@ -13,6 +13,7 @@ import { useNotificationCenterStore } from "../../../src/stores/notificationCent
 import { useAccentStore } from "../../../src/stores/accentStore.ts"
 import { useUIStore } from "../../../src/stores/uiStore.ts"
 import { Player } from "../../../src/components/Player.tsx"
+import { CreatePlaylist } from "../../../src/components/Pages/CreatePlaylist.tsx"
 import { engine } from "../../../src/audio/RustAudioEngine.ts"
 import { useEqStore } from "../../../src/stores/eqStore.ts"
 import { useAudioSettingsStore } from "../../../src/stores/audioSettingsStore.ts"
@@ -251,6 +252,7 @@ async function setup() {
       tags: true,
       playlists: true,
       playlistCreate: true,
+      playlistEdit: true,
       djModes: true,
       lyrics: true,
       ratings: true,
@@ -261,6 +263,8 @@ async function setup() {
     getArtistPopularTracks: async () => tracks,
     getArtistSimilar: async () => [artist],
     getRelatedHubs: async () => [],
+    getSectionStations: async () => [{ identifier: 'library.stations', items: ['Library Radio', 'Deep Cuts Radio', 'Time Travel Radio', 'Random Album Radio'].map((title, index) => ({ ...playlists[0], id: `fixture-station-${index}`, providerKey: `fixture-station-${index}`, title })) }],
+    buildRadioUri: (key: string) => 'synthetic://radio/' + key,
     getAlbum: async () => { await loadingGate; return album },
     getAlbumTracks: async () => tracks,
     getTrack: async (id: string) => ({ ...tracks.find(t => t.id === id)!,
@@ -393,6 +397,7 @@ async function setup() {
   }
   setHome(5)
   w.fixtureAppearance = {
+    radioPreview: () => usePlayerStore.setState({ isRadioMode: true, radioType: "artist", radioSeedArtist: "The Midnight Ensemble", contextName: "A long synthetic radio station name Radio" }),
     visualizer: (fullscreenMode: FullscreenVisualizerMode) =>
       useVisualizerStore.setState({ fullscreenMode, autoCycleEnabled: false }),
     lyricsPreview: (plain = false, positionMs = 42000) => {
@@ -691,7 +696,7 @@ async function setup() {
           className:
             "relative z-0 flex min-h-0 flex-1 flex-row overflow-hidden",
         },
-        React.createElement(SideBar, { onCreatePlaylist: () => {} }),
+        React.createElement(SideBar, { onCreatePlaylist: () => useUIStore.getState().setShowCreatePlaylist(true) }),
         React.createElement(
           "main",
           { className: "min-w-0 flex-1", role: "main" },
@@ -735,10 +740,12 @@ void setup()
 
 function InteractionHarness({ children }: { children: React.ReactNode }) {
   const { hotkeyHelpOpen, setHotkeyHelpOpen } = useGlobalHotkeys()
+  const createOpen = useUIStore(state => state.showCreatePlaylist)
   return (
     <ArtworkShell>
       {children}
       <ContextMenu />
+      {createOpen && <CreatePlaylist onClose={() => useUIStore.getState().setShowCreatePlaylist(false)} />}
       {hotkeyHelpOpen && <HotkeyHelpModal context="visualizer" onClose={() => setHotkeyHelpOpen(false)} />}
     </ArtworkShell>
   )

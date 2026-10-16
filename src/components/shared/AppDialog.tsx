@@ -6,6 +6,7 @@ import {
   type CSSProperties,
 } from "react"
 import { createPortal } from "react-dom"
+import { IconX } from "@tabler/icons-react"
 
 export interface AppDialogProps {
   title: string
@@ -174,7 +175,7 @@ export function AppDialog({
           <div className="relative flex min-w-0 items-center gap-4">
             {cover}
             <div className="min-w-0">
-              <h2 id={`${id}-title`} className="text-xl font-semibold">
+              <h2 id={`${id}-title`} className="break-words text-xl font-semibold">
                 {title}
               </h2>
               {description && (
@@ -193,9 +194,9 @@ export function AppDialog({
             aria-label={`Close ${title}`}
             disabled={!canClose}
             onClick={onClose}
-            className="app-dialog-close relative shrink-0 rounded-full px-3 py-1.5 text-lg hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40"
+            className="app-dialog-close player-panel-icon relative disabled:opacity-40"
           >
-            ×
+            <IconX size={20} aria-hidden="true" />
           </button>
         </header>
         <div className={bodyClassName}>{children}</div>

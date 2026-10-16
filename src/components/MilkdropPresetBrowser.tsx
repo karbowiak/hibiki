@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, useMemo } from "react"
 import { useVisualizerStore, type AutoCycleMode } from "../stores/visualizerStore"
 import { useShallow } from "zustand/react/shallow"
 import { getAllNames } from "../lib/milkdropPresets"
+import { PlayerPanelHeader } from "./shared/PlayerPanelHeader"
+import { IconHeart } from "@tabler/icons-react"
 
 type Tab = "all" | "favorites" | "history"
 
@@ -74,18 +76,9 @@ export default function MilkdropPresetBrowser() {
         onClick={() => setPresetBrowserOpen(false)}
       />
       {/* Panel */}
-      <div className="absolute right-0 top-0 bottom-0 z-30 w-80 flex flex-col bg-black/90 backdrop-blur-md border-l border-white/10 shadow-2xl">
+      <div className="app-overlay-surface absolute right-0 top-0 bottom-0 z-30 w-[min(22rem,100%)] flex flex-col border-l border-white/10">
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-          <span className="text-white font-semibold text-sm">Presets</span>
-          <button
-            onClick={() => setPresetBrowserOpen(false)}
-            className="text-white/50 hover:text-white text-lg"
-            aria-label="Close browser"
-          >
-            ✕
-          </button>
-        </div>
+        <PlayerPanelHeader title="Presets" onClose={() => setPresetBrowserOpen(false)} />
 
         {/* Auto-cycle controls */}
         <div className="px-4 py-2 border-b border-white/10 flex flex-wrap items-center gap-2 text-xs">
@@ -101,6 +94,7 @@ export default function MilkdropPresetBrowser() {
           {autoCycleEnabled && (
             <>
               <select
+                aria-label="Preset auto-cycle interval"
                 value={autoCycleIntervalSec}
                 onChange={(e) => setAutoCycleIntervalSec(Number(e.target.value))}
                 className="bg-white/10 text-white/80 rounded px-1.5 py-0.5 text-xs border-none outline-none"
@@ -112,6 +106,7 @@ export default function MilkdropPresetBrowser() {
                 ))}
               </select>
               <select
+                aria-label="Preset auto-cycle order"
                 value={autoCycleMode}
                 onChange={(e) => setAutoCycleMode(e.target.value as AutoCycleMode)}
                 className="bg-white/10 text-white/80 rounded px-1.5 py-0.5 text-xs border-none outline-none"
@@ -130,7 +125,8 @@ export default function MilkdropPresetBrowser() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search presets…"
-            className="w-full bg-white/10 text-white text-sm rounded px-3 py-1.5 outline-none placeholder:text-white/30 focus:ring-1 focus:ring-[var(--accent)]"
+            aria-label="Search presets"
+            className="app-input w-full"
             autoFocus
           />
         </div>
@@ -145,6 +141,7 @@ export default function MilkdropPresetBrowser() {
             <button
               key={t}
               onClick={() => setTab(t)}
+              aria-pressed={tab === t}
               className={`flex-1 py-2 text-xs font-medium transition-colors ${
                 tab === t
                   ? "text-[var(--accent)] border-b-2 border-[var(--accent)]"
@@ -159,17 +156,15 @@ export default function MilkdropPresetBrowser() {
         {/* Preset list */}
         <div ref={listRef} className="flex-1 overflow-y-auto min-h-0">
           {filtered.length === 0 ? (
-            <div className="text-white/30 text-sm text-center py-8">No presets found</div>
+            <div className="text-white/70 text-sm text-center py-8">No presets found</div>
           ) : (
             filtered.map((name) => {
               const isActive = name === currentPresetName
               const isFav = favSet.has(name)
               return (
-                <button
+                <div
                   key={name}
-                  ref={isActive ? activeRef : undefined}
-                  onClick={() => setCurrentPreset(name)}
-                  className={`w-full flex items-center gap-2 px-4 py-1.5 text-left text-xs transition-colors ${
+                  className={`w-full flex items-center gap-2 px-3 text-left text-xs transition-colors ${
                     isActive
                       ? "bg-[var(--accent)]/20 text-[var(--accent)]"
                       : "text-white/70 hover:bg-white/5 hover:text-white"
@@ -180,15 +175,18 @@ export default function MilkdropPresetBrowser() {
                       e.stopPropagation()
                       toggleFavorite(name)
                     }}
-                    className={`shrink-0 transition-colors ${
-                      isFav ? "text-red-400" : "text-white/20 hover:text-white/50"
+                    className={`player-panel-icon transition-colors ${
+                      isFav ? "text-red-400" : "text-white/60 hover:text-white"
                     }`}
-                    aria-label={isFav ? "Unfavorite" : "Favorite"}
+                    aria-label={`${isFav ? "Unfavorite" : "Favorite"} ${name}`}
+                    aria-pressed={isFav}
                   >
-                    {isFav ? "♥" : "♡"}
+                    <IconHeart size={16} fill={isFav ? "currentColor" : "none"} aria-hidden="true" />
                   </button>
-                  <span className="truncate">{name}</span>
-                </button>
+                  <button type="button" ref={isActive ? activeRef : undefined}
+                    onClick={() => setCurrentPreset(name)} aria-pressed={isActive}
+                    title={name} className="min-w-0 flex-1 truncate py-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">{name}</button>
+                </div>
               )
             })
           )}

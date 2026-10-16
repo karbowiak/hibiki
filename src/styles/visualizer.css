@@ -1,5 +1,13 @@
 /* The immersive stage owns the viewport, independent of shell glass and docks. */
 .fullscreen-visualizer {
+  --text-primary: #fff;
+  --text-secondary: rgb(255 255 255 / 0.7);
+  --text-muted: rgb(255 255 255 / 0.6);
+  --bg-base: #000;
+  --bg-elevated: #101010;
+  --bg-surface: #242424;
+  --bg-surface-hover: #333;
+  --border: rgb(255 255 255 / 0.12);
   position: fixed;
   inset: 0;
   z-index: 500;

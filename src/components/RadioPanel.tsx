@@ -1,5 +1,7 @@
 import { useShallow } from "zustand/react/shallow"
 import { usePlayerStore } from "../stores"
+import { PlayerPanelHeader } from "./shared/PlayerPanelHeader"
+import { IconMinus, IconPlus } from "@tabler/icons-react"
 
 const VARIETY_OPTIONS = [
   { label: "Focused",      value: 0,  desc: "Very similar to your seed" },
@@ -51,31 +53,16 @@ export default function RadioPanel({ onClose }: Props) {
   return (
     <>
       {/* Header — seed name + type + stop button */}
-      <div className="px-5 py-4 border-b border-[var(--border)]">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 mb-1.5">
-              <span className="text-[0.625rem] font-bold uppercase tracking-widest text-[color:var(--text-muted)]">
-                Radio
-              </span>
-              {typeLabel && (
-                <span className="text-[0.625rem] font-bold uppercase tracking-wider rounded-full bg-accent/15 border border-accent/30 px-2 py-0.5 text-accent">
-                  {typeLabel}
-                </span>
-              )}
-            </div>
-            <p className="text-sm font-semibold text-[color:var(--text-primary)] truncate">
-              {radioSeedArtist ? `${radioSeedArtist} — ${seedName}` : seedName}
-            </p>
-          </div>
+      <PlayerPanelHeader title="Radio" onClose={onClose}
+        subtitle={`${radioSeedArtist ? `${radioSeedArtist} — ${seedName}` : seedName}${typeLabel ? ` · ${typeLabel}` : ""}`}
+        actions={
           <button
             onClick={() => { stopRadio(); onClose() }}
-            className="flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full bg-[var(--bg-surface)] text-[color:var(--text-muted)] hover:bg-red-500/20 hover:text-red-400 transition-colors"
+            className="player-panel-action"
           >
             Stop
           </button>
-        </div>
-      </div>
+        } />
 
       {/* Variety */}
       <div className="px-5 py-4 border-b border-[var(--border)]">
@@ -89,16 +76,9 @@ export default function RadioPanel({ onClose }: Props) {
               <button
                 key={opt.value}
                 onClick={() => setRadioDegreesOfSeparation(opt.value)}
+                aria-pressed={selected}
                 title={opt.desc}
-                className={`rounded-lg border py-2 text-xs font-semibold transition-all ${
-                  selected
-                    ? "border-accent/50 text-accent"
-                    : "border-[var(--border)] text-[color:var(--text-muted)] hover:text-[color:var(--text-secondary)]"
-                }`}
-                style={{
-                  background: selected ? "var(--accent-tint-strong)" : "var(--accent-tint-subtle)",
-                  ...(selected ? { boxShadow: "0 0 8px rgb(var(--accent-rgb) / 0.15)" } : {}),
-                }}
+                className="player-panel-option !px-2 !text-xs"
               >
                 {opt.label}
               </button>
@@ -120,20 +100,22 @@ export default function RadioPanel({ onClose }: Props) {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setRadioMinQueue(Math.max(MIN_QUEUE, radioMinQueue - 1))}
+              aria-label="Fewer queued radio tracks"
               disabled={radioMinQueue <= MIN_QUEUE}
               className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--bg-surface)] text-[color:var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[color:var(--text-primary)] transition-colors disabled:opacity-30 disabled:cursor-default font-bold text-base leading-none"
             >
-              −
+              <IconMinus size={16} aria-hidden="true" />
             </button>
             <span className="w-8 text-center text-sm font-semibold text-[color:var(--text-primary)] tabular-nums">
               {radioMinQueue}
             </span>
             <button
               onClick={() => setRadioMinQueue(Math.min(MAX_QUEUE, radioMinQueue + 1))}
+              aria-label="More queued radio tracks"
               disabled={radioMinQueue >= MAX_QUEUE}
               className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--bg-surface)] text-[color:var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[color:var(--text-primary)] transition-colors disabled:opacity-30 disabled:cursor-default font-bold text-base leading-none"
             >
-              +
+              <IconPlus size={16} aria-hidden="true" />
             </button>
             <span className="text-[0.6875rem] text-[color:var(--text-secondary)]">tracks</span>
           </div>

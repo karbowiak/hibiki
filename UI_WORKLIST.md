@@ -1,5 +1,47 @@
 # Hibiki visual polish
 
+## Remaining surface polish
+
+- [x] Review the connected development app's Home, library overview, favorites,
+  playlists, Stations, Internet Radio, Podcasts, settings and playback popovers.
+  Preserve the existing artwork-driven shell, playback and appearance choices.
+- [x] Align playlist and favorite collection headings with the other browsing
+  pages. Keep playlist Sync beside its heading and bring Liked Songs transport
+  actions into the existing primary/secondary button system.
+- [x] Use shared media cards for Liked Albums and Liked Artists, preserving
+  ratings, metadata-provider artwork, navigation, prefetch and context actions.
+  Add draggable album/artist cards and a readable, noninteractive rating display.
+- [x] Keep an initials placeholder behind media artwork so missing, delayed or
+  failed images do not leave unidentified empty tiles. Retain existing image
+  retry and provider failover behavior.
+- [x] Refine library Station tiles, recent-mix artwork, mix-builder fields and
+  selected tabs. Preserve light text over intentionally dark category colors.
+- [x] Share close controls, heading spacing and typography across Equalizer,
+  Guest DJ, Radio, Sleep Timer and preset browsing. Keep the existing elevated
+  glass surface without adding more blur layers to the shell.
+- [x] Give the timer a roomier layout, labeled custom duration and clear selected
+  presets. Disable invalid values and enforce the existing 1–480 minute range
+  when Enter or Set is used. Keep close separate from cancelling an active timer.
+- [x] Refine settings surfaces and selection states. Switch the inner navigation
+  to a scrollable horizontal row when the available content column is narrow,
+  including with a docked queue. Label the custom accent and card-size inputs.
+- [x] Use the shared accessible dialog for keyboard help and consistent icon
+  close controls for metadata and playlist creation. Keep creation centered,
+  scrollable, readable in both themes and focused on its name field.
+- [x] Separate preset selection from favoriting instead of nesting buttons.
+  Label preset search and cycle controls; retain selection and favorite state.
+  Scope immersive colors so preset browsing stays readable in light app mode.
+
+Validation: all 1,017 frontend tests, both TypeScript projects and the production
+build pass. Full Chromium/WebKit appearance checks pass, with additional coverage
+at 800/1100/1440 px, enlarged text, docked queue, settings navigation, collection
+cards, creation and playback popovers. A focused mounted preset test confirms
+favoriting does not select a preset and closing remains independent. Native
+review confirms both themes, the new settings/timer, creation dialog, Station
+tiles and real liked-artist artwork/ratings. Personal playlists, ratings, sync
+connections and playback settings were not changed for testing. The original
+dark theme is restored. Changes remain local; 0.6.0 is still on hold.
+
 ## Fullscreen visualization
 
 - [x] Render the visualizer at document level so the playbar's backdrop filter

@@ -10,6 +10,8 @@ import {
 import { ArtworkImage, useArtworkFailures } from "./shared/ArtworkImage"
 import { Link } from "wouter"
 import clsx from "clsx"
+import { IconStar } from "@tabler/icons-react"
+import { starsFromRating } from "../lib/formatters"
 import { useTrackDrag } from "../hooks/useTrackDrag"
 import { useArtistImage, useAlbumImage } from "../hooks/useMediaImage"
 import { useContextMenu } from "../hooks/useContextMenu"
@@ -46,6 +48,7 @@ interface MediaCardProps {
   /** Album name — enables priority-aware album image resolution (requires artistName too). */
   albumName?: string | null
   versionCount?: number
+  userRating?: number | null
   onViewVersions?: () => void
 }
 
@@ -129,6 +132,7 @@ function MediaCardInner({
   contextItem,
   contextActions,
   versionCount,
+  userRating,
   onViewVersions,
 }: MediaCardProps) {
   const { handler, actionsHandler } = useContextMenu()
@@ -193,7 +197,10 @@ function MediaCardInner({
   const cardContent = (
     <>
       <div className="media-card__art aspect-square">
-        {displayThumb ? (
+        <div className="media-card__fallback" aria-hidden="true">
+          <span>{initials}</span>
+        </div>
+        {displayThumb && (
           <ArtworkImage
             onFailure={onImageFailure}
             src={displayThumb}
@@ -202,10 +209,6 @@ function MediaCardInner({
             loading="lazy"
             className="media-card__image"
           />
-        ) : (
-          <div className="media-card__fallback" aria-hidden="true">
-            <span>{initials}</span>
-          </div>
         )}
       </div>
       <div className="media-card__gradient" aria-hidden="true" />
@@ -244,6 +247,12 @@ function MediaCardInner({
             />
           )}
         </div>
+        {!!userRating && starsFromRating(userRating) > 0 && (
+          <span className="media-card__rating" role="img" aria-label={`Rated ${starsFromRating(userRating)} of 5 stars`}>
+            {Array.from({ length: 5 }, (_, index) => <IconStar key={index} size={11} aria-hidden="true"
+              fill={index < starsFromRating(userRating) ? "currentColor" : "none"} />)}
+          </span>
+        )}
       </div>
       {onPlay && (
         <button

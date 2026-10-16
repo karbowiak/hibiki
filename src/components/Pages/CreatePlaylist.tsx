@@ -3,6 +3,7 @@ import { useProviderStore } from "../../stores/providerStore"
 import { useId, useLayoutEffect, useRef, useState } from "react"
 import { useLibraryStore } from "../../stores"
 import type { MusicPlaylist } from "../../types/music"
+import { IconCheck, IconX } from "@tabler/icons-react"
 
 export function CreatePlaylist({
   onClose,
@@ -172,7 +173,7 @@ export function CreatePlaylist({
       }}
     >
       <div
-        className="app-overlay-surface w-[400px] rounded-xl bg-app-surface p-7 shadow-2xl"
+        className="app-overlay-surface w-[calc(100%-2rem)] max-w-md max-h-[90dvh] overflow-y-auto rounded-2xl bg-app-surface p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-5 flex items-center justify-between">
@@ -183,15 +184,15 @@ export function CreatePlaylist({
             ref={closeRef}
             aria-label="Close create playlist"
             onClick={onClose}
-            className="flex h-7 w-7 items-center justify-center rounded-full text-gray-400 hover:bg-white/10 hover:text-white"
+            className="player-panel-icon"
           >
-            ✕
+            <IconX size={20} aria-hidden="true" />
           </button>
         </div>
 
         {created ? (
           <div className="py-4 text-center">
-            <div className="mb-2 text-4xl">✓</div>
+            <IconCheck size={36} aria-hidden="true" className="mx-auto mb-3 text-[var(--text-primary)]" />
             <p role="status" className="font-semibold text-accent">
               Playlist created!
             </p>
@@ -214,7 +215,7 @@ export function CreatePlaylist({
               value={playlistName}
               onChange={(e) => setPlaylistName(e.target.value)}
               placeholder="My playlist #1"
-              className="w-full rounded-md bg-app-surface px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-white/30"
+              className="app-input w-full"
             />
             {error && (
               <p role="alert" className="text-sm text-red-400">
@@ -225,14 +226,14 @@ export function CreatePlaylist({
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-full px-5 py-2 text-sm font-semibold text-white hover:bg-white/10"
+                className="media-secondary"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={!playlistName.trim() || isCreating}
-                className="rounded-full bg-white px-5 py-2 text-sm font-semibold text-black transition-opacity hover:scale-105 active:scale-95 disabled:opacity-40"
+                className="media-primary"
               >
                 {isCreating ? "Creating…" : "Create"}
               </button>

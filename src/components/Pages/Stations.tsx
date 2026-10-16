@@ -2,7 +2,9 @@ import { useContextMenu } from "../../hooks/useContextMenu"
 import { useContextMenuStore } from "../../stores/contextMenuStore"
 import { ArtworkImage } from "../shared/ArtworkImage"
 import { MediaShelfSkeleton } from "../shared/Skeleton"
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react"
+import { IconRadio, IconPlayerPlay } from "@tabler/icons-react"
+import "../../styles/stations.css"
 import { useLocation } from "wouter"
 import { useShallow } from "zustand/react/shallow"
 import clsx from "clsx"
@@ -78,14 +80,7 @@ function ActionTile({ title, actionLabel, onClick, children, ...props }: Omit<Re
 }
 
 function StationIcon() {
-  return (
-    <svg
-      height="48" width="48" viewBox="0 0 24 24" fill="currentColor"
-      className="absolute right-2 bottom-2 text-white/20"
-    >
-      <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6zm-2 16a2 2 0 1 1 0-4 2 2 0 0 1 0 4z" />
-    </svg>
-  )
+  return <IconRadio className="station-tile__symbol" size={56} stroke={1.25} aria-hidden="true" />
 }
 
 // ---------------------------------------------------------------------------
@@ -116,9 +111,9 @@ export function RecentMixCard({ mix, sectionUuid, sectionId, playFromUri }: {
       title={label} actionLabel="Play mix"
       aria-label={`Play ${label} mix`}
       onClick={() => playFromUri(uri, true)}
-      className="text-left w-full cursor-pointer rounded-xl bg-app-card focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent p-3 hover:bg-hl-menu transition-colors active:scale-[0.97]"
+      className="media-card station-recent-mix text-left w-full cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
     >
-      <div className="mb-3 aspect-square overflow-hidden rounded-lg grid grid-cols-2 gap-px bg-black/20">
+      <div className="media-card__art grid grid-cols-2 gap-px bg-black/20">
         {thumbs.map((t, i) => t ? (
           <ArtworkImage key={i} src={t} alt="" className="h-full w-full object-cover" />
         ) : (
@@ -128,12 +123,16 @@ export function RecentMixCard({ mix, sectionUuid, sectionId, playFromUri }: {
           <div key={`e${i}`} className="bg-white/5" />
         ))}
       </div>
-      <div className="truncate text-sm font-semibold">{label}</div>
-      <div className="mt-0.5 flex items-center gap-1 text-xs text-[var(--text-secondary)]">
+      <div className="media-card__gradient" />
+      <div className="media-card__caption media-card__caption--play">
+      <div className="media-card__title">{label}</div>
+      <div className="media-card__meta flex items-center gap-1">
         <span className="capitalize">{mix.tabType} Mix</span>
         <span>·</span>
         <span>{formatTimeAgo(mix.createdAt)}</span>
       </div>
+      </div>
+      <span className="station-tile__action" aria-hidden="true"><IconPlayerPlay size={16} /></span>
     </ActionTile>
   )
 }
@@ -273,7 +272,7 @@ function SearchBasedMixBuilder({
         onChange={(e) => setQuery(e.target.value)}
         aria-label={`Search for ${tabType}`}
         placeholder={`Search for ${tabType === "artist" ? "an artist" : `a ${tabType}`}…`}
-        className="w-full rounded-lg bg-white/10 px-4 py-2.5 text-sm placeholder-white/40 outline-none transition-colors focus:bg-white/15"
+        className="app-input station-builder-input w-full"
         autoComplete="off"
         spellCheck={false}
       />
@@ -521,7 +520,7 @@ export function TagGridMixBuilder({
             actionLabel={`Play ${tabType} mix`}
             onClick={() => handleTagClick(tag)}
             className={clsx(
-              "relative aspect-square cursor-pointer overflow-hidden rounded-lg select-none text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent",
+              "station-tag-tile hero-overlay relative aspect-square cursor-pointer overflow-hidden rounded-xl select-none text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent",
               "hover:brightness-110 transition-[filter]",
               lastPlayed === tag.tag && "ring-2 ring-accent",
               colorPalette[(start + idx) % colorPalette.length]
@@ -530,7 +529,7 @@ export function TagGridMixBuilder({
           >
             <span className="line-clamp-2 p-3 text-sm font-bold leading-snug">{tag.tag}</span>
             {tag.count != null && (
-              <span className="absolute bottom-1.5 right-2 text-[10px] text-white/30 tabular-nums">
+              <span className="absolute bottom-3 right-3 text-xs text-white/80 tabular-nums">
                 {tag.count.toLocaleString()}
               </span>
             )}
@@ -773,12 +772,13 @@ export function StationsPage() {
                 key={item.providerKey ?? item.id}
                 actionLabel="Play station"
                 onClick={() => handleStationClick(item)}
-                className="relative aspect-square cursor-pointer overflow-hidden rounded-lg select-none text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent hover:brightness-110 transition-[filter]"
-                style={{ background: STATION_BG_COLORS[idx % STATION_BG_COLORS.length] }}
+                className="station-tile hero-overlay"
+                style={{ "--station-tone": STATION_BG_COLORS[idx % STATION_BG_COLORS.length] } as CSSProperties}
                 title={item.title}
               >
-                <span className="line-clamp-2 p-3 text-sm font-bold leading-snug">{item.title}</span>
+                <span className="station-tile__title">{item.title}</span>
                 <StationIcon />
+                <span className="station-tile__action" aria-hidden="true"><IconPlayerPlay size={16} /></span>
               </ActionTile>
             ))}
           </MediaGrid>
@@ -808,14 +808,14 @@ export function StationsPage() {
         <h2 className="mb-4 text-xl font-bold">Build a Mix</h2>
 
         {/* Tab bar */}
-        <div role="group" aria-label="Mix source" className="mb-6 flex w-fit max-w-full flex-wrap gap-1 rounded-lg bg-app-surface p-1">
+        <div role="group" aria-label="Mix source" className="station-builder-tabs mb-6 flex w-fit max-w-full flex-wrap gap-1 rounded-xl bg-app-surface p-1">
           {BUILDER_TABS.map(tab => (
             <button
               key={tab.key}
               aria-pressed={activeTab === tab.key}
               onClick={() => setActiveTab(tab.key)}
               className={clsx(
-                "rounded-md px-4 py-1.5 text-sm font-medium transition-colors",
+                "station-builder-tab rounded-lg px-4 py-2 text-sm font-medium transition-colors",
                 activeTab === tab.key
                   ? "bg-accent text-black"
                   : "text-white/60 hover:text-white"

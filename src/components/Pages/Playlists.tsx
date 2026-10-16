@@ -18,22 +18,10 @@ export function Playlists() {
   return (
     <div className="pb-12">
       {/* Header */}
-      <div className="flex flex-wrap items-center gap-5 px-8 py-6">
-        <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center text-[var(--text-secondary)]">
-          <svg
-            aria-hidden="true"
-            viewBox="0 0 24 24"
-            width="28"
-            height="28"
-            fill="currentColor"
-          >
-            <path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z" />
-          </svg>
-        </div>
-
+      <div className="collection-header">
         <div className="flex min-w-0 flex-[1_1_14rem] flex-col gap-3">
           <div>
-            <h1 className="break-words text-[clamp(1.75rem,3.2vw,3rem)] font-bold leading-tight tracking-tight">
+            <h1 className="discovery-title">
               Playlists
             </h1>
             <p className="mt-2 max-w-xl select-text text-sm text-[var(--text-secondary)]">
@@ -44,9 +32,6 @@ export function Playlists() {
             {count.toLocaleString()} {count === 1 ? "playlist" : "playlists"}
           </p>
         </div>
-      </div>
-
-      <div className="mb-5 flex flex-wrap gap-2 px-8">
         <button
           type="button"
           className="media-secondary"

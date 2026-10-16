@@ -12,6 +12,69 @@ const root = resolve(import.meta.dir, "..")
 const output = await mkdtemp(join(tmpdir(), "hibiki-appearance-"))
 const artifacts = resolve(root, ".tmp/appearance-checks")
 let artworkGate: Promise<void> | null = null
+async function checkFinishingPolish(page: Page, name: string) {
+  for (const [width, height, theme, textSize, docked] of [[1440, 900, "dark", 16, false], [1100, 850, "light", 20, true], [800, 760, "dark", 20, false]] as const) {
+    await page.setViewportSize({ width, height })
+    await page.evaluate(({ theme, textSize, docked }) => {
+      ;(window as any).fixtureAppearance.apply({ theme, textSize })
+      ;(window as any).fixtureAppearance.panel(docked ? "queue" : null, docked)
+      ;(window as any).fixtureAppearance.route('/settings/appearance')
+    }, { theme, textSize, docked })
+    const settings = page.locator('.settings-main')
+    await settings.waitFor()
+    assert.equal(await settings.evaluate(element => element.scrollWidth <= element.clientWidth + 1), true, `${name}/${width}: settings overflow their available column`)
+    const settingsWidth = await page.locator('.settings-layout').evaluate(element => element.clientWidth)
+    if (settingsWidth <= 760) assert.equal(await page.locator('.settings-navigation ul').evaluate(element => getComputedStyle(element).display), 'flex')
+    assert.equal(await page.getByRole('group', { name: 'Theme', exact: true }).locator('[aria-pressed="true"]').count(), 1)
+    await page.screenshot({ path: join(artifacts, `${name}-${width}-settings-polish.png`), animations: 'disabled' })
+    await page.getByRole('button', { name: 'Create Playlist', exact: true }).click()
+    const create = page.getByRole('dialog', { name: 'Create playlist', exact: true })
+    await create.waitFor()
+    assert.equal(await create.getByRole('textbox', { name: 'Playlist name' }).evaluate(element => document.activeElement === element), true)
+    await create.getByRole('textbox', { name: 'Playlist name' }).fill('A synthetic playlist name; never submitted')
+    assert.equal(await create.getByRole('button', { name: 'Create', exact: true }).isEnabled(), true)
+    await page.screenshot({ path: join(artifacts, `${name}-${width}-create-playlist-polish.png`), animations: 'disabled' })
+    await create.getByRole('button', { name: 'Close create playlist', exact: true }).click()
+    await create.waitFor({ state: 'detached' })
+    for (const label of ['Sleep Timer', 'Guest DJ', 'Equalizer', 'Radio settings']) {
+      if (label === 'Radio settings') await page.evaluate(() => (window as any).fixtureAppearance.radioPreview())
+      await page.getByRole('button', { name: label, exact: true }).click()
+      const popup = page.getByRole('dialog', { name: label, exact: true })
+      await popup.waitFor()
+      const bounds = await popup.boundingBox()
+      assert.ok(bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= width + 1 && bounds.y + bounds.height <= height + 1, `${name}/${width}/${label}: popover leaves the window`)
+      assert.equal(await popup.evaluate(element => element.scrollWidth <= element.clientWidth + 1), true, `${name}/${label}: popover content overflows`)
+      if (label === 'Sleep Timer') {
+        const duration = popup.getByRole('spinbutton', { name: 'Sleep timer duration in minutes' })
+        await duration.fill('999')
+        assert.equal(await popup.getByRole('button', { name: 'Set', exact: true }).isDisabled(), true)
+        await duration.fill('25')
+        assert.equal(await popup.getByRole('button', { name: 'Set', exact: true }).isEnabled(), true)
+        await page.screenshot({ path: join(artifacts, `${name}-${width}-sleep-polish.png`), animations: 'disabled' })
+      }
+      await popup.getByRole('button', { name: /^Close / }).click()
+      await popup.waitFor({ state: 'detached' })
+    }
+    for (const path of ['/collection/playlists', '/collection/albums', '/collection/artists', '/stations']) {
+      await page.evaluate(value => (window as any).fixtureAppearance.route(value), path)
+      await page.locator('.app-page-content h1').waitFor()
+      if (path.endsWith('albums') || path.endsWith('artists')) {
+        await page.locator('.media-card__rating').first().waitFor()
+        assert.equal(await page.locator('.media-card__fallback').count() > 0, true)
+      }
+      if (path === '/stations') {
+        await page.locator('.station-tile').first().waitFor()
+        const title = page.locator('.station-tile__title').first()
+        assert.equal(await title.evaluate(element => getComputedStyle(element).color), 'rgb(255, 255, 255)')
+      }
+      await page.screenshot({ path: join(artifacts, `${name}-${width}-${path.split('/').at(-1)}-polish.png`), animations: 'disabled' })
+    }
+  }
+  await page.evaluate(() => {
+    ;(window as any).fixtureAppearance.panel(null)
+    ;(window as any).fixtureAppearance.apply({})
+  })
+}
 async function checkFullscreenVisualizer(page: Page, name: string) {
   for (const [width, height, theme, textSize] of [[1440, 900, "dark", 16], [900, 720, "light", 20], [620, 620, "dark", 16]] as const) {
     await page.setViewportSize({ width, height })
@@ -34,7 +97,7 @@ async function checkFullscreenVisualizer(page: Page, name: string) {
     const help = page.getByRole('dialog', { name: 'Keyboard Shortcuts', exact: true })
     await help.waitFor()
     assert.equal(await help.evaluate(element => element.parentElement === document.body && element.contains(document.activeElement)), true, `${name}: shortcut help is trapped behind the viewer`)
-    assert.ok(await help.evaluate(element => Number(getComputedStyle(element).zIndex)) > await dialog.evaluate(element => Number(getComputedStyle(element).zIndex)))
+    assert.equal(await help.evaluate(element => element.matches(':modal') || Number(getComputedStyle(element).zIndex) > 500), true)
     await page.keyboard.press('Escape')
     await help.waitFor({ state: 'detached' })
     assert.equal(await dialog.evaluate(element => element === document.activeElement), true)
@@ -498,6 +561,13 @@ try {
         `${origin}/tests/fixtures/libraryLayout/index.html?appearance=1&player=1&discovery=1`
       )
       await page.waitForFunction(() => (window as any).visualFixtureReady)
+      if (process.argv.includes('--finishing-polish-only')) {
+        await checkFinishingPolish(page, name)
+        await checkFullscreenVisualizer(page, name)
+        assert.deepEqual(errors, [], `${name}: renderer errors`)
+        console.log(`${name}: responsive settings, collection cards, creation, playback popovers and keyboard help passed`)
+        continue
+      }
       if (process.argv.includes("--visualizer-only")) {
         await checkFullscreenVisualizer(page, name)
         assert.deepEqual(errors, [], `${name}: renderer errors`)
@@ -530,6 +600,7 @@ try {
         continue
       }
       await checkFullscreenVisualizer(page, name)
+      await checkFinishingPolish(page, name)
       await checkOverlayMaterial(page, name)
       await checkBackgroundSeparation(page, name)
       await checkLyricsDesign(page, name)

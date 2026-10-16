@@ -924,7 +924,7 @@ export function Player() {
                   label="Sleep Timer"
                   active={!!sleepEndsAt || sleepEndOfTrack}
                   subtitle={sleepRemaining}
-                  width={224}
+                  width={288}
                 >
                   {(close) => <SleepTimerPanel onClose={close} />}
                 </PlayerPopover>

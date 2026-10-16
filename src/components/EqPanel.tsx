@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from "react"
 import { useEqStore, EQ_LABELS, EQ_PRESETS } from "../stores/eqStore"
 import { useDeviceStore } from "../stores/deviceStore"
+import { PlayerPanelHeader } from "./shared/PlayerPanelHeader"
 
 const MIN_DB = -12
 const MAX_DB = 12
@@ -231,21 +232,10 @@ export default function EqPanel({ onClose }: Props) {
   return (
     <>
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-        <div className="flex flex-col">
-          <span className="text-sm font-bold text-[color:var(--text-primary)]">
-            Equalizer
-          </span>
-          {currentDevice && (
-            <span className="max-w-[180px] truncate text-[10px] text-[color:var(--text-muted)]">
-              {currentDevice}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
+      <PlayerPanelHeader title="Equalizer" onClose={onClose} actions={<>
           <button
             onClick={() => applyPreset([0, 0, 0, 0, 0, 0, 0, 0, 0, 0])}
-            className="rounded-full px-2 py-0.5 text-[10px] font-medium text-[color:var(--text-muted)] transition-colors hover:text-[color:var(--text-secondary)]"
+            className="player-panel-action"
           >
             Reset
           </button>
@@ -261,8 +251,7 @@ export default function EqPanel({ onClose }: Props) {
           >
             {enabled ? "ON" : "OFF"}
           </button>
-        </div>
-      </div>
+        </>} />
 
       {eqError && (
         <div

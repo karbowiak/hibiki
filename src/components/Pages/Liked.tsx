@@ -187,23 +187,11 @@ export function Liked() {
   return (
     <div className="pb-12">
       {/* Header */}
-      <div className="flex flex-wrap items-center gap-5 px-8 py-6">
-        <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center text-[var(--text-secondary)]">
-          <svg
-            aria-hidden="true"
-            viewBox="0 0 24 24"
-            width="28"
-            height="28"
-            fill="currentColor"
-          >
-            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-          </svg>
-        </div>
-
+      <div className="collection-header">
         {/* Info column */}
         <div className="flex min-w-0 flex-[1_1_14rem] flex-col gap-3">
           <div>
-            <h1 className="break-words text-[clamp(1.75rem,3.2vw,3rem)] font-bold leading-tight tracking-tight">
+            <h1 className="discovery-title">
               Liked Songs
             </h1>
             <p className="mt-2 max-w-xl select-text text-sm text-gray-400">
@@ -239,16 +227,19 @@ export function Liked() {
                 }
                 disabled={count === 0}
                 title="Play"
-                className="flex h-14 w-14 items-center justify-center rounded-full border border-white/10 bg-black/30 text-accent backdrop-blur-sm transition-all hover:scale-105 hover:bg-black/45 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+                aria-label="Play liked songs"
+                className="media-primary"
               >
                 <svg
                   viewBox="0 0 16 16"
-                  width="22"
-                  height="22"
+                  width="16"
+                  height="16"
                   fill="currentColor"
+                  aria-hidden="true"
                 >
                   <polygon points="3,2 13,8 3,14" />
                 </svg>
+                Play
               </button>
               {/* Shuffle */}
               <button
@@ -259,17 +250,20 @@ export function Liked() {
                 }}
                 disabled={count === 0}
                 title="Shuffle"
-                className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/30 text-accent backdrop-blur-sm transition-all hover:scale-105 hover:bg-black/45 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+                aria-label="Shuffle liked songs"
+                className="media-secondary"
               >
                 <svg
                   viewBox="0 0 16 16"
                   width="16"
                   height="16"
                   fill="currentColor"
+                  aria-hidden="true"
                 >
                   <path d="M13.151.922a.75.75 0 1 0-1.06 1.06L13.109 3H11.16a3.75 3.75 0 0 0-2.873 1.34l-6.173 7.356A2.25 2.25 0 0 1 .39 12.5H0V14h.391a3.75 3.75 0 0 0 2.873-1.34l6.173-7.356a2.25 2.25 0 0 1 1.724-.804h1.947l-1.017 1.018a.75.75 0 0 0 1.06 1.06L15.98 3.75 13.15.922zM.391 3.5H0V2h.391c1.109 0 2.16.49 2.873 1.34L4.89 5.277l-.979 1.167-1.796-2.14A2.25 2.25 0 0 0 .39 3.5z" />
                   <path d="m7.5 10.723.98-1.167.957 1.14a2.25 2.25 0 0 0 1.724.804h1.947l-1.017-1.018a.75.75 0 1 1 1.06-1.06l2.829 2.828-2.829 2.828a.75.75 0 1 1-1.06-1.06L13.109 13H11.16a3.75 3.75 0 0 1-2.873-1.34l-.787-.938z" />
                 </svg>
+                Shuffle
               </button>
             </div>
           </div>

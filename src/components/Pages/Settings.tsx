@@ -34,6 +34,7 @@ import { useTranslation } from "react-i18next"
 import { setLanguage } from "../../i18n"
 import { useLibraryStore } from "../../stores/libraryStore"
 import { clearMetadataCache, getMetadataCacheStats } from "../../stores/metadataCache"
+import "../../styles/settings.css"
 
 // ---------------------------------------------------------------------------
 // Section types & sidebar nav
@@ -152,7 +153,7 @@ function PillGroup<T>({
           aria-pressed={check(opt, value)}
           onClick={() => onChange(opt)}
           className={clsx(
-            "rounded-full px-4 py-1.5 text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+            "settings-choice rounded-full px-4 py-1.5 text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
             check(opt, value)
               ? "bg-accent text-black font-semibold"
               : "bg-white/10 text-white hover:bg-white/20"
@@ -212,7 +213,7 @@ function SettingCard({
   return (
     <div
       className={clsx(
-        "rounded-xl border border-white/[0.06] bg-white/[0.03] p-5",
+        "settings-card rounded-xl border border-[var(--border)] p-5",
         disabled && "opacity-40 pointer-events-none select-none"
       )}
     >
@@ -295,9 +296,10 @@ function AppearanceSection() {
                     <button
                       key={preset.name}
                       onClick={() => setFont(preset.name)}
+                      aria-pressed={font.name === preset.name}
                       style={{ fontFamily: preset.stack }}
                       className={clsx(
-                        "rounded-full px-4 py-1.5 text-sm transition-colors",
+                        "settings-choice rounded-full px-4 py-1.5 text-sm transition-colors",
                         font.name === preset.name
                           ? "bg-accent text-black font-semibold"
                           : "bg-white/10 text-white hover:bg-white/20"
@@ -323,6 +325,7 @@ function AppearanceSection() {
               <button
                 key={preset.hex}
                 onClick={() => { setAccent(preset.hex); setCustom(preset.hex) }}
+                aria-pressed={active}
                 title={preset.name}
                 className="group relative flex flex-col items-center gap-1.5"
               >
@@ -352,7 +355,7 @@ function AppearanceSection() {
         </div>
 
         {/* Custom hex input */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <div
             className="h-8 w-8 flex-shrink-0 rounded-full border border-white/20 transition-all"
             style={{ backgroundColor: /^#[0-9a-fA-F]{6}$/.test(custom) ? custom : accent }}
@@ -361,6 +364,7 @@ function AppearanceSection() {
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[var(--text-secondary)] select-none">#</span>
             <input
               type="text"
+              aria-label="Custom accent color"
               value={custom.replace(/^#/, "")}
               onChange={e => handleCustomChange("#" + e.target.value.replace(/[^0-9a-fA-F]/g, "").slice(0, 6))}
               placeholder="d946ef"
@@ -397,7 +401,7 @@ function AppearanceSection() {
         </div>
 
         {/* Live preview strip */}
-        <div className="mt-6 rounded-xl bg-accent-tint-subtle p-4 flex items-center gap-4 border border-white/5">
+        <div className="mt-6 rounded-xl bg-accent-tint-subtle p-4 flex flex-wrap items-center gap-4 border border-white/5">
           <span className="text-xs text-[var(--text-secondary)] w-16 flex-shrink-0">Preview</span>
           <div className="flex items-center gap-3 flex-wrap">
             <button className="flex h-8 w-8 items-center justify-center rounded-full text-black text-sm font-bold shadow-md" style={{ backgroundColor: accent }}>
@@ -417,6 +421,7 @@ function AppearanceSection() {
         <div className="flex items-center gap-4">
           <input
             type="range"
+            aria-label="Card size"
             min={CARD_SIZE_MIN}
             max={CARD_SIZE_MAX}
             step={10}
@@ -1367,10 +1372,11 @@ export function SettingsPage({ section: sectionProp }: { section?: string }) {
   const navItems = [...NAV, EASTER_EGG_NAV]
 
   return (
-    <div className="flex h-full">
+    <div className="settings-layout h-full">
+    <div className="settings-page">
       {/* Inner sidebar */}
-      <aside className="w-40 flex-shrink-0 border-r border-white/5 p-3 pt-8 lg:w-52 lg:p-6">
-        <p className="mb-4 text-xs font-bold uppercase tracking-widest text-[var(--text-secondary)]">Settings</p>
+      <aside className="settings-navigation">
+        <p className="settings-navigation-title">Settings</p>
         <nav aria-label="Settings sections">
           <ul className="space-y-0.5">
             {navItems.map(item => {
@@ -1381,7 +1387,7 @@ export function SettingsPage({ section: sectionProp }: { section?: string }) {
                     aria-current={active ? "page" : undefined}
                     onClick={() => setSection(item.id)}
                     className={clsx(
-                      "relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                      "settings-nav-button relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
                       active
                         ? "bg-white/10 text-white"
                         : "text-[var(--text-secondary)] hover:bg-white/5 hover:text-white"
@@ -1400,7 +1406,7 @@ export function SettingsPage({ section: sectionProp }: { section?: string }) {
       </aside>
 
       {/* Content */}
-      <main className="min-w-0 flex-1 overflow-auto p-4 pt-8 lg:p-10">
+      <main className="settings-main">
         {!section.startsWith("metadata/") && (
           <h1 className="mb-8 text-2xl font-bold">
             {navItems.find(n => n.id === section)?.label}
@@ -1418,6 +1424,7 @@ export function SettingsPage({ section: sectionProp }: { section?: string }) {
         {section === "about" && <AboutSection />}
         {section === "eastereggs" && <EasterEggsSection />}
       </main>
+    </div>
     </div>
   )
 }

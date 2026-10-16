@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react"
+import { useEffect, useId, useState } from "react"
 import { useSleepTimerStore } from "../stores/sleepTimerStore"
+import { PlayerPanelHeader } from "./shared/PlayerPanelHeader"
 
 const PRESETS = [
   { label: "15 min", value: 15 },
@@ -26,6 +27,9 @@ export default function SleepTimerPanel({ onClose }: Props) {
   const { endsAt, endOfTrack, start, startEndOfTrack, cancel } = useSleepTimerStore()
   const [, forceUpdate] = useState(0)
   const [customMinutes, setCustomMinutes] = useState("")
+  const durationId = useId()
+  const minutes = Number(customMinutes)
+  const validDuration = Number.isInteger(minutes) && minutes >= 1 && minutes <= 480
   const isActive = !!(endsAt || endOfTrack)
 
   // Tick every second to update countdown
@@ -41,9 +45,8 @@ export default function SleepTimerPanel({ onClose }: Props) {
   }
 
   function handleCustom() {
-    const m = parseInt(customMinutes, 10)
-    if (!m || m <= 0) return
-    start(m)
+    if (!validDuration) return
+    start(minutes)
     setCustomMinutes("")
     onClose()
   }
@@ -59,24 +62,20 @@ export default function SleepTimerPanel({ onClose }: Props) {
   return (
     <>
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)]">
-        <span className="text-sm font-bold text-[color:var(--text-primary)]">Sleep Timer</span>
-        {isActive && (
+      <PlayerPanelHeader title="Sleep Timer" onClose={onClose} actions={isActive ? (
           <button
             onClick={() => { cancel(); onClose() }}
-            className="rounded-full px-2.5 py-0.5 text-[10px] font-medium text-accent/70 transition-colors hover:bg-[var(--accent-tint-hover)] hover:text-accent"
+            className="player-panel-action"
           >
-            Cancel
+            Cancel timer
           </button>
-        )}
-      </div>
+        ) : undefined} />
 
       <div className="px-4 py-3 flex flex-col gap-3">
         {/* Countdown display */}
         {isActive && (
           <div
-            className="flex items-center justify-center rounded-lg border border-accent/20 py-2 text-lg font-bold tabular-nums text-accent"
-            style={{ background: "var(--accent-tint-subtle)" }}
+            className="player-panel-duration"
           >
             {endOfTrack ? "End of Track" : formatRemaining(endsAt!)}
           </div>
@@ -90,15 +89,8 @@ export default function SleepTimerPanel({ onClose }: Props) {
               <button
                 key={value}
                 onClick={() => handlePreset(value)}
-                className={`rounded-lg border px-3 py-2.5 text-left text-xs font-medium transition-all ${
-                  selected
-                    ? "border-accent/50 text-accent"
-                    : "border-[var(--border)] text-[color:var(--text-muted)] hover:text-[color:var(--text-secondary)]"
-                }`}
-                style={{
-                  background: selected ? "var(--accent-tint-strong)" : "var(--accent-tint-subtle)",
-                  ...(selected ? { boxShadow: "0 0 8px rgb(var(--accent-rgb) / 0.15)" } : {}),
-                }}
+                aria-pressed={selected}
+                className="player-panel-option"
               >
                 {label}
               </button>
@@ -107,15 +99,8 @@ export default function SleepTimerPanel({ onClose }: Props) {
           {/* End of track */}
           <button
             onClick={() => { startEndOfTrack(); onClose() }}
-            className={`col-span-2 rounded-lg border px-3 py-2.5 text-left text-xs font-medium transition-all ${
-              endOfTrack
-                ? "border-accent/50 text-accent"
-                : "border-[var(--border)] text-[color:var(--text-muted)] hover:text-[color:var(--text-secondary)]"
-            }`}
-            style={{
-              background: endOfTrack ? "var(--accent-tint-strong)" : "var(--accent-tint-subtle)",
-              ...(endOfTrack ? { boxShadow: "0 0 8px rgb(var(--accent-rgb) / 0.15)" } : {}),
-            }}
+            aria-pressed={endOfTrack}
+            className="player-panel-option col-span-2"
           >
             End of track
           </button>
@@ -123,25 +108,25 @@ export default function SleepTimerPanel({ onClose }: Props) {
 
         {/* Custom duration input */}
         <div className="border-t border-[var(--border)] pt-3">
-          <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-[color:var(--text-muted)]">
-            Custom
-          </p>
+          <label htmlFor={durationId} className="mb-2 block text-xs font-medium text-[color:var(--text-secondary)]">Custom duration</label>
           <div className="flex gap-1.5">
             <input
+              id={durationId}
+              aria-label="Sleep timer duration in minutes"
               type="number"
               min={1}
               max={480}
+              step={1}
               placeholder="Minutes"
               value={customMinutes}
               onChange={e => setCustomMinutes(e.target.value)}
               onKeyDown={e => { if (e.key === "Enter") handleCustom() }}
-              className="h-9 w-full rounded-lg border border-[var(--border)] px-3 text-xs text-[color:var(--text-primary)] placeholder:text-[color:var(--text-muted)]/50 focus:border-accent/30 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-              style={{ background: "var(--accent-tint-subtle)" }}
+              className="app-input w-full [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
             />
             <button
               onClick={handleCustom}
-              className="shrink-0 rounded-lg border border-[var(--border)] px-4 text-xs font-medium text-[color:var(--text-muted)] transition-all hover:text-[color:var(--text-secondary)]"
-              style={{ background: "var(--accent-tint-subtle)" }}
+              disabled={!validDuration}
+              className="player-panel-option shrink-0 disabled:cursor-default disabled:opacity-40"
             >
               Set
             </button>

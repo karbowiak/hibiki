@@ -1,6 +1,7 @@
 import { useShallow } from "zustand/react/shallow"
 import { usePlayerStore } from "../stores"
 import { DJ_MODES, type DjMode } from "../stores/playerStore"
+import { PlayerPanelHeader } from "./shared/PlayerPanelHeader"
 
 interface Props {
   onClose: () => void
@@ -12,20 +13,20 @@ export default function DjPanel({ onClose }: Props) {
   )
 
   return (
-    <div className="py-2">
-      <div className="px-4 pb-2 text-[0.625rem] font-semibold uppercase tracking-widest text-[color:var(--text-muted)]">
-        Guest DJ
-      </div>
+    <div>
+      <PlayerPanelHeader title="Guest DJ" onClose={onClose} />
+      <div className="p-2">
       {DJ_MODES.map(dj => {
         const active = djMode === dj.key
         return (
           <button
             key={dj.key}
+            aria-pressed={active}
             onClick={() => {
               setDjMode(active ? null : (dj.key as DjMode))
               onClose()
             }}
-            className={`w-full text-left px-4 py-2.5 transition-colors ${
+            className={`w-full rounded-lg text-left px-3 py-3 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
               active ? "bg-[var(--accent-tint)]" : "hover:bg-[var(--accent-tint-hover)]"
             }`}
           >
@@ -47,6 +48,7 @@ export default function DjPanel({ onClose }: Props) {
           </button>
         )
       })}
+      </div>
       {djMode && (
         <div className="border-t border-[var(--border)] mt-1 pt-1">
           <button

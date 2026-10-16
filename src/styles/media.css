@@ -68,6 +68,15 @@
   font-size: 0.75rem;
   line-height: 1.35;
 }
+.media-card__rating { display: flex; gap: 2px; margin-top: 0.35rem; color: #f4c665; }
+.collection-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.25rem;
+  padding: 2rem 2rem 1.5rem;
+}
 .media-card__primary {
   position: absolute;
   inset: 0;
