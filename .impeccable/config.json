@@ -6,5 +6,20 @@
       "maxFindings": 5,
       "maxChars": 8000
     }
+  },
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "bounce-easing",
+        "value": "animate-bounce",
+        "files": [
+          "src/styles.css"
+        ],
+        "createdAt": "2026-10-16T17:02:23.752Z",
+        "reason": "Agent: this selector is inside prefers-reduced-motion and disables animation with animation: none !important; it does not enable bounce easing."
+      }
+    ]
   }
 }
