@@ -291,11 +291,12 @@ pub async fn favorites_plex_mutate(
     let owner = client(&state, &context, true).await?;
     let (before, after) =
         prepare_mutation(&owner, section_id, playlist_id, &before_hash, &operation).await?;
-    {
-        let guard = state.0.lock().await;
-        let current = state.checked_client(&context, &guard)?;
-        send_update(current, playlist_id, &before, &operation).await?;
-    }
+    let admission = state.admit_mutation(&context).await?;
+    admission.run(|current| {
+        let before = &before;
+        let operation = &operation;
+        async move { send_update(&current, playlist_id, before, operation).await }
+    }).await?;
     let result = snapshot(&owner, section_id, playlist_id).await?;
     client(&state, &context, true).await?;
     if result.title != before.title || result.items.iter().map(|i| &i.track_id).ne(after.iter()) {

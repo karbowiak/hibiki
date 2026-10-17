@@ -66,12 +66,11 @@ pub async fn save_library_artwork(context: PlexRequestContext, section_id: i64, 
     let client = { let guard = state.0.lock().await; state.checked_client(&context, &guard)?.clone() };
     let prepared = tokio::time::timeout(std::time::Duration::from_secs(30), client.prepare_artwork_edit(section_id, item_id, kind, role, &baseline, choice, upload))
         .await.map_err(|_| "Artwork review timed out before saving")?.map_err(|error| error.to_string())?;
-    {
-        let guard = state.0.lock().await;
-        let current = state.checked_client(&context, &guard)?;
-        tokio::time::timeout(std::time::Duration::from_secs(15), current.commit_artwork_edit_once(&prepared))
-            .await.map_err(|_| "Plex did not confirm the artwork change")?.map_err(|_| "Plex did not confirm the artwork change")?;
-    }
+    let admission = state.admit_mutation(&context).await?;
+    tokio::time::timeout(std::time::Duration::from_secs(15), admission.run(|current| {
+        let prepared = &prepared;
+        async move { current.commit_artwork_edit_once(prepared).await }
+    })).await.map_err(|_| "Plex did not confirm the artwork change")?.map_err(|_| "Plex did not confirm the artwork change")?;
     let result = tokio::time::timeout(std::time::Duration::from_secs(30), client.verify_artwork_edit(&prepared))
         .await.map_err(|_| "Plex did not confirm the artwork change")?.map_err(|_| "Plex did not confirm the artwork change")?;
     let guard = state.0.lock().await;

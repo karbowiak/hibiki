@@ -22,7 +22,25 @@ use crate::plex::{
 // ---------------------------------------------------------------------------
 
 /// Shared Plex client state managed by Tauri.
-pub struct PlexState(pub Arc<Mutex<Option<PlexClient>>>, Arc<AtomicU64>);
+pub struct PlexState(pub Arc<Mutex<Option<PlexClient>>>, Arc<AtomicU64>, Arc<Mutex<()>>);
+
+/// One admitted verb owns its original credentials and a write-only serialization
+/// lane. Reads, audio admission and disconnect never wait on its HTTP response.
+pub(crate) struct PlexMutationAdmission {
+    client: PlexClient,
+    _serial: tokio::sync::OwnedMutexGuard<()>,
+}
+impl PlexMutationAdmission {
+    pub(crate) async fn run<F: std::future::Future>(
+        self,
+        operation: impl FnOnce(PlexClient) -> F,
+    ) -> F::Output {
+        let Self { client, _serial } = self;
+        let result = operation(client).await;
+        drop(_serial);
+        result
+    }
+}
 
 /// Identifies the account/server/library that originated a provider request.
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
@@ -41,7 +59,7 @@ impl PlexState {
         })
     }
     pub fn new() -> Self {
-        PlexState(Arc::new(Mutex::new(None)), Arc::new(AtomicU64::new(0)))
+        PlexState(Arc::new(Mutex::new(None)), Arc::new(AtomicU64::new(0)), Arc::new(Mutex::new(())))
     }
 
     async fn reset_with_audio_revocation(
@@ -218,6 +236,17 @@ impl PlexState {
     async fn client_for(&self, context: &PlexRequestContext) -> Result<PlexClient, String> {
         let current = self.0.lock().await;
         self.checked_client(context, &current).cloned()
+    }
+
+    /// Linearize admission with connection retirement. An already admitted verb
+    /// can finish on its captured account; retired queued verbs cannot start.
+    pub(crate) async fn admit_mutation(&self, context: &PlexRequestContext) -> Result<PlexMutationAdmission, String> {
+        let serial = self.2.clone().lock_owned().await;
+        let guard = self.0.lock().await;
+        Ok(PlexMutationAdmission {
+            client: self.checked_client(context, &guard)?.clone(),
+            _serial: serial,
+        })
     }
 
     pub(crate) async fn image_context(&self) -> crate::image_protocol::ImageContext {
@@ -914,12 +943,10 @@ impl PlexState {
         let client = self.client_for(context).await?;
         let prepared = tokio::time::timeout(std::time::Duration::from_secs(30), client.prepare_metadata_edit(section_id, item_id, kind, patch, expected))
             .await.map_err(|_| "Metadata review timed out before saving")?.map_err(|error| error.to_string())?;
-        {
-            let guard = self.0.lock().await;
-            let current = self.checked_client(context, &guard)?;
-            tokio::time::timeout(std::time::Duration::from_secs(15), current.save_metadata_edit(prepared))
-                .await.map_err(|_| "Plex did not confirm the metadata save")?.map_err(|_| "Plex did not confirm the metadata save")?;
-        }
+        let admission = self.admit_mutation(context).await?;
+        tokio::time::timeout(std::time::Duration::from_secs(15), admission.run(|current| async move {
+            current.save_metadata_edit(prepared).await
+        })).await.map_err(|_| "Plex did not confirm the metadata save")?.map_err(|_| "Plex did not confirm the metadata save")?;
         // Once the single write was sent, failed or retired proof is unconfirmed.
         tokio::time::timeout(std::time::Duration::from_secs(30), client.verify_metadata_edit(section_id, item_id, kind, patch))
             .await.map_err(|_| "Plex did not confirm the metadata save")?.map_err(|_| "Plex did not confirm the metadata save. Reload current values before retrying.")?;
@@ -952,11 +979,10 @@ impl PlexState {
         let client = self.client_for(context).await?;
         let prepared = tokio::time::timeout(std::time::Duration::from_secs(30), client.prepare_advanced_metadata_edit(section_id, item_id, kind, patch))
             .await.map_err(|_| "Metadata review timed out before saving")?.map_err(|error| error.to_string())?;
-        {
-            let guard = self.0.lock().await; let current = self.checked_client(context, &guard)?;
-            tokio::time::timeout(std::time::Duration::from_secs(15), current.commit_advanced_metadata_once(prepared))
-                .await.map_err(|_| "Plex did not confirm the metadata save")?.map_err(|_| "Plex did not confirm the metadata save")?;
-        }
+        let admission = self.admit_mutation(context).await?;
+        tokio::time::timeout(std::time::Duration::from_secs(15), admission.run(|current| async move {
+            current.commit_advanced_metadata_once(prepared).await
+        })).await.map_err(|_| "Plex did not confirm the metadata save")?.map_err(|_| "Plex did not confirm the metadata save")?;
         let verified = tokio::time::timeout(std::time::Duration::from_secs(30), client.advanced_metadata(section_id, item_id, kind))
             .await.map_err(|_| "Plex did not confirm the metadata save")?.map_err(|_| "Plex did not confirm the metadata save")?;
         for (key, wanted) in &patch.changes {
@@ -988,14 +1014,13 @@ pub async fn playlist_sync_plex_mutate(
         client.prepare_playlist_sync_edit(section_id, playlist_id, &expected, &operation))
         .await.map_err(|_| "Playlist review timed out before saving")?
         .map_err(|error| error.to_string())?;
-    {
-        let guard = state.0.lock().await;
-        let current = state.checked_client(&context, &guard)?;
-        // Once sent, failure is unconfirmed: the journal must reconcile before retrying.
-        tokio::time::timeout(std::time::Duration::from_secs(15), current.commit_playlist_sync_edit_once(&prepared))
-            .await.map_err(|_| "Plex did not confirm the playlist change")?
-            .map_err(|error| error.to_string())?;
-    }
+    let admission = state.admit_mutation(&context).await?;
+    // Admission retains the original account; ambiguous results still need reconciliation.
+    tokio::time::timeout(std::time::Duration::from_secs(15), admission.run(|current| {
+        let prepared = &prepared;
+        async move { current.commit_playlist_sync_edit_once(prepared).await }
+    })).await.map_err(|_| "Plex did not confirm the playlist change")?
+        .map_err(|error| error.to_string())?;
     let result = tokio::time::timeout(std::time::Duration::from_secs(30), client.verify_playlist_sync_edit(&prepared))
         .await.map_err(|_| "Plex did not confirm the playlist change")?
         .map_err(|_| "Plex did not confirm the playlist change")?;
@@ -1017,13 +1042,12 @@ pub async fn playlist_sync_plex_describe(
         client.prepare_playlist_description(section_id, playlist_id, &expected, &expected_description, &description))
         .await.map_err(|_| "Playlist description review timed out before saving")?
         .map_err(|error| error.to_string())?;
-    {
-        let guard = state.0.lock().await;
-        let current = state.checked_client(&context, &guard)?;
-        tokio::time::timeout(std::time::Duration::from_secs(15), current.commit_playlist_description_once(&prepared))
-            .await.map_err(|_| "Plex did not confirm the playlist description")?
-            .map_err(|_| "Plex did not confirm the playlist description")?;
-    }
+    let admission = state.admit_mutation(&context).await?;
+    tokio::time::timeout(std::time::Duration::from_secs(15), admission.run(|current| {
+        let prepared = &prepared;
+        async move { current.commit_playlist_description_once(prepared).await }
+    })).await.map_err(|_| "Plex did not confirm the playlist description")?
+        .map_err(|_| "Plex did not confirm the playlist description")?;
     let result = tokio::time::timeout(std::time::Duration::from_secs(30), client.verify_playlist_description(&prepared))
         .await.map_err(|_| "Playlist description outcome requires reconciliation")?
         .map_err(|_| "Playlist description outcome requires reconciliation")?;
@@ -2723,6 +2747,83 @@ mod connection_tests {
         client.machine_identifier = "test-server".into();
         client.library_scope = client.cache_scope_for_library(library, None);
         client
+    }
+
+    #[tokio::test]
+    async fn slow_mutation_does_not_block_audio_or_retirement_and_retired_queued_writes_never_start() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::time::{timeout, Duration};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let state = Arc::new(PlexState::new());
+        let revision = state.begin_connection().await;
+        let client = scoped_client(&base, "original-account-token", 5);
+        let context = PlexRequestContext {
+            connection_revision: revision,
+            cache_scope: client.library_scope.clone(),
+        };
+        state.publish(revision, client).await.unwrap();
+        let (seen_tx, seen_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 4096];
+            while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                let count = socket.read(&mut buffer).await.unwrap();
+                assert_ne!(count, 0);
+                request.extend_from_slice(&buffer[..count]);
+            }
+            seen_tx.send(()).unwrap();
+            release_rx.await.unwrap();
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            (listener, String::from_utf8(request).unwrap())
+        });
+        let admission = state.admit_mutation(&context).await.unwrap();
+        let writer = tokio::spawn(admission.run(|client| async move {
+            client
+                .put_metadata_params_once("/library/sections/5/all", &[("id", "42")])
+                .await
+        }));
+        timeout(Duration::from_secs(2), seen_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut queued = Box::pin(state.admit_mutation(&context));
+        assert!(
+            futures::poll!(&mut queued).is_pending(),
+            "writes must remain serialized"
+        );
+
+        let audio = timeout(
+            Duration::from_secs(1),
+            state.dispatch_audio(
+                Some(&context),
+                &format!("{base}/library/parts/10/file.wav"),
+                |_| Ok(77),
+            ),
+        )
+        .await;
+        let retirement = timeout(Duration::from_secs(1), state.reset(None)).await;
+        release_tx.send(()).unwrap();
+        assert_eq!(audio.unwrap().unwrap(), 77);
+        retirement.unwrap().unwrap();
+        writer.await.unwrap().unwrap();
+        assert!(queued.await.err().unwrap().contains("superseded"));
+        let (listener, request) = server.await.unwrap();
+        assert!(request.starts_with("PUT /library/sections/5/all?id=42 "));
+        assert!(request
+            .to_lowercase()
+            .contains("x-plex-token: original-account-token"));
+        let mut incoming = Box::pin(listener.accept());
+        assert!(
+            futures::poll!(&mut incoming).is_pending(),
+            "retired queued writes must send no request"
+        );
     }
 
     #[tokio::test]
