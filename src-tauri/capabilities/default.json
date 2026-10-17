@@ -21,7 +21,8 @@
     "core:menu:allow-set-as-windows-menu-for-nsapp",
     "shell:allow-open",
     "updater:allow-check",
-    "updater:allow-download-and-install",
+    "updater:allow-download",
+    "updater:allow-install",
     "notification:allow-is-permission-granted",
     "notification:allow-request-permission",
     "notification:allow-notify"
