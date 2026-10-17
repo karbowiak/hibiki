@@ -382,6 +382,7 @@ async function setup() {
       await clearMetadataCache()
       usePodcastStore.setState({ feedCache: {}, topChartCache: {} })
       useLibraryStore.setState({ playlistItemsCache: {}, playlistIsFullyLoaded: {} })
+      useUIStore.getState().incrementPageRefreshKey()
     },
     release: () => { releaseLoading?.(); releaseLoading = null; loadingGate = Promise.resolve() },
   }
@@ -608,6 +609,7 @@ async function setup() {
       // legitimately chooses either artist or album artwork.
       w.fixtureArtwork.replace("portrait.svg")
       useLibraryStore.setState({ playlistItemsCache: {}, playlistIsFullyLoaded: {}, currentPlaylistItems: [...tracks] })
+      useUIStore.getState().incrementPageRefreshKey()
       await clearMetadataCache()
     },
     replace: (name: string) => {

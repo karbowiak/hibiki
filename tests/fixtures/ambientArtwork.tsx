@@ -29,6 +29,7 @@ useMetadataIdentityStore.setState({ choices: {}, versions: {}, hydrated: true })
 const { createRoot } = await import("react-dom/client")
 const { useAmbientArtwork, useAmbientArtworkClaim } =
   await import("../../src/hooks/useAmbientArtwork")
+const { useWindowedPages } = await import("../../src/hooks/useWindowedPages")
 const { useProviderStore } = await import("../../src/stores/providerStore")
 const { useArtworkPreferenceStore, artworkPreferenceKey } =
   await import("../../src/stores/artworkPreferenceStore")
@@ -92,6 +93,13 @@ function Detail({ route, source }: { route: string; source: string }) {
   })
   return null
 }
+function SharedPlaylistReader() {
+  useWindowedPages("playlist:shared", async () => ({items:[{
+    id:"shared-song",artistId:"shared-artist",artistName:"Shared artist",artistThumbUrl:image("shared-art","b"),
+    albumId:null,albumName:"",albumThumbUrl:null,thumbUrl:null,
+  }],total:1}))
+  return null
+}
 function Harness({
   route = "/search",
   detail = false,
@@ -104,6 +112,7 @@ function Harness({
   latest = useAmbientArtwork(route)
   return (
     <>
+      {route === "/playlist/shared" && <SharedPlaylistReader />}
       <output data-tick={tick}>{JSON.stringify(latest.artwork)}</output>
       {detail && (
         <Detail route={route} source={image("detail", provider.cacheScope)} />
@@ -328,6 +337,13 @@ try {
     0,
     "playlist artwork uses loaded cache-only members without fetching playlist or metadata"
   )
+  await act(() => library.setState({playlists:[{id:"shared"}] as any,currentPlaylistId:null,currentPlaylistItems:[]}))
+  await render({route:"/playlist/shared"})
+  assert.equal(latest!.artwork?.src,image("shared-art","b"),"ambient artwork shares the windowed view without the retired prefix cache")
+  await act(() => window.dispatchEvent(new dom.window.CustomEvent("collection-cache-updated",{detail:"playlist:shared"})))
+  assert.equal(latest!.artwork?.src,image("shared-art","b"),"in-place refresh preserves the active shared artwork handle")
+  assert.equal(requests,0,"sharing pages starts no external artwork requests")
+
 } finally {
   await act(() => root.unmount())
   Math.random = random
