@@ -428,6 +428,35 @@ test("a failed queue save stays visible and retry saves the full queue", async (
   } finally {cleanup()}
 })
 
+test("blocked queue writes coalesce pending orders and flush the latest cursor", async () => {
+  const { initializeQueuePersistence, flushQueuePersistence } = await import("../src/lib/queuePersistence")
+  const gate = deferred<void>()
+  const writes: any[] = []
+  const p = provider("coalesce", { savedQueue: {
+    load: async () => null, clear: async () => {}, position: async () => {},
+    save: async value => { writes.push(value); if (writes.length === 1) await gate.promise },
+  } })
+  useProviderStore.getState().setProvider(p)
+  const cleanup = initializeQueuePersistence()
+  try {
+    await settle()
+    await state().playTrack(source("1"), [source("1"), source("2"), source("3")])
+    const first = flushQueuePersistence()
+    await settle()
+    state().reorderQueue(1, 2)
+    const middle = flushQueuePersistence()
+    state().reorderQueue(2, 0)
+    usePlayerStore.setState({ positionMs: 1234 })
+    const latest = flushQueuePersistence()
+    expect(writes).toHaveLength(1)
+    gate.resolve()
+    await Promise.all([first, middle, latest])
+    expect(writes).toHaveLength(2)
+    expect(writes[1].entries.map((entry: any) => entry.id)).toEqual(state().queue.map(track => track.id))
+    expect(writes[1].state.positionMs).toBe(1234)
+  } finally { gate.resolve(); cleanup() }
+})
+
 test("returning to Plex clears the old station and ignores late radio callbacks", async () => {
   useProviderStore.getState().setProvider(provider("a"))
   useRadioStreamStore.getState().playStation(station())

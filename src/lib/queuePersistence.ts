@@ -155,7 +155,7 @@ export function initializeQueuePersistence() {
       sourceQuery: source?.restoreQuery,
     }
   }
-  const save = (force = false) => {
+  const writeSnapshot = async (force: boolean) => {
     clearTimeout(timer)
     timer = undefined
     const captured = owner,
@@ -166,12 +166,12 @@ export function initializeQueuePersistence() {
       !captured?.savedQueue ||
       currentQueueOwner() !== captured
     )
-      return serial
+      return
     const order = currentQueueOrderVersion(),
       length = player.queue.length
     const structural = order !== lastOrder || length !== lastLength
     if (!structural && !force && Date.now() - lastPositionSave < 5000)
-      return serial
+      return
     const cursor = state()
     const entries = structural && length ? snapshotQueueEntries() : null
     // Save stable music identities and artwork, never audio URLs or session credentials.
@@ -211,7 +211,31 @@ export function initializeQueuePersistence() {
         throw error
       }
     }
-    serial = serial.catch(() => {}).then(work)
+    await work()
+  }
+  let writing = false, pending = false, pendingForce = false
+  const save = (force = false): Promise<void> => {
+    clearTimeout(timer)
+    timer = undefined
+    pending = true
+    pendingForce ||= force
+    if (writing) return serial
+    writing = true
+    // Capture large membership only when its write starts. A blocked native
+    // writer retains one running snapshot and one latest intent, never a FIFO
+    // of already superseded full queues.
+    serial = (async () => {
+      let error: unknown
+      while (pending) {
+        const force = pendingForce
+        pending = pendingForce = false
+        try {
+          await writeSnapshot(force)
+          error = undefined
+        } catch (cause) { error = cause }
+      }
+      if (error) throw error
+    })().finally(() => { writing = false })
     void serial.catch(() => {})
     return serial
   }
