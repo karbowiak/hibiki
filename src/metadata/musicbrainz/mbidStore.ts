@@ -8,10 +8,14 @@
  * 30-day TTL — MBIDs are stable identifiers that rarely change.
  */
 
+import { CacheRequests } from "../../lib/cacheRequests"
 import { create } from "zustand"
 import { safePersist } from "../../stores/idbStorage"
 import { evictStaleEntries } from "../../stores/cacheUtils"
-import { musicbrainzLookupRecording, type MusicBrainzRecordingMbids } from "./api"
+import {
+  musicbrainzLookupRecording,
+  type MusicBrainzRecordingMbids,
+} from "./api"
 
 const TTL_MS = 30 * 24 * 60 * 60_000 // 30 days
 const EVICTION_TTL = TTL_MS * 1.5
@@ -25,11 +29,16 @@ interface MbidStoreState {
   recordings: Record<string, CacheEntry>
   _hasHydrated: boolean
   /** Look up MBIDs for a recording. Returns cached data or fetches from MusicBrainz. */
-  lookup: (artist: string, track: string, album: string) => Promise<MusicBrainzRecordingMbids | null>
+  lookup: (
+    artist: string,
+    track: string,
+    album: string
+  ) => Promise<MusicBrainzRecordingMbids | null>
   clearCache: () => void
 }
 
-const inflight = new Map<string, Promise<MusicBrainzRecordingMbids | null>>()
+const requests = new CacheRequests()
+const MAX_RECORDINGS = 5000
 
 function makeKey(artist: string, track: string, album: string): string {
   return `${artist.toLowerCase()}::${track.toLowerCase()}::${album.toLowerCase()}`
@@ -45,27 +54,26 @@ export const useMbidStore = create<MbidStoreState>()(
         const key = makeKey(artist, track, album)
         const cached = get().recordings[key]
         if (cached) {
-          const ttl = cached.data === null ? TTL_MS : TTL_MS
-          if (Date.now() - cached.cachedAt < ttl) return cached.data
+          if (Date.now() - cached.cachedAt < TTL_MS) return cached.data
         }
-        const existing = inflight.get(key)
-        if (existing) return existing
-        const promise = (async () => {
-          try {
-            const data = await musicbrainzLookupRecording(artist, track, album)
-            set((s) => ({ recordings: { ...s.recordings, [key]: { data, cachedAt: Date.now() } } }))
-            return data
-          } catch {
-            return null
-          } finally {
-            inflight.delete(key)
+        return requests.load(
+          key,
+          () => musicbrainzLookupRecording(artist, track, album),
+          (data) => {
+            set((state) => ({
+              recordings: evictStaleEntries(
+                { ...state.recordings, [key]: { data, cachedAt: Date.now() } },
+                EVICTION_TTL,
+                MAX_RECORDINGS,
+                key
+              ),
+            }))
           }
-        })()
-        inflight.set(key, promise)
-        return promise
+        )
       },
 
       clearCache: () => {
+        requests.clear()
         set({ recordings: {} })
         useMbidStore.persist.clearStorage()
       },
@@ -75,10 +83,14 @@ export const useMbidStore = create<MbidStoreState>()(
       partialize: (s) => ({ recordings: s.recordings }),
       onRehydrateStorage: () => (state) => {
         if (state) {
-          state.recordings = evictStaleEntries(state.recordings, EVICTION_TTL)
+          state.recordings = evictStaleEntries(
+            state.recordings,
+            EVICTION_TTL,
+            MAX_RECORDINGS
+          )
         }
         useMbidStore.setState({ _hasHydrated: true })
       },
-    },
-  ),
+    }
+  )
 )
