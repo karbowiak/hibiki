@@ -1,74 +1,90 @@
-//! Visualizer — FFT frequency analysis and time-domain sample delivery.
-//!
-//! The audio callback sends raw PCM chunks via a lock-free channel.
-//! The visualizer task accumulates them into a rolling buffer, computes
-//! FFT at ~60fps, and emits VisFrame events to JS.
-
+//! Reusable mono ring and FFT buffers. No frame-sized allocations or front copies.
 pub mod fft;
 pub mod transport;
 
-use self::fft::{downmix_to_mono, FftProcessor, FFT_SIZE};
+use self::fft::{FftProcessor, FFT_SIZE, NUM_BINS};
 
-/// Processes audio samples for visualizer output.
-///
-/// Accumulates interleaved PCM into a rolling buffer. When enough
-/// samples are present (≥ FFT_SIZE mono frames), computes FFT and
-/// returns time-domain + frequency-domain data for the JS event.
+#[derive(serde::Serialize)]
+pub struct VisualizerFrame<'a> {
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    pub samples: &'a [f32],
+    pub frequency_bins: &'a [f32],
+}
+
 pub struct VisualizerProcessor {
-    /// Rolling sample buffer (interleaved, same format as audio output).
-    buffer: Vec<f32>,
-    /// Number of interleaved channels.
-    channels: u16,
-    /// Max buffer size — keeps the last N samples to bound memory.
-    max_samples: usize,
+    buffer: [f32; FFT_SIZE],
+    window: [f32; FFT_SIZE],
+    bins: [f32; NUM_BINS],
+    channels: usize,
+    cursor: usize,
+    filled: usize,
+    channel: usize,
+    channel_sum: f32,
     fft: FftProcessor,
 }
 
 impl VisualizerProcessor {
     pub fn new(channels: u16) -> Self {
-        // Keep enough for 2x FFT_SIZE mono frames (gives us headroom)
-        let max_samples = FFT_SIZE * 2 * channels.max(1) as usize;
         Self {
-            buffer: Vec::with_capacity(max_samples),
-            channels,
-            max_samples,
-            fft: FftProcessor::new(),
+            buffer: [0.0; FFT_SIZE], window: [0.0; FFT_SIZE], bins: [-100.0; NUM_BINS],
+            channels: channels.max(1) as usize, cursor: 0, filled: 0,
+            channel: 0, channel_sum: 0.0, fft: FftProcessor::new(),
         }
     }
 
-    /// Push new interleaved PCM samples into the rolling buffer.
     pub fn push_samples(&mut self, samples: &[f32]) {
-        self.buffer.extend_from_slice(samples);
-        // Trim from the front if we've exceeded max size
-        if self.buffer.len() > self.max_samples {
-            let excess = self.buffer.len() - self.max_samples;
-            self.buffer.drain(..excess);
+        for sample in samples {
+            self.channel_sum += sample;
+            self.channel += 1;
+            if self.channel == self.channels {
+                self.buffer[self.cursor] = self.channel_sum / self.channels as f32;
+                self.cursor = (self.cursor + 1) % FFT_SIZE;
+                self.filled = (self.filled + 1).min(FFT_SIZE);
+                self.channel_sum = 0.0;
+                self.channel = 0;
+            }
         }
     }
 
-    /// Compute FFT from the accumulated buffer.
-    /// Returns `(time_domain_samples, frequency_bins)` or `None` if not enough data.
-    pub fn compute(&mut self) -> Option<(Vec<f32>, Vec<f32>)> {
-        let ch = self.channels.max(1) as usize;
-        let min_interleaved = FFT_SIZE * ch;
+    /// Borrow reusable output until the next push/compute. The worker serializes
+    /// these slices directly rather than allocating owned event vectors.
+    pub fn compute(&mut self) -> Option<VisualizerFrame<'_>> {
+        if self.filled < FFT_SIZE { return None; }
+        let tail = FFT_SIZE - self.cursor;
+        self.window[..tail].copy_from_slice(&self.buffer[self.cursor..]);
+        self.window[tail..].copy_from_slice(&self.buffer[..self.cursor]);
+        self.fft.compute_into(&self.window, &mut self.bins);
+        Some(VisualizerFrame { kind: "visFrame", samples: &self.window, frequency_bins: &self.bins })
+    }
+}
 
-        if self.buffer.len() < min_interleaved {
-            return None;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn newest_window_matches_downmix_across_chunk_boundaries_and_reuses_outputs() {
+        for channels in [0,1,2,6] {
+            let mut processor = VisualizerProcessor::new(channels);
+            assert!(processor.compute().is_none());
+            let ch = channels.max(1) as usize;
+            let pcm: Vec<_> = (0..(FFT_SIZE+317)*ch).map(|i| (i as f32 * 0.01).sin()).collect();
+            for chunk in pcm.chunks(137) { processor.push_samples(chunk); }
+            let mono = fft::downmix_to_mono(&pcm, channels);
+            let expected = &mono[mono.len()-FFT_SIZE..];
+            let mut bins = [-100.0; NUM_BINS];
+            FftProcessor::new().compute_into(expected, &mut bins);
+            let output = processor.compute().unwrap();
+            assert_eq!(output.samples, expected);
+            assert_eq!(output.frequency_bins, bins);
+            let pointers = (output.samples.as_ptr(), output.frequency_bins.as_ptr());
+            processor.push_samples(&pcm);
+            let next = processor.compute().unwrap();
+            assert_eq!((next.samples.as_ptr(), next.frequency_bins.as_ptr()), pointers);
+            let event = serde_json::to_value(next).unwrap();
+            assert_eq!(event["type"], "visFrame");
+            assert_eq!(event["samples"].as_array().unwrap().len(), FFT_SIZE);
+            assert_eq!(event["frequency_bins"].as_array().unwrap().len(), NUM_BINS);
         }
-
-        // Downmix to mono
-        let mono = downmix_to_mono(&self.buffer, self.channels);
-
-        // Take the last FFT_SIZE mono samples
-        let start = mono.len().saturating_sub(FFT_SIZE);
-        let window = &mono[start..start + FFT_SIZE.min(mono.len() - start)];
-
-        // Time-domain samples (for JS waveform/oscilloscope display)
-        let time_domain = window.to_vec();
-
-        // Frequency-domain bins (dB)
-        let bins = self.fft.compute(window);
-
-        Some((time_domain, bins))
     }
 }

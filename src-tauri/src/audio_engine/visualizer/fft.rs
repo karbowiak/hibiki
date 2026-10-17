@@ -41,9 +41,10 @@ impl FftProcessor {
         }
     }
 
-    pub fn compute(&mut self, samples: &[f32]) -> Vec<f32> {
+    pub fn compute_into(&mut self, samples: &[f32], bins: &mut [f32; NUM_BINS]) {
         if samples.len() < FFT_SIZE {
-            return vec![-100.0; NUM_BINS];
+            bins.fill(-100.0);
+            return;
         }
 
         for ((out, sample), weight) in self.windowed.iter_mut().zip(samples).zip(&self.window) {
@@ -54,26 +55,32 @@ impl FftProcessor {
             .process_with_scratch(&mut self.windowed, &mut self.spectrum, &mut self.scratch)
             .is_err()
         {
-            return vec![-100.0; NUM_BINS];
+            bins.fill(-100.0);
+            return;
         }
 
         // Convert to dB magnitude
         let scale = 2.0 / FFT_SIZE as f32;
-        self.spectrum
-            .iter()
-            .map(|c| {
+        for (bin, c) in bins.iter_mut().zip(&self.spectrum) {
                 let magnitude = c.norm() * scale;
-                if magnitude > 1e-10 {
+                *bin = if magnitude > 1e-10 {
                     20.0 * magnitude.log10()
                 } else {
                     -100.0
-                }
-            })
-            .collect()
+                };
+        }
+    }
+
+    #[cfg(test)]
+    fn compute(&mut self, samples: &[f32]) -> Vec<f32> {
+        let mut bins = [-100.0; NUM_BINS];
+        self.compute_into(samples, &mut bins);
+        bins.to_vec()
     }
 }
 
 /// Downmix interleaved stereo to mono by averaging channels.
+#[cfg(test)]
 pub fn downmix_to_mono(interleaved: &[f32], channels: u16) -> Vec<f32> {
     if channels <= 1 {
         return interleaved.to_vec();

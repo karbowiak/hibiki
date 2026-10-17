@@ -50,10 +50,4 @@ pub enum EngineEvent {
         request_id: u64,
         message: String,
     },
-    VisFrame {
-        /// Time-domain samples (interleaved f32, but sent as Vec<f32> for serde).
-        samples: Vec<f32>,
-        /// FFT frequency bins in dB.
-        frequency_bins: Vec<f32>,
-    },
 }

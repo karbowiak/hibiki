@@ -201,7 +201,6 @@ impl AudioEngine {
                         EngineEvent::TrackStarted { .. } => "audio://track-started",
                         EngineEvent::TrackEnded { .. } => "audio://track-ended",
                         EngineEvent::Error { .. } => "audio://error",
-                        EngineEvent::VisFrame { .. } => "audio://vis-frame",
                     };
                     let _ = app_for_events.emit(event_name, &event);
                 }
@@ -240,7 +239,7 @@ impl AudioEngine {
 
         // Visualizer task (~60fps, receives PCM from audio callback via channel,
         // accumulates into a rolling buffer, computes FFT, emits events)
-        let event_tx_vis = event_tx.clone();
+        let app_for_visualizer = app_handle.clone();
         let running_vis = lifetime.0.clone();
         tauri::async_runtime::spawn(async move {
             let mut vis = VisualizerProcessor::new(device_channels);
@@ -260,11 +259,8 @@ impl AudioEngine {
                 if !got_data {
                     continue;
                 }
-                if let Some((time_domain, freq_bins)) = vis.compute() {
-                    let _ = event_tx_vis.try_send(EngineEvent::VisFrame {
-                        samples: time_domain,
-                        frequency_bins: freq_bins,
-                    });
+                if let Some(frame) = vis.compute() {
+                    let _ = app_for_visualizer.emit("audio://vis-frame", &frame);
                 }
             }
         });
