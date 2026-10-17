@@ -52,14 +52,44 @@ function mock(releases: { id: number; tag_name: string; draft: boolean }[]) {
   }
 }
 
-function execute(github: unknown, version = "0.5.2") {
+function execute(github: unknown, version = "0.5.2", publishOnly = false) {
   return run(
     github,
     { repo: { owner: "owner", repo: "repo" } },
-    { env: { RELEASE_TAG: `v${version}`, VERSION: version } },
+    { env: { RELEASE_TAG: `v${version}`, VERSION: version, PUBLISH_ONLY: String(publishOnly) } },
     createRequire(import.meta.url)
   )
 }
+
+test("publish-only requires an existing unpublished draft and never creates missing installers", async () => {
+  const missing=mock([])
+  await expect(execute(missing.github,"0.5.2",true)).rejects.toThrow("No existing draft")
+  expect(missing.calls).toEqual([])
+  const draft=mock([{id:42,tag_name:"v0.5.2",draft:true}])
+  expect(await execute(draft.github,"0.5.2",true)).toBe(42)
+  expect(draft.calls).toEqual([])
+  const published=mock([{id:42,tag_name:"v0.5.2",draft:false}])
+  await expect(execute(published.github,"0.5.2",true)).rejects.toThrow("already published")
+  expect(published.calls).toEqual([])
+})
+
+test("publication retries retain signature and relocated-AppImage checks and restore download execute permission", () => {
+  const jobs=(Bun.YAML.parse(workflow) as any).jobs
+  const publish=jobs["publish-release"]
+  expect(jobs["build-tauri"].if).toContain("!inputs.publish_only")
+  expect(publish.if).toContain("!cancelled()")
+  expect(publish.if).toContain("needs.create-release.result == 'success'")
+  expect(publish.if).toContain("needs.build-tauri.result == 'success' || (inputs.publish_only && needs.build-tauri.result == 'skipped')")
+  const signed=publish.steps.findIndex((s:any)=>s.name==="Verify tag, current CI and signed updater artifacts")
+  const bytes=publish.steps.findIndex((s:any)=>s.name==="Require published-byte AppStream and AppImageUpdate integrity")
+  const final=publish.steps.findIndex((s:any)=>s.name==="Publish release")
+  expect(signed).toBeGreaterThan(-1)
+  expect(bytes).toBeGreaterThan(signed)
+  expect(final).toBeGreaterThan(bytes)
+  expect(publish.steps[signed].with.script).toContain("await assertArtifacts(")
+  const run=publish.steps[bytes].run
+  expect(run.indexOf("chmod u+x")).toBeLessThan(run.indexOf("python3 scripts/check-appimage.py"))
+})
 
 test("release retries reuse the matching draft without creating or replacing assets", async () => {
   const { github, calls } = mock([

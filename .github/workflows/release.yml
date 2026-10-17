@@ -10,6 +10,11 @@ on:
         description: Existing release tag to build (for example v0.5.2)
         required: true
         type: string
+      publish_only:
+        description: Revalidate and publish an existing complete draft without rebuilding installers
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: release-${{ inputs.tag || github.ref_name }}
@@ -62,6 +67,7 @@ jobs:
         env:
           VERSION: ${{ steps.get-version.outputs.version }}
           RELEASE_TAG: ${{ steps.get-version.outputs.tag }}
+          PUBLISH_ONLY: ${{ inputs.publish_only }}
         with:
           script: |
             const tag = process.env.RELEASE_TAG
@@ -88,6 +94,9 @@ jobs:
               if (hasNotes) await github.rest.repos.updateRelease({ ...context.repo, release_id: existing.id, body })
               return existing.id
             }
+            if (process.env.PUBLISH_ONLY === 'true') {
+              throw new Error(`No existing draft for ${tag}; publish-only cannot build missing installers.`)
+            }
             const { data } = await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -101,6 +110,7 @@ jobs:
 
   build-tauri:
     needs: create-release
+    if: ${{ !inputs.publish_only }}
     runs-on: ${{ matrix.platform }}
     permissions:
       contents: write
@@ -252,6 +262,7 @@ jobs:
   publish-release:
     runs-on: ubuntu-latest
     needs: [create-release, build-tauri]
+    if: ${{ always() && !cancelled() && needs.create-release.result == 'success' && (needs.build-tauri.result == 'success' || (inputs.publish_only && needs.build-tauri.result == 'skipped')) }}
     permissions:
       contents: write
       actions: read
@@ -292,7 +303,11 @@ jobs:
               process.env.RELEASE_TAG, '.tmp/appimage-release-check')
 
       - name: Require published-byte AppStream and AppImageUpdate integrity
-        run: python3 scripts/check-appimage.py .tmp/appimage-release-check/*.AppImage
+        run: |
+          # HTTP downloads do not retain filesystem execute permissions.
+          # Signatures/digests have been checked before this local mode change.
+          chmod u+x .tmp/appimage-release-check/*.AppImage
+          python3 scripts/check-appimage.py .tmp/appimage-release-check/*.AppImage
 
       - name: Publish release
         uses: actions/github-script@v9
