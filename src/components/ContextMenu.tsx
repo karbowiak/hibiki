@@ -274,10 +274,9 @@ export function ContextMenu() {
   const hasRadio = useCapability("radio")
   const hasRatings = useCapability("ratings")
   const canEditPlaylists = useCapability("playlistEdit")
-  const { playTrack, playFromUri, playRadio, addNext, addToQueue } =
+  const { playFromUri, playRadio, addNext, addToQueue } =
     usePlayerStore(
       useShallow((s) => ({
-        playTrack: s.playTrack,
         playFromUri: s.playFromUri,
         playRadio: s.playRadio,
         addNext: s.addNext,

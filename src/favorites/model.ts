@@ -262,7 +262,7 @@ export function mergeFavoriteSnapshot(
     save(next, previous)
   }
   if (complete)
-    for (const [id, item] of Object.entries(entries)) {
+    for (const item of Object.values(entries)) {
       const prior = item.sources[service]
       if (prior && !seen.has(prior.key)) {
         const liked =

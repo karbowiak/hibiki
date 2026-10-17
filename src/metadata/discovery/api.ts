@@ -29,7 +29,7 @@ export const heyaDiscover = (
   kind: "artist" | "album",
   query: string,
   artist: string,
-  mbid?: string
+  _mbid?: string
 ) =>
   invoke<DiscoveryProgress>("heya_discover", {
     revision,

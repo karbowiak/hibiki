@@ -228,7 +228,7 @@ export function PlaylistSyncDialog({
       channel.editions.map((edition) => edition.playlistId)
     )
   )
-  function chooseEdition(channel: WeeklyChannel, edition: WeeklyEdition) {
+  function chooseEdition(edition: WeeklyEdition) {
     const summary = items.find((item) => item.id === edition.playlistId)
     if (!summary || !current) return
     setSelected(summary)
@@ -501,7 +501,7 @@ export function PlaylistSyncDialog({
                       disabled={channel.status === "unavailable"}
                       onClick={() =>
                         channel.latest
-                          ? chooseEdition(channel, channel.latest)
+                          ? chooseEdition(channel.latest)
                           : setWeeklyChoice(channel)
                       }
                     >
@@ -540,7 +540,7 @@ export function PlaylistSyncDialog({
                       <li key={edition.playlistId}>
                         <button
                           className={button}
-                          onClick={() => chooseEdition(weeklyChoice, edition)}
+                          onClick={() => chooseEdition(edition)}
                         >
                           {weeklyDate(edition)} · {edition.createdAt} ·{" "}
                           {edition.playlistId.slice(-8)}

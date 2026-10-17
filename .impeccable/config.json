@@ -19,6 +19,15 @@
         ],
         "createdAt": "2026-10-16T17:02:23.752Z",
         "reason": "Agent: this selector is inside prefers-reduced-motion and disables animation with animation: none !important; it does not enable bounce easing."
+      },
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": [
+          "tests/fixtures/mixOwnership.tsx"
+        ],
+        "createdAt": "2026-10-17T17:26:14.451Z",
+        "reason": "Codex: test-only ArtworkImage mock forwards its src through props and is not shipped UI."
       }
     ]
   }

@@ -1,5 +1,4 @@
 import { getSelection, subscribeSelection, shuffleTracks } from "../../lib/mixSelection"
-export { selectMix, shuffleTracks } from "../../lib/mixSelection"
 import { filterTracks, sortTracks, type TrackSortColumn } from "../../lib/trackOrder"
 import { mixThumbnailKey, useMixThumbnails } from "../../hooks/useMixThumbnails"
 import { ArtworkImage } from "../shared/ArtworkImage"

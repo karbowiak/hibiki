@@ -13,7 +13,7 @@ import { EpisodeRow } from "../EpisodeRow"
 import { ArtworkImage } from "../shared/ArtworkImage"
 import { podcastFeedPath } from "../../lib/podcastRoute"
 import { buildExternalImageUrl } from "../../lib/imageUrl"
-import type { PodcastDetail, PodcastEpisode } from "../../backends/podcast/api"
+import type { PodcastDetail } from "../../backends/podcast/api"
 
 export function PodcastDetailPage({ feedUrl }: { feedUrl: string }) {
   const {
@@ -86,7 +86,7 @@ export function PodcastDetailPage({ feedUrl }: { feedUrl: string }) {
     )
   }, [podcast, feedUrl])
 
-  const handlePlayEpisode = (ep: PodcastEpisode, index: number) => {
+  const handlePlayEpisode = (index: number) => {
     const track = episodeTracks[index]
     if (!track) return
     if (currentTrack?.id === track.id) {
@@ -274,7 +274,7 @@ export function PodcastDetailPage({ feedUrl }: { feedUrl: string }) {
                 isPlaying={episodePlaying}
                 progress={progress}
                 isCompleted={completed}
-                onPlay={() => handlePlayEpisode(ep, i)}
+                onPlay={() => handlePlayEpisode(i)}
               />
             )
           })}

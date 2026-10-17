@@ -392,8 +392,9 @@ try {
       }
     }
   } else if (scenario.startsWith("mix")) {
-    const { MixPage, selectMix } =
+    const { MixPage } =
       await import("../../src/components/Pages/Mix")
+    const { selectMix } = await import("../../src/lib/mixSelection")
     selectMix(mix())
     await act(async () =>
       root.render(

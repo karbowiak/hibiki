@@ -73,7 +73,7 @@ await click(named("Quick mix")); assert.equal(plays, 3)
 function pointer(type: string, x: number) { const e = new dom.window.MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: 0 }); Object.defineProperty(e, "pointerId", { value: 1 }); return e }
 await act(async () => { const primary = named("Quick mix"); primary.dispatchEvent(pointer("pointerdown", 0)); primary.dispatchEvent(pointer("pointermove", 20)); primary.dispatchEvent(pointer("pointerup", 20)); primary.click() })
 assert.equal(plays, 3, "drag release must not play")
-mock.module("../../src/components/Pages/Mix", () => ({ selectMix: noop, shuffleTracks: (tracks: any[]) => tracks }))
+mock.module("../../src/lib/mixSelection", () => ({ selectMix: noop, shuffleTracks: (tracks: any[]) => tracks }))
 const { RecentMixCard } = await import("../../src/components/Pages/Stations")
 await render(<RecentMixCard mix={{ seeds: [{ id: "seed", title: "Seed", thumb: null }], tabType: "artist", createdAt: Date.now() } as any} sectionUuid="fixture" sectionId={1} playFromUri={async () => { plays++ }} />)
 assert.equal(named("Play Seed mix").tagName, "BUTTON")

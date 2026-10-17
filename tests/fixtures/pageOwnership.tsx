@@ -112,7 +112,7 @@ try {
         return reply.promise
       },
     } as any)
-    mock.module("../../src/components/Pages/Home", () => ({
+    mock.module("../../src/lib/mediaCardInfo", () => ({
       getMediaInfo: () => null,
       makeDragPayload: () => null,
     }))
@@ -819,7 +819,7 @@ try {
     mock.module("../../src/hooks/useContextMenu", () => ({
       useContextMenu: () => ({ handler: () => () => {} }),
     }))
-    mock.module("../../src/components/Pages/Home", () => ({
+    mock.module("../../src/lib/mediaCardInfo", () => ({
       makeDragPayload: () => undefined,
     }))
     const { Search } = await import("../../src/components/Pages/Search")

@@ -18,7 +18,6 @@ import { useNotificationCenterStore } from "../../stores/notificationCenterStore
 export function DownloadMenuItems({
   kind,
   id,
-  title,
   close,
   current,
 }: {

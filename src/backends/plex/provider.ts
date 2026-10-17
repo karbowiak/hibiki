@@ -6,7 +6,7 @@ import type {
   PlaylistOccurrenceMutation,
 } from "../../providers/types"
 /**
- * PlexProvider — wraps lib/plex.ts calls behind the MusicProvider interface.
+ * PlexProvider — wraps scoped native Plex calls behind the MusicProvider interface.
  *
  * Holds sectionId, sectionUuid, baseUrl, and token internally.
  * Mappers convert Plex types to generic types, resolving image URLs during conversion.

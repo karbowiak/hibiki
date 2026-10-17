@@ -19,13 +19,6 @@ function readAccent(el: HTMLElement): string {
   return getComputedStyle(el).getPropertyValue("--accent").trim() || "#d946ef"
 }
 
-function lerpHex(a: string, b: string, t: number): string {
-  const r = Math.round(parseInt(a.slice(1, 3), 16) * (1 - t) + parseInt(b.slice(1, 3), 16) * t)
-  const g = Math.round(parseInt(a.slice(3, 5), 16) * (1 - t) + parseInt(b.slice(3, 5), 16) * t)
-  const bl = Math.round(parseInt(a.slice(5, 7), 16) * (1 - t) + parseInt(b.slice(5, 7), 16) * t)
-  return `rgb(${r},${g},${bl})`
-}
-
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------

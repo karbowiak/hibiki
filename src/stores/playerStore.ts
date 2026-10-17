@@ -563,10 +563,6 @@ export function prefetchTrackAudio(track: MusicTrack): void {
   if (provider) fireAndForget(playbackMetadata.playbackInfo(provider, track))
 }
 
-async function fetchAudioStreamId(track: MusicTrack, provider: MusicProvider): Promise<number | null> {
-  return playbackMetadata.streamId(provider, track)
-}
-
 async function fetchGainDb(track: MusicTrack, provider: MusicProvider): Promise<number | null> {
   return playbackMetadata.gain(provider, track, usePlayerStore.getState().albumPlaybackId)
 }
@@ -788,7 +784,7 @@ async function fetchMorePlaylistTracks(get: () => PlayerState, set: (fn: (s: Pla
  * previously 2–3 separate getTrack() calls into one.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function enrichCurrentTrack(track: MusicTrack, provider: MusicProvider, isCurrent: () => boolean, get: () => PlayerState, set: any): Promise<void> {
+async function enrichCurrentTrack(track: MusicTrack, provider: MusicProvider, isCurrent: () => boolean, set: any): Promise<void> {
   try {
     const full = await playbackMetadata.fullTrack(provider, track.id)
     if (!isCurrent()) return
@@ -828,10 +824,10 @@ function _onTrackBecomesActive(track: MusicTrack, index: number, get: () => Play
 
   if (!isPodcast) {
     // If the track lacks stream details (from a list endpoint), enrich it.
-    // This single call replaces separate fetchAudioStreamId + fetchGainDb calls.
+    // Resolve stream ID and gain together from one full-track request.
     const needsEnrichment = track.codec == null && track.mediaInfo?.audioStreamId == null
     if (needsEnrichment) {
-      if (provider) fireAndForget(enrichCurrentTrack(track, provider, isCurrent, get, set))
+      if (provider) fireAndForget(enrichCurrentTrack(track, provider, isCurrent, set))
     } else {
       // Track already has full data (from PlayQueue/radio) — just fetch waveform
       if (provider) fireAndForget(playbackMetadata.levels(provider,track)
@@ -1331,7 +1327,7 @@ export const usePlayerStore = create<PlayerState>()(
     useLyricsStore.getState().clear()
     if (_gaplessTimeoutId !== null) { clearTimeout(_gaplessTimeoutId); _gaplessTimeoutId = null }
     engine.stop()
-    const { currentTrack, positionMs, isInternetRadioActive } = get()
+    const { isInternetRadioActive } = get()
     // Stop internet radio if active
     if (isInternetRadioActive) {
       useRadioStreamStore.getState().stopStream()
@@ -1466,7 +1462,7 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   prev: () => {
-    const { queue, queueIndex, positionMs } = get()
+    const { queueIndex, positionMs } = get()
     if (positionMs > 3000) {
       // Restart current track in-place (preserve context)
       fireAndForget(playAtIndex(queueIndex, get, set))
