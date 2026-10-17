@@ -437,7 +437,7 @@ mod integration_tests {
                         collection.title, collection.subtype, collection.smart
                     );
                 }
-                assert!(collections.len() >= 0);
+
             }
             Err(e) => {
                 // May fail if collections endpoint not available
@@ -478,7 +478,7 @@ mod integration_tests {
                     match items_result {
                         Ok(items) => {
                             println!("Found {} items in collection", items.len());
-                            assert!(items.len() >= 0);
+
                         }
                         Err(e) => {
                             println!("Get collection items failed: {}", e);

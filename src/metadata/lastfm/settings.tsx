@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useLocation } from "wouter"
-import { open } from "@tauri-apps/plugin-shell"
+import { openUrl as open } from "@tauri-apps/plugin-opener"
 import { useLastfmStore } from "./authStore"
 import { useLastfmMetadataStore } from "./store"
 import { lastfmSaveCredentials, lastfmGetToken } from "./api"

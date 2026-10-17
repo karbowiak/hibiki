@@ -1,7 +1,9 @@
-//! Atomic catalogue checkpoints and playlist generations.
+//! Read legacy catalogue checkpoints; writers only create compatibility fixtures.
+#[cfg(test)]
 use super::catalogue::{self, now};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
+#[cfg(test)]
 use serde_json::Value;
 
 #[derive(Clone, Serialize)]
@@ -25,6 +27,7 @@ pub fn task(conn: &Connection, scope: &str, name: &str) -> Result<Option<Task>, 
     super::offline::check_identity(scope, name)?;
     conn.query_row("SELECT task,generation,status,cursor,total,completed_at,error,scan_mode,key_cursor,upper_id,started_at,lower_time,upper_time FROM plex_catalogue_tasks WHERE scope=?1 AND task=?2",params![scope,name],|r|Ok(Task{task:r.get(0)?,generation:r.get(1)?,status:r.get(2)?,cursor:r.get(3)?,total:r.get(4)?,completed_at:r.get(5)?,error:r.get(6)?,scan_mode:r.get(7)?,key_cursor:r.get(8)?,upper_id:r.get(9)?,started_at:r.get(10)?,lower_time:r.get(11)?,upper_time:r.get(12)?})).optional().map_err(|_|"Cannot read catalogue progress".into())
 }
+#[cfg(test)]
 pub fn begin(
     conn: &Connection,
     scope: &str,
@@ -60,6 +63,7 @@ pub fn begin(
        ON CONFLICT(scope,task) DO UPDATE SET generation=excluded.generation,status='pending',cursor=0,total=NULL,completed_at=NULL,error=NULL,scan_mode='offset',key_cursor=0,upper_id=NULL,started_at=0,lower_time=NULL,upper_time=NULL,updated_at=excluded.updated_at",params![scope,name,generation,now()]).map_err(|_|"Cannot begin catalogue sync")?;
     task(conn, scope, name)?.ok_or("Catalogue task unavailable".into())
 }
+#[cfg(test)]
 pub fn checkpoint(
     conn: &Connection,
     scope: &str,
@@ -78,6 +82,7 @@ pub fn checkpoint(
     }
     Ok(())
 }
+#[cfg(test)]
 pub fn stop(
     conn: &Connection,
     scope: &str,
@@ -157,20 +162,6 @@ pub fn roster_page(
         .map_err(|_| "Cannot commit catalogue page".into())
 }
 
-pub fn pending_details(
-    conn: &Connection,
-    scope: &str,
-    kind: &str,
-    cursor: i64,
-) -> Result<Vec<i64>, String> {
-    let mut query=conn.prepare("SELECT id FROM plex_catalogue WHERE scope=?1 AND kind=?2 AND removed=0 AND id>?3 AND (kind='playlist' OR detail=0 OR detail_revision IS NOT listing_revision) ORDER BY id LIMIT 50").map_err(|_|"Cannot read detail queue")?;
-    let rows = query
-        .query_map(params![scope, kind, cursor], |row| row.get(0))
-        .map_err(|_| "Cannot read detail queue")?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| "Cannot read detail queue".into());
-    rows
-}
 #[cfg(test)]
 pub fn detail_page(
     conn: &Connection,
@@ -223,6 +214,7 @@ pub fn playlist_page(
 ) -> Result<(), String> {
     playlist_page_checked(conn, scope, id, task, items, total, complete, None).map(|_| ())
 }
+#[cfg(test)]
 pub fn playlist_page_checked(
     conn: &Connection,
     scope: &str,
@@ -237,6 +229,7 @@ pub fn playlist_page_checked(
         conn, scope, id, task, items, total, complete, admission, None,
     )
 }
+#[cfg(test)]
 pub fn playlist_finish_checked(
     conn: &Connection,
     scope: &str,
@@ -257,6 +250,7 @@ pub fn playlist_finish_checked(
         Some(document),
     )
 }
+#[cfg(test)]
 fn playlist_page_impl(
     conn: &Connection,
     scope: &str,
@@ -361,6 +355,7 @@ pub fn playlist_staging_page(
     .collect()
 }
 
+#[cfg(test)]
 pub fn playlist_staging_identities(conn: &Connection, scope: &str, id: i64, task: &Task, offset: i64, limit: i64) -> Result<Vec<Value>, String> {
     let current=self::task(conn,scope,&format!("playlist:{id}"))?.ok_or("Missing playlist task")?;
     if current.generation!=task.generation || current.cursor!=task.cursor { return Err("Catalogue task was superseded".into()); }
@@ -371,6 +366,7 @@ pub fn playlist_staging_identities(conn: &Connection, scope: &str, id: i64, task
 
 /// Display-only progress. The verification itself always starts from zero;
 /// durable partial progress is never reused as an ordered membership proof.
+#[cfg(test)]
 pub fn playlist_verification_progress(conn:&Connection,scope:&str,task:&Task,offset:i64)->Result<(),String> {
     if offset<0 || offset>task.cursor || !task.task.starts_with("playlist:") { return Err("Invalid playlist verification progress".into()); }
     let changed=conn.execute("UPDATE plex_catalogue_tasks SET scan_mode='verify',key_cursor=?4,updated_at=?5 WHERE scope=?1 AND task=?2 AND generation=?3 AND cursor=?6 AND status!='complete'",params![scope,task.task,task.generation,offset,now(),task.cursor]).map_err(|_| "Cannot save playlist verification progress")?;

@@ -19,7 +19,7 @@ const auth = create(() => ({ isAuthenticated: true, username: "listener" }))
 mock.module("../../src/metadata/listenbrainz/authStore", () => ({
   useListenBrainzStore: auth,
 }))
-mock.module("@tauri-apps/plugin-shell", () => ({ open: async () => {} }))
+mock.module("@tauri-apps/plugin-opener", () => ({ openUrl: async () => {} }))
 const { createRoot } = await import("react-dom/client")
 const { useProviderStore } = await import("../../src/stores/providerStore")
 const { SyncCreationError } = await import("../../src/playlistSync/creation")

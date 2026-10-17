@@ -127,6 +127,7 @@ pub fn get(conn: &Connection, scope: &str, kind: &str, id: i64) -> Result<Option
 }
 /// Optional deferred GET archival must not overwrite a publication that
 /// arrived after the request began. Native owner fencing is the caller's job.
+#[cfg(test)]
 pub fn save_observation(conn: &Connection, scope: &str, kind: &str, id: i64,
     document: &Value, observed_at: i64) -> Result<bool, String> {
     check(scope, kind, id)?;

@@ -19,7 +19,10 @@
     "core:menu:allow-new",
     "core:menu:allow-set-as-app-menu",
     "core:menu:allow-set-as-windows-menu-for-nsapp",
-    "shell:allow-open",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://*" }, { "url": "http://*" }]
+    },
     "updater:allow-check",
     "updater:allow-download",
     "updater:allow-install",

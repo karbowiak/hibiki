@@ -7,7 +7,7 @@ import { getVersion } from "@tauri-apps/api/app"
 import { listen } from "@tauri-apps/api/event"
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks"
 import { getCurrentWindow } from "@tauri-apps/api/window"
-import { open } from "@tauri-apps/plugin-shell"
+import { openUrl as open } from "@tauri-apps/plugin-opener"
 import { check } from "@tauri-apps/plugin-updater"
 import { createAppMenu } from "../../src/lib/appMenu"
 import { runPreparedUpdate } from "../../src/lib/gracefulShutdown"
@@ -170,6 +170,8 @@ try {
       "plugin:event|emit_to",
       "plugin:shell|execute",
       "plugin:shell|spawn",
+      "plugin:opener|open_path",
+      "plugin:opener|reveal_item_in_dir",
       "plugin:window-state|save_window_state",
       "plugin:window-state|restore_state",
       "plugin:updater|download_and_install",
@@ -189,6 +191,9 @@ try {
       assert.notEqual(capability.local, false)
       assert.ok(!capability.webviews?.length, "Do not grant all webviews")
     }
+    const opener = selected.flatMap((item: any) => item.permissions)
+      .find((item: any) => item.identifier === "opener:allow-open-url")
+    assert.deepEqual(opener?.allow, [{ url: "https://*" }, { url: "http://*" }])
   } else {
     throw new Error("Unknown test scenario")
   }

@@ -25,7 +25,7 @@ const auth = create(() => ({ username: "listener", isAuthenticated: true }))
 mock.module("../../src/metadata/listenbrainz/authStore", () => ({
   useListenBrainzStore: auth,
 }))
-mock.module("@tauri-apps/plugin-shell", () => ({ open: async () => {} }))
+mock.module("@tauri-apps/plugin-opener", () => ({ openUrl: async () => {} }))
 const { createRoot } = await import("react-dom/client")
 const { useProviderStore } = await import("../../src/stores/providerStore")
 const { PlaylistCopyDialog } =

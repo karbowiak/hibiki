@@ -145,10 +145,10 @@ pub async fn download_storage_retry(app: tauri::AppHandle) -> Result<StorageInfo
 }
 #[tauri::command]
 pub fn download_storage_open(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri_plugin_shell::ShellExt;
+    use tauri_plugin_opener::OpenerExt;
     let root = app.state::<AudioDownloads>().cache().directory().to_owned();
-    app.shell()
-        .open(root.to_string_lossy().as_ref(), None)
+    app.opener()
+        .open_path(root.to_string_lossy(), None::<&str>)
         .map_err(|_| "Could not open the download folder".into())
 }
 async fn resume_downloads(app: &tauri::AppHandle) {

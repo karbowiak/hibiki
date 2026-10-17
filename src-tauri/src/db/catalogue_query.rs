@@ -179,6 +179,7 @@ fn projections_ready(conn: &Connection, scope: &str) -> Result<bool, String> {
 /// Runs on the native background writer. The source rows and their full raw
 /// metadata never change. A finite original rowid boundary plus composite-key
 /// checkpoints survive restart; concurrent new rows are covered by triggers.
+#[cfg(test)]
 pub(crate) fn backfill_projections(
     conn: &Connection,
     scope: &str,
@@ -243,6 +244,14 @@ fn projection_page_sql(filter: &str, order: &str, limit: i64, offset: i64) -> St
         .join(",");
     format!("WITH page AS MATERIALIZED(SELECT scope,kind,id,{columns} FROM plex_catalogue_browse_data WHERE {filter} ORDER BY {order} LIMIT {limit} OFFSET {offset}) SELECT c.kind,CASE WHEN c.listing_saved_at>c.saved_at THEN json_patch(c.document,json_remove(c.listing,'$.Media','$.Guid')) ELSE c.document END,max(c.saved_at,c.listing_saved_at) FROM page JOIN plex_catalogue c ON c.scope=page.scope AND c.kind=page.kind AND c.id=page.id ORDER BY {page_order}")
 }
+/// A completed incremental pass can restore browse freshness without another
+/// full census. Its capture began after the mutation and all admitted changes
+/// and deletion candidates have been resolved. Pending periodic requests do
+/// not invalidate an already completed pass.
+pub(super) fn browse_reconciled_after(conn: &Connection, scope: &str, invalidated_at: i64) -> Result<bool, String> {
+    super::offline::check_identity(scope, "browse-freshness")?;
+    conn.query_row("SELECT EXISTS(SELECT 1 FROM plex_catalogue_incremental i WHERE i.scope=?1 AND i.watermark IS NOT NULL AND i.catchup_target IS NULL AND i.catchup_started>?2 AND (SELECT COUNT(*) FROM plex_catalogue_tasks t WHERE t.scope=i.scope AND t.task IN ('artist','album','track','playlist') AND t.status='complete')=4 AND (SELECT COUNT(*) FROM plex_catalogue_tasks t WHERE t.scope=i.scope AND t.task IN ('catchup:artist','catchup:album','catchup:track','catchup:playlist') AND t.status='complete' AND t.upper_time=i.watermark)=4 AND NOT EXISTS(SELECT 1 FROM plex_catalogue_changes WHERE scope=i.scope) AND NOT EXISTS(SELECT 1 FROM plex_catalogue WHERE scope=i.scope AND verify_missing=1))",params![scope,invalidated_at],|r|r.get(0)).map_err(|_|"Cannot verify incremental browse freshness".into())
+}
 pub fn query(
     conn: &Connection,
     scope: &str,
@@ -296,7 +305,7 @@ pub fn query(
     // timestamp check, and playlist occurrences keep publication freshness.
     let invalidated = match invalidated {
         Some(at) if !matches!(method, "getTrack" | "getAlbum" | "getArtist")
-            && super::catalogue_incremental::browse_reconciled_after(conn, scope, at)? => None,
+            && browse_reconciled_after(conn, scope, at)? => None,
         marker => marker,
     };
     if method == "getAlbumTracks" {

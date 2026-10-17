@@ -93,6 +93,7 @@ pub(super) fn check_payload(value: &Value, depth: usize) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
 pub fn get(
     conn: &Connection,
     scope: &str,

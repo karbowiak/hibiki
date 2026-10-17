@@ -95,7 +95,7 @@ pub struct DeckState {
     pub fully_decoded: bool,
     pub decode_error: Option<String>,
     /// Sample offset — after a seek, the buffer is cleared and this is set to
-    /// the sample index where the new buffer starts. `position_secs()` adds
+    /// the sample index where the new buffer starts. `position_ms()` adds
     /// this offset to compute the real track position.
     pub sample_offset: usize,
     /// Seek generation counter — incremented on each seek. Background decode
@@ -192,14 +192,6 @@ impl DeckState {
         (((self.sample_offset as u128 + self.position as u128) * 1000)
             / (self.sample_rate as u128 * self.channels as u128))
             .min(u64::MAX as u128) as u64
-    }
-
-    pub fn position_secs(&self) -> f32 {
-        if self.channels == 0 || self.sample_rate == 0 {
-            return 0.0;
-        }
-        (self.sample_offset + self.position) as f32
-            / (self.sample_rate as f32 * self.channels as f32)
     }
 
     /// Total duration in seconds.
@@ -359,10 +351,10 @@ mod tests {
         deck.loaded = true;
 
         assert!((deck.duration_secs() - 1.0).abs() < 0.01);
-        assert!((deck.position_secs() - 0.0).abs() < 0.01);
+        assert_eq!(deck.position_ms(), 0);
 
         deck.position = 44100; // 0.5s into stereo buffer
-        assert!((deck.position_secs() - 0.5).abs() < 0.01);
+        assert_eq!(deck.position_ms(), 500);
     }
 
     #[test]

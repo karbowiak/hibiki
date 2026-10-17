@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { open } from "@tauri-apps/plugin-shell"
+import { openUrl as open } from "@tauri-apps/plugin-opener"
 import { useProviderStore } from "../../stores/providerStore"
 import { useListenBrainzStore } from "../../metadata/listenbrainz/authStore"
 import { VerifiedRecordingsAction } from "./VerifiedRecordingsAction"

@@ -151,19 +151,6 @@ pub fn next(conn: &Connection, scope: &str) -> Result<Option<Change>, String> {
 pub fn current(conn: &Connection, scope: &str, change: &Change) -> Result<bool, String> {
     conn.query_row("SELECT EXISTS(SELECT 1 FROM plex_catalogue_changes WHERE scope=?1 AND kind=?2 AND id=?3 AND version=?4)",params![scope,change.kind,change.id,change.version],|r|r.get(0)).map_err(|_|"Cannot fence admitted catalogue change".into())
 }
-pub fn discard(conn: &Connection, scope: &str, change: &Change) -> Result<(), String> {
-    conn.execute(
-        "DELETE FROM plex_catalogue_changes WHERE scope=?1 AND kind=?2 AND id=?3 AND version=?4",
-        params![scope, change.kind, change.id, change.version],
-    )
-    .map_err(|_| "Cannot retire unrelated catalogue hint")?;
-    conn.execute(
-        "UPDATE plex_catalogue SET verify_missing=0 WHERE scope=?1 AND kind=?2 AND id=?3",
-        params![scope, change.kind, change.id],
-    )
-    .map_err(|_| "Cannot retire unrelated deletion candidate")?;
-    Ok(())
-}
 pub fn defer(conn: &Connection, scope: &str, change: &Change) -> Result<(), String> {
     conn.execute("UPDATE plex_catalogue_changes SET attempted_at=?5 WHERE scope=?1 AND kind=?2 AND id=?3 AND version=?4",params![scope,change.kind,change.id,change.version,now()]).map_err(|_|"Cannot defer catalogue change")?;
     Ok(())
@@ -568,14 +555,7 @@ pub fn progress(conn: &Connection, scope: &str) -> Result<Progress, String> {
     super::offline::check_identity(scope, "incremental")?;
     conn.query_row("SELECT ((SELECT COUNT(*) FROM plex_catalogue_changes WHERE scope=?1)+(SELECT COUNT(*) FROM plex_catalogue WHERE scope=?1 AND verify_missing=1 AND NOT EXISTS(SELECT 1 FROM plex_catalogue_changes q WHERE q.scope=plex_catalogue.scope AND q.kind=plex_catalogue.kind AND q.id=plex_catalogue.id))),catchup_requested,watermark,changes_revision,phase FROM plex_catalogue_incremental WHERE scope=?1",[scope],|r|Ok(Progress{pending:r.get(0)?,catch_up_requested:r.get(1)?,watermark:r.get(2)?,changes_revision:r.get(3)?,phase:r.get(4)?})).optional().map(|p|p.unwrap_or(Progress{pending:0,catch_up_requested:false,watermark:None,changes_revision:0,phase:"idle".into()})).map_err(|_|"Cannot read incremental progress".into())
 }
-/// A completed incremental pass can restore browse freshness without another
-/// full census. Its capture began after the mutation and all admitted changes
-/// and deletion candidates have been resolved. Pending periodic requests do
-/// not invalidate an already completed pass.
-pub fn browse_reconciled_after(conn: &Connection, scope: &str, invalidated_at: i64) -> Result<bool, String> {
-    super::offline::check_identity(scope, "browse-freshness")?;
-    conn.query_row("SELECT EXISTS(SELECT 1 FROM plex_catalogue_incremental i WHERE i.scope=?1 AND i.watermark IS NOT NULL AND i.catchup_target IS NULL AND i.catchup_started>?2 AND (SELECT COUNT(*) FROM plex_catalogue_tasks t WHERE t.scope=i.scope AND t.task IN ('artist','album','track','playlist') AND t.status='complete')=4 AND (SELECT COUNT(*) FROM plex_catalogue_tasks t WHERE t.scope=i.scope AND t.task IN ('catchup:artist','catchup:album','catchup:track','catchup:playlist') AND t.status='complete' AND t.upper_time=i.watermark)=4 AND NOT EXISTS(SELECT 1 FROM plex_catalogue_changes WHERE scope=i.scope) AND NOT EXISTS(SELECT 1 FROM plex_catalogue WHERE scope=i.scope AND verify_missing=1))",params![scope,invalidated_at],|r|r.get(0)).map_err(|_|"Cannot verify incremental browse freshness".into())
-}
+pub(super) use super::catalogue_query::browse_reconciled_after;
 pub fn phase(conn: &Connection, scope: &str, phase: &str) -> Result<(), String> {
     ensure_state(conn, scope)?;
     conn.execute("UPDATE plex_catalogue_incremental SET phase=CASE WHEN ?2='updating' AND catchup_target IS NOT NULL THEN 'catchingUp' ELSE ?2 END WHERE scope=?1",params![scope,phase]).map_err(|_|"Cannot update catalogue phase")?;

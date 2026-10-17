@@ -6,6 +6,7 @@
 
 use super::deck::decode;
 use ebur128::{Channel, EbuR128, Mode};
+#[cfg(test)]
 use std::path::Path;
 use symphonia::core::audio::Channels;
 use symphonia::core::io::MediaSourceStream;
@@ -24,6 +25,7 @@ pub fn replay_gain(db: Option<f32>) -> f32 {
 ///
 /// Decodes the entire file, measures integrated loudness (EBU R128), and returns
 /// the gain needed to bring the track to the reference level (-18 LUFS).
+#[cfg(test)]
 pub fn analyze_loudness(
     path: &Path,
     ext: &str,

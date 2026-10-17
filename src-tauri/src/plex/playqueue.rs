@@ -578,6 +578,7 @@ mod contract_tests {
 
 #[cfg(test)]
 mod integration_tests {
+    use serde_json::Value;
     use super::super::{PlexClient, PlexClientConfig, PlexMedia};
 
     fn get_client() -> PlexClient {
@@ -756,7 +757,6 @@ mod integration_tests {
     /// Prints the full response body (truncated) so we can see the exact JSON shape.
     #[tokio::test]
     async fn test_artist_include_stations_raw() {
-        use serde_json::Value;
         let client = get_client();
         let url = client.build_url(&format!(
             "/library/metadata/{}?includeStations=1&excludeFields=summary",
@@ -768,7 +768,7 @@ mod integration_tests {
             .header("Accept", "application/json")
             .send().await.expect("request failed");
         println!("  Status: {}", resp.status());
-        let body: Value = resp.json().await.expect("parse failed");
+        let body: serde_json::Value = resp.json().await.expect("parse failed");
         let body_str = serde_json::to_string_pretty(&body).unwrap_or_default();
         // Print up to 4000 chars so we can see Station arrays if present
         let truncated = if body_str.len() > 4000 { &body_str[..4000] } else { &body_str };
@@ -779,7 +779,6 @@ mod integration_tests {
     /// Shows the raw response for the sonic mix endpoint.
     #[tokio::test]
     async fn test_mix_endpoint_raw_track() {
-        use serde_json::Value;
         let client = get_client();
         let url = client.build_url(&format!(
             "/library/sections/5/mix?pivot={}&limit=5",
@@ -791,7 +790,7 @@ mod integration_tests {
             .header("Accept", "application/json")
             .send().await.expect("request failed");
         println!("  Status: {}", resp.status());
-        let body: Value = resp.json().await.expect("parse failed");
+        let body: serde_json::Value = resp.json().await.expect("parse failed");
         let body_str = serde_json::to_string_pretty(&body).unwrap_or_default();
         let truncated = if body_str.len() > 4000 { &body_str[..4000] } else { &body_str };
         println!("{}", truncated);
@@ -850,7 +849,6 @@ mod integration_tests {
     /// Reveals whether the /mix endpoint accepts artist keys.
     #[tokio::test]
     async fn test_mix_endpoint_raw_artist() {
-        use serde_json::Value;
         let client = get_client();
         let url = client.build_url(&format!(
             "/library/sections/5/mix?pivot={}&limit=5",
@@ -862,7 +860,7 @@ mod integration_tests {
             .header("Accept", "application/json")
             .send().await.expect("request failed");
         println!("  Status: {}", resp.status());
-        let body: Value = resp.json().await.expect("parse failed");
+        let body: serde_json::Value = resp.json().await.expect("parse failed");
         let body_str = serde_json::to_string_pretty(&body).unwrap_or_default();
         let truncated = if body_str.len() > 4000 { &body_str[..4000] } else { &body_str };
         println!("{}", truncated);
@@ -873,7 +871,6 @@ mod integration_tests {
     /// Note: includeLoudnessRamps=1 is added globally by build_url().
     #[tokio::test]
     async fn test_loudness_ramps_raw() {
-        use serde_json::Value;
         let client = get_client();
         let url = client.build_url(&format!(
             "/library/metadata/{}",
@@ -885,7 +882,7 @@ mod integration_tests {
             .header("Accept", "application/json")
             .send().await.expect("request failed");
         println!("  Status: {}", resp.status());
-        let body: Value = resp.json().await.expect("parse failed");
+        let body: serde_json::Value = resp.json().await.expect("parse failed");
 
         // Search for startRamp/endRamp anywhere in the JSON tree
         fn find_ramps(v: &Value, path: &str) {
@@ -922,7 +919,6 @@ mod integration_tests {
     /// Probe: fetch a play queue and check for ramps (includeLoudnessRamps=1 added by build_url).
     #[tokio::test]
     async fn test_play_queue_ramps() {
-        use serde_json::Value;
         let client = get_client();
         let (_, uuid) = get_music_section(&client).await;
         let uri = match &uuid {

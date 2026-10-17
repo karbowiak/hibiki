@@ -1,14 +1,15 @@
 //! Local SQLite database layer.
 //!
-//! Stores artists, albums, tracks, playlists, and metadata from Plex with
-//! properly typed columns — enabling fast queries, local search, and
-//! deduplication.
+//! Keeps focused collection caches, favorites, playback state and downloads.
+//! Legacy catalogue readers preserve access to previously saved/offline data;
+//! full-library indexing and its background workers are retired.
 
 pub mod albums;
 pub mod artists;
 pub mod audio;
 pub mod catalogue;
-pub mod catalogue_analysis;
+// Legacy writers build historical databases for read-compatibility tests only.
+#[cfg(test)]
 pub mod catalogue_incremental;
 pub mod catalogue_query;
 pub mod catalogue_sync;

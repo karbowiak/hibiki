@@ -369,7 +369,7 @@ mod tests {
                             assert_eq!(uri,format!("server://machine/com.plexapp.plugins.library/library/metadata/{track_id}"));
                             items.push((track_id.parse().unwrap(), 14));
                         }
-                        PlaylistSyncOperation::Move { from, to } => {
+                        PlaylistSyncOperation::Move { from, to: _ } => {
                             assert_eq!(method, "PUT");
                             assert_eq!(
                                 path,

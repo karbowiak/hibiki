@@ -81,33 +81,6 @@ impl Scheduler {
         self.fired
     }
 
-    /// Check if the transition should fire at the given position.
-    /// Returns `Some(action)` if the trigger point was crossed, `None` otherwise.
-    pub fn check(&mut self, current_time_sec: f32, duration_sec: f32) -> Option<SchedulerAction> {
-        if self.fired || self.transition_time_sec < 0.0 {
-            return None;
-        }
-
-        match self.mode {
-            SchedulerMode::Crossfade => {
-                if current_time_sec >= self.transition_time_sec {
-                    self.fired = true;
-                    Some(SchedulerAction::TransitionPoint)
-                } else {
-                    None
-                }
-            }
-            SchedulerMode::Gapless => {
-                let trigger = duration_sec;
-                if trigger > 0.0 && current_time_sec >= trigger {
-                    self.fired = true;
-                    Some(SchedulerAction::GaplessPoint)
-                } else {
-                    None
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -120,14 +93,14 @@ mod tests {
         s.set_mode(SchedulerMode::Crossfade);
         s.set_transition_point(290.0);
 
-        assert!(s.check(100.0, 300.0).is_none());
-        assert!(s.check(289.9, 300.0).is_none());
+        assert!(s.check_crossfade_frame(100 * 48000, 48000).is_none());
+        assert!(s.check_crossfade_frame(290 * 48000 - 1, 48000).is_none());
         assert_eq!(
-            s.check(290.0, 300.0),
+            s.check_crossfade_frame(290 * 48000, 48000),
             Some(SchedulerAction::TransitionPoint)
         );
         // Should not fire again
-        assert!(s.check(295.0, 300.0).is_none());
+        assert!(s.check_crossfade_frame(295 * 48000, 48000).is_none());
         assert!(s.has_fired());
     }
 
@@ -137,9 +110,11 @@ mod tests {
         s.set_mode(SchedulerMode::Gapless);
         s.set_transition_point(300.0); // duration
 
-        assert!(s.check(298.0, 300.0).is_none());
-        assert!(s.check(299.95, 300.0).is_none());
-        assert_eq!(s.check(300.0, 300.0), Some(SchedulerAction::GaplessPoint));
+        // Gapless advancement belongs to actual decoder EOF in the callback;
+        // the crossfade scheduler cannot cut a tail at a guessed duration.
+        for frame in [298 * 48000, 300 * 48000 - 1, 300 * 48000, 301 * 48000] {
+            assert!(s.check_crossfade_frame(frame, 48000).is_none());
+        }
     }
 
     #[test]
@@ -147,10 +122,10 @@ mod tests {
         let mut s = Scheduler::new();
         s.set_mode(SchedulerMode::Crossfade);
         s.set_transition_point(10.0);
-        assert!(s.check(10.0, 20.0).is_some());
-        assert!(s.check(15.0, 20.0).is_none()); // already fired
+        assert!(s.check_crossfade_frame(10 * 48000, 48000).is_some());
+        assert!(s.check_crossfade_frame(15 * 48000, 48000).is_none()); // already fired
         s.reset();
         s.set_transition_point(18.0);
-        assert!(s.check(18.0, 20.0).is_some());
+        assert!(s.check_crossfade_frame(18 * 48000, 48000).is_some());
     }
 }

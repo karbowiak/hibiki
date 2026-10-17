@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react"
 import { useLocation } from "wouter"
 import { useShallow } from "zustand/react/shallow"
-import { open } from "@tauri-apps/plugin-shell"
+import { openUrl as open } from "@tauri-apps/plugin-opener"
 import { useConnectionStore } from "./connectionStore"
 import { useLibraryStore } from "../../stores/libraryStore"
 import { plexAuthPoll, plexGetResources, testServerConnection } from "./api"

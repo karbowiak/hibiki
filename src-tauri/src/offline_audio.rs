@@ -511,6 +511,7 @@ pub async fn audio_prepare_plex_track(
 /// Read full-resolution Plex levels once per exact media/analysis revision.
 /// `/levels` contains the same 100 ms loudness series as `/loudness`, plus
 /// sample-count metadata. Keep its complete response, not just 128 UI buckets.
+#[cfg(test)]
 fn cached_levels(
     conn: &rusqlite::Connection,
     client: &PlexClient,

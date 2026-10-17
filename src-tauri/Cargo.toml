@@ -15,7 +15,6 @@ tauri-build = { version = "2.7.1", features = [] }
 
 [dependencies]
 tauri = { version = "2.12.2", features = ["macos-private-api", "devtools"] }
-tauri-plugin-shell = "2.4.1"
 tauri-plugin-dialog = "2.8.3"
 tauri-plugin-window-state = "2.5.0"
 tauri-plugin-updater = "2.13.2"
@@ -84,6 +83,7 @@ realfft = "3.5"
 rubato = "5"
 tempfile = "3"
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "ico", "pnm"] }
+tauri-plugin-opener = "2"
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -100,11 +100,16 @@ libc = "0.2"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+block = "0.1.6"
+
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem
 # DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]
 
 [patch.crates-io]
+block = { path = "vendor/block" }
+symphonia-bundle-mp3 = { path = "vendor/symphonia-bundle-mp3" }
 symphonia-format-ogg = { path = "vendor/symphonia-format-ogg" }
 symphonia-format-isomp4 = { path = "vendor/symphonia-format-isomp4" }

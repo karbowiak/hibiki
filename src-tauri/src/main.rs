@@ -2,6 +2,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod audio_devices;
+#[cfg(all(test, target_os = "macos"))]
+mod platform_blocks_tests;
 mod audio_engine;
 mod cache_files;
 mod commands;
@@ -255,7 +257,7 @@ pub fn run() {
     }
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::new().skip_initial_state("main").build())
         .plugin(tauri_plugin_updater::Builder::new().build())

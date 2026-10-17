@@ -388,7 +388,7 @@ mod tests {
 
 #[cfg(test)]
 mod integration_tests {
-    use super::super::{PlexClient, PlexClientConfig, PlexMedia};
+    use super::super::{PlexClient, PlexClientConfig};
 
     fn get_client() -> PlexClient {
         let url = std::env::var("PLEX_URL")

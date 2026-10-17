@@ -1458,62 +1458,6 @@ fn an_underrun_does_not_run_filter_history_ahead_of_the_next_source_frame() {
 }
 
 
-fn analysis_callback() -> AudioCallbackState {
-    let (mut cb, _) = callback();
-    let mut track = meta(1);
-    track.gain_db = None;
-    cb.handle_load_deck(DeckId::A, track, 48000, 2, 1.0, 0);
-    cb.atomics.deck_a_load_id.store(7, Ordering::SeqCst);
-    cb.atomics.deck_a_loaded_id.store(7, Ordering::SeqCst);
-    cb.deck_mgr.active_deck_mut().has_started_playing = true;
-    cb
-}
-
-#[test]
-fn late_analysis_cannot_change_an_already_audible_occurrence() {
-    let mut cb=analysis_callback();cb.handle_command(AudioCommand::AnalyzedGain{deck:DeckId::A,load_id:7,gain_db:-6.0206});
-    let deck=cb.deck_mgr.active_deck();assert_eq!(deck.norm_gain,1.0);assert!(deck.norm_fade.is_none());assert!(deck.meta.as_ref().unwrap().gain_db.is_none());
-}
-
-#[test]
-fn analysis_for_a_previous_load_cannot_change_a_replacement_or_override_plex_gain() {
-    let mut cb = analysis_callback();
-    for (id, gain) in [(6, -12.0), (7, f32::NAN), (7, f32::INFINITY)] {
-        cb.handle_command(AudioCommand::AnalyzedGain {
-            deck: DeckId::A,
-            load_id: id,
-            gain_db: gain,
-        });
-    }
-    assert_eq!(cb.deck_mgr.active_deck().norm_gain, 1.0);
-    assert!(cb
-        .deck_mgr
-        .active_deck()
-        .meta
-        .as_ref()
-        .unwrap()
-        .gain_db
-        .is_none());
-    cb.deck_mgr.active_deck_mut().meta.as_mut().unwrap().gain_db = Some(-3.0);
-    cb.handle_command(AudioCommand::AnalyzedGain {
-        deck: DeckId::A,
-        load_id: 7,
-        gain_db: -12.0,
-    });
-    assert_eq!(
-        cb.deck_mgr.active_deck().meta.as_ref().unwrap().gain_db,
-        Some(-3.0)
-    );
-}
-
-#[test]
-fn normalization_toggle_does_not_adopt_a_late_automatic_measurement() {
-    let mut cb=analysis_callback();cb.handle_command(AudioCommand::SetNormalization(false));
-    cb.handle_command(AudioCommand::AnalyzedGain{deck:DeckId::A,load_id:7,gain_db:-6.0206});
-    cb.handle_command(AudioCommand::SetNormalization(true));
-    assert_eq!(cb.deck_mgr.active_deck().norm_gain,1.0);assert!(cb.deck_mgr.active_deck().meta.as_ref().unwrap().gain_db.is_none());
-}
-
 #[test]
 fn shutdown_barrier_follows_actual_ends_for_paused_and_outgoing_decks_even_when_ui_queue_is_full() {
     let (mut cb, _events) = callback();

@@ -858,7 +858,7 @@ mod integration_tests {
         match playlists {
             Ok(playlist_list) => {
                 println!("Found {} playlists", playlist_list.len());
-                assert!(playlist_list.len() >= 0);
+
             }
             Err(e) => {
                 // May fail if section doesn't exist

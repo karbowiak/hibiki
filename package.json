@@ -55,7 +55,7 @@
     "@tabler/icons-react": "^3.49.0",
     "@tauri-apps/api": "^2.12.2",
     "@tauri-apps/plugin-notification": "^2.5.1",
-    "@tauri-apps/plugin-shell": "^2.4.1",
+    "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-updater": "^2.13.2",
     "butterchurn": "^2.6.7",
     "butterchurn-presets": "^2.4.7",

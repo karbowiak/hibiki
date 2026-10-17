@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { open } from "@tauri-apps/plugin-shell"
+import { openUrl as open } from "@tauri-apps/plugin-opener"
 import { useListenBrainzStore } from "./authStore"
 import { useMbidStore } from "../musicbrainz/mbidStore"
 

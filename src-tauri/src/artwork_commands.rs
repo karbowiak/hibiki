@@ -106,7 +106,7 @@ mod tests {
         let mut client = crate::plex::PlexClient::new(crate::plex::PlexClientConfig::default()).unwrap(); client.library_scope = "fixture-scope".into();
         let context = PlexRequestContext { connection_revision: 4, cache_scope: client.library_scope.clone() };
         let state = ArtworkInventoryState::default();
-        let dto = state.issue(&context, Inventory { baseline: "snapshot".into(), current: None, entries: vec![crate::plex::artwork_inventory::InventoryEntry {
+        let dto = state.issue(&context, Inventory { baseline: "snapshot".into(), entries: vec![crate::plex::artwork_inventory::InventoryEntry {
             id: "candidate".into(), key: "metadata://private-key".into(), preview: Some("http://localhost:32400/library/metadata/1/posters/image".into()), provider: "Plex".into(), selected: false }] }).unwrap();
         let source = dto.candidates[0].source_url.as_ref().unwrap();
         assert!(!serde_json::to_string(&dto).unwrap().contains("private-key"));

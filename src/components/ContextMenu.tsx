@@ -1,7 +1,7 @@
 import { loadAlbumTracks } from "../lib/albumContents"
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useLocation } from "wouter"
-import { open } from "@tauri-apps/plugin-shell"
+import { openUrl as open } from "@tauri-apps/plugin-opener"
 import { useShallow } from "zustand/react/shallow"
 import {
   useContextMenuStore,

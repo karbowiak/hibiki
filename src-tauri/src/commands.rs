@@ -14,7 +14,7 @@ use crate::plex::lyrics::LyricLine;
 use crate::plex::models::{Album, Artist};
 use crate::plex::{
     Hub, IdentityResponse, Level, LibrarySection, PlayQueue, Playlist, PlexClient,
-    PlexClientConfig, PlexMedia, PlexSettings, ServerInfo, Tag, Track,
+    PlexClientConfig, PlexMedia, ServerInfo, Tag, Track,
 };
 
 // ---------------------------------------------------------------------------

@@ -882,42 +882,6 @@ impl AudioCallbackState {
                     self.compute_and_set_schedule();
                 }
             }
-            AudioCommand::AnalyzedGain {
-                deck,
-                load_id,
-                gain_db,
-            } => {
-                let (owner, loaded) = match deck {
-                    DeckId::A => (&self.atomics.deck_a_load_id, &self.atomics.deck_a_loaded_id),
-                    DeckId::B => (&self.atomics.deck_b_load_id, &self.atomics.deck_b_loaded_id),
-                };
-                if !gain_db.is_finite()
-                    || owner.load(Ordering::Acquire) != load_id
-                    || loaded.load(Ordering::Acquire) != load_id
-                {
-                    return;
-                }
-                let target = self.deck_mgr.deck_mut(deck);
-                if !target.loaded || target.has_started_playing {
-                    return;
-                }
-                let Some(meta) = target.meta.as_mut() else {
-                    return;
-                };
-                if meta.gain_db.is_some_and(|gain| gain.is_finite()) {
-                    return;
-                }
-                meta.gain_db = Some(gain_db);
-                let gain = if self.normalization_enabled {
-                    loudness::replay_gain(Some(gain_db))
-                } else {
-                    1.0
-                };
-                target.set_normalization_gain(gain);
-                if !self.is_crossfading {
-                    self.compute_and_set_schedule();
-                }
-            }
             AudioCommand::UpdateCrossfadeSettings(settings) => {
                 self.crossfade_settings = settings;
                 // Recompute schedule if both decks loaded

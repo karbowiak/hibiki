@@ -387,6 +387,7 @@ impl ImageCache {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn read(&self, ticket: &Ticket, key: &str) -> Option<Vec<u8>> {
         self.read_with_proof(ticket, key).map(|(bytes, _)| bytes)
     }

@@ -16,7 +16,7 @@ impl ArtworkRole {
 }
 
 pub struct InventoryEntry { pub id: String, pub key: String, pub preview: Option<String>, pub provider: String, pub selected: bool }
-pub struct Inventory { pub baseline: String, pub current: Option<String>, pub entries: Vec<InventoryEntry> }
+pub struct Inventory { pub baseline: String, pub entries: Vec<InventoryEntry> }
 pub struct PreparedArtworkEdit { pub item_id: i64, pub section_id: i64, pub kind: MetadataEditKind, pub role: ArtworkRole,
     pub inventory: Inventory, choice: Option<String>, upload: Option<Vec<u8>> }
 fn fingerprint(values: &Value) -> String { format!("{:x}", Sha256::digest(values.to_string().as_bytes())) }
@@ -112,7 +112,7 @@ impl PlexClient {
         let selected: Vec<_> = entries.iter().filter(|e| e.selected).map(|e| e.id.as_str()).collect();
         let locks = item.get("Field").and_then(Value::as_array).map(|fields| fields.iter().filter(|f| f.get("name").and_then(Value::as_str) == Some(role.field())).cloned().collect::<Vec<_>>()).unwrap_or_default();
         let baseline = fingerprint(&serde_json::json!([current, selected, locks]));
-        Ok(Inventory { baseline, current, entries })
+        Ok(Inventory { baseline, entries })
     }
     pub async fn prepare_artwork_edit(&self, section_id: i64, item_id: i64, kind: MetadataEditKind, role: ArtworkRole,
         baseline: &str, choice: Option<String>, upload: Option<Vec<u8>>) -> Result<PreparedArtworkEdit> {

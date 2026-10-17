@@ -97,7 +97,10 @@ pub(crate) fn decode_json<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result
             .context("Missing Plex text-recovery envelope")?;
         append_recovery(object, remaining);
     }
-    tracing::warn!(
+    // Recovered text is usable and keeps its byte provenance. Strict JSON,
+    // identity and credential failures still return errors above; routine
+    // successful recovery should not warn on every page refresh.
+    tracing::debug!(
         fields = count,
         "Plex returned malformed UTF-8 value text; native original-byte provenance retained"
     );
@@ -302,19 +305,6 @@ fn parse_page(
 }
 
 impl PlexClient {
-    /// Full native levels, preserving unknown fields. A 404 is absence; an
-    /// outage/rate limit must remain retryable instead of poisoning the queue.
-    pub async fn catalogue_levels(&self, stream: i64) -> Result<Option<Value>> {
-        anyhow::ensure!(stream>0,"Invalid Plex audio stream");
-        let response=self.client.get(self.build_url(&format!("/library/streams/{stream}/levels")))
-            .header("X-Plex-Token",token_header(&self.token)).header("Accept","application/json")
-            .send().await.map_err(request_error)?;
-        if response.status()==reqwest::StatusCode::NOT_FOUND { return Ok(None); }
-        let raw:Value=response.bounded_plex_json(16*1024*1024).await?;
-        let container=raw.get("MediaContainer").context("Missing Plex waveform container")?.clone();
-        crate::db::catalogue::validate_levels(&container).map_err(|_| anyhow::anyhow!("Invalid Plex waveform samples"))?;
-        Ok(Some(container))
-    }
     /// Path and filters are native constants, never renderer-provided URLs.
     pub async fn catalogue_page(
         &self,
@@ -387,42 +377,6 @@ impl PlexClient {
         Ok(page)
     }
 
-    /// A genuine authenticated 404 is distinct from transport/JSON failures.
-    /// Callers still verify the owning native account, server and section.
-    pub async fn catalogue_lookup(&self, id: i64, playlist: bool) -> Result<Option<Value>> {
-        anyhow::ensure!(id > 0, "Invalid catalogue identity");
-        let path = if playlist {
-            format!("/playlists/{id}")
-        } else {
-            format!(
-                "/library/metadata/{id}?includeGuids=1&includeLyrics=1&resolveTags=1&skipRefresh=1"
-            )
-        };
-        let response = self
-            .client
-            .get(self.build_url(&path))
-            .header("X-Plex-Token", token_header(&self.token))
-            .header("Accept", "application/json")
-            .send()
-            .await
-            .map_err(request_error)
-            .context("Catalogue lookup failed")?;
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        let raw: Value = response
-            .bounded_plex_json(16 * 1024 * 1024)
-            .await
-            .context("Catalogue lookup is unavailable or invalid")?;
-        let items = raw["MediaContainer"]["Metadata"]
-            .as_array()
-            .context("Missing catalogue lookup records")?;
-        anyhow::ensure!(
-            items.len() == 1 && number(&items[0]["ratingKey"]) == Some(id),
-            "Plex returned a different catalogue item"
-        );
-        Ok(Some(items[0].clone()))
-    }
     pub async fn catalogue_details(&self, ids: &[i64]) -> Result<Vec<Value>> {
         anyhow::ensure!(
             !ids.is_empty() && ids.len() <= 50 && ids.iter().all(|id| *id > 0),

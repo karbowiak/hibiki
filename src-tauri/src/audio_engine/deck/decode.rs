@@ -222,9 +222,10 @@ pub fn seek_to_ms(setup: &mut DecoderSetup, position_ms: u64) -> Result<()> {
             "AAC has no decodable initialization packets"
         );
     }
-    // AAC overlap/SBR filters and Opus prediction need previous packets after
-    // reset. Decode 160 ms of history on the worker and discard it before
-    // publishing PCM. This also exceeds Opus's mandatory 80 ms preroll.
+    // AAC/MP3 overlap filters and Opus prediction need previous packets after
+    // reset. MP3's bit-reservoir references alone do not rebuild its synthesis
+    // history. Decode 160 ms on the worker and discard it before publishing PCM;
+    // this also exceeds Opus's mandatory 80 ms preroll.
     let seek_position_ms = if setup
         .aac_seek_from_start
         .as_ref()
@@ -235,7 +236,7 @@ pub fn seek_to_ms(setup: &mut DecoderSetup, position_ms: u64) -> Result<()> {
         0
     } else if matches!(
         setup.decoder.codec_params().codec,
-        codecs::CODEC_TYPE_OPUS | codecs::CODEC_TYPE_AAC
+        codecs::CODEC_TYPE_OPUS | codecs::CODEC_TYPE_AAC | codecs::CODEC_TYPE_MP3
     ) {
         position_ms.saturating_sub(160)
     } else {
@@ -1036,6 +1037,30 @@ pub(crate) mod tests {
                     error < 1e-3,
                     "Opus seek {position} differed from the requested PCM position: {error}"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn mp3_cold_and_repeated_seeks_match_linear_playback() {
+        let data = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/audio/mp3-stereo.mp3"
+        )).to_vec();
+        let mut setup = probe_audio(data.clone()).unwrap();
+        let original = decode_all(&mut setup).unwrap();
+        for cold in [true, false] {
+            for position in [333, 720, 1250, 0] {
+                if cold { setup = probe_audio(data.clone()).unwrap(); }
+                seek_to_ms(&mut setup, position).unwrap();
+                let actual = decode_batch(&mut setup, 4096).unwrap();
+                assert!(!actual.is_empty());
+                let start = (position as f64 * f64::from(setup.sample_rate) / 1000.0).round() as usize
+                    * setup.channels as usize;
+                let expected = &original[start..start + actual.len()];
+                let error = actual.iter().zip(expected)
+                    .map(|(&a, &b)| f64::from((a - b).abs())).sum::<f64>() / actual.len() as f64;
+                assert!(error < 1e-3, "MP3 seek {position}, cold={cold}: mean PCM error {error}");
+                assert!(!setup.had_decode_errors && !setup.aborted);
             }
         }
     }

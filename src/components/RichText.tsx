@@ -1,4 +1,4 @@
-import { open } from "@tauri-apps/plugin-shell"
+import { openUrl as open } from "@tauri-apps/plugin-opener"
 import { isHttpUrl, sanitizePlexHtml } from "../lib/richText"
 
 interface Props {
