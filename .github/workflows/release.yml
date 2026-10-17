@@ -91,7 +91,7 @@ jobs:
             }
             const existing = matching.find(release => release.draft)
             if (existing) {
-              if (hasNotes) await github.rest.repos.updateRelease({ ...context.repo, release_id: existing.id, body })
+              if (hasNotes) await github.rest.repos.updateRelease({ ...context.repo, release_id: existing.id, tag_name: tag, draft: true, body })
               return existing.id
             }
             if (process.env.PUBLISH_ONLY === 'true') {
@@ -323,6 +323,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               release_id: process.env.release_id,
+              tag_name: process.env.RELEASE_TAG,
               draft: false,
               prerelease: false
             })

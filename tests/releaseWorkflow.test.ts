@@ -87,6 +87,7 @@ test("publication retries retain signature and relocated-AppImage checks and res
   expect(bytes).toBeGreaterThan(signed)
   expect(final).toBeGreaterThan(bytes)
   expect(publish.steps[signed].with.script).toContain("await assertArtifacts(")
+  expect(publish.steps[final].with.script).toContain("tag_name: process.env.RELEASE_TAG")
   const run=publish.steps[bytes].run
   expect(run.indexOf("chmod u+x")).toBeLessThan(run.indexOf("python3 scripts/check-appimage.py"))
 })
@@ -156,7 +157,7 @@ test("versioned release notes populate new drafts and refresh matching drafts on
   expect(fresh.calls).toEqual([{ owner: "owner", repo: "repo", tag_name: "v0.6.0", name: "Hibiki v0.6.0", body, draft: true, prerelease: false }])
   const retry = mock([{ id: 42, tag_name: "v0.6.0", draft: true }])
   expect(await execute(retry.github, "0.6.0")).toBe(42)
-  expect(retry.calls).toEqual([{ owner: "owner", repo: "repo", release_id: 42, body }])
+  expect(retry.calls).toEqual([{ owner: "owner", repo: "repo", release_id: 42, tag_name: "v0.6.0", draft: true, body }])
   const published = mock([{ id: 42, tag_name: "v0.6.0", draft: false }])
   await expect(execute(published.github, "0.6.0")).rejects.toThrow("already published")
   expect(published.calls).toEqual([])
