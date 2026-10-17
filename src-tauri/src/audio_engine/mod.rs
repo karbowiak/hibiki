@@ -799,6 +799,7 @@ fn handle_play(
             }
             let mut resolved_meta = meta.clone();
             resolved_meta.gain_db = gain_db;
+            resolved_meta.source_format = result.source_format;
             let norm_gain = if norm_enabled {
                 loudness::replay_gain(gain_db)
             } else {
@@ -959,6 +960,7 @@ fn handle_preload(
             }
             let mut resolved_meta = meta.clone();
             resolved_meta.gain_db = gain_db;
+            resolved_meta.source_format = result.source_format;
             let norm_gain = if norm_enabled {
                 loudness::replay_gain(gain_db)
             } else {
@@ -1302,6 +1304,7 @@ fn spawn_background_decode(
 
 /// Result of fetch + incremental decode.
 struct IncrementalDecodeResult {
+    source_format: Option<types::SourceAudioFormat>,
     cached_stamp: Option<cache::CacheStamp>,
     spool: Option<Arc<deck::streaming::SharedBuffer>>,
     initial_samples: Vec<f32>,
@@ -1465,6 +1468,7 @@ fn decode_initial_batch(
 
     setup.output_frames_decoded = (samples.len() / out_channels.max(1) as usize) as u64;
     Ok(IncrementalDecodeResult {
+        source_format: Some(setup.source_format()),
         cached_stamp: None,
         spool: None,
         initial_samples: samples,
@@ -1629,6 +1633,7 @@ mod control_tests {
                     end_ramp: None,
                     labels: None,
                     reporting_binding: None,
+                    source_format: None,
                 },
             })
             .unwrap()
@@ -1897,6 +1902,7 @@ mod control_tests {
                 end_ramp: None,
                 labels: None,
                 reporting_binding: None,
+                source_format: None,
             };
             std::thread::scope(|scope| {
                 let playing = scope.spawn(|| {
@@ -1987,6 +1993,7 @@ mod control_tests {
             atomics.deck_b_load_id.clone(),
         );
         let decoded = IncrementalDecodeResult {
+            source_format: None,
             cached_stamp: None,
             spool: Some(deck::streaming::SharedBuffer::new(None).unwrap()),
             initial_samples: vec![1.0, 1.0],
@@ -2009,6 +2016,7 @@ mod control_tests {
             end_ramp: None,
             labels: None,
             reporting_binding: None,
+            source_format: None,
         };
         assert_eq!(
             prepare_gain_db(
@@ -2098,6 +2106,7 @@ mod control_tests {
             end_ramp: None,
             labels: None,
             reporting_binding: None,
+            source_format: None,
         };
         assert_eq!(
             prepare_gain_db(
@@ -2140,6 +2149,7 @@ mod control_tests {
             .unwrap();
         spool.finish();
         let decoded = IncrementalDecodeResult {
+            source_format: None,
             cached_stamp: None,
             spool: Some(spool),
             initial_samples: vec![1.0, 1.0],
@@ -2162,6 +2172,7 @@ mod control_tests {
             end_ramp: None,
             labels: None,
             reporting_binding: None,
+            source_format: None,
         };
         assert!(prepare_gain_db(
             &meta,
@@ -2219,6 +2230,7 @@ mod control_tests {
             end_ramp: None,
             labels: None,
             reporting_binding: None,
+            source_format: None,
         };
         assert!(prepare_gain_db(
             &meta,
@@ -2274,7 +2286,7 @@ mod control_tests {
             let atomics=Arc::new(SharedAtomics::new());atomics.request_epoch.store(1,Ordering::SeqCst);let request=PlaybackRequest::new(1,atomics.request_epoch.clone(),atomics.deck_b_load_id.clone());atomics.deck_b_loaded_id.store(request.load_id,Ordering::SeqCst);
             let analysis=LoudnessAnalysis::start(atomics.clone(),Arc::new(AtomicBool::new(true))).unwrap();
             let (commands,received)=crossbeam_channel::unbounded();let(samples,_)=crossbeam_channel::unbounded();let(events,_)=crossbeam_channel::unbounded();let rt=tokio::runtime::Runtime::new().unwrap();
-            let meta=TrackMeta{rating_key:42,duration_ms,parent_key:String::new(),album_playback:false,gain_db:None,skip_crossfade:true,start_ramp:None,end_ramp:None,labels:None,reporting_binding:None};
+            let meta=TrackMeta{rating_key:42,duration_ms,parent_key:String::new(),album_playback:false,gain_db:None,skip_crossfade:true,start_ramp:None,end_ramp:None,labels:None,reporting_binding:None,source_format:None};
             handle_play(&source,&meta,DeckId::B,&commands,&samples,&events,rt.handle(),&atomics,&cache,Some(&analysis),&CrossfadeSettings::default(),44100,2,&request);
             let command=received.recv_timeout(Duration::from_secs(2)).unwrap();
             if valid {
@@ -2698,6 +2710,7 @@ mod control_tests {
             end_ramp: None,
             labels: None,
             reporting_binding: None,
+            source_format: None,
         };
         let play_epoch = engine
             .send(Command::Play {

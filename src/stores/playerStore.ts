@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event"
 import { fireAndForget } from "../lib/async"
 import { PlaybackKeyLookup } from "../audio/playbackKeyLookup"
 import { PlaybackJournal, startedQueueIndex } from "../audio/playbackJournal"
+import type { SourceAudioFormat } from "../audio/playbackJournal"
 import type { MusicProvider } from "../providers/types"
 import { dispatchPlaybackWhenReady } from "../audio/playbackRequests"
 import { isAlbumPlayback, playbackAlbumKey, preparedReplayGain } from "../audio/playbackContext"
@@ -40,6 +41,7 @@ export const DJ_MODES: { key: DjMode; name: string; desc: string }[] = [
 
 interface PlayerState {
   currentTrack: MusicTrack | null
+  playbackFormat: { trackId: string; playbackId: number; format: SourceAudioFormat } | null
   transitionInfo: TransitionInfo | null
   queue: MusicTrack[]
   queueIndex: number
@@ -819,7 +821,7 @@ function _onTrackBecomesActive(track: MusicTrack, index: number, get: () => Play
   _djInsertRequest = null
   const isCurrent = () => active === _activeTrackGeneration && getProvider() === provider && get().currentTrack?.id === track.id
   const isPodcast = _isPodcastTrack(track)
-  set({ currentTrack: track, transitionInfo: null, queueIndex: index, isPlaying: _playbackDesired, positionMs: 0,
+  set({ currentTrack: track, playbackFormat: null, transitionInfo: null, queueIndex: index, isPlaying: _playbackDesired, positionMs: 0,
         waveformLevels: null, lyricsLines: null })
   _lastTimelineReportedAt = 0
   _transcodeRetriedTrackId = null
@@ -979,6 +981,7 @@ export const usePlayerStore = create<PlayerState>()(
   safeLocalPersist(
     (set, get) => ({
   currentTrack: null,
+  playbackFormat: null,
   transitionInfo: null,
   queue: [],
   queueIndex: 0,
@@ -1339,6 +1342,7 @@ export const usePlayerStore = create<PlayerState>()(
     // Reset all playback state
     set({
       currentTrack: null,
+      playbackFormat: null,
       transitionInfo: null,
       albumPlaybackId: null,
       queue: [],
@@ -1727,6 +1731,7 @@ export const usePlayerStore = create<PlayerState>()(
           currentTrack: { ...s.currentTrack!, duration: track.duration },
           queue: s.queue.map((item, i) => i === index ? { ...item, duration: track.duration } : item),
         }))
+        set({ playbackFormat: event.source_format ? { trackId: track.id, playbackId: event.playback_id, format: event.source_format } : null })
         _onTrackAudiblyStarted(track, provider, event.playback_id)
         if (resumePosition > 0) {
           set({ positionMs: resumePosition })

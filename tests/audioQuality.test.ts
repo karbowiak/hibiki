@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test"
-import { formatAudioQuality } from "../src/lib/audioQuality"
+import {
+  formatAudioQuality,
+  playbackAudioQuality,
+} from "../src/lib/audioQuality"
 
 test("lossless quality keeps source depth and exact useful sample-rate precision", () => {
   expect(
@@ -44,4 +47,42 @@ test("missing or invalid audio fields leave a useful fallback", () => {
     })
   ).toBe("FLAC")
   expect(formatAudioQuality({ samplingRate: 44100 })).toBe("44.1kHz")
+})
+
+test("a native transcode never inherits the original file's codec, depth or bitrate", () => {
+  const original = {
+    codec: "FLAC",
+    bitDepth: 24,
+    samplingRate: 96000,
+    bitrate: 2400,
+  }
+  expect(
+    formatAudioQuality(
+      playbackAudioQuality(original, {
+        codec: "MP3",
+        bit_depth: 32,
+        sample_rate: 44100,
+        channels: 2,
+      })
+    )
+  ).toBe("MP3 44.1kHz")
+  expect(
+    formatAudioQuality(
+      playbackAudioQuality(original, {
+        codec: "FLAC",
+        bit_depth: 16,
+        sample_rate: 48000,
+        channels: 2,
+      })
+    )
+  ).toBe("FLAC 16bit/48kHz")
+  expect(
+    formatAudioQuality(
+      playbackAudioQuality(
+        { codec: "MP3", bitrate: 320 },
+        { codec: "MP3", bit_depth: 32, sample_rate: 48000, channels: 2 }
+      )
+    )
+  ).toBe("MP3 320kbps/48kHz")
+  expect(playbackAudioQuality(original, null)).toBe(original)
 })

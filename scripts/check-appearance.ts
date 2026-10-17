@@ -12,6 +12,37 @@ const root = resolve(import.meta.dir, "..")
 const output = await mkdtemp(join(tmpdir(), "hibiki-appearance-"))
 const artifacts = resolve(root, ".tmp/appearance-checks")
 let artworkGate: Promise<void> | null = null
+async function checkPlaybackQuality(page: Page, name: string) {
+  for (const [width, height, theme] of [[1940, 1214, "dark"], [1000, 760, "light"]] as const) {
+    await page.setViewportSize({ width, height })
+    await page.evaluate(({ theme }) => {
+      ;(window as any).fixtureAppearance.apply({ theme })
+      ;(window as any).fixtureAppearance.panel(null)
+      ;(window as any).fixtureAppearance.lyricsPreview()
+    }, { theme })
+    const info = page.getByRole('button', { name: 'Track info', exact: true })
+    const transport = page.getByRole('button', { name: 'Pause', exact: true }).or(page.getByRole('button', { name: 'Play', exact: true })).last()
+    const before = await transport.boundingBox()
+    for (const [format, label] of [
+      [{ codec: 'FLAC', bit_depth: 16, sample_rate: 44100, channels: 2 }, 'FLAC 16bit/44.1kHz'],
+      [{ codec: 'FLAC', bit_depth: 24, sample_rate: 192000, channels: 2 }, 'FLAC 24bit/192kHz'],
+      [{ codec: 'MP3', bit_depth: 32, sample_rate: 48000, channels: 2 }, 'MP3 48kHz'],
+    ] as const) {
+      await page.evaluate(value => (window as any).fixtureAppearance.playingFormat(value), format)
+      await info.locator('span[title]').waitFor()
+      assert.equal(await info.locator('span[title]').getAttribute('title'), label)
+      const now = await transport.boundingBox()
+      assert.ok(now && before && Math.abs(now.x - before.x) < 1, `${name}/${width}: quality text moved transport`)
+    }
+    await info.click()
+    const panel = page.getByRole('dialog', { name: 'Track info', exact: true })
+    await panel.getByText('Playing format', { exact: true }).waitFor()
+    await panel.getByText('MP3 48kHz', { exact: true }).waitFor()
+    await page.screenshot({ path: join(artifacts, `${name}-${width}-quality-format.png`) })
+    await page.keyboard.press('Escape')
+    assert.equal(await info.evaluate(e => e === document.activeElement), true)
+  }
+}
 async function checkTrackRowLayout(page: Page, name: string) {
   for (const [width, theme] of [[1440, "dark"], [1000, "light"]] as const) {
     await page.setViewportSize({ width, height: 900 })
@@ -618,6 +649,12 @@ try {
         `${origin}/tests/fixtures/libraryLayout/index.html?appearance=1&player=1&discovery=1${process.argv.includes("--album-hover-only") ? "&virtual=1" : ""}`
       )
       await page.waitForFunction(() => (window as any).visualFixtureReady)
+      if (process.argv.includes('--quality-only')) {
+        await checkPlaybackQuality(page, name)
+        assert.deepEqual(errors, [], `${name}: renderer errors`)
+        console.log(`${name}: active source format, stable playback controls and track info passed`)
+        continue
+      }
       if (process.argv.includes('--album-hover-only')) {
         await checkTrackRowLayout(page, name)
         assert.deepEqual(errors, [], `${name}: renderer errors`)

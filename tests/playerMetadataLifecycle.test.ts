@@ -1250,3 +1250,22 @@ test("custom positive provider IDs keep pending play/preload identity through qu
   audioCallbacks.onTrackStarted({ playback_id: ++playbackId, rating_key: preloadKey, duration_ms: next.duration })
   expect(state().currentTrack?.id).toBe("opaque-b")
 })
+
+test("active decoder format follows the accepted native occurrence and clears on selection", async () => {
+  const p = provider("format-test")
+  useProviderStore.getState().setProvider(p)
+  const first = source("4401", { codec: "FLAC", bitDepth: 24, samplingRate: 96000 })
+  const second = source("4402")
+  await state().initAudioEvents()
+  await state().playTrack(first, [first, second])
+  const id = ++playbackId
+  const format = { codec: "MP3", bit_depth: null, sample_rate: 44100, channels: 2 }
+  audioCallbacks.onTrackStarted({ playback_id: id, rating_key: 4401, duration_ms: first.duration, source_format: format })
+  expect(state().playbackFormat).toEqual({ trackId: "4401", playbackId: id, format })
+  expect(state().currentTrack?.codec).toBe("FLAC")
+  await state().playTrack(second, [first, second])
+  expect(state().playbackFormat).toBeNull()
+  // A repeated/retired start cannot bring the old format back.
+  audioCallbacks.onTrackStarted({ playback_id: id, rating_key: 4401, duration_ms: first.duration, source_format: format })
+  expect(state().playbackFormat).toBeNull()
+})

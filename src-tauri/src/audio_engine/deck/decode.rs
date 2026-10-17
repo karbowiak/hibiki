@@ -70,6 +70,17 @@ pub struct DecoderSetup {
 }
 
 impl DecoderSetup {
+    pub(in crate::audio_engine) fn source_format(&self) -> super::super::types::SourceAudioFormat {
+        let parameters = self.decoder.codec_params();
+        super::super::types::SourceAudioFormat {
+            codec: codec_type_name(parameters.codec),
+            // Encoded-stream parameters, never SampleBuffer<f32>'s precision.
+            bit_depth: parameters.bits_per_sample.filter(|bits| *bits > 0 && *bits <= 64),
+            sample_rate: self.sample_rate,
+            channels: self.channels,
+        }
+    }
+
     pub(in crate::audio_engine) fn attach_cached_file(
         &mut self,
         cache: std::sync::Arc<super::super::cache::AudioCache>,
@@ -429,13 +440,24 @@ fn codec_type_name(ct: codecs::CodecType) -> &'static str {
         codecs::CODEC_TYPE_OPUS => "Opus",
         codecs::CODEC_TYPE_VORBIS => "Vorbis",
         codecs::CODEC_TYPE_ALAC => "ALAC",
-        _ => "other",
+        _ => CODEC_REGISTRY.get_codec(ct).map_or("Unknown", |codec| codec.short_name),
     }
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn source_format_retains_encoded_precision_instead_of_the_float_decode_buffer() {
+        let mut setup = probe_audio(generate_test_wav(44100, 2, 0.1)).unwrap();
+        assert!(!decode_batch(&mut setup, 512).unwrap().is_empty());
+        let format = setup.source_format();
+        assert_eq!(format.bit_depth, Some(16));
+        assert_eq!(format.sample_rate, 44100);
+        assert_eq!(format.channels, 2);
+        assert!(format.codec.to_lowercase().contains("pcm"));
+    }
 
     #[test]
     fn late_cached_eof_is_incomplete_and_discards_only_the_decoded_revision() {

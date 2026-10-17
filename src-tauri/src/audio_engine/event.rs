@@ -35,6 +35,7 @@ pub enum EngineEvent {
         playback_id: u64,
         rating_key: i64,
         duration_ms: u64,
+        source_format: Option<super::types::SourceAudioFormat>,
     },
     TrackEnded {
         request_id: u64,

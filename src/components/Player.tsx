@@ -15,7 +15,7 @@ import { useAudioSettingsStore } from "../stores/audioSettingsStore"
 import { useVisualizerStore } from "../stores/visualizerStore"
 import { engine } from "../audio/RustAudioEngine"
 import { formatMs } from "../lib/formatters"
-import { formatAudioQuality } from "../lib/audioQuality"
+import { formatAudioQuality, playbackAudioQuality } from "../lib/audioQuality"
 import { IconBlockquote, IconZzz, IconActivity, IconMaximize, IconAdjustments, IconPlaylist, IconVolume, IconVolume2, IconVolumeOff, IconHeadphones, IconMusic } from "@tabler/icons-react"
 import { useCapability } from "../hooks/useCapability"
 import { useLongPress } from "../hooks/useLongPress"
@@ -262,6 +262,7 @@ function RadioPlayerBar() {
 }
 
 export function Player() {
+  const playbackFormat = usePlayerStore(state => state.playbackFormat)
   const backgroundArtworkEnabled = useArtworkAppearanceStore(state => state.backgroundArtworkEnabled)
   useEasterEggs()
   const vinylSpin = useEasterEggStore(s => s.vinylSpin)
@@ -509,7 +510,8 @@ export function Player() {
     (!contextName || contextName !== currentTrack.albumName)
   )
 
-  const mediaLabel = currentTrack ? formatAudioQuality(currentTrack) : null
+  const mediaLabel = currentTrack ? formatAudioQuality(playbackAudioQuality(currentTrack,
+    playbackFormat?.trackId === currentTrack.id ? playbackFormat.format : null)) : null
 
   // Short DJ name (strip "DJ " prefix) for inline display
   const djShortName = djMode ? DJ_MODES.find(d => d.key === djMode)?.name.replace("DJ ", "") ?? djMode : null
@@ -796,6 +798,8 @@ export function Player() {
                   )}
                 </button>
 
+                {currentTrack && <FavoriteButton key={currentTrack.id} track={currentTrack} size={18} className="h-8 w-8 rounded-full" />}
+
                 {/* Track info — plain text quality label, clickable */}
                 {currentTrack && (
                   <PlayerPopover
@@ -810,7 +814,6 @@ export function Player() {
                     {(close) => <TrackInfoPanel onClose={close} />}
                   </PlayerPopover>
                 )}
-                {currentTrack && <FavoriteButton key={currentTrack.id} track={currentTrack} size={18} className="h-8 w-8 rounded-full" />}
 
                 </div>
               </div>

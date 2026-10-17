@@ -49,6 +49,15 @@ impl DeckId {
     }
 }
 
+/// Encoded input format; copied without allocation into playback events.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq)]
+pub struct SourceAudioFormat {
+    pub codec: &'static str,
+    pub bit_depth: Option<u32>,
+    pub sample_rate: u32,
+    pub channels: u16,
+}
+
 /// Metadata for a track loaded into a deck.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,4 +76,7 @@ pub struct TrackMeta {
     pub labels: Option<crate::listening_history::TrackLabels>,
     #[serde(skip)]
     pub reporting_binding: Option<crate::listening_history::Binding>,
+    /// Trusted decoder input, populated on the preparation worker only.
+    #[serde(skip)]
+    pub source_format: Option<SourceAudioFormat>,
 }

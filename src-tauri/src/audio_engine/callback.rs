@@ -1473,6 +1473,7 @@ impl AudioCallbackState {
             playback_id: active.playback_id,
             rating_key: active.rating_key(),
             duration_ms: (active.duration_secs() as f64 * 1000.0).round() as u64,
+            source_format: active.meta.as_ref().and_then(|meta| meta.source_format),
         };
         if let Some(history) = self
             .history_tx

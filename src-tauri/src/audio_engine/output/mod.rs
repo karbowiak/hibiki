@@ -260,6 +260,7 @@ mod tests {
             end_ramp: None,
             labels: None,
             reporting_binding: None,
+            source_format: None,
         });
         atomics.set_state(EngineState::Playing);
         let (opened, openings) = bounded(4);

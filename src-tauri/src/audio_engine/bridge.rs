@@ -59,6 +59,7 @@ pub async fn audio_play(
                     end_ramp,
                     labels,
                     reporting_binding: Some(binding),
+                    source_format: None,
                 },
             })
         }).await
@@ -98,6 +99,7 @@ pub async fn audio_preload_next(
                     end_ramp,
                     labels,
                     reporting_binding: Some(binding),
+                    source_format: None,
                 },
             })
         }).await

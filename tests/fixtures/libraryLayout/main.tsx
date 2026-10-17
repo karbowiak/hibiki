@@ -547,6 +547,7 @@ async function setup() {
       dispatchEvent(new PopStateEvent("popstate"))
     },
     interactions: () => interactions,
+    playingFormat: (format: any) => usePlayerStore.setState({ playbackFormat: { trackId: usePlayerStore.getState().currentTrack!.id, playbackId: 1, format } }),
     trackInfo: (debug = false) => {
       useDebugStore.setState({ debugEnabled: debug })
       usePlayerStore.setState({ transitionInfo: {

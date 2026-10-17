@@ -612,6 +612,7 @@ fn meta(key: i64) -> TrackMeta {
         end_ramp: None,
         labels: None,
         reporting_binding: None,
+        source_format: None,
     }
 }
 

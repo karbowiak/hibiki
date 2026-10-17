@@ -1,7 +1,16 @@
+/** Native decoder input, before downmixing and resampling. */
+export interface SourceAudioFormat {
+  codec: string
+  bit_depth: number | null
+  sample_rate: number
+  channels: number
+}
+
 export interface TrackStarted {
   playback_id: number
   rating_key: number
   duration_ms: number
+  source_format?: SourceAudioFormat | null
 }
 
 export interface TrackEnded extends TrackStarted {
@@ -17,10 +26,18 @@ export class PlaybackJournal<T> {
   currentId: number | null = null
 
   start(event: TrackStarted, value: T, nowMs = Date.now()): boolean {
-    if (this.records.has(event.playback_id) || this.completed.has(event.playback_id)) return false
-    this.records.set(event.playback_id, { value, startedAtUnix: Math.floor(nowMs / 1000) })
+    if (
+      this.records.has(event.playback_id) ||
+      this.completed.has(event.playback_id)
+    )
+      return false
+    this.records.set(event.playback_id, {
+      value,
+      startedAtUnix: Math.floor(nowMs / 1000),
+    })
     this.currentId = event.playback_id
-    if (this.records.size > 64) this.records.delete(this.records.keys().next().value!)
+    if (this.records.size > 64)
+      this.records.delete(this.records.keys().next().value!)
     return true
   }
 
@@ -28,28 +45,42 @@ export class PlaybackJournal<T> {
     for (const id of this.records.keys()) this.completed.add(id)
     this.records.clear()
     this.currentId = null
-    while (this.completed.size > 64) this.completed.delete(this.completed.values().next().value!)
+    while (this.completed.size > 64)
+      this.completed.delete(this.completed.values().next().value!)
   }
 
   current(): T | null {
-    return this.currentId === null ? null : this.records.get(this.currentId)?.value ?? null
+    return this.currentId === null
+      ? null
+      : (this.records.get(this.currentId)?.value ?? null)
   }
 
-  finish(event: TrackEnded): { value: T; startedAtUnix: number; wasCurrent: boolean } | null {
+  finish(
+    event: TrackEnded
+  ): { value: T; startedAtUnix: number; wasCurrent: boolean } | null {
     const record = this.records.get(event.playback_id)
     if (!record) return null
     this.records.delete(event.playback_id)
     this.completed.add(event.playback_id)
-    if (this.completed.size > 64) this.completed.delete(this.completed.values().next().value!)
+    if (this.completed.size > 64)
+      this.completed.delete(this.completed.values().next().value!)
     const wasCurrent = this.currentId === event.playback_id
     if (wasCurrent) this.currentId = null
     return { ...record, wasCurrent }
   }
 }
 
-export function listenedEnough(durationMs: number, listenedMs: number): boolean {
-  return Number.isFinite(durationMs) && Number.isFinite(listenedMs) && durationMs > 0
-    && listenedMs > 0 && listenedMs >= Math.min(durationMs / 2, 240000)
+export function listenedEnough(
+  durationMs: number,
+  listenedMs: number
+): boolean {
+  return (
+    Number.isFinite(durationMs) &&
+    Number.isFinite(listenedMs) &&
+    durationMs > 0 &&
+    listenedMs > 0 &&
+    listenedMs >= Math.min(durationMs / 2, 240000)
+  )
 }
 
 export function canScrobble(durationMs: number, listenedMs: number): boolean {
@@ -57,8 +88,13 @@ export function canScrobble(durationMs: number, listenedMs: number): boolean {
 }
 
 /** An automatic transition advances even if adjacent entries are the same song. */
-export function startedQueueIndex(queueIds: string[], currentIndex: number, repeat: 0 | 1 | 2,
-  startedId: string, selectedId: string | null): number | null {
+export function startedQueueIndex(
+  queueIds: string[],
+  currentIndex: number,
+  repeat: 0 | 1 | 2,
+  startedId: string,
+  selectedId: string | null
+): number | null {
   if (selectedId !== null) return selectedId === startedId ? currentIndex : null
   let next = currentIndex + 1
   if (next >= queueIds.length && repeat === 2) next = 0

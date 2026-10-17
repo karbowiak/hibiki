@@ -6,6 +6,7 @@ import type { MusicTrack } from "../types/music"
 import { useTrackEnrichment } from "../hooks/useMetadataEnrichment"
 import { useDebugStore } from "../stores/debugStore"
 import { transitionRows } from "../audio/transitionInfo"
+import { formatAudioQuality, playbackAudioQuality } from "../lib/audioQuality"
 import "../styles/trackInfo.css"
 interface Props {
   onClose: () => void
@@ -13,6 +14,7 @@ interface Props {
 
 export default function TrackInfoPanel({ onClose }: Props) {
   const currentTrack = usePlayerStore(s => s.currentTrack)
+  const playbackFormat = usePlayerStore(s => s.playbackFormat)
   const provider = useProviderStore(s => s.provider)
   const transitionInfo = usePlayerStore(s => s.transitionInfo)
   const repeat = usePlayerStore(s => s.repeat)
@@ -79,6 +81,11 @@ export default function TrackInfoPanel({ onClose }: Props) {
   if (bitrate) rows.push(["Bitrate", `${bitrate} kbps`])
   if (channels) rows.push(["Channels", channels === 2 ? "Stereo" : channels === 1 ? "Mono" : `${channels}ch`])
   if (fileSize) rows.push(["File Size", formatSize(fileSize)])
+  if (playbackFormat?.trackId === track.id) {
+    const active = playbackFormat.format
+    rows.push(["Playing format", formatAudioQuality(playbackAudioQuality(track, active)) ?? "Unknown"])
+    rows.push(["Playing channels", active.channels === 2 ? "Stereo" : active.channels === 1 ? "Mono" : `${active.channels}ch`])
+  }
 
   // Loudness analysis status
   rows.push(["Loudness Analysis", hasGain || hasLoudness ? "Yes" : "No"])
