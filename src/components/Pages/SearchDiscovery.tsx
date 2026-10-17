@@ -19,8 +19,9 @@ import { prefetchAlbum, prefetchArtist } from "../../stores/metadataCache"
 import type { MusicItem, MusicPlaylist } from "../../types/music"
 import { MediaGrid } from "../shared/MediaGrid"
 import { MediaCard } from "../MediaCard"
-import { getMediaInfo, makeDragPayload } from "./Home"
-import { selectMix, shuffleTracks } from "./Mix"
+import { getMediaInfo, makeDragPayload } from "../../lib/mediaCardInfo"
+import { selectMix } from "../../lib/mixSelection"
+import { mixPlaybackSource, orderMixTracks } from "../../lib/mixOrder"
 
 function RecentTile({
   item,
@@ -84,13 +85,10 @@ export function SearchDiscovery() {
     void (async () => {
       try {
         if (provider.getMixTracksPage) {
-          await usePlayerStore.getState().playPagedTracks({ key: `mix:${item.providerKey}`, loadPage: (offset, limit) => provider.getMixTracksPage!(item.providerKey!, offset, limit) }, item.title, "/mix", true)
+          await usePlayerStore.getState().playPagedTracks(mixPlaybackSource(provider, item.providerKey!), item.title, "/mix")
           return
         }
-        const tracks = shuffleTracks(
-          await provider.getMixTracks!(item.providerKey!),
-          item.title
-        )
+        const tracks = orderMixTracks(await provider.getMixTracks!(item.providerKey!))
         if (!current()) return
         if (!tracks.length) {
           setPlayError(true)

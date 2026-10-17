@@ -27,6 +27,9 @@ const ui = create(() => ({
 const player = create(() => ({ playFromUri() {} }))
 const { useSearchStore } = await import("../../src/stores/searchStore")
 const library = create(() => ({
+  hubs: [],
+  recentlyAdded: [],
+  latestReleases: [],
   wsConnected: true,
   refreshAll: async () => {},
   invalidateCache() {},
@@ -97,6 +100,7 @@ async function unmount() {
 }
 try {
   if (scenario.startsWith("collection-")) {
+    if (scenario.endsWith("offline")) first.isOffline = true
     const kind = scenario.split("-")[1]!
     const field = kind === "hubs" ? "hubs" : "recentlyAdded"
     const timestamp = `_${field}FetchedAt`
@@ -112,8 +116,8 @@ try {
         return reply.promise
       },
     } as any)
-    mock.module("../../src/components/Pages/Home", () => ({
-      getMediaInfo: () => null,
+    mock.module("../../src/lib/mediaCardInfo", () => ({
+      getMediaInfo: (item: any) => ({ id: item.id, title: item.title, desc: "", thumb: null, isArtist: false, itemType: "album", href: `/album/${item.id}` }),
       makeDragPayload: () => null,
     }))
     const { HubPage } = await import("../../src/components/Pages/HubPage")
@@ -132,36 +136,42 @@ try {
     )
     assert.equal(pending.length, 1)
     assert.ok(document.querySelector('[role="status"]'))
-    const emptyMessage =
-      kind === "hubs"
-        ? "This collection is unavailable"
-        : "Nothing recently added"
+    const emptyMessage = "No music in this collection"
     assert.ok(!document.body.textContent?.includes(emptyMessage))
-    if (scenario.endsWith("provider")) {
-      const second = provider()
-      await act(async () => useProviderStore.getState().setProvider(second))
-      assert.equal(pending.length, 2)
-      assert.equal(pending[1]!.owner, second)
-      await act(async () => pending[0]!.reply.reject(new Error("retired")))
-      assert.ok(document.querySelector('[role="status"]'))
-      assert.ok(!document.querySelector('[role="alert"]'))
-    } else {
-      await act(async () => pending[0]!.reply.resolve())
-      assert.ok(document.querySelector('[role="alert"]'))
+    if (scenario.endsWith("offline")) {
+      await act(async () => {
+        library.setState({ recentlyAdded: [album("Saved offline album")], [timestamp]: 1 } as any)
+        pending[0]!.reply.resolve()
+      })
+      assert.ok(document.body.textContent?.includes("Saved offline album"))
       assert.ok(!document.body.textContent?.includes(emptyMessage))
-      await act(async () =>
-        document
-          .querySelector<HTMLButtonElement>('[role="alert"] button')!
-          .click()
-      )
-      assert.equal(pending.length, 2)
+    } else {
+      if (scenario.endsWith("provider")) {
+        const second = provider()
+        await act(async () => useProviderStore.getState().setProvider(second))
+        assert.equal(pending.length, 2)
+        assert.equal(pending[1]!.owner, second)
+        await act(async () => pending[0]!.reply.reject(new Error("retired")))
+        assert.ok(document.querySelector('[role="status"]'))
+        assert.ok(!document.querySelector('[role="alert"]'))
+      } else {
+        await act(async () => pending[0]!.reply.resolve())
+        assert.ok(document.querySelector('[role="alert"]'))
+        assert.ok(!document.body.textContent?.includes(emptyMessage))
+        await act(async () =>
+          document
+            .querySelector<HTMLButtonElement>('[role="alert"] button')!
+            .click()
+        )
+        assert.equal(pending.length, 2)
+      }
+      await act(async () => {
+        library.setState({ [timestamp]: 1 } as any)
+        pending[1]!.reply.resolve()
+      })
+      assert.ok(document.body.textContent?.includes(emptyMessage))
+      assert.ok(!document.querySelector('[role="alert"]'))
     }
-    await act(async () => {
-      library.setState({ [timestamp]: 1 } as any)
-      pending[1]!.reply.resolve()
-    })
-    assert.ok(document.body.textContent?.includes(emptyMessage))
-    assert.ok(!document.querySelector('[role="alert"]'))
   } else if (scenario === "library-provider") {
     const owners: any[] = []
     library.setState({
@@ -436,7 +446,7 @@ try {
           >
             Move occurrence
           </button>
-          {props.tracks.map((track: any) => (
+          {(props.paged?.loadedItems ?? props.tracks).map((track: any) => (
             <p key={track.playlistItemId}>{track.playlistItemId}</p>
           ))}
         </div>
@@ -499,21 +509,14 @@ try {
       moved: unknown[][] = []
     const movement = deferred<void>()
     let failLoad = scenario === "playlist-load"
-    const fetch = async (id: string) => {
+    const load = async (id: string, offset = 0, limit = 200) => {
       fetched.push(id)
-      const cache = (library.getState() as any).playlistItemsCache
-      library.setState({
-        currentPlaylist: playlists[id],
-        currentPlaylistId: id,
-        currentPlaylistItems: failLoad ? [] : (cache[id] ?? songs),
-        playlistItemsCache: failLoad
-          ? {}
-          : { ...cache, [id]: cache[id] ?? songs },
-        isLoading: false,
-        error: failLoad ? "Synthetic load failure" : null,
-      } as any)
+      if (failLoad) throw Error("Synthetic load failure")
+      return {items:songs.slice(offset,offset+limit),total:songs.length,offset}
     }
+    first.getPlaylistItems = load
     library.setState({
+      playlists: Object.values(playlists),
       currentPlaylist: null,
       currentPlaylistId: null,
       currentPlaylistItems: [],
@@ -522,7 +525,7 @@ try {
       isFetchingMore: false,
       error: null,
       playlistIsFullyLoaded: { "1": true, "2": true },
-      fetchPlaylistItems: fetch,
+      fetchPlaylistItems: () => { throw Error("The page must use only its windowed loader") },
       fetchMorePlaylistItems: async () => {},
       reorderPlaylistItems: (id: string, from: number, to: number) => {
         const items = [...(library.getState() as any).currentPlaylistItems]
@@ -541,7 +544,7 @@ try {
         const cache = { ...(library.getState() as any).playlistItemsCache }
         delete cache[id]
         library.setState({ playlistItemsCache: cache } as any)
-        if ((library.getState() as any).currentPlaylistId === id) void fetch(id)
+
       },
     } as any)
     first.movePlaylistItem = (...args: unknown[]) => {
@@ -551,6 +554,7 @@ try {
     const render = (id: string) =>
       act(() => root.render(<Playlist playlistId={id} />))
     await render("1")
+    assert.deepEqual(fetched,["1"],"opening a playlist reads its first page once")
     if (scenario === "playlist-smart-sync") {
       const sync = [
         ...document.querySelectorAll<HTMLButtonElement>("button"),
@@ -615,18 +619,15 @@ try {
       if (scenario === "reorder-route") await render("2")
       if (scenario === "reorder-provider") {
         playlists["1"] = { ...playlists["1"], title: "New library playlist" }
-        await act(() => useProviderStore.getState().setProvider(provider()))
+        const replacement = provider()
+        replacement.getPlaylistItems = load
+        await act(() => { library.setState({playlists:Object.values(playlists)} as any); useProviderStore.getState().setProvider(replacement) })
       }
       if (scenario === "reorder-unmount") await unmount()
       await act(async () => movement.reject(new Error("Move failed")))
       if (scenario === "reorder-recover") {
-        assert.deepEqual(invalidated, ["1"])
-        assert.deepEqual(
-          (library.getState() as any).currentPlaylistItems.map(
-            (song: any) => song.playlistItemId
-          ),
-          ["occurrence-one", "occurrence-two"]
-        )
+        assert.deepEqual(invalidated, [])
+        assert.ok(document.body.textContent!.includes("occurrence-one"))
         assert.ok(
           document
             .querySelector("[role=alert]")!
@@ -648,7 +649,6 @@ try {
           "late recovery must not invalidate or replace the new view"
         )
         if (scenario === "reorder-route") {
-          assert.equal((library.getState() as any).currentPlaylistId, "2")
           assert.ok(document.body.textContent!.includes("Second playlist"))
         }
         if (scenario === "reorder-provider")
@@ -819,7 +819,8 @@ try {
     mock.module("../../src/hooks/useContextMenu", () => ({
       useContextMenu: () => ({ handler: () => () => {} }),
     }))
-    mock.module("../../src/components/Pages/Home", () => ({
+    mock.module("../../src/lib/mediaCardInfo", () => ({
+      getMediaInfo: () => null,
       makeDragPayload: () => undefined,
     }))
     const { Search } = await import("../../src/components/Pages/Search")
@@ -881,9 +882,11 @@ try {
       await import("../../src/components/Pages/CreatePlaylist")
     const pending: ReturnType<typeof deferred<any>>[] = []
     const names: string[] = []
+    const selectedIds: string[][] = []
     library.setState({
-      createPlaylist: (name) => {
+      createPlaylist: (name, ids) => {
         names.push(name)
+        selectedIds.push(ids)
         const request = deferred<any>()
         pending.push(request)
         return request.promise
@@ -904,6 +907,7 @@ try {
       act(() =>
         root.render(
           <CreatePlaylist
+            itemIds={scenario === "playlist-items" ? ["1", "2", "1"] : undefined}
             onClose={() => {
               closed++
             }}
@@ -932,7 +936,18 @@ try {
       })
     await render()
     await name()
-    if (scenario === "playlist-followup") {
+    if (scenario === "playlist-items") {
+      await act(submit)
+      await act(async () => pending[0].reject(Error("Could not create playlist")))
+      assert.deepEqual(selectedIds, [["1", "2", "1"]])
+      assert.equal(created, 0)
+      assert.equal(document.querySelector("input")!.value, "  My playlist  ")
+      assert(document.querySelector("[role=alert]"))
+      await act(submit)
+      assert.deepEqual(selectedIds[1], ["1", "2", "1"], "retry retains the original songs")
+      await act(async () => pending[1].resolve({ id: "created" }))
+      assert.equal(created, 1)
+    } else if (scenario === "playlist-followup") {
       await act(submit)
       await act(async () => pending[0].resolve({ id: "created" }))
       assert.equal(created, 1)

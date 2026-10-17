@@ -1006,6 +1006,11 @@ pub struct Playlist {
 /// A hub (home screen recommendation)
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Hub {
+    /// Server-supplied destinations for expanding a shelf.
+    #[serde(default)]
+    pub key: Option<String>,
+    #[serde(rename(deserialize = "hubKey"), default)]
+    pub hub_key: Option<String>,
     /// Hub title
     #[serde(default)]
     pub title: String,

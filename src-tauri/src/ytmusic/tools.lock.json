@@ -1,0 +1,60 @@
+{
+  "ytDlpVersion": "2026.08.19",
+  "targets": {
+    "aarch64-apple-darwin": {
+      "ytDlp": {
+        "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_macos",
+        "sha256": "0f192b7ec147ab6288885d6351d9ab67367640029b4377576ef46dd79cf7b202"
+      },
+      "node": {
+        "url": "https://nodejs.org/dist/v24.22.0/node-v24.22.0-darwin-arm64.tar.gz",
+        "sha256": "6a9724d9b50a5f22b4816cded441b5a8d9ddae546191a5e5b7efa5a5e2ee26d5",
+        "member": "node-v24.22.0-darwin-arm64/bin/node"
+      }
+    },
+    "x86_64-apple-darwin": {
+      "ytDlp": {
+        "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_macos",
+        "sha256": "0f192b7ec147ab6288885d6351d9ab67367640029b4377576ef46dd79cf7b202"
+      },
+      "node": {
+        "url": "https://nodejs.org/dist/v24.22.0/node-v24.22.0-darwin-x64.tar.gz",
+        "sha256": "495e3f273c645f3c4677d438304cdfc701729ea5dec5728f5c8e76a2dece4b91",
+        "member": "node-v24.22.0-darwin-x64/bin/node"
+      }
+    },
+    "x86_64-unknown-linux-gnu": {
+      "ytDlp": {
+        "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_linux",
+        "sha256": "58162f9bfdc27458ea47bfcb311cf47028f17d8154a8bf7d689861d46399230a"
+      },
+      "node": {
+        "url": "https://nodejs.org/dist/v24.22.0/node-v24.22.0-linux-x64.tar.gz",
+        "sha256": "28ea0a438de9a13bd7891fd758eee6c7819ee8af5442dfd8d45bd65e56d4228c",
+        "member": "node-v24.22.0-linux-x64/bin/node"
+      }
+    },
+    "aarch64-unknown-linux-gnu": {
+      "ytDlp": {
+        "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_linux_aarch64",
+        "sha256": "b16e4dab368a816cd05d477d698a605a6ae87ccee1c8ffd38fa21d7254141fcc"
+      },
+      "node": {
+        "url": "https://nodejs.org/dist/v24.22.0/node-v24.22.0-linux-arm64.tar.gz",
+        "sha256": "b7e7991d5407815adfa74a2a9cd4db683552c8ce32ff4a295c22e972849c3f5d",
+        "member": "node-v24.22.0-linux-arm64/bin/node"
+      }
+    },
+    "x86_64-pc-windows-msvc": {
+      "ytDlp": {
+        "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp.exe",
+        "sha256": "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a"
+      },
+      "node": {
+        "url": "https://nodejs.org/dist/v24.22.0/win-x64/node.exe",
+        "sha256": "ba93f9a70bd86fce3ebbb39ec758501458453467aa92a34a0a3602d1e3fc2b9c"
+      }
+    }
+  },
+  "nodeVersion": "v24.22.0"
+}

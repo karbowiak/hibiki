@@ -38,6 +38,7 @@ export class WindowedPages<T> implements WindowedCollection<T> {
     }
   }
   snapshot = () => this.revision
+  get observed() { return this.listeners.size > 0 }
   private publish() {
     this.loading = this.pending.size > 0
     this.revision++

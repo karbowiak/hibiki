@@ -4,10 +4,23 @@ const DEFAULT_EVICTION_TTL_MS = 14 * 24 * 60 * 60_000 // 14 days
 export function evictStaleEntries<T>(
   record: Record<string, { data: T; cachedAt: number }>,
   ttlMs: number = DEFAULT_EVICTION_TTL_MS,
+  maxEntries = Infinity,
+  keep?: string
 ): Record<string, { data: T; cachedAt: number }> {
-  const cutoff = Date.now() - ttlMs
+  const now = Date.now(),
+    cutoff = now - ttlMs
   const entries = Object.entries(record)
-  const fresh = entries.filter(([, v]) => v.cachedAt >= cutoff)
+  let fresh = entries.filter(
+    ([, v]) => v.cachedAt >= cutoff && v.cachedAt <= now
+  )
+  if (fresh.length > maxEntries)
+    fresh = fresh
+      .sort(
+        (a, b) =>
+          Number(b[0] === keep) - Number(a[0] === keep) ||
+          b[1].cachedAt - a[1].cachedAt
+      )
+      .slice(0, maxEntries)
   if (fresh.length === entries.length) return record // nothing to evict
   return Object.fromEntries(fresh)
 }

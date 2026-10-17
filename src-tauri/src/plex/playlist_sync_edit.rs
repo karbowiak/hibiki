@@ -181,7 +181,7 @@ impl PlexClient {
             scope: self.library_scope.clone(),
         })
     }
-    /// Hold the originating PlexState guard only across this one non-retrying verb.
+    /// Send the admitted verb once using its captured original client.
     pub async fn commit_playlist_sync_edit_once(
         &self,
         prepared: &PreparedPlaylistSyncEdit,

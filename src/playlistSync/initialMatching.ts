@@ -1,4 +1,4 @@
-import { createVerifiedPlaylistRefresh } from "../components/PlaylistSync/verifiedPlaylistRefresh"
+import { createVerifiedPlaylistRefresh } from "./verifiedPlaylistRefresh"
 import type { MusicProvider } from "../providers/types"
 import { playlistCandidateScore, matchTrack, recordingMbid } from "./matching"
 import { providerPlaylistAccount } from "./provider"

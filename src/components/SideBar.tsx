@@ -1,3 +1,4 @@
+import { youtubeMusicContext } from "../backends/ytmusic/contextActions"
 import "../styles/shellArtwork.css"
 import "../styles/sidebar.css"
 import { loadAlbumTracks } from "../lib/albumContents"
@@ -6,7 +7,7 @@ import { useAccentStore } from "../stores/accentStore"
 import { useArtworkAppearanceStore } from "../stores/artworkAppearanceStore"
 import { ArtworkImage } from "./shared/ArtworkImage"
 import { Link, useLocation } from "wouter"
-import { useMemo, useRef, useState, useCallback, useEffect } from "react"
+import { useRef, useState, useEffect } from "react"
 import { useVirtualWindow, virtualRef } from "../hooks/useVirtualWindow"
 import clsx from "clsx"
 import { useShallow } from "zustand/react/shallow"
@@ -35,26 +36,16 @@ import { useCapability } from "../hooks/useCapability"
 import { useProviderStore } from "../stores/providerStore"
 import { useDragStore } from "../stores/dragStore"
 import type { MusicPlaylist } from "../types/music"
+import { useLibraryPlaylists, libraryPlaylistHref, type LibraryPlaylist } from "../hooks/useLibraryPlaylists"
+import { savePlaylistOrder } from "../stores/playlistOrder"
+import { youtubeMusicCollectionSource, useYoutubeMusicDiscoveryStore } from "../backends/ytmusic/discovery"
+import { MusicSourceBadge } from "./shared/MusicSource"
 
 // ---------------------------------------------------------------------------
 // Custom order persistence (localStorage)
 // ---------------------------------------------------------------------------
 
 const LIBRARY_EXPANDED_KEY = "plex-sidebar-library-expanded"
-const ORDER_KEY = "plex-sidebar-playlist-order"
-
-function getCustomOrder(): string[] {
-  try {
-    const raw = localStorage.getItem(ORDER_KEY)
-    return raw ? JSON.parse(raw) : []
-  } catch {
-    return []
-  }
-}
-
-function setCustomOrder(ids: string[]) {
-  localStorage.setItem(ORDER_KEY, JSON.stringify(ids))
-}
 
 // ---------------------------------------------------------------------------
 // Sortable playlist item
@@ -62,7 +53,7 @@ function setCustomOrder(ids: string[]) {
 
 interface SortablePlaylistItemProps {
   rowRef?: React.RefObject<HTMLLIElement | null>
-  playlist: MusicPlaylist
+  playlist: LibraryPlaylist
   location: string
   playPlaylist: (
     playlistId: string,
@@ -96,7 +87,9 @@ function SortablePlaylistItem({
     id: playlist.id,
   })
   const offline = useProviderStore((state) => state.provider?.isOffline)
-  const isDropTarget = !playlist.smart && !offline
+  const isDropTarget = !playlist.youtubeMusic && !playlist.smart && !offline
+  const { actionsHandler } = useContextMenu()
+  const [, navigate] = useLocation()
   // Subscribe to hover state from pointer-based drag system
   const isHovered = useDragStore(
     (s) => s.isDragging && s.hoveredPlaylistId === playlist.id
@@ -128,7 +121,7 @@ function SortablePlaylistItem({
     pointerEvents: isDragging ? "none" : undefined,
   }
 
-  const href = `/playlist/${playlist.id}`
+  const href = libraryPlaylistHref(playlist)
   const artUrl = playlist.thumbUrl
 
   return (
@@ -151,7 +144,7 @@ function SortablePlaylistItem({
             e.stopPropagation()
           }
         }}
-        onContextMenu={ctxMenu("playlist", playlist)}
+        onContextMenu={playlist.youtubeMusic ? actionsHandler(youtubeMusicContext(playlist.youtubeMusic, navigate)) : ctxMenu("playlist", playlist)}
         className={clsx(
           "sidebar-playlist-link group flex cursor-default items-center gap-3 rounded-md px-1 py-[5px] no-underline transition-colors duration-200 hover:bg-accent-tint hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
           location !== href
@@ -184,7 +177,7 @@ function SortablePlaylistItem({
               )
             }}
             title={`Play ${playlist.title}`}
-            disabled={!!offline && playlist.offlineAvailable !== true}
+            disabled={!playlist.youtubeMusic && !!offline && playlist.offlineAvailable !== true}
             className="absolute inset-0 flex items-center justify-center border-0 bg-overlay-medium opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
           >
             <svg viewBox="0 0 16 16" width="16" height="16" fill="white">
@@ -198,12 +191,12 @@ function SortablePlaylistItem({
         >
           {playlist.title}
         </span>
-        <DownloadBadge
+        {playlist.youtubeMusic ? <MusicSourceBadge source="ytmusic" className="mr-1" /> : <DownloadBadge
           intentOnly
           kind="playlist"
           id={playlist.id}
           className="mr-1"
-        />
+        />}
       </Link>
     </li>
   )
@@ -225,8 +218,14 @@ export function SideBar({
   const [location] = useLocation()
   const hasStations = useCapability("stations")
   const canEditPlaylists = useCapability("playlistEdit")
-  const playlists = useLibraryStore((s) => s.playlists)
-  const playPlaylist = usePlayerStore(useShallow((s) => s.playPlaylist))
+  const { playlists: sortedPlaylists, youtube: youtubePlaylists } = useLibraryPlaylists()
+  const playPlexPlaylist = usePlayerStore(useShallow((s) => s.playPlaylist))
+  const playPlaylist = (id: string, count: number, title: string, href: string) => {
+    if (id.startsWith("ytmusic:")) {
+      if (useYoutubeMusicDiscoveryStore.getState().connected)
+        void usePlayerStore.getState().playPagedTracks(youtubeMusicCollectionSource({ browseId: id.slice(8) }), title, href)
+    } else void playPlexPlaylist(id, count, title, href)
+  }
   const isArtExpanded = useUIStore((s) => s.isArtExpanded)
   const { handler: ctxMenu } = useContextMenu()
   const provider = useProviderStore((s) => s.provider)
@@ -249,6 +248,10 @@ export function SideBar({
       const currentRequest = () =>
         current() && owned() && provider?.cacheScope === capturedScope
       if (!targetPlaylistId || !provider || !currentRequest()) return
+      if (payload.type === "track" && payload.ids.some((id: string) => id.startsWith("ytmusic:"))) {
+        useLibraryStore.setState({ error: "YouTube Music songs cannot be added to a Plex playlist." })
+        return
+      }
       if (
         sourceProvider !== undefined &&
         (sourceProvider !== provider || scope !== capturedScope)
@@ -330,7 +333,6 @@ export function SideBar({
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   )
-  const [orderVersion, setOrderVersion] = useState(0)
   const justDragged = useRef(false)
   const [libraryExpanded, setLibraryExpanded] = useState(() => {
     try {
@@ -339,20 +341,6 @@ export function SideBar({
       return false
     }
   })
-
-  // Sort playlists by custom order; new playlists go to bottom
-  const sortedPlaylists = useMemo(() => {
-    const order = getCustomOrder()
-    if (order.length === 0) return playlists
-
-    const orderMap = new Map(order.map((id, idx) => [id, idx]))
-    const inOrder = playlists
-      .filter((p) => orderMap.has(p.id))
-      .sort((a, b) => orderMap.get(a.id)! - orderMap.get(b.id)!)
-    const notInOrder = playlists.filter((p) => !orderMap.has(p.id))
-    return [...inOrder, ...notInOrder]
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playlists, orderVersion])
 
   const playlistScroll = useRef<HTMLDivElement>(null)
   const playlistWindow = useVirtualWindow(
@@ -389,8 +377,7 @@ export function SideBar({
     const reordered = [...ids]
     const [moved] = reordered.splice(oldIdx, 1)
     reordered.splice(newIdx, 0, moved)
-    setCustomOrder(reordered)
-    setOrderVersion((v) => v + 1)
+    savePlaylistOrder(reordered)
   }
 
   return (
@@ -600,6 +587,10 @@ export function SideBar({
                   style={{ height: playlistWindow.after }}
                 />
               )}
+              {youtubePlaylists.connected && (youtubePlaylists.more || youtubePlaylists.error) && <li>
+                <button type="button" disabled={youtubePlaylists.loading} onClick={() => void (youtubePlaylists.error ? youtubePlaylists.retry() : youtubePlaylists.loadMore())}
+                  className="px-3 py-2 text-xs text-(--text-secondary)">{youtubePlaylists.error ? "Retry YTM playlists" : youtubePlaylists.loading ? "Loading YTM playlists…" : "More YTM playlists"}</button>
+              </li>}
             </ul>
           </SortableContext>
         </DndContext>

@@ -1,7 +1,7 @@
 import { useShallow } from "zustand/react/shallow"
 import { usePlayerStore } from "../stores"
 import { PlayerPanelHeader } from "./shared/PlayerPanelHeader"
-import { IconMinus, IconPlus } from "@tabler/icons-react"
+import { MusicSourceBadge } from "./shared/MusicSource"
 
 const VARIETY_OPTIONS = [
   { label: "Focused",      value: 0,  desc: "Very similar to your seed" },
@@ -11,9 +11,6 @@ const VARIETY_OPTIONS = [
   { label: "Adventurous",  value: 4,  desc: "Anything loosely connected" },
   { label: "Wild",         value: -1, desc: "Completely unrestricted" },
 ]
-
-const MIN_QUEUE = 3
-const MAX_QUEUE = 20
 
 interface Props {
   onClose: () => void
@@ -25,9 +22,8 @@ export default function RadioPanel({ onClose }: Props) {
     radioType,
     radioSeedArtist,
     radioDegreesOfSeparation,
-    radioMinQueue,
+    radioMode,
     setRadioDegreesOfSeparation,
-    setRadioMinQueue,
     stopRadio,
   } = usePlayerStore(
     useShallow(s => ({
@@ -35,9 +31,8 @@ export default function RadioPanel({ onClose }: Props) {
       radioType:                  s.radioType,
       radioSeedArtist:            s.radioSeedArtist,
       radioDegreesOfSeparation:   s.radioDegreesOfSeparation,
-      radioMinQueue:              s.radioMinQueue,
+      radioMode:                  s.radioMode,
       setRadioDegreesOfSeparation: s.setRadioDegreesOfSeparation,
-      setRadioMinQueue:           s.setRadioMinQueue,
       stopRadio:                  s.stopRadio,
     })),
   )
@@ -65,9 +60,9 @@ export default function RadioPanel({ onClose }: Props) {
         } />
 
       {/* Variety */}
-      <div className="px-5 py-4 border-b border-(--border)">
+      {radioMode !== "ytmusic" && <div className="px-5 py-4 border-b border-(--border)">
         <p className="text-[0.625rem] font-semibold uppercase tracking-widest text-(--text-muted) mb-3">
-          Variety
+          Plex variety
         </p>
         <div className="grid grid-cols-3 gap-1.5 mb-3">
           {VARIETY_OPTIONS.map(opt => {
@@ -88,38 +83,16 @@ export default function RadioPanel({ onClose }: Props) {
         {activeVariety && (
           <p className="text-[0.6875rem] text-(--text-muted) leading-snug">{activeVariety.desc}</p>
         )}
-      </div>
+      </div>}
 
-      {/* Queue buffer */}
       <div className="px-5 py-4">
-        <p className="text-[0.625rem] font-semibold uppercase tracking-widest text-(--text-muted) mb-3">
-          Queue Buffer
-        </p>
-        <div className="flex items-center justify-between">
-          <span className="text-[0.6875rem] text-(--text-secondary)">Always keep ahead</span>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setRadioMinQueue(Math.max(MIN_QUEUE, radioMinQueue - 1))}
-              aria-label="Fewer queued radio tracks"
-              disabled={radioMinQueue <= MIN_QUEUE}
-              className="flex h-7 w-7 items-center justify-center rounded-full bg-(--bg-surface) text-(--text-secondary) hover:bg-(--bg-surface-hover) hover:text-(--text-primary) transition-colors disabled:opacity-30 disabled:cursor-default font-bold text-base leading-none"
-            >
-              <IconMinus size={16} aria-hidden="true" />
-            </button>
-            <span className="w-8 text-center text-sm font-semibold text-(--text-primary) tabular-nums">
-              {radioMinQueue}
-            </span>
-            <button
-              onClick={() => setRadioMinQueue(Math.min(MAX_QUEUE, radioMinQueue + 1))}
-              aria-label="More queued radio tracks"
-              disabled={radioMinQueue >= MAX_QUEUE}
-              className="flex h-7 w-7 items-center justify-center rounded-full bg-(--bg-surface) text-(--text-secondary) hover:bg-(--bg-surface-hover) hover:text-(--text-primary) transition-colors disabled:opacity-30 disabled:cursor-default font-bold text-base leading-none"
-            >
-              <IconPlus size={16} aria-hidden="true" />
-            </button>
-            <span className="text-[0.6875rem] text-(--text-secondary)">tracks</span>
-          </div>
+        <div className="mb-2 flex items-center gap-3 text-sm font-medium">
+          {radioMode !== "ytmusic" && <MusicSourceBadge source="plex" label />}
+          {radioMode !== "plex" && <MusicSourceBadge source="ytmusic" label />}
         </div>
+        <p className="text-xs text-(--text-secondary)">
+          {radioMode === "mixed" ? "10 songs ahead: 5 Plex + 5 YTM, alternating." : "10 songs ahead, topped up as you listen."}
+        </p>
       </div>
     </>
   )

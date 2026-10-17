@@ -17,6 +17,7 @@ globalThis.localStorage = dom.window.localStorage
 const { createRoot } = await import("react-dom/client")
 const root = createRoot(document.getElementById("root")!)
 const requests: Array<{ command: string; args: any; pending: ReturnType<typeof deferred<any>> }> = []
+mock.module("@tauri-apps/api/event", () => ({ listen: async () => () => {} }))
 mock.module("@tauri-apps/api/core", () => ({ invoke(command: string, args: any) {
   const pending = deferred<any>(); requests.push({ command, args, pending }); return pending.promise
 } }))

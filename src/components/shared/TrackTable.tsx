@@ -6,7 +6,8 @@ import { useOfflineStatusStore } from "../../offline/statusStore"
 import { ArtworkImage } from "./ArtworkImage"
 import { Skeleton } from "./Skeleton"
 import { useRef, useEffect, useCallback } from "react"
-import { Link } from "wouter"
+import { MusicEntityLink } from "./MusicEntityLink"
+import { trackEntity } from "../../lib/musicLinks"
 import {
   DndContext,
   closestCenter,
@@ -29,6 +30,7 @@ import { StarRating } from "./StarRating"
 import { HeroRating } from "../HeroRating"
 import "../../styles/trackRows.css"
 import { TrackRowActions } from "./TrackRowActions"
+import { MusicSourceBadge, trackMusicSource } from "./MusicSource"
 import { formatMs, formatDate, formatBitrate } from "../../lib/formatters"
 import { prefetchTrackAudio } from "../../stores/playerStore"
 import { useContextMenu } from "../../hooks/useContextMenu"
@@ -48,6 +50,7 @@ const TRACK_DATA_COLUMNS: {
   { id: "album", label: "Album", width: 220 },
   { id: "year", label: "Year", width: 110 },
   { id: "plays", label: "Plays", width: 110, align: "right" },
+  { id: "views", label: "Views", width: 110, align: "right" },
   { id: "popularity", label: "Popularity", width: 110, align: "right" },
   { id: "label", label: "Label", width: 160 },
   { id: "bitrate", label: "Bit Rate", width: 110, align: "right" },
@@ -210,11 +213,14 @@ function TrackRowCells({
     !track.mediaInfo?.localAudio &&
     track.mediaInfo?.offlineAvailable !== true
   const isActive = currentTrackId === track.id
+  const showArtist = !visibleCols.has("artist") && (presentation !== "album" ||
+    !!(track.originalTitle && track.originalTitle !== track.artistName))
   const actions = (
     <TrackRowActions
       track={track}
       unavailable={unavailable}
       showRadio={showRadio}
+      showLike={!visibleCols.has("rating")}
       onAddToQueue={onAddToQueue}
       onPlayRadio={onPlayRadio}
     />
@@ -285,80 +291,54 @@ function TrackRowCells({
             ))}
           <div className="min-w-0 flex-1">
             <div className="track-row-title-line flex min-w-0 items-center gap-2">
+              <MusicSourceBadge source={trackMusicSource(track, provider?.name)} />
               <span
                 className={`truncate ${isActive ? "text-accent" : "text-(--text-primary)"}`}
               >
                 {track.title}
               </span>
+              {track.explicit && <span className="shrink-0 rounded bg-app-surface px-1 text-[10px] font-semibold text-(--text-secondary)" title="Explicit" aria-label="Explicit">E</span>}
               {showInlineDownload && (
                 <DownloadBadge kind="track" id={track.id} />
               )}
-              {presentation === "artist" && track.albumId && (
-                <Link
-                  href={`/album/${track.albumId}`}
-                  onClick={(e) => e.stopPropagation()}
+              {presentation === "artist" && !!track.albumName && (
+                <MusicEntityLink
+                  entity={trackEntity(track, "album")}
                   className="min-w-0 truncate text-xs text-(--text-muted) hover:text-(--text-primary) hover:underline"
                 >
                   · {track.albumName}
-                </Link>
+                </MusicEntityLink>
               )}
+              {presentation === "album" && !showArtist && <div className="ml-2 shrink-0">{actions}</div>}
             </div>
-            <div className="track-row-secondary-line flex min-w-0 items-center gap-2">
-              {!visibleCols.has("artist") &&
-                (presentation !== "album" ||
-                  (track.originalTitle &&
-                    track.originalTitle !== track.artistName)) && (
+            {(presentation !== "album" || showArtist) && <div className="track-row-secondary-line flex min-w-0 items-center gap-2">
+              {showArtist && (
                   <div className="track-row-artist min-w-0 shrink truncate">
-                    {track.artistId ? (
-                      <Link
-                        href={`/artist/${track.artistId}`}
-                        className="text-(--text-muted) transition-colors hover:text-(--text-primary) hover:underline"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {track.originalTitle || track.artistName}
-                      </Link>
-                    ) : (
-                      <span className="text-(--text-muted)">
-                        {track.originalTitle || track.artistName}
-                      </span>
-                    )}
+                    <MusicEntityLink entity={trackEntity(track, "artist")}
+                      className="text-(--text-muted) transition-colors hover:text-(--text-primary) hover:underline">
+                      {track.originalTitle || track.artistName}
+                    </MusicEntityLink>
                   </div>
                 )}
               {actions}
-            </div>
+            </div>}
           </div>
         </div>
       </td>
 
       {visibleCols.has("artist") && (
         <td className="max-w-[180px] truncate p-2">
-          {track.artistId ? (
-            <Link
-              href={`/artist/${track.artistId}`}
-              className="transition-colors hover:text-(--text-primary) hover:underline"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {track.artistName}
-            </Link>
-          ) : (
-            track.artistName
-          )}
+          <MusicEntityLink entity={trackEntity(track, "artist")} className="transition-colors hover:text-(--text-primary) hover:underline">
+            {track.artistName}
+          </MusicEntityLink>
         </td>
       )}
 
       {visibleCols.has("album") && (
         <td className="max-w-[200px] truncate p-2">
-          {track.albumId ? (
-            <Link
-              href={`/album/${track.albumId}`}
-              className="transition-colors hover:text-(--text-primary) hover:underline"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {track.albumName}
-            </Link>
-          ) : (
-            track.albumName
-          )}
+          <MusicEntityLink entity={trackEntity(track, "album")} className="transition-colors hover:text-(--text-primary) hover:underline">
+            {track.albumName}
+          </MusicEntityLink>
         </td>
       )}
 
@@ -370,6 +350,7 @@ function TrackRowCells({
       {visibleCols.has("plays") && (
         <td className="p-2 text-right tabular-nums">{track.playCount || ""}</td>
       )}
+      {visibleCols.has("views") && <td className="p-2 text-right tabular-nums">{track.viewCount?.toLocaleString() ?? ""}</td>}
       {visibleCols.has("popularity") && (
         <td className="p-2 text-right tabular-nums">
           {track.ratingCount ?? ""}

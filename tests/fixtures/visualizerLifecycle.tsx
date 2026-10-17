@@ -188,6 +188,14 @@ mock.module("@tauri-apps/api/window", () => ({
 }))
 
 const { usePlayerStore } = await import("../../src/stores/playerStore")
+let playerRenders = 0
+if (scenario === "progress") {
+  const hooks = await import("../../src/hooks/useMediaImage")
+  mock.module("../../src/hooks/useMediaImage", () => ({
+    ...hooks,
+    useAlbumImage: () => { playerRenders++; return null },
+  }))
+}
 const { useVisualizerStore } = await import("../../src/stores/visualizerStore")
 const { useEasterEggStore } = await import("../../src/stores/easterEggStore")
 usePlayerStore.setState({ isPlaying: true })
@@ -267,7 +275,7 @@ if (scenario === "compact") {
   stale.forEach((callback) => callback(1000))
   assert.equal(frames.size, 0)
   assert.equal(draws, unmountedDraws)
-} else if (scenario === "bridge") {
+} else if (scenario === "bridge" || scenario === "progress") {
   const { Player } = await import("../../src/components/Player")
   const { engine } = await import("../../src/audio/RustAudioEngine")
   const { useDeviceStore } = await import("../../src/stores/deviceStore")
@@ -278,6 +286,9 @@ if (scenario === "compact") {
   useEqStore.setState({ syncToEngine: () => {} })
   useAudioSettingsStore.setState({ syncToEngine: async () => {} })
   usePlayerStore.setState({ initAudioEvents: async () => () => {} })
+  if (scenario === "progress") usePlayerStore.setState({
+    currentTrack: { id: "fixture", title: "Track", artistName: "Artist", duration: 120_000 } as any,
+  })
   useVisualizerStore.setState({
     fullscreenOpen: false,
     compactMode: "spectrum",
@@ -291,6 +302,15 @@ if (scenario === "compact") {
       <Player />
     </Router>
   )
+  if (scenario === "progress") {
+    const initialRenders = playerRenders
+    assert.ok(initialRenders > 0)
+    for (let tick = 1; tick <= 20; tick++) {
+      await act(() => usePlayerStore.setState({ positionMs: tick * 250 }))
+      assert.equal(document.querySelector<HTMLInputElement>('[aria-label="Seek"]')?.value, String(tick * 250))
+    }
+    assert.equal(playerRenders, initialRenders, "clock ticks must update the seek controls without rendering the Player")
+  }
   assert.equal(enabled.at(-1), true)
   await playing(false)
   assert.equal(enabled.at(-1), false)

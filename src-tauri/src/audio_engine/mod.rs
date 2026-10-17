@@ -22,11 +22,13 @@ pub mod dsp;
 pub(crate) mod event;
 pub mod loudness;
 pub mod output;
+mod preparation;
 mod request;
 pub(crate) mod source;
 pub mod state;
 pub mod types;
 pub mod visualizer;
+mod waveform;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -149,7 +151,7 @@ impl AudioEngine {
         let (event_tx, event_rx) = bounded::<EngineEvent>(256);
 
         // Audio callback → visualizer task (PCM chunks for FFT)
-        let (vis_tx, vis_rx) = crossbeam_channel::bounded::<Vec<f32>>(16);
+        let (vis_tx, vis_rx) = visualizer::transport::channel();
 
         // Create the callback state — it will be moved into the cpal closure
         let mut cb_state = AudioCallbackState::new(
@@ -252,6 +254,7 @@ impl AudioEngine {
                 let mut got_data = false;
                 while let Ok(samples) = vis_rx.try_recv() {
                     vis.push_samples(&samples);
+                    vis_rx.recycle(samples);
                     got_data = true;
                 }
                 if !got_data {
@@ -386,6 +389,7 @@ impl AudioEngine {
         }
         if matches!(&cmd, Command::ClearPreload) {
             self.atomics.preload_revision.fetch_add(1, Ordering::SeqCst);
+            self.atomics.preparation_revision.fetch_add(1, Ordering::SeqCst);
         }
         let preload_revision = self.atomics.preload_revision.load(Ordering::SeqCst);
         let audio = match cmd {
@@ -470,8 +474,80 @@ impl AudioEngine {
         self.atomics.normalization_is_enabled()
     }
 
+    pub(super) fn begin_queue_preparation(
+        &self,
+        request_id: u64,
+        batch: u64,
+    ) -> Result<Option<u64>, String> {
+        let _admission = self
+            .command_admission
+            .lock()
+            .map_err(|_| "Audio admission unavailable")?;
+        if self.closing.load(Ordering::Acquire)
+            || self.startup_error.is_some()
+            || request_id != self.atomics.request_epoch.load(Ordering::SeqCst)
+        {
+            return Ok(None);
+        }
+        let mut order = self
+            .atomics
+            .preparation_order
+            .lock()
+            .map_err(|_| "Audio preparation unavailable")?;
+        if *order >= (request_id, batch) {
+            return Ok(None);
+        }
+        *order = (request_id, batch);
+        Ok(Some(
+            self.atomics
+                .preparation_revision
+                .fetch_add(1, Ordering::SeqCst)
+                + 1,
+        ))
+    }
+
+    pub(super) fn finish_queue_preparation(
+        &self,
+        request_id: u64,
+        revision: u64,
+        tracks: Vec<preparation::Track>,
+    ) -> Result<(), String> {
+        let _admission = self
+            .command_admission
+            .lock()
+            .map_err(|_| "Audio admission unavailable")?;
+        if self.closing.load(Ordering::Acquire)
+            || request_id != self.atomics.request_epoch.load(Ordering::SeqCst)
+            || revision != self.atomics.preparation_revision.load(Ordering::SeqCst)
+        {
+            return Ok(());
+        }
+        self.cmd_tx
+            .send(ControlCommand {
+                epoch: request_id,
+                preload_revision: self.atomics.preload_revision.load(Ordering::SeqCst),
+                command: Command::PrepareQueue { revision, tracks },
+            })
+            .map_err(|_| "Audio engine unavailable".into())
+    }
+
     pub fn cache(&self) -> &Arc<AudioCache> {
         &self.cache
+    }
+
+    pub(super) fn waveform_request(&self, request_id: u64) -> Result<PlaybackRequest, String> {
+        if self.closing.load(Ordering::Acquire)
+            || request_id != self.atomics.request_epoch.load(Ordering::SeqCst)
+        {
+            return Err("Waveform superseded".into());
+        }
+        let running = self.lifetime.0.clone();
+        Ok(PlaybackRequest::new(
+            request_id,
+            self.atomics.request_epoch.clone(),
+            Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        )
+        .while_background(move || running.load(Ordering::Acquire)))
     }
 
     pub(crate) fn diagnostics(&self) -> Option<diagnostics::Snapshot> {
@@ -547,7 +623,47 @@ fn control_thread_main(
         }
     }
 
+    let mut preparation: Option<(u64, u64, std::collections::VecDeque<preparation::Track>)> = None;
     loop {
+        // Commands always take priority over speculative transfers and measurement.
+        // Interrupted work remains queued so a new preload cannot lose the rest
+        // of the warming batch. No background job owns a physical playback deck.
+        if cmd_rx.is_empty() {
+            if let Some((epoch, revision, tracks)) = preparation.as_mut() {
+                if *epoch != atomics.request_epoch.load(Ordering::SeqCst)
+                    || *revision != atomics.preparation_revision.load(Ordering::SeqCst)
+                {
+                    preparation = None;
+                } else if let Some(track) = tracks.pop_front() {
+                    let commands = cmd_rx.clone();
+                    let revoked = AtomicBool::new(false);
+                    let request = PlaybackRequest::new(
+                        *epoch,
+                        atomics.request_epoch.clone(),
+                        Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                    )
+                    .for_preload(atomics.preparation_revision.clone(), *revision)
+                    .while_background(move || {
+                        if !commands.is_empty() {
+                            revoked.store(true, Ordering::SeqCst);
+                        }
+                        !revoked.load(Ordering::SeqCst)
+                    });
+                    if let Err(error) =
+                        preparation::prepare(&track, &cache, &rt, &request, analysis.as_ref())
+                    {
+                        if !request.is_current() {
+                            tracks.push_front(track);
+                        } else {
+                            debug!(%error, "queue audio preparation unavailable");
+                        }
+                    }
+                    continue;
+                } else {
+                    preparation = None;
+                }
+            }
+        }
         let Ok(ControlCommand {
             epoch,
             preload_revision,
@@ -560,6 +676,11 @@ fn control_thread_main(
             continue;
         }
         match command {
+            Command::PrepareQueue { revision, tracks } => {
+                if revision == atomics.preparation_revision.load(Ordering::SeqCst) {
+                    preparation = Some((epoch, revision, tracks.into()));
+                }
+            }
             Command::Play { source, meta } => {
                 pending_source_key.clear();
                 // Keep an existing overlap audible before reusing its outgoing
@@ -574,6 +695,15 @@ fn control_thread_main(
                 }
                 let deck = pending_deck(&atomics);
                 let request = make_request(epoch, deck, &atomics);
+                let source = match source.resolve(&rt, &request) {
+                    Ok(source) => source,
+                    Err(message) => {
+                        if request.is_current() {
+                            let _ = audio_cmd_tx.send(AudioCommand::FailPlay { request_id: epoch, message });
+                        }
+                        continue;
+                    }
+                };
                 handle_play(
                     &source,
                     &meta,
@@ -629,6 +759,22 @@ fn control_thread_main(
                 let deck = pending_deck(&atomics);
                 let request = make_request(epoch, deck, &atomics)
                     .for_preload(atomics.preload_revision.clone(), preload_revision);
+                let source_key = source.cache_key.clone();
+                if source.requires_resolution() {
+                    // Clear the previous next song before a potentially slow
+                    // lookup, so it cannot transition while its replacement loads.
+                    let _ = audio_cmd_tx.send(AudioCommand::PreparePreload { request_id: epoch, deck });
+                }
+                let source = match source.resolve(&rt, &request) {
+                    Ok(source) => source,
+                    Err(error) => {
+                        if request.is_current() {
+                            atomics.preload_error_rk.store(meta.rating_key, Ordering::SeqCst);
+                            warn!(%error, "preload media lookup failed");
+                        }
+                        continue;
+                    }
+                };
                 handle_preload(
                     &source,
                     &meta,
@@ -650,7 +796,7 @@ fn control_thread_main(
                     DeckId::B => &atomics.deck_b_loaded_id,
                 };
                 if request.is_current() && loaded.load(Ordering::SeqCst) == request.load_id {
-                    pending_source_key = source.cache_key;
+                    pending_source_key = source_key;
                     pending_owner = Some((deck, request.load_id));
                 }
             }
@@ -760,6 +906,7 @@ fn handle_play(
         return;
     }
     debug!(rating_key = meta.rating_key, ?deck, "play command");
+    let preparation_started = std::time::Instant::now();
 
     // The callback owns playback state, including pause during loading.
 
@@ -794,7 +941,8 @@ fn handle_play(
             let source_rate = result.source_rate;
             let source_channels = result.source_channels;
             let has_more = result.has_more;
-
+            let decode_ms = preparation_started.elapsed().as_millis() as u64;
+            let gain_started = std::time::Instant::now();
             let gain_db = match prepare_gain_db(meta, source, deck, request, cache, atomics, analysis, &result) {
                 Ok(gain)=>gain,
                 Err(error)=>{if request.is_current(){let _=audio_cmd_tx.send(AudioCommand::FailPlay{request_id:request.epoch,message:format!("Could not prepare track loudness: {error}")});}return}
@@ -802,6 +950,8 @@ fn handle_play(
             if !request.is_current() {
                 return;
             }
+            tracing::info!(rating_key = meta.rating_key, decode_ms, normalization_ms = gain_started.elapsed().as_millis() as u64,
+                "Audio prepared for playback");
             let source_kind = if result.cached_stamp.is_some() {
                 if source.local_cache.as_ref().is_some_and(|local| !Arc::ptr_eq(local, cache)) { "download" } else { "cache" }
             } else { "network" };
@@ -1317,6 +1467,7 @@ fn spawn_background_decode(
 
 /// Result of fetch + incremental decode.
 struct IncrementalDecodeResult {
+    provider_gain_db: Option<f32>,
     source_format: Option<types::SourceAudioFormat>,
     source_bytes: Option<u64>,
     cached_stamp: Option<cache::CacheStamp>,
@@ -1353,6 +1504,14 @@ fn fetch_and_decode_incremental(
     let cache = source.local_cache.as_ref().unwrap_or(cache);
     let ext = &source.extension;
     let cache_key = &source.cache_key;
+    let fill = cache.fill_lock(cache_key);
+    let fill_guard = rt.block_on(async {
+        tokio::select! {
+            biased;
+            _ = request.cancelled() => Err("Audio request superseded".to_owned()),
+            guard = fill.lock_owned() => Ok(guard),
+        }
+    })?;
 
     // ---- Cache HIT: decode from local file ----
     if let Some((file, stamp)) = cache.open_with_stamp(cache_key) {
@@ -1363,6 +1522,7 @@ fn fetch_and_decode_incremental(
             let mut setup = decode::probe_from_source(mss, Some(ext)).map_err(|error| format!("{error}"))?;
             setup.attach_cached_file(cache.clone(), cache_key.clone(), stamp.clone());
             let mut result = decode_initial_batch(&mut setup, device_rate, device_channels)?;
+            result.provider_gain_db = source.gain_db;
             if setup.aborted || setup.had_decode_errors { return Err("cached audio contains incomplete or invalid frames".into()); }
             result.cached_stamp = Some(stamp.clone());
             result.source_bytes = source_bytes;
@@ -1370,7 +1530,10 @@ fn fetch_and_decode_incremental(
             Ok(result)
         })();
         match cached {
-            Ok(result) => return Ok(result),
+            Ok(result) => {
+                if source.prepare_waveform { waveform::schedule(cache.clone(), cache_key.clone(), request.clone()); }
+                return Ok(result);
+            },
             Err(error) => {
                 if !request.is_current() { return Err("audio request superseded".into()); }
                 warn!(rating_key, %error, "cached audio failed; retrying original media source");
@@ -1380,7 +1543,14 @@ fn fetch_and_decode_incremental(
     }
 
     // ---- Cache MISS: stream from HTTP, tee to disk ----
-    debug!(rating_key, "cache miss — streaming from Plex");
+    if source.request.is_none() && source.requires_resolution() {
+        // A completed cached file can be evicted or prove corrupt after initial
+        // admission. Resolve a fresh transport only when the file is unavailable.
+        drop(fill_guard);
+        let resolved = source.resolve_network(rt, request)?;
+        return fetch_and_decode_incremental(&resolved, rating_key, cache, rt, device_rate, device_channels, request);
+    }
+    debug!(rating_key, "cache miss — streaming audio");
 
     use self::deck::streaming::{SharedBuffer, StreamingReader};
     let media_request = source.request.as_ref().ok_or("This track is no longer available offline. Reconnect to download it again.")?
@@ -1390,6 +1560,9 @@ fn fetch_and_decode_incremental(
     let cache_for_task = cache.clone();
     let request = request.clone();
     let plex_fetch_lock = source.plex_fetch_lock.clone();
+    let provider_gain = source.gain_db.filter(|gain| gain.is_finite());
+    let gain_key = source.cache_key.clone();
+    let prepare_waveform = source.prepare_waveform;
 
     let shared_buf = rt.block_on(async {
         let shared = SharedBuffer::new(None).map_err(|error| format!("Cannot create audio spool: {error}"))?;
@@ -1397,6 +1570,7 @@ fn fetch_and_decode_incremental(
         let shared_return = shared.clone();
 
         tauri::async_runtime::spawn(async move {
+            let _fill_guard = fill_guard;
             let download = async {
                 let mut writer = cache_writer;
                 let result = download::download(
@@ -1429,6 +1603,13 @@ fn fetch_and_decode_incremental(
                 if let Some(writer) = writer {
                     if let Err(error) = writer.finish(&cache_for_task) {
                         tracing::warn!(%error, "audio cache finalization failed");
+                    } else {
+                        if let Some(gain) = provider_gain {
+                            if let Some((_, stamp)) = cache_for_task.open_with_stamp(&gain_key) {
+                                let _ = cache_for_task.set_computed_gain_for_stamp(&gain_key, &stamp, gain);
+                            }
+                        }
+                        if prepare_waveform { waveform::schedule(cache_for_task.clone(), gain_key.clone(), request.clone()); }
                     }
                 }
                 shared_w.finish();
@@ -1446,6 +1627,7 @@ fn fetch_and_decode_incremental(
     let reader = StreamingReader::new(shared_buf.clone());
     let mut setup = decode::probe_stream(reader, Some(ext)).map_err(|e| format!("{}", e))?;
     let mut result = decode_initial_batch(&mut setup, device_rate, device_channels)?;
+    result.provider_gain_db = source.gain_db;
     result.spool = Some(shared_buf);
     result.decoder = if setup.finished { None } else { Some(setup) };
     Ok(result)
@@ -1486,8 +1668,18 @@ fn decode_initial_batch(
         setup.resampler = Some(resampler);
     }
 
+    // Allocate the bounded deck working set on the decoder worker. VecDeque
+    // adopts this allocation when the callback installs the initial PCM.
+    if !setup.finished {
+        let channels = out_channels.max(1) as usize;
+        let ahead = (device_rate as usize * 20 * channels).min(32 * 1024 * 1024 / 4);
+        let capacity = ahead + device_rate as usize * channels * 5;
+        samples.reserve(capacity.saturating_sub(samples.len()));
+    }
+
     setup.output_frames_decoded = (samples.len() / out_channels.max(1) as usize) as u64;
     Ok(IncrementalDecodeResult {
+        provider_gain_db: None,
         source_format: Some(setup.source_format()),
         source_bytes: None,
         cached_stamp: None,
@@ -1540,7 +1732,8 @@ fn prepare_gain_db(
     {
         return Err("audio file changed during preparation".into());
     }
-    if let Some(gain) = meta.gain_db.filter(|gain| gain.is_finite()) {
+    if let Some(gain) = meta.gain_db.filter(|gain| gain.is_finite())
+        .or(decoded.provider_gain_db).or(source.gain_db).filter(|gain| gain.is_finite()) {
         return Ok(Some(gain));
     }
     if decoded.cached_stamp.is_some() {
@@ -1630,9 +1823,139 @@ mod control_tests {
         let (_a_tx, a_rx) = crossbeam_channel::bounded(4);
         let (_b_tx, b_rx) = crossbeam_channel::bounded(4);
         let (events, event_rx) = crossbeam_channel::unbounded();
-        let (visualizer, _vis_rx) = crossbeam_channel::bounded(4);
+        let (visualizer, _vis_rx) = visualizer::transport::channel();
         let callback = AudioCallbackState::new(audio_rx, a_rx, b_rx, events, visualizer, atomics);
         (engine, cmd_rx, callback, event_rx)
+    }
+
+    #[test]
+    fn queue_preparation_rejects_stale_batches_and_work_retired_by_stop_or_clear() {
+        let directory = tempfile::tempdir().unwrap();
+        let (engine, commands, _callback, _events) = engine_with_callback(directory.path(), 8);
+        let first = engine.begin_queue_preparation(1, 1).unwrap().unwrap();
+        let next = engine.begin_queue_preparation(1, 2).unwrap().unwrap();
+        assert!(engine.begin_queue_preparation(1, 1).unwrap().is_none());
+        engine.finish_queue_preparation(1, first, vec![]).unwrap();
+        assert!(commands.is_empty());
+        engine.finish_queue_preparation(1, next, vec![]).unwrap();
+        assert!(
+            matches!(commands.recv().unwrap().command, Command::PrepareQueue { revision, .. } if revision == next)
+        );
+        let cleared = engine.begin_queue_preparation(1, 3).unwrap().unwrap();
+        engine.send(Command::ClearPreload).unwrap();
+        engine.finish_queue_preparation(1, cleared, vec![]).unwrap();
+        assert!(commands.is_empty());
+        let stopped = engine.begin_queue_preparation(1, 4).unwrap().unwrap();
+        engine.send(Command::Stop).unwrap();
+        engine.finish_queue_preparation(1, stopped, vec![]).unwrap();
+        assert!(engine.begin_queue_preparation(1, 5).unwrap().is_none());
+        assert!(commands.is_empty());
+    }
+
+    #[test]
+    fn a_foreground_command_preempts_slow_queue_preparation_and_the_job_then_resumes() {
+        use std::sync::atomic::AtomicUsize;
+        let directory = tempfile::tempdir().unwrap();
+        let cache = Arc::new(AudioCache::new(directory.path().into(), None));
+        let atomics = Arc::new(SharedAtomics::new());
+        atomics.request_epoch.store(1, Ordering::SeqCst);
+        atomics.preparation_revision.store(1, Ordering::SeqCst);
+        let (commands, control) = crossbeam_channel::unbounded();
+        let (audio, received) = crossbeam_channel::unbounded();
+        let (samples_a, _a) = crossbeam_channel::unbounded();
+        let (samples_b, _b) = crossbeam_channel::unbounded();
+        let (events, _events) = crossbeam_channel::unbounded();
+        let (entered, waiting) = crossbeam_channel::bounded(1);
+        let (prepared, completed) = crossbeam_channel::bounded(1);
+        let count = Arc::new(AtomicUsize::new(0));
+        let observed = count.clone();
+        let owned_cache = cache.clone();
+        let mut source = MediaSource::deferred("s1-background".into(), move || {
+            if observed.fetch_add(1, Ordering::SeqCst) == 0 {
+                let _ = entered.send(());
+                Box::pin(async { std::future::pending().await })
+            } else {
+                let mut writer = owned_cache.begin_write("s1-background", "wav").unwrap();
+                writer
+                    .write_chunk(&decode::tests::generate_test_wav(44100, 2, 1.0))
+                    .unwrap();
+                writer.finish(&owned_cache).unwrap();
+                let cached = MediaSource::cached(
+                    "s1-background".into(),
+                    "wav".into(),
+                    "fixture".into(),
+                    owned_cache.clone(),
+                );
+                Box::pin(async move { Ok(cached) })
+            }
+        });
+        source.local_cache = Some(cache.clone());
+        let analysis = LoudnessAnalysis::with_analyzer(
+            atomics.clone(),
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(move |_, _, _| {
+                let _ = prepared.send(());
+                Ok(-6.0)
+            }),
+        )
+        .unwrap();
+        let control_atomics = atomics.clone();
+        let worker = std::thread::spawn(move || {
+            control_thread_main(
+                control,
+                audio,
+                samples_a,
+                samples_b,
+                events,
+                control_atomics,
+                cache,
+                Some(analysis),
+                44100,
+                2,
+            )
+        });
+        commands
+            .send(ControlCommand {
+                epoch: 1,
+                preload_revision: 0,
+                command: Command::PrepareQueue {
+                    revision: 1,
+                    tracks: vec![preparation::Track {
+                        source,
+                        duration_ms: 1000,
+                        gain_db: None,
+                    }],
+                },
+            })
+            .unwrap();
+        waiting.recv_timeout(Duration::from_secs(2)).unwrap();
+        commands
+            .send(ControlCommand {
+                epoch: 1,
+                preload_revision: 0,
+                command: Command::SetCrossfadeWindow { ms: 2345 },
+            })
+            .unwrap();
+        assert!(
+            matches!(received.recv_timeout(Duration::from_secs(2)).unwrap(), AudioCommand::UpdateCrossfadeSettings(settings) if settings.crossfade_window_ms == 2345)
+        );
+        completed.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            2,
+            "Interrupted warm work must resume after foreground work"
+        );
+        assert_eq!(atomics.deck_a_load_id.load(Ordering::SeqCst), 0);
+        assert_eq!(atomics.deck_b_load_id.load(Ordering::SeqCst), 0);
+        atomics.request_epoch.store(2, Ordering::SeqCst);
+        commands
+            .send(ControlCommand {
+                epoch: 2,
+                preload_revision: 0,
+                command: Command::Shutdown,
+            })
+            .unwrap();
+        worker.join().unwrap();
     }
 
     fn queue_test_play(engine: &AudioEngine) -> u64 {
@@ -2014,6 +2337,7 @@ mod control_tests {
             atomics.deck_b_load_id.clone(),
         );
         let decoded = IncrementalDecodeResult {
+            provider_gain_db: None,
             source_format: None,
             source_bytes: None,
             cached_stamp: None,
@@ -2055,6 +2379,10 @@ mod control_tests {
             Some(-3.0)
         );
         meta.gain_db = None;
+        let decoded = IncrementalDecodeResult { provider_gain_db: Some(-8.0), ..decoded };
+        assert_eq!(prepare_gain_db(&meta, &source, DeckId::B, &request, &cache, &atomics, None, &decoded).unwrap(),
+            Some(-8.0), "Provider loudness must skip full-file analysis while the spool is still downloading");
+        let decoded = IncrementalDecodeResult { provider_gain_db: None, ..decoded };
         atomics.normalization_enabled.store(false, Ordering::SeqCst);
         assert_eq!(
             prepare_gain_db(
@@ -2171,6 +2499,7 @@ mod control_tests {
             .unwrap();
         spool.finish();
         let decoded = IncrementalDecodeResult {
+            provider_gain_db: None,
             source_format: None,
             source_bytes: None,
             cached_stamp: None,
@@ -2670,7 +2999,7 @@ mod control_tests {
                 .store(audible.load_id, Ordering::SeqCst);
             let deck = callback.deck_mgr.active_deck_mut();
             deck.loaded = true;
-            deck.samples = vec![0.1; 44100];
+            deck.samples = vec![0.1; 44100].into();
             deck.has_started_playing = true;
             deck.played_frames = 100;
             deck.playback_id = 1;

@@ -135,7 +135,7 @@ export interface MusicProvider {
   /** Explicit collection caches, warmed independently of the full Plex catalogue. */
   warmCollections?(): void
   stopCollectionWarmup?(): void
-  getCachedTrackSource?(key: string, shuffle?: boolean): Promise<import("../lib/pagedPlayback").PagedTrackSource | null>
+  getCachedTrackSource?(key: string, shuffle?: boolean, query?: import("../lib/pagedPlayback").CollectionOrder): Promise<import("../lib/pagedPlayback").PagedTrackSource | null>
   readonly savedQueue?: import("../lib/queueSession").SavedQueueStorage
   getCollectionPage?(key: string, offset: number, limit: number, filter: string, sort: string, dir: "asc" | "desc"): Promise<PagedResult<MusicItem>>
 
@@ -167,6 +167,7 @@ export interface MusicProvider {
   /** Albums ordered by original release date, independently of library import date. */
   getLatestReleases?(limit?: number): Promise<MusicAlbum[]>
   getHubs(): Promise<MusicHub[]>
+  getDiscoveryPage?(kind: "recent" | "latest" | "hub", offset: number, limit: number, hub?: MusicHub): Promise<PagedResult<MusicItem>>
 
   // --- Library ---
   getTrack(id: string): Promise<MusicTrack>

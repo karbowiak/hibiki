@@ -9,9 +9,10 @@ interface ScrollRowProps {
   restoreKey?: string
   onPlayAll?: () => void
   onShuffleAll?: () => void
+  onExpandedChange?: (expanded: boolean) => void
 }
 
-export function ScrollRow({ title, titleHref, children, restoreKey, onPlayAll, onShuffleAll }: ScrollRowProps) {
+export function ScrollRow({ title, titleHref, children, restoreKey, onPlayAll, onShuffleAll, onExpandedChange }: ScrollRowProps) {
   const [expanded, setExpanded] = useState(false)
   const [overflows, setOverflows] = useState(false)
   const scrollRef = useScrollRestore(restoreKey, "x")
@@ -126,9 +127,9 @@ export function ScrollRow({ title, titleHref, children, restoreKey, onPlayAll, o
             </button>
           </>
         )}
-        {showButtons && (
+        {(showButtons || onExpandedChange) && (
           <button
-            onClick={() => setExpanded(e => !e)}
+            onClick={() => { setExpanded(!expanded); onExpandedChange?.(!expanded) }}
             aria-label={expanded ? "Collapse" : "Expand"}
             aria-expanded={expanded}
             type="button"

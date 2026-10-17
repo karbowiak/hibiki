@@ -1,3 +1,7 @@
+import { MusicSourceBadge } from "../shared/MusicSource"
+import { useYoutubeMusicDiscovery } from "../../backends/ytmusic/discovery"
+import { mixDiscoveryItems } from "../../lib/discovery"
+import { DiscoveryCard } from "../shared/DiscoveryCard"
 import { useContextMenu } from "../../hooks/useContextMenu"
 import { useContextMenuStore } from "../../stores/contextMenuStore"
 import { ArtworkImage } from "../shared/ArtworkImage"
@@ -13,7 +17,8 @@ import { usePlayerStore } from "../../stores/playerStore"
 import { useProviderStore } from "../../stores/providerStore"
 import { useCapability } from "../../hooks/useCapability"
 import type { RecentMix, SeedItem } from "../../stores/libraryStore"
-import { selectMix, shuffleTracks } from "./Mix"
+import { selectMix } from "../../lib/mixSelection"
+import { mixPlaybackSource, orderMixTracks } from "../../lib/mixOrder"
 import {
   mixTitleToArtistName,
   mixThumbnailKey,
@@ -568,6 +573,7 @@ export function TagGridMixBuilder({
 // ---------------------------------------------------------------------------
 
 export function StationsPage() {
+  const youtube = useYoutubeMusicDiscovery(true)
   const [, navigate] = useLocation()
   const hasStations = useCapability("stations")
   const provider = useProviderStore((s) => s.provider)
@@ -604,15 +610,15 @@ export function StationsPage() {
   const [stationAttempt, setStationAttempt] = useState(0)
   const [activeTab, setActiveTab] = useState<BuilderTab>("artist")
   // Mixes for You from hubs store
-  const { mixesHubs, mixesItems, mixesTitle } = useMemo(() => {
+  const { mixesItems, mixesTitle } = useMemo(() => {
     const mh = hubs.filter((h) => h.identifier?.startsWith("music.mixes"))
     return {
-      mixesHubs: mh,
       mixesItems: mh.flatMap((h) => h.items),
       mixesTitle: mh[0]?.title ?? "Mixes for You",
     }
   }, [hubs])
 
+  const mixedMixes = useMemo(() => mixDiscoveryItems(mixesItems, youtube.connected ? youtube.hubs : []), [mixesItems, youtube.connected, youtube.hubs])
   const mixThumbs = useMixThumbnails(hasStations ? provider : null, mixesItems)
   const playbackView = useRef({ active: false, revision: 0 })
   const [playError, setPlayError] = useState(false)
@@ -636,12 +642,12 @@ export function StationsPage() {
     void (async () => {
       try {
         if (provider.getMixTracksPage) {
-          await usePlayerStore.getState().playPagedTracks({ key: `mix:${item.providerKey}`, loadPage: (offset, limit) => provider.getMixTracksPage!(item.providerKey!, offset, limit) }, item.title, "/mix", true)
+          await usePlayerStore.getState().playPagedTracks(mixPlaybackSource(provider, item.providerKey!), item.title, "/mix")
           return
         }
         const items = await provider.getMixTracks!(item.providerKey!)
         if (!current() || !items.length) return
-        const tracks = shuffleTracks(items, item.title)
+        const tracks = orderMixTracks(items)
         await playTrack(tracks[0], tracks, item.title, "/mix")
       } catch {
         if (current()) setPlayError(true)
@@ -723,9 +729,11 @@ export function StationsPage() {
       {playError && <p role="alert" className="text-sm text-red-400">Could not play this mix. Please try again.</p>}
 
       {/* Mixes for You */}
-      {mixesItems.length > 0 && (
+      {mixedMixes.length > 0 && (
         <ScrollRow title={mixesTitle} restoreKey="stations-mixes">
-          {mixesItems.map((item) => {
+          {mixedMixes.map((entry) => {
+            if (entry.source === "ytmusic") return <DiscoveryCard key={`ytmusic:${entry.item.id}`} entry={entry} scrollItem large mix />
+            const item = entry.item
             if (item.type !== "playlist") return null
             const thumb =
               mixThumbs[mixThumbnailKey(item)] ?? item.thumbUrl ?? null
@@ -734,6 +742,7 @@ export function StationsPage() {
                 key={mixThumbnailKey(item)}
                 title={item.title}
                 desc="Mix for You"
+                artworkBadge={<MusicSourceBadge source="plex" />}
                 thumb={thumb}
                 isArtist
                 artistName={mixTitleToArtistName(item.title)}

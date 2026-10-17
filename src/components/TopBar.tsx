@@ -12,8 +12,6 @@ import {
   useUIStore,
   useLibraryStore,
 } from "../stores"
-import { metadataBackends } from "../metadata"
-import { clearImageCache } from "../lib/imageCache"
 import { ThemeToggle } from "./ThemeToggle"
 import { MusicLibraryPicker } from "./MusicLibraryPicker"
 import { ActivityIndicator } from "./ActivityIndicator"
@@ -24,6 +22,8 @@ import {
 } from "./SearchDropdown"
 import { IS_MACOS } from "../lib/platform"
 import { NotificationCenter } from "./NotificationCenter"
+import { YoutubeMusicConnection } from "./YoutubeMusicConnection"
+import { refreshYoutubeMusicDiscovery, useYoutubeMusicDiscoveryStore } from "../backends/ytmusic/discovery"
 import { useOfflineStatusStore } from "../offline/statusStore"
 
 export function TopBar() {
@@ -60,9 +60,8 @@ export function TopBar() {
       query: s.query,
     }))
   )
-  const { musicSectionId, isConnected } = useConnectionStore(
+  const { isConnected } = useConnectionStore(
     useShallow((s) => ({
-      musicSectionId: s.musicSectionId,
       isConnected: s.isConnected,
     }))
   )
@@ -74,12 +73,7 @@ export function TopBar() {
       incrementPageRefreshKey: s.incrementPageRefreshKey,
     }))
   )
-  const { refreshAll, invalidateCache } = useLibraryStore(
-    useShallow((s) => ({
-      refreshAll: s.refreshAll,
-      invalidateCache: s.invalidateCache,
-    }))
-  )
+  const youtubeConnected = useYoutubeMusicDiscoveryStore(state => state.connected)
   const [localQuery, setLocalQuery] = useState(query)
   const [showDropdown, setShowDropdown] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
@@ -117,7 +111,7 @@ export function TopBar() {
       }
     }, 350)
     return () => clearTimeout(timer)
-  }, [localQuery, musicSectionId, provider])
+  }, [localQuery, provider, search, clear])
 
   // Recent searches and provider changes update the canonical query externally.
   useEffect(() => {
@@ -162,17 +156,30 @@ export function TopBar() {
       window.removeEventListener("plexify:search-focus", onSearchFocus)
       window.removeEventListener("plexify:refresh", onRefresh)
     }
-  }, [musicSectionId, isRefreshing, location])
+  }, [isConnected, youtubeConnected, isRefreshing, location])
 
   const handleRefresh = async () => {
-    if (!musicSectionId || isRefreshing) return
+    if ((!isConnected && !youtubeConnected) || isRefreshing) return
     setIsRefreshing(true)
     try {
-      invalidateCache()
       incrementPageRefreshKey()
-      // Clear external metadata caches so they re-fetch fresh
-      metadataBackends.forEach((b) => b.clearCache?.())
-      await Promise.all([clearImageCache(), refreshAll()])
+      const library = useLibraryStore.getState()
+      const work: Promise<unknown>[] = []
+      // Detail and collection hooks refresh their current resource through the
+      // page key. Home/stations own shared hub previews rather than a detail hook.
+      if (location === "/" || location === "/stations") {
+        if (provider) {
+          work.push(library.fetchHubs({ force: true }))
+          if (location === "/") work.push(library.fetchRecentlyAdded(50, { force: true }), library.fetchLatestReleases(30, { force: true }))
+        }
+      }
+      if (location === "/library" && provider) work.push(library.fetchLikedTracks(undefined, { force: true }),
+        library.fetchLikedAlbums(undefined, { force: true }), library.fetchLikedArtists(undefined, { force: true }), library.fetchPlaylists({ force: true }))
+      if (location === "/collection/playlists" && provider) work.push(library.fetchPlaylists({ force: true }))
+      if (location.startsWith("/playlist/")) library.invalidatePlaylistItems(decodeURIComponent(location.slice(10)))
+      if (youtubeConnected && (location === "/" || location === "/stations" || location.startsWith("/hub/"))) work.push(refreshYoutubeMusicDiscovery(true))
+      if (location === "/search" && query.trim()) work.push(search(query, true))
+      await Promise.allSettled(work)
     } finally {
       setIsRefreshing(false)
     }
@@ -345,6 +352,7 @@ export function TopBar() {
 
       <div className="topbar-actions ml-auto flex shrink-0 items-center gap-2">
         <MusicLibraryPicker />
+        <YoutubeMusicConnection />
         {(offlineMode || savedCount > 0) && <button type="button" className="topbar-control shell-control-secondary rounded-full px-3 text-xs" onClick={() => navigate("/settings")} title="Previously saved pages; open connection settings">
           {offlineMode ? "Saved library" : "Saved copy"}
         </button>}
@@ -355,8 +363,9 @@ export function TopBar() {
         {/* Refresh button */}
         <button
           onClick={() => void handleRefresh()}
-          disabled={isRefreshing || !isConnected}
-          title="Refresh library (⌘R)"
+          disabled={isRefreshing || (!isConnected && !youtubeConnected)}
+          title="Refresh page (⌘R)"
+          aria-label="Refresh page"
           className="topbar-control topbar-icon-control shell-control-secondary flex items-center justify-center rounded-full bg-app-surface transition-colors hover:bg-app-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
         >
           <svg

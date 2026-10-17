@@ -241,6 +241,8 @@ export interface PagedMediaItems {
 }
 
 export interface Hub {
+  key?: string | null
+  hub_key?: string | null
   title: string
   hub_identifier: string
   size: number

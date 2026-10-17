@@ -11,7 +11,7 @@ fn callback() -> (AudioCallbackState, Receiver<EngineEvent>) {
     let (_a_tx, a_rx) = crossbeam_channel::unbounded();
     let (_b_tx, b_rx) = crossbeam_channel::unbounded();
     let (events_tx, events_rx) = crossbeam_channel::unbounded();
-    let (vis_tx, _vis_rx) = crossbeam_channel::unbounded();
+    let (vis_tx, _vis_rx) = super::super::visualizer::transport::channel();
     let mut cb = AudioCallbackState::new(
         cmd_rx,
         a_rx,
@@ -31,7 +31,7 @@ fn listening_time_excludes_seeks_pauses_and_unplayed_preloads() {
     let (mut cb, events) = callback();
     cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
     cb.handle_load_deck(DeckId::B, meta(2), 48000, 2, 1.0, 0);
-    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 960000];
+    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 960000].into();
     cb.deck_mgr.active_deck_mut().fully_decoded = true;
     cb.deck_mgr.active_deck_mut().has_started_playing = true;
     cb.set_state(EngineState::Playing);
@@ -76,7 +76,7 @@ fn listening_time_excludes_seeks_pauses_and_unplayed_preloads() {
 fn a_paused_deck_reports_start_only_after_its_first_rendered_frame() {
     let (mut cb, events) = callback();
     cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
-    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 96000];
+    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 96000].into();
     cb.deck_mgr.active_deck_mut().has_started_playing = true;
     cb.handle_command(AudioCommand::Pause);
     cb.process_callback(&mut [0.0; 960]);
@@ -99,7 +99,7 @@ fn a_paused_deck_reports_start_only_after_its_first_rendered_frame() {
 fn resuming_while_an_incoming_track_is_loading_keeps_the_outgoing_audio_audible() {
     let (mut cb, _) = callback();
     cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
-    cb.deck_mgr.active_deck_mut().samples = vec![0.3; 96000];
+    cb.deck_mgr.active_deck_mut().samples = vec![0.3; 96000].into();
     cb.deck_mgr.active_deck_mut().has_started_playing = true;
     cb.set_state(EngineState::Playing);
     cb.process_callback(&mut [0.0; 960]);
@@ -118,9 +118,9 @@ fn selecting_a_new_track_while_paused_does_not_briefly_resume_the_outgoing_song(
     let (mut cb, _) = callback();
     cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
     cb.handle_load_deck(DeckId::B, meta(2), 48000, 2, 1.0, 0);
-    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 96000];
+    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 96000].into();
     cb.deck_mgr.active_deck_mut().has_started_playing = true;
-    cb.deck_mgr.pending_deck_mut().samples = vec![0.4; 96000];
+    cb.deck_mgr.pending_deck_mut().samples = vec![0.4; 96000].into();
     cb.set_state(EngineState::Playing);
     cb.process_callback(&mut [0.0; 960]);
     cb.handle_command(AudioCommand::Pause);
@@ -143,7 +143,7 @@ fn audible_callback() -> AudioCallbackState {
     let (mut cb, _) = callback();
     cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
     let deck = cb.deck_mgr.active_deck_mut();
-    deck.samples = vec![0.3; 960000];
+    deck.samples = vec![0.3; 960000].into();
     deck.fully_decoded = true;
     deck.has_started_playing = true;
     cb.set_state(EngineState::Playing);
@@ -200,7 +200,7 @@ fn initial_play_and_buffered_resume_begin_the_fade_only_with_pcm() {
     cb.deck_mgr
         .active_deck_mut()
         .samples
-        .extend_from_slice(&[0.3; FADE_SAMPLES * 2]);
+        .extend([0.3; FADE_SAMPLES * 2].iter().copied());
     cb.process_callback(&mut output);
     assert_eq!(output[0], 0.0);
     assert!(output[FADE_SAMPLES..]
@@ -215,7 +215,7 @@ fn initial_play_and_buffered_resume_begin_the_fade_only_with_pcm() {
     cb.deck_mgr
         .active_deck_mut()
         .samples
-        .extend_from_slice(&[0.3; FADE_SAMPLES * 2]);
+        .extend([0.3; FADE_SAMPLES * 2].iter().copied());
     cb.process_callback(&mut output);
     assert_eq!(output[0], 0.0);
     assert!(output[FADE_SAMPLES..]
@@ -227,7 +227,7 @@ fn initial_play_and_buffered_resume_begin_the_fade_only_with_pcm() {
 fn pausing_across_a_scheduled_transition_does_not_stall_the_fade() {
     let mut cb = audible_callback();
     cb.handle_load_deck(DeckId::B, meta(2), 48000, 2, 1.0, 0);
-    cb.deck_mgr.pending_deck_mut().samples = vec![0.2; 960000];
+    cb.deck_mgr.pending_deck_mut().samples = vec![0.2; 960000].into();
     cb.crossfade_settings.smart_crossfade = false;
     cb.crossfade_settings.crossfade_window_ms = 1000;
     cb.compute_and_set_schedule();
@@ -248,7 +248,7 @@ fn pausing_across_a_scheduled_transition_does_not_stall_the_fade() {
 fn pausing_a_crossfade_freezes_both_decks_and_its_remaining_overlap() {
     let mut cb = audible_callback();
     cb.handle_load_deck(DeckId::B, meta(2), 48000, 2, 1.0, 0);
-    cb.deck_mgr.pending_deck_mut().samples = vec![0.1; 960000];
+    cb.deck_mgr.pending_deck_mut().samples = vec![0.1; 960000].into();
     cb.handle_transition_to_active(true, true);
     cb.process_callback(&mut [0.0; 960]);
     assert!(cb.is_crossfading);
@@ -277,7 +277,7 @@ fn device_format_conversion_keeps_fade_boundaries_and_track_positions() {
     let prepare = || {
         let mut cb = audible_callback();
         cb.handle_load_deck(DeckId::B, meta(2), 48000, 2, 1.0, 0);
-        cb.deck_mgr.pending_deck_mut().samples = vec![0.1; 960000];
+        cb.deck_mgr.pending_deck_mut().samples = vec![0.1; 960000].into();
         cb.handle_transition_to_active(true, true);
         cb
     };
@@ -329,7 +329,7 @@ fn invalid_normalization_metadata_cannot_silence_a_track_or_break_its_crossfade_
     let mut incoming = meta(2);
     incoming.gain_db = Some(f32::INFINITY);
     cb.handle_load_deck(DeckId::B, incoming, 48000, 2, f32::NAN, 0);
-    cb.deck_mgr.pending_deck_mut().samples = vec![0.1; 960000];
+    cb.deck_mgr.pending_deck_mut().samples = vec![0.1; 960000].into();
     cb.handle_command(AudioCommand::SetNormalization(true));
     assert_eq!(cb.deck_mgr.deck(DeckId::A).norm_gain, 1.0);
     assert_eq!(cb.deck_mgr.deck(DeckId::B).norm_gain, 1.0);
@@ -450,7 +450,7 @@ fn paused_seeks_and_starved_pause_tails_do_not_play_delayed_audio() {
     cb.deck_mgr
         .active_deck_mut()
         .samples
-        .extend_from_slice(&[0.3; FADE_SAMPLES * 2]);
+        .extend([0.3; FADE_SAMPLES * 2].iter().copied());
     cb.process_callback(&mut output);
     assert!(output.iter().all(|sample| *sample == 0.0));
     assert_eq!(cb.deck_mgr.active_deck().position, position);
@@ -460,7 +460,7 @@ fn paused_seeks_and_starved_pause_tails_do_not_play_delayed_audio() {
 fn a_pause_tail_can_cross_the_end_of_an_overlap_without_advancing_extra_frames() {
     let mut cb = audible_callback();
     cb.handle_load_deck(DeckId::B, meta(2), 48000, 2, 1.0, 0);
-    cb.deck_mgr.pending_deck_mut().samples = vec![0.1; 960000];
+    cb.deck_mgr.pending_deck_mut().samples = vec![0.1; 960000].into();
     cb.handle_transition_to_active(true, true); // 500ms manual skip
     cb.process_callback(&mut vec![0.0; 48000 * 2 * 480 / 1000]);
     assert_eq!(cb.crossfade_remaining_frames, 960);
@@ -478,7 +478,7 @@ fn a_pause_tail_can_cross_the_end_of_an_overlap_without_advancing_extra_frames()
 fn pausing_while_loading_during_an_overlap_frees_the_old_deck_after_the_fade() {
     let mut cb = audible_callback();
     cb.handle_load_deck(DeckId::B, meta(2), 48000, 2, 1.0, 0);
-    cb.deck_mgr.pending_deck_mut().samples = vec![0.1; 960000];
+    cb.deck_mgr.pending_deck_mut().samples = vec![0.1; 960000].into();
     cb.handle_transition_to_active(true, true);
     cb.process_callback(&mut [0.0; 960]);
     cb.atomics.request_epoch.store(1, Ordering::SeqCst);
@@ -517,7 +517,7 @@ fn stop_during_a_pause_fade_is_silent_and_a_new_play_gets_its_own_fade_in() {
     cb.process_callback(&mut output);
     assert!(output.iter().all(|sample| *sample == 0.0));
     cb.handle_load_deck(cb.deck_mgr.active_id().other(), meta(2), 48000, 2, 1.0, 0);
-    cb.deck_mgr.pending_deck_mut().samples = vec![0.3; 96000];
+    cb.deck_mgr.pending_deck_mut().samples = vec![0.3; 96000].into();
     cb.handle_command(AudioCommand::TransitionToActive {
         user_skip: true,
         request_id: 0,
@@ -538,7 +538,7 @@ fn fading_between_two_occurrences_of_one_song_finishes_only_the_outgoing_identit
             metadata.duration_ms = 2000;
             cb.handle_load_deck(deck_id, metadata, 48000, 2, 1.0, 0);
             let deck = cb.deck_mgr.deck_mut(deck_id);
-            deck.samples = vec![0.1; 192000];
+            deck.samples = vec![0.1; 192000].into();
             deck.fully_decoded = true;
         }
         cb.deck_mgr.active_deck_mut().has_started_playing = true;
@@ -757,7 +757,7 @@ fn gapless_preserves_every_tail_sample_and_starts_the_next_deck_inside_the_callb
         metadata.album_playback = true;
         cb.handle_load_deck(deck_id, metadata, 48000, 2, 1.0, 0);
         let deck = cb.deck_mgr.deck_mut(deck_id);
-        deck.samples = vec![value; 96000];
+        deck.samples = vec![value; 96000].into();
         deck.fully_decoded = true;
         deck.has_started_playing = deck_id == DeckId::A;
     }
@@ -790,7 +790,7 @@ fn a_mixramp_boundary_inside_the_output_buffer_aligns_the_first_incoming_sample(
     for (deck_id, key, value) in [(DeckId::A, 1, 0.2), (DeckId::B, 2, 0.4)] {
         cb.handle_load_deck(deck_id, meta(key), 1000, 2, 1.0, 0);
         let deck = cb.deck_mgr.deck_mut(deck_id);
-        deck.samples = vec![value; 20000];
+        deck.samples = vec![value; 20000].into();
         deck.fully_decoded = true;
         deck.has_started_playing = deck_id == DeckId::A;
     }
@@ -821,9 +821,9 @@ fn incoming_buffer_starvation_freezes_fade_time_until_more_pcm_arrives() {
     let (mut cb, _) = callback();
     cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
     cb.handle_load_deck(DeckId::B, meta(2), 48000, 2, 1.0, 0);
-    cb.deck_mgr.active_deck_mut().samples = vec![0.2; 100];
+    cb.deck_mgr.active_deck_mut().samples = vec![0.2; 100].into();
     cb.deck_mgr.active_deck_mut().has_started_playing = true;
-    cb.deck_mgr.pending_deck_mut().samples = vec![0.1; 96000];
+    cb.deck_mgr.pending_deck_mut().samples = vec![0.1; 96000].into();
     cb.deck_mgr.pending_deck_mut().has_started_playing = true;
     cb.is_crossfading = true;
     cb.crossfade_remaining_frames = 100;
@@ -834,7 +834,7 @@ fn incoming_buffer_starvation_freezes_fade_time_until_more_pcm_arrives() {
     cb.deck_mgr
         .active_deck_mut()
         .samples
-        .extend_from_slice(&[0.2; 100]);
+        .extend([0.2; 100].iter().copied());
     cb.process_callback(&mut [0.0; 100]);
     assert!(!cb.is_crossfading);
     assert_eq!(cb.deck_mgr.active_deck().position, 200);
@@ -856,7 +856,7 @@ fn trimming_played_pcm_preserves_the_timeline_and_backward_seeks_reach_the_decod
     cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
     let (seek_tx, seeks) = crossbeam_channel::unbounded();
     let deck = cb.deck_mgr.active_deck_mut();
-    deck.samples = vec![0.2; 48000 * 2 * 24];
+    deck.samples = vec![0.2; 48000 * 2 * 24].into();
     deck.position = 48000 * 2 * 10;
     deck.seek_tx = Some(seek_tx);
     deck.has_started_playing = true;
@@ -1044,7 +1044,7 @@ fn paused_load_keeps_pause_and_acknowledges_the_actual_deck_swap() {
 fn skip_keeps_the_current_track_audible_until_the_incoming_buffer_is_ready() {
     let (mut cb, _) = callback();
     cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
-    cb.deck_mgr.active_deck_mut().samples = vec![0.2; 96000];
+    cb.deck_mgr.active_deck_mut().samples = vec![0.2; 96000].into();
     cb.deck_mgr.active_deck_mut().has_started_playing = true;
     cb.set_state(EngineState::Playing);
     cb.atomics.request_epoch.store(1, Ordering::SeqCst);
@@ -1076,7 +1076,7 @@ fn preloaded_samples_arm_the_gapless_scheduler() {
     cb.atomics.request_epoch.store(1, Ordering::SeqCst);
     cb.atomics.deck_b_load_id.store(1, Ordering::SeqCst);
     cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
-    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 960000];
+    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 960000].into();
     cb.deck_mgr.active_deck_mut().has_started_playing = true;
     cb.crossfade_settings.crossfade_window_ms = 0;
     cb.crossfade_settings.smart_crossfade = false;
@@ -1100,7 +1100,7 @@ fn a_preload_cannot_replace_a_still_audible_outgoing_deck() {
     cb.atomics.request_epoch.store(1, Ordering::SeqCst);
     cb.atomics.deck_b_load_id.store(1, Ordering::SeqCst);
     cb.handle_load_deck(DeckId::B, meta(2), 48000, 2, 1.0, 0);
-    cb.deck_mgr.pending_deck_mut().samples = vec![0.2; 96000];
+    cb.deck_mgr.pending_deck_mut().samples = vec![0.2; 96000].into();
     cb.is_crossfading = true;
     cb.handle_command(load(DeckId::B, 3, 1, 1, 2));
     assert_eq!(cb.deck_mgr.pending_deck().rating_key(), 2);
@@ -1148,7 +1148,7 @@ fn unrecoverable_stream_exhaustion_reports_an_error_once_instead_of_buffering_fo
 fn failed_preload_does_not_stop_or_retry_the_active_song() {
     let (mut cb, events) = callback();
     cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
-    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 96000];
+    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 96000].into();
     cb.handle_load_deck(DeckId::B, meta(2), 48000, 2, 1.0, 0);
     cb.deck_mgr.pending_deck_mut().decode_error = Some("Interrupted preload".into());
     cb.set_state(EngineState::Playing);
@@ -1167,7 +1167,7 @@ fn a_paused_backward_seek_can_reload_pcm_before_a_previous_seek_offset() {
     cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
     let active = cb.deck_mgr.active_deck_mut();
     active.sample_offset = 48000 * 2 * 5;
-    active.samples = vec![0.1; 96000];
+    active.samples = vec![0.1; 96000].into();
     active.fully_decoded = true;
     active.seek_tx = Some(seek_tx);
     cb.handle_command(AudioCommand::Pause);
@@ -1229,9 +1229,9 @@ fn an_unknown_duration_does_not_turn_the_initial_stream_buffer_into_an_early_end
     let mut unknown = meta(1);
     unknown.duration_ms = 0;
     cb.handle_load_deck(DeckId::A, unknown, 48000, 2, 1.0, 0);
-    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 96000];
+    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 96000].into();
     cb.handle_load_deck(DeckId::B, meta(2), 48000, 2, 1.0, 0);
-    cb.deck_mgr.pending_deck_mut().samples = vec![0.1; 96000];
+    cb.deck_mgr.pending_deck_mut().samples = vec![0.1; 96000].into();
     cb.set_state(EngineState::Playing);
     cb.compute_and_set_schedule();
     cb.deck_mgr.active_deck_mut().position = 95000;
@@ -1251,9 +1251,9 @@ fn manual_skips_between_album_tracks_fade_after_the_new_buffer_is_ready() {
     incoming.album_playback = true;
     cb.handle_load_deck(DeckId::A, outgoing, 48000, 2, 1.0, 0);
     cb.handle_load_deck(DeckId::B, incoming, 48000, 2, 1.0, 0);
-    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 96000];
+    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 96000].into();
     cb.deck_mgr.active_deck_mut().has_started_playing = true;
-    cb.deck_mgr.pending_deck_mut().samples = vec![0.1; 96000];
+    cb.deck_mgr.pending_deck_mut().samples = vec![0.1; 96000].into();
     cb.set_state(EngineState::Playing);
     cb.handle_transition_to_active(true, true);
     assert!(cb.is_crossfading);
@@ -1318,7 +1318,7 @@ fn mixramp_keeps_both_decks_for_the_entire_overlap() {
     for (deck_id, key) in [(DeckId::A, 1), (DeckId::B, 2)] {
         cb.handle_load_deck(deck_id, meta(key), 48000, 2, 1.0, 0);
         let deck = cb.deck_mgr.deck_mut(deck_id);
-        deck.samples = vec![0.1; 48000 * 2 * 3];
+        deck.samples = vec![0.1; 48000 * 2 * 3].into();
         deck.fully_decoded = true;
         let ramp = vec![
             RampPoint {
@@ -1363,7 +1363,7 @@ fn mixramp_keeps_both_decks_for_the_entire_overlap() {
 fn public_track_keys_in_the_negative_namespace_keep_native_start_and_end_identity() {
     let (mut cb, events) = callback();
     cb.handle_load_deck(DeckId::A, meta(-1), 48000, 2, 1.0, 0);
-    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 96000];
+    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 96000].into();
     cb.deck_mgr.active_deck_mut().fully_decoded = true;
     cb.deck_mgr.active_deck_mut().has_started_playing = true;
     cb.set_state(EngineState::Playing);
@@ -1382,7 +1382,7 @@ fn public_track_keys_in_the_negative_namespace_keep_native_start_and_end_identit
 fn filtered_callback(samples: Vec<f32>) -> AudioCallbackState {
     let (mut cb, _) = callback();
     cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
-    cb.deck_mgr.active_deck_mut().samples = samples;
+    cb.deck_mgr.active_deck_mut().samples = samples.into();
     cb.deck_mgr.active_deck_mut().has_started_playing = true;
     cb.dsp_chain.set_eq_enabled(true);
     cb.dsp_chain
@@ -1441,7 +1441,7 @@ fn an_underrun_does_not_run_filter_history_ahead_of_the_next_source_frame() {
         cb.deck_mgr
             .active_deck_mut()
             .samples
-            .extend_from_slice(&vec![0.25; 48000]);
+            .extend(vec![0.25; 48000]);
     }
     let mut actual = [0.0; 960];
     let mut expected = [0.0; 960];
@@ -1511,11 +1511,11 @@ fn shutdown_barrier_follows_actual_ends_for_paused_and_outgoing_decks_even_when_
 #[test]
 fn native_visualizer_stops_sending_pcm_after_pause_tail_or_stop() {
     let (mut cb, _events) = callback();
-    let (vis_tx, vis_rx) = crossbeam_channel::unbounded();
+    let (vis_tx, vis_rx) = super::super::visualizer::transport::channel();
     cb.vis_tx = vis_tx;
     cb.vis_enabled = true;
     cb.handle_load_deck(DeckId::A, meta(1), 48000, 2, 1.0, 0);
-    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 48000 * 2 * 10];
+    cb.deck_mgr.active_deck_mut().samples = vec![0.1; 48000 * 2 * 10].into();
     cb.deck_mgr.active_deck_mut().fully_decoded = true;
     cb.deck_mgr.active_deck_mut().has_started_playing = true;
     cb.set_state(EngineState::Playing);
@@ -1680,7 +1680,7 @@ fn seeking_near_the_end_does_not_advance_to_a_preloaded_track_during_the_fade() 
     let mut cb = audible_callback();
     cb.deck_mgr.active_deck_mut().position = 960000 - 960;
     cb.handle_load_deck(DeckId::B, meta(2), 48000, 2, 1.0, 0);
-    cb.deck_mgr.pending_deck_mut().samples = vec![0.6; 96000];
+    cb.deck_mgr.pending_deck_mut().samples = vec![0.6; 96000].into();
     cb.handle_command(AudioCommand::SeekInBuffer { position: 2000 });
     cb.process_callback(&mut [0.0; FADE_SAMPLES]);
     assert_eq!(cb.deck_mgr.active_deck().rating_key(), 1);

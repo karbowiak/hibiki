@@ -25,6 +25,8 @@ import {
   type AmbientCandidate,
 } from "../lib/ambientArtwork"
 import { useArtistArtwork, useAlbumArtwork } from "./useMediaImage"
+import { useCachedWindowedPages } from "./useWindowedPages"
+import type { MusicTrack } from "../types/music"
 import {
   applyArtworkRevision,
   artworkRevisionKey,
@@ -97,18 +99,22 @@ export function useAmbientArtwork(route: string): {
     }))
   )
   const playlistRoute = /^\/playlist(?:\/|$)/.test(route)
+  const playlistId = playlistRoute
+    ? library.playlists.find(playlist => isCurrentPlaylistRoute(route,playlist.id))?.id
+    : null
+  const playlistPages = useCachedWindowedPages<MusicTrack>(playlistId ? `playlist:${playlistId}` : null)
   const candidates = useMemo(() => {
     if (!scope) return []
     if (playlistRoute)
-      return isCurrentPlaylistRoute(route, library.currentPlaylistId)
+      return playlistPages || isCurrentPlaylistRoute(route, library.currentPlaylistId)
         ? collectPlaylistAmbientCandidates(
-            library.currentPlaylistItems ?? [],
+            playlistPages?.loadedItems ?? library.currentPlaylistItems ?? [],
             scope,
             library.likedArtists ?? []
           )
         : []
     return collectAmbientCandidates(library, scope)
-  }, [library, scope, route, playlistRoute])
+  }, [library, scope, route, playlistRoute, playlistPages, playlistPages?.snapshot()])
   const visit = useMemo(
     () => ({
       route,

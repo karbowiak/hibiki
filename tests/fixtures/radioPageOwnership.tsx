@@ -11,6 +11,7 @@ const dom = new JSDOM("<div id='root'></div>", {
 })
 globalThis.document = dom.window.document
 globalThis.window = dom.window as any
+Object.assign(globalThis, { location: dom.window.location, history: dom.window.history })
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 const { createRoot } = await import("react-dom/client")
 const root = createRoot(document.getElementById("root")!)

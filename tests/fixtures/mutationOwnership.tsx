@@ -14,7 +14,7 @@ const localFavorites:any[]=[]
 mock.module("../../src/stores/favoritesStore.ts",()=>({useFavoritesStore:create(()=>({loaded:false,likedTrackIds:new Set(),ratingChanged:async(...args:any[])=>{localFavorites.push(args)}}))}))
 const library = create(() => ({ playlists: [{id:"same", title:"Original",smart:false}], error: null as string|null,
  invalidatePlaylistItems: (id:string)=>writes.push(["invalidate",id]), renamePlaylist:(id:string,title:string)=>writes.push(["rename",id,title]),removePlaylist:(id:string)=>writes.push(["delete",id]),onItemRated:(...args:any[])=>writes.push(["rate",...args]) }))
-const player = create(()=>({playPlaylist(){},playTrack(){},playFromUri(){},playRadio(){},addNext:(tracks:any[])=>writes.push(["next",tracks]),addToQueue:(tracks:any[])=>writes.push(["queue",tracks])}))
+const player = create(()=>({playPlaylist(){},playTrack(){},playFromUri(){writes.push(["replace-playback"])},playRadio(){},addNext:(tracks:any[])=>writes.push(["next",tracks]),addToQueue:(tracks:any[])=>writes.push(["queue",tracks])}))
 mock.module("../../src/stores/index.ts",()=>({useLibraryStore:library,usePlayerStore:player}))
 mock.module("../../src/stores/libraryStore.ts",()=>({useLibraryStore:library}))
 mock.module("../../src/stores/playerStore.ts",()=>({usePlayerStore:player}))
@@ -30,6 +30,7 @@ const { useProviderStore } = await import("../../src/stores/providerStore")
 const { useContextMenuStore: menu } = await import("../../src/stores/contextMenuStore")
 const first=deferred<any>(),second=deferred<any>()
 function provider(name:string){return {cacheScope:name,capabilities:{playlists:true,playlistEdit:true,ratings:true,stations:false,radio:false},
+ getArtistTracks:async(...args:any[])=>{calls.push(["artist-tracks",name,...args]);return first.promise},buildItemUri:()=>"library://artist",
  addToPlaylist:async(...args:any[])=>{calls.push(["add",name,...args]);return calls.filter(x=>x[0]==="add").length===1?first.promise:second.promise},
  editPlaylist:async(...args:any[])=>{calls.push(["rename",name,...args]);return first.promise},deletePlaylist:async(...args:any[])=>{calls.push(["delete",name,...args]);return first.promise},
  removeFromPlaylist:async(...args:any[])=>{calls.push(["remove",name,...args]);return first.promise},getAlbumTracks:async(...args:any[])=>{calls.push(["tracks",name,...args]);return first.promise},
@@ -73,7 +74,7 @@ if(scenario.startsWith("sidebar")){
  if(scenario!=="rating-unmount")await unmount()
 }else{
  const {ContextMenu}=await import("../../src/components/ContextMenu")
- const kind=scenario.startsWith("queue")?"album":scenario.startsWith("remove")||scenario.startsWith("add")||scenario.startsWith("menu-rating")?"track":"playlist"
+ const kind=scenario.startsWith("queue-artist")?"artist":scenario.startsWith("queue")?"album":scenario.startsWith("remove")||scenario.startsWith("add")||scenario.startsWith("menu-rating")?"track":"playlist"
  const data:any={id:scenario==="delete-route"?"1":"same",title:"Original",smart:false,playlistItemId:"occurrence",artistName:"Artist",albumName:"Album"}
  if(scenario==="delete-route")history.replaceState(null,"","/playlist/10")
  await act(async()=>{root.render(<ContextMenu/>);menu.getState().show(10,10,kind,data,"same")})
@@ -92,7 +93,7 @@ if(scenario.startsWith("sidebar")){
  if(scenario.endsWith("failure")){first.reject(Error("synthetic secret"));await settle();if(scenario.includes("provider-failure"))assert.equal(library.getState().error,null);else if(scenario.startsWith("menu-rating"))assert(document.querySelector('[aria-description="Unable to save the rating. Please try again."]'));else assert(library.getState().error?.includes("Unable"))}
  else await resolve([{id:"old-track"}])
  if(scenario==="delete-route"){assert.deepEqual(writes,[["delete","1"]]);assert.equal(location.pathname,"/playlist/10")}
- else if(scenario.endsWith("success")){assert.equal(writes.length,1)}else if(scenario.endsWith("new-menu")){assert.equal(menu.getState().data?.id,"new");assert.equal(menu.getState().open,true);if(scenario.startsWith("queue"))assert.deepEqual(writes,[])}else{assert.deepEqual(writes,[]);if(!scenario.endsWith("failure"))assert.equal(library.getState().error,null)}
+ else if(scenario.endsWith("success")){assert.equal(writes.length,1);if(scenario==="queue-artist-success")assert.deepEqual(writes,[["queue",[{id:"old-track"}]]])}else if(scenario.endsWith("new-menu")){assert.equal(menu.getState().data?.id,"new");assert.equal(menu.getState().open,true);if(scenario.startsWith("queue"))assert.deepEqual(writes,[])}else{assert.deepEqual(writes,[]);if(!scenario.endsWith("failure"))assert.equal(library.getState().error,null)}
  if(!scenario.endsWith("unmount"))await unmount()
 }
 dom.window.close()

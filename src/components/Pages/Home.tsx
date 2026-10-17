@@ -1,3 +1,5 @@
+import { MusicSourceBadge } from "../shared/MusicSource"
+import { getMediaInfo, makeDragPayload } from "../../lib/mediaCardInfo"
 import { deduplicateAlbums, deduplicateAlbumItems, deduplicateHubAlbums } from "../../lib/dedup"
 import { useUIStore } from "../../stores/uiStore"
 import { loadAlbumTracks } from "../../lib/albumContents"
@@ -16,23 +18,23 @@ import {
 } from "../../stores"
 import { useProviderStore } from "../../stores/providerStore"
 import { prefetchArtist, prefetchAlbum } from "../../stores/metadataCache"
-import type { MusicItem, MusicPlaylist, MusicTrack } from "../../types/music"
+import type { MusicItem, MusicTrack } from "../../types/music"
 import type { MusicProvider } from "../../providers/types"
-import type { DragPayload } from "../../stores/dragStore"
 import { useContextMenu } from "../../hooks/useContextMenu"
 import { makeOnPlay } from "../../lib/mediaPlay"
 import { ScrollRow } from "../ScrollRow"
 import { MediaCard } from "../MediaCard"
-import { selectMix, shuffleTracks } from "./Mix"
+import { selectMix } from "../../lib/mixSelection"
+import { mixPlaybackSource, orderMixTracks } from "../../lib/mixOrder"
 import { Link } from "wouter"
 import "../../styles/discovery.css"
 import { PageLoading } from "../shared/PageLoading"
-
-function getItemYear(item: MusicItem): number {
-  if (item.type === "album") return item.year
-  if (item.type === "track") return item.year
-  return 0
-}
+import { DiscoveryCard } from "../shared/DiscoveryCard"
+import { useYoutubeMusicDiscovery, browseYoutubeMusic, youtubeMusicItemTrack } from "../../backends/ytmusic/discovery"
+import { useYoutubeMusicHistory } from "../../backends/ytmusic/history"
+import { homeDiscoverySections, mixDiscoveryItems, sortLatestReleases, isRecentlyPlayedHub, mergeDiscoveryItems, plexDiscoveryItems, youtubeDiscoveryItems, recentDiscoveryItems, type DiscoveryItem } from "../../lib/discovery"
+import { advancePlaybackSelection, capturePlaybackSelectionVersion } from "../../lib/playbackSelection"
+import { shuffled } from "../../lib/pagedPlayback"
 
 async function resolveItemsToTracks(items: MusicItem[], provider: MusicProvider): Promise<MusicTrack[]> {
   const results = await Promise.all(items.map(async (item) => {
@@ -47,87 +49,23 @@ async function resolveItemsToTracks(items: MusicItem[], provider: MusicProvider)
   return results.flat()
 }
 
-function shuffleArray<T>(arr: T[]): T[] {
-  const shuffled = [...arr]
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
-  }
-  return shuffled
-}
-
-export function getMediaInfo(item: MusicItem, opts?: { showYear?: boolean }) {
-  switch (item.type) {
-    case "album":
-      return {
-        title: item.title,
-        desc: opts?.showYear && item.year > 0
-          ? `${item.artistName} · ${item.year}`
-          : item.artistName,
-        thumb: item.thumbUrl,
-        isArtist: false,
-        href: `/album/${item.id}`,
-        id: item.id,
-        itemType: "album" as const,
-        artistName: item.artistName,
-        albumName: item.title,
-      }
-    case "artist":
-      return {
-        title: item.title,
-        desc: "Artist",
-        thumb: item.thumbUrl,
-        isArtist: true,
-        href: `/artist/${item.id}`,
-        id: item.id,
-        itemType: "artist" as const,
-        artistName: item.title,
-        albumName: null,
-      }
-    case "track":
-      return {
-        title: item.title,
-        desc: opts?.showYear && item.year > 0
-          ? `${item.artistName} · ${item.year}`
-          : item.artistName,
-        thumb: item.thumbUrl,
-        isArtist: false,
-        href: item.albumId ? `/album/${item.albumId}` : null,
-        id: item.id,
-        itemType: "track" as const,
-        artistName: item.artistName,
-        albumName: item.albumName,
-      }
-    case "playlist":
-      return {
-        title: item.title,
-        desc: "Playlist",
-        thumb: item.thumbUrl,
-        isArtist: false,
-        href: `/playlist/${item.id}`,
-        id: item.id,
-        itemType: "playlist" as const,
-      }
-    default:
-      return null
-  }
-}
-
-/** Build a drag payload for any media item (track, album, artist). */
-export function makeDragPayload(item: MusicItem): DragPayload | undefined {
-  switch (item.type) {
-    case "track":
-      return { type: "track", ids: [item.id], label: item.title, tracks: [item as MusicTrack] }
-    case "album":
-      return { type: "album", ids: [item.id], label: item.title }
-    case "artist":
-      return { type: "artist", ids: [item.id], label: item.title }
-    default:
-      return undefined
-  }
+async function resolveDiscoveryTracks(items: DiscoveryItem[], provider: MusicProvider): Promise<MusicTrack[]> {
+  const results: MusicTrack[][] = new Array(items.length)
+  let index = 0
+  await Promise.all(Array.from({ length: Math.min(4, items.length) }, async () => {
+    while (index < items.length) {
+      const current = index++, entry = items[current]
+      results[current] = entry.source === "plex" ? await resolveItemsToTracks([entry.item], provider)
+        : entry.item.kind === "song" ? [youtubeMusicItemTrack(entry.item)]
+          : (await browseYoutubeMusic({ browseId: entry.item.id })).items.filter(item => item.kind === "song").map(youtubeMusicItemTrack)
+    }
+  }))
+  return results.flat()
 }
 
 export function Home() {
+  const youtube = useYoutubeMusicDiscovery(true)
+  const history = useYoutubeMusicHistory()
   // Granular selector: only re-render when recentlyAdded or hubs actually change.
   // Changes to playlistItemsCache (from background prefetch) do NOT trigger re-renders here.
   const { recentlyAdded: rawAdded, latestReleases: rawReleases, hubs: rawHubs } = useLibraryStore(
@@ -165,7 +103,7 @@ export function Home() {
     return undefined
   }
 
-  const hasRealData = latestReleases.length > 0 || recentlyAdded.length > 0 || hubs.length > 0
+  const hasRealData = latestReleases.length > 0 || recentlyAdded.length > 0 || hubs.length > 0 || youtube.hubs.length > 0
   const latestReleaseItems = useMemo(
     () => latestReleases.slice(0, 30).map(album => ({ ...album, type: "album" as const })),
     [latestReleases]
@@ -178,6 +116,15 @@ export function Home() {
       mixesTitle: mh[0]?.title ?? "Mixes for You",
     }
   }, [hubs])
+
+  const mixedReleases = useMemo(() => sortLatestReleases(mergeDiscoveryItems(plexDiscoveryItems(latestReleaseItems),
+    youtube.connected ? youtubeDiscoveryItems(youtube.hubs.filter(hub => hub.category === "releases").flatMap(hub => hub.items)) : [])).slice(0, 30), [latestReleaseItems, youtube.connected, youtube.hubs])
+  const mixedMixes = useMemo(() => mixDiscoveryItems(mixesItems, youtube.connected ? youtube.hubs : []), [mixesItems, youtube.connected, youtube.hubs])
+  const recentItems = useMemo(() => recentDiscoveryItems(hubs.filter(isRecentlyPlayedHub).flatMap(hub => hub.items),
+    youtube.connected ? [...history, ...youtube.hubs.filter(hub => hub.category === "recent").flatMap(hub => hub.items)] : []).slice(0, 30), [hubs, youtube.connected, youtube.hubs, history])
+  const otherSections = useMemo(() => homeDiscoverySections(hubs.filter(hub => hub.items.length > 0 && hub.identifier
+    && !hub.identifier.startsWith("music.mixes") && !isRecentlyPlayedHub(hub)
+    && !/recently[. ]?added|station/i.test(`${hub.identifier} ${hub.title}`)), youtube.connected ? youtube.hubs : []), [hubs, youtube.connected, youtube.hubs])
 
   const mixThumbs = useMixThumbnails(provider, mixesItems)
   const playbackView = useRef({ active: false, revision: 0 })
@@ -198,8 +145,10 @@ export function Home() {
   ) {
     const view = playbackView.current
     const revision = ++view.revision
+    const selection = advancePlaybackSelection()
     const current = () =>
       view.active &&
+      capturePlaybackSelectionVersion() === selection &&
       view.revision === revision &&
       useProviderStore.getState().provider === provider
     setPlayError(false)
@@ -207,7 +156,7 @@ export function Home() {
       try {
         const items = await load()
         if (!current() || !items.length) return
-        const tracks = shuffle ? shuffleArray(items) : items
+        const tracks = shuffle ? shuffled(items) : items
         await playTrack(tracks[0], tracks, title, route)
       } catch {
         if (current()) setPlayError(true)
@@ -279,9 +228,11 @@ export function Home() {
         </div>
       </header>
       {playError && <p role="alert" className="text-sm text-red-400">Could not play these items. Please try again.</p>}
-      {mixesItems.length > 0 && (
+      {mixedMixes.length > 0 && (
         <ScrollRow title={mixesTitle} titleHref="/stations" restoreKey="home-mixes">
-          {mixesItems.map((item) => {
+          {mixedMixes.map((entry) => {
+            if (entry.source === "ytmusic") return <DiscoveryCard key={`ytmusic:${entry.item.id}`} entry={entry} scrollItem large mix />
+            const item = entry.item
             if (item.type !== "playlist") return null
             const thumb = mixThumbs[mixThumbnailKey(item)] ?? item.thumbUrl
             const openMix = () => { selectMix(item); navigate("/mix") }
@@ -289,16 +240,17 @@ export function Home() {
               const mixKey = item.providerKey
               if (!mixKey || !provider?.getMixTracks) return
               if (provider.getMixTracksPage) {
-                void usePlayerStore.getState().playPagedTracks({ key: `mix:${mixKey}`, loadPage: (offset, limit) => provider.getMixTracksPage!(mixKey, offset, limit) }, item.title, "/mix", true)
+                void usePlayerStore.getState().playPagedTracks(mixPlaybackSource(provider, mixKey), item.title, "/mix")
                 return
               }
-              playResolved(async () => shuffleTracks(await provider.getMixTracks!(mixKey), item.title), item.title, "/mix", false)
+              playResolved(async () => orderMixTracks(await provider.getMixTracks!(mixKey)), item.title, "/mix", false)
             }
             return (
               <MediaCard
                 key={mixThumbnailKey(item)}
                 title={item.title}
                 desc="Mix for You"
+                artworkBadge={<MusicSourceBadge source="plex" />}
                 thumb={thumb}
                 isArtist
                 artistName={mixTitleToArtistName(item.title)}
@@ -316,34 +268,15 @@ export function Home() {
         </ScrollRow>
       )}
 
-      {latestReleaseItems.length > 0 && (
+      {mixedReleases.length > 0 && (
         <ScrollRow
           title="Latest Releases"
+          titleHref="/hub/latest-releases"
           restoreKey="home-latest-releases"
-          onPlayAll={provider ? () => playResolved(() => resolveItemsToTracks(latestReleaseItems, provider), "Latest Releases", null, false) : undefined}
-          onShuffleAll={provider ? () => playResolved(() => resolveItemsToTracks(latestReleaseItems, provider), "Latest Releases", null, true) : undefined}
+          onPlayAll={provider ? () => playResolved(() => resolveDiscoveryTracks(mixedReleases, provider), "Latest Releases", null, false) : undefined}
+          onShuffleAll={provider ? () => playResolved(() => resolveDiscoveryTracks(mixedReleases, provider), "Latest Releases", null, true) : undefined}
         >
-          {latestReleaseItems.map((item, idx) => {
-            const info = getMediaInfo(item)
-            if (!info) return null
-            return (
-              <MediaCard
-                key={`${item.id}-${idx}`}
-                title={info.title}
-                desc={info.desc}
-                thumb={info.thumb}
-                isArtist={false}
-                href={info.href ?? undefined}
-                prefetch={makePrefetch(info)}
-                onPlay={makeOnPlay(item, { playTrack, playFromUri, playPlaylist, provider })}
-                onContextMenu={makeOnContextMenu(item)}
-                dragPayload={makeDragPayload(item)}
-                artistName={item.artistName}
-                albumName={item.title}
-                scrollItem
-              />
-            )
-          })}
+          {mixedReleases.map(entry => <DiscoveryCard key={`${entry.source}:${entry.item.id}`} entry={entry} scrollItem />)}
         </ScrollRow>
       )}
 
@@ -380,116 +313,32 @@ export function Home() {
         </ScrollRow>
       )}
 
-      {hubs.map(hub => {
-        if (hub.items.length === 0 || !hub.identifier) return null
-        // Skip mixes hubs — already rendered as the pinned top section
-        if (hub.identifier.startsWith("music.mixes")) return null
-        // Skip recently-added hubs — identifier-based + title fallback for server-variant identifiers
-        if (hub.identifier.toLowerCase().includes("recently.added") ||
-            hub.identifier.toLowerCase().includes("recentlyadded") ||
-            hub.title.toLowerCase().startsWith("recently added")) return null
-        // Skip station hubs — already shown on the /stations page
-        if (hub.identifier.toLowerCase().includes("station")) return null
-        const isAnniversary = hub.identifier.includes("anniversary")
-        // "On This Day" — sort oldest → newest and show the release year.
-        const items = isAnniversary
-          ? [...hub.items].sort((a, b) => getItemYear(a) - getItemYear(b))
-          : hub.items
-        const layout = hub.layout ?? "scroller"
+      {recentItems.length > 0 && <ScrollRow title="Recently Played Music" titleHref="/hub/recently-played" restoreKey="home-recently-played"
+        onPlayAll={provider ? () => playResolved(() => resolveDiscoveryTracks(recentItems, provider), "Recently Played Music", "/hub/recently-played", false) : undefined}
+        onShuffleAll={provider ? () => playResolved(() => resolveDiscoveryTracks(recentItems, provider), "Recently Played Music", "/hub/recently-played", true) : undefined}>
+        {recentItems.map(entry => <DiscoveryCard key={`${entry.source}:${entry.item.id}`} entry={entry} scrollItem />)}
+      </ScrollRow>}
 
-        // Pills layout — flex-wrap of rounded pill buttons
-        if (layout === "pills") {
-          return (
-            <div key={hub.identifier}>
-              <h2 className="text-base font-semibold text-white mb-3">{hub.title}</h2>
-              <div className="flex flex-wrap gap-2">
-                {items.slice(0, 30).map((item, idx) => {
-                  const info = getMediaInfo(item)
-                  if (!info) return null
-                  return (
-                    <button
-                      key={`${item.id}-${idx}`}
-                      onClick={() => info.href && navigate(info.href)}
-                      className="rounded-full bg-white/10 px-4 py-1.5 text-sm text-white/70 hover:bg-white/20 hover:text-white transition-colors"
-                    >
-                      {info.title}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          )
-        }
-
-        // Hero layout — larger cards with image overlay
-        if (layout === "hero") {
-          return (
-            <ScrollRow
-              key={hub.identifier}
-              title={hub.title}
-              titleHref={"/hub/" + encodeURIComponent(hub.identifier)}
-              restoreKey={`home-hub-${hub.identifier}`}
-              onPlayAll={provider ? () => playResolved(() => resolveItemsToTracks(items.slice(0, 30), provider), hub.title, null, false) : undefined}
-              onShuffleAll={provider ? () => playResolved(() => resolveItemsToTracks(items.slice(0, 30), provider), hub.title, null, true) : undefined}
-            >
-              {items.slice(0, 30).map((item, idx) => {
-                const info = getMediaInfo(item, { showYear: isAnniversary })
-                if (!info) return null
-                return (
-                  <MediaCard
-                    key={`${item.id}-${idx}`}
-                    title={info.title}
-                    desc={info.desc}
-                    thumb={info.thumb}
-                    isArtist={info.isArtist}
-                    href={info.href ?? undefined}
-                    prefetch={makePrefetch(info)}
-                    onPlay={makeOnPlay(item, { playTrack, playFromUri, playPlaylist, provider })}
-                    onContextMenu={makeOnContextMenu(item)}
-                    dragPayload={makeDragPayload(item)}
-                    scrollItem
-                    large
-                  />
-                )
-              })}
-            </ScrollRow>
-          )
-        }
-
-        // Default scroller layout
-        return (
-          <ScrollRow
-            key={hub.identifier}
-            title={hub.title}
-            titleHref={"/hub/" + encodeURIComponent(hub.identifier)}
-            restoreKey={`home-hub-${hub.identifier}`}
-            onPlayAll={provider ? () => playResolved(() => resolveItemsToTracks(items.slice(0, 30), provider), hub.title, null, false) : undefined}
-            onShuffleAll={provider ? () => playResolved(() => resolveItemsToTracks(items.slice(0, 30), provider), hub.title, null, true) : undefined}
-          >
-            {items.slice(0, 30).map((item, idx) => {
-              const info = getMediaInfo(item, { showYear: isAnniversary })
-              if (!info) return null
-              const Card = MediaCard
-              return (
-                <Card
-                  key={`${item.id}-${idx}`}
-                  title={info.title}
-                  desc={info.desc}
-                  thumb={info.thumb}
-                  isArtist={info.isArtist}
-                  href={info.href ?? undefined}
-                  prefetch={makePrefetch(info)}
-                  onPlay={makeOnPlay(item, { playTrack, playFromUri, playPlaylist, provider })}
-                  onContextMenu={makeOnContextMenu(item)}
-                  dragPayload={makeDragPayload(item)}
-                  artistName={"artistName" in info ? info.artistName : undefined}
-                  albumName={"albumName" in info ? info.albumName : undefined}
-                  scrollItem
-                />
-              )
-            })}
-          </ScrollRow>
-        )
+      {otherSections.map(section => {
+        const original = hubs.find(hub => hub.identifier === section.id)
+        const anniversary = section.id.includes("anniversary")
+        const items = anniversary ? [...section.items].sort((a, b) => {
+          const year = (entry: DiscoveryItem) => entry.source === "plex" && "year" in entry.item ? entry.item.year : entry.source === "ytmusic" ? entry.item.year ?? 0 : 0
+          return year(a) - year(b)
+        }) : section.items
+        if (original?.layout === "pills") return <section key={section.id}>
+          <h2 className="mb-3 text-base font-semibold"><Link href={section.href} className="hover:underline">{section.title}</Link></h2>
+          <div className="flex flex-wrap gap-2">{items.slice(0, 30).map(entry => {
+            if (entry.source !== "plex") return null
+            const info = getMediaInfo(entry.item)
+            return info?.href ? <Link key={entry.item.id} href={info.href} className="rounded-full bg-app-surface px-4 py-1.5 text-sm text-(--text-secondary) hover:bg-app-surface-hover">{info.title}</Link> : null
+          })}</div>
+        </section>
+        return <ScrollRow key={section.id} title={section.title} titleHref={section.href} restoreKey={`home-hub-${section.id}`}
+          onPlayAll={provider ? () => playResolved(() => resolveDiscoveryTracks(items.slice(0, 30), provider), section.title, section.href, false) : undefined}
+          onShuffleAll={provider ? () => playResolved(() => resolveDiscoveryTracks(items.slice(0, 30), provider), section.title, section.href, true) : undefined}>
+          {items.slice(0, 30).map(entry => <DiscoveryCard key={`${entry.source}:${entry.item.id}`} entry={entry} showYear={anniversary} scrollItem large={original?.layout === "hero"} />)}
+        </ScrollRow>
       })}
     </div>
   )

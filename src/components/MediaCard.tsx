@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { makeOnPlay } from "../lib/mediaPlay"
 import { usePlayerStore } from "../stores/playerStore"
 import { DownloadBadge } from "./shared/DownloadBadge"
@@ -17,8 +17,16 @@ import { useArtistImage, useAlbumImage } from "../hooks/useMediaImage"
 import { useContextMenu } from "../hooks/useContextMenu"
 import type { MusicItem } from "../types/music"
 import type { DragPayload } from "../stores/dragStore"
+import { useNearViewport } from "../hooks/useNearViewport"
+import type { Ref, ReactNode } from "react"
+import { MusicEntityLink } from "./shared/MusicEntityLink"
+import { albumArtistEntity, trackEntity, type MusicEntityRef } from "../lib/musicLinks"
 
 interface MediaCardProps {
+  navigationEntity?: MusicEntityRef | null
+  descriptionEntity?: MusicEntityRef | null
+  artworkBadge?: ReactNode
+  artworkRef?: Ref<HTMLDivElement>
   title: string
   desc: string
   thumb: string | null
@@ -52,46 +60,118 @@ interface MediaCardProps {
   onViewVersions?: () => void
 }
 
-/**
- * Resolves the best image for an artist card via the priority metadata system.
- * Separate component to satisfy React's rules of hooks.
- */
+interface CardArtwork {
+  identity: string
+  url: string | null
+}
+function useCardArtwork(identity: string, fallback: string | null) {
+  const [resolved, setResolved] = useState<CardArtwork | null>(null)
+  const publish = useCallback(
+    (value: CardArtwork) =>
+      setResolved((previous) =>
+        previous?.identity === value.identity && previous.url === value.url
+          ? previous
+          : value
+      ),
+    []
+  )
+  return {
+    url: resolved?.identity === identity ? resolved.url : fallback,
+    publish,
+  }
+}
+interface ArtworkResolverProps {
+  identity: string
+  artist: string
+  thumb: string | null
+  failures: readonly string[]
+  publish: (value: CardArtwork) => void
+}
+function ArtistArtworkResolver({
+  identity,
+  artist,
+  thumb,
+  failures,
+  publish,
+}: ArtworkResolverProps) {
+  const url = useArtistImage(artist, thumb, undefined, failures, true)
+  useEffect(() => publish({ identity, url }), [identity, url, publish])
+  return null
+}
+function AlbumArtworkResolver({
+  identity,
+  artist,
+  album,
+  thumb,
+  failures,
+  publish,
+}: ArtworkResolverProps & { album: string }) {
+  const url = useAlbumImage(artist, album, thumb, undefined, failures, true)
+  useEffect(() => publish({ identity, url }), [identity, url, publish])
+  return null
+}
+
+/** Offscreen cards keep their own focus/DOM while expensive artwork hooks wait. */
 function ArtistImageCard({
   artistName,
   thumb,
   ...rest
 }: MediaCardProps & { artistName: string }) {
-  const { failures, onFailure } = useArtworkFailures(
-    JSON.stringify([artistName, thumb])
-  )
-  const resolved = useArtistImage(artistName, thumb, undefined, failures)
+  const { near, ref } = useNearViewport()
+  const identity = JSON.stringify([artistName, thumb])
+  const { failures, onFailure } = useArtworkFailures(identity)
+  const { url, publish } = useCardArtwork(identity, thumb)
   return (
-    <MediaCardInner {...rest} thumb={resolved} onImageFailure={onFailure} />
+    <>
+      <MediaCardInner
+        {...rest}
+        artistName={artistName}
+        artworkRef={ref}
+        thumb={url}
+        onImageFailure={onFailure}
+      />
+      {near && (
+        <ArtistArtworkResolver
+          identity={identity}
+          artist={artistName}
+          thumb={thumb}
+          failures={failures}
+          publish={publish}
+        />
+      )}
+    </>
   )
 }
-
-/**
- * Resolves the best image for an album card via the priority metadata system.
- * Separate component to satisfy React's rules of hooks.
- */
 function AlbumImageCard({
   artistName,
   albumName,
   thumb,
   ...rest
 }: MediaCardProps & { artistName: string; albumName: string }) {
-  const { failures, onFailure } = useArtworkFailures(
-    JSON.stringify([artistName, albumName, thumb])
-  )
-  const resolved = useAlbumImage(
-    artistName,
-    albumName,
-    thumb,
-    undefined,
-    failures
-  )
+  const { near, ref } = useNearViewport()
+  const identity = JSON.stringify([artistName, albumName, thumb])
+  const { failures, onFailure } = useArtworkFailures(identity)
+  const { url, publish } = useCardArtwork(identity, thumb)
   return (
-    <MediaCardInner {...rest} thumb={resolved} onImageFailure={onFailure} />
+    <>
+      <MediaCardInner
+        {...rest}
+        artistName={artistName}
+        artworkRef={ref}
+        thumb={url}
+        onImageFailure={onFailure}
+      />
+      {near && (
+        <AlbumArtworkResolver
+          identity={identity}
+          artist={artistName}
+          album={albumName}
+          thumb={thumb}
+          failures={failures}
+          publish={publish}
+        />
+      )}
+    </>
   )
 }
 
@@ -116,6 +196,12 @@ export function MediaCard(props: MediaCardProps) {
 }
 
 function MediaCardInner({
+  navigationEntity,
+  descriptionEntity,
+  artistName,
+  isArtist,
+  artworkBadge,
+  artworkRef,
   title,
   desc,
   thumb,
@@ -194,6 +280,8 @@ function MediaCardInner({
     .map((word) => Array.from(word)[0] ?? "")
     .join("")
     .toLocaleUpperCase()
+  const credit = descriptionEntity !== undefined ? descriptionEntity : contextItem?.type === "album" ? albumArtistEntity(contextItem)
+    : contextItem?.type === "track" ? trackEntity(contextItem, "artist") : !isArtist && artistName ? { kind: "artist" as const, name: artistName } : null
   const cardContent = (
     <>
       <div className="media-card__art aspect-square">
@@ -212,6 +300,7 @@ function MediaCardInner({
         )}
       </div>
       <div className="media-card__gradient" aria-hidden="true" />
+      {artworkBadge && <span className="absolute top-2 right-2 z-10 flex h-7 min-w-7 items-center justify-center rounded-full bg-black/70 p-1.5 pointer-events-none">{artworkBadge}</span>}
       {onViewVersions && (versionCount ?? 0) > 1 && (
         <button
           type="button"
@@ -229,6 +318,7 @@ function MediaCardInner({
       <div
         className={clsx(
           "media-card__caption",
+          credit && "media-card__caption--links",
           onPlay && "media-card__caption--play"
         )}
       >
@@ -237,7 +327,7 @@ function MediaCardInner({
         </div>
         <div className="flex items-center gap-1.5">
           <div className="media-card__meta min-w-0" title={desc}>
-            {desc}
+            {credit ? <MusicEntityLink entity={credit} className="relative z-4 pointer-events-auto hover:underline">{desc}</MusicEntityLink> : desc}
           </div>
           {contextItem && (
             <DownloadBadge
@@ -248,9 +338,21 @@ function MediaCardInner({
           )}
         </div>
         {!!userRating && starsFromRating(userRating) > 0 && (
-          <span className="media-card__rating" role="img" aria-label={`Rated ${starsFromRating(userRating)} of 5 stars`}>
-            {Array.from({ length: 5 }, (_, index) => <IconStar key={index} size={11} aria-hidden="true"
-              fill={index < starsFromRating(userRating) ? "currentColor" : "none"} />)}
+          <span
+            className="media-card__rating"
+            role="img"
+            aria-label={`Rated ${starsFromRating(userRating)} of 5 stars`}
+          >
+            {Array.from({ length: 5 }, (_, index) => (
+              <IconStar
+                key={index}
+                size={11}
+                aria-hidden="true"
+                fill={
+                  index < starsFromRating(userRating) ? "currentColor" : "none"
+                }
+              />
+            ))}
           </span>
         )}
       </div>
@@ -299,6 +401,7 @@ function MediaCardInner({
   const primaryClass = "media-card__primary"
   return (
     <div
+      ref={artworkRef}
       style={scrollStyle}
       onMouseEnter={prefetch}
       onFocus={prefetch}
@@ -333,7 +436,11 @@ function MediaCardInner({
       className={cardClass}
       {...(!href && !onClick ? dragHandlers : undefined)}
     >
-      {href ? (
+      {navigationEntity ? (
+        <MusicEntityLink entity={navigationEntity} className={primaryClass} onNavigate={onClick}>
+          <span className="sr-only">{title}</span>
+        </MusicEntityLink>
+      ) : href ? (
         <Link
           href={href}
           onClick={onClick}

@@ -44,7 +44,7 @@ mock.module("@tauri-apps/api/core", () => ({
 }))
 const { useProviderStore } = await import("../../src/stores/providerStore")
 const { useCatalogueStore } = await import("../../src/offline/catalogueStore")
-const { useDownloadStatusStore, refreshDownloadStatuses } =
+const { useDownloadStatusStore, refreshDownloadStatuses, registerDownloadStatus, captureDownloadOwner } =
   await import("../../src/offline/downloadStatusStore")
 const { DownloadBadge } =
   await import("../../src/components/shared/DownloadBadge")
@@ -160,6 +160,19 @@ assert.equal(
   calls.find((c) => c.command === "download_entity").args.kind,
   "artist"
 )
+// Identical polls preserve individual status references, avoiding badge rerenders.
+const savedStatus = useDownloadStatusStore.getState().statuses["album:42"]
+await act(async () => { refreshDownloadStatuses(); await settle() })
+assert.equal(useDownloadStatusStore.getState().statuses["album:42"], savedStatus)
+// Scrolling across hundreds of cards does not retain departed status records.
+const captured = captureDownloadOwner()!
+for (let index = 200; index < 500; index++) {
+  const unregister = registerDownloadStatus(captured, { kind: "track", id: String(index) })
+  await act(async () => { await settle() })
+  unregister()
+}
+await act(async () => { await settle() })
+assert(Object.keys(useDownloadStatusStore.getState().statuses).every(key => !key.startsWith("track:")))
 // A retired account never restores old badges. Physical folder usage is global.
 hold = true
 await act(async () => {

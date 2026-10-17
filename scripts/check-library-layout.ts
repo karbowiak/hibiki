@@ -1,12 +1,11 @@
 import assert from "node:assert/strict"
-import { mkdtemp, mkdir, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { mkdir } from "node:fs/promises"
 import { join, resolve } from "node:path"
-import { build } from "vite"
+import { fixtureBuild, disposeFixture, fixtureFile, launchFixtureBrowser } from "./lib/browserFixtures"
 import { chromium, webkit } from "playwright"
 
 const root = resolve(import.meta.dir, "..")
-const output = await mkdtemp(join(tmpdir(), "hibiki-library-layout-"))
+const output = await fixtureBuild(["tests/fixtures/libraryLayout/index.html"], "darwin")
 const artifactDir = resolve(root, ".tmp/library-layout-checks")
 await mkdir(artifactDir, { recursive: true })
 const artwork =
@@ -22,18 +21,7 @@ const originalPlatform = process.env.TAURI_ENV_PLATFORM
 process.env.TAURI_ENV_PLATFORM = "darwin"
 let server: ReturnType<typeof Bun.serve> | undefined
 try {
-  await build({
-    root,
-    configFile: resolve(root, "vite.config.ts"),
-    logLevel: "error",
-    build: {
-      outDir: output,
-      emptyOutDir: true,
-      rolldownOptions: {
-        input: resolve(root, "tests/fixtures/libraryLayout/index.html"),
-      },
-    },
-  })
+
   server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -43,13 +31,7 @@ try {
         return new Response(artwork, {
           headers: { "Content-Type": "image/svg+xml" },
         })
-      const filename = resolve(output, "." + pathname)
-      if (!filename.startsWith(output + "/"))
-        return new Response("Not found", { status: 404 })
-      const file = Bun.file(filename)
-      return (await file.exists())
-        ? new Response(file)
-        : new Response("Not found", { status: 404 })
+      return fixtureFile(output,pathname)
     },
   })
   const origin = `http://127.0.0.1:${server.port}`
@@ -57,12 +39,7 @@ try {
     ["chrome", chromium],
     ["webkit", webkit],
   ] as const) {
-    const browser = await type.launch({
-      headless: true,
-      ...(name === "chrome" && process.env.HIBIKI_CHROME_CHANNEL
-        ? { channel: process.env.HIBIKI_CHROME_CHANNEL }
-        : {}),
-    })
+    const browser = await launchFixtureBrowser(type)
     try {
       const context = await browser.newContext({
         viewport: { width: 1440, height: 900 },
@@ -97,6 +74,9 @@ try {
             dispatchEvent(new PopStateEvent("popstate"))
           }, route)
           await page.waitForTimeout(300)
+          // Lazy route imports can still be suspended on a busy CI worker.
+          // Geometry is meaningful only after the real heading is painted.
+          await page.locator("#layout-fixture main h1").first().waitFor({ state: "visible" })
           await page
             .locator("#layout-fixture main .overflow-auto")
             .evaluate((element) => {
@@ -541,5 +521,5 @@ try {
   if (originalPlatform === undefined) delete process.env.TAURI_ENV_PLATFORM
   else process.env.TAURI_ENV_PLATFORM = originalPlatform
   server?.stop(true)
-  await rm(output, { recursive: true, force: true })
+  await disposeFixture(output)
 }

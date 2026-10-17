@@ -2,6 +2,7 @@ import { createMetadataCache } from "./metadataCacheCore"
 import { idbStorage } from "./idbStorage"
 import { useProviderStore } from "./providerStore"
 import { useUIStore } from "./uiStore"
+import { playbackMetadata } from "../audio/playbackMetadata"
 export type { ArtistCacheEntry, AlbumCacheEntry, MetadataCacheSession } from "./metadataCacheCore"
 
 const metadata = createMetadataCache({
@@ -18,7 +19,11 @@ export const isMetadataCacheCurrent = metadata.current
 export const activateMetadataCache = metadata.activate
 export const disconnectMetadataCache = metadata.disconnect
 export const clearMetadataCache = metadata.clear
-export const invalidateMetadataItem = metadata.invalidate
+export const invalidateMetadataItem: typeof metadata.invalidate = (...args) => {
+  const provider = useProviderStore.getState().provider
+  if (provider) playbackMetadata.invalidate(provider)
+  return metadata.invalidate(...args)
+}
 export const getMetadataCacheStats = metadata.stats
 export const prefetchArtist = metadata.prefetchArtist
 export const prefetchAlbum = metadata.prefetchAlbum

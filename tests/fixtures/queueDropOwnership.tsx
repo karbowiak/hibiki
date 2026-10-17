@@ -8,6 +8,7 @@ const scenario = process.argv[2]
 const dom = new JSDOM("<div id='root'></div>", { url: "https://hibiki.test" })
 globalThis.window = dom.window as any
 globalThis.document = dom.window.document
+Object.assign(globalThis, { location: dom.window.location, history: dom.window.history })
 globalThis.requestAnimationFrame = callback => setTimeout(() => callback(0), 0) as any
 globalThis.cancelAnimationFrame = handle => clearTimeout(handle)
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true

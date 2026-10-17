@@ -12,7 +12,84 @@ use super::library::build_url_from_params;
 use anyhow::{Result, Context};
 use tracing::{debug, instrument};
 
+#[derive(serde::Serialize)]
+pub struct DiscoveryPage {
+    items: Vec<PlexMedia>,
+    total: i64,
+    offset: i64,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct DiscoveryContainer {
+    #[serde(rename = "Metadata", default)]
+    metadata: Vec<PlexMedia>,
+    #[serde(rename = "Hub", default)]
+    hubs: Vec<Hub>,
+    #[serde(rename = "totalSize", default, deserialize_with = "super::models::serde_string_or_i64_opt::deserialize")]
+    total: Option<i64>,
+    #[serde(default, deserialize_with = "super::models::serde_string_or_i64_opt::deserialize")]
+    offset: Option<i64>,
+}
+
+fn discovery_destination(section: i64, kind: &str, key: Option<&str>) -> Result<String> {
+    anyhow::ensure!(section > 0, "Invalid music library section");
+    match kind {
+        "recent" => Ok(format!("/library/sections/{section}/recentlyAdded?sort=addedAt:desc")),
+        "latest" => {
+            let tomorrow = chrono::Utc::now().date_naive().succ_opt()
+                .context("Invalid release date boundary")?.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+            Ok(format!("/library/sections/{section}/all?type=9&sort=originallyAvailableAt:desc&originallyAvailableAt%3C%3C={tomorrow}"))
+        }
+        "hub" => {
+            let key = key.context("This hub has no expansion destination")?;
+            let parsed = url::Url::parse("https://hibiki.invalid")?.join(key)?;
+            let path = parsed.path();
+            anyhow::ensure!(key.starts_with('/') && !key.starts_with("//")
+                && parsed.host_str() == Some("hibiki.invalid") && parsed.fragment().is_none()
+                && (path.starts_with(&format!("/library/sections/{section}/"))
+                    || path.starts_with("/library/metadata/") || path.starts_with("/hubs/")),
+                "Invalid discovery destination");
+            Ok(key.to_owned())
+        }
+        _ => anyhow::bail!("Unknown discovery collection"),
+    }
+}
+
 impl PlexClient {
+    pub async fn discovery_page(&self, section: i64, kind: &str, offset: i64, limit: i64,
+        hub_id: Option<&str>, key: Option<&str>) -> Result<DiscoveryPage> {
+        anyhow::ensure!((0..=10_000_000).contains(&offset) && (1..=100).contains(&limit), "Invalid discovery page");
+        if kind == "hub" && key.is_none() {
+            // Some generated shelves have no key. Ask that shelf for a larger
+            // preview; finite shelves naturally end when Plex stops expanding it.
+            let hub_id = hub_id.context("Missing hub identifier")?;
+            let params = vec![("identifier".into(), hub_id.into()), ("count".into(), (offset + limit).to_string()),
+                ("includeMyMixes".into(), "1".into()), ("includeAnniversaryReleases".into(), "1".into())];
+            let url = build_url_from_params(&self.build_endpoint_url(&format!("/hubs/sections/{section}")), &params);
+            let response: DiscoveryContainer = self.get_url(&url).await?;
+            let hub = response.hubs.into_iter().find(|hub| hub.hub_identifier == hub_id)
+                .context("This discovery hub is no longer available")?;
+            let count = hub.metadata.len() as i64;
+            return Ok(DiscoveryPage { total: count + i64::from(count == offset + limit), offset,
+                items: hub.metadata.into_iter().skip(offset as usize).take(limit as usize).collect() });
+        }
+        let destination = discovery_destination(section, kind, key)?;
+        let mut url = url::Url::parse(&self.build_endpoint_url(&destination))?;
+        // Replace paging from the supplied key instead of leaving duplicate parameters.
+        let mut params: Vec<(String, String)> = url.query_pairs().filter(|(key, _)|
+            !matches!(key.as_ref(), "X-Plex-Container-Start" | "X-Plex-Container-Size" | "limit" | "offset"))
+            .map(|(key, value)| (key.into_owned(), value.into_owned())).collect();
+        params.extend([("X-Plex-Container-Start".into(), offset.to_string()),
+            ("X-Plex-Container-Size".into(), limit.to_string()), ("limit".into(), limit.to_string())]);
+        url.set_query(None);
+        let request = build_url_from_params(url.as_str(), &params);
+        let response: DiscoveryContainer = self.get_url(&request).await?;
+        anyhow::ensure!(response.offset.is_none_or(|actual| actual == offset), "Plex returned an unexpected discovery page");
+        let count = response.metadata.len() as i64;
+        anyhow::ensure!(count <= limit, "Plex ignored the discovery page size");
+        let total = response.total.unwrap_or(offset + count + i64::from(count == limit));
+        Ok(DiscoveryPage { items: response.metadata, total, offset })
+    }
     /// Get all global hubs (home screen hubs)
     ///
     /// # Arguments
@@ -314,6 +391,44 @@ mod tests {
     use super::*;
     use super::super::{PlexClientConfig, PlexMedia};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn discovery_only_accepts_relative_read_destinations_for_the_current_library() {
+        assert!(discovery_destination(5, "hub", Some("/library/sections/5/all?type=9&sort=lastViewedAt:desc")).is_ok());
+        for key in ["https://example.invalid/library/sections/5/all", "//example.invalid/hubs", "/library/sections/6/all", "/:/prefs", "/library/sections/5/../../../../prefs"] {
+            assert!(discovery_destination(5, "hub", Some(key)).is_err(), "accepted {key}");
+        }
+    }
+
+    #[tokio::test]
+    async fn discovery_pages_preserve_hub_filters_and_advance_the_container_offset() {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let client = PlexClient::new(PlexClientConfig { base_url: format!("http://{}", listener.local_addr().unwrap()), token: "test-token".into(), ..Default::default() }).unwrap();
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new(); let mut buffer = [0; 4096];
+                while !request.windows(4).any(|part| part == b"\r\n\r\n") {
+                    let n = socket.read(&mut buffer).await.unwrap(); assert!(n > 0);
+                    request.extend_from_slice(&buffer[..n]);
+                }
+                let body = serde_json::json!({"MediaContainer":{"offset":50,"totalSize":123,"Metadata":[{"type":"album","ratingKey":"51","title":"Next album"}]}}).to_string();
+                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+                String::from_utf8(request).unwrap()
+            });
+            let page = client.discovery_page(5, "hub", 50, 50, Some("music.recent.played"),
+                Some("/library/sections/5/all?type=9&sort=lastViewedAt:desc&X-Plex-Container-Start=0")).await.unwrap();
+            assert_eq!(page.total, 123); assert_eq!(page.offset, 50); assert_eq!(page.items.len(), 1);
+            let request = server.await.unwrap();
+            let target = request.lines().next().unwrap().split_whitespace().nth(1).unwrap();
+            let url = url::Url::parse(&format!("http://localhost{target}")).unwrap();
+            let values: Vec<_> = url.query_pairs().collect();
+            assert_eq!(values.iter().filter(|(key, _)| key == "X-Plex-Container-Start").count(), 1);
+            assert!(values.iter().any(|(key, value)| key == "X-Plex-Container-Start" && value == "50"));
+            assert!(values.iter().any(|(key, value)| key == "sort" && value == "lastViewedAt:desc"));
+            assert!(!values.iter().any(|(key, _)| key == "includeLoudnessRamps"));
+        }).await.unwrap();
+    }
 
     #[tokio::test]
     async fn desktop_discovery_preserves_all_personalized_mixes_and_its_query() {

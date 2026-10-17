@@ -1,5 +1,6 @@
 import { loadAlbumTracks } from "../lib/albumContents"
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { openMusicEntity, trackEntity, albumArtistEntity } from "../lib/musicLinks"
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useLocation } from "wouter"
 import { openUrl as open } from "@tauri-apps/plugin-opener"
 import { useShallow } from "zustand/react/shallow"
@@ -50,10 +51,13 @@ import type {
 } from "../types/music"
 import { makeOnPlay } from "../lib/mediaPlay"
 import { DownloadMenuItems } from "./shared/DownloadMenuItems"
-import { IconStar } from "@tabler/icons-react"
+import { IconStar, IconHeart } from "@tabler/icons-react"
 import { saveTrackRatingToPlex } from "../favorites/saveRating"
 import { effectiveTrackRating } from "../favorites/ratings"
 import { useFavoritesStore } from "../stores/favoritesStore"
+
+const ACTION_ICONS = { play: IconPlay, shuffle: IconShuffle, next: IconNext, queue: IconQueue,
+  radio: IconRadio, share: IconShare, artist: IconArtist, album: IconAlbum, heart: <IconHeart size={14} /> }
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -274,10 +278,9 @@ export function ContextMenu() {
   const hasRadio = useCapability("radio")
   const hasRatings = useCapability("ratings")
   const canEditPlaylists = useCapability("playlistEdit")
-  const { playTrack, playFromUri, playRadio, addNext, addToQueue } =
+  const { playFromUri, playRadio, addNext, addToQueue } =
     usePlayerStore(
       useShallow((s) => ({
-        playTrack: s.playTrack,
         playFromUri: s.playFromUri,
         playRadio: s.playRadio,
         addNext: s.addNext,
@@ -297,6 +300,7 @@ export function ContextMenu() {
   const [confirming, setConfirming] = useState(false)
   const [actionsError, setActionsError] = useState<string | null>(null)
   const pendingAction = useRef<symbol | null>(null)
+  const [pendingLabel, setPendingLabel] = useState<string | null>(null)
 
   // Reset inline states when menu reopens
   useEffect(() => {
@@ -305,6 +309,7 @@ export function ContextMenu() {
       setConfirming(false)
       setActionsError(null)
       pendingAction.current = null
+      setPendingLabel(null)
     }
   }, [isOpen, generation])
 
@@ -399,7 +404,7 @@ export function ContextMenu() {
     const left = Math.max(8, Math.min(x, window.innerWidth - rect.width - 8))
     const top = Math.max(8, Math.min(y, window.innerHeight - rect.height - 8))
     setMenuPos({ left, top })
-  }, [isOpen, x, y, renaming, confirming, actionsError, generation])
+  }, [isOpen, x, y, renaming, confirming, actionsError, pendingLabel, generation])
 
   if (
     !isOpen ||
@@ -426,15 +431,16 @@ export function ContextMenu() {
     if (!currentMenu() || pendingAction.current) return
     const request = Symbol("context action")
     pendingAction.current = request
+    setPendingLabel(action.label)
     setActionsError(null)
     try {
-      await action.run()
+      await action.run(currentMenu)
       if (currentMenu()) close()
     } catch {
       if (currentMenu())
         setActionsError("Could not complete this action. Try again.")
     } finally {
-      if (pendingAction.current === request) pendingAction.current = null
+      if (pendingAction.current === request) { pendingAction.current = null; setPendingLabel(null) }
     }
   }
   if (type === "actions") {
@@ -458,11 +464,14 @@ export function ContextMenu() {
           className="app-overlay-surface fixed z-9999 w-60 select-none rounded-lg border border-(--border) bg-app-card py-1 text-sm shadow-2xl"
         >
           {actionData.actions.map((action, index) => (
-            <Item
-              key={`${index}:${action.label}`}
-              label={action.label}
-              onClick={() => void invokeAction(action)}
-            />
+            <Fragment key={`${index}:${action.label}`}>
+              {index > 0 && action.section && action.section !== actionData.actions[index - 1].section && <Divider />}
+              {action.section === "share" && actionData.actions[index - 1]?.section !== "share" && <SectionLabel label="Share" />}
+              <Item icon={action.icon ? ACTION_ICONS[action.icon] : undefined}
+                label={action.label}
+                disabled={action.disabled || !!pendingLabel}
+                onClick={() => void invokeAction(action)} />
+            </Fragment>
           ))}
           {actionsError && (
             <p
@@ -554,27 +563,21 @@ export function ContextMenu() {
           close()
         })
         .catch(() => failed(() => current() && currentMenu()))
-    } else if (artist && provider?.isOffline && provider.getArtistTracks) {
+    } else if (artist && provider?.getArtistTracks) {
       const current = captureOwner()
       void provider
         .getArtistTracks(artist.id)
         .then((tracks) => {
           if (!current() || !currentMenu()) return
-          addToQueue(
+          addToQueue(provider.isOffline ?
             tracks.filter(
               (track) =>
                 track.mediaInfo?.offlineAvailable || track.mediaInfo?.localAudio
-            )
+            ) : tracks
           )
           close()
         })
         .catch(() => failed(() => current() && currentMenu()))
-    } else if (artist && provider?.buildItemUri) {
-      const uri = provider.buildItemUri(
-        artist.providerKey ?? `/library/metadata/${artist.id}`
-      )
-      void playFromUri(uri, true, artist.title, `/artist/${artist.id}`)
-      close()
     }
   }
 
@@ -593,13 +596,13 @@ export function ContextMenu() {
 
   function goToArtist() {
     if (!currentMenu()) return
-    if (track?.artistId) navigate(`/artist/${track.artistId}`)
+    void openMusicEntity(trackEntity(track, "artist"), navigate)
     close()
   }
 
   function goToAlbum() {
     if (!currentMenu()) return
-    if (track?.albumId) navigate(`/album/${track.albumId}`)
+    void openMusicEntity(trackEntity(track, "album"), navigate)
     close()
   }
 
@@ -873,7 +876,7 @@ export function ContextMenu() {
         {(track || album) && (
           <Item icon={IconNext} label="Play next" onClick={doAddNext} />
         )}
-        <Item icon={IconQueue} label="Add to bottom" onClick={doQueue} />
+        <Item icon={IconQueue} label="Add to bottom" disabled={unavailable || (!!artist && !provider?.getArtistTracks)} onClick={doQueue} />
         {hasRadio && (
           <Item icon={IconRadio} label="Start radio" onClick={doRadio} />
         )}
@@ -1001,7 +1004,8 @@ export function ContextMenu() {
               icon={IconArtist}
               label="Go to artist"
               onClick={() => {
-                if (album.artistId) navigate(`/artist/${album.artistId}`)
+                if (!currentMenu()) return
+                void openMusicEntity(albumArtistEntity(album), navigate)
                 close()
               }}
             />

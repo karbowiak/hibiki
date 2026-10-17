@@ -13,6 +13,7 @@ import type { MusicProvider } from "../providers/types"
 import type { MusicTrack } from "../types/music"
 import type { PagedTrackSource } from "./pagedPlayback"
 import type { SavedQueue, SavedQueueState } from "./queueSession"
+import { isYoutubeMusicId, youtubeMusicTrack } from "../backends/ytmusic/tracks"
 
 export function restoredQueueSource(
   provider: MusicProvider,
@@ -62,11 +63,23 @@ export function restoredQueueSource(
   }
   const loadItems = async (positions: number[]) => {
     const selected = positions.map((index) => entries[index])
-    const ids = [...new Set(selected.map((entry) => entry.id).filter(Boolean))]
+    const ids = [...new Set(selected.map((entry) => entry.id).filter(id => id && !isYoutubeMusicId(id)))]
     const cached = ids.length
       ? ((await provider.favorites?.cachedTracks?.(ids)) ?? [])
       : []
     const tracks = new Map(cached.map((track) => [track.id, track]))
+    for (const entry of selected) {
+      if (isYoutubeMusicId(entry.id)) tracks.set(entry.id, {
+        ...youtubeMusicTrack({ videoId: entry.id.slice(8), title: entry.title ?? "YouTube Music song",
+          artist: entry.artistName ?? "", album: entry.albumName ?? null, duration: null, thumbnail: null }),
+        ...(entry.thumbUrl || entry.albumThumbUrl ? {
+          thumbUrl: entry.thumbUrl || entry.albumThumbUrl,
+          albumThumbUrl: entry.albumThumbUrl || entry.thumbUrl,
+        } : {}),
+        artistThumbUrl: entry.artistThumbUrl ?? null,
+        duration: entry.duration ?? 0,
+      })
+    }
     const missing = ids.filter((id) => !tracks.has(id))
     for (let i = 0; i < missing.length; i += 4) {
       const results = await Promise.allSettled(
@@ -161,10 +174,10 @@ export function initializeQueuePersistence() {
       return serial
     const cursor = state()
     const entries = structural && length ? snapshotQueueEntries() : null
-    // Public streams/podcast playback use their own progress recovery. This
-    // snapshot owns Plex music identities and lazy collection positions only.
+    // Save stable music identities and artwork, never audio URLs or session credentials.
+    // Public streams and podcasts retain their separate progress recovery.
     const supported = !entries?.some(
-      (entry) => entry.id && !/^[1-9]\d*$/.test(entry.id)
+      (entry) => entry.id && !/^[1-9]\d*$/.test(entry.id) && !isYoutubeMusicId(entry.id)
     )
     const work = async () => {
       if (

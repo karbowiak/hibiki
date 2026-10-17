@@ -6,7 +6,7 @@ import type {
   PlaylistOccurrenceMutation,
 } from "../../providers/types"
 /**
- * PlexProvider — wraps lib/plex.ts calls behind the MusicProvider interface.
+ * PlexProvider — wraps scoped native Plex calls behind the MusicProvider interface.
  *
  * Holds sectionId, sectionUuid, baseUrl, and token internally.
  * Mappers convert Plex types to generic types, resolving image URLs during conversion.
@@ -314,6 +314,11 @@ export class PlexProvider implements MusicProvider {
     const sid = this.requireSection()
     const hubs = await this.api.getHubs(sid)
     return hubs.map((h) => plexHubToMusicHub(h, this.img))
+  }
+
+  async getDiscoveryPage(kind: "recent" | "latest" | "hub", offset: number, limit: number, hub?: MusicHub): Promise<PagedResult<MusicItem>> {
+    const page = await this.api.getDiscoveryPage(this.requireSection(), kind, offset, limit, hub?.identifier, hub?.key)
+    return { ...page, items: page.items.map(item => plexMediaToMusicItem(item, this.img)).filter((item): item is MusicItem => item !== null) }
   }
 
   async getLatestReleases(limit = 30): Promise<MusicAlbum[]> {

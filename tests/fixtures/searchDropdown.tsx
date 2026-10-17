@@ -37,6 +37,7 @@ mock.module("../../src/stores/playerStore", () => ({
 }))
 mock.module("wouter", () => ({
   useLocation: () => ["/", (href: string) => navigated.push(href)],
+  Link: ({ href, children, ...props }: any) => <a href={href} {...props}>{children}</a>,
 }))
 mock.module("../../src/components/shared/ArtworkImage", () => ({
   ArtworkImage: () => null,

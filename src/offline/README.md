@@ -1,272 +1,129 @@
-# Scoped saved-library browsing
+# Saved browsing, collections and audio
 
-SQLite V2 browsing snapshots are separate from the legacy globally keyed Plex
-metadata tables. A snapshot belongs to the protected account/server/library digest
-and an exact method + argument key, including pagination offset/size and filters.
-Repeated playlist occurrences, server totals and album alternate IDs are preserved.
-These snapshots remain bounded. SQLite V5–V8 separately retain the complete
-private Plex documents and builds a resumable catalogue with scoped FTS5 search.
-The native worker scans bounded artist/album/track/playlist rosters, batches full
-details, and publishes playlist memberships only after a complete verified scan.
-V8 captures a finite highest item ID and walks `sort=id:asc` with exclusive
-`id>>` and inclusive `id<` filters. The ID cursor and processed row count persist
-separately. Imports can change totals without restarting the census; completion
-requires the terminal empty bounded page. Legacy partial offset scans convert
-once without deleting raw metadata, and completed baselines reconcile every
-30 days. Census absence only stages a verification candidate: a fresh scoped
-library check and authenticated item 404 are required before soft removal.
-Local audio bytes, shared download claims and raw provenance remain intact.
-Legacy unscoped rows never become a trusted catalogue.
+Hibiki retains the data needed for visited pages, favorites, selected collections
+and offline audio. It does not crawl or mirror the entire Plex library. Historical
+catalogue tables and readers remain compatible with previously saved data; their
+old census, catch-up and waveform-discovery workers are retired.
 
-Plex reads show local data immediately and revalidate asynchronously. Identical
-sanitized responses do not trigger UI refreshes; changed responses update active
-collections/detail caches, and changed playlist pages retire the old paging
-generation. Cold misses use Plex and persist the result. Fresh playlist sync and
-download preflight reads bypass local-first snapshots.
+## Ownership and saved pages
 
-Online read methods save successful credential-free DTOs. Transport unavailability
-can return an exact saved page while the same provider/session/library still owns
-the request. Authentication/permission/not-found failures do not become cached
-success. Storage failure leaves online browsing usable. Mutation, queue and playback
-methods never execute from saved data. Accepted writes invalidate the relevant
-cached method/item prefixes, preserving unrelated visited detail pages.
+Native reads and writes belong to a protected account/server/library scope and a
+connection revision. Reconnects, logout and library changes retire outstanding
+work. A renderer-provided identity cannot authorize a different saved library.
 
-The explicit “Browse saved library” entry resets/revokes the previous connection
-and asks native code to restore a trusted identity from protected saved settings.
-It cannot select an arbitrary previous frontend account. Its provider reports
-`isOffline=true`, `isConnected=false` and read-only capabilities; uncached pages
-remain unavailable. The native audio index enables playback of complete local
-files for that same owner. Remote mutations and queue generation remain disabled.
+`providerCache.ts` stores sanitized, exact method-and-argument responses, including
+pagination and filters. Online reads can show a saved response and revalidate it;
+changed responses refresh the affected view. Cold misses use Plex. Transport
+unavailability may use the same owner's saved response; authentication, permission
+and not-found failures do not become successful cached reads. Optional persistence
+failure does not turn a successful online read into a failure.
 
-Each page is at most 1 MiB, each scope at most 2,000 pages/32 MiB, globally at most
-8,000 pages/128 MiB. Writes and eviction are atomic. SQL migrations and schema
-version changes commit together. DTOs exclude opaque provider data, stream URLs,
-credential fields and URL credentials (including nested image source URLs).
+Saved DTOs exclude credentials, authenticated URLs and opaque native provider data.
+Pages are bounded to 1 MiB, 2,000 pages/32 MiB per scope and 8,000 pages/128 MiB
+across scopes. Accepted mutations invalidate relevant snapshots. Fresh playlist
+sync and download preparation bypass saved browse responses. Mutations and remote
+queue generation never execute from saved responses.
 
-## Audio cache and downloads
+“Browse saved library” restores a trusted saved identity through native code. The
+provider is offline, disconnected and read-only; missing pages remain unavailable.
+A health monitor can also switch a temporarily unavailable connected library to
+local reads while preserving active audio. File availability is checked separately
+from the presence of metadata.
 
-SQLite V4 stores native audio bindings under account/server/library + track +
-media-source digest, and a separate durable download queue. No credentials,
-authenticated URLs or server filesystem paths are stored in these rows. Legacy
-globally keyed track rows cannot authorize local audio. Native fresh metadata
-must match both the selected library and track; media quality uses the same
-lossless/bit-depth/sample-rate/bitrate order as the renderer.
+## Focused collection caches
 
-Automatic playback caching remains bounded and evictable. Explicit downloads
-use an independent `Hibiki` folder in the operating system's Music directory,
-with no automatic LRU eviction. Settings → Cache → Downloads shows the current
-location and can move it elsewhere. The OS resolves redirected Music folders
-on Windows and XDG music-directory preferences on Linux; the fallback is
-`~/Music/Hibiki`. Clearing or shrinking the automatic cache preserves downloads.
-Existing app-data downloads move through verified no-clobber copies before the
-configured root changes. Keys, validation revisions, gain and private metadata
-remain intact; failed moves retain the original files and can be retried.
-SQLite settings, favorites, waveforms and queue state stay in app data.
+`collectionCache.ts` manages paged playlist rosters, selected mixes and rated
+collections. Native `db/collection_cache.rs` stages membership in bounded batches
+and activates a complete generation atomically. An incomplete refresh cannot
+replace a complete collection. Repeated playlist occurrences retain their own IDs.
 
-Audio uses readable `Artist/Album/01 - Title [source suffix].ext` paths.
-Downloaded playlists get UTF-8 `.m3u` files in `Hibiki/Playlists`, preserving
-verified order and repeated occurrences with relative paths. Only complete
-available songs are exported; the file updates as downloads finish or playlist
-membership changes. Removing a playlist download removes its managed M3U and
-unshared music. Manual files are preserved. The original encoded audio and its
-embedded tags are retained without transcoding or rewriting tags.
-Download storage rejects new admissions at its 32,768-file index limit rather
-than deleting saved music. Files are capped at 2 GiB each; unsupported multipart
-tracks are rejected rather than saving only the first part.
+Default pages seek indexed positions and use the collection's stored total.
+Filtered and sorted reads share compact ordered identities, keyed by database,
+owner, active generation, item revision and query. The native query cache retains
+at most eight results within 32 MiB. Shared metadata edits invalidate the order
+through a transaction-visible database revision; full item DTOs stay in SQLite.
 
-One native worker transfers tracks sequentially. Playlist requests use fresh,
-paged reads; audio intentions collapse repeated tracks without altering Plex
-playlist occurrences. Admission is limited to 256 tracks per batch and 10,000
-pending intentions. Complete automatic-cache files are copied and validated
-without another media request. Transfers retry verified overlapping HTTP byte
-ranges in the current run. After an app restart/reconnect, interrupted intentions
-restart from byte zero; abandoned partials are never marked available.
+Mix order is seeded by a hash of complete canonical membership. Upstream paging,
+metadata edits and source reordering do not linearize or reseed a mix. A membership
+change produces a new stable permutation. Explicit shuffle remains a separate
+playback choice.
 
-Downloads are fully decoded in bounded batches and compared with HTTP body
-length and native decoded duration before atomic publication. Publication rechecks the connection and
-job revision, so logout, removal, remove/re-add and reconnect cannot publish old
-work. Failed index persistence is a failed download. Progress, retry, removal and
-actual file availability are visible on each music item. User-selected local playback
-does not fetch Plex audio, gain or waveform metadata; native audio rechecks its
-owned file at every play/preload and never falls back to HTTP in saved-library
-mode. Missing/truncated files are unavailable; late decode failure retires only
-the file revision that failed.
+`useWindowedPages` and `WindowedPages` retain up to eight 200-item renderer pages.
+Playlist views use this single paging lifecycle, including retry and refresh.
+They do not also load an independent prefix into the library store.
 
-A native health monitor verifies server and library identity before restoring a
-connection. Temporary loss closes native remote admission and switches the same
-playback owner to local reads/playback with a prominent banner and read-only
-capabilities. It does not stop active audio. Saved-only mode stays explicitly
-local; startup can fall back to a trusted saved catalogue when connection fails.
-Actual file availability is projected in batches; missing tracks are grayed and
-cannot be played or queued offline. Catalogue scanning never downloads encoded
-audio, requests server analysis, installs models or changes remote objects.
+## Queue membership and metadata
 
-Full raw documents (including unknown fields, all media/streams, GUIDs and native
-paths) remain in private native storage. Renderer projections strip native file
-paths and audio URLs. Full `/levels` responses are indexed for every available
-audio stream under exact scoped source and analysis identities. Missing analysis
-is explicitly unavailable/retryable; it does not imply exported sonic vectors.
-The Activity dropdown reports saved entities, the current indexing phase,
-playlist verification, and waveform collection separately. Library metadata
-can be complete while playlists or waveforms are still being saved. Ordered
-playlist verification reports its actual second-pass progress and restarts that
-proof from zero after interruption. Compact local membership reads and 500-item
-remote verification pages avoid repeatedly decoding full track documents.
-Waveforms use four bounded concurrent metadata requests and 24-result atomic
-batches, retaining full native samples. Completed media discovery is reused;
-deferred track observations discover their exact media identities atomically.
-Existing foreground waveforms are reused without another request, retired media
-results cannot publish, and transport/authentication/rate-limit failures remain
-retryable rather than being marked unavailable. Failures use Activity and the
-shared notification center.
-A large initial scan can take time: partial local browse reports local counts
-separately from server totals, and children require verified coverage.
-Very large unpaged DTO collections fail explicitly at 32 MiB instead of silently
-truncating; paged library/playlist reads remain bounded.
+A prepared cached queue captures its full ordered identity and occurrence list.
+Filtered/sorted playback captures the query result once; later metadata reads use
+those captured IDs rather than positions in a mutable query. Selecting a row also
+checks that its captured occurrence still matches the clicked row.
 
-Plex read responses can contain invalid UTF-8 from imported tags. Bounded native
-decoding repairs only malformed value text to U+FFFD and retains original byte
-sequences, offsets and field pointers privately beside the affected raw record.
-Object keys, JSON structure and response limits remain strict; credential fields
-and authenticated URLs are excluded from recovery provenance. Generic provider
-JSON and Plex mutations retain strict decoding.
+`QueueSession` retains compact membership for the complete queue while hydrating
+only visited/upcoming details. `QueueHydration` reads at most 100 positions per
+batch and retains up to 800 full tracks. Playback precedes queued viewport and
+prefetch work. New viewports supersede obsolete queued requests, and retired queues
+cannot publish late data. Structural queue edits rebuild the position index once;
+unchanged projections preserve the existing queue reference.
 
-Download status lives on tracks, albums, artists and playlists rather than a
-separate Downloads screen. Visible icons share scoped, batched native polling;
-complete membership is required before showing a fully downloaded collection.
-Partial and failed downloads remain retryable from the entity menu, including
-artist discographies. Cache settings show explicit download storage separately
-from the evictable playback cache. The old /downloads route redirects there.
+Queue persistence stores the selected order, occurrences, source positions and
+playback state. A saved queue does not authorize audio belonging to another owner.
+Playback preparation and Track Info share the scoped `PlaybackMetadata` resource;
+provider/session changes and explicit metadata invalidation retire cached data.
 
-Explicitly requested collections are rechecked on startup/reconnect and hourly
-while their Plex library is connected. Fresh, verified membership queues new or
-missing songs and retries failed jobs; completed/in-flight files are retained.
-Every refresh is fenced by its original intention revision, so removing or
-replacing a request while Plex is responding cannot resurrect it. Historical
-collection claims continue to protect earlier downloaded editions. Individual
-track intentions do not cause a library-wide discovery pass.
+## Audio cache and explicit downloads
 
-Download badges expose native failure reasons, including damaged audio and
-duration mismatches. Playlist Info sits beside More and opens a shared dialog
-with named failed songs, retry, saved counts and playlist-sync review. Action
-menus contain actions rather than anonymous error paragraphs. Issue reads stay
-scoped to the current library and collection, with bounded pages of 100.
-Successful queue/removal actions use the
-download icon rather than a popup. Background refresh/retry does not publish
-notifications. File validation still rejects truncated or damaged media.
+The automatic playback cache is bounded and evictable. Explicit downloads live in
+the operating system's Music directory under `Hibiki`, or a user-selected location.
+Clearing or shrinking the playback cache preserves explicit downloads. Moving
+downloads uses verified no-clobber copies before changing the configured root;
+failed moves retain their original files.
 
-V7 retains expected download membership separately from file ownership. A
-collection removal releases only that collection's claims and preserves files
-used by other collections or explicit individual-song downloads. Song removal
-releases that song everywhere, leaving collections honestly partial. New weekly
-playlist membership never silently deletes a previously saved edition. Existing
-V4 download jobs migrate as individual intentions because their original source
-was not recorded. Verified collection requests adopt their matching untitled
-legacy claims. Startup also releases legacy claims backed by a download-specific
-playlist snapshot whose request was removed, preserving shared collection and
-named individual requests. Ordinary browse snapshots cannot authorize cleanup.
-Preparation verifies the native library identity, paged
-membership and playlist revision before queueing encoded audio.
+Audio bindings include owner, track and media-source identity. Complete files are
+validated before atomic publication, and playback/preload rechecks the owned file.
+Offline playback never falls back to an HTTP audio request. Missing, truncated or
+damaged files are unavailable, even when metadata remains browsable. Local playback
+does not request remote gain or waveform metadata.
 
-Entity preparation also archives the entity's full native document and complete
-raw member roster. Captured album children and verified published playlist
-occurrences are independently browsable before the global census completes;
-full track details enrich their media/analysis without losing playlist order or
-duplicate occurrences. Removing a collection or removing/re-adding it retires
-its revision, so outstanding batch admission cannot resurrect cancelled jobs.
-Individual-song removal excludes that song from any remaining pending batches.
+One native transfer worker processes downloads sequentially. Fresh, paged
+collection preparation preserves expected order and repeated playlist occurrences,
+while encoded-audio intentions deduplicate tracks. Publication checks ownership
+and intention revision again, so logout, cancellation and remove/re-add cannot
+publish retired work. Existing complete playback-cache files can be copied and
+validated without downloading them again. Interrupted work restarts safely after
+reconnect; abandoned partial files are never marked available.
 
-## Responsive browsing and playback preparation
+Collection claims are separate from individual song intentions. Removing one
+collection releases its claims while preserving songs owned by other collections
+or individual downloads. Removing a song releases that song across collections.
+New playlist editions do not silently delete previously downloaded editions.
+Managed M3U files preserve verified playlist order and repeated occurrences and
+contain only available complete files. Manual files are preserved.
 
-Browsing and playback point lookups use separate read-only WAL connections on
-bounded blocking workers. Playback has reserved reader capacity, and scoped
-ownership is checked again after reads. Catalogue writes cannot hold the native
-Plex/audio admission lock while waiting for the writer. V9 shelf/tag projections
-backfill in small resumable batches; online views fall back to Plex until their
-scope is covered, while full raw documents and existing checkpoints remain intact.
-V10 deduplicates only derived tag rows before trigger insertion, including during
-full-detail UPSERTs. Plex can repeat genre/mood/style/format tags; its full raw
-document remains intact and an existing scan resumes from its saved checkpoint.
-The migration replaces two triggers without scanning or rewriting the library.
-Local tag inventories allow up to 100,000 distinct labels within 4 MiB of encoded
-DTOs; exceeding either bound fails explicitly. Complete artist/album/track
-rosters make an empty inventory authoritative. Genre/mood/style grids render at
-most 96 tiles per page and search the full inventory before pagination.
-Playlist card totals use fresh, atomically published occurrence counts for both
-local browsing and online refreshes. Staging, foreign scopes and publications
-invalidated by playlist edits cannot supply counts; the original Plex roster
-metadata remains unchanged.
-Visited snapshots use the same independent readers; access bookkeeping and
-optional snapshot saves run in the background. Reads wait for mutation
-invalidations, not unrelated saves. Online results remain usable before optional
-storage completes. A completed incremental pass captured after an edit, with
-all admitted changes resolved, restores broad catalogue freshness. Playlist
-membership still requires its own complete, fresh published generation.
+`downloadStatusStore.ts` batches visible entity requests. Native status reads
+select only jobs referenced by those entities and check each relevant file once.
+The renderer drops departed badge statuses and reuses unchanged status objects.
+Playlist Info exposes scoped, paged failures and retry actions. Explicit collection
+requests are rechecked on reconnect and periodically while their library is online;
+an individual song request does not start library-wide discovery.
 
-Artist and album pages publish their identity, albums and tracks before waiting
-for optional related hubs, similar artists and stations. Enrichment retains the
-same account/request fences and updates only its current page. Deep playlist
-pages seek the published occurrence-position range before metadata joins, so
-skipping preceding songs does not decode them.
+`db/focused_library.rs` retains metadata needed by downloads, claims and favorites,
+plus a small recent playback working set. Legacy catalogue presence does not prove
+complete server coverage. Partial offline artist/album reads report partial data.
+Existing native metadata and exact waveform identities remain private to their
+owner; renderer projections omit native paths and authenticated audio URLs.
 
-Normalized playback fixes gain before installing a finite track, including queue
-preloads. Native preparation reuses Plex or cached gain first and can request
-`/library/metadata/{id}/analyzeLoudness` once per scoped file with bounded polling.
-If Plex cannot supply gain, complete encoded bytes are measured by the cancellable
-R128 worker before sound. Known-gain and normalization-off tracks still stream
-immediately; live streams use a fixed gain because integrated loudness requires
-a complete finite file. Automatic analysis never changes an audible occurrence.
-Valid silent tracks and very short interludes use fixed unity when the completed
-scan cannot measure integrated loudness; no guessed gain is saved. Empty or
-incomplete audio still fails before playback.
+## Database and diagnostics
 
-Development builds write bounded private `performance-*.jsonl` sessions in app
-data. The nonblocking log records fixed operation/phase names and milliseconds
-for native ownership waits, database work, Plex response headers/body decoding,
-renderer IPC/cache mapping, page core/enrichment and React render commits. It
-contains no query arguments, SQL parameters, library identities, metadata,
-URLs, tokens, paths or error strings. Each session stops at 4 MiB, admissions
-drop under pressure, and production builds create no performance log. Timing
-phases and UI observation time measure different parts of a page load; native
-SQL/projection figures alone do not establish end-to-end responsiveness.
-Run `python3 scripts/report-performance.py` to summarize the latest session, or
-pass a session filename. `--min-ms` and `--limit` narrow the outlier report.
+SQLite migrations and their schema versions commit together. Browse and playback
+use independent read-only WAL connections on bounded blocking workers; playback
+has reserved reader capacity. Each read runs against a consistent snapshot.
+Writes run on the serialized writer lane and do not hold Plex/audio admission
+locks while waiting for SQLite.
 
-## Incremental catalogue updates
-
-Plex WebSocket hints enter `catalogue_notify` in batches of at most 200. Only
-native-owned scoped contexts and supported artist/album/track/audio-playlist
-kinds and states are admitted; renderer hints never authorize deletion. A
-durable queue coalesces each entity and fences GET responses and atomic playlist
-publication against newer admitted hints. Its independent native worker can
-update the current library while the initial bulk census or waveform pass runs.
-Live hints take priority over catch-up/deletion work. Processing states 0/1
-retain their admission and retry if the item is not yet queryable.
-Native GETs verify selected-library membership before archiving full metadata.
-Bulk detail requests run only for missing or changed listing revisions, retain
-unknown fields and full Media/Stream/Guid documents, and cannot overwrite a
-newer event publication. Unchanged notifications acknowledge without UI events.
-
-Socket reconnect/scan-end and periodic fallback request a catch-up pass. PMS
-HTTP Date supplies the upper epoch-second watermark. Each finite ID pass applies
-an overlapping timestamp window; all four kinds must complete before atomic
-watermark publication. Active windows resume across restarts, and new requests
-remain pending behind the five-minute native throttle. Queue overflow requests
-full catch-up; page backpressure prevents advancing checkpoints past unqueued
-changes. Rare full censuses also find deletion/missed-event candidates.
-
-Scoped `catalogue_updated` events follow actual native publications and include
-bounded changed entity references. `catalogue_progress.incremental` reports
-pending changes, catch-up request, epoch-second watermark, changes revision and
-`idle`/`updating`/`catchingUp` phase. Finite baseline coverage is separate from
-later arrivals; ongoing imports do not imply a completed live-server snapshot.
-Media/stream waveform identities use source, full Media and musicAnalysisVersion,
-so unrelated metadata timestamps do not refetch levels. Exact legacy revisions
-are adopted only after source/stream/media/analysis identity verification.
-
-Transport behavior was checked against the official PMS media-query language
-and read-only live bounded pages for all four kinds. Primary references: the
-[official media-query specification](https://developer.plex.tv/pms/#section/API-Info/Media-Queries)
-and [PlexAPI alert state documentation](https://python-plexapi.readthedocs.io/en/latest/modules/alert.html). The native ignored proof
-uses an explicitly supplied private settings path and an isolated temporary DB;
-no server object, active playback, live cache or downloaded file is modified.
+Development builds can write bounded private `performance-*.jsonl` sessions. They
+record fixed operation/phase names and durations, without metadata, identities,
+query arguments, URLs, paths, credentials or error text. Each session stops at
+4 MiB and drops admissions under pressure. Production builds do not create these
+logs. Run `python3 scripts/report-performance.py` to summarize a session. Native
+SQL timings alone do not establish complete page-load or audible playback latency.

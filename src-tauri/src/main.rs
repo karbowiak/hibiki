@@ -50,6 +50,7 @@ mod radiobrowser;
 mod shutdown;
 mod window_geometry;
 mod default_playlists;
+mod ytmusic;
 
 use commands::PlexState;
 use mediasession::MediaSessionState;
@@ -257,11 +258,11 @@ pub fn run() {
     }
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_window_state::Builder::new().skip_initial_state("main").build())
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_notification::init())
+        .plugin(ytmusic::app_only_plugin(tauri_plugin_opener::init()))
+        .plugin(ytmusic::app_only_plugin(tauri_plugin_dialog::init()))
+        .plugin(ytmusic::app_only_plugin(tauri_plugin_window_state::Builder::new().skip_initial_state("main").with_denylist(&[ytmusic::WINDOW]).build()))
+        .plugin(ytmusic::app_only_plugin(tauri_plugin_updater::Builder::new().build()))
+        .plugin(ytmusic::app_only_plugin(tauri_plugin_notification::init()))
         .manage(PlexState::new())
         .manage(artwork_commands::ArtworkInventoryState::default())
         .manage(std::sync::Arc::new(soulsync::SoulSyncState::default()))
@@ -324,6 +325,7 @@ pub fn run() {
             }
 
             download_library::start(app.handle().clone());
+            ytmusic::start(app.handle().clone());
 
             // Remove the native OS menu bar (redundant on Windows with our custom titlebar).
             app.remove_menu().ok();
@@ -385,6 +387,16 @@ pub fn run() {
             });
         })
         .invoke_handler(tauri::generate_handler![
+            ytmusic::ytmusic_status,
+            ytmusic::ytmusic_connect,
+            ytmusic::ytmusic_refresh,
+            ytmusic::ytmusic_disconnect,
+            ytmusic::ytmusic_search,
+            ytmusic::ytmusic_browse,
+            ytmusic::ytmusic_set_song_like,
+            ytmusic::ytmusic_test_stream,
+            ytmusic::ytmusic_helpers,
+            ytmusic::ytmusic_install_helpers,
             performance::record_performance,
             shutdown::shutdown_listener_ready,
             shutdown::prepare_app_shutdown,
@@ -434,6 +446,7 @@ pub fn run() {
             commands::get_recently_added,
             commands::get_latest_releases,
             commands::get_hubs,
+            commands::get_discovery_page,
             commands::get_on_deck,
             commands::get_section_tags,
             // Metadata
@@ -637,6 +650,8 @@ pub fn run() {
             // Rust audio engine
             audio_engine::bridge::audio_play,
             audio_engine::bridge::audio_preload_next,
+            audio_engine::bridge::audio_prepare_queue,
+            audio_engine::bridge::audio_get_waveform,
             audio_engine::bridge::audio_clear_preload,
             audio_engine::bridge::audio_pause,
             audio_engine::bridge::audio_resume,
@@ -669,7 +684,7 @@ pub fn run() {
             let state = app.state::<shutdown::ShutdownState>();
             if state.approved() { return; }
             match event {
-                tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::CloseRequested { api, .. }, .. } => { api.prevent_close(); state.request(app); }
+                tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { api, .. }, .. } if label == "main" => { api.prevent_close(); state.request(app); }
                 tauri::RunEvent::ExitRequested { code, api, .. } if code != Some(tauri::RESTART_EXIT_CODE) => { api.prevent_exit(); state.request(app); }
                 _ => {}
             }

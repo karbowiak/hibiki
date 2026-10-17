@@ -3,8 +3,12 @@ import { PlaybackPalette } from "./PlaybackPalette"
 import { useAlbumImage } from "../hooks/useMediaImage"
 import { useArtworkAppearanceStore } from "../stores/artworkAppearanceStore"
 import { ArtworkImage } from "./shared/ArtworkImage"
-import { useEffect, useRef, useState } from "react"
+import { MusicSourceBadge, trackMusicSource } from "./shared/MusicSource"
+import { useProviderStore } from "../stores/providerStore"
+import { lazy, Suspense, useEffect, useRef, useState } from "react"
 import { Link } from "wouter"
+import { MusicEntityLink } from "./shared/MusicEntityLink"
+import { trackEntity } from "../lib/musicLinks"
 import { useShallow } from "zustand/react/shallow"
 import { usePlayerStore } from "../stores"
 import { DJ_MODES } from "../stores/playerStore"
@@ -14,7 +18,6 @@ import { useDeviceStore } from "../stores/deviceStore"
 import { useAudioSettingsStore } from "../stores/audioSettingsStore"
 import { useVisualizerStore } from "../stores/visualizerStore"
 import { engine } from "../audio/RustAudioEngine"
-import { formatMs } from "../lib/formatters"
 import { formatAudioQuality, playbackAudioQuality } from "../lib/audioQuality"
 import { IconBlockquote, IconZzz, IconActivity, IconMaximize, IconAdjustments, IconPlaylist, IconVolume, IconVolume2, IconVolumeOff, IconHeadphones, IconMusic } from "@tabler/icons-react"
 import { useCapability } from "../hooks/useCapability"
@@ -23,14 +26,15 @@ import EqPanel from "./EqPanel"
 import SleepTimerPanel from "./SleepTimerPanel"
 import TrackInfoPanel from "./TrackInfoPanel"
 import DjPanel from "./DjPanel"
+import { useYoutubeMusicDiscoveryStore } from "../backends/ytmusic/discovery"
 import RadioPanel from "./RadioPanel"
 import PlayerPopover from "./PlayerPopover"
-import VisualizerCanvas from "./VisualizerCanvas"
+import { PlayerProgress } from "./PlayerProgress"
 import { StarRating } from "./shared/StarRating"
 import { useContextMenu } from "../hooks/useContextMenu"
 import { useContextMenuStore } from "../stores/contextMenuStore"
+import { isYoutubeMusicId } from "../backends/ytmusic/tracks"
 import { useTrackDrag } from "../hooks/useTrackDrag"
-import VisualizerFullscreen from "./VisualizerFullscreen"
 import SquigglyVolumeSlider from "./SquigglyVolumeSlider"
 import { useSleepTimerStore } from "../stores/sleepTimerStore"
 import { useRadioStreamStore } from "../stores/radioStreamStore"
@@ -39,6 +43,8 @@ import { useEasterEggStore } from "../stores/easterEggStore"
 import { useVisualizationVisibility } from "../hooks/useVisualizationVisibility"
 import { ImageModal } from "./shared/ImageModal"
 import { IconChevronUp, IconChevronDown } from "@tabler/icons-react"
+
+const VisualizerFullscreen = lazy(() => import("./VisualizerFullscreen"))
 
 // ---------------------------------------------------------------------------
 // RadioPlayerBar — shown when internet radio is active
@@ -261,6 +267,7 @@ function RadioPlayerBar() {
 }
 
 export function Player() {
+  const libraryName = useProviderStore(state => state.provider?.name)
   const playbackFormat = usePlayerStore(state => state.playbackFormat)
   const backgroundArtworkEnabled = useArtworkAppearanceStore(state => state.backgroundArtworkEnabled)
   useEasterEggs()
@@ -271,16 +278,11 @@ export function Player() {
   const threeDotRef = useRef<HTMLButtonElement>(null)
   const volumeSliderRef = useRef<HTMLDivElement>(null)
   const volumeTooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [seekHoverPct, setSeekHoverPct] = useState<number | null>(null)
   const [volumeTooltipVisible, setVolumeTooltipVisible] = useState(false)
 
   useEffect(() => () => {
     if (volumeTooltipTimer.current) clearTimeout(volumeTooltipTimer.current)
   }, [])
-
-  // positionMs updates at ~4 Hz — isolate it as a primitive selector so only
-  // the progress bar re-renders on each tick, not the entire Player subtree.
-  const positionMs = usePlayerStore(s => s.positionMs)
 
   const {
     currentTrack,
@@ -293,20 +295,17 @@ export function Player() {
     djMode,
     contextName,
     contextHref,
-    waveformLevels,
     lyricsLines,
     isInternetRadioActive,
     pause,
     resume,
     next,
     prev,
-    seekTo,
     setVolume,
     toggleMute,
     toggleShuffle,
     cycleRepeat,
     stop,
-    stopRadio,
     initAudioEvents,
   } = usePlayerStore(useShallow(s => ({
     currentTrack: s.currentTrack,
@@ -319,20 +318,17 @@ export function Player() {
     djMode: s.djMode,
     contextName: s.contextName,
     contextHref: s.contextHref,
-    waveformLevels: s.waveformLevels,
     lyricsLines: s.lyricsLines,
     isInternetRadioActive: s.isInternetRadioActive,
     pause: s.pause,
     resume: s.resume,
     next: s.next,
     prev: s.prev,
-    seekTo: s.seekTo,
     setVolume: s.setVolume,
     toggleMute: s.toggleMute,
     toggleShuffle: s.toggleShuffle,
     cycleRepeat: s.cycleRepeat,
     stop: s.stop,
-    stopRadio: s.stopRadio,
     initAudioEvents: s.initAudioEvents,
   })))
 
@@ -367,6 +363,7 @@ export function Player() {
   const { enabled: eqEnabled, syncToEngine } = useEqStore(useShallow(s => ({ enabled: s.enabled, syncToEngine: s.syncToEngine })))
   const syncAudioSettings = useAudioSettingsStore(s => s.syncToEngine)
   const hasRadio = useCapability("radio")
+  const youtubeConnected = useYoutubeMusicDiscoveryStore(s => s.connected)
   const hasDjModes = useCapability("djModes")
   const hasLyrics = useCapability("lyrics")
 
@@ -490,22 +487,14 @@ export function Player() {
   const albumArtwork = useAlbumImage(currentTrack?.artistName ?? null, currentTrack?.albumName ?? null, currentTrack?.albumThumbUrl ?? currentTrack?.thumbUrl ?? null, currentTrack?.albumId)
   const thumbUrl = albumArtwork ?? currentTrack?.artistThumbUrl ?? null
 
-  const artistId = currentTrack?.artistId
-  const albumId = currentTrack?.albumId
-  const ArtworkContainer = albumId ? Link : "div"
-
-  const progressPct = currentTrack?.duration
-    ? (positionMs / currentTrack.duration) * 100
-    : 0
-  // Clock glyph widths must not resize/resample the waveform on every tick.
-  const timeColumnWidth = `${Math.max(5, formatMs(currentTrack?.duration ?? 0).length)}ch`
-
+  const artistEntity = trackEntity(currentTrack, "artist")
+  const albumEntity = trackEntity(currentTrack, "album")
   const repeatActive = repeat > 0
   const shuffleActive = shuffle
 
   // Only show album in the subtitle row when contextName isn't already showing the same album
   const showAlbumInSubtitle = !!(
-    currentTrack?.albumName && albumId &&
+    currentTrack?.albumName && albumEntity &&
     (!contextName || contextName !== currentTrack.albumName)
   )
 
@@ -527,17 +516,16 @@ export function Player() {
           className="group/expanded absolute bottom-full left-0 z-30"
           style={{ width: sidebarWidth, height: sidebarWidth }}
         >
-          <ArtworkContainer
-            href={albumId ? `/album/${albumId}` : undefined}
-            className={`block h-full w-full overflow-hidden ${albumId ? "cursor-pointer" : "cursor-default"} ${vinylSpin ? "rounded-full" : "rounded-md"}`}
+          <MusicEntityLink
+            entity={albumEntity}
+            className={`block h-full w-full overflow-hidden ${albumEntity ? "cursor-pointer" : "cursor-default"} ${vinylSpin ? "rounded-full" : "rounded-md"}`}
             style={vinylSpin ? {
               animation: "vinyl-spin 3s linear infinite",
               animationPlayState: isPlaying ? "running" : "paused",
             } : undefined}
-            onClick={e => { if (!albumId) e.preventDefault() }}
           >
             <ArtworkImage loading="eager" src={thumbUrl} alt={currentTrack?.albumName ?? ""} className="h-full w-full object-cover" />
-          </ArtworkContainer>
+          </MusicEntityLink>
           {/* Hover overlay buttons — bottom-right */}
           <div className="pointer-events-none absolute inset-0 flex items-end justify-end gap-1 opacity-0 transition-opacity group-hover/expanded:opacity-100 group-focus-within/expanded:opacity-100 p-1.5">
             <button
@@ -567,7 +555,9 @@ export function Player() {
         />
       )}
 
-      {fullscreenOpen && <VisualizerFullscreen />}
+      {fullscreenOpen && (
+        <Suspense fallback={null}><VisualizerFullscreen /></Suspense>
+      )}
       <div className="shell-artwork-player-inner flex h-fit w-screen min-w-[620px] flex-col overflow-clip bg-app-card">
         <div className="player-body">
           <div className="player-layout relative flex h-full items-center justify-between" style={{ paddingInline: "var(--spacing-player)" }}>
@@ -585,14 +575,13 @@ export function Player() {
                 <div className="flex min-w-0 items-center gap-3">
                   <div className={`group/art relative h-14 w-14 shrink-0 ${isArtExpanded && thumbUrl ? "hidden" : ""}`}>
                     {/* Album art — click navigates to album */}
-                    <ArtworkContainer
-                      href={albumId ? `/album/${albumId}` : undefined}
-                      className={`block h-full w-full overflow-hidden ${albumId ? "cursor-pointer" : "cursor-default"} ${vinylSpin ? "rounded-full" : "rounded-md"}`}
+                    <MusicEntityLink
+                      entity={albumEntity}
+                      className={`block h-full w-full overflow-hidden ${albumEntity ? "cursor-pointer" : "cursor-default"} ${vinylSpin ? "rounded-full" : "rounded-md"}`}
                       style={vinylSpin ? {
                         animation: "vinyl-spin 3s linear infinite",
                         animationPlayState: isPlaying ? "running" : "paused",
                       } : undefined}
-                      onClick={e => { if (!albumId) e.preventDefault() }}
                     >
                       {thumbUrl ? (
                         <ArtworkImage loading="eager" src={thumbUrl} alt="" className="h-full w-full object-cover" />
@@ -601,7 +590,7 @@ export function Player() {
                           <IconMusic size={24} stroke={1.4} aria-hidden="true" />
                         </div>
                       )}
-                    </ArtworkContainer>
+                    </MusicEntityLink>
                     {/* Hover overlay buttons — bottom-right */}
                     {thumbUrl && (
                       <div className="pointer-events-none absolute inset-0 flex items-end justify-end gap-0.5 opacity-0 transition-opacity group-hover/art:opacity-100 group-focus-within/art:opacity-100 p-0.5">
@@ -624,26 +613,20 @@ export function Player() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <h6 className="line-clamp-1 text-sm font-medium text-white">
-                      {albumId ? (
-                        <Link href={`/album/${albumId}`} className="hover:underline">
-                          {currentTrack?.title ?? ""}
-                        </Link>
-                      ) : (currentTrack?.title ?? "Nothing playing")}
+                      <MusicEntityLink entity={albumEntity} className="hover:underline">
+                        {currentTrack?.title ?? "Nothing playing"}
+                      </MusicEntityLink>
                     </h6>
                     <p className="truncate text-[0.688rem] text-white/60 mt-0.5">
-                      {artistId ? (
-                        <Link href={`/artist/${artistId}`} className="hover:text-white hover:underline transition-colors">
-                          {currentTrack?.artistName ?? ""}
-                        </Link>
-                      ) : (currentTrack ? currentTrack.artistName ?? "" : "Choose music from your library")}
-                      {showAlbumInSubtitle && (
-                        <>
-                          <span className="mx-1 text-white/30">·</span>
-                          <Link href={`/album/${albumId}`} className="hover:text-white hover:underline transition-colors">
-                            {currentTrack!.albumName}
-                          </Link>
-                        </>
-                      )}
+                      <MusicEntityLink entity={artistEntity} className="hover:text-white hover:underline transition-colors">
+                        {currentTrack ? currentTrack.artistName : "Choose music from your library"}
+                      </MusicEntityLink>
+                      {showAlbumInSubtitle && <>
+                        <span className="mx-1 text-white/30">·</span>
+                        <MusicEntityLink entity={albumEntity} className="hover:text-white hover:underline transition-colors">
+                          {currentTrack!.albumName}
+                        </MusicEntityLink>
+                      </>}
                     </p>
                     {currentTrack && (
                       <div className="flex items-center gap-2 mt-0.5">
@@ -665,11 +648,13 @@ export function Player() {
                           artist={currentTrack.artistName}
                           track={currentTrack.title}
                           size={11}
+                          eagerLike
                         />
                         <button
                           ref={threeDotRef}
                           onClick={e => {
                             e.stopPropagation()
+                            if (isYoutubeMusicId(currentTrack.id)) { ctxMenu("track", currentTrack)(e); return }
                             const rect = threeDotRef.current?.getBoundingClientRect()
                             if (rect) showContextMenu(rect.left, rect.bottom + 4, "track", currentTrack)
                           }}
@@ -695,7 +680,7 @@ export function Player() {
                 <div className="flex items-center justify-end gap-x-1.5">
 
                 {/* Radio mode indicator */}
-                {hasRadio && isRadioMode && (
+                {isRadioMode && (
                   <PlayerPopover
                     icon={
                       <span className="text-[0.625rem] font-bold uppercase tracking-wider">RADIO</span>
@@ -708,6 +693,14 @@ export function Player() {
                   >
                     {(close) => <RadioPanel onClose={close} />}
                   </PlayerPopover>
+                )}
+
+                {currentTrack && !isInternetRadioActive && (
+                  <MusicSourceBadge
+                    source={trackMusicSource(currentTrack, libraryName)}
+                    label
+                    className="mr-1 text-xs font-medium text-white/70 pointer-events-auto"
+                  />
                 )}
 
                 {/* Shuffle */}
@@ -814,49 +807,7 @@ export function Player() {
                 </div>
               </div>
 
-              {/* Progress / seek bar */}
-              <div className="mt-1.5 flex w-full items-center gap-x-2 pointer-events-auto">
-                <div className="shrink-0 whitespace-nowrap text-right text-[0.688rem] tabular-nums text-white text-opacity-70" style={{ width: timeColumnWidth }}>
-                  {formatMs(seekHoverPct !== null
-                    ? (currentTrack?.duration ?? 0) * seekHoverPct / 100
-                    : positionMs)}
-                </div>
-                <div
-                  className={`relative min-w-0 flex-1 h-7 select-none ${currentTrack ? "cursor-pointer" : "cursor-default opacity-40"}`}
-                  onMouseMove={e => {
-                    if (!currentTrack) return
-                    const rect = e.currentTarget.getBoundingClientRect()
-                    setSeekHoverPct(Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100)))
-                  }}
-                  onMouseLeave={() => setSeekHoverPct(null)}
-                  onClick={e => {
-                    if (!currentTrack) return
-                    const rect = e.currentTarget.getBoundingClientRect()
-                    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
-                    seekTo((currentTrack?.duration ?? 0) * pct)
-                  }}
-                >
-                  <VisualizerCanvas
-                    progressPct={progressPct}
-                    hoverPct={seekHoverPct}
-                    levels={waveformLevels}
-                    mode={compactMode}
-                  />
-                  <input
-                    type="range"
-                    disabled={!currentTrack}
-                    min={0}
-                    max={currentTrack?.duration ?? 0}
-                    value={positionMs}
-                    onChange={(e) => seekTo(parseFloat(e.target.value))}
-                    className="absolute inset-0 h-full w-full opacity-0"
-                    aria-label="Seek"
-                  />
-                </div>
-                <div className="shrink-0 whitespace-nowrap text-[0.688rem] tabular-nums text-white text-opacity-70" style={{ width: timeColumnWidth }}>
-                  {formatMs(currentTrack?.duration ?? 0)}
-                </div>
-              </div>
+              <PlayerProgress />
             </div>
             </div>
 
@@ -864,7 +815,7 @@ export function Player() {
             <div className="player-tools flex w-[30%] min-w-[11.25rem] flex-wrap items-center justify-end gap-1" role="group" aria-label="Player tools">
               <div className="player-tools-buttons flex shrink-0 items-center gap-1">
                 {/* Guest DJ — icon only when inactive, icon+name pill when active */}
-                {hasDjModes && <PlayerPopover
+                {(hasDjModes || hasRadio || youtubeConnected) && <PlayerPopover
                   icon={
                     djMode ? (
                       <>
@@ -876,9 +827,9 @@ export function Player() {
                     )
                   }
                   wide={!!djMode}
-                  active={!!djMode}
-                  label="Guest DJ"
-                  width={288}
+                  active={!!djMode || isRadioMode}
+                  label="Radio and Guest DJ"
+                  width={420}
                 >
                   {(close) => <DjPanel onClose={close} />}
                 </PlayerPopover>}

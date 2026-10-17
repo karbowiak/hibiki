@@ -1,8 +1,10 @@
+import { useArtworkCache } from "./useArtworkCache"
 import type { MetadataIdentity } from "../metadata/core/types"
 import { useReviewedArtwork } from "./useReviewedArtwork"
 import { useProviderStore } from "../stores/providerStore"
-import { useEffect } from "react"
 import { useFanartMetadataStore } from "../metadata/fanart/store"
+import type { FanartAlbum } from "../metadata/fanart/store"
+import type { FanartArtist } from "../metadata/services/api"
 import { useFanartServiceStore } from "../metadata/services/store"
 import { albumMatches } from "../metadata/albumMatch"
 import {
@@ -40,70 +42,35 @@ export function useFanartArtwork(
   const offline = useProviderStore((state) => state.provider?.isOffline)
   const status = useFanartServiceStore((s) => s.status)
   const loadStatus = useFanartServiceStore((s) => s.load)
-  const key =
-    kind === "artist"
-      ? (artist?.toLowerCase() ?? "")
-      : artist && title
-        ? `${artist.toLowerCase()}::${title.toLowerCase()}`
-        : ""
-  const artistEntry = useFanartMetadataStore((s) =>
-    kind === "artist" ? s.artists[key] : undefined
-  )
-  const albumEntry = useFanartMetadataStore((s) =>
-    kind === "album" ? s.albums[key] : undefined
-  )
-  const hydrated = useFanartMetadataStore((s) => s._hasHydrated)
-  const pending = useFanartMetadataStore(
-    (s) =>
-      !!(kind === "artist" ? s._loadingArtists[key] : s._loadingAlbums[key])
-  )
-  const getArtist = useFanartMetadataStore((s) => s.getArtist)
-  const getAlbum = useFanartMetadataStore((s) => s.getAlbum)
   const enabled = !!status?.enabled && status.configured
-  const data = artistEntry?.data ?? albumEntry?.data
-  const valid =
-    enabled &&
-    !!data?.mbid &&
-    data.revision === status?.revision &&
-    (kind === "artist"
-      ? typeof artistEntry?.data?.name === "string" &&
-        artistEntry.data.name.trim().toLowerCase() ===
-          artist?.trim().toLowerCase()
-      : !!albumEntry?.data &&
-        albumMatches(albumEntry.data, artist ?? "", title ?? ""))
-  useEffect(() => {
-    if ((allowFetch || offline) && !status) void loadStatus()
-    if (
-      !!reviewed.resolution?.choice ||
-      !allowFetch ||
-      offline ||
-      !enabled ||
-      !hydrated ||
-      !artist ||
-      (kind === "album" && !title)
-    )
-      return
-    const entry = kind === "artist" ? artistEntry : albumEntry
-    if (entry !== undefined && (entry.data === null || valid)) return
-    if (kind === "artist") void getArtist(artist).catch(() => {})
-    else void getAlbum(artist, title!).catch(() => {})
-  }, [
-    allowFetch,
-    reviewed.resolution?.lease,
-    offline,
-    status,
-    enabled,
-    hydrated,
+  const { key, data, valid, pending } = useArtworkCache<
+    FanartArtist,
+    FanartAlbum
+  >(useFanartMetadataStore, {
+    kind,
     artist,
     title,
-    kind,
-    artistEntry?.data,
-    albumEntry?.data,
-    valid,
-    getArtist,
-    getAlbum,
+    enabled,
+    allowFetch,
+    offline,
+    statusLoaded: !!status,
     loadStatus,
-  ])
+    reviewedChoice: !!reviewed.resolution?.choice,
+    reviewedLease: reviewed.resolution?.lease,
+    validate(artistEntry, albumEntry) {
+      const data = artistEntry?.data ?? albumEntry?.data
+      return (
+        !!data?.mbid &&
+        data.revision === status?.revision &&
+        (kind === "artist"
+          ? typeof artistEntry?.data?.name === "string" &&
+            artistEntry.data.name.trim().toLowerCase() ===
+              artist?.trim().toLowerCase()
+          : !!albumEntry?.data &&
+            albumMatches(albumEntry.data, artist ?? "", title ?? ""))
+      )
+    },
+  })
   const activeData = reviewed.resolution?.choice ? reviewed.data : data
   const activeValid = reviewed.resolution?.choice ? !!reviewed.data : valid
   const posters = Array.isArray(activeData?.posters) ? activeData.posters : []
@@ -139,9 +106,7 @@ export function useFanartArtwork(
   )
   return {
     images,
-    pending: reviewed.resolution?.choice
-      ? reviewed.pending
-      : enabled && (!hydrated || pending),
+    pending: reviewed.resolution?.choice ? reviewed.pending : pending,
     revision: status?.revision,
   }
 }

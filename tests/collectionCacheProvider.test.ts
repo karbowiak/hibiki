@@ -5,7 +5,151 @@ import {
   freshPlaylistReads,
 } from "../src/offline/providerCache"
 import type { MusicProvider } from "../src/providers/types"
+import { orderMixTracks } from "../src/lib/mixOrder"
+import { deferred } from "./helpers/radioAudioFakes"
+import type { MusicTrack } from "../src/types/music"
 const cached = { id: "1", title: "Cached song", type: "track" }
+
+test("mix pages upgrade a linear snapshot once and share its stable full membership with playback", async () => {
+  const rows = Array.from(
+    { length: 1200 },
+    (_, index) =>
+      ({
+        id: String(index),
+        title: `Song ${index}`,
+        type: "track",
+        artistName: `Artist ${Math.floor(index / 400)}`,
+      }) as MusicTrack
+  )
+  let saved = rows,
+    staged: MusicTrack[] = []
+  const legacyKey =
+    "mix:" +
+    Buffer.from(
+      await crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode("/mix/path")
+      )
+    ).toString("hex")
+  const legacyInfo = {
+    complete: true,
+    dirty: false,
+    refreshing: false,
+    stamp: "legacy",
+    cachedAt: Date.now(),
+  }
+  let info: typeof legacyInfo | null = null
+  const gate = deferred<void>(),
+    started = deferred<void>()
+  const pages: number[] = [],
+    commands: any[] = []
+  const raw = {
+    cacheScope: "owner",
+    playbackSession: {},
+    isConnected: () => true,
+    getMixTracksPage: async (_path: string, offset: number, limit: number) => {
+      pages.push(offset)
+      if (!offset) {
+        started.resolve()
+        await gate.promise
+      }
+      return {
+        items: rows.slice(offset, offset + limit),
+        total: rows.length,
+        offset,
+      }
+    },
+  } as unknown as MusicProvider
+  const transport = async <T>(_command: string, args: any): Promise<T> => {
+    const request = args.request
+    commands.push(request)
+    switch (request.op) {
+      case "info":
+        return (request.key === legacyKey ? legacyInfo : info) as T
+      case "begin":
+        info = {
+          ...legacyInfo,
+          complete: false,
+          stamp: request.stamp,
+          refreshing: true,
+        }
+        return { generation: 1, offset: 0 } as T
+      case "put":
+        staged.push(...request.items)
+        return null as T
+      case "commit":
+        saved = orderMixTracks(staged)
+        info = { ...info!, complete: true, refreshing: false }
+        return { changed: true } as T
+      case "page":
+        return {
+          items: saved.slice(request.offset, request.offset + request.limit),
+          total: saved.length,
+          offset: request.offset,
+        } as T
+      case "refs":
+        return saved.map((track) => [track.id, null]) as T
+      case "items":
+        return request.ids.map((id: string) =>
+          rows.find((track) => track.id === id)
+        ) as T
+      default:
+        return null as T
+    }
+  }
+  const provider = createCollectionCacheProvider(
+    raw,
+    raw,
+    { connectionRevision: 1, cacheScope: "owner" },
+    transport
+  )
+  try {
+    let ready = false
+    const first = provider.getMixTracksPage!("/mix/path", 0, 30).then(
+      (value) => {
+        ready = true
+        return value
+      }
+    )
+    await started.promise
+    const later = provider.getMixTracksPage!("/mix/path", 600, 30)
+    const source = provider.getCachedTrackSource!("mix:/mix/path")
+    await Bun.sleep(180)
+    expect(ready).toBe(false)
+    expect(commands.filter((command) => command.op === "page")).toHaveLength(0)
+    gate.resolve()
+    const [page, secondPage, snapshot] = await Promise.all([
+      first,
+      later,
+      source,
+    ])
+    expect(pages).toEqual([0, 500, 1000])
+    expect(commands.filter((command) => command.op === "begin")).toHaveLength(1)
+    expect(commands.every((command) => command.key !== legacyKey)).toBe(true)
+    expect(page.items.map((track) => track.id)).toEqual(
+      snapshot!.entries!.slice(0, 30).map((track) => track.id)
+    )
+    expect(secondPage.items.map((track) => track.id)).toEqual(
+      snapshot!.entries!.slice(600, 630).map((track) => track.id)
+    )
+    const original = snapshot!.entries!.map((track) => track.id)
+    expect(
+      (await provider.getCachedTrackSource!("mix:/mix/path"))!.entries!.map(
+        (track) => track.id
+      )
+    ).toEqual(original)
+    saved = [...saved].reverse()
+    expect(
+      (await snapshot!.loadPage(600, 30)).items.map((track) => track.id)
+    ).toEqual(original.slice(600, 630))
+    expect(original).not.toEqual(rows.map((track) => track.id))
+    ;(raw as any).playbackSession = {}
+    await expect(snapshot!.loadPage(0, 1)).rejects.toThrow("superseded")
+  } finally {
+    gate.resolve()
+    provider.stopCollectionWarmup!()
+  }
+})
 function fixture() {
   const commands: any[] = []
   let upstream = 0

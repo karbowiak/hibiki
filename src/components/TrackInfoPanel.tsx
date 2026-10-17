@@ -1,3 +1,5 @@
+import { MusicEntityLink } from "./shared/MusicEntityLink"
+import { trackEntity } from "../lib/musicLinks"
 import { useEffect, useState } from "react"
 import PlaybackDiagnostics from "./PlaybackDiagnostics"
 import { usePlayerStore } from "../stores"
@@ -9,6 +11,10 @@ import { useDebugStore } from "../stores/debugStore"
 import { transitionRows } from "../audio/transitionInfo"
 import { formatAudioQuality, playbackAudioQuality } from "../lib/audioQuality"
 import "../styles/trackInfo.css"
+import { playbackMetadata } from "../audio/playbackMetadata"
+import { hasIndependentAudio, isYoutubeMusicId } from "../backends/ytmusic/tracks"
+import { usePlaybackDiagnostics } from "../hooks/usePlaybackDiagnostics"
+import { gainDecibels } from "../audio/playbackDiagnostics"
 interface Props {
   onClose: () => void
 }
@@ -20,6 +26,8 @@ export default function TrackInfoPanel({ onClose }: Props) {
   const transitionInfo = usePlayerStore((s) => s.transitionInfo)
   const repeat = usePlayerStore((s) => s.repeat)
   const [view, setView] = useState<"track" | "playback">("track")
+  const youtube = isYoutubeMusicId(currentTrack?.id ?? "")
+  const { snapshot } = usePlaybackDiagnostics(youtube && view === "track")
   const queue = usePlayerStore((s) => s.queue)
   const queueIndex = usePlayerStore((s) => s.queueIndex)
   const [fullTrack, setFullTrack] = useState<MusicTrack | null>(null)
@@ -36,10 +44,11 @@ export default function TrackInfoPanel({ onClose }: Props) {
   useEffect(() => {
     setFullTrack(null)
     if (!currentTrack) return
+    if (hasIndependentAudio(currentTrack) || youtube || currentTrack.mediaInfo?.localAudio) return
     if (!provider) return
     let cancelled = false
-    provider
-      .getTrack(currentTrack.id)
+    playbackMetadata
+      .fullTrack(provider, currentTrack.id)
       .then((t) => {
         if (!cancelled) setFullTrack(t)
       })
@@ -47,19 +56,20 @@ export default function TrackInfoPanel({ onClose }: Props) {
     return () => {
       cancelled = true
     }
-  }, [currentTrack?.id, provider])
+  }, [currentTrack?.id, provider, youtube])
 
   const debugEnabled = useDebugStore((s) => s.debugEnabled)
 
   const track = fullTrack?.id === currentTrack?.id ? fullTrack : currentTrack
   if (!track) return null
 
-  const codec = track.codec
-  const channels = track.channels
+  const active = playbackFormat?.trackId === track.id ? playbackFormat.format : null
+  const codec = youtube ? active?.codec : track.codec
+  const channels = youtube ? active?.channels : track.channels
   const bitrate = track.bitrate
-  const bitDepth = track.bitDepth
-  const sampleRate = track.samplingRate
-  const fileSize = track.mediaInfo?.fileSize
+  const bitDepth = youtube ? active?.bit_depth : track.bitDepth
+  const sampleRate = youtube ? active?.sample_rate : track.samplingRate
+  const fileSize = youtube ? snapshot?.source?.totalBytes : track.mediaInfo?.fileSize
   const container = track.mediaInfo?.container
 
   const hasGain = track.gain != null
@@ -67,6 +77,7 @@ export default function TrackInfoPanel({ onClose }: Props) {
 
   const rows: [string, string][] = []
 
+  if (youtube) rows.push(["Source", "YouTube Music"])
   if (track.artistName) rows.push(["Artist", track.artistName])
   if (track.albumName) rows.push(["Album", track.albumName])
   if (track.albumYear) rows.push(["Year", String(track.albumYear)])
@@ -85,8 +96,7 @@ export default function TrackInfoPanel({ onClose }: Props) {
       channels === 2 ? "Stereo" : channels === 1 ? "Mono" : `${channels}ch`,
     ])
   if (fileSize) rows.push(["File Size", formatSize(fileSize)])
-  if (playbackFormat?.trackId === track.id) {
-    const active = playbackFormat.format
+  if (active && !youtube) {
     rows.push([
       "Playing format",
       formatAudioQuality(playbackAudioQuality(track, active)) ?? "Unknown",
@@ -102,7 +112,13 @@ export default function TrackInfoPanel({ onClose }: Props) {
   }
 
   // Loudness analysis status
-  rows.push(["Loudness Analysis", hasGain || hasLoudness ? "Yes" : "No"])
+  if (youtube) {
+    if (snapshot) rows.push(["Normalization", gainDecibels(snapshot.normalizationGain)])
+    if (snapshot?.source) rows.push(["Playback source", {
+      cache: "Audio cache", download: "Offline download", network: "YouTube Music stream",
+    }[snapshot.source.kind]])
+    rows.push(["YouTube ID", track.id.slice(8)])
+  } else rows.push(["Loudness Analysis", hasGain || hasLoudness ? "Yes" : "No"])
   if (hasGain) rows.push(["Track Gain", `${track.gain!.toFixed(1)} dB`])
   if (track.albumGain != null)
     rows.push(["Album Gain", `${track.albumGain.toFixed(1)} dB`])
@@ -150,24 +166,6 @@ export default function TrackInfoPanel({ onClose }: Props) {
     if (pd?.updated_at) debugRows.push(["Updated At", pd.updated_at])
   }
 
-  const SectionTable = ({
-    rows: r,
-    mono,
-  }: {
-    rows: [string, string][]
-    mono?: boolean
-  }) => (
-    <dl
-      className={`track-info-values${mono ? " track-info-values--technical" : ""}`}
-    >
-      {r.map(([label, value]) => (
-        <div key={label}>
-          <dt>{label}</dt>
-          <dd>{value}</dd>
-        </div>
-      ))}
-    </dl>
-  )
 
   const hasAnalysis = analysisRows.length > 0
   const hasDebug = debugRows.length > 0
@@ -220,7 +218,10 @@ export default function TrackInfoPanel({ onClose }: Props) {
           <PlaybackDiagnostics />
         ) : (
           <>
-            <SectionTable rows={rows} />
+            <SectionTable track={track} rows={rows} />
+            {youtube && !active && (
+              <p className="track-info-caption">Audio details appear when playback starts.</p>
+            )}
 
             {/* Panel 2: Smart Crossfade */}
             {hasAnalysis && (
@@ -229,7 +230,7 @@ export default function TrackInfoPanel({ onClose }: Props) {
                 aria-label="Next transition"
               >
                 <h4>Next transition</h4>
-                <SectionTable rows={analysisRows} mono />
+                <SectionTable track={track} rows={analysisRows} mono />
               </section>
             )}
 
@@ -237,7 +238,7 @@ export default function TrackInfoPanel({ onClose }: Props) {
             {hasDebug && (
               <section className="track-info-section" aria-label="Debug">
                 <h4>Debug</h4>
-                <SectionTable rows={debugRows} mono />
+                <SectionTable track={track} rows={debugRows} mono />
               </section>
             )}
           </>
@@ -245,4 +246,28 @@ export default function TrackInfoPanel({ onClose }: Props) {
       </div>
     </div>
   )
+}
+
+function SectionTable({
+    rows: r,
+    track,
+    mono,
+  }: {
+    rows: [string, string][]
+    track: MusicTrack
+    mono?: boolean
+  }) {
+  return (
+    <dl
+      className={`track-info-values${mono ? " track-info-values--technical" : ""}`}
+    >
+      {r.map(([label, value]) => (
+        <div key={label}>
+          <dt>{label}</dt>
+          <dd>{label === "Artist" || label === "Album" ? <MusicEntityLink entity={trackEntity(track, label === "Artist" ? "artist" : "album")} className="hover:underline">{value}</MusicEntityLink> : value}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+
 }

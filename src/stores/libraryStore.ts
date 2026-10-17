@@ -145,7 +145,7 @@ export interface LibraryState {
   fetchMorePlaylistItems: (playlistId: string, opts?: FetchOpts) => Promise<void>
   prefetchAllPlaylists: () => Promise<void>
   prefetchMixTracks: () => Promise<void>
-  createPlaylist: (title: string) => Promise<MusicPlaylist>
+  createPlaylist: (title: string, itemIds?: string[]) => Promise<MusicPlaylist>
   refreshAll: () => Promise<void>
   /** Evict a single playlist's item cache and refetch if it's currently viewed. */
   invalidatePlaylistItems: (playlistId: string) => void
@@ -737,10 +737,10 @@ export function createLibraryStore({
         mixPrefetch = work
         return work
       },
-      createPlaylist: async (title) => {
+      createPlaylist: async (title, itemIds = []) => {
         const session = capture()
         if (!session) throw new Error("No provider")
-        const playlist = await session.provider.createPlaylist(title, [])
+        const playlist = await session.provider.createPlaylist(title, itemIds)
         if (!current(session)) throw new Error("Library connection changed before the playlist was returned")
         requests.delete("playlists")
         set((state) => ({ playlists: [...state.playlists, playlist], _playlistsFetchedAt: null }))

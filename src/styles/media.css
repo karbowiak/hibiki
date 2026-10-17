@@ -48,6 +48,7 @@
   text-shadow: 0 1px 4px rgb(0 0 0 / 0.5);
 }
 .media-card__caption--play { padding-right: 3.2rem; }
+.media-card__caption--links { z-index: 4; }
 .media-card__title {
   display: -webkit-box;
   -webkit-line-clamp: 2;

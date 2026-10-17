@@ -12,6 +12,31 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 pub(super) type Analyzer =
     dyn Fn(File, &str, &dyn Fn() -> bool) -> Result<f32, String> + Send + Sync;
+
+/// A completed encoded file and its exact cache revision, independent of provider
+/// or playback deck. Transient playback spools use None for the cache stamp.
+pub(super) struct AudioItem {
+    key: String,
+    extension: String,
+    cache: Arc<AudioCache>,
+    file: File,
+    stamp: Option<CacheStamp>,
+}
+impl AudioItem {
+    pub(super) fn cached(
+        source: &super::source::MediaSource,
+        cache: Arc<AudioCache>,
+    ) -> Option<Self> {
+        let (file, stamp) = cache.open_with_stamp(&source.cache_key)?;
+        Some(Self {
+            key: source.cache_key.clone(),
+            extension: source.extension.clone(),
+            cache,
+            file,
+            stamp: Some(stamp),
+        })
+    }
+}
 struct Job {
     key: String,
     ext: String,
@@ -154,6 +179,25 @@ impl LoudnessAnalysis {
         file: File,
         stamp: Option<CacheStamp>,
     ) -> Result<Option<f32>, String> {
+        self.prepare_item(
+            AudioItem {
+                key: source.cache_key.clone(),
+                extension: source.extension.clone(),
+                cache,
+                file,
+                stamp,
+            },
+            deck,
+            request,
+        )
+    }
+
+    pub(super) fn prepare_item(
+        &self,
+        item: AudioItem,
+        deck: DeckId,
+        request: &PlaybackRequest,
+    ) -> Result<Option<f32>, String> {
         if !request.is_current() {
             return Err("Audio preparation cancelled".into());
         }
@@ -162,14 +206,15 @@ impl LoudnessAnalysis {
         }
         let (tx, rx): (Sender<Result<f32, String>>, Receiver<Result<f32, String>>) =
             crossbeam_channel::bounded(1);
-        let accepted_stamp = stamp.clone();
-        let accepted_cache = cache.clone();
+        let accepted_stamp = item.stamp.clone();
+        let accepted_cache = item.cache.clone();
+        let key = item.key.clone();
         let job = Job {
-            key: source.cache_key.clone(),
-            ext: source.extension.clone(),
-            file,
-            cache,
-            stamp,
+            key: item.key,
+            ext: item.extension,
+            file: item.file,
+            cache: item.cache,
+            stamp: item.stamp,
             request: request.clone(),
             reply: tx,
         };
@@ -195,9 +240,9 @@ impl LoudnessAnalysis {
             match rx.recv_timeout(Duration::from_millis(10)) {
                 Ok(result) => {
                     if result.is_ok()
-                        && accepted_stamp.as_ref().is_some_and(|stamp| {
-                            !accepted_cache.stamp_is_current(&source.cache_key, stamp)
-                        })
+                        && accepted_stamp
+                            .as_ref()
+                            .is_some_and(|stamp| !accepted_cache.stamp_is_current(&key, stamp))
                     {
                         return Err("Audio file changed during preparation".into());
                     }

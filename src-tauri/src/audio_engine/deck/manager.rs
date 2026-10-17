@@ -3,6 +3,8 @@
 //! Mirrors the TypeScript DeckManager: two reusable decks, one active (playing)
 //! and one pending (preloaded with next track). Transitions swap roles.
 
+use std::collections::VecDeque;
+
 use super::super::crossfade::types::TrackRamps;
 use super::super::output::playback_envelope::PlaybackEnvelope;
 use super::super::types::{DeckId, TrackMeta};
@@ -68,8 +70,8 @@ pub struct DeckState {
     pub end_reported: bool,
     pub history_start_reported: bool,
     pub history_end_reported: bool,
-    /// Decoded audio samples (interleaved f32).
-    pub samples: Vec<f32>,
+    /// Decoded interleaved PCM. A ring releases history without moving the tail.
+    pub samples: VecDeque<f32>,
     /// Current read position in samples (interleaved index).
     pub position: usize,
     /// Track metadata (None if deck is empty).
@@ -114,7 +116,7 @@ impl DeckState {
             end_reported: false,
             history_start_reported: false,
             history_end_reported: false,
-            samples: Vec::new(),
+            samples: VecDeque::new(),
             position: 0,
             meta: None,
             ramps: TrackRamps::default(),
@@ -346,7 +348,7 @@ mod tests {
         let mut deck = DeckState::new(DeckId::A);
         deck.sample_rate = 44100;
         deck.channels = 2;
-        deck.samples = vec![0.0; 44100 * 2]; // 1 second stereo
+        deck.samples = vec![0.0; 44100 * 2].into(); // 1 second stereo
         deck.fully_decoded = true;
         deck.loaded = true;
 
@@ -370,7 +372,7 @@ mod tests {
     #[test]
     fn reset_clears_deck() {
         let mut deck = DeckState::new(DeckId::A);
-        deck.samples = vec![1.0; 1000];
+        deck.samples = vec![1.0; 1000].into();
         deck.position = 500;
         deck.loaded = true;
         deck.reset();
@@ -378,4 +380,32 @@ mod tests {
         assert_eq!(deck.position, 0);
         assert!(!deck.loaded);
     }
+    #[test]
+    fn streaming_history_wraps_without_moving_the_unplayed_pcm_or_growing() {
+        let mut deck = DeckState::new(DeckId::A);
+        deck.sample_rate = 10;
+        deck.channels = 2;
+        let (seek_tx, _seeks) = crossbeam_channel::bounded(1);
+        deck.seek_tx = Some(seek_tx);
+        let mut initial = Vec::with_capacity(600);
+        initial.extend((0..440).map(|n| n as f32));
+        let address = initial.as_ptr();
+        deck.samples = initial.into();
+        assert_eq!(deck.samples.as_slices().0.as_ptr(),address,"install adopts worker-allocated PCM");
+        deck.position = 60;
+        deck.trim_played_samples();
+        assert_eq!(deck.samples.as_slices().0.as_ptr(),address.wrapping_add(20),"trimming advances the ring without copying its tail");
+        let mut wrapped = false;
+        for next in (440..2440).step_by(10) {
+            deck.samples.extend((next..next+10).map(|n| n as f32));
+            deck.position += 10;
+            deck.trim_played_samples();
+            assert_eq!(deck.samples.capacity(),600);
+            assert_eq!(deck.samples[0],deck.sample_offset as f32);
+            assert_eq!(deck.samples[deck.samples.len()-1],(next+9) as f32);
+            wrapped |= !deck.samples.as_slices().1.is_empty();
+        }
+        assert!(wrapped,"fixture exercises both sides of the ring");
+    }
+
 }

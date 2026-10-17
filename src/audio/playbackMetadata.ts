@@ -36,6 +36,9 @@ function variantKey(track: MusicTrack): string {
 /** Runtime metadata is isolated even when providers reuse numeric track IDs. */
 export class PlaybackMetadata {
   private sessions = new WeakMap<MusicProvider, Session>()
+  invalidate(provider: MusicProvider) {
+    this.sessions.delete(provider)
+  }
   private session(provider: MusicProvider) {
     let session = this.sessions.get(provider)
     if (
@@ -194,3 +197,6 @@ export class PlaybackMetadata {
     return request
   }
 }
+
+/** Shared by playback preparation and the track information panel. */
+export const playbackMetadata = new PlaybackMetadata()

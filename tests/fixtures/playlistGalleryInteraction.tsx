@@ -10,7 +10,7 @@ const played: unknown[][] = []
 let contextActions = 0
 mock.module("../../src/stores/index.ts", () => ({ useLibraryStore: create(() => ({ playlists: [playlist] })) }))
 mock.module("../../src/stores/playerStore", () => ({ usePlayerStore: create(() => ({ playPlaylist: async (...args: unknown[]) => { played.push(args) } })) }))
-mock.module("../../src/hooks/useContextMenu", () => ({ useContextMenu: () => ({ handler: (kind: string, item: unknown) => (event: Event) => { event.preventDefault(); assert.equal(kind, "playlist"); assert.equal(item, playlist); contextActions++ } }) }))
+mock.module("../../src/hooks/useContextMenu", () => ({ useContextMenu: () => ({ handler: (kind: string, item: unknown) => (event: Event) => { event.preventDefault(); assert.equal(kind, "playlist"); assert.deepEqual(item, { ...playlist, type: "playlist" }); contextActions++ } }) }))
 mock.module("../../src/hooks/useMediaImage", () => ({ useArtistImage: () => null, useAlbumImage: () => null }))
 mock.module("../../src/hooks/useTrackDrag", () => ({ useTrackDrag: () => ({}) }))
 mock.module("../../src/components/shared/ArtworkImage", () => ({ ArtworkImage: () => null, useArtworkFailures: () => ({ failures: [], onFailure() {} }) }))

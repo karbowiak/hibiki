@@ -13,6 +13,12 @@ pub struct Entry {
     #[serde(skip_serializing_if = "Option::is_none")]
     album_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    thumb_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    album_thumb_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    artist_thumb_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     duration: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     playlist_item_id: Option<String>,
@@ -82,7 +88,8 @@ pub fn run(conn: &Connection, scope: &str, request: &Request) -> Result<Value, S
             }
             check_state(&state, entries.len())?;
             for entry in entries {
-                if !entry.id.is_empty() && entry.id.parse::<u64>().ok().is_none_or(|id| id == 0) {
+                if !entry.id.is_empty() && entry.id.parse::<u64>().ok().is_none_or(|id| id == 0)
+                    && !crate::ytmusic::valid_track_id(&entry.id) {
                     return Err("Invalid saved music identity".into());
                 }
                 if entry.id.is_empty() && entry.source_index.is_none()
@@ -103,6 +110,24 @@ pub fn run(conn: &Connection, scope: &str, request: &Request) -> Result<Value, S
                         .is_some_and(|d| !d.is_finite() || !(0.0..=604800000.0).contains(&d))
                 {
                     return Err("Invalid saved queue metadata".into());
+                }
+                for artwork in [
+                    &entry.thumb_url,
+                    &entry.album_thumb_url,
+                    &entry.artist_thumb_url,
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    if artwork.len() > 4096
+                        || url::Url::parse(artwork).ok().is_none_or(|url| {
+                            !matches!(url.scheme(), "image" | "http" | "https")
+                                || url.host_str().is_none()
+                        })
+                    {
+                        return Err("Invalid saved queue artwork".into());
+                    }
+                    super::offline::check_payload(&Value::String(artwork.clone()), 0)?;
                 }
             }
             let total = entries.len() as i64;
@@ -147,6 +172,52 @@ pub fn run(conn: &Connection, scope: &str, request: &Request) -> Result<Value, S
 mod tests {
     use super::*;
     #[test]
+    fn artwork_is_durable_but_cannot_persist_credentials_or_media_payloads() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("queue.db");
+        let conn = Connection::open(&path).unwrap();
+        super::super::schema::run_migrations(&conn).unwrap();
+        let scope = format!("plex-{}", "a".repeat(64));
+        let artwork = "image://localhost/ext/img?src=https%3A%2F%2Flh3.googleusercontent.com%2Falbum-cover%3Dw600-h600";
+        let entry = |artwork: &str| serde_json::from_value::<Entry>(json!({
+            "id": "ytmusic:abcdefghijk", "thumbUrl": artwork, "albumThumbUrl": artwork,
+            "artistThumbUrl": "https://images.test/artist.jpg"
+        })).unwrap();
+        let save = |conn: &Connection, artwork: &str| run(conn, &scope, &Request::Save {
+            entries: vec![entry(artwork)], state: json!({"index":0,"positionMs":12345})
+        });
+        save(&conn, artwork).unwrap();
+        drop(conn);
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(run(&conn, &scope, &Request::Load).unwrap()["entries"][0]["albumThumbUrl"], artwork);
+        for invalid in [
+            "https://user:password@images.test/cover.jpg",
+            "https://images.test/cover.jpg?X-Plex-Token=secret",
+            "image://localhost/ext/img?src=https%3A%2F%2Fimages.test%2Fcover.jpg%3Faccess_token%3Dsecret",
+            "data:image/png;base64,AAAA", "file:///private/cover.jpg", &"x".repeat(4097),
+        ] {
+            assert!(save(&conn, invalid).is_err());
+        }
+        let restored = run(&conn, &scope, &Request::Load).unwrap();
+        assert_eq!(restored["entries"][0]["thumbUrl"], artwork);
+        assert_eq!(restored["entries"][0]["artistThumbUrl"], "https://images.test/artist.jpg");
+        // Pre-artwork queues remain readable without a migration.
+        assert!(serde_json::from_value::<Entry>(json!({"id":"7"})).unwrap().thumb_url.is_none());
+    }
+    #[test]
+    fn mixed_queues_keep_opaque_video_ids_but_reject_playback_urls() {
+        let conn = Connection::open_in_memory().unwrap();
+        super::super::schema::run_migrations(&conn).unwrap();
+        let scope = format!("plex-{}", "a".repeat(64));
+        let entry = |id: &str| serde_json::from_value::<Entry>(json!({"id": id, "title": "Song"})).unwrap();
+        run(&conn, &scope, &Request::Save { entries: vec![entry("7"), entry("ytmusic:abcdefghijk")], state: json!({"index":1,"positionMs":12345}) }).unwrap();
+        let saved = run(&conn, &scope, &Request::Load).unwrap();
+        assert_eq!(saved["entries"][1]["id"], "ytmusic:abcdefghijk");
+        for id in ["ytmusic:abcdefghijk?cookie=secret", "https://rr1.googlevideo.com?signature=secret", "ytmusic:invalid"] {
+            assert!(run(&conn, &scope, &Request::Save { entries: vec![entry(id)], state: json!({"index":0,"positionMs":0}) }).is_err());
+        }
+    }
+    #[test]
     fn full_order_duplicate_occurrences_and_position_are_durable_and_scoped() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("queue.db");
@@ -160,6 +231,9 @@ mod tests {
                 title: None,
                 artist_name: None,
                 album_name: None,
+                thumb_url: None,
+                album_thumb_url: None,
+                artist_thumb_url: None,
                 duration: None,
                 playlist_item_id: Some(i.to_string()),
                 source_index: Some(i),

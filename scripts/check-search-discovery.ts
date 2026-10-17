@@ -1,12 +1,11 @@
 import assert from "node:assert/strict"
-import { mkdtemp, mkdir, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { mkdir } from "node:fs/promises"
 import { join, resolve } from "node:path"
-import { build } from "vite"
+import { fixtureBuild, disposeFixture, fixtureFile, launchFixtureBrowser } from "./lib/browserFixtures"
 import { chromium, webkit } from "playwright"
 
 const root = resolve(import.meta.dir, "..")
-const output = await mkdtemp(join(tmpdir(), "hibiki-search-discovery-"))
+const output = await fixtureBuild(["tests/fixtures/libraryLayout/index.html"], "darwin")
 const artifacts = resolve(root, ".tmp/search-discovery-checks")
 await mkdir(artifacts, { recursive: true })
 const font = await Bun.file(
@@ -19,18 +18,7 @@ const originalPlatform = process.env.TAURI_ENV_PLATFORM
 process.env.TAURI_ENV_PLATFORM = "darwin"
 let server: ReturnType<typeof Bun.serve> | undefined
 try {
-  await build({
-    root,
-    configFile: resolve(root, "vite.config.ts"),
-    logLevel: "error",
-    build: {
-      outDir: output,
-      emptyOutDir: true,
-      rolldownOptions: {
-        input: resolve(root, "tests/fixtures/libraryLayout/index.html"),
-      },
-    },
-  })
+
   server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -41,13 +29,7 @@ try {
           '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="480"><rect width="480" height="480" fill="#7c3aed"/><circle cx="240" cy="240" r="110" fill="#c4b5fd"/></svg>',
           { headers: { "Content-Type": "image/svg+xml" } }
         )
-      const path = resolve(output, `.${pathname}`)
-      if (!path.startsWith(`${output}/`))
-        return new Response(null, { status: 404 })
-      const file = Bun.file(path)
-      return (await file.exists())
-        ? new Response(file)
-        : new Response(null, { status: 404 })
+      return fixtureFile(output,pathname)
     },
   })
   const origin = `http://127.0.0.1:${server.port}`
@@ -55,7 +37,7 @@ try {
     ["chromium", chromium],
     ["webkit", webkit],
   ] as const) {
-    const browser = await type.launch({ headless: true })
+    const browser = await launchFixtureBrowser(type)
     try {
       const context = await browser.newContext()
       const requests: string[] = []
@@ -234,5 +216,5 @@ try {
   server?.stop(true)
   if (originalPlatform === undefined) delete process.env.TAURI_ENV_PLATFORM
   else process.env.TAURI_ENV_PLATFORM = originalPlatform
-  await rm(output, { recursive: true, force: true })
+  await disposeFixture(output)
 }

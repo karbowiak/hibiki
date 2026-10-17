@@ -1,5 +1,8 @@
+import { collectionPlaybackSource, selectCollectionTrack } from "../../lib/collectionPlayback"
+import { getSelection, subscribeSelection } from "../../lib/mixSelection"
+import { mixPlaybackSource, orderMixTracks, shuffleTracks } from "../../lib/mixOrder"
+import { filterTracks, sortTracks, type TrackSortColumn } from "../../lib/trackOrder"
 import { mixThumbnailKey, useMixThumbnails } from "../../hooks/useMixThumbnails"
-import type { MusicProvider } from "../../providers/types"
 import { ArtworkImage } from "../shared/ArtworkImage"
 import { Skeleton } from "../shared/Skeleton"
 import {
@@ -14,85 +17,12 @@ import { useShallow } from "zustand/react/shallow"
 import { usePlayerStore } from "../../stores"
 import { useProviderStore } from "../../stores/providerStore"
 import { useCapability } from "../../hooks/useCapability"
-import { formatTotalMs } from "../../lib/formatters"
 import { UltraBlur } from "../UltraBlur"
 import { useWindowedPages } from "../../hooks/useWindowedPages"
 import { useTableSort } from "../../hooks/useTableSort"
 import { ALL_COLUMNS, usePlaylistColumns } from "../../hooks/useColumnPicker"
 import { TrackTable } from "../shared/TrackTable"
-import type { MusicTrack, MusicPlaylist } from "../../types/music"
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function hashString(str: string): number {
-  let hash = 5381
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) + hash + str.charCodeAt(i)) | 0
-  }
-  return hash >>> 0
-}
-
-function mulberry32(seed: number): () => number {
-  let s = seed | 0
-  return () => {
-    s = (s + 0x6d2b79f5) | 0
-    let t = Math.imul(s ^ (s >>> 15), 1 | s)
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
-}
-
-export function shuffleTracks(arr: MusicTrack[], title: string): MusicTrack[] {
-  const result = [...arr]
-  const rng = mulberry32(hashString(title))
-  for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1))
-    ;[result[i], result[j]] = [result[j], result[i]]
-  }
-  return result
-}
-
-// ---------------------------------------------------------------------------
-// Module-level state: the mix item selected on the homepage.
-// Plex hub mixes have rating_key=0 — we cannot route by ID, so Home.tsx
-// calls selectMix() before navigating to /mix.
-// ---------------------------------------------------------------------------
-
-let selectedMix: {
-  item: MusicPlaylist
-  provider: MusicProvider | null
-} | null = null
-const selectionListeners = new Set<() => void>()
-function subscribeSelection(listener: () => void) {
-  selectionListeners.add(listener)
-  return () => {
-    selectionListeners.delete(listener)
-  }
-}
-function getSelection() {
-  return selectedMix
-}
-
-useProviderStore.subscribe((state, previous) => {
-  if (
-    state.provider !== previous.provider &&
-    selectedMix?.provider !== state.provider
-  ) {
-    selectedMix = null
-    for (const listener of selectionListeners) listener()
-  }
-})
-
-export function selectMix(item: MusicPlaylist) {
-  selectedMix = { item, provider: useProviderStore.getState().provider }
-  for (const listener of selectionListeners) listener()
-}
-
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
+import type { MusicTrack } from "../../types/music"
 
 export function MixPage() {
   const [, navigate] = useLocation()
@@ -125,22 +55,7 @@ export function MixPage() {
     return () => clearTimeout(t)
   }, [filterQuery])
 
-  type SortCol =
-    | "default"
-    | "title"
-    | "artist"
-    | "album"
-    | "year"
-    | "plays"
-    | "popularity"
-    | "label"
-    | "bitrate"
-    | "format"
-    | "added_at"
-    | "rating"
-    | "rated_at"
-    | "duration"
-  const { sortCol, sortDir, handleSort } = useTableSort<SortCol>()
+  const { sortCol, sortDir, handleSort } = useTableSort<TrackSortColumn>()
 
   const mixKey = mixItem?.providerKey as string | undefined
 
@@ -149,7 +64,7 @@ export function MixPage() {
     async (offset, limit) => {
       if (provider?.getMixTracksPage)
         return provider.getMixTracksPage(mixKey!, offset, limit)
-      const items = (await provider?.getMixTracks?.(mixKey!)) ?? []
+      const items = orderMixTracks((await provider?.getMixTracks?.(mixKey!)) ?? [])
       return {
         items: items.slice(offset, offset + limit),
         total: items.length,
@@ -211,72 +126,15 @@ export function MixPage() {
     return result
   }, [tracks])
 
-  const filteredTracks = useMemo(() => {
-    if (!debouncedQuery) return tracks
-    const q = debouncedQuery.toLowerCase()
-    return tracks.filter(
-      (t) =>
-        t.title.toLowerCase().includes(q) ||
-        t.artistName.toLowerCase().includes(q) ||
-        t.albumName.toLowerCase().includes(q)
-    )
-  }, [tracks, debouncedQuery])
+  const filteredTracks = useMemo(
+    () => filterTracks(tracks, debouncedQuery),
+    [tracks, debouncedQuery]
+  )
 
-  const sortedTracks = useMemo(() => {
-    if (sortCol === "default") return filteredTracks
-    const items = [...filteredTracks]
-    items.sort((a, b) => {
-      let cmp = 0
-      switch (sortCol) {
-        case "title":
-          cmp = a.title.localeCompare(b.title)
-          break
-        case "artist":
-          cmp = a.artistName.localeCompare(b.artistName)
-          break
-        case "album":
-          cmp = a.albumName.localeCompare(b.albumName)
-          break
-        case "year":
-          cmp = (a.albumYear ?? a.year) - (b.albumYear ?? b.year)
-          break
-        case "plays":
-          cmp = a.playCount - b.playCount
-          break
-        case "popularity":
-          cmp = (a.ratingCount ?? 0) - (b.ratingCount ?? 0)
-          break
-        case "label":
-          cmp = (a.parentStudio ?? "").localeCompare(b.parentStudio ?? "")
-          break
-        case "bitrate":
-          cmp = (a.bitrate ?? 0) - (b.bitrate ?? 0)
-          break
-        case "format":
-          cmp = (a.codec ?? "").localeCompare(b.codec ?? "")
-          break
-        case "added_at":
-          cmp =
-            (a.addedAt ? +new Date(a.addedAt) : 0) -
-            (b.addedAt ? +new Date(b.addedAt) : 0)
-          break
-        case "rating":
-          cmp = (a.userRating ?? 0) - (b.userRating ?? 0)
-          break
-        case "rated_at": {
-          cmp =
-            (a.lastRatedAt ? +new Date(a.lastRatedAt) : 0) -
-            (b.lastRatedAt ? +new Date(b.lastRatedAt) : 0)
-          break
-        }
-        case "duration":
-          cmp = a.duration - b.duration
-          break
-      }
-      return sortDir === "asc" ? cmp : -cmp
-    })
-    return items
-  }, [filteredTracks, sortCol, sortDir])
+  const sortedTracks = useMemo(
+    () => sortTracks(filteredTracks, sortCol, sortDir),
+    [filteredTracks, sortCol, sortDir]
+  )
 
   if (!hasMixTracks) return null
 
@@ -295,39 +153,18 @@ export function MixPage() {
 
   const playbackSource =
     provider?.getMixTracksPage && mixKey
-      ? {
-          key: `mix:${mixKey}`,
-          total: page.total,
-          loadPage: (offset: number, limit: number) =>
-            provider.getMixTracksPage!(mixKey, offset, limit),
-        }
+      ? mixPlaybackSource(provider, mixKey, page.total)
       : null
-  const querySource = {
-    key: `mix-query:${mixKey}`,
-    restoreQuery: { key: `mix:${mixKey}`, filter: debouncedQuery, sort: sortCol, dir: sortDir },
-    total: queried.total,
-    loadPage: async (offset: number, limit: number) => {
-      const result = await provider!.getCollectionPage!(
-        `mix:${mixKey}`,
-        offset,
-        limit,
-        debouncedQuery,
-        sortCol,
-        sortDir
-      )
-      return {
-        ...result,
-        items: result.items.filter((item) => item.type === "track"),
-      }
-    },
-  }
+  const querySource = provider ? collectionPlaybackSource(provider, {
+    key: `mix:${mixKey}`, filter: debouncedQuery, sort: sortCol, dir: sortDir,
+  }, queried.total) : null
   function handlePlayInOrder() {
     if (useQuery && provider?.getCollectionPage)
       void playPagedTracks(querySource, mixItem!.title, "/mix")
     else if (playbackSource && !filterQuery)
       void playPagedTracks(playbackSource, mixItem!.title, "/mix")
-    else if (tracks.length)
-      void playTrack(tracks[0], sortedTracks, mixItem!.title, "/mix")
+    else if (sortedTracks.length)
+      void playTrack(sortedTracks[0], sortedTracks, mixItem!.title, "/mix")
   }
   function handlePlayShuffled() {
     if (useQuery && provider?.getCollectionPage)
@@ -491,7 +328,7 @@ export function MixPage() {
           onPlay={(track, all, index) => {
             if (useQuery && provider?.getCollectionPage)
               void playPagedTracks(
-                querySource,
+                selectCollectionTrack(querySource, track, index ?? 0),
                 mixItem.title,
                 "/mix",
                 false,

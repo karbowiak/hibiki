@@ -18,16 +18,6 @@ import { computeSpectrumFromFFT } from "../lib/visualizerSpectrum"
 import { useVisualizationVisibility } from "../hooks/useVisualizationVisibility"
 import { useVisualizationFrames } from "../hooks/useVisualizationFrames"
 
-// Lerp between two hex colors
-function lerpColor(a: string, b: string, t: number): string {
-  const ar = parseInt(a.slice(1, 3), 16), ag = parseInt(a.slice(3, 5), 16), ab = parseInt(a.slice(5, 7), 16)
-  const br = parseInt(b.slice(1, 3), 16), bg = parseInt(b.slice(3, 5), 16), bb = parseInt(b.slice(5, 7), 16)
-  const r = Math.round(ar + (br - ar) * t)
-  const g = Math.round(ag + (bg - ag) * t)
-  const bl = Math.round(ab + (bb - ab) * t)
-  return `rgb(${r},${g},${bl})`
-}
-
 // Starfield hue palette for colored stars
 const STAR_HUES = [5, 15, 40, 50, 175, 190, 215, 225, 310, 330]
 function randomStarHue(): number {

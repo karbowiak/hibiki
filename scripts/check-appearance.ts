@@ -1,15 +1,14 @@
 import assert from "node:assert/strict"
-import { mkdtemp, mkdir, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { mkdir } from "node:fs/promises"
 import { join, resolve } from "node:path"
-import { build } from "vite"
+import { fixtureBuild, disposeFixture, fixtureFile, launchFixtureBrowser } from "./lib/browserFixtures"
 import { chromium, webkit, type Page } from "playwright"
 import { podcastFeedPath } from "../src/lib/podcastRoute"
 import { artworkContrast } from "../src/lib/artworkTone"
 
 // Real components and stores, disposable preferences and playback, no account I/O.
 const root = resolve(import.meta.dir, "..")
-const output = await mkdtemp(join(tmpdir(), "hibiki-appearance-"))
+const output = await fixtureBuild(["tests/fixtures/libraryLayout/index.html"], "windows")
 const artifacts = resolve(root, ".tmp/appearance-checks")
 let artworkGate: Promise<void> | null = null
 async function checkPlaybackQuality(page: Page, name: string) {
@@ -145,7 +144,11 @@ async function checkTrackRowLayout(page: Page, name: string) {
       const titleCell = await row.locator('td:nth-child(2)').boundingBox()
       const titleLine = await row.locator('.track-row-title-line').boundingBox()
       assert.ok(actionBounds && titleCell && actionBounds.x >= titleCell.x && actionBounds.x + actionBounds.width <= titleCell.x + titleCell.width, `${name}/${path}: actions leave the title column`)
-      assert.ok(titleLine && actionBounds && actionBounds.y > titleLine.y + titleLine.height / 2, `${name}/${path}: actions are not on the second line`)
+      if (path.startsWith('/album/') && !(await row.locator('.track-row-secondary-line').count())) {
+        assert.ok(titleLine && actionBounds && Math.abs(actionBounds.y + actionBounds.height / 2 - titleLine.y - titleLine.height / 2) < 2, `${name}/${path}: compact album actions are not aligned with the title`)
+      } else {
+        assert.ok(titleLine && actionBounds && actionBounds.y > titleLine.y + titleLine.height / 2, `${name}/${path}: actions are not on the second line`)
+      }
       const artistLine = row.locator('.track-row-artist')
       if (!path.startsWith('/album/') && await artistLine.count()) {
         const artist = await artistLine.boundingBox()
@@ -183,7 +186,7 @@ async function checkFinishingPolish(page: Page, name: string) {
     await page.screenshot({ path: join(artifacts, `${name}-${width}-create-playlist-polish.png`), animations: 'disabled' })
     await create.getByRole('button', { name: 'Close create playlist', exact: true }).click()
     await create.waitFor({ state: 'detached' })
-    for (const label of ['Sleep Timer', 'Guest DJ', 'Equalizer', 'Radio settings']) {
+    for (const label of ['Sleep Timer', 'Radio and Guest DJ', 'Equalizer', 'Radio settings']) {
       if (label === 'Radio settings') await page.evaluate(() => (window as any).fixtureAppearance.radioPreview())
       await page.getByRole('button', { name: label, exact: true }).click()
       const popup = page.getByRole('dialog', { name: label, exact: true })
@@ -314,7 +317,13 @@ async function checkBackgroundSeparation(page: Page, name: string) {
     await page.evaluate(value => (window as any).fixtureAppearance.route(value), path)
     await page.locator('.app-artwork-shell[data-artwork-mode="global"]').waitFor()
     assert.equal(await page.locator('.app-artwork-sharp').count(), 0, `${name}/${path}: a general page has a sharp hero`)
-    assert.match(await page.locator('.app-artwork-pixels').first().evaluate(element => getComputedStyle(element).filter), /blur\(28px\)/)
+    // Crossfades can retire a pixel node between Playwright resolving it and
+    // reading its styles. Query from the persistent shell in the same JS turn.
+    const blur = await page.locator('.app-artwork-shell').evaluate(shell => {
+      const pixels = shell.querySelector('.app-artwork-pixels')
+      return pixels ? getComputedStyle(pixels).filter : null
+    })
+    assert.match(blur ?? "", /blur\(28px\)/, `${name}/${path}: global artwork must stay blurred`)
   }
   await page.evaluate(() => (window as any).fixtureArtwork.detailBackground("cover.svg"))
   for (const path of ["/album/fixture-album", "/playlist/fixture-playlist-0"]) {
@@ -630,18 +639,7 @@ const fallbackFont = await Bun.file(
 ).bytes()
 let server: ReturnType<typeof Bun.serve> | undefined
 try {
-  await build({
-    root,
-    configFile: resolve(root, "vite.config.ts"),
-    logLevel: "error",
-    build: {
-      outDir: output,
-      emptyOutDir: true,
-      rolldownOptions: {
-        input: resolve(root, "tests/fixtures/libraryLayout/index.html"),
-      },
-    },
-  })
+
   server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -658,13 +656,7 @@ try {
           `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="480"><rect width="480" height="480" fill="${path.includes("replacement") ? "#0891b2" : path.includes("next") ? "#f97316" : "#7c3aed"}"/></svg>`,
           { headers: { "Content-Type": "image/svg+xml" } }
         )
-      const filePath = resolve(output, `.${path}`)
-      if (!filePath.startsWith(`${output}/`))
-        return new Response(null, { status: 404 })
-      const file = Bun.file(filePath)
-      return (await file.exists())
-        ? new Response(file)
-        : new Response(null, { status: 404 })
+      return fixtureFile(output,path)
     },
   })
   const origin = `http://127.0.0.1:${server.port}`
@@ -673,7 +665,7 @@ try {
     ["webkit", webkit],
   ] as const) {
     if (process.argv.includes("--webkit-only") && name !== "webkit") continue
-    const browser = await type.launch({ headless: true })
+    const browser = await launchFixtureBrowser(type)
     try {
       const context = await browser.newContext()
       await context.route("**/*", async (route) => {
@@ -1186,7 +1178,7 @@ try {
         ]) {
           await page.evaluate(() => (window as any).fixtureAppearance.route("/search"))
           await page.locator("main h1").waitFor()
-          await page.evaluate(() => (window as any).fixtureLoading.hold())
+          await page.evaluate(() => (window as any).fixtureLoading.hold(true))
           await page.evaluate(value => (window as any).fixtureAppearance.route(value), path)
           const placeholder = page.locator("main .skeleton-shimmer").first()
           await placeholder.waitFor()
@@ -1537,5 +1529,5 @@ try {
   if (previousPlatform === undefined) delete process.env.TAURI_ENV_PLATFORM
   else process.env.TAURI_ENV_PLATFORM = previousPlatform
   server?.stop(true)
-  await rm(output, { recursive: true, force: true })
+  await disposeFixture(output)
 }

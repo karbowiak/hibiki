@@ -1,3 +1,4 @@
+import { verifiedRecordingLookup } from "./verifiedMappings"
 import { useLinkedPlaylistStore } from "../stores/linkedPlaylistStore"
 import type { MusicProvider } from "../providers/types"
 import { useProviderStore } from "../stores/providerStore"
@@ -45,14 +46,7 @@ export async function linkedSyncServices(
     !provider.isOffline
   const lease = await nativeListenBrainzPlaylists.account()
   if (!owns()) throw Error("Playlist sync session changed")
-  const mbidFor = (id: string) => {
-    const values = new Set(
-      link.mappings
-        .filter((mapping) => mapping.libraryTrack.id === id)
-        .map((mapping) => mapping.recordingMbid)
-    )
-    return values.size === 1 ? [...values][0] : null
-  }
+  const mbidFor = verifiedRecordingLookup(link.mappings)
   const libraryReader = providerPlaylistAdapter(provider, {
     verifiedMbid: (track) => mbidFor(track.id),
   })

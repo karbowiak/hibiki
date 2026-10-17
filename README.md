@@ -80,6 +80,7 @@ Use `bun run tauri build` for a production bundle. Podcast Index categories and 
 bun run build          # TypeScript checks and frontend build
 bun run test:frontend  # Frontend regression tests
 bun run test:unit      # Rust tests without a Plex server
+bun run test:browsers  # Isolated Chromium/WebKit checks with shared fixture builds
 ```
 
 `bun run test` includes live Plex integration tests that can modify server playlists and playback history; it requires a dedicated test server.

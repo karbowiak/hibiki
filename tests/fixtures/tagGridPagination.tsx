@@ -22,7 +22,7 @@ mock.module("../../src/stores", () => ({
 mock.module("../../src/stores/playerStore", () => ({
   usePlayerStore: create(() => ({})),
 }))
-mock.module("../../src/components/Pages/Mix", () => ({
+mock.module("../../src/lib/mixSelection", () => ({
   selectMix() {},
   shuffleTracks() {},
 }))

@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import { lazy, Suspense, useEffect } from "react"
 import { isTauri } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
 import { useLocation } from "wouter"
@@ -8,14 +8,11 @@ import { ArtworkShell } from "./components/ArtworkShell"
 import "./App.css"
 import { TailwindIndicator } from "./components/tailwind-indicator"
 import { Player } from "./components/Player"
-import { CreatePlaylist } from "./components/Pages/CreatePlaylist"
 import { QueuePanel } from "./components/QueuePanel"
 import LyricsPanel from "./components/LyricsPanel"
 import { UpdateDialog } from "./components/UpdateDialog"
 import { ContextMenu } from "./components/ContextMenu"
-import { DebugPanel } from "./components/DebugPanel"
 import { DragOverlay } from "./components/DragOverlay"
-import { HotkeyHelpModal } from "./components/HotkeyHelpModal"
 import { useDebugPanelStore } from "./stores/debugPanelStore"
 import { useVisualizerStore } from "./stores/visualizerStore"
 import { createAppMenu } from "./lib/appMenu"
@@ -48,6 +45,16 @@ import { PlaylistSyncStatus } from "./components/PlaylistSync/PlaylistSyncStatus
 import { NotificationToasts } from "./components/NotificationCenter"
 import LiveAnnouncer from "./components/LiveAnnouncer"
 import "./i18n" // Initialize i18n on app load
+
+const CreatePlaylist = lazy(() =>
+  import("./components/Pages/CreatePlaylist").then(module => ({ default: module.CreatePlaylist }))
+)
+const DebugPanel = lazy(() =>
+  import("./components/DebugPanel").then(module => ({ default: module.DebugPanel }))
+)
+const HotkeyHelpModal = lazy(() =>
+  import("./components/HotkeyHelpModal").then(module => ({ default: module.HotkeyHelpModal }))
+)
 
 function DesktopApp() {
   useEffect(initializeQueuePersistence, [])
@@ -130,9 +137,12 @@ function DesktopApp() {
     }
   }, [isLoading, isConnected, isOffline])
 
-  if (import.meta.env.PROD) {
-    document.addEventListener("contextmenu", (event) => event.preventDefault())
-  }
+  useEffect(() => {
+    if (!import.meta.env.PROD) return
+    const preventContextMenu = (event: MouseEvent) => event.preventDefault()
+    document.addEventListener("contextmenu", preventContextMenu)
+    return () => document.removeEventListener("contextmenu", preventContextMenu)
+  }, [])
 
   return (
     <div className="select-none">
@@ -168,28 +178,29 @@ function DesktopApp() {
       <TailwindIndicator />
       <NotificationToasts />
 
-      {showCreatePlaylist && (
-        <CreatePlaylist
-          onClose={() => { setShowCreatePlaylist(false); setPendingPlaylistItemIds(null) }}
-          onCreated={pendingPlaylistItemIds ? (playlist) => {
-            const provider = useProviderStore.getState().provider
-            if (provider) {
-              void provider.addToPlaylist(playlist.id, pendingPlaylistItemIds.map(String))
-                .then(() => { if (useProviderStore.getState().provider === provider) useLibraryStore.getState().invalidatePlaylistItems(playlist.id) })
-                .catch(() => {})
-            }
-            recordRecentPlaylist(playlist.id)
-            setPendingPlaylistItemIds(null)
-          } : undefined}
-        />
-      )}
+      <Suspense fallback={null}>
+        {showCreatePlaylist && (
+          <CreatePlaylist
+            onClose={() => { setShowCreatePlaylist(false); setPendingPlaylistItemIds(null) }}
+            itemIds={pendingPlaylistItemIds ?? undefined}
+            onCreated={(playlist) => {
+              recordRecentPlaylist(playlist.id)
+              setPendingPlaylistItemIds(null)
+            }}
+          />
+        )}
+      </Suspense>
 
       <ShutdownNotice />
       <UpdateDialog />
       <ContextMenu />
       <HoverInformation />
-      {hotkeyHelpOpen && <HotkeyHelpModal context={fullscreenOpen ? "visualizer" : "player"} onClose={() => setHotkeyHelpOpen(false)} />}
-      {debugPanelOpen && <DebugPanel />}
+      {hotkeyHelpOpen && (
+        <Suspense fallback={null}>
+          <HotkeyHelpModal context={fullscreenOpen ? "visualizer" : "player"} onClose={() => setHotkeyHelpOpen(false)} />
+        </Suspense>
+      )}
+      {debugPanelOpen && <Suspense fallback={null}><DebugPanel /></Suspense>}
       <LiveAnnouncer />
       <DragOverlay />
     </div>

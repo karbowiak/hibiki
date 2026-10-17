@@ -1,6 +1,16 @@
 import { expect, test } from "bun:test"
 import { buildExternalImageUrl, buildImageUrl } from "../src/lib/imageUrl"
 import { buildPlexImageUrl } from "../src/backends/plex/imageUrl"
+import { youtubeMusicTrack } from "../src/backends/ytmusic/tracks"
+
+test("YouTube covers use the persistent native image cache, including missing legacy artwork", () => {
+  const song = { videoId: "abcdefghijk", title: "Song", artist: "Artist", album: null, duration: null, thumbnail: "https://lh3.googleusercontent.com/cover=w600-h600" }
+  const track = youtubeMusicTrack(song)
+  expect(track.thumbUrl).toBe(buildExternalImageUrl(song.thumbnail))
+  expect(track.albumThumbUrl).toBe(track.thumbUrl)
+  expect(new URL(youtubeMusicTrack({ ...song, thumbnail: null }).thumbUrl!).searchParams.get("src"))
+    .toBe("https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg")
+})
 
 test("cards and detail pages share the same explicit artwork URL", () => {
   const source = "https://images.example.test/art.jpg?signature=a%2Bb&size=1000"

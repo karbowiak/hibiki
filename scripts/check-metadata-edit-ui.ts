@@ -1,8 +1,7 @@
 import assert from "node:assert/strict"
-import { mkdir, mkdtemp, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { mkdir } from "node:fs/promises"
 import { join, resolve } from "node:path"
-import { build } from "vite"
+import { fixtureBuild, disposeFixture, fixtureFile, launchFixtureBrowser } from "./lib/browserFixtures"
 import { chromium, webkit } from "playwright"
 function contrast(foreground: string, background: string) {
   const luminance = (color: string) => {
@@ -25,25 +24,14 @@ function contrast(foreground: string, background: string) {
   return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05)
 }
 const root = resolve(import.meta.dir, "..")
-const output = await mkdtemp(join(tmpdir(), "hibiki-metadata-edit-"))
+const output = await fixtureBuild(["tests/fixtures/metadataEditUI/index.html"], "windows")
 const artifacts = resolve(root, ".tmp/metadata-edit-checks")
 await mkdir(artifacts, { recursive: true })
 let server: ReturnType<typeof Bun.serve> | undefined
 const previousPlatform = process.env.TAURI_ENV_PLATFORM
 process.env.TAURI_ENV_PLATFORM = "windows"
 try {
-  await build({
-    root,
-    configFile: resolve(root, "vite.config.ts"),
-    logLevel: "error",
-    build: {
-      outDir: output,
-      emptyOutDir: true,
-      rolldownOptions: {
-        input: resolve(root, "tests/fixtures/metadataEditUI/index.html"),
-      },
-    },
-  })
+
   server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -58,13 +46,7 @@ try {
           '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="320"><rect width="640" height="320" fill="#234454"/><circle cx="440" cy="150" r="190" fill="#7b5037"/><path d="M0 240L640 150V320H0" fill="#102430"/></svg>',
           { headers: { "Content-Type": "image/svg+xml" } }
         )
-      const filename = resolve(output, "." + new URL(request.url).pathname)
-      if (!filename.startsWith(output + "/"))
-        return new Response("Not found", { status: 404 })
-      const file = Bun.file(filename)
-      return (await file.exists())
-        ? new Response(file)
-        : new Response("Not found", { status: 404 })
+      return fixtureFile(output,new URL(request.url).pathname)
     },
   })
   const origin = `http://127.0.0.1:${server.port}`
@@ -73,12 +55,7 @@ try {
     ["chrome", chromium],
     ["webkit", webkit],
   ] as const) {
-    const browser = await type.launch({
-      headless: true,
-      ...(name === "chrome" && process.env.HIBIKI_CHROME_CHANNEL
-        ? { channel: process.env.HIBIKI_CHROME_CHANNEL }
-        : {}),
-    })
+    const browser = await launchFixtureBrowser(type)
     try {
       const context = await browser.newContext()
       await context.route("**/*", (route) =>
@@ -342,5 +319,5 @@ try {
   server?.stop(true)
   if (previousPlatform === undefined) delete process.env.TAURI_ENV_PLATFORM
   else process.env.TAURI_ENV_PLATFORM = previousPlatform
-  await rm(output, { recursive: true, force: true })
+  await disposeFixture(output)
 }

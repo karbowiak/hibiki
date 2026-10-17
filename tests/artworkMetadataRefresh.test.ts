@@ -62,3 +62,25 @@ test("failed lookup stops its loading status and remains retryable without a fal
   await store.getState().getArtist("Artist")
   expect(attempts).toBe(2)
 })
+
+test("metadata caches stay bounded during use and retain the newest positive or negative result", async () => {
+  const store = createMetadataStore({
+    storeName: "synthetic-bounded-artwork",
+    maxArtists: 2,
+    maxAlbums: 2,
+    evictionTtl: 1000,
+    fetchArtist: async (artist) => artist === "missing" ? null : artist,
+    fetchAlbum: async (_, album) => album,
+  })
+  store.setState({ artists: { stale: { data: "expired", cachedAt: Date.now() - 2000 } } })
+  for (const name of ["first", "second", "third", "missing"]) {
+    await store.getState().getArtist(name)
+    await store.getState().getAlbum("artist", name)
+    expect(store.getState().stats().artistCount).toBeLessThanOrEqual(2)
+    expect(store.getState().stats().albumCount).toBeLessThanOrEqual(2)
+    expect(store.getState().artists[name]).toBeDefined()
+    expect(store.getState().albums[`artist::${name}`]?.data).toBe(name)
+  }
+  expect(store.getState().artists.stale).toBeUndefined()
+  expect(store.getState().artists.missing.data).toBeNull()
+})

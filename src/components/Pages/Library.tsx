@@ -11,21 +11,31 @@ import { useProviderStore } from "../../stores/providerStore"
 import { useEffect, useMemo } from "react"
 import { useLibraryStore } from "../../stores"
 import { useUIStore } from "../../stores/uiStore"
-import { MediaCard } from "../MediaCard"
-import type { MusicTrack } from "../../types/music"
+import { DiscoveryCard } from "../shared/DiscoveryCard"
+import { LibraryPlaylistCard } from "../shared/LibraryPlaylistCard"
+import { useLibraryPlaylists } from "../../hooks/useLibraryPlaylists"
+import { useYoutubeMusicLibrary } from "../../backends/ytmusic/library"
+import { mergeDiscoveryItems, youtubeDiscoveryItems, type DiscoveryItem } from "../../lib/discovery"
 import { ScrollRow } from "../ScrollRow"
 
 export function Library() {
-  const playlists = useLibraryStore((s) => s.playlists)
+  const { playlists } = useLibraryPlaylists()
+  const youtubeSongs = useYoutubeMusicLibrary("songs")
+  const youtubeAlbums = useYoutubeMusicLibrary("albums")
+  const youtubeArtists = useYoutubeMusicLibrary("artists")
   const likedTracks = useLibraryStore((s) => s.likedTracks)
   const rawLikedAlbums = useLibraryStore((s) => s.likedAlbums)
-  const likedArtists = useLibraryStore((s) => s.likedArtists)
+  const rawLikedArtists = useLibraryStore((s) => s.likedArtists)
   const fetchLikedTracks = useLibraryStore((s) => s.fetchLikedTracks)
   const fetchLikedAlbums = useLibraryStore((s) => s.fetchLikedAlbums)
   const fetchLikedArtists = useLibraryStore((s) => s.fetchLikedArtists)
   const provider = useProviderStore((s) => s.provider)
   const shouldDeduplicate=useUIStore(s=>s.deduplicateAlbums)
-  const likedAlbums=useMemo(()=>shouldDeduplicate ? deduplicateAlbums(rawLikedAlbums) : rawLikedAlbums,[rawLikedAlbums,shouldDeduplicate])
+  const plexAlbums=useMemo(()=>shouldDeduplicate ? deduplicateAlbums(rawLikedAlbums) : rawLikedAlbums,[rawLikedAlbums,shouldDeduplicate])
+  const likedAlbums = useMemo(() => mergeDiscoveryItems(plexAlbums.map(item => ({ source: "plex", item: { ...item, type: "album" } } as DiscoveryItem)),
+    youtubeAlbums.connected ? youtubeDiscoveryItems(youtubeAlbums.items) : []), [plexAlbums, youtubeAlbums.connected, youtubeAlbums.items])
+  const likedArtists = useMemo(() => mergeDiscoveryItems(rawLikedArtists.map(item => ({ source: "plex", item: { ...item, type: "artist" } } as DiscoveryItem)),
+    youtubeArtists.connected ? youtubeDiscoveryItems(youtubeArtists.items) : []), [rawLikedArtists, youtubeArtists.connected, youtubeArtists.items])
   const pageRefreshKey = useUIStore((s) => s.pageRefreshKey)
 
   useEffect(() => {
@@ -43,10 +53,11 @@ export function Library() {
 
   const topTracks = useMemo(
     () =>
-      [...likedTracks]
+      mergeDiscoveryItems([...likedTracks]
         .sort((a, b) => (b.userRating ?? 0) - (a.userRating ?? 0))
-        .slice(0, 25),
-    [likedTracks]
+        .map(item => ({ source: "plex", item: { ...item, type: "track" } } as DiscoveryItem)),
+      youtubeSongs.connected ? youtubeDiscoveryItems(youtubeSongs.items) : []).slice(0, 25),
+    [likedTracks, youtubeSongs.connected, youtubeSongs.items]
   )
 
   return (
@@ -105,13 +116,13 @@ export function Library() {
         ))}
       </nav>
       {(playlists.length > 0 ||
-        likedTracks.length > 0 ||
+        topTracks.length > 0 ||
         likedAlbums.length > 0 ||
         likedArtists.length > 0) && (
         <dl className="discovery-ledger" aria-label="Your library at a glance">
           {[
             ["Playlists", playlists.length],
-            ["Liked songs", likedTracks.length],
+            ["Liked songs", likedTracks.length + (youtubeSongs.connected ? youtubeSongs.items.length : 0)],
             ["Liked albums", likedAlbums.length],
             ["Liked artists", likedArtists.length],
           ]
@@ -136,17 +147,7 @@ export function Library() {
           titleHref="/collection/playlists"
           restoreKey="library-playlists"
         >
-          {playlists.map((pl) => (
-            <MediaCard
-              key={pl.id}
-              contextItem={{ ...pl, type: "playlist" }}
-              title={pl.title}
-              desc={`${pl.trackCount} songs`}
-              thumb={pl.thumbUrl}
-              href={`/playlist/${pl.id}`}
-              scrollItem
-            />
-          ))}
+          {playlists.map(playlist => <LibraryPlaylistCard key={playlist.id} playlist={playlist} scrollItem />)}
         </ScrollRow>
       )}
 
@@ -156,25 +157,7 @@ export function Library() {
           titleHref="/collection/tracks"
           restoreKey="library-liked-songs"
         >
-          {topTracks.map((track) => (
-            <MediaCard
-              key={track.id}
-              contextItem={{ ...track, type: "track" }}
-              title={track.title}
-              desc={track.artistName}
-              thumb={track.thumbUrl}
-              artistName={track.artistName}
-              albumName={track.albumName}
-              href={track.albumId ? `/album/${track.albumId}` : undefined}
-              dragPayload={{
-                type: "track",
-                ids: [track.id],
-                label: track.title,
-                tracks: [track as MusicTrack],
-              }}
-              scrollItem
-            />
-          ))}
+          {topTracks.map(entry => <DiscoveryCard key={`${entry.source}:${entry.item.id}`} entry={entry} scrollItem />)}
         </ScrollRow>
       )}
 
@@ -184,24 +167,7 @@ export function Library() {
           titleHref="/collection/albums"
           restoreKey="library-liked-albums"
         >
-          {likedAlbums.map((album) => (
-            <MediaCard
-              key={album.id}
-              contextItem={{ ...album, type: "album" }}
-              title={album.title}
-              desc={album.artistName ?? ""}
-              thumb={album.thumbUrl}
-              artistName={album.artistName}
-              albumName={album.title}
-              href={`/album/${album.id}`}
-              dragPayload={{
-                type: "album",
-                ids: [album.id],
-                label: album.title,
-              }}
-              scrollItem
-            />
-          ))}
+          {likedAlbums.map(entry => <DiscoveryCard key={`${entry.source}:${entry.item.id}`} entry={entry} scrollItem />)}
         </ScrollRow>
       )}
 
@@ -211,24 +177,7 @@ export function Library() {
           titleHref="/collection/artists"
           restoreKey="library-liked-artists"
         >
-          {likedArtists.map((artist) => (
-            <MediaCard
-              key={artist.id}
-              contextItem={{ ...artist, type: "artist" }}
-              title={artist.title}
-              desc=""
-              thumb={artist.thumbUrl}
-              artistName={artist.title}
-              isArtist
-              href={`/artist/${artist.id}`}
-              dragPayload={{
-                type: "artist",
-                ids: [artist.id],
-                label: artist.title,
-              }}
-              scrollItem
-            />
-          ))}
+          {likedArtists.map(entry => <DiscoveryCard key={`${entry.source}:${entry.item.id}`} entry={entry} scrollItem />)}
         </ScrollRow>
       )}
     </div>

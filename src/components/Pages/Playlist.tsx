@@ -1,3 +1,5 @@
+import { collectionPlaybackSource, selectCollectionTrack } from "../../lib/collectionPlayback"
+import { filterTracks, sortTracks, type TrackSortColumn } from "../../lib/trackOrder"
 import { useEntityDownloadStatus } from "../shared/DownloadBadge"
 import { PlaylistInformationDialog } from "../PlaylistInformationDialog"
 import { IconInfoCircle } from "@tabler/icons-react"
@@ -8,7 +10,6 @@ import {
   linksForPlaylist,
 } from "../../stores/linkedPlaylistStore"
 import { useListenBrainzStore } from "../../metadata/listenbrainz/authStore"
-import type { MusicTrack } from "../../types/music"
 import { ArtworkImage } from "../shared/ArtworkImage"
 import { AmbientHeroBackdrop } from "../shared/MediaBackdrop"
 import {
@@ -30,7 +31,6 @@ import {
 import { useTableSort } from "../../hooks/useTableSort"
 import { RichText } from "../RichText"
 import "../../styles/media-detail-controls.css"
-import { useScrollContainer } from "../Page"
 import { ALL_COLUMNS, usePlaylistColumns } from "../../hooks/useColumnPicker"
 import { TrackTable } from "../shared/TrackTable"
 import { PageLoading } from "../shared/PageLoading"
@@ -39,8 +39,6 @@ import { playlistNeedsReview } from "../../lib/syncAttention"
 import { SyncReviewIndicator } from "../shared/SyncReviewIndicator"
 
 const PLAYLIST_COLUMNS = ALL_COLUMNS
-
-const EMPTY_ITEMS: MusicTrack[] = []
 
 export function Playlist({ playlistId }: { playlistId: string }) {
   const [showLinked, setShowLinked] = useState(false)
@@ -52,43 +50,14 @@ export function Playlist({ playlistId }: { playlistId: string }) {
   const syncAuthenticated = useListenBrainzStore((s) => s.isAuthenticated)
   const [showEdit, setShowEdit] = useState(false)
   const ownedMenuActions = useRef<ContextAction[]>([])
-  // Granular selectors: changes to playlistItemsCache (background prefetch)
-  // do NOT trigger re-renders of this component.
-  const {
-    fetchPlaylistItems,
-    fetchMorePlaylistItems,
-    reorderPlaylistItems,
-    invalidatePlaylistItems,
-  } = useLibraryStore(
-    useShallow((s) => ({
-      fetchPlaylistItems: s.fetchPlaylistItems,
-      fetchMorePlaylistItems: s.fetchMorePlaylistItems,
-      reorderPlaylistItems: s.reorderPlaylistItems,
-      invalidatePlaylistItems: s.invalidatePlaylistItems,
-    }))
-  )
-  const currentPlaylist = useLibraryStore((s) =>
-    s.currentPlaylist?.id === playlistId ? s.currentPlaylist : null
-  )
-  const currentPlaylistItems = useLibraryStore((s) =>
-    s.currentPlaylistId === playlistId ? s.currentPlaylistItems : EMPTY_ITEMS
-  )
-  const loadError = useLibraryStore((s) =>
-    s.currentPlaylistId === playlistId &&
-    !s.isLoading &&
-    !Object.hasOwn(s.playlistItemsCache, playlistId)
-      ? s.error
-      : null
+  const invalidatePlaylistItems = useLibraryStore(s => s.invalidatePlaylistItems)
+  const currentPlaylist = useLibraryStore(s =>
+    s.playlists.find(playlist => playlist.id === playlistId) ??
+    (s.currentPlaylist?.id === playlistId ? s.currentPlaylist : null)
   )
   const [reorderError, setReorderError] = useState<string | null>(null)
   const [isReordering, setIsReordering] = useState(false)
   const viewRef = useRef<{ active: boolean; pending: boolean } | null>(null)
-  const isLoading = useLibraryStore((s) => s.isLoading)
-  const isFetchingMore = useLibraryStore((s) => s.isFetchingMore)
-  // Subscribe only to this specific playlist's fullness, not the whole record.
-  const isFullyLoaded = useLibraryStore(
-    (s) => s.playlistIsFullyLoaded[playlistId] ?? false
-  )
 
   const {
     playTrack,
@@ -118,8 +87,13 @@ export function Playlist({ playlistId }: { playlistId: string }) {
         : { items: [], total: 0 },
     currentPlaylist?.trackCount ?? 0
   )
+  const currentPlaylistItems = windowed.loadedItems
+  const isLoading = windowed.loading && !windowed.initialized
+  const isFetchingMore = windowed.loading && windowed.initialized
+  const isFullyLoaded = windowed.initialized && windowed.residentCount >= windowed.total
+  const loadError = windowed.error
+  const [fallbackEnd, setFallbackEnd] = useState(200)
   const pageRefreshKey = useUIStore((s) => s.pageRefreshKey)
-  const scrollContainerRef = useScrollContainer()
   const heroRef = useRef<HTMLDivElement>(null)
 
   const { visible: visibleCols, toggle: toggleCol } = usePlaylistColumns(
@@ -135,90 +109,19 @@ export function Playlist({ playlistId }: { playlistId: string }) {
     return () => clearTimeout(t)
   }, [filterQuery])
 
-  const filteredItems = useMemo(() => {
-    if (!debouncedQuery) return currentPlaylistItems
-    const q = debouncedQuery.toLowerCase()
-    return currentPlaylistItems.filter(
-      (t) =>
-        t.title.toLowerCase().includes(q) ||
-        t.artistName.toLowerCase().includes(q) ||
-        t.albumName.toLowerCase().includes(q)
-    )
-  }, [currentPlaylistItems, debouncedQuery])
+  const filteredItems = useMemo(
+    () => filterTracks(currentPlaylistItems, debouncedQuery),
+    [windowed, windowed.snapshot(), debouncedQuery]
+  )
 
-  type SortCol =
-    | "default"
-    | "title"
-    | "artist"
-    | "album"
-    | "year"
-    | "plays"
-    | "popularity"
-    | "label"
-    | "bitrate"
-    | "format"
-    | "added_at"
-    | "rating"
-    | "rated_at"
-    | "duration"
-  const { sortCol, sortDir, handleSort } = useTableSort<SortCol>({
+  const { sortCol, sortDir, handleSort } = useTableSort<TrackSortColumn>({
     resetKey: playlistId,
   })
 
-  const sortedItems = useMemo(() => {
-    if (sortCol === "default") return filteredItems
-    const items = [...filteredItems]
-    items.sort((a, b) => {
-      let cmp = 0
-      switch (sortCol) {
-        case "title":
-          cmp = a.title.localeCompare(b.title)
-          break
-        case "artist":
-          cmp = a.artistName.localeCompare(b.artistName)
-          break
-        case "album":
-          cmp = a.albumName.localeCompare(b.albumName)
-          break
-        case "year":
-          cmp = (a.albumYear ?? a.year) - (b.albumYear ?? b.year)
-          break
-        case "plays":
-          cmp = a.playCount - b.playCount
-          break
-        case "popularity":
-          cmp = (a.ratingCount ?? 0) - (b.ratingCount ?? 0)
-          break
-        case "label":
-          cmp = (a.parentStudio ?? "").localeCompare(b.parentStudio ?? "")
-          break
-        case "bitrate":
-          cmp = (a.bitrate ?? 0) - (b.bitrate ?? 0)
-          break
-        case "format":
-          cmp = (a.codec ?? "").localeCompare(b.codec ?? "")
-          break
-        case "added_at":
-          cmp =
-            (a.addedAt ? +new Date(a.addedAt) : 0) -
-            (b.addedAt ? +new Date(b.addedAt) : 0)
-          break
-        case "rating":
-          cmp = (a.userRating ?? 0) - (b.userRating ?? 0)
-          break
-        case "rated_at":
-          cmp =
-            (a.lastRatedAt ? +new Date(a.lastRatedAt) : 0) -
-            (b.lastRatedAt ? +new Date(b.lastRatedAt) : 0)
-          break
-        case "duration":
-          cmp = a.duration - b.duration
-          break
-      }
-      return sortDir === "asc" ? cmp : -cmp
-    })
-    return items
-  }, [filteredItems, sortCol, sortDir])
+  const sortedItems = useMemo(
+    () => sortTracks(filteredItems, sortCol, sortDir),
+    [filteredItems, sortCol, sortDir]
+  )
 
   const useQuery = !!debouncedQuery || sortCol !== "default"
   const queried = useWindowedPages(
@@ -261,7 +164,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
     viewRef.current = view
     setReorderError(null)
     setIsReordering(false)
-    if (playlistId) void fetchPlaylistItems(playlistId)
+    setFallbackEnd(200)
     return () => {
       view.active = false
       const menu = useContextMenuStore.getState()
@@ -275,9 +178,6 @@ export function Playlist({ playlistId }: { playlistId: string }) {
     }
   }, [playlistId, pageRefreshKey, provider])
 
-  const pageError = useLibraryStore(
-    (s) => s.playlistPageErrors?.[playlistId] ?? null
-  )
   // Reorder is only available for non-smart playlists in default sort order with no filter
   const canReorder =
     !isReordering &&
@@ -291,28 +191,23 @@ export function Playlist({ playlistId }: { playlistId: string }) {
       const view = viewRef.current
       if (!provider || !canReorder || !view?.active || view.pending) return
       const movedTrack =
-        windowed.getItem(fromIndex) ?? currentPlaylistItems[fromIndex]
+        windowed.getItem(fromIndex)
       if (!movedTrack?.playlistItemId) return
 
       const afterIndex = toIndex > fromIndex ? toIndex : toIndex - 1
       const afterTrack =
         afterIndex >= 0
-          ? (windowed.getItem(afterIndex) ?? currentPlaylistItems[afterIndex])
+          ? windowed.getItem(afterIndex)
           : null
       const afterItemId = afterTrack?.playlistItemId ?? "0"
 
       const current = () =>
         view.active &&
         useProviderStore.getState().provider === provider &&
-        useLibraryStore.getState().currentPlaylistId === playlistId
+        viewRef.current === view
       view.pending = true
       setIsReordering(true)
       setReorderError(null)
-      if (
-        fromIndex < currentPlaylistItems.length &&
-        toIndex < currentPlaylistItems.length
-      )
-        reorderPlaylistItems(playlistId, fromIndex, toIndex)
 
       void (async () => {
         let after = afterItemId
@@ -335,15 +230,14 @@ export function Playlist({ playlistId }: { playlistId: string }) {
           )
       })()
         .then(() => {
-          if (current()) windowed.invalidate()
+          if (current()) { invalidatePlaylistItems(playlistId); windowed.invalidate() }
         })
         .catch(() => {
           if (!current()) return
           setReorderError(
             "The playlist order could not be saved. Please try again."
           )
-          // Drop the optimistic cache so recovery reads the saved server order.
-          invalidatePlaylistItems(playlistId)
+          windowed.invalidate()
         })
         .finally(() => {
           if (!current()) return
@@ -354,10 +248,8 @@ export function Playlist({ playlistId }: { playlistId: string }) {
     [
       provider,
       canReorder,
-      currentPlaylistItems,
       windowed,
       playlistId,
-      reorderPlaylistItems,
       invalidatePlaylistItems,
     ]
   )
@@ -374,7 +266,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
         disabled={isLoading}
         onClick={() => {
           setReorderError(null)
-          invalidatePlaylistItems(playlistId)
+          windowed.invalidate()
         }}
         className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white disabled:opacity-50"
       >
@@ -415,25 +307,9 @@ export function Playlist({ playlistId }: { playlistId: string }) {
       }
     : null
 
-  const querySource = {
-    key: `playlist-query:${playlistId}`,
-    restoreQuery: { key: `playlist:${playlistId}`, filter: debouncedQuery, sort: sortCol, dir: sortDir },
-    total: queried.total,
-    loadPage: async (offset: number, limit: number) => {
-      const page = await provider!.getCollectionPage!(
-        `playlist:${playlistId}`,
-        offset,
-        limit,
-        debouncedQuery,
-        sortCol,
-        sortDir
-      )
-      return {
-        ...page,
-        items: page.items.filter((item) => item.type === "track"),
-      }
-    },
-  }
+  const querySource = provider ? collectionPlaybackSource(provider, {
+    key: `playlist:${playlistId}`, filter: debouncedQuery, sort: sortCol, dir: sortDir,
+  }, queried.total) : null
 
   return (
     <div className="media-detail-page playlist-detail-page pb-12">
@@ -617,6 +493,8 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                       () => {
                         if (current()) {
                           invalidatePlaylistItems(playlistId)
+                          windowed.invalidate()
+                          queried.invalidate()
                           void useLibraryStore
                             .getState()
                             .fetchPlaylists({ force: true })
@@ -741,7 +619,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
           onClose={() => setShowEdit(false)}
           onSaved={() => {
             invalidatePlaylistItems(playlistId)
-            void fetchPlaylistItems(playlistId)
+            windowed.invalidate()
           }}
         />
       )}
@@ -802,7 +680,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
         onPlay={(track, all, index) => {
           if (playbackSource && (!useQuery || provider?.getCollectionPage))
             void playPagedTracks(
-              useQuery ? querySource : playbackSource,
+              useQuery ? selectCollectionTrack(querySource, track, index ?? all.indexOf(track)) : playbackSource,
               currentPlaylist.title,
               `/playlist/${playlistId}`,
               false,
@@ -842,29 +720,30 @@ export function Playlist({ playlistId }: { playlistId: string }) {
         !isFullyLoaded &&
         loadedCount > 0 && (
           <div className="mx-8 mt-4 flex flex-wrap items-center gap-3">
-            {pageError && (
+            {loadError && (
               <p role="alert" className="w-full text-sm text-red-400">
-                {pageError}
+                {loadError}
               </p>
             )}
             <button
               type="button"
               disabled={isFetchingMore || isLoading}
-              onClick={() =>
-                void fetchMorePlaylistItems(playlistId, { force: true })
-              }
+              onClick={() => {
+                if (loadError) windowed.retry()
+                else { windowed.ensureRange(fallbackEnd, fallbackEnd + 200); setFallbackEnd(fallbackEnd + 200) }
+              }}
               className="rounded-full bg-app-surface px-4 py-2 text-sm text-(--text-primary) hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
             >
               {isFetchingMore
                 ? "Loading more…"
-                : pageError
+                : loadError
                   ? "Retry loading more"
                   : "Load more songs"}
             </button>
-            {pageError && (
+            {loadError && (
               <button
                 type="button"
-                onClick={() => invalidatePlaylistItems(playlistId)}
+                onClick={() => windowed.invalidate()}
                 className="rounded-full border border-white/20 px-4 py-2 text-sm text-(--text-primary) focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
               >
                 Reload playlist
@@ -872,7 +751,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
             )}
             {filterQuery && (
               <span className="text-xs text-(--text-secondary)">
-                Filter applies to loaded songs; loading more is optional.
+                Filter applies to loaded songs; up to 1,600 songs are kept in this view.
               </span>
             )}
           </div>

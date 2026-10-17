@@ -13,6 +13,7 @@
     "test": "cd src-tauri && cargo test",
     "test:frontend": "bun test tests",
     "test:unit": "cd src-tauri && cargo test --locked --all-features --bin hibiki -- --skip integration_tests",
+    "test:browsers": "bun scripts/check-browsers.ts",
     "test:renderer": "bun scripts/check-renderer.ts",
     "test:search-discovery": "bun scripts/check-search-discovery.ts",
     "test:appearance": "bun scripts/check-appearance.ts",

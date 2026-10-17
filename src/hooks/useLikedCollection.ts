@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState } from "react"
+import { useLayoutEffect, useRef, useState } from "react"
 import { useLibraryStore, useUIStore } from "../stores"
 import { useProviderStore } from "../stores/providerStore"
 
@@ -14,9 +14,12 @@ const timestamps = {
 export function useLibraryCollection(kind: keyof typeof timestamps) {
   const provider = useProviderStore((s) => s.provider)
   const refresh = useUIStore((s) => s.pageRefreshKey)
+  const previousRefresh = useRef(refresh)
   const [attempt, setAttempt] = useState(0)
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading")
   useLayoutEffect(() => {
+    const force = previousRefresh.current !== refresh || attempt > 0
+    previousRefresh.current = refresh
     let active = true
     setStatus("loading")
     if (!provider)
@@ -29,7 +32,7 @@ export function useLibraryCollection(kind: keyof typeof timestamps) {
     void (async () => {
       try {
         const state = useLibraryStore.getState()
-        const opts = { force: attempt > 0 }
+        const opts = { force }
         if (kind === "hubs") await state.fetchHubs(opts)
         else if (kind === "recent")
           await state.fetchRecentlyAdded(undefined, opts)

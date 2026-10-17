@@ -1,8 +1,9 @@
+import { useArtworkCache } from "./useArtworkCache"
 import type { MetadataIdentity } from "../metadata/core/types"
 import { useReviewedArtwork } from "./useReviewedArtwork"
 import { useProviderStore } from "../stores/providerStore"
-import { useEffect } from "react"
 import { useHeyaArtworkStore } from "../metadata/heya/artworkStore"
+import type { HeyaArtwork } from "../metadata/heya/artworkStore"
 import { useHeyaServiceStore } from "../metadata/services/store"
 import { albumMatches } from "../metadata/albumMatch"
 import {
@@ -42,75 +43,36 @@ export function useHeyaArtwork(
   const offline = useProviderStore((state) => state.provider?.isOffline)
   const status = useHeyaServiceStore((s) => s.status)
   const loadStatus = useHeyaServiceStore((s) => s.load)
-  const key =
-    kind === "artist"
-      ? (artist?.toLowerCase() ?? "")
-      : artist && title
-        ? `${artist.toLowerCase()}::${title.toLowerCase()}`
-        : ""
-  const artistEntry = useHeyaArtworkStore((s) =>
-    kind === "artist" ? s.artists[key] : undefined
-  )
-  const albumEntry = useHeyaArtworkStore((s) =>
-    kind === "album" ? s.albums[key] : undefined
-  )
-  const hydrated = useHeyaArtworkStore((s) => s._hasHydrated)
-  const pending = useHeyaArtworkStore(
-    (s) =>
-      !!(kind === "artist" ? s._loadingArtists[key] : s._loadingAlbums[key])
-  )
-  const getArtist = useHeyaArtworkStore((s) => s.getArtist)
-  const getAlbum = useHeyaArtworkStore((s) => s.getAlbum)
   const enabled = !!status?.enabled && status.configured
-  const data = artistEntry?.data ?? albumEntry?.data
-  const valid =
-    enabled &&
-    !!data?.id &&
-    data.revision === status?.revision &&
-    (kind === "artist"
-      ? typeof artistEntry?.data?.artist === "string" &&
-        artistEntry.data.artist.trim().toLowerCase() ===
-          artist?.trim().toLowerCase()
-      : !!albumEntry?.data &&
-        albumMatches(albumEntry.data, artist ?? "", title ?? ""))
-  useEffect(() => {
-    if ((allowFetch || offline) && !status) void loadStatus()
-    if (
-      !!reviewed.resolution?.choice ||
-      !allowFetch ||
-      offline ||
-      !enabled ||
-      !hydrated ||
-      !artist ||
-      (kind === "album" && !title)
-    )
-      return
-    const entry = kind === "artist" ? artistEntry : albumEntry
-    if (
-      entry &&
-      Date.now() - entry.cachedAt < 30 * 60 * 1000 &&
-      (entry.data === null || valid)
-    )
-      return
-    if (kind === "artist") void getArtist(artist).catch(() => {})
-    else void getAlbum(artist, title!).catch(() => {})
-  }, [
-    allowFetch,
-    reviewed.resolution?.lease,
-    offline,
-    status,
-    enabled,
-    hydrated,
+  const { key, data, valid, pending } = useArtworkCache<
+    HeyaArtwork,
+    HeyaArtwork
+  >(useHeyaArtworkStore, {
+    kind,
     artist,
     title,
-    kind,
-    artistEntry?.data,
-    albumEntry?.data,
-    valid,
-    getArtist,
-    getAlbum,
+    enabled,
+    allowFetch,
+    offline,
+    statusLoaded: !!status,
     loadStatus,
-  ])
+    reviewedChoice: !!reviewed.resolution?.choice,
+    reviewedLease: reviewed.resolution?.lease,
+    maxAge: 30 * 60_000,
+    validate(artistEntry, albumEntry) {
+      const data = artistEntry?.data ?? albumEntry?.data
+      return (
+        !!data?.id &&
+        data.revision === status?.revision &&
+        (kind === "artist"
+          ? typeof artistEntry?.data?.artist === "string" &&
+            artistEntry.data.artist.trim().toLowerCase() ===
+              artist?.trim().toLowerCase()
+          : !!albumEntry?.data &&
+            albumMatches(albumEntry.data, artist ?? "", title ?? ""))
+      )
+    },
+  })
   const offlineSaved =
     offline &&
     enabled &&
@@ -178,9 +140,7 @@ export function useHeyaArtwork(
   }))
   return {
     images,
-    pending: reviewed.resolution?.choice
-      ? reviewed.pending
-      : enabled && (!hydrated || pending),
+    pending: reviewed.resolution?.choice ? reviewed.pending : pending,
     revision: status?.revision,
   }
 }

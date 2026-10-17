@@ -2,6 +2,10 @@ import { mock } from "bun:test"
 import assert from "node:assert/strict"
 import { JSDOM } from "jsdom"
 import { act } from "react"
+import { advancePlaybackSelection } from "../../src/lib/playbackSelection"
+import { deferred } from "../helpers/radioAudioFakes"
+const scenario = process.argv[2]
+const pending = deferred<typeof tracks>()
 const dom = new JSDOM("<div id='root'></div>", { url: "https://hibiki.test/" })
 globalThis.window = dom.window as any
 globalThis.document = dom.window.document
@@ -15,7 +19,7 @@ const imported = { ...latest, id: "imported", title: "Old Import", type: "album"
 const tracks = [{ id: "track", title: "Track" }]
 const played: string[] = [], contexts: string[] = [], prefetched: string[] = [], albumCalls: string[] = []
 let selection: any[] = []
-const provider = { capabilities: {}, cacheScope: "scope-a", async getAlbumTracks(id: string) { albumCalls.push(id); return tracks } }
+const provider = { capabilities: {}, cacheScope: "scope-a", async getAlbumTracks(id: string) { albumCalls.push(id); return scenario === "new-selection" ? pending.promise : tracks } }
 const library = { latestReleases: [latest], recentlyAdded: [imported], hubs: [] }
 mock.module("../../src/stores", () => ({
   useLibraryStore: (selector: any) => selector(library),
@@ -26,11 +30,11 @@ mock.module("../../src/stores/providerStore", () => ({ useProviderStore: Object.
 mock.module("../../src/stores/metadataCache", () => ({ prefetchAlbum: (id: string) => prefetched.push(id), prefetchArtist() {} }))
 mock.module("../../src/hooks/useMixThumbnails", () => ({ mixTitleToArtistName: (name: string) => name, mixThumbnailKey: (item: any) => item.id, useMixThumbnails: () => ({}) }))
 mock.module("../../src/hooks/useContextMenu", () => ({ useContextMenu: () => ({ handler: (type: string, item: any) => () => contexts.push(`${type}:${item.id}`) }) }))
-mock.module("../../src/lib/mediaPlay", () => ({ makeOnPlay: (item: any) => () => played.push(`${item.type}:${item.id}`) }))
-mock.module("../../src/components/Pages/Mix", () => ({ selectMix() {}, shuffleTracks: (items: any[]) => items }))
+mock.module("../../src/lib/mediaPlay", () => ({ makeOnPlay: (item: any) => () => { advancePlaybackSelection(); played.push(`${item.type}:${item.id}`) } }))
+mock.module("../../src/lib/mixSelection", () => ({ selectMix() {}, shuffleTracks: (items: any[]) => items }))
 mock.module("../../src/components/shared/MediaBackdrop", () => ({ AmbientHeroBackdrop: () => null }))
 mock.module("../../src/components/ScrollRow", () => ({ ScrollRow: ({ title, titleHref, onPlayAll, children }: any) => <section data-shelf={title}><h2>{titleHref ? <a href={titleHref}>{title}</a> : title}</h2>{onPlayAll && <button onClick={onPlayAll}>Play all {title}</button>}{children}</section> }))
-mock.module("../../src/components/MediaCard", () => ({ MediaCard: (props: any) => <button data-card={props.title} data-href={props.href} data-thumb={props.thumb} data-drag={JSON.stringify(props.dragPayload)} onClick={props.onPlay} onContextMenu={props.onContextMenu} onMouseOver={props.prefetch}>{props.title}</button> }))
+mock.module("../../src/components/MediaCard", () => ({ MediaCard: (props: any) => <button data-card={props.title} data-href={props.href} data-thumb={props.thumb} data-drag={JSON.stringify(props.dragPayload)} onClick={props.onPlay} onContextMenu={props.contextItem ? () => contexts.push(`${props.contextItem.type}:${props.contextItem.id}`) : props.onContextMenu} onMouseOver={props.prefetch}>{props.title}</button> }))
 mock.module("../../src/hooks/useArtworkTone", () => ({ useArtworkTone: () => undefined }))
 mock.module("../../src/hooks/useMediaImage", () => ({ useAlbumImage: (_artist: any, _title: any, thumb: any) => thumb }))
 const { createRoot } = await import("react-dom/client")
@@ -39,7 +43,7 @@ const root = createRoot(document.getElementById("root")!)
 async function flush() { for (let i = 0; i < 20; i++) await Promise.resolve() }
 await act(async () => { root.render(<Home />); await flush() })
 assert.deepEqual(Array.from(document.querySelectorAll("section")).map(element => element.getAttribute("data-shelf")), ["Latest Releases", "Recently Added"])
-assert.equal(document.querySelector("[data-shelf='Latest Releases'] h2 a"), null)
+assert.equal(document.querySelector("[data-shelf='Latest Releases'] h2 a")?.getAttribute("href"), "/hub/latest-releases")
 const card = document.querySelector("[data-card='New Release']") as HTMLButtonElement
 assert.equal(card.dataset.href, "/album/latest")
 assert.equal(card.dataset.thumb, latest.thumbUrl)
@@ -50,6 +54,9 @@ assert.deepEqual(contexts, ["album:latest"])
 assert.deepEqual(prefetched, ["latest"])
 await act(async () => { (document.querySelector("[data-shelf='Latest Releases'] button") as HTMLButtonElement).click(); await flush() })
 assert.deepEqual(albumCalls, ["latest"])
-assert.deepEqual(selection.slice(0, 3), [tracks[0], tracks, "Latest Releases"])
+if (scenario === "new-selection") {
+  await act(async () => { card.click(); pending.resolve(tracks); await flush() })
+  assert.deepEqual(selection, [], "a delayed shelf cannot replace a newer card selection")
+} else assert.deepEqual(selection.slice(0, 3), [tracks[0], tracks, "Latest Releases"])
 await act(async () => root.unmount())
 dom.window.close()

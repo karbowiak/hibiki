@@ -14,6 +14,7 @@ type Props = {
     | "artist"
     | "album"
     | "playlist"
+    | "tracks"
     | "podcast"
     | "home"
     | "shelves"
@@ -110,6 +111,8 @@ export function PageLoading({ message, variant = "detail" }: Props) {
             {kind === "artist" && <MediaShelfSkeleton />}
           </div>
         </>
+      ) : kind === "tracks" ? (
+        <div aria-hidden="true"><LoadingRows artwork /></div>
       ) : kind === "podcast" ? (
         <div aria-hidden="true">
           <div className="broadcast-detail__hero">

@@ -13,24 +13,17 @@ import { useProviderStore } from "../../stores/providerStore"
 import { useListenBrainzStore } from "../../metadata/listenbrainz/authStore"
 import { useLinkedPlaylistStore } from "../../stores/linkedPlaylistStore"
 import {
-  nativeListenBrainzPlaylists,
-  listenBrainzPlaylistAdapter,
   type ListenBrainzPlaylistSummary,
 } from "../../playlistSync/listenbrainz"
 import {
   providerPlaylistAccount,
-  providerPlaylistAdapter,
 } from "../../playlistSync/provider"
-import { linkedSyncServices } from "../../playlistSync/linkedServices"
-import {
-  linkedPlaylistRepository,
-  type LinkedPlaylistRepository,
-} from "../../playlistSync/linkedJournal"
+import { linkedPlaylistManagerServices, type LinkedPlaylistManagerServices } from "../../playlistSync/managerServices"
+export { linkedPlaylistManagerServices, type LinkedPlaylistManagerServices } from "../../playlistSync/managerServices"
 import {
   checkLinkedPlaylist,
   reconcileLinkedStep,
   archiveReviewedLinkedStep,
-  type LinkedSyncServices,
 } from "../../playlistSync/linkedExecution"
 import {
   linkedSyncDirection,
@@ -53,63 +46,19 @@ import {
   type PlaylistAccount,
   type PlaylistSnapshot,
   type PlaylistPlan,
-  type PlaylistAdapter,
 } from "../../playlistSync/types"
 import {
   validWeeklyEdition,
   type WeeklySourceBinding,
 } from "../../playlistSync/weekly"
-import type { MusicProvider } from "../../providers/types"
 import type { MusicPlaylist } from "../../types/music"
 import {
   createLinkedSync,
   syncCreationJournal,
-  type SyncCreationJournal,
 } from "../../playlistSync/creation"
 const NEW_REMOTE = "__new_listenbrainz_playlist__"
 const button =
   "rounded-lg border border-(--border) bg-app-surface px-3 py-2 text-sm text-(--text-primary) hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
-export interface LinkedPlaylistManagerServices {
-  creationJournal?: SyncCreationJournal
-  account(): Promise<PlaylistAccount>
-  library(provider: MusicProvider, link?: LinkedPlaylist): PlaylistAdapter
-  remote(account: PlaylistAccount): PlaylistAdapter & {
-    list(
-      offset?: number,
-      count?: number
-    ): Promise<{ items: PlaylistSnapshot[]; total: number }>
-    listAll?(): Promise<{
-      items: ListenBrainzPlaylistSummary[]
-      total: number
-      complete: boolean
-      truncated: boolean
-    }>
-  }
-  sync(
-    provider: MusicProvider,
-    link: LinkedPlaylist,
-    current: () => boolean
-  ): Promise<LinkedSyncServices>
-  repository: LinkedPlaylistRepository
-}
-export const linkedPlaylistManagerServices: LinkedPlaylistManagerServices = {
-  account: () => nativeListenBrainzPlaylists.account(),
-  library: (provider, link) =>
-    providerPlaylistAdapter(provider, {
-      verifiedMbid: (track) => {
-        const values = new Set(
-          link?.mappings
-            .filter((mapping) => mapping.libraryTrack.id === track.id)
-            .map((mapping) => mapping.recordingMbid)
-        )
-        return values.size === 1 ? [...values][0] : null
-      },
-    }),
-  remote: (account) => listenBrainzPlaylistAdapter(account),
-  sync: linkedSyncServices,
-  repository: linkedPlaylistRepository,
-  creationJournal: syncCreationJournal,
-}
 interface Preview {
   library: PlaylistSnapshot
   remote: PlaylistSnapshot

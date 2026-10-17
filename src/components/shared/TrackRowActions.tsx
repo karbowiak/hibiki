@@ -1,9 +1,14 @@
 import type { MusicTrack } from "../../types/music"
+import { isYoutubeMusicTrack } from "../../backends/ytmusic/tracks"
+import { YoutubeMusicLikeButton } from "./YoutubeMusicLikeButton"
+import { useYoutubeMusicDiscoveryStore } from "../../backends/ytmusic/discovery"
+import { usePlayerStore } from "../../stores/playerStore"
 
 interface Props {
   track: MusicTrack
   unavailable: boolean
   showRadio: boolean
+  showLike?: boolean
   onAddToQueue: (tracks: MusicTrack[]) => void
   onPlayRadio: (id: string, type: "track") => void
 }
@@ -13,14 +18,18 @@ export function TrackRowActions({
   track,
   unavailable,
   showRadio,
+  showLike = true,
   onAddToQueue,
   onPlayRadio,
 }: Props) {
+  const youtubeConnected = useYoutubeMusicDiscoveryStore(s => s.connected)
+  const youtube = isYoutubeMusicTrack(track)
   return (
     <div
       className="track-row-actions"
       onPointerDown={(event) => event.stopPropagation()}
     >
+      {showLike && <YoutubeMusicLikeButton track={track} size={14} />}
       <button
         type="button"
         disabled={unavailable}
@@ -42,15 +51,16 @@ export function TrackRowActions({
         </svg>
         Queue
       </button>
-      {showRadio && (
+      {(youtube ? youtubeConnected : showRadio) && (
         <button
           type="button"
           disabled={unavailable}
           aria-label={`Start radio for ${track.title}`}
-          title="Track Radio"
+          title={youtube ? "YTM radio" : "Plex radio"}
           onClick={(event) => {
             event.stopPropagation()
-            void onPlayRadio(track.id, "track")
+            if (youtube) void usePlayerStore.getState().playRadio(track.id, "track", track.title, "ytmusic", track)
+            else void onPlayRadio(track.id, "track")
           }}
         >
           <svg

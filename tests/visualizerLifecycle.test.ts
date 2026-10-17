@@ -4,6 +4,7 @@ import { resolve } from "node:path"
 for (const scenario of [
   "compact",
   "bridge",
+  "progress",
   "milkdrop",
   "fullscreen-window",
   "cancel-meta",

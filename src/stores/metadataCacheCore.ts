@@ -147,6 +147,28 @@ interface MetadataDependencies {
   deduplicate?: () => boolean
 }
 
+interface PageRequest<T> {
+  deduplicated: boolean
+  promise: Promise<T>
+  core?: T
+  listeners: Set<(entry: T) => void>
+}
+function joinPage<T>(
+  request: PageRequest<T>,
+  onCore?: (entry: T) => void
+): Promise<T> {
+  if (onCore) {
+    if (request.core) onCore(request.core)
+    else request.listeners.add(onCore)
+  }
+  return request.promise
+}
+function publishCore<T>(request: PageRequest<T>, core: T) {
+  request.core = core
+  for (const listener of request.listeners) listener(core)
+  request.listeners.clear()
+}
+
 export function createMetadataCache({
   getProvider,
   storage,
@@ -158,14 +180,8 @@ export function createMetadataCache({
     provider: MusicProvider | null = null
   let artists: Record<string, ArtistCacheEntry> = {},
     albums: Record<string, AlbumCacheEntry> = {}
-  const artistRequests = new Map<
-    string,
-    { deduplicated: boolean; promise: Promise<ArtistCacheEntry> }
-  >()
-  const albumRequests = new Map<
-    string,
-    { deduplicated: boolean; promise: Promise<AlbumCacheEntry> }
-  >()
+  const artistRequests = new Map<string, PageRequest<ArtistCacheEntry>>()
+  const albumRequests = new Map<string, PageRequest<AlbumCacheEntry>>()
   const capture = (candidate = getProvider()): MetadataCacheSession | null =>
     candidate && candidate === provider && getProvider() === candidate
       ? { owner, provider: candidate, epoch }
@@ -220,14 +236,15 @@ export function createMetadataCache({
       shouldDeduplicate = opts.deduplicate ?? deduplicate()
     if (!session) return Promise.reject(new MetadataRequestSuperseded())
     const cached = getArtist(id, shouldDeduplicate)
-    if (!opts.force && cached && Date.now() - cached.fetchedAt < STALE_MS)
-      return Promise.resolve(cached)
     const existing = artistRequests.get(id)
     if (!opts.force && existing?.deduplicated === shouldDeduplicate)
-      return existing.promise
-    const request = {
+      return joinPage(existing, opts.onCore)
+    if (!opts.force && cached && Date.now() - cached.fetchedAt < STALE_MS)
+      return Promise.resolve(cached)
+    const request: PageRequest<ArtistCacheEntry> = {
       deduplicated: shouldDeduplicate,
       promise: Promise.resolve(null as unknown as ArtistCacheEntry),
+      listeners: new Set(opts.onCore ? [opts.onCore] : []),
     }
     artistRequests.set(id, request)
     const valid = () => {
@@ -292,11 +309,9 @@ export function createMetadataCache({
           deduplicated: shouldDeduplicate,
           fetchedAt: Date.now(),
         }
-        if (opts.onCore) {
-          artists = evict({ ...artists, [id]: core }, MAX_ARTISTS, id)
-          save()
-          opts.onCore(core)
-        }
+        artists = evict({ ...artists, [id]: core }, MAX_ARTISTS, id)
+        save()
+        publishCore(request, core)
         const [similarArtists, sonicallySimilar, relatedHubs, stations] =
           await recommendations
         valid()
@@ -328,12 +343,18 @@ export function createMetadataCache({
     const shouldDeduplicate = deduplicate()
     if (!session) return Promise.reject(new MetadataRequestSuperseded())
     const cached = getAlbum(id)
-    if (!opts.force && cached && Date.now() - cached.fetchedAt < STALE_MS)
-      return Promise.resolve(cached)
     const existing = albumRequests.get(id)
     if (!opts.force && existing?.deduplicated === shouldDeduplicate)
-      return existing.promise
-    const request = (async () => {
+      return joinPage(existing, opts.onCore)
+    if (!opts.force && cached && Date.now() - cached.fetchedAt < STALE_MS)
+      return Promise.resolve(cached)
+    const request: PageRequest<AlbumCacheEntry> = {
+      deduplicated: shouldDeduplicate,
+      promise: Promise.resolve(null as unknown as AlbumCacheEntry),
+      listeners: new Set(opts.onCore ? [opts.onCore] : []),
+    }
+    albumRequests.set(id, request)
+    request.promise = (async () => {
       const timing = startTiming("albumPage")
       try {
         const related = session.provider.getRelatedHubs(id).catch(() => [])
@@ -344,7 +365,7 @@ export function createMetadataCache({
         )
         timing.phase("core")
         check(session)
-        if (albumRequests.get(id)?.promise !== request)
+        if (albumRequests.get(id) !== request)
           throw new MetadataRequestSuperseded()
         if (album.id !== id)
           throw new Error("Server returned a different album")
@@ -355,14 +376,12 @@ export function createMetadataCache({
           fetchedAt: Date.now(),
           deduplicated: shouldDeduplicate,
         }
-        if (opts.onCore) {
-          albums = evict({ ...albums, [id]: core }, MAX_ALBUMS, id)
-          save()
-          opts.onCore(core)
-        }
+        albums = evict({ ...albums, [id]: core }, MAX_ALBUMS, id)
+        save()
+        publishCore(request, core)
         const relatedHubs = await related
         check(session)
-        if (albumRequests.get(id)?.promise !== request)
+        if (albumRequests.get(id) !== request)
           throw new MetadataRequestSuperseded()
         timing.phase("recommendations")
         const entry = { ...core, relatedHubs }
@@ -373,10 +392,9 @@ export function createMetadataCache({
         timing.end("load")
       }
     })().finally(() => {
-      if (albumRequests.get(id)?.promise === request) albumRequests.delete(id)
+      if (albumRequests.get(id) === request) albumRequests.delete(id)
     })
-    albumRequests.set(id, { deduplicated: shouldDeduplicate, promise: request })
-    return request
+    return request.promise
   }
 
   return {

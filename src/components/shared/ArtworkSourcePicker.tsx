@@ -1,4 +1,5 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react"
+import { useModalLifecycle } from "../../hooks/useModalLifecycle"
+import { useEffect, useId, useRef, useState } from "react"
 import { isTauri } from "@tauri-apps/api/core"
 import { refreshImage as refreshNativeImage } from "../../lib/imageCache"
 import { createPortal } from "react-dom"
@@ -238,49 +239,7 @@ function SourceDialog({
   const id = useId()
   const dialog = useRef<HTMLDialogElement>(null)
   const close = useRef<HTMLButtonElement>(null)
-  useLayoutEffect(() => {
-    const element = dialog.current!
-    const previous = document.activeElement as HTMLElement | null
-    const overflow = document.body.style.overflow
-    document.body.style.overflow = "hidden"
-    const native = typeof element.showModal === "function"
-    const hidden: {
-      node: Element
-      aria: string | null
-      inert: string | null
-    }[] = []
-    if (native) element.showModal()
-    else {
-      element.setAttribute("open", "")
-      for (const node of [...document.body.children])
-        if (node !== element) {
-          hidden.push({
-            node,
-            aria: node.getAttribute("aria-hidden"),
-            inert: node.getAttribute("inert"),
-          })
-          node.setAttribute("aria-hidden", "true")
-          node.setAttribute("inert", "")
-        }
-    }
-    close.current?.focus()
-    const contain = (event: FocusEvent) => {
-      if (!element.contains(event.target as Node)) close.current?.focus()
-    }
-    document.addEventListener("focusin", contain, true)
-    return () => {
-      document.removeEventListener("focusin", contain, true)
-      if (native && element.open) element.close()
-      document.body.style.overflow = overflow
-      for (const { node, aria, inert } of hidden) {
-        if (aria === null) node.removeAttribute("aria-hidden")
-        else node.setAttribute("aria-hidden", aria)
-        if (inert === null) node.removeAttribute("inert")
-        else node.setAttribute("inert", inert)
-      }
-      if (previous?.isConnected) previous.focus({ preventScroll: true })
-    }
-  }, [])
+  useModalLifecycle(dialog, { onClose, initialFocus: close })
   return createPortal(
     <dialog
       ref={dialog}
@@ -295,26 +254,6 @@ function SourceDialog({
       }}
       onKeyDown={(e) => {
         e.stopPropagation()
-        if (e.key === "Escape") {
-          e.preventDefault()
-          onClose()
-        }
-        if (e.key === "Tab") {
-          const buttons = [
-            ...dialog.current!.querySelectorAll<HTMLButtonElement>(
-              "button:not(:disabled)"
-            ),
-          ]
-          const first = buttons[0],
-            last = buttons.at(-1)
-          if (e.shiftKey && document.activeElement === first) {
-            e.preventDefault()
-            last?.focus()
-          } else if (!e.shiftKey && document.activeElement === last) {
-            e.preventDefault()
-            first?.focus()
-          }
-        }
       }}
       className="fixed inset-0 z-20000 m-auto max-h-[90vh] w-[min(92vw,680px)] overflow-y-auto rounded-xl border border-(--border) bg-app-bg p-6 text-(--text-primary) shadow-2xl backdrop:bg-black/70"
     >

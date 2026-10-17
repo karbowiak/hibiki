@@ -21,6 +21,7 @@ mock.module("wouter", () => ({
   ),
 }))
 const ui = create(() => ({ pageRefreshKey: 0, deduplicateAlbums: false }))
+mock.module("../../src/stores/uiStore", () => ({ useUIStore: ui }))
 const player = create(() => ({
   currentTrack: null,
   playTrack: (...args: any[]) => {
@@ -41,7 +42,7 @@ mock.module("../../src/stores", () => ({
   usePlayerStore: player,
   useLibraryStore: library,
 }))
-mock.module("../../src/stores/playerStore", () => ({ prefetchTrackAudio() {} }))
+mock.module("../../src/stores/playerStore", () => ({ usePlayerStore: player, prefetchTrackAudio() {} }))
 mock.module("../../src/hooks/useMediaImage", () => ({
   useArtistImage: () => null,
   useAlbumImage: () => null,
@@ -142,10 +143,10 @@ const track = {
   duration: 1000,
   userRating: 0,
 }
-const entry = (name: string) =>
+const entry = (name: string, id: string) =>
   kind === "artist"
     ? {
-        artist: { id: name, title: name, genres: [], styles: [], moods: [] },
+        artist: { id, title: name, genres: [], styles: [], moods: [] },
         albums: [],
         singles: [],
         popularTracks: [track],
@@ -156,7 +157,7 @@ const entry = (name: string) =>
       }
     : {
         album: {
-          id: name,
+          id,
           title: name,
           artistName: "Fixture artist",
           labels: [],
@@ -191,7 +192,7 @@ async function settle(index: number, name: string, fail = false) {
         new Error("https://private.test?token=private-placeholder")
       )
     else {
-      const result = entry(name)
+      const result = entry(name, request.id)
       if (request.owner === useProviderStore.getState().provider)
         cache.set(cacheKey(request.id), result)
       request.reply.resolve(result)
