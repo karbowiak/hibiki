@@ -141,7 +141,7 @@ export default function SquigglyVolumeSlider({ volume, onChange }: Props) {
 
   return (
     <div
-      className="relative select-none rounded-md focus-within:ring-2 focus-within:ring-[var(--accent)]"
+      className="relative select-none rounded-md focus-within:ring-2 focus-within:ring-(--accent)"
       style={{ width: WIDTH, height: HEIGHT }}
     >
       <svg

@@ -74,7 +74,7 @@ export function ImageModal({
       ref={dialogRef}
       aria-label={alt || "Artwork"}
       aria-modal="true"
-      className={`fixed inset-0 z-[20000] m-0 h-full max-h-none w-full max-w-none items-center justify-center border-0 p-0 text-white backdrop-blur-sm backdrop:bg-transparent open:flex ${isDark ? "bg-black/90" : "bg-black/80"}`}
+      className={`fixed inset-0 z-20000 m-0 h-full max-h-none w-full max-w-none items-center justify-center border-0 p-0 text-white backdrop-blur-sm backdrop:bg-transparent open:flex ${isDark ? "bg-black/90" : "bg-black/80"}`}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose()
       }}

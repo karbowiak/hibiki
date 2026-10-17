@@ -12,17 +12,17 @@ export function WeeklyEditionHistory({
   return (
     <section
       aria-label="Earlier weekly editions needing review"
-      className="mt-4 rounded-xl border border-[var(--border)] p-3"
+      className="mt-4 rounded-xl border border-(--border) p-3"
     >
       <h4 className="font-medium">Earlier weekly editions</h4>
-      <p className="mt-1 text-xs text-[var(--text-secondary)]">
+      <p className="mt-1 text-xs text-(--text-secondary)">
         These songs belong to earlier editions and are kept separately from the
         current sync.
       </p>
       {unresolved.map((receipt) => (
         <details
           key={receipt.edition.playlistId}
-          className="mt-3 rounded-lg border border-[var(--border)] p-3"
+          className="mt-3 rounded-lg border border-(--border) p-3"
         >
           <summary className="cursor-pointer text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
             {receipt.edition.weekOf
@@ -36,7 +36,7 @@ export function WeeklyEditionHistory({
           </summary>
           {receipt.matchedCount !== undefined &&
             receipt.total !== undefined && (
-              <p className="mt-2 text-xs text-[var(--text-secondary)]">
+              <p className="mt-2 text-xs text-(--text-secondary)">
                 {receipt.matchedCount} of {receipt.total} songs matched in this
                 edition.
               </p>

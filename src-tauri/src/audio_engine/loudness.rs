@@ -8,7 +8,7 @@ use super::deck::decode;
 use ebur128::{Channel, EbuR128, Mode};
 #[cfg(test)]
 use std::path::Path;
-use symphonia::core::audio::Channels;
+use symphonia::core::audio::Position as Channels;
 use symphonia::core::io::MediaSourceStream;
 use tracing::debug;
 
@@ -46,16 +46,14 @@ pub(super) fn analyze_loudness_file(
     let source = MediaSourceStream::new(Box::new(file), Default::default());
     let mut decoder =
         decode::probe_from_source(source, Some(ext)).map_err(|error| format!("probe: {error}"))?;
-    let params = &decoder
+    let track = decoder
         .format
         .tracks()
         .iter()
         .find(|track| track.id == decoder.track_id)
-        .ok_or("Missing audio track")?
-        .codec_params;
-    let expected_frames = params.n_frames;
-    let trimmed_frames =
-        u64::from(params.delay.unwrap_or(0)) + u64::from(params.padding.unwrap_or(0));
+        .ok_or("Missing audio track")?;
+    // Symphonia 0.6 reports playable frames, excluding encoder delay/padding.
+    let expected_frames = track.num_frames;
     let mut meter = None;
     let mut total_frames = 0_u64;
     while !decoder.finished {
@@ -95,9 +93,7 @@ pub(super) fn analyze_loudness_file(
     if !is_current() {
         return Err("analysis cancelled".into());
     }
-    if expected_frames
-        .is_some_and(|expected| total_frames.saturating_add(trimmed_frames) < expected)
-    {
+    if expected_frames.is_some_and(|expected| total_frames < expected) {
         return Err("Incomplete audio cannot be used for loudness analysis".into());
     }
     let loudness = meter
@@ -127,7 +123,7 @@ fn loudness_channels(layout: Channels) -> Vec<Channel> {
             Channels::REAR_LEFT | Channels::SIDE_LEFT => Channel::LeftSurround,
             Channels::REAR_RIGHT | Channels::SIDE_RIGHT => Channel::RightSurround,
             Channels::FRONT_RIGHT => Channel::Right,
-            Channels::FRONT_CENTRE => Channel::Center,
+            Channels::FRONT_CENTER => Channel::Center,
             _ => Channel::Left,
         })
         .collect()
@@ -183,20 +179,24 @@ mod tests {
     #[test]
     fn silence_empty_audio_truncation_and_cancellation_cannot_create_a_cached_guess() {
         let base = Channels::FRONT_LEFT | Channels::FRONT_RIGHT;
-        assert!(measure(decode::tests::generate_layout_wav(
-            44100,
-            base,
-            44100,
-            |_, _| 0.0
-        ))
-        .is_err());
-        assert!(measure(decode::tests::generate_layout_wav(
-            44100,
-            base,
-            0,
-            |_, _| 0.0
-        ))
-        .is_err());
+        assert!(
+            measure(decode::tests::generate_layout_wav(
+                44100,
+                base,
+                44100,
+                |_, _| 0.0
+            ))
+            .is_err()
+        );
+        assert!(
+            measure(decode::tests::generate_layout_wav(
+                44100,
+                base,
+                0,
+                |_, _| 0.0
+            ))
+            .is_err()
+        );
         let mut truncated = decode::tests::generate_layout_wav(44100, base, 44100 * 2, |_, _| 0.1);
         truncated.truncate(truncated.len() / 2);
         assert!(measure(truncated).is_err());

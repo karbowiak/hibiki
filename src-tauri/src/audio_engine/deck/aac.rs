@@ -3,18 +3,25 @@
 use fdk_aac_sys as sys;
 use std::ptr::NonNull;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use symphonia::core::audio::{
-    AsAudioBufferRef, AudioBuffer, AudioBufferRef, Channels, Signal, SignalSpec,
+    AsGenericAudioBufferRef, Audio, AudioBuffer, AudioMut, AudioSpec as SignalSpec,
+    GenericAudioBufferRef as AudioBufferRef, Position as Channels,
 };
-use symphonia::core::codecs::{
-    CodecDescriptor, CodecParameters, Decoder, DecoderOptions, FinalizeResult, CODEC_TYPE_AAC,
+use symphonia::core::codecs::CodecInfo;
+use symphonia::core::codecs::audio::FinalizeResult;
+use symphonia::core::codecs::audio::{
+    AudioCodecParameters as CodecParameters, AudioDecoder as Decoder,
+    AudioDecoderOptions as DecoderOptions, well_known::CODEC_ID_AAC,
 };
+use symphonia::core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia::core::errors::{Error, Result};
-use symphonia::core::formats::Packet;
-use symphonia::core::support_codec;
+#[cfg(test)]
+use symphonia::core::packet::Packet;
+use symphonia::core::packet::PacketRef;
+use symphonia::core::units::{Duration, Timestamp};
 
 const MAX_CHANNELS: usize = 8;
 const MAX_FRAMES: usize = 4096;
@@ -92,18 +99,18 @@ fn speaker_mapping(types: &[u32], indices: &[u8]) -> Result<(Channels, Vec<usize
             sys::AUDIO_CHANNEL_TYPE_ACT_FRONT => {
                 let order: &[Channels] = if odd {
                     &[
-                        Channels::FRONT_CENTRE,
+                        Channels::FRONT_CENTER,
                         Channels::FRONT_LEFT,
                         Channels::FRONT_RIGHT,
-                        Channels::FRONT_LEFT_CENTRE,
-                        Channels::FRONT_RIGHT_CENTRE,
+                        Channels::FRONT_LEFT_CENTER,
+                        Channels::FRONT_RIGHT_CENTER,
                     ]
                 } else {
                     &[
                         Channels::FRONT_LEFT,
                         Channels::FRONT_RIGHT,
-                        Channels::FRONT_LEFT_CENTRE,
-                        Channels::FRONT_RIGHT_CENTRE,
+                        Channels::FRONT_LEFT_CENTER,
+                        Channels::FRONT_RIGHT_CENTER,
                     ]
                 };
                 order.get(usize::from(index)).copied()
@@ -111,7 +118,7 @@ fn speaker_mapping(types: &[u32], indices: &[u8]) -> Result<(Channels, Vec<usize
             sys::AUDIO_CHANNEL_TYPE_ACT_BACK => {
                 let order: &[Channels] = if odd {
                     &[
-                        Channels::REAR_CENTRE,
+                        Channels::REAR_CENTER,
                         Channels::REAR_LEFT,
                         Channels::REAR_RIGHT,
                     ]
@@ -131,7 +138,7 @@ fn speaker_mapping(types: &[u32], indices: &[u8]) -> Result<(Channels, Vec<usize
             sys::AUDIO_CHANNEL_TYPE_ACT_FRONT_TOP => {
                 let order: &[Channels] = if odd {
                     &[
-                        Channels::TOP_FRONT_CENTRE,
+                        Channels::TOP_FRONT_CENTER,
                         Channels::TOP_FRONT_LEFT,
                         Channels::TOP_FRONT_RIGHT,
                     ]
@@ -143,7 +150,7 @@ fn speaker_mapping(types: &[u32], indices: &[u8]) -> Result<(Channels, Vec<usize
             sys::AUDIO_CHANNEL_TYPE_ACT_BACK_TOP => {
                 let order: &[Channels] = if odd {
                     &[
-                        Channels::TOP_REAR_CENTRE,
+                        Channels::TOP_REAR_CENTER,
                         Channels::TOP_REAR_LEFT,
                         Channels::TOP_REAR_RIGHT,
                     ]
@@ -173,7 +180,7 @@ pub(super) struct AacDecoder {
     buf: AudioBuffer<i16>,
     usable: bool,
     initialization: Vec<Box<[u8]>>,
-    initialization_end: u64,
+    initialization_end: i64,
     just_reset: bool,
     seek_from_start: Arc<AtomicBool>,
 }
@@ -183,9 +190,9 @@ pub(super) struct AacDecoder {
 unsafe impl Send for AacDecoder {}
 unsafe impl Sync for AacDecoder {}
 
-impl Decoder for AacDecoder {
-    fn try_new(params: &CodecParameters, _options: &DecoderOptions) -> Result<Self> {
-        if params.codec != CODEC_TYPE_AAC {
+impl AacDecoder {
+    pub(super) fn try_new(params: &CodecParameters, _options: &DecoderOptions) -> Result<Self> {
+        if params.codec != CODEC_ID_AAC {
             return Err(Error::Unsupported("aac: codec mismatch"));
         }
         let config = configuration(params)?;
@@ -193,8 +200,8 @@ impl Decoder for AacDecoder {
         let rate = params.sample_rate.unwrap_or(48000);
         let layout = params
             .channels
-            .or_else(|| params.channel_layout.map(|value| value.into_channels()))
-            .unwrap_or(Channels::FRONT_LEFT | Channels::FRONT_RIGHT);
+            .clone()
+            .unwrap_or_else(|| (Channels::FRONT_LEFT | Channels::FRONT_RIGHT).into());
         if !(7350..=768000).contains(&rate) || !(1..=MAX_CHANNELS).contains(&layout.count()) {
             return Err(Error::Unsupported("aac: invalid declared audio format"));
         }
@@ -203,7 +210,7 @@ impl Decoder for AacDecoder {
             config,
             params: params.clone(),
             pcm: vec![0; MAX_FRAMES * MAX_CHANNELS],
-            buf: AudioBuffer::new(MAX_FRAMES as u64, SignalSpec::new(rate, layout)),
+            buf: AudioBuffer::new(SignalSpec::new(rate, layout), MAX_FRAMES),
             usable: true,
             initialization: Vec::new(),
             initialization_end: 0,
@@ -211,11 +218,30 @@ impl Decoder for AacDecoder {
             seek_from_start: Arc::new(AtomicBool::new(false)),
         })
     }
-
-    fn supported_codecs() -> &'static [CodecDescriptor] {
-        &[support_codec!(CODEC_TYPE_AAC, "aac", "FDK AAC")]
+}
+const CODEC_INFO: CodecInfo = CodecInfo {
+    short_name: "aac",
+    long_name: "FDK AAC",
+    profiles: &[],
+};
+impl RegisterableAudioDecoder for AacDecoder {
+    fn try_registry_new(
+        params: &CodecParameters,
+        options: &DecoderOptions,
+    ) -> Result<Box<dyn Decoder>> {
+        Ok(Box::new(Self::try_new(params, options)?))
     }
-
+    fn supported_codecs() -> &'static [SupportedAudioCodec] {
+        &[SupportedAudioCodec {
+            id: CODEC_ID_AAC,
+            info: CODEC_INFO,
+        }]
+    }
+}
+impl Decoder for AacDecoder {
+    fn codec_info(&self) -> &CodecInfo {
+        &CODEC_INFO
+    }
     fn reset(&mut self) {
         self.buf.clear();
         self.just_reset = false;
@@ -227,7 +253,7 @@ impl Decoder for AacDecoder {
             // CLRHIST also retires PS header state. Replay bounded initial access
             // units instead of retaining history from the old playback position.
             for initialization in self.initialization.clone() {
-                let packet = Packet::new_from_boxed_slice(0, u64::MAX, 0, initialization);
+                let packet = PacketRef::new(0, Timestamp::MAX, Duration::ZERO, &initialization);
                 if self.decode_packet(&packet).is_err() {
                     self.usable = false;
                     break;
@@ -242,7 +268,7 @@ impl Decoder for AacDecoder {
         &self.params
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
+    fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<AudioBufferRef<'_>> {
         self.buf.clear();
         if let Err(error) = self.decode_packet(packet) {
             // Partial or corrupt access units must not become transport input
@@ -250,14 +276,14 @@ impl Decoder for AacDecoder {
             self.reset();
             return Err(error);
         }
-        Ok(self.buf.as_audio_buffer_ref())
+        Ok(self.buf.as_generic_audio_buffer_ref())
     }
 
     fn finalize(&mut self) -> FinalizeResult {
         FinalizeResult::default()
     }
     fn last_decoded(&self) -> AudioBufferRef<'_> {
-        self.buf.as_audio_buffer_ref()
+        self.buf.as_generic_audio_buffer_ref()
     }
 }
 
@@ -266,9 +292,9 @@ impl AacDecoder {
         self.seek_from_start.clone()
     }
 
-    fn decode_packet(&mut self, packet: &Packet) -> Result<()> {
+    fn decode_packet(&mut self, packet: &PacketRef<'_>) -> Result<()> {
         self.buf.clear();
-        if std::mem::take(&mut self.just_reset) && packet.ts() == 0 {
+        if std::mem::take(&mut self.just_reset) && packet.pts.get() == 0 {
             // At the beginning preserve the original decoder delay rather than
             // the extra packet used only to initialize a mid-file seek.
             self.handle = Handle::open(&self.config)?;
@@ -277,7 +303,7 @@ impl AacDecoder {
         if !self.usable {
             return Err(Error::DecodeError("aac: decoder reset failed"));
         }
-        let data = packet.buf();
+        let data = packet.data;
         if data.is_empty() {
             return Err(Error::DecodeError("aac: empty audio packet"));
         }
@@ -334,24 +360,32 @@ impl AacDecoder {
         let types = unsafe { std::slice::from_raw_parts(info.pChannelType, channels) };
         let indices = unsafe { std::slice::from_raw_parts(info.pChannelIndices, channels) };
         let (layout, mapping) = speaker_mapping(types, indices)?;
-        let spec = SignalSpec::new(info.sampleRate as u32, layout);
+        let spec = SignalSpec::new(info.sampleRate as u32, layout.into());
         if *self.buf.spec() != spec {
-            self.buf = AudioBuffer::new(MAX_FRAMES as u64, spec);
+            self.buf = AudioBuffer::new(spec, MAX_FRAMES);
         }
-        self.buf.render_reserved(Some(frames));
+        self.buf.render_uninit(Some(frames));
         for (channel, &wire) in mapping.iter().enumerate() {
-            for (frame, sample) in self.buf.chan_mut(channel).iter_mut().enumerate() {
+            for (frame, sample) in self
+                .buf
+                .plane_mut(channel)
+                .expect("validated channel")
+                .iter_mut()
+                .enumerate()
+            {
                 *sample = self.pcm[frame * channels + wire];
             }
         }
-        self.buf
-            .trim(packet.trim_start() as usize, packet.trim_end() as usize);
+        self.buf.trim(
+            packet.trim_start.get() as usize,
+            packet.trim_end.get() as usize,
+        );
         if self.initialization.len() < 4
-            && packet.ts() == self.initialization_end
+            && packet.pts.get() == self.initialization_end
             && data.len() <= 32768
         {
             self.initialization.push(data.into());
-            self.initialization_end = packet.ts().saturating_add(packet.dur());
+            self.initialization_end = packet.pts.get().saturating_add(packet.dur.get() as i64);
         }
         Ok(())
     }
@@ -360,7 +394,6 @@ impl AacDecoder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use symphonia::core::audio::SampleBuffer;
 
     fn first_access_unit() -> (CodecParameters, Packet) {
         let data = include_bytes!(concat!(
@@ -370,15 +403,15 @@ mod tests {
         let mut setup = super::super::decode::probe_audio(data.to_vec()).unwrap();
         (
             setup.decoder.codec_params().clone(),
-            setup.format.next_packet().unwrap(),
+            setup.format.next_packet().unwrap().unwrap(),
         )
     }
 
     fn pcm(decoder: &mut AacDecoder, packet: &Packet) -> Vec<i16> {
         let decoded = decoder.decode(packet).unwrap();
-        let mut output = SampleBuffer::new(decoded.capacity() as u64, *decoded.spec());
-        output.copy_interleaved_ref(decoded);
-        output.samples().to_vec()
+        let mut output = Vec::new();
+        decoded.copy_to_vec_interleaved(&mut output);
+        output
     }
 
     #[test]
@@ -391,8 +424,8 @@ mod tests {
         decoder.reset();
         assert_eq!(decoder.last_decoded().frames(), 0);
         assert_eq!(pcm(&mut decoder, &packet), expected);
-        for invalid in [&[][..], &packet.buf()[..1], &[0xff; 32769][..]] {
-            let bad = Packet::new_from_slice(0, 0, 1024, invalid);
+        for invalid in [&[][..], &&packet.data[..1], &[0xff; 32769][..]] {
+            let bad = Packet::new(0, Timestamp::ZERO, Duration::new(1024), invalid);
             assert!(decoder.decode(&bad).is_err());
             assert_eq!(decoder.last_decoded().frames(), 0);
             assert_eq!(pcm(&mut decoder, &packet), expected);
@@ -420,11 +453,11 @@ mod tests {
         ] {
             let mut invalid = params.clone();
             invalid.sample_rate = Some(rate);
-            invalid.channels = Some(channels);
+            invalid.channels = Some(channels.into());
             assert!(AacDecoder::try_new(&invalid, &DecoderOptions::default()).is_err());
         }
         let mut invalid = params;
-        invalid.codec = symphonia::core::codecs::CODEC_TYPE_OPUS;
+        invalid.codec = symphonia::core::codecs::audio::well_known::CODEC_ID_OPUS;
         assert!(AacDecoder::try_new(&invalid, &DecoderOptions::default()).is_err());
     }
 
@@ -436,7 +469,7 @@ mod tests {
         let l = sys::AUDIO_CHANNEL_TYPE_ACT_LFE;
         let (layout, order) =
             speaker_mapping(&[f, f, f, l, r, r, s, s], &[1, 2, 0, 0, 0, 1, 0, 1]).unwrap();
-        assert_eq!(layout.count(), 8);
+        assert_eq!(layout.iter().count(), 8);
         assert_eq!(order, [0, 1, 2, 3, 4, 5, 6, 7]);
         for (types, indices) in [
             (&[f, f][..], &[0, 0][..]),

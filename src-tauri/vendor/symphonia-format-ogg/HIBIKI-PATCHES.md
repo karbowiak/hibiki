@@ -1,10 +1,10 @@
-Upstream: symphonia-format-ogg 0.5.5, Project Symphonia commit `6d533f26150953a882a6a111ebd13f0abf7129d5`. Source headers and MPL-2.0 license are retained. The original normalized manifest and its source manifest are included.
+Upstream: `symphonia-format-ogg 0.6.1`, Project Symphonia commit `ee35874b571a35a9a6e15d3bc9a3aaf8f11fbeee`. Original source headers, manifests and MPL-2.0 license are retained.
 
 Hibiki changes:
 
-- `physical.rs`: scan two maximum-sized pages per logical stream when probing the tail, since encoder padding needs both the final and preceding granule positions.
-- `logical.rs`: infer EOS padding during sequential playback when the file tail was unavailable at probe time; use explicit Opus header pre-skip rather than interpreting a short EOS page's final padding as initial delay.
-- `mappings/opus.rs`: convert granules to presentation timestamps by subtracting header pre-skip; read all six bits of the code-3 frame count.
-- `demuxer.rs`: seek safely while the complete byte extent is unavailable, and discover binary-seek bounds once a streaming spool finishes.
+- `physical.rs`: scan two maximum-sized pages per stream so the end probe sees both final granule positions.
+- `logical.rs`: retain explicit Opus pre-skip for single-page timing. Sequential EOS padding inference is now provided upstream.
+- `mappings/opus.rs`: subtract header pre-skip when converting granules to presentation timestamps; use all six bits for the code-3 frame count.
+- `demuxer.rs`: seek linearly inside an incomplete spool, and discover bisection bounds when the spool finishes.
 
-Application regressions in `audio_engine/deck/decode.rs` cover gapless duration, named surround channels, initial playback from an incomplete HTTP-length spool, and seeks before/after that spool finishes. Keep these regressions when removing this patch for a later upstream release.
+Application regressions in `audio_engine/deck/decode.rs` compare gapless duration, surround channel order, prefix streaming and cold/repeated seeks against linear PCM. A mapper unit test covers 32- and 48-frame Opus packets. Retain these checks when removing the patch.

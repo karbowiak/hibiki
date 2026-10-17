@@ -716,10 +716,7 @@ pub(crate) mod tests {
         assert_eq!(params["track"], "Song");
         assert_eq!(
             params["api_sig"],
-            format!(
-                "{:x}",
-                Md5::digest("api_keykeyartistArtistmethodtrack.lovesksessiontrackSongsecret")
-            )
+            hex::encode(Md5::digest("api_keykeyartistArtistmethodtrack.lovesksessiontrackSongsecret"))
         );
         let (base, thread) = loopback(vec![(
             200,

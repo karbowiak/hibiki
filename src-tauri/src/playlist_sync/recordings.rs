@@ -130,9 +130,7 @@ fn source(
     if recordings.len() > 1 || tracks.len() > 1 || (!recordings.is_empty() && !tracks.is_empty()) {
         return Err("ambiguous-reference");
     }
-    let fingerprint = format!(
-        "{:x}",
-        Sha256::digest(
+    let fingerprint = hex::encode(Sha256::digest(
             json!([
                 id,
                 section,
@@ -145,8 +143,7 @@ fn source(
             ])
             .to_string()
             .as_bytes()
-        )
-    );
+        ));
     Ok(Source {
         title,
         artist,

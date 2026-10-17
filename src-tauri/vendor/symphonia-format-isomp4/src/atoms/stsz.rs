@@ -1,14 +1,12 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::Result;
-use symphonia_core::io::ReadBytes;
-
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::limits::*;
+use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result};
 
 #[derive(Debug)]
 pub enum SampleSize {
@@ -20,8 +18,6 @@ pub enum SampleSize {
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct StszAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// The total number of samples.
     pub sample_count: u32,
     /// A vector of `sample_count` sample sizes, or a constant size for all samples.
@@ -29,22 +25,20 @@ pub struct StszAtom {
 }
 
 impl Atom for StszAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (_, _) = it.read_extended_header()?;
 
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let (_, _) = AtomHeader::read_extra(reader)?;
-
-        let sample_size = reader.read_be_u32()?;
-        let sample_count = reader.read_be_u32()?;
+        let sample_size = it.read_u32()?;
+        let sample_count = it.read_u32()?;
 
         let sample_sizes = if sample_size == 0 {
-            // TODO: Apply a limit.
-            let mut entries = Vec::with_capacity(sample_count as usize);
+            // Limit the maximum initial capacity to prevent malicious files from using all the
+            // available memory.
+            let mut entries =
+                Vec::with_capacity(MAX_TABLE_INITIAL_CAPACITY.min(sample_count as usize));
 
             for _ in 0..sample_count {
-                entries.push(reader.read_be_u32()?);
+                entries.push(it.read_u32()?);
             }
 
             SampleSize::Variable(entries)
@@ -53,6 +47,6 @@ impl Atom for StszAtom {
             SampleSize::Constant(sample_size)
         };
 
-        Ok(StszAtom { header, sample_count, sample_sizes })
+        Ok(StszAtom { sample_count, sample_sizes })
     }
 }

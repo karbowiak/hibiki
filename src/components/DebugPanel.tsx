@@ -246,15 +246,15 @@ export function DebugPanel() {
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 z-[10000] bg-black/60"
+        className="fixed inset-0 z-10000 bg-black/60"
         onClick={close}
       />
 
       {/* Panel */}
-      <div className="fixed inset-0 z-[10001] flex items-center justify-center p-6 pointer-events-none">
+      <div className="fixed inset-0 z-10001 flex items-center justify-center p-6 pointer-events-none">
         <div className="pointer-events-auto w-full max-w-2xl max-h-[85vh] flex flex-col rounded-xl border border-white/10 bg-app-card shadow-2xl">
           {/* Header */}
-          <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/8 flex-shrink-0">
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/8 shrink-0">
             <div>
               <span className="text-xs font-semibold uppercase tracking-wider text-accent">{title}</span>
               {subtitle && <span className="ml-2 text-xs text-white/50 truncate">{subtitle}</span>}

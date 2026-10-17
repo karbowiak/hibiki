@@ -299,7 +299,7 @@ export function SearchDropdown({
       aria-busy={isSearching}
       onKeyDown={(event) => event.stopPropagation()}
       style={{ maxHeight: Math.min(480, maxHeight), width: panelWidth }}
-      className="app-overlay-surface discovery-search-popup absolute left-0 top-full z-50 mt-2 w-full max-w-[calc(100vw-24px)] overflow-y-auto overscroll-contain rounded-xl border border-[var(--border)] bg-app-card py-1 text-[var(--text-primary)] shadow-2xl"
+      className="app-overlay-surface discovery-search-popup absolute left-0 top-full z-50 mt-2 w-full max-w-[calc(100vw-24px)] overflow-y-auto overscroll-contain rounded-xl border border-(--border) bg-app-card py-1 text-(--text-primary) shadow-2xl"
     >
       <div className="discovery-search-caption">
         {emptyQuery ? "A shortcut to your music" : "Search your library"}
@@ -347,7 +347,7 @@ export function SearchDropdown({
                     ) : (
                       <span
                         aria-hidden="true"
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-app-surface text-[var(--text-muted)]"
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-app-surface text-(--text-muted)"
                       >
                         {kind === "recent" ? "↶" : "↗"}
                       </span>
@@ -356,7 +356,7 @@ export function SearchDropdown({
                       <span className="block truncate text-sm font-medium">
                         {row.title}
                       </span>
-                      <span className="block truncate text-xs text-[var(--text-secondary)]">
+                      <span className="block truncate text-xs text-(--text-secondary)">
                         {row.description}
                       </span>
                     </span>
@@ -367,7 +367,7 @@ export function SearchDropdown({
           })}
           <div
             data-search-footer
-            className="sticky bottom-0 border-t border-[var(--border)] bg-app-card"
+            className="sticky bottom-0 border-t border-(--border) bg-app-card"
           >
             <div
               role="option"
@@ -388,7 +388,7 @@ export function SearchDropdown({
           {isSearching && (
             <p
               role="status"
-              className="px-3 py-3 text-sm text-[var(--text-secondary)]"
+              className="px-3 py-3 text-sm text-(--text-secondary)"
             >
               Searching…
             </p>
@@ -401,7 +401,7 @@ export function SearchDropdown({
                   type="button"
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => void search(query)}
-                  className="mt-2 rounded-md bg-app-surface px-3 py-2 text-[var(--text-primary)]"
+                  className="mt-2 rounded-md bg-app-surface px-3 py-2 text-(--text-primary)"
                 >
                   Try again
                 </button>
@@ -410,7 +410,7 @@ export function SearchDropdown({
               !isSearching && (
                 <p
                   role="status"
-                  className="px-3 py-3 text-sm text-[var(--text-secondary)]"
+                  className="px-3 py-3 text-sm text-(--text-secondary)"
                 >
                   No results for “{query}”.
                 </p>
@@ -434,11 +434,11 @@ export function SearchDropdown({
                     key={kind}
                     role="group"
                     aria-label={label}
-                    className="border-b border-[var(--border)] pb-1 last:border-b-0"
+                    className="border-b border-(--border) pb-1 last:border-b-0"
                   >
                     <div
                       aria-hidden="true"
-                      className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+                      className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-(--text-muted)"
                     >
                       {label}
                     </div>
@@ -460,7 +460,7 @@ export function SearchDropdown({
                             {row.item.title}
                           </div>
                           {row.kind !== "artist" && (
-                            <div className="truncate text-xs text-[var(--text-secondary)]">
+                            <div className="truncate text-xs text-(--text-secondary)">
                               {row.item.artistName}
                               {row.kind === "track" && row.item.albumName
                                 ? ` · ${row.item.albumName}`
@@ -475,7 +475,7 @@ export function SearchDropdown({
               })}
               <div
                 data-search-footer
-                className="sticky bottom-0 z-10 border-t border-[var(--border)] bg-app-card"
+                className="sticky bottom-0 z-10 border-t border-(--border) bg-app-card"
               >
                 <div
                   id={`${id}-option-${items.length}`}

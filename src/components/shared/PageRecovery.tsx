@@ -20,21 +20,21 @@ export function PageRecovery({
 }: PageRecoveryProps) {
   const titleId = useId()
   const actionClass =
-    "rounded-full border border-[var(--border)] bg-app-surface px-4 py-2 text-sm font-medium text-[color:var(--text-primary)] transition-colors hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+    "rounded-full border border-(--border) bg-app-surface px-4 py-2 text-sm font-medium text-(--text-primary) transition-colors hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
   return (
     <section
       role={kind === "error" ? "alert" : "region"}
       aria-labelledby={titleId}
-      className="my-4 rounded-xl border border-[var(--border)] bg-app-card p-5"
+      className="my-4 rounded-xl border border-(--border) bg-app-card p-5"
     >
       <h2
         id={titleId}
-        className="text-base font-semibold text-[color:var(--text-primary)]"
+        className="text-base font-semibold text-(--text-primary)"
       >
         {title}
       </h2>
       {description && (
-        <p className="mt-2 max-w-xl text-sm leading-relaxed text-[color:var(--text-secondary)]">
+        <p className="mt-2 max-w-xl text-sm leading-relaxed text-(--text-secondary)">
           {description}
         </p>
       )}

@@ -52,8 +52,8 @@ export function PlexArtworkPanel({ kind, itemId, role, disabled = false, onBusy,
     {loading && <p role="status" className="metadata-edit-note">Loading Plex images…</p>}
     {!!inventory?.candidates.length && <div className="grid grid-cols-[repeat(auto-fill,minmax(110px,1fr))] gap-3">{inventory.candidates.map(candidate => {
       const picked = selection && "choice" in selection && selection.choice === candidate.id
-      return <button type="button" key={candidate.id} className={`overflow-hidden rounded-lg border p-2 text-left transition-colors hover:bg-app-surface-hover ${picked ? "border-[var(--artwork-primary)]" : "border-[var(--border)]"}`} disabled={disabled || busy || loading || reloadRequired || candidate.selected} aria-pressed={!!picked} onClick={() => setSelection({ choice: candidate.id })}>
-        {candidate.sourceUrl ? <ArtworkImage src={buildExternalImageUrl(candidate.sourceUrl, owner.cacheScope)} alt={`${candidate.label} ${role}`} className={`w-full rounded-md object-cover ${role === "background" ? "aspect-video" : "aspect-square"}`} /> : <span className="flex aspect-square items-center justify-center rounded-md bg-app-surface text-xs text-[var(--text-muted)]">Preview unavailable</span>}
+      return <button type="button" key={candidate.id} className={`overflow-hidden rounded-lg border p-2 text-left transition-colors hover:bg-app-surface-hover ${picked ? "border-(--artwork-primary)" : "border-(--border)"}`} disabled={disabled || busy || loading || reloadRequired || candidate.selected} aria-pressed={!!picked} onClick={() => setSelection({ choice: candidate.id })}>
+        {candidate.sourceUrl ? <ArtworkImage src={buildExternalImageUrl(candidate.sourceUrl, owner.cacheScope)} alt={`${candidate.label} ${role}`} className={`w-full rounded-md object-cover ${role === "background" ? "aspect-video" : "aspect-square"}`} /> : <span className="flex aspect-square items-center justify-center rounded-md bg-app-surface text-xs text-(--text-muted)">Preview unavailable</span>}
         <span className="mt-2 block truncate text-xs font-medium">{candidate.label}</span>
         <span className="metadata-edit-note block text-xs">{candidate.selected ? "Current in Plex" : picked ? "Selected for review" : "Choose image"}</span>
       </button>
@@ -69,7 +69,7 @@ export function PlexArtworkPanel({ kind, itemId, role, disabled = false, onBusy,
       <button type="button" className="metadata-edit-button" disabled={disabled || busy || loading || reloadRequired} onClick={() => input.current?.click()}>Upload image…</button>
       <button type="button" className="metadata-edit-button" disabled={disabled || busy || loading} onClick={() => void reload()}>{reloadRequired ? "Reload current artwork" : "Reload choices"}</button>
     </div>
-    {selection && <div className="rounded-lg border border-[var(--border)] p-4">
+    {selection && <div className="rounded-lg border border-(--border) p-4">
       <h5 className="font-semibold">After saving to Plex</h5>
       {proposedImage && <ArtworkImage src={proposedImage} alt={`Proposed ${role}`} className={`mt-3 max-h-40 rounded-md object-contain ${role === "background" ? "w-60" : "w-36"}`} />}
       <p className="metadata-edit-note mt-3">{"file" in selection ? selection.file.name : selected?.label} · This changes the {role} in your Plex library.</p>

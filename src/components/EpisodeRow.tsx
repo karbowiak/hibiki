@@ -41,7 +41,7 @@ export function EpisodeRow({ episode, podcastArtworkUrl, isPlaying, progress, is
       isPlaying && "bg-white/5"
     )}>
       {/* Artwork + play button */}
-      <div className="relative h-14 w-14 flex-shrink-0 overflow-hidden rounded-lg bg-white/5">
+      <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-white/5">
         {thumb && <ArtworkImage src={thumb} alt="" className="h-full w-full object-cover" loading="lazy" />}
         <button
           onClick={onPlay}
@@ -69,12 +69,12 @@ export function EpisodeRow({ episode, podcastArtworkUrl, isPlaying, progress, is
         <div className="flex items-center gap-2">
           <span className={clsx(
             "truncate text-sm font-medium",
-            isPlaying ? "text-accent" : "text-[color:var(--text-primary)]"
+            isPlaying ? "text-accent" : "text-(--text-primary)"
           )}>
             {episode.title}
           </span>
           {isCompleted && (
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" className="flex-shrink-0 text-accent">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" className="shrink-0 text-accent">
               <path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0z" />
             </svg>
           )}

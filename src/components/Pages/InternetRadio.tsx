@@ -223,7 +223,7 @@ function RadioLoadError({
     <div role="alert" className="mb-4 text-sm text-red-400">
       <p>{message}</p>
       {hint && (
-        <p className="mt-1 text-xs text-[color:var(--text-secondary)]">
+        <p className="mt-1 text-xs text-(--text-secondary)">
           {hint}
         </p>
       )}
@@ -316,7 +316,7 @@ export function InternetRadioPage() {
         {/* Search bar */}
         <div className="broadcast-search relative">
           <svg
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-[color:var(--text-muted)]"
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-(--text-muted)"
             viewBox="0 0 16 16"
             width="16"
             height="16"
@@ -336,7 +336,7 @@ export function InternetRadioPage() {
             <button
               aria-label="Clear radio search"
               onClick={() => setSearchQuery("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[color:var(--text-muted)] hover:text-[color:var(--text-secondary)]"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-(--text-muted) hover:text-(--text-secondary)"
             >
               <svg
                 viewBox="0 0 16 16"
@@ -367,7 +367,7 @@ export function InternetRadioPage() {
           {!isSearching &&
             search.status !== "error" &&
             searchResults.length === 0 && (
-              <p className="text-sm text-[color:var(--text-muted)]">
+              <p className="text-sm text-(--text-muted)">
                 No stations found. Try a different search term.
               </p>
             )}
@@ -395,12 +395,12 @@ export function InternetRadioPage() {
                   "broadcast-pill rounded-md px-4 py-1.5 text-sm font-medium transition-colors",
                   tab === t.key
                     ? "bg-app-surface text-white"
-                    : "text-[color:var(--text-secondary)] hover:text-[color:var(--text-secondary)]"
+                    : "text-(--text-secondary) hover:text-(--text-secondary)"
                 )}
               >
                 {t.label}
                 {t.key === "favorites" && favorites.length > 0 && (
-                  <span className="ml-1.5 text-xs text-[color:var(--text-muted)]">
+                  <span className="ml-1.5 text-xs text-(--text-muted)">
                     ({favorites.length})
                   </span>
                 )}
@@ -457,10 +457,10 @@ export function InternetRadioPage() {
                   >
                     <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
                   </svg>
-                  <p className="text-sm text-[color:var(--text-muted)]">
+                  <p className="text-sm text-(--text-muted)">
                     No favorites yet
                   </p>
-                  <p className="mt-1 text-xs text-[color:var(--text-muted)]">
+                  <p className="mt-1 text-xs text-(--text-muted)">
                     Click the heart icon on any station to save it here
                   </p>
                 </div>
@@ -490,10 +490,10 @@ export function InternetRadioPage() {
                     <circle cx="12" cy="12" r="10" />
                     <polyline points="12 6 12 12 16 14" />
                   </svg>
-                  <p className="text-sm text-[color:var(--text-muted)]">
+                  <p className="text-sm text-(--text-muted)">
                     No recent stations
                   </p>
-                  <p className="mt-1 text-xs text-[color:var(--text-muted)]">
+                  <p className="mt-1 text-xs text-(--text-muted)">
                     Stations you play will appear here
                   </p>
                 </div>
@@ -502,7 +502,7 @@ export function InternetRadioPage() {
                   <div className="mb-3 flex justify-end">
                     <button
                       onClick={clearRecent}
-                      className="text-xs text-[color:var(--text-muted)] transition-colors hover:text-[color:var(--text-secondary)]"
+                      className="text-xs text-(--text-muted) transition-colors hover:text-(--text-secondary)"
                     >
                       Clear history
                     </button>
@@ -525,7 +525,7 @@ export function InternetRadioPage() {
                     onClick={() => {
                       setSelectedCountry(null)
                     }}
-                    className="mb-4 flex items-center gap-1.5 text-sm text-[color:var(--text-secondary)] transition-colors hover:text-white"
+                    className="mb-4 flex items-center gap-1.5 text-sm text-(--text-secondary) transition-colors hover:text-white"
                   >
                     <svg
                       viewBox="0 0 16 16"
@@ -553,7 +553,7 @@ export function InternetRadioPage() {
                       hint={country.errorHint}
                     />
                   ) : countryStations.length === 0 ? (
-                    <p className="text-sm text-[color:var(--text-muted)]">
+                    <p className="text-sm text-(--text-muted)">
                       No stations found for this country.
                     </p>
                   ) : (
@@ -567,7 +567,7 @@ export function InternetRadioPage() {
               ) : countryIndex.status === "loading" ? (
                 <p
                   role="status"
-                  className="text-sm text-[color:var(--text-muted)]"
+                  className="text-sm text-(--text-muted)"
                 >
                   Loading countries…
                 </p>
@@ -578,7 +578,7 @@ export function InternetRadioPage() {
                   hint={countryIndex.errorHint}
                 />
               ) : countries.length === 0 ? (
-                <p className="text-sm text-[color:var(--text-muted)]">
+                <p className="text-sm text-(--text-muted)">
                   No countries available.
                 </p>
               ) : (
@@ -594,7 +594,7 @@ export function InternetRadioPage() {
                         <p className="truncate text-sm font-medium text-white">
                           {c.name}
                         </p>
-                        <p className="text-xs text-[color:var(--text-muted)]">
+                        <p className="text-xs text-(--text-muted)">
                           {c.station_count.toLocaleString()} stations
                         </p>
                       </div>
@@ -613,7 +613,7 @@ export function InternetRadioPage() {
                     onClick={() => {
                       setSelectedTag(null)
                     }}
-                    className="mb-4 flex items-center gap-1.5 text-sm text-[color:var(--text-secondary)] transition-colors hover:text-white"
+                    className="mb-4 flex items-center gap-1.5 text-sm text-(--text-secondary) transition-colors hover:text-white"
                   >
                     <svg
                       viewBox="0 0 16 16"
@@ -641,7 +641,7 @@ export function InternetRadioPage() {
                       hint={genre.errorHint}
                     />
                   ) : tagStations.length === 0 ? (
-                    <p className="text-sm text-[color:var(--text-muted)]">
+                    <p className="text-sm text-(--text-muted)">
                       No stations found for this genre.
                     </p>
                   ) : (
@@ -655,7 +655,7 @@ export function InternetRadioPage() {
               ) : tagIndex.status === "loading" ? (
                 <p
                   role="status"
-                  className="text-sm text-[color:var(--text-muted)]"
+                  className="text-sm text-(--text-muted)"
                 >
                   Loading genres…
                 </p>
@@ -666,7 +666,7 @@ export function InternetRadioPage() {
                   hint={tagIndex.errorHint}
                 />
               ) : tags.length === 0 ? (
-                <p className="text-sm text-[color:var(--text-muted)]">
+                <p className="text-sm text-(--text-muted)">
                   No genres available.
                 </p>
               ) : (
@@ -678,7 +678,7 @@ export function InternetRadioPage() {
                       className="broadcast-pill"
                     >
                       {t.name}
-                      <span className="ml-1.5 text-xs text-[color:var(--text-muted)]">
+                      <span className="ml-1.5 text-xs text-(--text-muted)">
                         {t.station_count.toLocaleString()}
                       </span>
                     </button>

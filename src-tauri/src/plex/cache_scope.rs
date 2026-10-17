@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 pub fn library_scope(server: &str, credential: &str, library: &str, base: &str) -> String {
     let tuple =
         serde_json::to_vec(&["plex", server, credential, library, base]).expect("string tuple");
-    format!("plex-{:x}", Sha256::digest(tuple))
+    format!("plex-{}", hex::encode(Sha256::digest(tuple)))
 }
 
 /// Match only cryptographically identical account/server/library owners across

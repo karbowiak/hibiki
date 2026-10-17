@@ -75,7 +75,7 @@ pub fn cache_key(
     if !src.is_empty() {
         use sha2::{Digest, Sha256};
         let source = serde_json::to_vec(&[scope, "source", src]).expect("image source tuple");
-        return format!("v2_{:x}.img", Sha256::digest(source));
+        return format!("v2_{}.img", hex::encode(Sha256::digest(source)));
     }
     legacy_cache_key(scope, entity_type, entity_id, src, name, artist)
 }
@@ -91,7 +91,7 @@ pub fn legacy_cache_key(
     use sha2::{Digest, Sha256};
     let tuple = serde_json::to_vec(&[scope, entity_type, entity_id, src, name, artist])
         .expect("string tuple");
-    format!("v2_{:x}.img", Sha256::digest(tuple))
+    format!("v2_{}.img", hex::encode(Sha256::digest(tuple)))
 }
 
 pub fn scope_matches(client: Option<&PlexClient>, requested: &str) -> bool {

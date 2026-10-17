@@ -2292,7 +2292,7 @@ mod control_tests {
 
     #[test]
     fn complete_silence_and_short_jingles_install_at_fixed_unity_but_incomplete_or_empty_files_do_not() {
-        use symphonia::core::audio::Channels;
+        use symphonia::core::audio::Position as Channels;
         let layout=Channels::FRONT_LEFT|Channels::FRONT_RIGHT;
         let silence=decode::tests::generate_layout_wav(44100,layout,44100,|_,_|0.0);
         let short=decode::tests::generate_layout_wav(44100,layout,4410,|frame,_|(frame as f32*0.08).sin()*0.2);
@@ -2398,8 +2398,8 @@ mod control_tests {
 
     #[test]
     fn equal_channel_counts_keep_distinct_center_and_lfe_assignments_from_the_file() {
-        use symphonia::core::audio::Channels;
-        for extra in [Channels::FRONT_CENTRE, Channels::LFE1] {
+        use symphonia::core::audio::Position as Channels;
+        for extra in [Channels::FRONT_CENTER, Channels::LFE1] {
             let layout = Channels::FRONT_LEFT | Channels::FRONT_RIGHT | extra;
             let source = decode::tests::generate_layout_wav(48000, layout, 128, |_, channel| {
                 if channel == extra {
@@ -2414,7 +2414,7 @@ mod control_tests {
             assert_eq!(result.channels, 2);
             assert_eq!(result.source_channels, 3);
             assert_eq!(result.initial_samples.len(), 256);
-            let expected = if extra == Channels::FRONT_CENTRE {
+            let expected = if extra == Channels::FRONT_CENTER {
                 0.25 * std::f32::consts::FRAC_1_SQRT_2
             } else {
                 0.0
@@ -2428,16 +2428,16 @@ mod control_tests {
 
     #[test]
     fn surround_content_survives_initial_decode_background_src_and_seeking() {
-        use symphonia::core::audio::Channels;
+        use symphonia::core::audio::Position as Channels;
         let layout = Channels::FRONT_LEFT
             | Channels::FRONT_RIGHT
-            | Channels::FRONT_CENTRE
+            | Channels::FRONT_CENTER
             | Channels::LFE1
             | Channels::REAR_LEFT
             | Channels::REAR_RIGHT;
         let source = decode::tests::generate_layout_wav(44100, layout, 44100 * 3, |frame, channel| {
             let frequency = match channel {
-                Channels::FRONT_CENTRE => 750.0,
+                Channels::FRONT_CENTER => 750.0,
                 Channels::REAR_LEFT => 250.0,
                 Channels::REAR_RIGHT => 500.0,
                 Channels::LFE1 => 80.0,

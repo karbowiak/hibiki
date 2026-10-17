@@ -794,14 +794,14 @@ export default function VisualizerFullscreen() {
                 <span className="text-white/70 whitespace-nowrap">Reactivity</span>
                 <input type="range" min={0} max={100} value={starfieldReactivity}
                   onChange={(e) => setStarfieldReactivity(Number(e.target.value))}
-                  className="w-24 accent-[var(--accent)]" />
+                  className="w-24 accent-(--accent)" />
                 <span className="text-white/60 w-8 text-right">{starfieldReactivity}%</span>
               </label>
               <label className="flex items-center gap-2">
                 <span className="text-white/70 whitespace-nowrap">Speed</span>
                 <input type="range" min={1} max={10} step={0.5} value={starfieldBaseSpeed}
                   onChange={(e) => setStarfieldBaseSpeed(Number(e.target.value))}
-                  className="w-20 accent-[var(--accent)]" />
+                  className="w-20 accent-(--accent)" />
                 <span className="text-white/60 w-4 text-right">{starfieldBaseSpeed}</span>
               </label>
             </div>
@@ -852,7 +852,7 @@ export default function VisualizerFullscreen() {
               </button>
               <button
                 onClick={() => useVisualizerStore.getState().setAutoCycleEnabled(!autoCycleEnabled)}
-                className={`transition-colors ${autoCycleEnabled ? "text-[var(--accent)]" : "hover:text-white"}`}
+                className={`transition-colors ${autoCycleEnabled ? "text-(--accent)" : "hover:text-white"}`}
                 aria-label={autoCycleEnabled ? "Disable auto-cycle" : "Enable auto-cycle"}
                 title={`Auto-cycle ${autoCycleEnabled ? "on" : "off"} (${autoCycleIntervalSec}s)`}
               >
@@ -862,7 +862,7 @@ export default function VisualizerFullscreen() {
               </button>
               <button
                 onClick={() => setPresetBrowserOpen(!presetBrowserOpen)}
-                className={`transition-colors ${presetBrowserOpen ? "text-[var(--accent)]" : "hover:text-white"}`}
+                className={`transition-colors ${presetBrowserOpen ? "text-(--accent)" : "hover:text-white"}`}
                 aria-label="Browse presets" title="Browse (B)"
               >
                 <svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor">

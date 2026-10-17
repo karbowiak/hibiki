@@ -442,7 +442,7 @@ export function ContextMenu() {
     return (
       <>
         <div
-          className="fixed inset-0 z-[9998]"
+          className="fixed inset-0 z-9998"
           onClick={close}
           onContextMenu={(e) => {
             e.preventDefault()
@@ -455,7 +455,7 @@ export function ContextMenu() {
           aria-modal="true"
           aria-label={`${data.title} actions`}
           style={{ left: menuPos.left, top: menuPos.top }}
-          className="app-overlay-surface fixed z-[9999] w-60 select-none rounded-lg border border-[var(--border)] bg-app-card py-1 text-sm shadow-2xl"
+          className="app-overlay-surface fixed z-9999 w-60 select-none rounded-lg border border-(--border) bg-app-card py-1 text-sm shadow-2xl"
         >
           {actionData.actions.map((action, index) => (
             <Item
@@ -467,7 +467,7 @@ export function ContextMenu() {
           {actionsError && (
             <p
               role="alert"
-              className="px-3 py-2 text-xs text-[var(--text-secondary)]"
+              className="px-3 py-2 text-xs text-(--text-secondary)"
             >
               {actionsError}
             </p>
@@ -717,7 +717,7 @@ export function ContextMenu() {
     return (
       <>
         <div
-          className="fixed inset-0 z-[9998]"
+          className="fixed inset-0 z-9998"
           onContextMenu={(e) => {
             e.preventDefault()
             close()
@@ -730,7 +730,7 @@ export function ContextMenu() {
           aria-modal="true"
           aria-label={`${data.title} actions`}
           style={{ left: menuPos.left, top: menuPos.top }}
-          className="app-overlay-surface fixed z-[9999] w-60 select-none rounded-lg border border-white/10 bg-app-card py-1 text-sm shadow-2xl"
+          className="app-overlay-surface fixed z-9999 w-60 select-none rounded-lg border border-white/10 bg-app-card py-1 text-sm shadow-2xl"
         >
           {renaming ? (
             <InlineRenameInput
@@ -794,7 +794,7 @@ export function ContextMenu() {
               {actionsError && (
                 <p
                   role="alert"
-                  className="px-3 py-2 text-sm text-[var(--text-primary)]"
+                  className="px-3 py-2 text-sm text-(--text-primary)"
                 >
                   {actionsError}
                 </p>
@@ -840,7 +840,7 @@ export function ContextMenu() {
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 z-[9998]"
+        className="fixed inset-0 z-9998"
         onContextMenu={(e) => {
           e.preventDefault()
           close()
@@ -855,7 +855,7 @@ export function ContextMenu() {
         aria-modal="true"
         aria-label={`${data.title} actions`}
         style={{ left: menuPos.left, top: menuPos.top }}
-        className="app-overlay-surface fixed z-[9999] w-60 select-none rounded-lg border border-white/10 bg-app-card py-1 text-sm shadow-2xl"
+        className="app-overlay-surface fixed z-9999 w-60 select-none rounded-lg border border-white/10 bg-app-card py-1 text-sm shadow-2xl"
       >
         {/* Play */}
         <Item

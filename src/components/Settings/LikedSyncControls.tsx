@@ -95,19 +95,19 @@ export function LikedSyncControls() {
   }
   return (
     <div className="space-y-4">
-      <p className="text-sm text-[var(--text-secondary)]">
+      <p className="text-sm text-(--text-secondary)">
         Manage likes shared with Plex, Last.fm and ListenBrainz, or rebuild
         imported likes and their library matches.
       </p>
       {confirm ? (
         <div
-          className="space-y-3 border-t border-[var(--border)] pt-4"
+          className="space-y-3 border-t border-(--border) pt-4"
           aria-label="Reset liked sync"
         >
-          <h3 className="text-sm font-semibold text-[var(--text-primary)]">
+          <h3 className="text-sm font-semibold text-(--text-primary)">
             Reset liked sync?
           </h3>
-          <p className="max-w-prose text-sm text-[var(--text-secondary)]">
+          <p className="max-w-prose text-sm text-(--text-secondary)">
             Imported likes and their matches will be rebuilt from your enabled
             services. Your local hearts and unlikes, star ratings, and sync
             connections stay saved.
@@ -161,22 +161,22 @@ export function LikedSyncControls() {
         </div>
       )}
       {!provider?.favorites && (
-        <p className="text-sm text-[var(--text-muted)]">
+        <p className="text-sm text-(--text-muted)">
           Connect a music library to manage liked sync.
         </p>
       )}
       {running && (
-        <p role="status" className="text-sm text-[var(--text-secondary)]">
+        <p role="status" className="text-sm text-(--text-secondary)">
           Syncing likes. You can reset once this finishes.
         </p>
       )}
       {pending && (
-        <p className="text-sm text-[var(--text-secondary)]">
+        <p className="text-sm text-(--text-secondary)">
           Review pending sync changes in Manage sync before resetting.
         </p>
       )}
       {message && (
-        <p role="status" className="text-sm text-[var(--text-secondary)]">
+        <p role="status" className="text-sm text-(--text-secondary)">
           {message}
         </p>
       )}

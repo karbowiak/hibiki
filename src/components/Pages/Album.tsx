@@ -345,7 +345,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
       >
         <div className="relative z-10 flex w-full flex-wrap items-end gap-6">
           {/* Album art — click to open modal */}
-          <div className="artwork-edit-frame relative flex flex-shrink-0 flex-col items-start">
+          <div className="artwork-edit-frame relative flex shrink-0 flex-col items-start">
             {thumbUrl ? (
               <button
                 type="button"
@@ -354,7 +354,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                   e.currentTarget.focus({ preventScroll: true })
                   setShowImageModal(true)
                 }}
-                className="h-52 w-52 flex-shrink-0 rounded-md shadow-2xl ring-2 ring-transparent transition-all duration-200 hover:ring-white/40 focus-visible:outline-none focus-visible:ring-white/70"
+                className="h-52 w-52 shrink-0 rounded-md shadow-2xl ring-2 ring-transparent transition-all duration-200 hover:ring-white/40 focus-visible:outline-none focus-visible:ring-white/70"
               >
                 <ArtworkImage
                   src={thumbUrl}
@@ -365,7 +365,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                 />
               </button>
             ) : (
-              <div className="h-52 w-52 flex-shrink-0 rounded-md bg-app-surface shadow-2xl" />
+              <div className="h-52 w-52 shrink-0 rounded-md bg-app-surface shadow-2xl" />
             )}
             <ArtworkSourcePicker
               kind="album"
@@ -385,7 +385,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
               <div className="media-detail-eyebrow">{formatLabel}</div>
               <DownloadBadge kind="album" id={albumId} />
             </div>
-            <h1 className="media-detail-title select-text break-words">
+            <h1 className="media-detail-title select-text wrap-break-word">
               {album.title}
             </h1>
 
@@ -394,7 +394,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                 <ArtworkImage
                   src={parentThumbUrl}
                   alt=""
-                  className="h-6 w-6 flex-shrink-0 rounded object-cover"
+                  className="h-6 w-6 shrink-0 rounded object-cover"
                 />
               )}
               <Link
@@ -584,11 +584,11 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                   return createPortal(
                     <>
                       <div
-                        className="fixed inset-0 z-[9998]"
+                        className="fixed inset-0 z-9998"
                         onClick={() => setMenuOpen(false)}
                       />
                       <div
-                        className="app-overlay-surface fixed z-[9999] max-h-[70vh] w-56 overflow-y-auto rounded-lg border border-[var(--border)] bg-app-surface py-1 shadow-xl"
+                        className="app-overlay-surface fixed z-9999 max-h-[70vh] w-56 overflow-y-auto rounded-lg border border-(--border) bg-app-surface py-1 shadow-xl"
                         style={{
                           top: (rect?.bottom ?? 0) + 4,
                           right: window.innerWidth - (rect?.right ?? 0),
@@ -611,7 +611,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                             setMenuOpen(false)
                             setEditOpen(true)
                           }}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-(--text-primary) hover:bg-(--bg-surface-hover)"
                         >
                           Edit metadata and sources…
                         </button>
@@ -621,7 +621,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                             setMenuOpen(false)
                             setVersionsOpen(true)
                           }}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-(--text-primary) hover:bg-(--bg-surface-hover)"
                         >
                           Compare album and media versions…
                         </button>
@@ -630,7 +630,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                             addNext(tracks)
                             setMenuOpen(false)
                           }}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-(--text-primary) hover:bg-(--bg-surface-hover)"
                         >
                           <svg
                             viewBox="0 0 24 24"
@@ -647,7 +647,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                             addToQueue(tracks)
                             setMenuOpen(false)
                           }}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-(--text-primary) hover:bg-(--bg-surface-hover)"
                         >
                           <svg
                             viewBox="0 0 24 24"
@@ -660,7 +660,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                           Add to queue
                         </button>
 
-                        <hr className="my-1 border-t border-[var(--border)]" />
+                        <hr className="my-1 border-t border-(--border)" />
 
                         {/* Rating */}
                         <StarRating
@@ -674,10 +674,10 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                           onRated={() => setMenuOpen(false)}
                         />
 
-                        <hr className="my-1 border-t border-[var(--border)]" />
+                        <hr className="my-1 border-t border-(--border)" />
 
                         {/* Share */}
-                        <div className="px-3 pb-0.5 pt-2 text-xs font-semibold text-[var(--text-secondary)]">
+                        <div className="px-3 pb-0.5 pt-2 text-xs font-semibold text-(--text-secondary)">
                           Share
                         </div>
                         <button
@@ -687,7 +687,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                             )
                             setMenuOpen(false)
                           }}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-(--text-primary) hover:bg-(--bg-surface-hover)"
                         >
                           <svg
                             viewBox="0 0 24 24"
@@ -706,7 +706,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                             )
                             setMenuOpen(false)
                           }}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-(--text-primary) hover:bg-(--bg-surface-hover)"
                         >
                           <svg
                             viewBox="0 0 24 24"
@@ -724,7 +724,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                               void open(deezerData.deezer_url)
                               setMenuOpen(false)
                             }}
-                            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-(--text-primary) hover:bg-(--bg-surface-hover)"
                           >
                             <svg
                               viewBox="0 0 24 24"
@@ -738,13 +738,13 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                           </button>
                         )}
 
-                        <hr className="my-1 border-t border-[var(--border)]" />
+                        <hr className="my-1 border-t border-(--border)" />
 
                         {/* Navigation */}
                         <Link
                           href={`/artist/${album.artistId}`}
                           onClick={() => setMenuOpen(false)}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-(--text-primary) hover:bg-(--bg-surface-hover)"
                         >
                           <svg
                             viewBox="0 0 24 24"
@@ -760,8 +760,8 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                         {/* Debug */}
                         {debugEnabled && (
                           <>
-                            <hr className="my-1 border-t border-[var(--border)]" />
-                            <div className="px-3 pb-0.5 pt-2 text-xs font-semibold text-[var(--text-secondary)]">
+                            <hr className="my-1 border-t border-(--border)" />
+                            <div className="px-3 pb-0.5 pt-2 text-xs font-semibold text-(--text-secondary)">
                               Debug
                             </div>
                             <button
@@ -769,7 +769,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                                 showDebugPanel("album", album)
                                 setMenuOpen(false)
                               }}
-                              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-(--text-primary) hover:bg-(--bg-surface-hover)"
                             >
                               <svg
                                 viewBox="0 0 24 24"
@@ -849,19 +849,19 @@ export function AlbumPage({ albumId }: { albumId: string }) {
       {/* Review */}
       {review && (
         <div className="px-8 pt-6">
-          <div className="max-w-2xl rounded-lg border border-[var(--border)] bg-app-surface p-4">
+          <div className="max-w-2xl rounded-lg border border-(--border) bg-app-surface p-4">
             {review.tag && (
-              <div className="mb-2 text-sm font-semibold text-[color:var(--text-primary)]">
+              <div className="mb-2 text-sm font-semibold text-(--text-primary)">
                 {review.tag}
               </div>
             )}
             {review.text && (
-              <p className="line-clamp-4 text-sm leading-relaxed text-[color:var(--text-secondary)]">
+              <p className="line-clamp-4 text-sm leading-relaxed text-(--text-secondary)">
                 {review.text}
               </p>
             )}
             {review.source && (
-              <div className="mt-2 text-xs text-[color:var(--text-muted)]">
+              <div className="mt-2 text-xs text-(--text-muted)">
                 — {review.source}
               </div>
             )}

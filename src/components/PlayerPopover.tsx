@@ -114,7 +114,7 @@ export default function PlayerPopover({
           role="dialog"
           aria-label={label}
           tabIndex={-1}
-          className="app-overlay-surface playback-popover fixed overflow-auto outline-none z-[300] rounded-xl bg-app-card border border-[var(--border)] shadow-2xl shadow-black/40 backdrop-blur-lg select-none"
+          className="app-overlay-surface playback-popover fixed overflow-auto outline-none z-300 rounded-xl bg-app-card border border-(--border) shadow-2xl shadow-black/40 backdrop-blur-lg select-none"
           style={{
             ...palette,
             bottom: pos.bottom,
@@ -131,7 +131,7 @@ export default function PlayerPopover({
       )}
 
       {/* Toggle button */}
-      <div className={`relative flex flex-col items-center ${wide ? "min-w-0" : "flex-shrink-0"}`}>
+      <div className={`relative flex flex-col items-center ${wide ? "min-w-0" : "shrink-0"}`}>
         <button
           ref={buttonRef}
           onClick={toggle}

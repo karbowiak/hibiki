@@ -87,7 +87,7 @@ export default function MilkdropPresetBrowser() {
               type="checkbox"
               checked={autoCycleEnabled}
               onChange={(e) => setAutoCycleEnabled(e.target.checked)}
-              className="accent-[var(--accent)]"
+              className="accent-(--accent)"
             />
             Auto-cycle
           </label>
@@ -144,7 +144,7 @@ export default function MilkdropPresetBrowser() {
               aria-pressed={tab === t}
               className={`flex-1 py-2 text-xs font-medium transition-colors ${
                 tab === t
-                  ? "text-[var(--accent)] border-b-2 border-[var(--accent)]"
+                  ? "text-(--accent) border-b-2 border-(--accent)"
                   : "text-white/50 hover:text-white/80"
               }`}
             >
@@ -166,7 +166,7 @@ export default function MilkdropPresetBrowser() {
                   key={name}
                   className={`w-full flex items-center gap-2 px-3 text-left text-xs transition-colors ${
                     isActive
-                      ? "bg-[var(--accent)]/20 text-[var(--accent)]"
+                      ? "bg-(--accent)/20 text-(--accent)"
                       : "text-white/70 hover:bg-white/5 hover:text-white"
                   }`}
                 >

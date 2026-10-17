@@ -308,11 +308,11 @@ function SearchBasedMixBuilder({
                   <ArtworkImage
                     src={thumb}
                     alt=""
-                    className={"h-9 w-9 flex-shrink-0 rounded-md object-cover"}
+                    className={"h-9 w-9 shrink-0 rounded-md object-cover"}
                   />
                 ) : (
                   <div
-                    className={"h-9 w-9 flex-shrink-0 rounded-md bg-white/10"}
+                    className={"h-9 w-9 shrink-0 rounded-md bg-white/10"}
                   />
                 )}
                 <div className="min-w-0 flex-1">
@@ -330,7 +330,7 @@ function SearchBasedMixBuilder({
                 </div>
                 <div
                   className={clsx(
-                    "flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border transition-colors",
+                    "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-colors",
                     isSeeded ? "border-accent bg-accent" : "border-white/30"
                   )}
                 >
@@ -392,12 +392,12 @@ function SearchBasedMixBuilder({
                       src={thumb}
                       alt=""
                       className={
-                        "h-5 w-5 flex-shrink-0 rounded-sm object-cover"
+                        "h-5 w-5 shrink-0 rounded-sm object-cover"
                       }
                     />
                   ) : (
                     <div
-                      className={"h-5 w-5 flex-shrink-0 rounded-sm bg-white/20"}
+                      className={"h-5 w-5 shrink-0 rounded-sm bg-white/20"}
                     />
                   )}
                   <span className="max-w-[120px] truncate">{item.title}</span>
@@ -506,7 +506,7 @@ export function TagGridMixBuilder({
         }}
         aria-label={`Filter ${tabType}s`}
         placeholder={`Filter ${tabType}s…`}
-        className="w-full max-w-xs rounded-lg bg-app-surface px-4 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] transition-colors"
+        className="w-full max-w-xs rounded-lg bg-app-surface px-4 py-2 text-sm text-(--text-primary) placeholder:text-(--text-secondary) transition-colors"
         autoComplete="off"
         spellCheck={false}
       />

@@ -68,7 +68,7 @@ import {
 } from "../../playlistSync/creation"
 const NEW_REMOTE = "__new_listenbrainz_playlist__"
 const button =
-  "rounded-lg border border-[var(--border)] bg-app-surface px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
+  "rounded-lg border border-(--border) bg-app-surface px-3 py-2 text-sm text-(--text-primary) hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
 export interface LinkedPlaylistManagerServices {
   creationJournal?: SyncCreationJournal
   account(): Promise<PlaylistAccount>
@@ -930,7 +930,7 @@ export function LinkedPlaylistManager({
           </button>
         ))}
       </div>
-      <p className="mb-4 text-sm text-[var(--text-secondary)]">
+      <p className="mb-4 text-sm text-(--text-secondary)">
         Choose which playlist updates the other. Sync runs manually unless you
         enable automatic checks while Hibiki is open and online. Conflicting
         edits pause for your review.
@@ -950,7 +950,7 @@ export function LinkedPlaylistManager({
             {error && (
               <div
                 role="alert"
-                className="mb-4 text-sm text-[var(--text-primary)]"
+                className="mb-4 text-sm text-(--text-primary)"
               >
                 {error}
                 <button
@@ -1097,14 +1097,14 @@ export function LinkedPlaylistManager({
                   </select>
                 </label>
                 {smartLibrary(libraryId) && (
-                  <p className="text-sm text-[var(--text-secondary)]">
+                  <p className="text-sm text-(--text-secondary)">
                     Smart playlists are read-only snapshots. Plex → ListenBrainz
                     copies their current songs; sync never changes the smart
                     playlist or its rules.
                   </p>
                 )}
                 {remoteId && !remoteWritable(remoteId) && (
-                  <p className="text-sm text-[var(--text-secondary)]">
+                  <p className="text-sm text-(--text-secondary)">
                     This ListenBrainz playlist is read-only. Sync can read it
                     and update Plex, but will never change the remote playlist.
                   </p>
@@ -1143,7 +1143,7 @@ export function LinkedPlaylistManager({
                     ? "Follow new weekly editions automatically while Hibiki is open"
                     : "Automatically check this link while Hibiki is open"}
                 </label>
-                <p className="text-xs text-[var(--text-secondary)]">
+                <p className="text-xs text-(--text-secondary)">
                   {weeklySource
                     ? "Weekly following is opt-in. New editions update while Hibiki is open, or on the next launch; Hibiki cannot run scheduled updates while closed."
                     : "Automatic updates are off by default."}{" "}
@@ -1193,7 +1193,7 @@ export function LinkedPlaylistManager({
             {!preview && tab === "review" && (
               <p
                 role="status"
-                className="rounded-xl border border-[var(--border)] p-4"
+                className="rounded-xl border border-(--border) p-4"
               >
                 Choose a source and destination in Setup, or review a retained
                 link below.
@@ -1207,13 +1207,13 @@ export function LinkedPlaylistManager({
                 <h3 className="font-semibold">
                   Review {preview.plan.rows.length} ordered occurrences
                 </h3>
-                <p className="text-sm text-[var(--text-secondary)]">
+                <p className="text-sm text-(--text-secondary)">
                   The initial{" "}
                   {preview.source === "library" ? "library" : "ListenBrainz"}{" "}
                   version will update the other playlist. Confirm every
                   recording; unknown matches are never guessed.
                 </p>
-                <details className="rounded-lg border border-[var(--border)] p-3">
+                <details className="rounded-lg border border-(--border) p-3">
                   <summary className="cursor-pointer text-sm">
                     Current destination:{" "}
                     {
@@ -1356,7 +1356,7 @@ export function LinkedPlaylistManager({
             {otherLinks.length > 0 && (
               <section
                 aria-label="Previous connection links"
-                className="mt-6 rounded-lg border border-[var(--border)] p-3"
+                className="mt-6 rounded-lg border border-(--border) p-3"
               >
                 <p className="text-sm">
                   {otherLinks.length} links belong to a different library
@@ -1381,7 +1381,7 @@ export function LinkedPlaylistManager({
                           Review connection for {available.title}
                         </button>
                       ) : (
-                        <p className="text-xs text-[var(--text-secondary)]">
+                        <p className="text-xs text-(--text-secondary)">
                           Reconnect the original connection to review its
                           unavailable playlist or unresolved update.
                         </p>
@@ -1394,7 +1394,7 @@ export function LinkedPlaylistManager({
             {rebindView && (
               <section
                 aria-label="Review connection identity"
-                className="mt-4 space-y-3 rounded-lg border border-[var(--border)] p-3"
+                className="mt-4 space-y-3 rounded-lg border border-(--border) p-3"
               >
                 <h3 className="font-semibold">
                   Current library playlist: {rebindView.library.title}
@@ -1441,14 +1441,14 @@ export function LinkedPlaylistManager({
               className="mt-6 space-y-4"
             >
               {links.length === 0 ? (
-                <p className="text-sm text-[var(--text-muted)]">
+                <p className="text-sm text-(--text-muted)">
                   No linked playlists for these accounts.
                 </p>
               ) : (
                 links.map((link) => (
                   <article
                     key={link.id}
-                    className="rounded-lg border border-[var(--border)] p-3"
+                    className="rounded-lg border border-(--border) p-3"
                   >
                     <h3 className="font-semibold">
                       {link.baseline.library.title}{" "}
@@ -1471,14 +1471,14 @@ export function LinkedPlaylistManager({
                               ? `Syncing · ${link.job.completedSteps} verified steps`
                               : "Enabled"}
                     </p>
-                    <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                    <p className="mt-1 text-xs text-(--text-secondary)">
                       {linkedAutomaticSync(link)
                         ? "Automatic checks on"
                         : "Manual sync · automatic checks off"}
                     </p>
                     {(smartLibrary(link.libraryPlaylistId) ||
                       link.baseline.library.readOnly) && (
-                      <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                      <p className="mt-2 text-sm text-(--text-secondary)">
                         Smart snapshot · Plex → ListenBrainz only. Sync never
                         changes this playlist’s songs or rules in Plex.
                       </p>
@@ -1507,7 +1507,7 @@ export function LinkedPlaylistManager({
                       </p>
                     )}
                     {!!link.incomplete?.lookupLimits?.length && (
-                      <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                      <p className="mt-2 text-sm text-(--text-secondary)">
                         Some catalogue lookups were incomplete or unavailable.
                         Those songs remain for review; this does not mean they
                         are missing from your library. Retry lookups or search
@@ -1636,7 +1636,7 @@ export function LinkedPlaylistManager({
                       {link.job?.step || link.job?.descriptionStep ? (
                         <>
                           {recoveryViews[link.id] && (
-                            <div className="basis-full rounded-lg border border-[var(--border)] p-3">
+                            <div className="basis-full rounded-lg border border-(--border) p-3">
                               <p className="text-sm font-medium">
                                 Current destination order ·{" "}
                                 {recoveryViews[link.id].items.length}{" "}
@@ -1669,7 +1669,7 @@ export function LinkedPlaylistManager({
                                   </dd>
                                 </dl>
                               )}
-                              <p className="mt-2 text-xs text-[var(--text-secondary)]">
+                              <p className="mt-2 text-xs text-(--text-secondary)">
                                 The earlier request may have applied. Retaining
                                 this review records the uncertain intent and
                                 pauses updates; a new ordered preview is
@@ -1721,7 +1721,7 @@ export function LinkedPlaylistManager({
               )}
             </section>
             {tab === "review" && playlistId && (
-              <div className="mt-6 border-t border-[var(--border)] pt-5">
+              <div className="mt-6 border-t border-(--border) pt-5">
                 <h3 className="mb-3 font-semibold">Retained copy recovery</h3>
                 <PlaylistCopyReceipts
                   embedded

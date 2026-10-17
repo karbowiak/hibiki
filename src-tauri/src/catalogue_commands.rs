@@ -119,9 +119,7 @@ pub(crate) async fn save_checked<T>(
 }
 pub(crate) fn playlist_revision(item: &serde_json::Value) -> String {
     use sha2::{Digest, Sha256};
-    format!(
-        "{:x}",
-        Sha256::digest(
+    hex::encode(Sha256::digest(
             serde_json::to_vec(&serde_json::json!([
                 item["leafCount"],
                 item["duration"],
@@ -129,8 +127,7 @@ pub(crate) fn playlist_revision(item: &serde_json::Value) -> String {
                 item["content"]
             ]))
             .unwrap_or_default()
-        )
-    )
+        ))
 }
 pub(crate) async fn verify_playlist_documents(
     client: &PlexClient,

@@ -14,13 +14,13 @@ export function TheAudioDbSettings({ embedded = false }: { embedded?: boolean } 
   }, [status?.revision])
   return (
     <section
-      className={embedded ? "space-y-3" : "mt-6 rounded-xl border border-[var(--border)] p-4"}
+      className={embedded ? "space-y-3" : "mt-6 rounded-xl border border-(--border) p-4"}
       aria-labelledby={embedded ? undefined : `${id}-title`}
     >
       {!embedded && <h3 id={`${id}-title`} className="font-semibold">
         TheAudioDB
       </h3>}
-      <p className="mt-1 text-sm text-[var(--text-muted)]">
+      <p className="mt-1 text-sm text-(--text-muted)">
         Artist biographies, album and track descriptions, genres and artwork
         from TheAudioDB. A premium V2 API key is required.
       </p>
@@ -44,7 +44,7 @@ export function TheAudioDbSettings({ embedded = false }: { embedded?: boolean } 
           value={key}
           onChange={(event) => setKey(event.target.value)}
           disabled={loading}
-          className="rounded-lg border border-[var(--border)] bg-app-bg px-3 py-2"
+          className="rounded-lg border border-(--border) bg-app-bg px-3 py-2"
         />
         <label className="flex items-center gap-2 text-sm">
           <input
@@ -55,7 +55,7 @@ export function TheAudioDbSettings({ embedded = false }: { embedded?: boolean } 
           />
           Enable TheAudioDB
         </label>
-        <p className="text-xs text-[var(--text-muted)]">
+        <p className="text-xs text-(--text-muted)">
           Requests use TheAudioDB’s official server. Saving does not contact it.{" "}
           <a
             href="https://www.theaudiodb.com/pricing"
@@ -76,7 +76,7 @@ export function TheAudioDbSettings({ embedded = false }: { embedded?: boolean } 
         <div className="flex flex-wrap gap-2">
           <button
             disabled={loading || !status}
-            className="rounded-lg bg-accent px-3 py-2 text-sm text-[var(--artwork-ink,var(--accent-foreground,#111))] disabled:opacity-50"
+            className="rounded-lg bg-accent px-3 py-2 text-sm text-(--artwork-ink,var(--accent-foreground,#111)) disabled:opacity-50"
           >
             Save settings
           </button>
@@ -84,7 +84,7 @@ export function TheAudioDbSettings({ embedded = false }: { embedded?: boolean } 
             type="button"
             disabled={loading}
             onClick={() => void load()}
-            className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+            className="rounded-lg border border-(--border) px-3 py-2 text-sm"
           >
             Reload settings
           </button>
@@ -95,7 +95,7 @@ export function TheAudioDbSettings({ embedded = false }: { embedded?: boolean } 
               onClick={async () => {
                 if (await configure({ enabled: false, clear: true })) setKey("")
               }}
-              className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+              className="rounded-lg border border-(--border) px-3 py-2 text-sm"
             >
               Clear saved key
             </button>

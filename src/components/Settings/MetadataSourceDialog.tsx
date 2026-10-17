@@ -58,7 +58,7 @@ export function MetadataSourceDialog({
       ) : Settings ? (
         <Settings />
       ) : (
-        <div className="space-y-3 text-sm text-[var(--text-secondary)]">
+        <div className="space-y-3 text-sm text-(--text-secondary)">
           <p>
             This public source does not need an API key or a separate
             connection.

@@ -137,7 +137,7 @@ export function ActivityIndicator() {
             ? `${active} active operation${active === 1 ? "" : "s"}`
             : "No active operations"
         }
-        className={`topbar-control topbar-icon-control relative flex items-center justify-center rounded-full text-[var(--text-secondary)] transition-colors hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${isOpen ? "bg-app-surface-hover" : "bg-app-surface"}`}
+        className={`topbar-control topbar-icon-control relative flex items-center justify-center rounded-full text-(--text-secondary) transition-colors hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${isOpen ? "bg-app-surface-hover" : "bg-app-surface"}`}
       >
         <IconDisc
           aria-hidden="true"
@@ -154,17 +154,17 @@ export function ActivityIndicator() {
             role="dialog"
             aria-label="Activity"
             style={position}
-            className="app-overlay-surface fixed z-[9999] max-h-[calc(100vh-140px)] overflow-y-auto rounded-xl border border-[var(--border)] bg-app-surface shadow-2xl"
+            className="app-overlay-surface fixed z-9999 max-h-[calc(100vh-140px)] overflow-y-auto rounded-xl border border-(--border) bg-app-surface shadow-2xl"
           >
-            <div className="border-b border-[var(--border)] px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+            <div className="border-b border-(--border) px-4 py-3 text-xs font-semibold uppercase tracking-wider text-(--text-secondary)">
               Activity
             </div>
             {!activities.length ? (
-              <p className="px-4 py-4 text-sm text-[var(--text-secondary)]">
+              <p className="px-4 py-4 text-sm text-(--text-secondary)">
                 No active operations.
               </p>
             ) : (
-              <ul className="divide-y divide-[var(--border)]">
+              <ul className="divide-y divide-(--border)">
                 {activities.map((activity) => {
                   const Icon =
                     activity.state === "error"
@@ -184,14 +184,14 @@ export function ActivityIndicator() {
                       <Icon
                         aria-hidden="true"
                         size={17}
-                        className={`mt-0.5 shrink-0 ${activity.busy ? "animate-spin text-accent" : "text-[var(--text-secondary)]"}`}
+                        className={`mt-0.5 shrink-0 ${activity.busy ? "animate-spin text-accent" : "text-(--text-secondary)"}`}
                       />
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm text-[var(--text-primary)]">
+                        <p className="text-sm text-(--text-primary)">
                           {activity.label}
                         </p>
                         {activity.detail && (
-                          <p className="mt-1 whitespace-pre-line text-xs leading-relaxed text-[var(--text-secondary)]">
+                          <p className="mt-1 whitespace-pre-line text-xs leading-relaxed text-(--text-secondary)">
                             {activity.detail}
                           </p>
                         )}
@@ -199,7 +199,7 @@ export function ActivityIndicator() {
                           <button
                             type="button"
                             onClick={activity.retry}
-                            className="mt-2 rounded-md border border-[var(--border)] px-2 py-1 text-xs text-[var(--text-primary)] hover:bg-app-surface-hover"
+                            className="mt-2 rounded-md border border-(--border) px-2 py-1 text-xs text-(--text-primary) hover:bg-app-surface-hover"
                           >
                             Retry indexing
                           </button>

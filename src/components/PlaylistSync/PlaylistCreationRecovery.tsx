@@ -11,7 +11,7 @@ import {
 } from "../../playlistSync/creation"
 import { useCopyOwner } from "./useCopyOwner"
 const button =
-  "rounded-lg border border-[var(--border)] px-3 py-2 text-sm hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
+  "rounded-lg border border-(--border) px-3 py-2 text-sm hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
 /** Recovery performs reads and local retention only; it never repeats playlist creation. */
 export function PlaylistCreationRecovery({
   playlists,
@@ -58,10 +58,10 @@ export function PlaylistCreationRecovery({
   return (
     <section
       aria-label="Playlist creation recovery"
-      className="mb-5 space-y-3 rounded-xl border border-[var(--border)] bg-app-surface p-4"
+      className="mb-5 space-y-3 rounded-xl border border-(--border) bg-app-surface p-4"
     >
       <h3 className="font-semibold">Creation needs inspection</h3>
-      <p className="text-sm text-[var(--text-secondary)]">
+      <p className="text-sm text-(--text-secondary)">
         A previous create may have reached Plex or ListenBrainz. Recover its
         original destination before requesting another playlist.
       </p>
@@ -125,8 +125,8 @@ function RecoveryRow({
     }
   }
   return (
-    <article className="rounded-lg border border-[var(--border)] p-3">
-      <h4 className="break-words font-medium">{intent.title}</h4>
+    <article className="rounded-lg border border-(--border) p-3">
+      <h4 className="wrap-break-word font-medium">{intent.title}</h4>
       {intent.destinationId ? (
         <p className="mt-2 text-sm">
           The original destination ID is retained. Recovery checks it without

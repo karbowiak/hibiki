@@ -1,21 +1,19 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{decode_error, Result};
-use symphonia_core::io::ReadBytes;
-
-use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, EdtsAtom, MdiaAtom, TkhdAtom};
+use crate::atoms::{
+    Atom, AtomHeader, AtomIterator, AtomType, EdtsAtom, MdiaAtom, ReadAtom, Result, TkhdAtom,
+    decode_error,
+};
 
 /// Track atom.
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct TrakAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Track header atom.
     pub tkhd: TkhdAtom,
     /// Optional, edit list atom.
@@ -25,40 +23,36 @@ pub struct TrakAtom {
 }
 
 impl Atom for TrakAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let mut iter = AtomIterator::new(reader, header);
-
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
         let mut tkhd = None;
         let mut edts = None;
         let mut mdia = None;
 
-        while let Some(header) = iter.next()? {
-            match header.atype {
+        while let Some(header) = it.next_header()? {
+            match header.atom_type {
                 AtomType::TrackHeader => {
-                    tkhd = Some(iter.read_atom::<TkhdAtom>()?);
+                    tkhd = Some(it.read_atom::<TkhdAtom>()?);
                 }
                 AtomType::Edit => {
-                    edts = Some(iter.read_atom::<EdtsAtom>()?);
+                    edts = Some(it.read_atom::<EdtsAtom>()?);
                 }
                 AtomType::Media => {
-                    mdia = Some(iter.read_atom::<MdiaAtom>()?);
+                    mdia = Some(it.read_atom::<MdiaAtom>()?);
                 }
                 _ => (),
             }
         }
 
-        if tkhd.is_none() {
-            return decode_error("isomp4: missing tkhd atom");
-        }
+        let Some(tkhd) = tkhd
+        else {
+            return decode_error("isomp4 (trak): missing tkhd atom");
+        };
 
-        if mdia.is_none() {
-            return decode_error("isomp4: missing mdia atom");
-        }
+        let Some(mdia) = mdia
+        else {
+            return decode_error("isomp4 (trak): missing mdia atom");
+        };
 
-        Ok(TrakAtom { header, tkhd: tkhd.unwrap(), edts, mdia: mdia.unwrap() })
+        Ok(TrakAtom { tkhd, edts, mdia })
     }
 }

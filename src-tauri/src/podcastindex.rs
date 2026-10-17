@@ -57,7 +57,7 @@ fn auth_headers() -> Vec<(&'static str, String)> {
     let epoch_str = epoch.to_string();
 
     let hash_input = format!("{}{}{}", PI_KEY, PI_SECRET, epoch_str);
-    let hash = format!("{:x}", Sha1::digest(hash_input.as_bytes()));
+    let hash = hex::encode(Sha1::digest(hash_input.as_bytes()));
 
     vec![
         ("X-Auth-Key", PI_KEY.to_string()),

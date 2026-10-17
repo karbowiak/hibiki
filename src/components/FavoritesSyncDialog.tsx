@@ -85,7 +85,7 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
       className="max-w-3xl"
     >
       <div className="space-y-5 p-5">
-        <p className="text-sm text-[var(--text-secondary)]">
+        <p className="text-sm text-(--text-secondary)">
           Each enabled connection syncs both ways. The first sync merges
           existing favorites; later likes and unlikes are shared between
           connected services. Three stars or more means liked in Hibiki.
@@ -103,7 +103,7 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
             return (
               <section
                 key={service}
-                className="rounded-xl border border-[var(--border)] bg-app-surface p-4"
+                className="rounded-xl border border-(--border) bg-app-surface p-4"
               >
                 <label className="flex items-center justify-between gap-4 font-semibold">
                   {service === "plex"
@@ -119,7 +119,7 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
                     }
                   />
                 </label>
-                <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                <p className="mt-2 text-sm text-(--text-secondary)">
                   {!connected
                     ? `Connect ${names[service]} in Settings to enable sync.`
                     : service === "plex"
@@ -132,7 +132,7 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
                     <label className="relative mt-3 block text-sm">
                       Plex destination
                       <select
-                        className="mt-1 min-h-10 w-full appearance-none rounded-lg border border-[var(--border)] bg-app-card px-3 py-2 pr-9"
+                        className="mt-1 min-h-10 w-full appearance-none rounded-lg border border-(--border) bg-app-card px-3 py-2 pr-9"
                         value={selected}
                         disabled={busy || enabled}
                         onChange={(event) => setSelected(event.target.value)}
@@ -153,7 +153,7 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
                     </label>
                   )}
                 {binding?.playlistId && (
-                  <p className="mt-2 text-xs text-[var(--text-muted)]">
+                  <p className="mt-2 text-xs text-(--text-muted)">
                     Connected playlist:{" "}
                     {playlists.find((item) => item.id === binding.playlistId)
                       ?.title ?? "Liked Songs"}
@@ -225,18 +225,18 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
             )
           }
         )}
-        <p className="text-sm text-[var(--text-secondary)]">
+        <p className="text-sm text-(--text-secondary)">
           Three stars or more means liked. Lowering a rating below three stars
           or clearing it also unlikes the song in connected services. Imported
           likes display three stars in Hibiki and never write a rating to Plex.
         </p>
-        <p className="text-xs text-[var(--text-muted)]">
+        <p className="text-xs text-(--text-muted)">
           Existing ratings and original liked dates are retained. Explicit star
           changes update the local liked state.
         </p>
         {collection.settings.listenbrainz && unresolvedIds > 0 && (
           <section className="space-y-3">
-            <p className="text-sm text-[var(--text-secondary)]">
+            <p className="text-sm text-(--text-secondary)">
               {unresolvedIds} favorites still need recording IDs before they can
               be sent to ListenBrainz. They remain saved in Hibiki.
             </p>
@@ -290,7 +290,7 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
         )}
         {idReview && (
           <form
-            className="space-y-3 rounded-xl border border-[var(--border)] p-4"
+            className="space-y-3 rounded-xl border border-(--border) p-4"
             onSubmit={(event) => {
               event.preventDefault()
               if (!current() || busy) return
@@ -304,12 +304,12 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
             }}
           >
             <h3 className="font-semibold">Recording ID for {idReview.title}</h3>
-            <p className="text-sm text-[var(--text-secondary)]">
+            <p className="text-sm text-(--text-secondary)">
               Paste the MusicBrainz recording ID you have checked for this song.
             </p>
             <input
               aria-label="MusicBrainz recording ID"
-              className="w-full rounded-lg border border-[var(--border)] bg-app-surface p-2"
+              className="w-full rounded-lg border border-(--border) bg-app-surface p-2"
               maxLength={36}
               value={recordingId}
               onChange={(event) => setRecordingId(event.target.value)}
@@ -383,7 +383,7 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
               ))}
             </ul>
             {missing.length > 100 && (
-              <p className="mt-2 text-sm text-[var(--text-muted)]">
+              <p className="mt-2 text-sm text-(--text-muted)">
                 Showing the first 100. Every unmatched song is retained.
               </p>
             )}
@@ -398,7 +398,7 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
           </p>
         )}
         <div className="flex items-center justify-between gap-3">
-          <span className="text-sm text-[var(--text-muted)]">
+          <span className="text-sm text-(--text-muted)">
             {running
               ? "Syncing favorites in the background…"
               : "Likes are available locally, including offline."}
@@ -446,7 +446,7 @@ function FavoriteMatch({
     useProviderStore.getState().provider === provider &&
     provider?.playbackSession === owner
   return (
-    <section className="space-y-3 rounded-xl border border-[var(--border)] p-4">
+    <section className="space-y-3 rounded-xl border border-(--border) p-4">
       <div className="flex items-center justify-between">
         <h3 className="font-semibold">Match {entry.title || "recording"}</h3>
         <button className="media-secondary" onClick={onClose}>
@@ -504,7 +504,7 @@ function FavoriteMatch({
               }}
             >
               {track.artistName} — {track.title}
-              <span className="block text-xs text-[var(--text-muted)]">
+              <span className="block text-xs text-(--text-muted)">
                 {track.albumName} · {track.codec} {track.bitrate}
               </span>
             </button>

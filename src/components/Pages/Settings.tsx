@@ -115,7 +115,7 @@ function Toggle({ label, value, onChange }: { label: string; value: boolean; onC
       aria-checked={value}
       onClick={() => onChange(!value)}
       className={clsx(
-        "relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent",
+        "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent",
         value ? "bg-accent" : "bg-white/20"
       )}
     >
@@ -183,16 +183,16 @@ function SettingRow({
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
           <p className="text-sm font-medium text-white/80">{label}</p>
-          {description && <p className="text-xs text-[var(--text-secondary)] mt-0.5">{description}</p>}
+          {description && <p className="text-xs text-(--text-secondary) mt-0.5">{description}</p>}
         </div>
-        <div className="flex-shrink-0">{children}</div>
+        <div className="shrink-0">{children}</div>
       </div>
     )
   }
   return (
     <div>
       <p className="text-sm font-medium text-white/80 mb-1.5">{label}</p>
-      {description && <p className="text-xs text-[var(--text-secondary)] mb-2.5">{description}</p>}
+      {description && <p className="text-xs text-(--text-secondary) mb-2.5">{description}</p>}
       {children}
     </div>
   )
@@ -214,19 +214,19 @@ function SettingCard({
   return (
     <div
       className={clsx(
-        "settings-card rounded-xl border border-[var(--border)] p-5",
+        "settings-card rounded-xl border border-(--border) p-5",
         disabled && "opacity-40 pointer-events-none select-none"
       )}
     >
       <div className="flex items-center gap-3 mb-4">
         <h2 className="text-sm font-semibold text-white">{title}</h2>
         {badge && (
-          <span className="rounded-full bg-white/8 px-2 py-0.5 text-xs font-medium text-[var(--text-secondary)]">
+          <span className="rounded-full bg-white/8 px-2 py-0.5 text-xs font-medium text-(--text-secondary)">
             {badge}
           </span>
         )}
       </div>
-      {description && <p className="text-xs text-[var(--text-secondary)] -mt-2.5 mb-4">{description}</p>}
+      {description && <p className="text-xs text-(--text-secondary) -mt-2.5 mb-4">{description}</p>}
       {children}
     </div>
   )
@@ -288,7 +288,7 @@ function AppearanceSection() {
             return (
               <div key={cat}>
                 {cat !== "default" && (
-                  <p className="text-xs font-bold uppercase tracking-[0.15em] text-[var(--text-secondary)] mb-1.5">
+                  <p className="text-xs font-bold uppercase tracking-[0.15em] text-(--text-secondary) mb-1.5">
                     {cat === "sans-serif" ? "Sans-serif" : "Monospace"}
                   </p>
                 )}
@@ -347,7 +347,7 @@ function AppearanceSection() {
                     </svg>
                   )}
                 </span>
-                <span className={`text-xs transition-colors ${active ? "text-white" : "text-[var(--text-secondary)] group-hover:text-white/70"}`}>
+                <span className={`text-xs transition-colors ${active ? "text-white" : "text-(--text-secondary) group-hover:text-white/70"}`}>
                   {preset.name}
                 </span>
               </button>
@@ -358,11 +358,11 @@ function AppearanceSection() {
         {/* Custom hex input */}
         <div className="flex flex-wrap items-center gap-3">
           <div
-            className="h-8 w-8 flex-shrink-0 rounded-full border border-white/20 transition-all"
+            className="h-8 w-8 shrink-0 rounded-full border border-white/20 transition-all"
             style={{ backgroundColor: /^#[0-9a-fA-F]{6}$/.test(custom) ? custom : accent }}
           />
           <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[var(--text-secondary)] select-none">#</span>
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-(--text-secondary) select-none">#</span>
             <input
               type="text"
               aria-label="Custom accent color"
@@ -375,7 +375,7 @@ function AppearanceSection() {
               }`}
             />
           </div>
-          <span className="text-xs text-[var(--text-secondary)]">
+          <span className="text-xs text-(--text-secondary)">
             {isCustom ? "Custom colour active" : "Enter a custom hex value"}
           </span>
         </div>
@@ -384,7 +384,7 @@ function AppearanceSection() {
         <div className="mt-4">
           <button
             onClick={() => setShowPicker(!showPicker)}
-            className="flex items-center gap-2 text-xs text-[var(--text-secondary)] hover:text-white/70 transition-colors"
+            className="flex items-center gap-2 text-xs text-(--text-secondary) hover:text-white/70 transition-colors"
           >
             <svg
               viewBox="0 0 16 16" width="10" height="10" fill="currentColor"
@@ -403,7 +403,7 @@ function AppearanceSection() {
 
         {/* Live preview strip */}
         <div className="mt-6 rounded-xl bg-accent-tint-subtle p-4 flex flex-wrap items-center gap-4 border border-white/5">
-          <span className="text-xs text-[var(--text-secondary)] w-16 flex-shrink-0">Preview</span>
+          <span className="text-xs text-(--text-secondary) w-16 shrink-0">Preview</span>
           <div className="flex items-center gap-3 flex-wrap">
             <button className="flex h-8 w-8 items-center justify-center rounded-full text-black text-sm font-bold shadow-md" style={{ backgroundColor: accent }}>
               <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><polygon points="3,2 13,8 3,14" /></svg>
@@ -428,13 +428,13 @@ function AppearanceSection() {
             step={10}
             value={cardSize}
             onChange={e => setCardSize(parseInt(e.target.value, 10))}
-            className="flex-1 range-styled accent-[var(--accent)] cursor-pointer"
+            className="flex-1 range-styled accent-(--accent) cursor-pointer"
           />
           <span className="text-sm font-mono text-white/60 w-14 text-right">{cardSize}px</span>
         </div>
         <div className="flex justify-between mt-1">
-          <span className="text-xs text-[var(--text-secondary)]">Small</span>
-          <span className="text-xs text-[var(--text-secondary)]">Large</span>
+          <span className="text-xs text-(--text-secondary)">Small</span>
+          <span className="text-xs text-(--text-secondary)">Large</span>
         </div>
       </SettingCard>
 
@@ -450,13 +450,13 @@ function AppearanceSection() {
       <SettingCard title="Background artwork" description="Let artwork show softly behind the app. Without artwork, or when reduced transparency is enabled, the interface stays opaque.">
         <Toggle label="Background artwork" value={backgroundArtworkEnabled} onChange={setBackgroundArtworkEnabled} />
         <div className="mt-4"><Toggle label="Rotate background every 45 seconds" value={backgroundRotationEnabled} onChange={setBackgroundRotationEnabled} /></div>
-        <p className="mt-2 text-xs text-[color:var(--text-muted)]">Artist and album backgrounds stay with their page. Pause rotation or choose the next image from the toolbar.</p>
+        <p className="mt-2 text-xs text-(--text-muted)">Artist and album backgrounds stay with their page. Pause rotation or choose the next image from the toolbar.</p>
         <div className="mt-4 flex flex-wrap items-center gap-3">
-          <label htmlFor="interface-opacity" className="text-sm text-[color:var(--text-secondary)]">Interface opacity</label>
-          <input id="interface-opacity" type="range" min={0.45} max={1} step={0.01} value={interfaceOpacity} disabled={!backgroundArtworkEnabled} onChange={event => setInterfaceOpacity(Number(event.target.value))} className="range-styled min-w-0 flex-1 accent-[var(--accent)] disabled:opacity-40" />
-          <output htmlFor="interface-opacity" className="text-xs tabular-nums text-[color:var(--text-secondary)]">{Math.round(interfaceOpacity * 100)}%</output>
+          <label htmlFor="interface-opacity" className="text-sm text-(--text-secondary)">Interface opacity</label>
+          <input id="interface-opacity" type="range" min={0.45} max={1} step={0.01} value={interfaceOpacity} disabled={!backgroundArtworkEnabled} onChange={event => setInterfaceOpacity(Number(event.target.value))} className="range-styled min-w-0 flex-1 accent-(--accent) disabled:opacity-40" />
+          <output htmlFor="interface-opacity" className="text-xs tabular-nums text-(--text-secondary)">{Math.round(interfaceOpacity * 100)}%</output>
         </div>
-        <p className="mt-2 text-xs text-[color:var(--text-muted)]">More transparent ← → More opaque. A readability floor keeps text clear.</p>
+        <p className="mt-2 text-xs text-(--text-muted)">More transparent ← → More opaque. A readability floor keeps text clear.</p>
       </SettingCard>
 
       {/* Highlight Intensity */}
@@ -472,7 +472,7 @@ function AppearanceSection() {
           {customColorsEnabled && Object.keys(overrides).length > 0 && (
             <button
               onClick={resetCustomColors}
-              className="text-xs text-[var(--text-secondary)] hover:text-white/70 transition-colors"
+              className="text-xs text-(--text-secondary) hover:text-white/70 transition-colors"
             >
               Reset all
             </button>
@@ -480,7 +480,7 @@ function AppearanceSection() {
         </div>
         <button
           onClick={() => setShowCustomColors(!showCustomColors)}
-          className="flex items-center gap-2 text-xs text-[var(--text-secondary)] hover:text-white/70 transition-colors"
+          className="flex items-center gap-2 text-xs text-(--text-secondary) hover:text-white/70 transition-colors"
         >
           <svg
             viewBox="0 0 16 16" width="10" height="10" fill="currentColor"
@@ -495,7 +495,7 @@ function AppearanceSection() {
             {(Object.keys(SEMANTIC_COLOR_LABELS) as SemanticColor[]).map((key, idx) => (
               <React.Fragment key={key}>
                 {idx === UI_COLOR_COUNT && (
-                  <p className="text-xs font-bold uppercase tracking-[0.15em] text-[var(--text-secondary)] mt-2 mb-0.5">System</p>
+                  <p className="text-xs font-bold uppercase tracking-[0.15em] text-(--text-secondary) mt-2 mb-0.5">System</p>
                 )}
               <div className="flex items-center gap-3">
                 <input
@@ -509,7 +509,7 @@ function AppearanceSection() {
                 {overrides[key] && (
                   <button
                     onClick={() => setOverride(key, null)}
-                    className="text-xs text-[var(--text-secondary)] hover:text-white/60"
+                    className="text-xs text-(--text-secondary) hover:text-white/60"
                   >
                     Reset
                   </button>
@@ -557,29 +557,29 @@ function HighlightCard() {
           step={5}
           value={pct}
           onChange={e => setIntensity(parseInt(e.target.value, 10) / 100)}
-          className="flex-1 range-styled accent-[var(--accent)] cursor-pointer"
+          className="flex-1 range-styled accent-(--accent) cursor-pointer"
         />
         <span className="text-sm font-mono text-white/60 w-14 text-right">{pct}%</span>
       </div>
       <div className="flex justify-between mt-1">
-        <span className="text-xs text-[var(--text-secondary)]">Subtle</span>
-        <span className="text-xs text-[var(--text-secondary)]">Vivid</span>
+        <span className="text-xs text-(--text-secondary)">Subtle</span>
+        <span className="text-xs text-(--text-secondary)">Vivid</span>
       </div>
 
       {/* Live preview */}
       <div className="mt-5 rounded-xl bg-white/5 p-4 border border-white/5">
-        <span className="text-xs text-[var(--text-secondary)] block mb-3">Preview</span>
+        <span className="text-xs text-(--text-secondary) block mb-3">Preview</span>
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center gap-3 px-3 py-2 rounded-md bg-hl-card">
-            <div className="h-8 w-8 rounded bg-white/10 flex-shrink-0" />
+            <div className="h-8 w-8 rounded bg-white/10 shrink-0" />
             <div>
               <div className="text-xs font-medium text-white">Card hover</div>
-              <div className="text-xs text-[var(--text-secondary)]">Album or artist card</div>
+              <div className="text-xs text-(--text-secondary)">Album or artist card</div>
             </div>
           </div>
           <div className="flex items-center gap-3 px-3 py-1.5 rounded bg-hl-row">
-            <div className="text-xs text-[var(--text-secondary)] w-4 text-center">1</div>
-            <div className="h-7 w-7 rounded-sm bg-white/10 flex-shrink-0" />
+            <div className="text-xs text-(--text-secondary) w-4 text-center">1</div>
+            <div className="h-7 w-7 rounded-sm bg-white/10 shrink-0" />
             <div className="text-xs font-medium text-white">Track row highlight</div>
           </div>
           <div className="flex items-center gap-2.5 px-3 py-1.5 rounded bg-hl-menu">
@@ -587,7 +587,7 @@ function HighlightCard() {
             <span className="text-xs text-white/85">Menu item</span>
           </div>
           <div className="flex items-center gap-3 px-3 py-2 rounded-md bg-hl-queue">
-            <div className="h-7 w-7 rounded-sm bg-white/10 flex-shrink-0" />
+            <div className="h-7 w-7 rounded-sm bg-white/10 shrink-0" />
             <div className="text-xs font-medium text-white">Queue item</div>
           </div>
         </div>
@@ -596,7 +596,7 @@ function HighlightCard() {
       {/* Advanced per-category sliders */}
       <button
         onClick={() => setShowAdvanced(o => !o)}
-        className="mt-4 flex items-center gap-1.5 text-xs text-[var(--text-secondary)] hover:text-white/70 transition-colors"
+        className="mt-4 flex items-center gap-1.5 text-xs text-(--text-secondary) hover:text-white/70 transition-colors"
       >
         <svg
           viewBox="0 0 16 16" width="10" height="10" fill="currentColor"
@@ -616,7 +616,7 @@ function HighlightCard() {
               <div key={key}>
                 <div className="flex items-baseline justify-between mb-1">
                   <span className="text-xs font-medium text-white/70">{label}</span>
-                  <span className="text-xs text-[var(--text-secondary)]">{desc}</span>
+                  <span className="text-xs text-(--text-secondary)">{desc}</span>
                 </div>
                 <div className="flex items-center gap-3">
                   <input
@@ -626,13 +626,13 @@ function HighlightCard() {
                     step={1}
                     value={Math.round(val * 100)}
                     onChange={e => setCategory(key, parseInt(e.target.value, 10) / 100)}
-                    className="flex-1 range-styled accent-[var(--accent)] cursor-pointer"
+                    className="flex-1 range-styled accent-(--accent) cursor-pointer"
                   />
-                  <span className="text-xs font-mono text-[var(--text-secondary)] w-10 text-right">{Math.round(val * 100)}%</span>
+                  <span className="text-xs font-mono text-(--text-secondary) w-10 text-right">{Math.round(val * 100)}%</span>
                   {val !== defVal && (
                     <button
                       onClick={() => setCategory(key, defVal)}
-                      className="text-xs text-[var(--text-secondary)] hover:text-white/60 transition-colors"
+                      className="text-xs text-(--text-secondary) hover:text-white/60 transition-colors"
                       title="Reset to default"
                     >
                       Reset
@@ -649,7 +649,7 @@ function HighlightCard() {
       {!isDefault && (
         <button
           onClick={reset}
-          className="mt-4 text-xs text-[var(--text-secondary)] hover:text-white/70 transition-colors underline underline-offset-2"
+          className="mt-4 text-xs text-(--text-secondary) hover:text-white/70 transition-colors underline underline-offset-2"
         >
           Reset all to defaults
         </button>
@@ -699,7 +699,7 @@ function VisualizerColorsCard() {
               setVizColorMid(VIZ_COLOR_DEFAULTS.mid)
               setVizColorHigh(VIZ_COLOR_DEFAULTS.high)
             }}
-            className="text-xs text-[var(--text-secondary)] hover:text-white/70 transition-colors ml-auto"
+            className="text-xs text-(--text-secondary) hover:text-white/70 transition-colors ml-auto"
           >
             Reset
           </button>
@@ -767,14 +767,14 @@ function CacheSection() {
         <div className="flex items-center gap-4">
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-white">Library Data</p>
-            <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+            <p className="text-xs text-(--text-secondary) mt-0.5">
               {playlistCount} playlists · {hubCount} hubs · {recentlyAddedCount} recently added · {playlistCacheCount} playlist caches · {mixCacheCount} mix caches
             </p>
           </div>
           <button
             onClick={handleClearLibrary}
             disabled={libClearing}
-            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 hover:border-white/20 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 hover:border-white/20 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
           >
             {libClearing ? "Clearing..." : "Clear"}
           </button>
@@ -786,14 +786,14 @@ function CacheSection() {
         <div className="flex items-center gap-4">
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-white">Metadata Entries</p>
-            <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+            <p className="text-xs text-(--text-secondary) mt-0.5">
               {metaStats.artistCount} artists · {metaStats.albumCount} albums
             </p>
           </div>
           <button
             onClick={handleClearMetadata}
             disabled={metaClearing || (metaStats.artistCount === 0 && metaStats.albumCount === 0)}
-            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 hover:border-white/20 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 hover:border-white/20 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
           >
             {metaClearing ? "Clearing..." : "Clear"}
           </button>
@@ -840,7 +840,7 @@ function GeneralSection() {
             </button>
           ))}
         </div>
-        <p className="mt-2 text-xs text-[var(--text-secondary)]">More languages coming soon. Contribute translations on GitHub.</p>
+        <p className="mt-2 text-xs text-(--text-secondary)">More languages coming soon. Contribute translations on GitHub.</p>
       </SettingCard>
 
       <SettingCard title="Liked Songs sync">
@@ -907,7 +907,7 @@ function GeneralSection() {
       </SettingCard>
 
       <SettingCard title="AI" disabled badge="Coming soon">
-        <p className="text-sm text-[var(--text-secondary)]">Sonic recommendations, radio tuning and smart mix settings will appear here.</p>
+        <p className="text-sm text-(--text-secondary)">Sonic recommendations, radio tuning and smart mix settings will appear here.</p>
       </SettingCard>
     </div>
   )
@@ -965,13 +965,13 @@ function CapabilityGrid({ caps, labels }: { caps: { [k: string]: boolean }; labe
         return (
           <div key={key} className="flex items-center gap-2 rounded-lg bg-white/5 px-3 py-2">
             {supported ? (
-              <svg height="14" width="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-accent flex-shrink-0">
+              <svg height="14" width="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-accent shrink-0">
                 <path d="M20 6L9 17l-5-5" />
               </svg>
             ) : (
-              <span className="text-[var(--text-secondary)] flex-shrink-0 text-xs font-bold w-3.5 text-center">-</span>
+              <span className="text-(--text-secondary) shrink-0 text-xs font-bold w-3.5 text-center">-</span>
             )}
-            <span className={`text-xs ${supported ? "text-white/70" : "text-[var(--text-secondary)]"}`}>{label}</span>
+            <span className={`text-xs ${supported ? "text-white/70" : "text-(--text-secondary)"}`}>{label}</span>
           </div>
         )
       })}
@@ -980,9 +980,9 @@ function CapabilityGrid({ caps, labels }: { caps: { [k: string]: boolean }; labe
 }
 
 function SupportedFeatures({ children }: { children: React.ReactNode }) {
-  return <details className="rounded-xl border border-[var(--border)] bg-app-card">
+  return <details className="rounded-xl border border-(--border) bg-app-card">
     <summary className="cursor-pointer rounded-xl px-4 py-3 text-sm font-medium text-white/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">Supported features</summary>
-    <div className="border-t border-[var(--border)] p-4">{children}</div>
+    <div className="border-t border-(--border) p-4">{children}</div>
   </details>
 }
 
@@ -1014,7 +1014,7 @@ function MetadataListView({ setSection }: { setSection: (s: Section) => void }) 
 
       {/* Listening integrations keep their dedicated account settings. */}
       <div>
-        <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--text-secondary)] mb-4">Listening &amp; Lyrics</h3>
+        <h3 className="text-xs font-bold uppercase tracking-widest text-(--text-secondary) mb-4">Listening &amp; Lyrics</h3>
         <div className="space-y-3">
           {metadataBackends.filter(mb => mb.id === "genius" || mb.id === "listenbrainz").map(mb => {
             const enabled = mb.useIsEnabled()
@@ -1030,15 +1030,15 @@ function MetadataListView({ setSection }: { setSection: (s: Section) => void }) 
                   <span className="text-sm font-semibold text-white">{mb.name}</span>
                   <span className="ml-auto flex items-center gap-1.5 text-xs">
                     <span className={`h-2 w-2 rounded-full ${enabled ? "bg-accent" : "bg-white/20"}`} />
-                    <span className={enabled ? "text-accent" : "text-[var(--text-secondary)]"}>
+                    <span className={enabled ? "text-accent" : "text-(--text-secondary)"}>
                       {enabled ? (mb.id === "lastfm" ? "Enabled" : "Always on") : "Disabled"}
                     </span>
                   </span>
-                  <svg height="14" width="14" viewBox="0 0 24 24" fill="currentColor" className="text-[var(--text-secondary)] group-hover:text-[var(--text-secondary)] transition-colors">
+                  <svg height="14" width="14" viewBox="0 0 24 24" fill="currentColor" className="text-(--text-secondary) group-hover:text-(--text-secondary) transition-colors">
                     <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" />
                   </svg>
                 </div>
-                <p className="mt-1.5 text-xs text-[var(--text-secondary)]">{mb.description}</p>
+                <p className="mt-1.5 text-xs text-(--text-secondary)">{mb.description}</p>
               </button>
             )
           })}
@@ -1054,11 +1054,11 @@ function MetadataSubPage({ backendId, goBack }: { backendId: string; goBack: () 
   if (!metaBackend) {
     return (
       <div className="max-w-2xl">
-        <button onClick={goBack} className="mb-6 flex items-center gap-1.5 text-sm text-[var(--text-secondary)] hover:text-white transition-colors">
+        <button onClick={goBack} className="mb-6 flex items-center gap-1.5 text-sm text-(--text-secondary) hover:text-white transition-colors">
           <svg height="16" width="16" viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" /></svg>
           Back to Metadata
         </button>
-        <p className="text-sm text-[var(--text-secondary)]">Metadata source not found.</p>
+        <p className="text-sm text-(--text-secondary)">Metadata source not found.</p>
       </div>
     )
   }
@@ -1070,7 +1070,7 @@ function MetadataSubPage({ backendId, goBack }: { backendId: string; goBack: () 
     <div className="max-w-2xl space-y-8">
       {/* Back button + header */}
       <div>
-        <button onClick={goBack} className="mb-4 flex items-center gap-1.5 text-sm text-[var(--text-secondary)] hover:text-white transition-colors">
+        <button onClick={goBack} className="mb-4 flex items-center gap-1.5 text-sm text-(--text-secondary) hover:text-white transition-colors">
           <svg height="16" width="16" viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" /></svg>
           Back to Metadata
         </button>
@@ -1179,7 +1179,7 @@ function AboutSection() {
 
           {/* App name */}
           <h1 className="text-3xl font-bold tracking-tight text-white">Hibiki</h1>
-          <p className="mt-1 text-sm text-[var(--text-secondary)]">A Plex music client</p>
+          <p className="mt-1 text-sm text-(--text-secondary)">A Plex music client</p>
 
           {/* Version pill */}
           <div className="mt-4 flex items-center gap-2">
@@ -1212,7 +1212,7 @@ function AboutSection() {
       {/* ── Updates ── */}
       <div className="rounded-2xl border border-white/[0.06] bg-white/[0.025] p-5">
         <div className="flex items-center gap-3 mb-4">
-          <svg height="16" width="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--text-secondary)]"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          <svg height="16" width="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-(--text-secondary)"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
           <h3 className="text-sm font-semibold text-white">Updates</h3>
         </div>
 
@@ -1237,11 +1237,11 @@ function AboutSection() {
             <div className="rounded-xl bg-accent/10 border border-accent/20 px-4 py-3 flex items-center justify-between">
               <div>
                 <p className="text-sm font-semibold text-accent">Version {update.version} available</p>
-                {update.body && <p className="text-xs text-[var(--text-secondary)] mt-0.5 line-clamp-1">{update.body}</p>}
+                {update.body && <p className="text-xs text-(--text-secondary) mt-0.5 line-clamp-1">{update.body}</p>}
               </div>
               <button
                 onClick={() => setShowDialog(true)}
-                className="rounded-full px-4 py-1.5 text-sm bg-accent text-black font-semibold flex-shrink-0"
+                className="rounded-full px-4 py-1.5 text-sm bg-accent text-black font-semibold shrink-0"
               >
                 Install
               </button>
@@ -1249,7 +1249,7 @@ function AboutSection() {
           )}
 
           {!checking && !update && !error && lastChecked && (
-            <p className="text-xs text-[var(--text-secondary)]">You're on the latest version.</p>
+            <p className="text-xs text-(--text-secondary)">You're on the latest version.</p>
           )}
 
           {!checking && error && (
@@ -1261,12 +1261,12 @@ function AboutSection() {
       {/* ── Built With ── */}
       <div className="rounded-2xl border border-white/[0.06] bg-white/[0.025] p-6">
         <h3 className="text-sm font-semibold text-white mb-1">Built With</h3>
-        <p className="text-xs text-[var(--text-secondary)] mb-5">The open-source projects that power Hibiki.</p>
+        <p className="text-xs text-(--text-secondary) mb-5">The open-source projects that power Hibiki.</p>
 
         <div className="space-y-5">
           {categories.map((cat) => (
             <div key={cat.key}>
-              <p className="text-xs font-bold uppercase tracking-[0.15em] text-[var(--text-secondary)] mb-2.5">{cat.label}</p>
+              <p className="text-xs font-bold uppercase tracking-[0.15em] text-(--text-secondary) mb-2.5">{cat.label}</p>
               <div className="flex flex-wrap gap-2">
                 {cat.items.map((item) => (
                   <TechBadge key={item.label} item={item} />
@@ -1282,28 +1282,28 @@ function AboutSection() {
         <h3 className="text-sm font-semibold text-white mb-4">Special Thanks</h3>
         <div className="space-y-3">
           <div className="flex items-start gap-3 rounded-xl bg-white/[0.04] p-4 ring-1 ring-white/[0.06] transition-colors hover:bg-white/[0.06]">
-            <div className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-[#e5a00d]/15 text-[#e5a00d]">
+            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#e5a00d]/15 text-[#e5a00d]">
               <svg height="16" width="16" viewBox="0 0 24 24" fill="currentColor"><path d="M20 13H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 19c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM20 3H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1V4c0-.55-.45-1-1-1zM7 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/></svg>
             </div>
             <div>
               <CreditLink href="https://www.plex.tv">Plex</CreditLink>
-              <p className="text-xs text-[var(--text-secondary)] mt-0.5">The media server that makes it all possible.</p>
+              <p className="text-xs text-(--text-secondary) mt-0.5">The media server that makes it all possible.</p>
             </div>
           </div>
           <div className="flex items-start gap-3 rounded-xl bg-white/[0.04] p-4 ring-1 ring-white/[0.06] transition-colors hover:bg-white/[0.06]">
-            <div className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-white/[0.08] text-[var(--text-secondary)]">
+            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.08] text-(--text-secondary)">
               <svg height="16" width="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
             </div>
             <div>
               <CreditLink href="https://github.com/agmmnn/tauri-spotify-clone">@agmmnn</CreditLink>
-              <p className="text-xs text-[var(--text-secondary)] mt-0.5">Original Spotify-clone UI design inspiration.</p>
+              <p className="text-xs text-(--text-secondary) mt-0.5">Original Spotify-clone UI design inspiration.</p>
             </div>
           </div>
         </div>
       </div>
 
       {/* ── Footer ── */}
-      <p className="text-center text-xs text-[var(--text-secondary)] pb-4">
+      <p className="text-center text-xs text-(--text-secondary) pb-4">
         Made with love and way too much coffee.
       </p>
     </div>
@@ -1395,10 +1395,10 @@ export function SettingsPage({ section: sectionProp }: { section?: string }) {
                       "settings-nav-button relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
                       active
                         ? "bg-white/10 text-white"
-                        : "text-[var(--text-secondary)] hover:bg-white/5 hover:text-white"
+                        : "text-(--text-secondary) hover:bg-white/5 hover:text-white"
                     )}
                   >
-                    <span className={clsx("flex-shrink-0 transition-colors", active ? "text-accent" : "text-[var(--text-secondary)]")}>
+                    <span className={clsx("shrink-0 transition-colors", active ? "text-accent" : "text-(--text-secondary)")}>
                       {item.icon}
                     </span>
                     {item.label}

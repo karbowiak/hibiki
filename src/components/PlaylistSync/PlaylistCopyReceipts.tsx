@@ -13,7 +13,7 @@ import { playlistCopyServices, type PlaylistCopyServices } from "./services"
 import { useCopyOwner } from "./useCopyOwner"
 import { providerPlaylistAccount } from "../../playlistSync/provider"
 const button =
-  "rounded-lg border border-[var(--border)] bg-app-surface px-3 py-2 text-sm hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
+  "rounded-lg border border-(--border) bg-app-surface px-3 py-2 text-sm hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
 function accountLabel(attempt: PlaylistAttempt) {
   return attempt.account.service === "listenbrainz"
     ? `ListenBrainz: ${attempt.account.user}`
@@ -286,9 +286,9 @@ function Receipt({
     attempt.state === "cancelled" ||
     attempt.state === "dismissed"
   return (
-    <article className="rounded-lg border border-[var(--border)] bg-app-surface p-3">
+    <article className="rounded-lg border border-(--border) bg-app-surface p-3">
       <p className="font-medium">{attempt.title}</p>
-      <p className="text-sm text-[var(--text-secondary)]">
+      <p className="text-sm text-(--text-secondary)">
         {accountLabel(attempt)} · {attempt.expectedTrackIds.length} ordered
         occurrences
       </p>
@@ -308,7 +308,7 @@ function Receipt({
           <label className="block text-sm">
             Destination playlist ID
             <input
-              className="mt-1 w-full rounded-lg border border-[var(--border)] bg-app-card px-3 py-2"
+              className="mt-1 w-full rounded-lg border border-(--border) bg-app-card px-3 py-2"
               value={id}
               maxLength={500}
               disabled={busy || !!attempt.destinationId}
@@ -320,7 +320,7 @@ function Receipt({
               }
             />
           </label>
-          <p className="text-xs text-[var(--text-secondary)]">
+          <p className="text-xs text-(--text-secondary)">
             Choose the exact playlist after checking its title and order.
             Similar titles alone cannot identify an uncertain copy.
           </p>
@@ -376,7 +376,7 @@ function Receipt({
             {busy ? "Checking and saving…" : "Verify this copy"}
           </button>
           {!attempt.destinationId && (
-            <div className="mt-4 border-t border-[var(--border)] pt-3">
+            <div className="mt-4 border-t border-(--border) pt-3">
               <label className="flex items-start gap-2 text-sm">
                 <input
                   type="checkbox"
@@ -396,7 +396,7 @@ function Receipt({
                   ? "Retry local dismissal"
                   : "Dismiss this local blocker"}
               </button>
-              <p className="mt-1 text-xs text-[var(--text-secondary)]">
+              <p className="mt-1 text-xs text-(--text-secondary)">
                 The receipt stays in local history. This does not delete a
                 playlist or send another create request.
               </p>

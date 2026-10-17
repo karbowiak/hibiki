@@ -87,15 +87,15 @@ function PlayedRow({
       onContextMenu={onContextMenu}
       onClick={onJump}
     >
-      <span className="w-5 flex-shrink-0" />
+      <span className="w-5 shrink-0" />
       {thumb ? (
         <ArtworkImage
           src={thumb}
           alt=""
-          className="h-10 w-10 flex-shrink-0 rounded-sm object-cover"
+          className="h-10 w-10 shrink-0 rounded-sm object-cover"
         />
       ) : (
-        <div className="h-10 w-10 flex-shrink-0 rounded-sm bg-app-surface" />
+        <div className="h-10 w-10 shrink-0 rounded-sm bg-app-surface" />
       )}
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5">
@@ -108,7 +108,7 @@ function PlayedRow({
               onJump()
             }}
             aria-label={`Play ${title}`}
-            className="truncate rounded text-left text-sm text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            className="truncate rounded text-left text-sm text-(--text-primary) focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           >
             {title}
           </button>
@@ -118,7 +118,7 @@ function PlayedRow({
           <TrackBadges isGuestDj={isGuestDj} isRadio={isRadio} />
         </div>
       </div>
-      <span className="flex-shrink-0 text-xs tabular-nums text-[var(--text-muted)]">
+      <span className="shrink-0 text-xs tabular-nums text-(--text-muted)">
         {formatMs(durationMs)}
       </span>
       <span className="queue-remove-spacer" aria-hidden="true" />
@@ -142,7 +142,7 @@ function NowPlayingRow({
       className="queue-track-row queue-track-row--current flex items-center gap-2 rounded-md"
       onContextMenu={onContextMenu}
     >
-      <span className="w-5 flex-shrink-0 text-center">
+      <span className="w-5 shrink-0 text-center">
         <svg
           viewBox="0 0 16 16"
           width="10"
@@ -157,10 +157,10 @@ function NowPlayingRow({
         <ArtworkImage
           src={thumb}
           alt=""
-          className="h-10 w-10 flex-shrink-0 rounded-sm object-cover"
+          className="h-10 w-10 shrink-0 rounded-sm object-cover"
         />
       ) : (
-        <div className="h-10 w-10 flex-shrink-0 rounded-sm bg-app-surface" />
+        <div className="h-10 w-10 shrink-0 rounded-sm bg-app-surface" />
       )}
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5">
@@ -173,7 +173,7 @@ function NowPlayingRow({
           <TrackBadges isGuestDj={isGuestDj} isRadio={isRadio} />
         </div>
       </div>
-      <span className="flex-shrink-0 text-xs tabular-nums text-[var(--text-muted)]">
+      <span className="shrink-0 text-xs tabular-nums text-(--text-muted)">
         {formatMs(durationMs)}
       </span>
       <span className="queue-remove-spacer" aria-hidden="true" />
@@ -244,7 +244,7 @@ function SortableUpcomingItem({
       aria-label={title}
       tabIndex={-1}
     >
-      <span className="w-5 flex-shrink-0 text-center text-xs tabular-nums text-[var(--text-muted)]">
+      <span className="w-5 shrink-0 text-center text-xs tabular-nums text-(--text-muted)">
         {index + 1}
       </span>
 
@@ -252,10 +252,10 @@ function SortableUpcomingItem({
         <ArtworkImage
           src={thumb}
           alt=""
-          className="h-10 w-10 flex-shrink-0 rounded-sm object-cover"
+          className="h-10 w-10 shrink-0 rounded-sm object-cover"
         />
       ) : (
-        <div className="h-10 w-10 flex-shrink-0 rounded-sm bg-app-surface" />
+        <div className="h-10 w-10 shrink-0 rounded-sm bg-app-surface" />
       )}
 
       <div className="min-w-0 flex-1">
@@ -269,7 +269,7 @@ function SortableUpcomingItem({
               onJump()
             }}
             aria-label={`Play ${title}`}
-            className="truncate rounded text-left text-sm text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            className="truncate rounded text-left text-sm text-(--text-primary) focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           >
             {title}
           </button>
@@ -280,12 +280,12 @@ function SortableUpcomingItem({
         </div>
       </div>
 
-      <span className="flex-shrink-0 text-xs tabular-nums text-[var(--text-muted)]">
+      <span className="shrink-0 text-xs tabular-nums text-(--text-muted)">
         {formatMs(durationMs)}
       </span>
 
       <button
-        className="queue-remove-button flex-shrink-0 text-[var(--text-muted)] opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 hover:text-[var(--text-primary)] focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+        className="queue-remove-button shrink-0 text-(--text-muted) opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 hover:text-(--text-primary) focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
         onClick={(e) => {
           e.stopPropagation()
           onRemove()
@@ -446,7 +446,7 @@ function SectionHeader({
 }) {
   return (
     <div className="flex items-center justify-between px-3 pb-1 pt-3">
-      <span className="text-xs font-semibold text-[var(--text-secondary)]">
+      <span className="text-xs font-semibold text-(--text-secondary)">
         {label}
       </span>
       {right}
@@ -460,7 +460,7 @@ function SectionHeader({
 
 function IndicatorRow({ icon, text }: { icon: React.ReactNode; text: string }) {
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-[var(--text-muted)]">
+    <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-(--text-muted)">
       {icon}
       <span>{text}</span>
     </div>
@@ -478,7 +478,7 @@ function RepeatOneIcon() {
       width="14"
       height="14"
       fill="currentColor"
-      className="flex-shrink-0 text-accent"
+      className="shrink-0 text-accent"
     >
       <path d="M0 4.75A3.75 3.75 0 0 1 3.75 1h.75v1.5h-.75A2.25 2.25 0 0 0 1.5 4.75v5A2.25 2.25 0 0 0 3.75 12H5v1.5H3.75A3.75 3.75 0 0 1 0 9.75v-5zM12.25 2.5A2.25 2.25 0 0 1 14.5 4.75v5A2.25 2.25 0 0 1 12.25 12h-.75v1.5h.75A3.75 3.75 0 0 0 16 9.75v-5A3.75 3.75 0 0 0 12.25 1H11v1.5h1.25z" />
       <path d="M4.5 1 2 3.5 4.5 6V1zM11.5 16l2.5-2.5L11.5 11v5z" />
@@ -503,7 +503,7 @@ function RepeatIcon() {
       width="14"
       height="14"
       fill="currentColor"
-      className="flex-shrink-0 text-accent"
+      className="shrink-0 text-accent"
     >
       <path d="M0 4.75A3.75 3.75 0 0 1 3.75 1h.75v1.5h-.75A2.25 2.25 0 0 0 1.5 4.75v5A2.25 2.25 0 0 0 3.75 12H5v1.5H3.75A3.75 3.75 0 0 1 0 9.75v-5zM12.25 2.5A2.25 2.25 0 0 1 14.5 4.75v5A2.25 2.25 0 0 1 12.25 12h-.75v1.5h.75A3.75 3.75 0 0 0 16 9.75v-5A3.75 3.75 0 0 0 12.25 1H11v1.5h1.25z" />
       <path d="M4.5 1 2 3.5 4.5 6V1zM11.5 16l2.5-2.5L11.5 11v5z" />
@@ -518,7 +518,7 @@ function ShuffleIcon() {
       width="14"
       height="14"
       fill="currentColor"
-      className="flex-shrink-0 text-accent"
+      className="shrink-0 text-accent"
     >
       <path d="M13.151.922a.75.75 0 1 0-1.06 1.06L13.109 3H11.16a3.75 3.75 0 0 0-2.873 1.34l-6.173 7.356A2.25 2.25 0 0 1 .39 12.5H0V14h.391a3.75 3.75 0 0 0 2.873-1.34l6.173-7.356A2.25 2.25 0 0 1 11.16 4.5h1.95l-1.018 1.018a.75.75 0 0 0 1.06 1.06l2.06-2.06a.78.78 0 0 0 0-1.06L13.15.922zM.391 3.5H0V2h.391c1.109 0 2.16.49 2.873 1.34L4.89 5.277l-.979 1.167-1.796-2.14A2.25 2.25 0 0 0 .39 3.5z" />
       <path d="m7.5 10.723.98-1.167 1.796 2.14a2.25 2.25 0 0 0 1.724.804h1.95l-1.018-1.018a.75.75 0 1 1 1.06-1.06l2.06 2.06a.78.78 0 0 1 0 1.06l-2.06 2.06a.75.75 0 1 1-1.06-1.06L13.109 13.5h-1.95a3.75 3.75 0 0 1-2.873-1.34L7.5 10.723z" />
@@ -709,7 +709,7 @@ export function QueuePanel() {
 
   const header = (
     <div
-      className={`${isQueuePinned ? "app-docked-header " : ""}flex flex-shrink-0 items-center justify-between border-b border-[var(--border)] px-4 py-3`}
+      className={`${isQueuePinned ? "app-docked-header " : ""}flex shrink-0 items-center justify-between border-b border-(--border) px-4 py-3`}
     >
       {isQueuePinned ? (
         <div
@@ -733,7 +733,7 @@ export function QueuePanel() {
           </button>
         </div>
       ) : (
-        <h2 className="text-sm font-semibold text-[color:var(--text-primary)]">
+        <h2 className="text-sm font-semibold text-(--text-primary)">
           Queue
         </h2>
       )}
@@ -747,7 +747,7 @@ export function QueuePanel() {
           className={`panel-toolbar-button panel-toolbar-icon flex items-center justify-center rounded-full transition-colors ${
             isQueuePinned
               ? "text-accent hover:text-accent/70"
-              : "text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)]"
+              : "text-(--text-muted) hover:text-(--text-primary)"
           }`}
           aria-label={isQueuePinned ? "Unpin queue" : "Pin queue"}
         >
@@ -757,7 +757,7 @@ export function QueuePanel() {
         </button>
         <button
           onClick={() => setQueueOpen(false)}
-          className="panel-toolbar-button panel-toolbar-icon flex items-center justify-center rounded-full text-[color:var(--text-muted)] transition-colors hover:text-[color:var(--text-primary)]"
+          className="panel-toolbar-button panel-toolbar-icon flex items-center justify-center rounded-full text-(--text-muted) transition-colors hover:text-(--text-primary)"
           aria-label="Close queue"
         >
           <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
@@ -786,10 +786,10 @@ export function QueuePanel() {
   const list =
     queue.length === 0 ? (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-10 text-center text-sm">
-        <p className="font-medium text-[var(--text-primary)]">
+        <p className="font-medium text-(--text-primary)">
           Your queue is empty
         </p>
-        <p className="text-[var(--text-secondary)]">
+        <p className="text-(--text-secondary)">
           Play a song to add it here.
         </p>
       </div>
@@ -827,7 +827,7 @@ export function QueuePanel() {
               <SectionHeader
                 label="Now Playing"
                 right={
-                  <span className="text-xs text-[var(--text-muted)]">
+                  <span className="text-xs text-(--text-muted)">
                     {queue.length.toLocaleString()} songs
                   </span>
                 }
@@ -856,7 +856,7 @@ export function QueuePanel() {
               right={
                 <button
                   onClick={clearUpcoming}
-                  className="rounded-md px-2 py-1 text-xs text-[var(--text-secondary)] transition-colors hover:bg-app-surface-hover hover:text-[var(--text-primary)]"
+                  className="rounded-md px-2 py-1 text-xs text-(--text-secondary) transition-colors hover:bg-app-surface-hover hover:text-(--text-primary)"
                 >
                   Clear
                 </button>
@@ -893,7 +893,7 @@ export function QueuePanel() {
       <div
         aria-hidden={!isQueueOpen}
         inert={!isQueueOpen}
-        className={`flex-shrink-0 overflow-hidden ${isResizing ? "" : "transition-[width] duration-300 ease-in-out"}`}
+        className={`shrink-0 overflow-hidden ${isResizing ? "" : "transition-[width] duration-300 ease-in-out"}`}
         style={{ width: isQueueOpen ? queueWidth : 0 }}
       >
         <div
@@ -901,7 +901,7 @@ export function QueuePanel() {
           data-shell-transparency={
             backgroundArtworkEnabled ? "enabled" : undefined
           }
-          className={`app-docked-panel shell-artwork-surface relative flex h-full flex-col border-l border-[var(--border)] bg-app-bg transition-shadow duration-200 ${isHoveredDrop ? "ring-2 ring-inset ring-accent/60" : ""} ${dropFlash ? "ring-2 ring-inset ring-green-500/60" : ""}`}
+          className={`app-docked-panel shell-artwork-surface relative flex h-full flex-col border-l border-(--border) bg-app-bg transition-shadow duration-200 ${isHoveredDrop ? "ring-2 ring-inset ring-accent/60" : ""} ${dropFlash ? "ring-2 ring-inset ring-green-500/60" : ""}`}
           style={{ width: queueWidth, minWidth: queueWidth }}
         >
           <div
@@ -930,7 +930,7 @@ export function QueuePanel() {
         aria-hidden={!isQueueOpen}
         inert={!isQueueOpen}
         data-queue-drop-target
-        className={`app-overlay-surface fixed bottom-24 right-0 top-0 z-50 flex w-80 flex-col overflow-hidden rounded-l-2xl border-l border-[var(--border)] bg-app-bg shadow-2xl transition-[transform,box-shadow] duration-300 ease-in-out ${
+        className={`app-overlay-surface fixed bottom-24 right-0 top-0 z-50 flex w-80 flex-col overflow-hidden rounded-l-2xl border-l border-(--border) bg-app-bg shadow-2xl transition-[transform,box-shadow] duration-300 ease-in-out ${
           isQueueOpen ? "translate-x-0" : "translate-x-full"
         } ${isHoveredDrop ? "ring-2 ring-inset ring-accent/60" : ""} ${dropFlash ? "ring-2 ring-inset ring-green-500/60" : ""}`}
       >

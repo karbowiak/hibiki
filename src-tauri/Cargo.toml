@@ -11,64 +11,65 @@ rust-version = "1.90"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [build-dependencies]
-tauri-build = { version = "2.7.1", features = [] }
+tauri-build = { version = "2.7.3", features = [] }
 
 [dependencies]
-tauri = { version = "2.12.2", features = ["macos-private-api", "devtools"] }
+tauri = { version = "2.12.4", features = ["macos-private-api", "devtools"] }
 tauri-plugin-dialog = "2.8.3"
 tauri-plugin-window-state = "2.5.0"
-tauri-plugin-updater = "2.13.2"
-tauri-plugin-notification = "2.5.1"
-souvlaki = "0.7"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+tauri-plugin-updater = "2.14.0"
+tauri-plugin-notification = "2.7.0"
+souvlaki = "0.8.3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
 
 # Async runtime
-tokio = { version = "1.35", features = ["full"] }
-futures = "0.3"
+tokio = { version = "1.53.3", features = ["full"] }
+futures = "0.3.34"
 
 # HTTP client with retry logic
 # Preserve the native TLS, text decoding, HTTP/2, and system proxy behavior of 0.11.
 reqwest = { version = "0.13.5", default-features = false, features = ["native-tls", "charset", "http2", "system-proxy", "json", "stream", "query", "form"] }
 reqwest-middleware = { version = "0.5.2", features = ["json", "query"] }
 reqwest-retry = "0.9.1"
-encoding_rs = "0.8"
-mime = "0.3"
+encoding_rs = "0.8.42"
+mime = "0.3.17"
 
 # Error handling
-anyhow = "1.0"
-thiserror = "2.0"
+anyhow = "1.0.104"
+thiserror = "2.0.21"
 
 # Tracing
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 # Date/time
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { version = "0.4.45", features = ["serde"] }
 
 # URL handling
-url = "2.5"
+url = "2.5.8"
 
 # Cryptography
-md-5 = "0.10"
-sha1 = "0.10"
-sha2 = "0.10"
+md-5 = "0.11.0"
+sha1 = "0.11.0"
+sha2 = "0.11.1"
+hex = "0.4.3"
 
 # Utilities
-once_cell = "1.19"
-uuid = { version = "1", features = ["v4"] }
-roxmltree = "0.21"
-scraper = "0.27"
-crossbeam-channel = "0.5"
+once_cell = "1.21.4"
+uuid = { version = "1.28.0", features = ["v4"] }
+roxmltree = "0.21.1"
+scraper = "0.27.0"
+crossbeam-channel = "0.5.17"
 
 # SQLite database
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 
 # Cross-platform audio device enumeration & playback
-cpal = "0.15"
+cpal = "0.18.2"
 
 # Audio decoding — AAC uses FDK and a streaming ADTS reader registered by Hibiki.
-symphonia = { version = "0.5", default-features = false, features = [
+symphonia = { version = "0.6.1", default-features = false, features = [
     "adpcm", "alac", "flac", "mp1", "mp2", "mp3", "pcm", "vorbis",
     "caf", "isomp4", "mkv", "ogg", "aiff", "wav",                    # formats
 ] }
@@ -76,18 +77,18 @@ opusic-sys = "0.7.5"
 fdk-aac-sys = "0.5.0"
 
 # EBU R128 loudness analysis (for Opus tracks where Plex lacks proper loudness data)
-ebur128 = "0.1"
+ebur128 = "0.1.10"
 
 # FFT for visualizer frequency analysis
-realfft = "3.5"
-rubato = "5"
-tempfile = "3"
+realfft = "3.5.0"
+rubato = "5.0.1"
+tempfile = "3.27.0"
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "ico", "pnm"] }
-tauri-plugin-opener = "2"
+tauri-plugin-opener = "2.7.2"
 
 [dev-dependencies]
-tokio-test = "0.4"
-tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+tokio-test = "0.4.6"
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
 
 # Artwork cache hits hash validated bytes; keep that hot path fast in the dev app.
 [profile.dev.package.sha2]
@@ -95,10 +96,10 @@ opt-level = 3
 
 [target.'cfg(unix)'.dependencies]
 # Portable O_NOFOLLOW/O_NONBLOCK flags for opening only actual cached files.
-libc = "0.2"
+libc = "0.2.191"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 block = "0.1.6"
@@ -109,7 +110,9 @@ block = "0.1.6"
 custom-protocol = ["tauri/custom-protocol"]
 
 [patch.crates-io]
-block = { path = "vendor/block" }
+# Upstream Windows updater still pins ZIP 4, which has fixed advisories in ZIP 9.
+tauri-plugin-updater = { path = "vendor/tauri-plugin-updater" }
 symphonia-bundle-mp3 = { path = "vendor/symphonia-bundle-mp3" }
 symphonia-format-ogg = { path = "vendor/symphonia-format-ogg" }
 symphonia-format-isomp4 = { path = "vendor/symphonia-format-isomp4" }
+block = { path = "vendor/block" }

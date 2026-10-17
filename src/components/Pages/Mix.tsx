@@ -362,10 +362,10 @@ export function MixPage() {
               loading="eager"
               src={displayThumb}
               alt=""
-              className="h-44 w-44 flex-shrink-0 rounded-md object-cover shadow-2xl"
+              className="h-44 w-44 shrink-0 rounded-md object-cover shadow-2xl"
             />
           ) : (
-            <div className="flex h-44 w-44 flex-shrink-0 items-center justify-center rounded-md bg-app-surface shadow-2xl">
+            <div className="flex h-44 w-44 shrink-0 items-center justify-center rounded-md bg-app-surface shadow-2xl">
               <svg
                 height="64"
                 width="64"
@@ -384,14 +384,14 @@ export function MixPage() {
               <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-white/50">
                 Mix for You
               </p>
-              <h1 className="break-words text-[clamp(1.75rem,3.2vw,3rem)] font-bold leading-tight tracking-tight drop-shadow">
+              <h1 className="wrap-break-word text-[clamp(1.75rem,3.2vw,3rem)] font-bold leading-tight tracking-tight drop-shadow">
                 {mixItem.title}
               </h1>
               {/* Artist list */}
               {isLoading && artists.length === 0 ? (
                 <Skeleton className="mt-2 h-4 w-2/3" />
               ) : artists.length > 0 ? (
-                <p className="mt-2 break-words text-sm text-white/60">
+                <p className="mt-2 wrap-break-word text-sm text-white/60">
                   {artists.map((a, i) => (
                     <span key={a.title}>
                       {i > 0 && <span className="mx-1.5 text-white/30">·</span>}

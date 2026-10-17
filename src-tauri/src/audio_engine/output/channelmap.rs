@@ -1,7 +1,7 @@
 //! Convert decoded speaker layouts into the engine's stable stereo format.
 //! Runs on decoder threads, before SRC; the real-time mixer only reads stereo.
 
-use symphonia::core::audio::Channels;
+use symphonia::core::audio::Position as Channels;
 
 /// Default Lo/Ro coefficients for 5.1 follow ITU-R BS.775-4 Annex 4, Table 2.
 /// LFE is omitted (Annex 7); main channels retain their full bass bandwidth.
@@ -14,15 +14,17 @@ pub struct StereoDownmix {
 
 impl StereoDownmix {
     pub fn new(layout: Channels) -> Result<Self, String> {
-        if layout.is_empty() || layout.count() > 32 {
+        if layout.is_empty() || layout.iter().count() > 32 {
             return Err("Unsupported audio channel layout".into());
         }
-        let mono = layout.count() == 1
-            && (layout == Channels::FRONT_LEFT || layout == Channels::FRONT_CENTRE);
+        let mono = layout.iter().count() == 1
+            && (layout == Channels::FRONT_LEFT || layout == Channels::FRONT_CENTER);
         let left_surrounds = (layout & (Channels::REAR_LEFT | Channels::SIDE_LEFT))
+            .iter()
             .count()
             .max(1);
         let right_surrounds = (layout & (Channels::REAR_RIGHT | Channels::SIDE_RIGHT))
+            .iter()
             .count()
             .max(1);
         let surround = std::f32::consts::FRAC_1_SQRT_2;
@@ -35,28 +37,28 @@ impl StereoDownmix {
                 match channel {
                     Channels::FRONT_LEFT => [1.0, 0.0],
                     Channels::FRONT_RIGHT => [0.0, 1.0],
-                    Channels::FRONT_CENTRE
-                    | Channels::TOP_FRONT_CENTRE
-                    | Channels::FRONT_CENTRE_HIGH => [surround, surround],
+                    Channels::FRONT_CENTER
+                    | Channels::BOTTOM_FRONT_CENTER
+                    | Channels::TOP_FRONT_CENTER => [surround, surround],
                     Channels::REAR_LEFT | Channels::SIDE_LEFT => {
                         [surround / (left_surrounds as f32).sqrt(), 0.0]
                     }
                     Channels::REAR_RIGHT | Channels::SIDE_RIGHT => {
                         [0.0, surround / (right_surrounds as f32).sqrt()]
                     }
-                    Channels::FRONT_LEFT_CENTRE
+                    Channels::FRONT_LEFT_CENTER
                     | Channels::FRONT_LEFT_WIDE
-                    | Channels::FRONT_LEFT_HIGH
                     | Channels::TOP_FRONT_LEFT
-                    | Channels::TOP_REAR_LEFT
-                    | Channels::REAR_LEFT_CENTRE => [surround, 0.0],
-                    Channels::FRONT_RIGHT_CENTRE
+                    | Channels::TOP_SIDE_LEFT
+                    | Channels::BOTTOM_FRONT_LEFT
+                    | Channels::TOP_REAR_LEFT => [surround, 0.0],
+                    Channels::FRONT_RIGHT_CENTER
                     | Channels::FRONT_RIGHT_WIDE
-                    | Channels::FRONT_RIGHT_HIGH
                     | Channels::TOP_FRONT_RIGHT
-                    | Channels::TOP_REAR_RIGHT
-                    | Channels::REAR_RIGHT_CENTRE => [0.0, surround],
-                    Channels::REAR_CENTRE | Channels::TOP_CENTRE | Channels::TOP_REAR_CENTRE => {
+                    | Channels::TOP_SIDE_RIGHT
+                    | Channels::BOTTOM_FRONT_RIGHT
+                    | Channels::TOP_REAR_RIGHT => [0.0, surround],
+                    Channels::REAR_CENTER | Channels::TOP_CENTER | Channels::TOP_REAR_CENTER => {
                         [0.5, 0.5]
                     }
                     Channels::LFE1 | Channels::LFE2 => [0.0, 0.0],
@@ -110,7 +112,7 @@ mod tests {
         assert_eq!(unchanged, input);
         let moved = stereo.process(input).unwrap();
         assert_eq!(moved.as_ptr(), allocation);
-        for layout in [Channels::FRONT_LEFT, Channels::FRONT_CENTRE] {
+        for layout in [Channels::FRONT_LEFT, Channels::FRONT_CENTER] {
             assert_eq!(
                 StereoDownmix::new(layout)
                     .unwrap()
@@ -129,7 +131,7 @@ mod tests {
         ] {
             let layout = Channels::FRONT_LEFT
                 | Channels::FRONT_RIGHT
-                | Channels::FRONT_CENTRE
+                | Channels::FRONT_CENTER
                 | Channels::LFE1
                 | surrounds;
             let downmix = StereoDownmix::new(layout).unwrap();
@@ -141,7 +143,9 @@ mod tests {
             let side = std::f32::consts::FRAC_1_SQRT_2;
             assert_eq!(
                 result,
-                vec![1.0, 0.0, 0.0, 1.0, side, side, 0.0, 0.0, side, 0.0, 0.0, side]
+                vec![
+                    1.0, 0.0, 0.0, 1.0, side, side, 0.0, 0.0, side, 0.0, 0.0, side
+                ]
             );
         }
     }
@@ -149,7 +153,7 @@ mod tests {
     #[test]
     fn layouts_with_the_same_channel_count_do_not_share_speaker_assignments() {
         let front = StereoDownmix::new(
-            Channels::FRONT_LEFT | Channels::FRONT_RIGHT | Channels::FRONT_CENTRE,
+            Channels::FRONT_LEFT | Channels::FRONT_RIGHT | Channels::FRONT_CENTER,
         )
         .unwrap();
         let bass =
@@ -164,7 +168,7 @@ mod tests {
     fn side_and_rear_speakers_of_71_share_surround_power_and_keep_sides_separate() {
         let layout = Channels::FRONT_LEFT
             | Channels::FRONT_RIGHT
-            | Channels::FRONT_CENTRE
+            | Channels::FRONT_CENTER
             | Channels::LFE1
             | Channels::REAR_LEFT
             | Channels::REAR_RIGHT
@@ -189,7 +193,7 @@ mod tests {
     #[test]
     fn named_height_channels_are_folded_and_malformed_frames_remain_errors() {
         let layout =
-            Channels::TOP_FRONT_LEFT | Channels::TOP_FRONT_CENTRE | Channels::TOP_FRONT_RIGHT;
+            Channels::TOP_FRONT_LEFT | Channels::TOP_FRONT_CENTER | Channels::TOP_FRONT_RIGHT;
         let downmix = StereoDownmix::new(layout).unwrap();
         let side = std::f32::consts::FRAC_1_SQRT_2;
         assert_eq!(
@@ -206,10 +210,12 @@ mod tests {
         );
         assert!(downmix.process(vec![1.0, 0.0]).is_err());
         assert!(StereoDownmix::new(Channels::empty()).is_err());
-        assert!(downmix
-            .process(vec![f32::MAX; 3])
-            .unwrap()
-            .iter()
-            .all(|value| value.is_finite()));
+        assert!(
+            downmix
+                .process(vec![f32::MAX; 3])
+                .unwrap()
+                .iter()
+                .all(|value| value.is_finite())
+        );
     }
 }

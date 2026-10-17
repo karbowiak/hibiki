@@ -99,7 +99,7 @@ export function ImageCacheControls({
           aria-label="Clear image cache"
           onClick={() => void request(true)}
           disabled={pending !== null || !info?.files}
-          className="flex-shrink-0 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 transition-colors hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+          className="shrink-0 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 transition-colors hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
         >
           {pending === "clearing" ? "Clearing..." : "Clear"}
         </button>

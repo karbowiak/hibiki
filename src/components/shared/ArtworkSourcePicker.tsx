@@ -146,7 +146,7 @@ export function ArtworkSourcePanel(props: ArtworkSourcePickerProps) {
   const resolution = useArtworkSourceResolution(props)
   if (!resolution.preferenceKey)
     return (
-      <p role="status" className="text-sm text-[var(--text-secondary)]">
+      <p role="status" className="text-sm text-(--text-secondary)">
         Connect an account-scoped library to choose artwork for this item.
       </p>
     )
@@ -185,7 +185,7 @@ export function ArtworkSourcePicker(props: ArtworkSourcePickerProps) {
         }}
         className={
           props.className ??
-          "rounded-full border border-[var(--border)] bg-app-surface px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          "rounded-full border border-(--border) bg-app-surface px-3 py-2 text-sm text-(--text-primary) hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
         }
       >
         {props.iconOnly ? (
@@ -316,14 +316,14 @@ function SourceDialog({
           }
         }
       }}
-      className="fixed inset-0 z-[20000] m-auto max-h-[90vh] w-[min(92vw,680px)] overflow-y-auto rounded-xl border border-[var(--border)] bg-app-bg p-6 text-[var(--text-primary)] shadow-2xl backdrop:bg-black/70"
+      className="fixed inset-0 z-20000 m-auto max-h-[90vh] w-[min(92vw,680px)] overflow-y-auto rounded-xl border border-(--border) bg-app-bg p-6 text-(--text-primary) shadow-2xl backdrop:bg-black/70"
     >
       <div className="mb-4 flex items-start justify-between gap-4">
         <div className="min-w-0">
           <h2 id={id} className="text-xl font-semibold">
             Choose artwork
           </h2>
-          <p className="mt-1 break-words text-sm text-[var(--text-secondary)]">
+          <p className="mt-1 wrap-break-word text-sm text-(--text-secondary)">
             {props.kind === "album"
               ? `${props.albumName} · ${props.artistName}`
               : props.artistName}
@@ -517,23 +517,23 @@ function ArtworkSourcePanelContent({
   return (
     <div className={props.className}>
       {props.role === "background" && (
-        <p className="mb-3 text-sm text-[var(--text-secondary)]">
+        <p className="mb-3 text-sm text-(--text-secondary)">
           Provider background art is separate from posters. Artist
           images and album covers can also be reused as a background; those
           choices are labeled as reused covers.
         </p>
       )}
-      <p role="status" className="mb-4 text-sm text-[var(--text-secondary)]">
+      <p role="status" className="mb-4 text-sm text-(--text-secondary)">
         {artworkStatus(info)}
       </p>
       <button
         type="button"
         aria-pressed={!info.preference}
         onClick={() => choose(null)}
-        className={`mb-4 w-full rounded-lg border p-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${!info.preference ? "border-accent bg-accent-tint" : "border-[var(--border)] bg-app-surface"}`}
+        className={`mb-4 w-full rounded-lg border p-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${!info.preference ? "border-accent bg-accent-tint" : "border-(--border) bg-app-surface"}`}
       >
         <span className="font-semibold">Automatic</span>
-        <span className="mt-1 block text-sm text-[var(--text-secondary)]">
+        <span className="mt-1 block text-sm text-(--text-secondary)">
           {props.role === "background"
             ? "Prefer Plex background art, then follow your source order. Reused covers are labeled. Poster choices stay separate."
             : "Follow your global artwork source order."}
@@ -563,7 +563,7 @@ function ArtworkSourcePanelContent({
                   : imageIndex === 0)
               }
               onClick={() => choose(source, image.id)}
-              className={`rounded-lg border p-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${info.preference === source && (selectedCandidate?.source === source ? selectedCandidate.id === image.id : imageIndex === 0) ? "border-accent bg-accent-tint" : "border-[var(--border)] bg-app-surface hover:bg-app-surface-hover"}`}
+              className={`rounded-lg border p-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${info.preference === source && (selectedCandidate?.source === source ? selectedCandidate.id === image.id : imageIndex === 0) ? "border-accent bg-accent-tint" : "border-(--border) bg-app-surface hover:bg-app-surface-hover"}`}
             >
               <div
                 className={`mb-2 ${props.role === "background" ? "aspect-video" : "aspect-square"} overflow-hidden rounded-md bg-app-bg`}
@@ -576,7 +576,7 @@ function ArtworkSourcePanelContent({
                     className="h-full w-full object-cover"
                   />
                 ) : (
-                  <div className="flex h-full items-center justify-center p-2 text-center text-sm text-[var(--text-muted)]">
+                  <div className="flex h-full items-center justify-center p-2 text-center text-sm text-(--text-muted)">
                     {busy && source !== "plex"
                       ? "Checking artwork…"
                       : source === "heya"
@@ -599,7 +599,7 @@ function ArtworkSourcePanelContent({
                 </span>
               )}
               {image.label && (
-                <span className="mt-1 block text-xs text-[var(--text-secondary)]">
+                <span className="mt-1 block text-xs text-(--text-secondary)">
                   {image.label}
                 </span>
               )}
@@ -607,7 +607,7 @@ function ArtworkSourcePanelContent({
           ))
         )}
       </div>
-      <p className="mt-4 text-sm text-[var(--text-secondary)]">
+      <p className="mt-4 text-sm text-(--text-secondary)">
         This choice applies to this item in your current library. Other
         available sources can appear if the selected artwork fails.
       </p>
@@ -649,11 +649,11 @@ function ArtworkSourcePanelContent({
                 if (current()) setBusy(false)
               })
           }}
-          className="rounded-full border border-[var(--border)] px-4 py-2 text-sm hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
+          className="rounded-full border border-(--border) px-4 py-2 text-sm hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
         >
           {busy ? "Checking artwork…" : "Refresh choices"}
         </button>
-        <p className="text-xs text-[var(--text-muted)]">
+        <p className="text-xs text-(--text-muted)">
           {props.refreshImage
             ? "Refresh choices checks metadata. Use Refresh image to reload this image’s cached bytes."
             : "Refresh choices checks metadata, not cached image bytes. Plex artwork refresh is unavailable here."}
@@ -670,7 +670,7 @@ function ArtworkSourcePanelContent({
                 ? info.refreshTargets[info.source]
                 : null)
           }
-          className="mt-3 rounded-full border border-[var(--border)] px-4 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
+          className="mt-3 rounded-full border border-(--border) px-4 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
           onClick={() => {
             const source = info.preference ?? info.source
             const url = source ? info.refreshTargets[source] : null
@@ -708,7 +708,7 @@ function ArtworkSourcePanelContent({
         </button>
       )}
       {message && (
-        <p role="status" className="mt-3 text-sm text-[var(--text-secondary)]">
+        <p role="status" className="mt-3 text-sm text-(--text-secondary)">
           {message}
         </p>
       )}

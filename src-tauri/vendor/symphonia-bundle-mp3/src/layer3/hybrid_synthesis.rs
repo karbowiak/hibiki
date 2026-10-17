@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -10,7 +10,7 @@
 
 use crate::common::FrameHeader;
 
-use super::{common::*, GranuleChannel};
+use super::{GranuleChannel, common::*};
 
 use std::{convert::TryInto, f64};
 
@@ -284,7 +284,7 @@ pub(super) fn hybrid_synthesis(
 ) {
     // The first sub-band after the rzero partition boundary is the sub-band limit. All sub-bands
     // past this are zeroed.
-    let sb_limit = (channel.rzero + 17) / 18;
+    let sb_limit = channel.rzero.div_ceil(18);
 
     // Determine the split point of long and short blocks in terms of a sub-band index.
     //
@@ -314,7 +314,9 @@ pub(super) fn hybrid_synthesis(
             let start = 18 * sb;
 
             // Casting to a slice of a known-size lets the compiler elide bounds checks.
-            let sub_band: &mut [f32; 18] = (&mut samples[start..(start + 18)]).try_into().unwrap();
+            let sub_band: &mut [f32; 18] = (&mut samples[start..(start + 18)])
+                .try_into()
+                .expect("slice is exactly 18 elements");
 
             // Perform the 36-point on the entire sub-band.
             imdct36::imdct36(sub_band, window, &mut overlap[sb]);
@@ -334,7 +336,9 @@ pub(super) fn hybrid_synthesis(
             let start = 18 * sb;
 
             // Casting to a slice of a known-size lets the compiler elide bounds checks.
-            let sub_band: &mut [f32; 18] = (&mut samples[start..(start + 18)]).try_into().unwrap();
+            let sub_band: &mut [f32; 18] = (&mut samples[start..(start + 18)])
+                .try_into()
+                .expect("slice is exactly 18 elements");
 
             // Perform the 12-point IMDCT on each of the 3 short windows within the sub-band (6
             // samples each).
@@ -346,7 +350,8 @@ pub(super) fn hybrid_synthesis(
     // sub-band may be non-zero. Therefore, copy it over.
     for sb in sb_limit..32 {
         let start = 18 * sb;
-        let sub_band: &mut [f32; 18] = (&mut samples[start..(start + 18)]).try_into().unwrap();
+        let sub_band: &mut [f32; 18] =
+            (&mut samples[start..(start + 18)]).try_into().expect("slice is exactly 18 elements");
 
         sub_band.copy_from_slice(&overlap[sb]);
         overlap[sb].fill(0.0);
@@ -481,8 +486,8 @@ pub fn frequency_inversion(samples: &mut [f32; 576]) {
 
 #[cfg(test)]
 mod tests {
-    use super::imdct12_win;
     use super::IMDCT_WINDOWS;
+    use super::imdct12_win;
     use std::f64;
 
     fn imdct12_analytical(x: &[f32; 6]) -> [f32; 12] {

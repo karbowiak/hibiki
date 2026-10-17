@@ -619,7 +619,7 @@ export function MetadataEditDialog({
                           </label>
                         </>
                       )}
-                      <div className="border-t border-[var(--border)] pt-4">
+                      <div className="border-t border-(--border) pt-4">
                         <p className="metadata-edit-label">Library metadata</p>
                         <p className="metadata-edit-note mt-2">
                           Review and save changes to your Plex library.
@@ -709,7 +709,7 @@ export function MetadataEditDialog({
                 <p
                   role={needsReload ? "alert" : "status"}
                   aria-live="polite"
-                  className="mt-4 rounded-lg border border-[var(--border)] bg-app-surface px-4 py-3 text-sm"
+                  className="mt-4 rounded-lg border border-(--border) bg-app-surface px-4 py-3 text-sm"
                 >
                   {message}
                 </p>
@@ -792,10 +792,10 @@ export function MetadataEditDialog({
                   return (
                     <div
                       key={adapter.id}
-                      className="rounded-lg border border-[var(--border)] bg-app-surface px-3 py-2 text-xs"
+                      className="rounded-lg border border-(--border) bg-app-surface px-3 py-2 text-xs"
                     >
                       <strong>{labels[adapter.id]}</strong>
-                      <span className="ml-2 text-[var(--text-secondary)]">
+                      <span className="ml-2 text-(--text-secondary)">
                         {status}
                       </span>
                       <button
@@ -858,7 +858,7 @@ export function MetadataEditDialog({
                             })}
                         </select>
                       </div>
-                      <p className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-sm">
+                      <p className="max-h-40 overflow-y-auto whitespace-pre-wrap wrap-break-word text-sm">
                         {Array.isArray(value)
                           ? value.join(", ")
                           : typeof value === "string" ||

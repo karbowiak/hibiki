@@ -275,7 +275,7 @@ pub(crate) fn sign(params: &BTreeMap<&str, &str>, api_secret: &str) -> String {
     s.push_str(api_secret);
     let mut hasher = Md5::new();
     hasher.update(s.as_bytes());
-    format!("{:x}", hasher.finalize())
+    hex::encode(hasher.finalize())
 }
 
 /// Parse a string field that Last.fm returns for numeric values (listeners, playcounts, etc.)

@@ -104,7 +104,7 @@ export function SimilarArtistAvatar({
     )
   }
   return (
-    <div className="flex h-16 w-16 items-center justify-center rounded-md bg-app-surface text-xl font-bold text-[color:var(--text-muted)]">
+    <div className="flex h-16 w-16 items-center justify-center rounded-md bg-app-surface text-xl font-bold text-(--text-muted)">
       {name[0]}
     </div>
   )
@@ -496,7 +496,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
         {/* Main content row */}
         <div className="relative z-10 flex w-full flex-wrap items-end gap-6">
           {/* Avatar — click to open modal */}
-          <div className="artwork-edit-frame relative flex flex-shrink-0 flex-col items-start">
+          <div className="artwork-edit-frame relative flex shrink-0 flex-col items-start">
             {thumbUrl ? (
               <button
                 type="button"
@@ -505,7 +505,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                   e.currentTarget.focus({ preventScroll: true })
                   setShowImageModal(true)
                 }}
-                className="h-36 w-36 flex-shrink-0 rounded-lg shadow-2xl ring-2 ring-transparent transition-all hover:ring-white/40 focus-visible:outline-none focus-visible:ring-white/70"
+                className="h-36 w-36 shrink-0 rounded-lg shadow-2xl ring-2 ring-transparent transition-all hover:ring-white/40 focus-visible:outline-none focus-visible:ring-white/70"
               >
                 <ArtworkImage
                   src={thumbUrl}
@@ -516,7 +516,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                 />
               </button>
             ) : (
-              <div className="h-36 w-36 flex-shrink-0 rounded-lg bg-app-surface shadow-2xl" />
+              <div className="h-36 w-36 shrink-0 rounded-lg bg-app-surface shadow-2xl" />
             )}
             <ArtworkSourcePicker
               kind="artist"
@@ -535,7 +535,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
               <div className="media-detail-eyebrow">Artist</div>
               <DownloadBadge kind="artist" id={artistId} />
             </div>
-            <h1 className="media-detail-title select-text break-words">
+            <h1 className="media-detail-title select-text wrap-break-word">
               {artist.title}
             </h1>
 
@@ -728,11 +728,11 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                   return createPortal(
                     <>
                       <div
-                        className="fixed inset-0 z-[9998]"
+                        className="fixed inset-0 z-9998"
                         onClick={() => setMenuOpen(false)}
                       />
                       <div
-                        className="app-overlay-surface fixed z-[9999] max-h-[70vh] w-56 overflow-y-auto rounded-lg border border-[var(--border)] bg-app-surface py-1 shadow-xl"
+                        className="app-overlay-surface fixed z-9999 max-h-[70vh] w-56 overflow-y-auto rounded-lg border border-(--border) bg-app-surface py-1 shadow-xl"
                         style={{
                           top: (rect?.bottom ?? 0) + 4,
                           right: window.innerWidth - (rect?.right ?? 0),
@@ -755,7 +755,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                             setMenuOpen(false)
                             setEditOpen(true)
                           }}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-(--text-primary) hover:bg-(--bg-surface-hover)"
                         >
                           Edit metadata and sources…
                         </button>
@@ -764,7 +764,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                             addToQueue(popularTracks)
                             setMenuOpen(false)
                           }}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-(--text-primary) hover:bg-(--bg-surface-hover)"
                         >
                           <svg
                             viewBox="0 0 24 24"
@@ -777,7 +777,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                           Add popular to queue
                         </button>
 
-                        <hr className="my-1 border-t border-[var(--border)]" />
+                        <hr className="my-1 border-t border-(--border)" />
 
                         {/* Rating */}
                         <StarRating
@@ -791,10 +791,10 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                           onRated={() => setMenuOpen(false)}
                         />
 
-                        <hr className="my-1 border-t border-[var(--border)]" />
+                        <hr className="my-1 border-t border-(--border)" />
 
                         {/* Share */}
-                        <div className="px-3 pb-0.5 pt-2 text-xs font-semibold text-[var(--text-secondary)]">
+                        <div className="px-3 pb-0.5 pt-2 text-xs font-semibold text-(--text-secondary)">
                           Share
                         </div>
                         <button
@@ -804,7 +804,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                             )
                             setMenuOpen(false)
                           }}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-(--text-primary) hover:bg-(--bg-surface-hover)"
                         >
                           <svg
                             viewBox="0 0 24 24"
@@ -822,7 +822,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                               void open(deezerData.deezer_url)
                               setMenuOpen(false)
                             }}
-                            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-(--text-primary) hover:bg-(--bg-surface-hover)"
                           >
                             <svg
                               viewBox="0 0 24 24"
@@ -839,8 +839,8 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                         {/* Debug */}
                         {debugEnabled && (
                           <>
-                            <hr className="my-1 border-t border-[var(--border)]" />
-                            <div className="px-3 pb-0.5 pt-2 text-xs font-semibold text-[var(--text-secondary)]">
+                            <hr className="my-1 border-t border-(--border)" />
+                            <div className="px-3 pb-0.5 pt-2 text-xs font-semibold text-(--text-secondary)">
                               Debug
                             </div>
                             <button
@@ -848,7 +848,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                                 showDebugPanel("artist", artist)
                                 setMenuOpen(false)
                               }}
-                              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[color:var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-(--text-primary) hover:bg-(--bg-surface-hover)"
                             >
                               <svg
                                 viewBox="0 0 24 24"
@@ -931,7 +931,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                     void playTrack(s[0], s, artist.title, `/artist/${artistId}`)
                   }}
                   title="Shuffle popular tracks"
-                  className="group flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-app-surface px-3 py-1 text-xs font-semibold text-[color:var(--text-secondary)] transition-all duration-200 hover:border-[var(--border-strong)] hover:bg-app-surface-hover hover:text-[color:var(--text-primary)] active:scale-95"
+                  className="group flex items-center gap-1.5 rounded-full border border-(--border) bg-app-surface px-3 py-1 text-xs font-semibold text-(--text-secondary) transition-all duration-200 hover:border-(--border-strong) hover:bg-app-surface-hover hover:text-(--text-primary) active:scale-95"
                 >
                   <svg
                     viewBox="0 0 16 16"
@@ -1156,7 +1156,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
           <section>
             <h2 className="media-section-heading mb-4">
               {priority[0] === "lastfm" ? "Similar Artists" : "Fans Also Like"}
-              <span className="ml-2 text-xs font-normal text-[color:var(--text-muted)]">
+              <span className="ml-2 text-xs font-normal text-(--text-muted)">
                 via Last.fm
               </span>
             </h2>
@@ -1184,7 +1184,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                       <div className="opacity-40">{avatar}</div>
                     )}
                     <span
-                      className={`line-clamp-2 text-center text-xs leading-tight ${plexId ? "text-[color:var(--text-secondary)]" : "text-[color:var(--text-muted)]"}`}
+                      className={`line-clamp-2 text-center text-xs leading-tight ${plexId ? "text-(--text-secondary)" : "text-(--text-muted)"}`}
                     >
                       {a.name}
                     </span>

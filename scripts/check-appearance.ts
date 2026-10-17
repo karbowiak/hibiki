@@ -840,7 +840,7 @@ try {
             const r = title.getBoundingClientRect()
             const family = getComputedStyle(document.body).fontFamily
             const rowTitle = main.querySelector<HTMLElement>(
-              "tbody tr:nth-child(2) td:nth-child(2) > div, section .group span.truncate"
+              "tbody tr:nth-child(2) .track-row-title-line > .truncate, section .group span.truncate"
             )
             return {
               overflow: scroller.scrollWidth - scroller.clientWidth,

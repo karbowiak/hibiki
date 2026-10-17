@@ -79,10 +79,10 @@ function NotificationContent({
         <NotificationIcon severity={notification.severity} />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="break-words text-sm font-semibold text-white">
+        <p className="wrap-break-word text-sm font-semibold text-white">
           {notification.title}
         </p>
-        <p className="mt-1 break-words text-sm leading-relaxed text-white/60">
+        <p className="mt-1 wrap-break-word text-sm leading-relaxed text-white/60">
           {notification.message}
         </p>
         <NotificationAction notification={notification} />
@@ -204,7 +204,7 @@ export function NotificationCenter() {
         aria-controls={open ? panelId : undefined}
         title="Notifications"
         onClick={() => setOpen((value) => !value)}
-        className={`topbar-control topbar-icon-control shell-control-secondary relative flex items-center justify-center rounded-full transition-colors ${open ? "bg-accent/15 text-accent" : "bg-app-surface text-[color:var(--text-secondary)] hover:bg-app-surface-hover"}`}
+        className={`topbar-control topbar-icon-control shell-control-secondary relative flex items-center justify-center rounded-full transition-colors ${open ? "bg-accent/15 text-accent" : "bg-app-surface text-(--text-secondary) hover:bg-app-surface-hover"}`}
       >
         <IconBell size={17} stroke={1.7} aria-hidden="true" />
         {unread > 0 && (
@@ -226,7 +226,7 @@ export function NotificationCenter() {
             aria-labelledby={titleId}
             tabIndex={-1}
             style={position}
-            className="app-overlay-surface fixed z-[12000] flex flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-app-card text-white shadow-2xl outline-none"
+            className="app-overlay-surface fixed z-12000 flex flex-col overflow-hidden rounded-xl border border-(--border) bg-app-card text-white shadow-2xl outline-none"
             onKeyDown={(event) => {
               event.stopPropagation()
               if (event.key === "Escape") {
@@ -235,7 +235,7 @@ export function NotificationCenter() {
               }
             }}
           >
-            <div className="flex shrink-0 items-center gap-2 border-b border-[var(--border-subtle)] px-4 py-3">
+            <div className="flex shrink-0 items-center gap-2 border-b border-(--border-subtle) px-4 py-3">
               <h2 id={titleId} className="flex-1 text-sm font-semibold">
                 Notifications
               </h2>
@@ -261,11 +261,11 @@ export function NotificationCenter() {
             </div>
             <div className="min-h-0 overflow-y-auto overscroll-contain">
               {history.length ? (
-                <ul className="divide-y divide-[var(--border-subtle)]">
+                <ul className="divide-y divide-(--border-subtle)">
                   {history.map((notification) => (
                     <li key={notification.id} className="px-4 py-4">
                       <NotificationContent notification={notification} />
-                      <div className="ml-8 mt-2 flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                      <div className="ml-8 mt-2 flex items-center gap-2 text-xs text-(--text-secondary)">
                         <time
                           dateTime={new Date(
                             notification.updatedAt
@@ -333,7 +333,7 @@ function NotificationToast({
   return (
     <div
       role="status"
-      className="app-overlay-surface pointer-events-auto relative rounded-xl border border-[var(--border)] bg-app-card p-4 pr-10 text-white shadow-xl"
+      className="app-overlay-surface pointer-events-auto relative rounded-xl border border-(--border) bg-app-card p-4 pr-10 text-white shadow-xl"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
       onFocus={() => setPaused(true)}
@@ -397,7 +397,7 @@ export function NotificationToasts() {
     <div
       aria-label="Recent notifications"
       style={position}
-      className="pointer-events-none fixed right-4 z-[11000] flex w-[360px] max-w-[calc(100vw-32px)] flex-col gap-3 overflow-y-auto overscroll-contain p-1"
+      className="pointer-events-none fixed right-4 z-11000 flex w-[360px] max-w-[calc(100vw-32px)] flex-col gap-3 overflow-y-auto overscroll-contain p-1"
     >
       {toasts.map((notification) => (
         <NotificationToast key={notification.id} notification={notification} />

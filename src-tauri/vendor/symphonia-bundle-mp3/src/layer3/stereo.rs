@@ -1,15 +1,15 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 
 use crate::common::{ChannelMode, FrameHeader, Mode};
 
-use super::{common::*, Granule};
+use super::{Granule, common::*};
 
 use std::cmp::max;
 use std::{f32, f64};
@@ -506,7 +506,10 @@ pub(super) fn stereo(
 
     // Split the sample buffer into two channels.
     let (ch0, ch1) = {
-        let (ch0, ch1) = ch.split_first_mut().unwrap();
+        let (ch0, ch1) = match ch.split_first_mut() {
+            Some(v) => v,
+            None => return decode_error("mp3: stereo channel pair is empty"),
+        };
         (ch0, &mut ch1[0])
     };
 

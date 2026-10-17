@@ -41,7 +41,7 @@ useProviderStore.getState().setProvider({
 function Fixture() {
   const [open, setOpen] = useState(false)
   return (
-    <main className="bg-app-base min-h-screen p-8 text-[var(--text-primary)]">
+    <main className="bg-app-base min-h-screen p-8 text-(--text-primary)">
       <h1 className="mb-4 text-2xl font-semibold">Synthetic library</h1>
       <button
         type="button"

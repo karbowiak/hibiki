@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -7,8 +7,8 @@
 
 use std::fmt;
 
-use symphonia_core::audio::{AudioBuffer, Signal};
-use symphonia_core::errors::{decode_error, Error, Result};
+use symphonia_core::audio::{AudioBuffer, AudioMut};
+use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr, ReadBytes};
 
 mod bitstream;
@@ -32,49 +32,8 @@ pub struct BitResevoir {
     buf: Box<[u8]>,
     len: usize,
     consumed: usize,
-    // A reset starts without earlier packets (normal during accurate seeking).
+    // Fresh/reset decoders deliberately begin without preceding reservoir bytes.
     primed: bool,
-}
-
-#[cfg(test)]
-mod reservoir_log_tests {
-    use super::BitResevoir;
-    use log::{Level, LevelFilter, Log, Metadata, Record};
-    use std::cell::RefCell;
-
-    thread_local! {
-        static LEVELS: RefCell<Vec<Level>> = const { RefCell::new(Vec::new()) };
-    }
-    struct Recorder;
-    impl Log for Recorder {
-        fn enabled(&self, metadata: &Metadata<'_>) -> bool {
-            metadata.target() == "symphonia_bundle_mp3::layer3"
-        }
-        fn log(&self, record: &Record<'_>) {
-            if self.enabled(record.metadata()) {
-                LEVELS.with(|levels| levels.borrow_mut().push(record.level()));
-            }
-        }
-        fn flush(&self) {}
-    }
-    static RECORDER: Recorder = Recorder;
-
-    #[test]
-    fn warmup_is_debug_but_an_established_reservoir_underflow_still_warns() {
-        log::set_logger(&RECORDER).unwrap();
-        log::set_max_level(LevelFilter::Trace);
-        let mut reservoir = BitResevoir::new();
-        assert_eq!(reservoir.fill(&[0; 100], 300).unwrap(), 300);
-        assert_eq!(reservoir.fill(&[0; 100], 300).unwrap(), 200);
-        assert_eq!(reservoir.fill(&[0; 100], 0).unwrap(), 0);
-        assert_eq!(reservoir.fill(&[0; 100], 300).unwrap(), 200);
-        reservoir.clear();
-        assert_eq!(reservoir.fill(&[0; 100], 300).unwrap(), 300);
-        LEVELS.with(|levels| assert_eq!(
-            *levels.borrow(),
-            [Level::Debug, Level::Debug, Level::Warn, Level::Debug]
-        ));
-    }
 }
 
 impl BitResevoir {
@@ -128,10 +87,9 @@ impl BitResevoir {
             let underflow = (main_data_begin - unread) as u32;
 
             if self.primed {
-                warn!("mpa: invalid main_data_begin, underflow by {} bytes", underflow);
-            }
-            else {
-                debug!("mpa: priming bit reservoir, {} preceding bytes unavailable", underflow);
+                warn!("mpa: invalid main_data_begin, underflow by {underflow} bytes");
+            } else {
+                debug!("mpa: reservoir warm-up, underflow by {underflow} bytes");
             }
 
             underflow
@@ -293,7 +251,7 @@ impl fmt::Debug for GranuleChannel {
 
         write!(f, "\tscalefacs=[ ")?;
         for sf in &self.scalefacs[..] {
-            write!(f, "{}, ", sf)?;
+            write!(f, "{sf}, ")?;
         }
         writeln!(f, "]")?;
         writeln!(f, "\trzero={}", self.rzero)?;
@@ -355,7 +313,7 @@ impl Layer3 {
                 let byte_index = part2_3_begin >> 3;
 
                 // Create a bit reader at the expected starting bit position.
-                let mut bs = if byte_index < main_data.len() {
+                let mut bs = if byte_index <= main_data.len() {
                     let mut bs = BitReaderLtr::new(&main_data[byte_index..]);
 
                     let bit_index = part2_3_begin & 0x7;
@@ -485,7 +443,7 @@ impl Layer for Layer3 {
 
             // Each granule will yield 576 samples. After reserving frames, all steps must be
             // infalliable.
-            out.render_reserved(Some(576));
+            out.render_uninit(Some(576));
 
             // The next steps are independant of channel count.
             for ch in 0..header.n_channels() {
@@ -512,7 +470,10 @@ impl Layer for Layer3 {
                 hybrid_synthesis::frequency_inversion(&mut self.samples[gr][ch]);
 
                 // Perform polyphase synthesis and generate PCM samples.
-                let out_ch_samples = out.chan_mut(ch);
+                let out_ch_samples = match out.plane_mut(ch) {
+                    Some(p) => p,
+                    None => return decode_error("mp3: missing audio plane"),
+                };
 
                 synthesis::synthesis(
                     &mut self.synthesis[ch],
@@ -524,5 +485,46 @@ impl Layer for Layer3 {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod reservoir_log_tests {
+    use super::BitResevoir;
+    use log::{Level, LevelFilter, Log, Metadata, Record};
+    use std::cell::RefCell;
+
+    thread_local! {
+        static LEVELS: RefCell<Vec<Level>> = const { RefCell::new(Vec::new()) };
+    }
+    struct Recorder;
+    impl Log for Recorder {
+        fn enabled(&self, metadata: &Metadata<'_>) -> bool {
+            metadata.target() == "symphonia_bundle_mp3::layer3"
+        }
+        fn log(&self, record: &Record<'_>) {
+            if self.enabled(record.metadata()) {
+                LEVELS.with(|levels| levels.borrow_mut().push(record.level()));
+            }
+        }
+        fn flush(&self) {}
+    }
+    static RECORDER: Recorder = Recorder;
+
+    #[test]
+    fn warmup_is_debug_but_an_established_reservoir_underflow_still_warns() {
+        log::set_logger(&RECORDER).unwrap();
+        log::set_max_level(LevelFilter::Trace);
+        let mut reservoir = BitResevoir::new();
+        assert_eq!(reservoir.fill(&[0; 100], 300).unwrap(), 300);
+        assert_eq!(reservoir.fill(&[0; 100], 300).unwrap(), 200);
+        assert_eq!(reservoir.fill(&[0; 100], 0).unwrap(), 0);
+        assert_eq!(reservoir.fill(&[0; 100], 300).unwrap(), 200);
+        reservoir.clear();
+        assert_eq!(reservoir.fill(&[0; 100], 300).unwrap(), 300);
+        LEVELS.with(|levels| assert_eq!(
+            *levels.borrow(),
+            [Level::Debug, Level::Debug, Level::Warn, Level::Debug]
+        ));
     }
 }

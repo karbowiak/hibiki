@@ -94,9 +94,9 @@ export function VerifiedRecordingsAction({
   return (
     <section
       aria-label="Verified recording lookup"
-      className="rounded-xl border border-[var(--border)] bg-app-surface p-4"
+      className="rounded-xl border border-(--border) bg-app-surface p-4"
     >
-      <p className="text-sm text-[var(--text-secondary)]">
+      <p className="text-sm text-(--text-secondary)">
         Look up recording IDs for this playlist. Only confirmed matches are
         accepted; songs with uncertain matches still need your choice.
       </p>
@@ -125,7 +125,7 @@ export function VerifiedRecordingsAction({
         )}
       </div>
       {message && (
-        <p role="status" className="mt-3 text-sm text-[var(--text-secondary)]">
+        <p role="status" className="mt-3 text-sm text-(--text-secondary)">
           {message}
         </p>
       )}

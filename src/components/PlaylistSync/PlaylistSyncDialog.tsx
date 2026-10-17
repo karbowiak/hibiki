@@ -39,7 +39,7 @@ function weeklyDate(edition: WeeklyEdition): string {
     : `Generated ${new Date(edition.createdAt).toISOString().slice(0, 10)}`
 }
 const button =
-  "rounded-lg border border-[var(--border)] px-3 py-2 text-sm hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
+  "rounded-lg border border-(--border) px-3 py-2 text-sm hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
 type SyncSummary = ListenBrainzPlaylistSummary & Pick<WeeklySummary, "weekly">
 export interface PlaylistSyncBrowserServices {
   account(): Promise<PlaylistAccount>
@@ -329,10 +329,10 @@ export function PlaylistSyncDialog({
       {!ready ? (
         <div
           role="status"
-          className="rounded-xl border border-[var(--border)] p-5"
+          className="rounded-xl border border-(--border) p-5"
         >
           <h3 className="font-semibold">Connect both services</h3>
-          <p className="mt-2 text-sm text-[var(--text-secondary)]">
+          <p className="mt-2 text-sm text-(--text-secondary)">
             Connect ListenBrainz and an online music library in Settings to
             configure playlist sync.
           </p>
@@ -354,16 +354,16 @@ export function PlaylistSyncDialog({
           {recoveredPlaylist && (
             <p
               role="status"
-              className="mb-4 rounded-xl border border-[var(--border)] p-4"
+              className="mb-4 rounded-xl border border-(--border) p-4"
             >
               The retained playlist link was recovered. Open the playlist’s Sync
               review to continue and check any songs needing a choice.
             </p>
           )}
           {remote && (
-            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-app-surface p-4">
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-(--border) bg-app-surface p-4">
               <div className="min-w-0">
-                <p className="break-words font-semibold">
+                <p className="wrap-break-word font-semibold">
                   {weeklyBinding
                     ? weeklyBinding.family === "weekly-exploration"
                       ? "Weekly Exploration"
@@ -371,11 +371,11 @@ export function PlaylistSyncDialog({
                     : remote.title}
                 </p>
                 {weeklyBinding && (
-                  <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                  <p className="mt-1 text-sm text-(--text-secondary)">
                     {weeklyDate(weeklyBinding.edition)}
                   </p>
                 )}
-                <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                <p className="mt-1 text-xs text-(--text-secondary)">
                   {remote.access.generated
                     ? "Generated playlist"
                     : remote.access.owned
@@ -425,7 +425,7 @@ export function PlaylistSyncDialog({
           {error && (
             <div
               role="alert"
-              className="mb-4 rounded-xl border border-[var(--border)] p-4"
+              className="mb-4 rounded-xl border border-(--border) p-4"
             >
               {error}
               <button
@@ -448,7 +448,7 @@ export function PlaylistSyncDialog({
                     setQuery(e.target.value)
                     setPage(0)
                   }}
-                  className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-app-surface px-3 py-2"
+                  className="min-w-0 flex-1 rounded-lg border border-(--border) bg-app-surface px-3 py-2"
                 />
                 <select
                   aria-label="Playlist source"
@@ -468,7 +468,7 @@ export function PlaylistSyncDialog({
               {truncated && current && (
                 <p
                   role="status"
-                  className="mb-3 text-sm text-[var(--text-secondary)]"
+                  className="mb-3 text-sm text-(--text-secondary)"
                 >
                   This is a bounded partial listing. Some playlists are
                   unavailable in this view; no missing playlists or songs will
@@ -481,7 +481,7 @@ export function PlaylistSyncDialog({
                 visibleChannels.length === 0 && (
                   <p
                     role="status"
-                    className="py-8 text-center text-[var(--text-secondary)]"
+                    className="py-8 text-center text-(--text-secondary)"
                   >
                     {query
                       ? "No playlists match your search."
@@ -497,7 +497,7 @@ export function PlaylistSyncDialog({
                     <button
                       key={channel.family}
                       type="button"
-                      className="rounded-xl border border-[var(--border)] bg-app-surface p-4 text-left hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                      className="rounded-xl border border-(--border) bg-app-surface p-4 text-left hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                       disabled={channel.status === "unavailable"}
                       onClick={() =>
                         channel.latest
@@ -508,14 +508,14 @@ export function PlaylistSyncDialog({
                       <span className="block font-semibold">
                         {channel.label}
                       </span>
-                      <span className="mt-1 block text-sm text-[var(--text-secondary)]">
+                      <span className="mt-1 block text-sm text-(--text-secondary)">
                         {channel.latest
                           ? `${channel.label} · ${weeklyDate(channel.latest)}`
                           : channel.status === "ambiguous"
                             ? "Choose a verified edition before linking"
                             : "No verified edition available"}
                       </span>
-                      <span className="mt-2 block text-xs text-[var(--text-secondary)]">
+                      <span className="mt-2 block text-xs text-(--text-secondary)">
                         Generated for you · import-only
                       </span>
                     </button>
@@ -525,12 +525,12 @@ export function PlaylistSyncDialog({
               {weeklyChoice && (
                 <section
                   aria-label="Choose a weekly edition"
-                  className="mb-5 rounded-xl border border-[var(--border)] p-4"
+                  className="mb-5 rounded-xl border border-(--border) p-4"
                 >
                   <h3 className="font-semibold">
                     {weeklyChoice.label}: review editions
                   </h3>
-                  <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                  <p className="mt-2 text-sm text-(--text-secondary)">
                     A unique latest edition could not be proven. Choose an
                     edition explicitly; automatic following stays unavailable
                     until a unique newer edition is verified.
@@ -554,7 +554,7 @@ export function PlaylistSyncDialog({
                 {filtered.slice(page * 30, (page + 1) * 30).map((item) => (
                   <li key={item.id}>
                     <button
-                      className="flex w-full items-center gap-4 rounded-xl border border-[var(--border)] bg-app-surface p-4 text-left transition-colors hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                      className="flex w-full items-center gap-4 rounded-xl border border-(--border) bg-app-surface p-4 text-left transition-colors hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                       onClick={() => {
                         setSelected(item)
                         setWeeklyBinding(undefined)
@@ -570,10 +570,10 @@ export function PlaylistSyncDialog({
                         ♫
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block break-words font-medium">
+                        <span className="block wrap-break-word font-medium">
                           {item.title || "Untitled playlist"}
                         </span>
-                        <span className="mt-1 block text-xs text-[var(--text-secondary)]">
+                        <span className="mt-1 block text-xs text-(--text-secondary)">
                           {item.access.generated
                             ? "Generated for you"
                             : item.access.owned
@@ -599,7 +599,7 @@ export function PlaylistSyncDialog({
                   >
                     Previous
                   </button>
-                  <span className="text-sm text-[var(--text-secondary)]">
+                  <span className="text-sm text-(--text-secondary)">
                     {page + 1} / {Math.ceil(filtered.length / 30)}
                   </span>
                   <button
@@ -621,7 +621,7 @@ export function PlaylistSyncDialog({
               aria-labelledby={`${tabsId}-destination`}
               className="space-y-5"
             >
-              <div className="rounded-xl border border-[var(--border)] bg-app-surface p-4">
+              <div className="rounded-xl border border-(--border) bg-app-surface p-4">
                 <label className="block text-sm">
                   Local playlist name
                   <input
@@ -651,11 +651,11 @@ export function PlaylistSyncDialog({
                       ? "Open configured sync"
                       : "Create Sync"}
                 </button>
-                <p className="mt-3 text-sm text-[var(--text-secondary)]">
+                <p className="mt-3 text-sm text-(--text-secondary)">
                   Creates a fresh local playlist. Matching continues in the
                   background; songs needing a choice remain in its Review.
                 </p>
-                <p className="mt-2 text-xs text-[var(--text-secondary)]">
+                <p className="mt-2 text-xs text-(--text-secondary)">
                   {weeklyBinding
                     ? "Follows new weekly editions while Hibiki is open or on next launch."
                     : "ListenBrainz → Plex · manual sync · automatic checks off."}
@@ -664,7 +664,7 @@ export function PlaylistSyncDialog({
               {creationError && (
                 <div
                   role="alert"
-                  className="rounded-xl border border-[var(--border)] p-4"
+                  className="rounded-xl border border-(--border) p-4"
                 >
                   {creationError}
                   {creationReceipt?.destinationId && (

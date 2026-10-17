@@ -75,15 +75,15 @@ export function DownloadStorageControls() {
       <div className="flex min-w-0 items-start gap-3">
         <IconFolder
           size={20}
-          className="mt-0.5 shrink-0 text-[var(--text-secondary)]"
+          className="mt-0.5 shrink-0 text-(--text-secondary)"
           aria-hidden="true"
         />
         <div className="min-w-0 flex-1">
-          <p className="break-all text-sm font-medium text-[var(--text-primary)]">
+          <p className="break-all text-sm font-medium text-(--text-primary)">
             {info?.directory ?? "Loading download folder…"}
           </p>
           {info && (
-            <p className="mt-1 text-xs text-[var(--text-secondary)]">
+            <p className="mt-1 text-xs text-(--text-secondary)">
               {info.tracks.toLocaleString()}{" "}
               {info.tracks === 1 ? "song" : "songs"} ·{" "}
               {(info.totalBytes / 1024 ** 3).toFixed(2)} GiB
@@ -91,7 +91,7 @@ export function DownloadStorageControls() {
           )}
         </div>
       </div>
-      <p className="text-sm leading-relaxed text-[var(--text-secondary)]">
+      <p className="text-sm leading-relaxed text-(--text-secondary)">
         Songs are organized by artist and album. Downloaded playlists get an M3U
         file in the Playlists folder, updated as songs finish downloading. Each
         song is stored once.
@@ -100,7 +100,7 @@ export function DownloadStorageControls() {
         <button
           type="button"
           disabled={moving || !info}
-          className="settings-choice rounded-lg border border-[var(--border)] bg-app-surface px-3 py-1.5 text-sm text-[var(--text-primary)] transition-colors hover:bg-app-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
+          className="settings-choice rounded-lg border border-(--border) bg-app-surface px-3 py-1.5 text-sm text-(--text-primary) transition-colors hover:bg-app-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
           onClick={() => void change("download_storage_choose")}
         >
           {moving ? "Moving downloads…" : "Change folder…"}
@@ -108,7 +108,7 @@ export function DownloadStorageControls() {
         <button
           type="button"
           disabled={moving || !info}
-          className="settings-choice inline-flex items-center gap-2 rounded-lg border border-[var(--border)] bg-app-surface px-3 py-1.5 text-sm text-[var(--text-primary)] transition-colors hover:bg-app-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
+          className="settings-choice inline-flex items-center gap-2 rounded-lg border border-(--border) bg-app-surface px-3 py-1.5 text-sm text-(--text-primary) transition-colors hover:bg-app-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
           onClick={() =>
             void invoke("download_storage_open").catch(() => {
               if (current.current) setError("Could not open the download folder.")
@@ -119,13 +119,13 @@ export function DownloadStorageControls() {
           Open folder
         </button>
       </div>
-      <p className="text-xs leading-relaxed text-[var(--text-secondary)]">
+      <p className="text-xs leading-relaxed text-(--text-secondary)">
         Hibiki uses a dedicated Hibiki folder inside your chosen location.
         Existing downloads move with it; the temporary playback cache stays
         separate.
       </p>
       {moving && (
-        <p role="status" className="text-sm text-[var(--text-secondary)]">
+        <p role="status" className="text-sm text-(--text-secondary)">
           Finishing the current download and moving verified files. This can
           take a moment for a large collection.
         </p>
@@ -133,13 +133,13 @@ export function DownloadStorageControls() {
       {(error || info?.error) && (
         <div
           role="alert"
-          className="space-y-2 text-sm text-[var(--text-primary)]"
+          className="space-y-2 text-sm text-(--text-primary)"
         >
           <p>{error || info?.error}</p>
           <button
             type="button"
             disabled={moving}
-            className="settings-choice rounded-lg border border-[var(--border)] bg-app-surface px-3 py-1.5 text-sm text-[var(--text-primary)] transition-colors hover:bg-app-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
+            className="settings-choice rounded-lg border border-(--border) bg-app-surface px-3 py-1.5 text-sm text-(--text-primary) transition-colors hover:bg-app-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
             onClick={() => void change("download_storage_retry")}
           >
             Try again

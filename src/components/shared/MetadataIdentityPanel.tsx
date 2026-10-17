@@ -17,7 +17,7 @@ function IdentityEvidence({ candidate }: { candidate: MetadataIdentityCandidate 
       {candidate.area && <><dt className="metadata-edit-note">Origin</dt><dd>{candidate.area}</dd></>}
       {candidate.releaseDate && <><dt className="metadata-edit-note">Release date</dt><dd>{candidate.releaseDate}</dd></>}
       {candidate.artistType && <><dt className="metadata-edit-note">Artist type</dt><dd>{candidate.artistType}</dd></>}
-      {!!candidate.aliases.length && <><dt className="metadata-edit-note">Also known as</dt><dd className="break-words">{candidate.aliases.map(a => a.name).join(" · ")}</dd></>}
+      {!!candidate.aliases.length && <><dt className="metadata-edit-note">Also known as</dt><dd className="wrap-break-word">{candidate.aliases.map(a => a.name).join(" · ")}</dd></>}
       <dt className="metadata-edit-note">Identity</dt><dd className="break-all font-mono text-xs">{candidate.id}</dd>
     </dl>
   </div>

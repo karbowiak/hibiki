@@ -230,12 +230,9 @@ pub(crate) fn analysis_revision(
     music_version: Option<i64>,
 ) -> Result<String, String> {
     use sha2::{Digest, Sha256};
-    Ok(format!(
-        "{:x}",
-        Sha256::digest(
+    Ok(hex::encode(Sha256::digest(
             serde_json::to_vec(&(media, music_version)).map_err(|_| "Invalid analysis revision")?
-        )
-    ))
+        )))
 }
 pub struct Page {
     pub items: Vec<Value>,

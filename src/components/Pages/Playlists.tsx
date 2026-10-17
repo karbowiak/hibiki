@@ -24,11 +24,11 @@ export function Playlists() {
             <h1 className="discovery-title">
               Playlists
             </h1>
-            <p className="mt-2 max-w-xl select-text text-sm text-[var(--text-secondary)]">
+            <p className="mt-2 max-w-xl select-text text-sm text-(--text-secondary)">
               All your playlists in one place.
             </p>
           </div>
-          <p className="text-sm text-[var(--text-secondary)]">
+          <p className="text-sm text-(--text-secondary)">
             {count.toLocaleString()} {count === 1 ? "playlist" : "playlists"}
           </p>
         </div>
@@ -44,7 +44,7 @@ export function Playlists() {
       {/* Playlist grid */}
       <div className="px-8 pt-2">
         {count === 0 ? (
-          <div className="py-12 text-center text-sm text-[var(--text-muted)]">
+          <div className="py-12 text-center text-sm text-(--text-muted)">
             No playlists yet. Create one to get started.
           </div>
         ) : (

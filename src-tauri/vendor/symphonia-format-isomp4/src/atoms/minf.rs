@@ -1,21 +1,18 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{decode_error, Result};
-use symphonia_core::io::ReadBytes;
-
-use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, SmhdAtom, StblAtom};
+use crate::atoms::{
+    Atom, AtomHeader, AtomIterator, AtomType, ReadAtom, Result, SmhdAtom, StblAtom, decode_error,
+};
 
 /// Media information atom.
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct MinfAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Sound media header atom.
     pub smhd: Option<SmhdAtom>,
     /// Sample table atom.
@@ -23,32 +20,27 @@ pub struct MinfAtom {
 }
 
 impl Atom for MinfAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let mut iter = AtomIterator::new(reader, header);
-
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
         let mut smhd = None;
         let mut stbl = None;
 
-        while let Some(header) = iter.next()? {
-            match header.atype {
+        while let Some(header) = it.next_header()? {
+            match header.atom_type {
                 AtomType::SoundMediaHeader => {
-                    smhd = Some(iter.read_atom::<SmhdAtom>()?);
+                    smhd = Some(it.read_atom::<SmhdAtom>()?);
                 }
                 AtomType::SampleTable => {
-                    stbl = Some(iter.read_atom::<StblAtom>()?);
+                    stbl = Some(it.read_atom::<StblAtom>()?);
                 }
                 _ => (),
             }
         }
 
-        if stbl.is_none() {
-            return decode_error("isomp4: missing stbl atom");
-        }
+        let Some(stbl) = stbl
+        else {
+            return decode_error("isomp4 (minf): missing stbl atom");
+        };
 
-        Ok(MinfAtom { header, smhd, stbl: stbl.unwrap() })
+        Ok(MinfAtom { smhd, stbl })
     }
 }

@@ -61,10 +61,7 @@ fn account(service: &str, username: &str, credential: &str) -> Option<String> {
     } else {
         username.to_lowercase()
     };
-    Some(format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(&[service, &identity]).unwrap())
-    ))
+    Some(hex::encode(Sha256::digest(serde_json::to_vec(&[service, &identity]).unwrap())))
 }
 impl Binding {
     pub fn capture(settings: &crate::plex::PlexSettings, plex: Option<String>) -> Self {
@@ -483,7 +480,7 @@ fn count_reports(conn: &rusqlite::Connection) -> Result<usize, String> {
 }
 fn timeline_session_identifier(job: &str) -> String {
     use sha2::{Digest, Sha256};
-    format!("history-{:x}", Sha256::digest(job.as_bytes()))
+    format!("history-{}", hex::encode(Sha256::digest(job.as_bytes())))
 }
 async fn submit(
     report: &Report,

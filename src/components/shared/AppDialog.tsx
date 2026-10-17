@@ -155,14 +155,14 @@ export function AppDialog({
         if (event.target === event.currentTarget && current.current.canClose)
           current.current.onClose()
       }}
-      className={`app-overlay-surface fixed inset-0 m-auto max-h-[min(90dvh,900px)] w-[calc(100%-2rem)] overflow-hidden rounded-2xl border border-[var(--border)] bg-app-card p-0 text-[var(--text-primary)] shadow-2xl backdrop:bg-black/65 ${className}`}
+      className={`app-overlay-surface fixed inset-0 m-auto max-h-[min(90dvh,900px)] w-[calc(100%-2rem)] overflow-hidden rounded-2xl border border-(--border) bg-app-card p-0 text-(--text-primary) shadow-2xl backdrop:bg-black/65 ${className}`}
     >
       <div
         className="flex max-h-[min(90dvh,900px)] flex-col"
         onClick={(event) => event.stopPropagation()}
       >
         <header
-          className={`app-dialog-header relative flex shrink-0 items-start justify-between gap-4 border-b border-[var(--border)] p-5 ${headerBackdrop ? "app-dialog-header--artwork" : ""}`}
+          className={`app-dialog-header relative flex shrink-0 items-start justify-between gap-4 border-b border-(--border) p-5 ${headerBackdrop ? "app-dialog-header--artwork" : ""}`}
         >
           {headerBackdrop && (
             <div
@@ -175,13 +175,13 @@ export function AppDialog({
           <div className="relative flex min-w-0 items-center gap-4">
             {cover}
             <div className="min-w-0">
-              <h2 id={`${id}-title`} className="break-words text-xl font-semibold">
+              <h2 id={`${id}-title`} className="wrap-break-word text-xl font-semibold">
                 {title}
               </h2>
               {description && (
                 <p
                   id={`${id}-description`}
-                  className="mt-1 text-sm text-[var(--text-secondary)]"
+                  className="mt-1 text-sm text-(--text-secondary)"
                 >
                   {description}
                 </p>
@@ -201,7 +201,7 @@ export function AppDialog({
         </header>
         <div className={bodyClassName}>{children}</div>
         {footer && (
-          <footer className="shrink-0 border-t border-[var(--border)] p-4">
+          <footer className="shrink-0 border-t border-(--border) p-4">
             {footer}
           </footer>
         )}

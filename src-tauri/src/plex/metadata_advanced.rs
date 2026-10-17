@@ -176,7 +176,7 @@ fn parse(
                 unreachable!()
             };
             // Expose only a conflict fingerprint, never a private artwork URL.
-            AdvancedValue::Text(format!("{:x}", Sha256::digest(raw.as_bytes())))
+            AdvancedValue::Text(hex::encode(Sha256::digest(raw.as_bytes())))
         } else {
             value
         };

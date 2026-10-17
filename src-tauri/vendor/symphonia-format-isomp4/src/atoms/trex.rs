@@ -1,21 +1,16 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::Result;
-use symphonia_core::io::ReadBytes;
-
-use crate::atoms::{Atom, AtomHeader};
+use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result};
 
 /// Track extends atom.
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct TrexAtom {
-    /// Atom header.
-    header: AtomHeader,
     /// Track this atom describes.
     pub track_id: u32,
     /// Default sample description index.
@@ -29,20 +24,15 @@ pub struct TrexAtom {
 }
 
 impl Atom for TrexAtom {
-    fn header(&self) -> AtomHeader {
-        self.header
-    }
-
-    fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
-        let (_, _) = AtomHeader::read_extra(reader)?;
+    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (_, _) = it.read_extended_header()?;
 
         Ok(TrexAtom {
-            header,
-            track_id: reader.read_be_u32()?,
-            default_sample_desc_idx: reader.read_be_u32()?,
-            default_sample_duration: reader.read_be_u32()?,
-            default_sample_size: reader.read_be_u32()?,
-            default_sample_flags: reader.read_be_u32()?,
+            track_id: it.read_u32()?,
+            default_sample_desc_idx: it.read_u32()?,
+            default_sample_duration: it.read_u32()?,
+            default_sample_size: it.read_u32()?,
+            default_sample_flags: it.read_u32()?,
         })
     }
 }

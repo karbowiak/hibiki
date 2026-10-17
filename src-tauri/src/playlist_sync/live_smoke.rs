@@ -50,7 +50,7 @@ fn binding(settings: &PlexSettings) -> String {
         settings.listenbrainz_auth_revision,
         settings.listenbrainz_token
     ]);
-    format!("{:x}", Sha256::digest(values.to_string().as_bytes()))
+    hex::encode(Sha256::digest(values.to_string().as_bytes()))
 }
 fn current(config: &Path, expected: &str) -> Result<()> {
     let settings = crate::plex::load_settings(config)

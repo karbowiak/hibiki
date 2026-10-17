@@ -11,7 +11,7 @@ export function PlaylistSyncFrame({
     <section aria-label={props.title} className="min-w-0">
       {props.children}
       {props.footer && (
-        <div className="mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-[var(--border)] pt-4">
+        <div className="mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-(--border) pt-4">
           {props.footer}
         </div>
       )}

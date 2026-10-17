@@ -318,7 +318,7 @@ export function PlexSettings() {
     <div className="max-w-xl space-y-8">
       {/* Connection status */}
       <div className="flex items-center gap-3 rounded-xl bg-white/5 px-5 py-4">
-        <span className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${isConnected ? "bg-accent" : "bg-red-500"}`} />
+        <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${isConnected ? "bg-accent" : "bg-red-500"}`} />
         <div className="min-w-0">
           <p className="text-sm font-medium text-white">
             {isConnected ? "Connected" : isOffline ? "Browsing saved library" : "Not connected"}
@@ -331,7 +331,7 @@ export function PlexSettings() {
           <button
             onClick={handleDisconnect}
             disabled={isDisconnecting}
-            className="ml-auto flex-shrink-0 rounded-full border border-white/20 px-4 py-1.5 text-xs font-semibold text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-30 transition-colors"
+            className="ml-auto shrink-0 rounded-full border border-white/20 px-4 py-1.5 text-xs font-semibold text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-30 transition-colors"
           >
             {isDisconnecting ? "Disconnecting..." : "Disconnect"}
           </button>
@@ -339,9 +339,9 @@ export function PlexSettings() {
       </div>
 
       {(
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-4 text-[var(--text-primary)]">
+        <div className="rounded-xl border border-(--border) bg-(--bg-surface) p-4 text-(--text-primary)">
           <p className="text-sm">Browse saved pages and play complete cached or downloaded music without Plex. Library changes are disabled offline. Switching to saved-library mode stops current playback.</p>
-          <button type="button" disabled={isLoading} className="mt-3 rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-medium hover:bg-[var(--bg-elevated)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50" onClick={async () => {
+          <button type="button" disabled={isLoading} className="mt-3 rounded-lg border border-(--border) px-4 py-2 text-sm font-medium hover:bg-(--bg-elevated) focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50" onClick={async () => {
             stopPolling()
             const request = authGeneration.current
             await browseSavedLibrary()
@@ -360,7 +360,7 @@ export function PlexSettings() {
           {availableMusicSections.length > 1 && (
             <button
               onClick={() => void handleOpenLibrarySwitcher()}
-              className="flex-shrink-0 rounded-full border border-white/20 px-4 py-1.5 text-xs font-semibold text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+              className="shrink-0 rounded-full border border-white/20 px-4 py-1.5 text-xs font-semibold text-white/60 hover:bg-white/10 hover:text-white transition-colors"
             >
               Switch
             </button>
@@ -388,7 +388,7 @@ export function PlexSettings() {
                         <span className="rounded-full bg-accent/20 px-2 py-0.5 text-[10px] font-medium text-accent">current</span>
                       )}
                       {isSwitching && !isCurrent && (
-                        <svg className="animate-spin text-[#e5a00d] flex-shrink-0" height="14" width="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <svg className="animate-spin text-[#e5a00d] shrink-0" height="14" width="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                           <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
                           <path d="M12 2a10 10 0 0 1 10 10" />
                         </svg>
@@ -427,7 +427,7 @@ export function PlexSettings() {
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-white">{section.title}</span>
                     {isLoading && (
-                      <svg className="animate-spin text-[#e5a00d] flex-shrink-0" height="14" width="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <svg className="animate-spin text-[#e5a00d] shrink-0" height="14" width="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                         <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
                         <path d="M12 2a10 10 0 0 1 10 10" />
                       </svg>
@@ -503,7 +503,7 @@ export function PlexSettings() {
                         )}
                       </div>
                       {isConnectingThis && (
-                        <svg className="animate-spin text-[#e5a00d] flex-shrink-0" height="14" width="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <svg className="animate-spin text-[#e5a00d] shrink-0" height="14" width="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                           <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
                           <path d="M12 2a10 10 0 0 1 10 10" />
                         </svg>

@@ -28,9 +28,9 @@ import {
 } from "../../playlistSync/manualSearch"
 
 const button =
-  "rounded-lg border border-[var(--border)] bg-app-surface px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
+  "rounded-lg border border-(--border) bg-app-surface px-3 py-2 text-sm text-(--text-primary) hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
 const input =
-  "w-full rounded-lg border border-[var(--border)] bg-app-surface px-3 py-2 text-sm text-[var(--text-primary)] focus:outline focus:outline-2 focus:outline-accent"
+  "w-full rounded-lg border border-(--border) bg-app-surface px-3 py-2 text-sm text-(--text-primary) focus:outline focus:outline-2 focus:outline-accent"
 interface Props {
   mode: "import" | "export"
   suggestedTitle?: string
@@ -378,13 +378,13 @@ export function PlaylistCopyDialog({
         </>
       }
     >
-      <p className="mb-3 text-sm text-[var(--text-secondary)]">
+      <p className="mb-3 text-sm text-(--text-secondary)">
         {username
           ? `ListenBrainz: ${username}`
           : "ListenBrainz is disconnected"}{" "}
         · {provider?.name ?? "Music library disconnected"}
       </p>
-      <p className="mb-4 text-sm text-[var(--text-secondary)]">
+      <p className="mb-4 text-sm text-(--text-secondary)">
         Last.fm does not support playlist import or export. This is an explicit
         copy, with no automatic background synchronization.
       </p>
@@ -481,14 +481,14 @@ export function PlaylistCopyDialog({
               onChange={(event) => setTitle(event.target.value)}
             />
           </label>
-          <p className="mb-3 text-sm text-[var(--text-secondary)]">
+          <p className="mb-3 text-sm text-(--text-secondary)">
             {plan.rows.length} ordered occurrences · {missing} need review.
             Repeated songs remain separate in this preview.
           </p>
           {copyBlocked && (
             <p
               role="status"
-              className="mb-3 text-sm text-[var(--text-secondary)]"
+              className="mb-3 text-sm text-(--text-secondary)"
             >
               {copyBlocked}
             </p>
@@ -615,11 +615,11 @@ export function OccurrenceResolver({
     }
   }
   return (
-    <article className="rounded-lg border border-[var(--border)] bg-app-surface p-3">
+    <article className="rounded-lg border border-(--border) bg-app-surface p-3">
       <p className="font-medium">
         {index + 1}. {row.source.title || "Untitled recording"}
       </p>
-      <p className="text-sm text-[var(--text-secondary)]">
+      <p className="text-sm text-(--text-secondary)">
         {row.source.artist || "Unknown artist"}
         {row.source.album ? ` · ${row.source.album}` : ""}
       </p>
@@ -731,7 +731,7 @@ export function OccurrenceResolver({
               {busy ? "Searching…" : "Search library"}
             </button>
           </div>
-          <p className="mt-2 text-xs text-[var(--text-secondary)]">
+          <p className="mt-2 text-xs text-(--text-secondary)">
             Use * for several characters or ? for one character to narrow names.
             Include an artist or title; wildcard matches are suggestions and
             always require your explicit selection.
@@ -755,7 +755,7 @@ export function OccurrenceResolver({
             </ul>
           )}
           {!busy && candidates.length === 0 && (
-            <p className="mt-2 text-sm text-[var(--text-secondary)]">
+            <p className="mt-2 text-sm text-(--text-secondary)">
               No candidates shown. Search this library to choose a recording.
             </p>
           )}

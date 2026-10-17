@@ -153,7 +153,7 @@ export function ScrollRow({ title, titleHref, children, restoreKey, onPlayAll, o
       ) : (
         <div
           ref={scrollRef}
-          className="flex gap-3 overflow-x-auto pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+          className="flex gap-3 overflow-x-auto pb-1 scrollbar-none [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
         >
           {children}
         </div>

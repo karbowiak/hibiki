@@ -88,7 +88,7 @@ export function HotkeyHelpModal({ context = "player", onClose }: Props) {
         <div className="space-y-5">
           {groups.map(group => (
             <div key={group.title}>
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-[color:var(--text-muted)]">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-(--text-muted)">
                 {group.title}
               </h3>
               <div className="space-y-1">
@@ -97,8 +97,8 @@ export function HotkeyHelpModal({ context = "player", onClose }: Props) {
                     key={hotkey.key}
                     className="flex items-center justify-between rounded px-2 py-1.5 text-sm hover:bg-white/5"
                   >
-                    <span className="text-[color:var(--text-secondary)]">{hotkey.action}</span>
-                    <kbd className="rounded border border-[var(--border)] bg-app-surface px-2 py-0.5 font-mono text-xs text-[color:var(--text-primary)]">
+                    <span className="text-(--text-secondary)">{hotkey.action}</span>
+                    <kbd className="rounded border border-(--border) bg-app-surface px-2 py-0.5 font-mono text-xs text-(--text-primary)">
                       {hotkey.key}
                     </kbd>
                   </div>

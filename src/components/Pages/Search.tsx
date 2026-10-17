@@ -189,16 +189,16 @@ export function Search() {
   const total = GROUP_ORDER.reduce((sum, type) => sum + groups[type].length, 0)
 
   return (
-    <div className="min-w-0 pb-12 text-[var(--text-primary)]">
+    <div className="min-w-0 pb-12 text-(--text-primary)">
       <header className={showResults ? "mb-6" : "discovery-command-head mb-6"}>
         <h1
           className={
-            showResults ? "break-words text-3xl font-bold" : "discovery-title"
+            showResults ? "wrap-break-word text-3xl font-bold" : "discovery-title"
           }
         >
           {showResults ? `Results for “${query.trim()}”` : "Search"}
         </h1>
-        <p className="mt-2 text-sm text-[var(--text-secondary)]">
+        <p className="mt-2 text-sm text-(--text-secondary)">
           {showResults
             ? isSearching
               ? "Searching your library…"
@@ -211,14 +211,14 @@ export function Search() {
       {showResults ? (
         <div className="space-y-6">
           {isSearching && (
-            <p role="status" className="text-sm text-[var(--text-secondary)]">
+            <p role="status" className="text-sm text-(--text-secondary)">
               Searching…
             </p>
           )}
           {error && (
             <div
               role="alert"
-              className="rounded-lg border border-red-400/30 bg-red-400/5 p-4 text-sm text-[var(--text-primary)]"
+              className="rounded-lg border border-red-400/30 bg-red-400/5 p-4 text-sm text-(--text-primary)"
             >
               <p>Search failed: {error}</p>
               <button
@@ -230,7 +230,7 @@ export function Search() {
             </div>
           )}
           {!isSearching && !error && total === 0 && (
-            <p className="text-sm text-[var(--text-secondary)]">
+            <p className="text-sm text-(--text-secondary)">
               No results for “{query.trim()}”. Try another artist, album, or
               track name.
             </p>
@@ -252,7 +252,7 @@ export function Search() {
                     onClick={() =>
                       updateView((current) => ({ ...current, filter: type }))
                     }
-                    className={`rounded-full px-4 py-1.5 text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40 ${view.filter === type ? "bg-accent-tint-strong text-accent" : "bg-app-surface text-[var(--text-secondary)] hover:bg-app-surface-hover"}`}
+                    className={`rounded-full px-4 py-1.5 text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40 ${view.filter === type ? "bg-accent-tint-strong text-accent" : "bg-app-surface text-(--text-secondary) hover:bg-app-surface-hover"}`}
                   >
                     {type === "all" ? "All" : GROUP_LABELS[type]}{" "}
                     <span className="ml-1 tabular-nums">{count}</span>
@@ -275,7 +275,7 @@ export function Search() {
                   className="mb-3 text-xl font-bold"
                 >
                   {GROUP_LABELS[type]}{" "}
-                  <span className="ml-2 text-sm font-normal tabular-nums text-[var(--text-secondary)]">
+                  <span className="ml-2 text-sm font-normal tabular-nums text-(--text-secondary)">
                     {items.length}
                   </span>
                 </h2>
@@ -372,7 +372,7 @@ export function Search() {
                       Show more {GROUP_LABELS[type].toLowerCase()} (
                       {Math.min(PAGE_SIZE[type], items.length - visible)})
                     </button>
-                    <span className="text-xs tabular-nums text-[var(--text-secondary)]">
+                    <span className="text-xs tabular-nums text-(--text-secondary)">
                       Showing {visible} of {items.length}
                     </span>
                   </div>
@@ -402,7 +402,7 @@ export function Search() {
           {recentSearches.length > 0 ? (
             <>
               <div className="mb-3 flex items-center justify-between">
-                <span className="text-sm font-semibold text-[var(--text-secondary)]">
+                <span className="text-sm font-semibold text-(--text-secondary)">
                   Recent searches
                 </span>
                 <button
@@ -415,7 +415,7 @@ export function Search() {
                         "Could not clear recent searches. Try again."
                       )
                   }}
-                  className="text-xs text-[var(--text-muted)] transition-colors hover:text-[var(--text-primary)]"
+                  className="text-xs text-(--text-muted) transition-colors hover:text-(--text-primary)"
                 >
                   Clear
                 </button>
@@ -425,7 +425,7 @@ export function Search() {
                   <button
                     key={q}
                     onClick={() => void search(q)}
-                    className="rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-sm text-[var(--text-secondary)] transition-colors hover:border-accent/30 hover:bg-hl-menu hover:text-[var(--text-primary)]"
+                    className="rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-sm text-(--text-secondary) transition-colors hover:border-accent/30 hover:bg-hl-menu hover:text-(--text-primary)"
                   >
                     {q}
                   </button>
@@ -433,7 +433,7 @@ export function Search() {
               </div>
             </>
           ) : (
-            <div className="text-sm text-[var(--text-muted)]">
+            <div className="text-sm text-(--text-muted)">
               Type something to search your library.
             </div>
           )}

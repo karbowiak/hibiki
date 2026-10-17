@@ -4,14 +4,22 @@
 
 use std::ptr::NonNull;
 use symphonia::core::audio::{
-    AsAudioBufferRef, AudioBuffer, AudioBufferRef, Channels, Signal, SignalSpec,
+    AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec as SignalSpec,
+    GenericAudioBufferRef as AudioBufferRef, Position as Channels,
 };
-use symphonia::core::codecs::{
-    CodecDescriptor, CodecParameters, Decoder, DecoderOptions, FinalizeResult, CODEC_TYPE_OPUS,
+use symphonia::core::codecs::CodecInfo;
+use symphonia::core::codecs::audio::FinalizeResult;
+use symphonia::core::codecs::audio::{
+    AudioCodecParameters as CodecParameters, AudioDecoder as Decoder,
+    AudioDecoderOptions as DecoderOptions, well_known::CODEC_ID_OPUS,
 };
+use symphonia::core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia::core::errors::{Error, Result};
-use symphonia::core::formats::Packet;
-use symphonia::core::support_codec;
+#[cfg(test)]
+use symphonia::core::packet::Packet;
+use symphonia::core::packet::PacketRef;
+#[cfg(test)]
+use symphonia::core::units::{Duration, Timestamp};
 
 const SAMPLE_RATE: u32 = 48000;
 const MAX_FRAMES: usize = 5760; // Maximum Opus packet duration: 120 ms.
@@ -31,7 +39,7 @@ impl Header {
         let Some(data) = params.extra_data.as_deref() else {
             let count = params
                 .channels
-                .or_else(|| params.channel_layout.map(|layout| layout.into_channels()))
+                .as_ref()
                 .map(|channels| channels.count())
                 .unwrap_or(0);
             if !(1..=2).contains(&count) {
@@ -87,7 +95,7 @@ impl Header {
             2 => &[Channels::FRONT_LEFT, Channels::FRONT_RIGHT],
             3 => &[
                 Channels::FRONT_LEFT,
-                Channels::FRONT_CENTRE,
+                Channels::FRONT_CENTER,
                 Channels::FRONT_RIGHT,
             ],
             4 => &[
@@ -98,14 +106,14 @@ impl Header {
             ],
             5 => &[
                 Channels::FRONT_LEFT,
-                Channels::FRONT_CENTRE,
+                Channels::FRONT_CENTER,
                 Channels::FRONT_RIGHT,
                 Channels::REAR_LEFT,
                 Channels::REAR_RIGHT,
             ],
             6 => &[
                 Channels::FRONT_LEFT,
-                Channels::FRONT_CENTRE,
+                Channels::FRONT_CENTER,
                 Channels::FRONT_RIGHT,
                 Channels::REAR_LEFT,
                 Channels::REAR_RIGHT,
@@ -113,16 +121,16 @@ impl Header {
             ],
             7 => &[
                 Channels::FRONT_LEFT,
-                Channels::FRONT_CENTRE,
+                Channels::FRONT_CENTER,
                 Channels::FRONT_RIGHT,
                 Channels::SIDE_LEFT,
                 Channels::SIDE_RIGHT,
-                Channels::REAR_CENTRE,
+                Channels::REAR_CENTER,
                 Channels::LFE1,
             ],
             8 => &[
                 Channels::FRONT_LEFT,
-                Channels::FRONT_CENTRE,
+                Channels::FRONT_CENTER,
                 Channels::FRONT_RIGHT,
                 Channels::SIDE_LEFT,
                 Channels::SIDE_RIGHT,
@@ -172,9 +180,9 @@ impl Drop for OpusDecoder {
     }
 }
 
-impl Decoder for OpusDecoder {
-    fn try_new(params: &CodecParameters, _options: &DecoderOptions) -> Result<Self> {
-        if params.codec != CODEC_TYPE_OPUS {
+impl OpusDecoder {
+    pub(super) fn try_new(params: &CodecParameters, _options: &DecoderOptions) -> Result<Self> {
+        if params.codec != CODEC_ID_OPUS {
             return Err(Error::Unsupported("opus: codec mismatch"));
         }
         let header = Header::parse(params)?;
@@ -196,14 +204,13 @@ impl Decoder for OpusDecoder {
             NonNull::new(raw).ok_or(Error::DecodeError("opus: decoder allocation failed"))?;
         let mut normalized = params.clone();
         normalized.sample_rate = Some(SAMPLE_RATE);
-        normalized.channels = Some(header.layout);
-        normalized.channel_layout = None;
+        normalized.channels = Some(header.layout.into());
         let result = Self {
             handle,
             params: normalized,
             buf: AudioBuffer::new(
-                MAX_FRAMES as u64,
-                SignalSpec::new(SAMPLE_RATE, header.layout),
+                SignalSpec::new(SAMPLE_RATE, header.layout.into()),
+                MAX_FRAMES,
             ),
             pcm: vec![0.0; MAX_FRAMES * channels],
             channels,
@@ -229,11 +236,30 @@ impl Decoder for OpusDecoder {
         }
         Ok(result)
     }
-
-    fn supported_codecs() -> &'static [CodecDescriptor] {
-        &[support_codec!(CODEC_TYPE_OPUS, "opus", "Opus multistream")]
+}
+const CODEC_INFO: CodecInfo = CodecInfo {
+    short_name: "opus",
+    long_name: "Opus multistream",
+    profiles: &[],
+};
+impl RegisterableAudioDecoder for OpusDecoder {
+    fn try_registry_new(
+        params: &CodecParameters,
+        options: &DecoderOptions,
+    ) -> Result<Box<dyn Decoder>> {
+        Ok(Box::new(Self::try_new(params, options)?))
     }
-
+    fn supported_codecs() -> &'static [SupportedAudioCodec] {
+        &[SupportedAudioCodec {
+            id: CODEC_ID_OPUS,
+            info: CODEC_INFO,
+        }]
+    }
+}
+impl Decoder for OpusDecoder {
+    fn codec_info(&self) -> &CodecInfo {
+        &CODEC_INFO
+    }
     fn reset(&mut self) {
         self.buf.clear();
         self.remaining_skip = 0;
@@ -252,12 +278,12 @@ impl Decoder for OpusDecoder {
         &self.params
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<AudioBufferRef<'_>> {
+    fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<AudioBufferRef<'_>> {
         self.buf.clear();
         if !self.usable {
             return Err(Error::DecodeError("opus: decoder reset failed"));
         }
-        let data = packet.buf();
+        let data = packet.data;
         if data.is_empty() {
             return Err(Error::DecodeError("opus: empty audio packet"));
         }
@@ -279,32 +305,42 @@ impl Decoder for OpusDecoder {
             return Err(Error::DecodeError("opus: invalid audio packet"));
         }
         let frames = frames as usize;
-        self.buf.render_reserved(Some(frames));
+        self.buf.render_uninit(Some(frames));
         for channel in 0..self.channels {
-            for (frame, sample) in self.buf.chan_mut(channel).iter_mut().enumerate() {
+            for (frame, sample) in self
+                .buf
+                .plane_mut(channel)
+                .expect("validated channel")
+                .iter_mut()
+                .enumerate()
+            {
                 *sample = self.pcm[frame * self.channels + channel];
             }
         }
         if self.just_reset {
             // Seeking back to the first packet needs its initial delay again;
             // a middle-of-stream reset must not skip header delay a second time.
-            self.remaining_skip = if packet.ts() == 0 { self.pre_skip } else { 0 };
+            self.remaining_skip = if packet.pts.get() <= 0 {
+                self.pre_skip
+            } else {
+                0
+            };
             self.just_reset = false;
         }
         let skip = self.remaining_skip.min(frames);
         self.remaining_skip = self.remaining_skip.saturating_sub(frames);
         self.buf.trim(
-            skip.max(packet.trim_start() as usize),
-            packet.trim_end() as usize,
+            skip.max(packet.trim_start.get() as usize),
+            packet.trim_end.get() as usize,
         );
-        Ok(self.buf.as_audio_buffer_ref())
+        Ok(self.buf.as_generic_audio_buffer_ref())
     }
 
     fn finalize(&mut self) -> FinalizeResult {
         FinalizeResult::default()
     }
     fn last_decoded(&self) -> AudioBufferRef<'_> {
-        self.buf.as_audio_buffer_ref()
+        self.buf.as_generic_audio_buffer_ref()
     }
 }
 
@@ -314,9 +350,7 @@ mod tests {
 
     fn params(head: &[u8]) -> CodecParameters {
         let mut params = CodecParameters::new();
-        params
-            .for_codec(CODEC_TYPE_OPUS)
-            .with_extra_data(head.into());
+        params.for_codec(CODEC_ID_OPUS).with_extra_data(head.into());
         params
     }
 
@@ -371,9 +405,9 @@ mod tests {
             "/tests/fixtures/audio/opus-stereo.ogg"
         ));
         let mut setup = super::super::decode::probe_audio(file.to_vec()).unwrap();
-        let packet = setup.format.next_packet().unwrap();
+        let packet = setup.format.next_packet().unwrap().unwrap();
         assert!(setup.decoder.decode(&packet).unwrap().frames() > 0);
-        let invalid = Packet::new_from_slice(setup.track_id, 0, 0, &[3]);
+        let invalid = Packet::new(setup.track_id, Timestamp::ZERO, Duration::ZERO, &[3][..]);
         assert!(setup.decoder.decode(&invalid).is_err());
         assert_eq!(setup.decoder.last_decoded().frames(), 0);
         setup.decoder.reset();

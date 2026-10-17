@@ -14,7 +14,7 @@ export function ShutdownNotice() {
     return () => window.removeEventListener("keydown", blockBackground, true)
   }, [status.phase])
   if (status.phase === "idle") return null
-  return <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 p-6" role="dialog" aria-modal="true" aria-label="Closing Hibiki">
+  return <div className="fixed inset-0 z-1000 flex items-center justify-center bg-black/60 p-6" role="dialog" aria-modal="true" aria-label="Closing Hibiki">
     <div ref={dialog} tabIndex={-1} className="max-w-md rounded-lg border border-white/15 bg-app-card p-6 text-white shadow-xl">
       <h2 className="text-lg font-semibold">{status.phase === "preparing" ? "Closing Hibiki" : "Hibiki stayed open"}</h2>
       <p className="mt-3 text-sm text-white/80" role="status">{status.message}</p>

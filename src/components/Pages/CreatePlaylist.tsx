@@ -137,7 +137,7 @@ export function CreatePlaylist({
       ref={dialogRef}
       aria-modal="true"
       aria-labelledby={titleId}
-      className="fixed inset-0 z-[20000] m-0 h-full max-h-none w-full max-w-none items-center justify-center border-0 bg-black/60 p-0 text-white backdrop-blur-sm backdrop:bg-transparent open:flex"
+      className="fixed inset-0 z-20000 m-0 h-full max-h-none w-full max-w-none items-center justify-center border-0 bg-black/60 p-0 text-white backdrop-blur-sm backdrop:bg-transparent open:flex"
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose()
       }}
@@ -192,7 +192,7 @@ export function CreatePlaylist({
 
         {created ? (
           <div className="py-4 text-center">
-            <IconCheck size={36} aria-hidden="true" className="mx-auto mb-3 text-[var(--text-primary)]" />
+            <IconCheck size={36} aria-hidden="true" className="mx-auto mb-3 text-(--text-primary)" />
             <p role="status" className="font-semibold text-accent">
               Playlist created!
             </p>

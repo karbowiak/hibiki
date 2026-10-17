@@ -98,7 +98,7 @@ export function Library() {
               <strong>{title}</strong>
               <small>{desc}</small>
             </span>
-            <span aria-hidden="true" className="text-[var(--text-muted)]">
+            <span aria-hidden="true" className="text-(--text-muted)">
               ↗
             </span>
           </Link>
@@ -125,7 +125,7 @@ export function Library() {
         </dl>
       )}
       {!provider && (
-        <p className="text-sm text-[var(--text-secondary)]">
+        <p className="text-sm text-(--text-secondary)">
           Connect your music library in Settings to load your collections.
         </p>
       )}

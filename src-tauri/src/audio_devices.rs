@@ -29,7 +29,9 @@ pub struct AudioOutputDevice {
 pub fn get_default_output_device_name() -> String {
     let host = cpal::default_host();
     host.default_output_device()
-        .and_then(|d| d.name().ok())
+        .and_then(|device| {
+            device.description().ok().map(|description| description.name().to_owned())
+        })
         .unwrap_or_else(|| "System default".to_string())
 }
 
@@ -38,15 +40,20 @@ pub fn get_output_devices() -> Vec<AudioOutputDevice> {
     let host = cpal::default_host();
     let default_name = host
         .default_output_device()
-        .and_then(|d| d.name().ok());
+        .and_then(|device| {
+            device.description().ok().map(|description| description.name().to_owned())
+        });
 
     let mut devices: Vec<AudioOutputDevice> = host
         .output_devices()
         .map(|iter| {
             iter.filter_map(|d| {
-                d.name().ok().map(|name| AudioOutputDevice {
-                    is_default: default_name.as_deref() == Some(&name),
-                    name,
+                d.description().ok().map(|description| {
+                    let name = description.name().to_owned();
+                    AudioOutputDevice {
+                        is_default: default_name.as_deref() == Some(&name),
+                        name,
+                    }
                 })
             })
             .collect()

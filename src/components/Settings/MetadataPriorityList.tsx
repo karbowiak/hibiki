@@ -84,7 +84,7 @@ export function MetadataPriorityList() {
     <>
       <div
         ref={list}
-        className="flex flex-col divide-y divide-[var(--border)]"
+        className="flex flex-col divide-y divide-(--border)"
         onPointerMove={(event) => {
           if (dragging !== null) {
             const index = hovered(event.clientY)
@@ -119,7 +119,7 @@ export function MetadataPriorityList() {
           >
             <button
               type="button"
-              className="shrink-0 cursor-grab touch-none rounded-md p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent active:cursor-grabbing"
+              className="shrink-0 cursor-grab touch-none rounded-md p-1 text-(--text-muted) hover:text-(--text-primary) focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent active:cursor-grabbing"
               aria-label={`Reorder ${SOURCE_LABELS[item]}`}
               title="Drag, or use arrow keys to reorder"
               onPointerDown={(event) => {
@@ -149,11 +149,11 @@ export function MetadataPriorityList() {
             </button>
             <div className="min-w-0 flex-1 basis-36">
               <p className="text-sm font-medium">{SOURCE_LABELS[item]}</p>
-              <p className="mt-0.5 text-xs leading-relaxed text-[var(--text-muted)]">
+              <p className="mt-0.5 text-xs leading-relaxed text-(--text-muted)">
                 {SOURCE_DESCRIPTIONS[item]}
               </p>
             </div>
-            <span className="text-xs text-[var(--text-muted)]">
+            <span className="text-xs text-(--text-muted)">
               {status(item)}
             </span>
             <div className="flex items-center gap-1">
@@ -162,7 +162,7 @@ export function MetadataPriorityList() {
                 onClick={() => move(index, index - 1)}
                 disabled={index === 0}
                 aria-label={`Move ${SOURCE_LABELS[item]} up`}
-                className="rounded-md p-1 text-[var(--text-muted)] hover:bg-white/10 disabled:opacity-25"
+                className="rounded-md p-1 text-(--text-muted) hover:bg-white/10 disabled:opacity-25"
               >
                 <IconChevronUp size={15} />
               </button>
@@ -171,7 +171,7 @@ export function MetadataPriorityList() {
                 onClick={() => move(index, index + 1)}
                 disabled={index === priority.length - 1}
                 aria-label={`Move ${SOURCE_LABELS[item]} down`}
-                className="rounded-md p-1 text-[var(--text-muted)] hover:bg-white/10 disabled:opacity-25"
+                className="rounded-md p-1 text-(--text-muted) hover:bg-white/10 disabled:opacity-25"
               >
                 <IconChevronDown size={15} />
               </button>
@@ -179,7 +179,7 @@ export function MetadataPriorityList() {
                 type="button"
                 onClick={() => setSource(item)}
                 aria-label={`Configure ${SOURCE_LABELS[item]}`}
-                className="ml-1 inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                className="ml-1 inline-flex items-center gap-1.5 rounded-lg border border-(--border) px-3 py-1.5 text-xs hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
               >
                 <IconSettings size={14} />
                 Configure

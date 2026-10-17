@@ -790,7 +790,7 @@ pub(super) async fn cleanup_reviewed(config: &Path, run: &str) -> Result<()> {
         .filter(|r| r.len() == 3)
         .context("Three reviewed QA resources required")?
         .clone();
-    let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&resources)?));
+    let digest = hex::encode(Sha256::digest(serde_json::to_vec(&resources)?));
     if std::env::var("HIBIKI_QA_REVIEWED_CLEANUP_DIGEST")
         .ok()
         .as_deref()

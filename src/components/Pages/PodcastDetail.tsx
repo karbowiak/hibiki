@@ -156,7 +156,7 @@ export function PodcastDetailPage({ feedUrl }: { feedUrl: string }) {
                 className="h-full w-full object-cover"
               />
             ) : (
-              <div className="flex h-full w-full items-center justify-center text-[color:var(--text-muted)]">
+              <div className="flex h-full w-full items-center justify-center text-(--text-muted)">
                 <svg
                   viewBox="0 0 24 24"
                   width="64"
@@ -173,20 +173,20 @@ export function PodcastDetailPage({ feedUrl }: { feedUrl: string }) {
           <div className="broadcast-detail__info">
             <p className="broadcast-eyebrow">Podcast</p>
             <h1 className="broadcast-detail__title mb-3">{podcast.title}</h1>
-            <p className="mb-3 text-sm text-[color:var(--text-secondary)]">
+            <p className="mb-3 text-sm text-(--text-secondary)">
               {podcast.author}
             </p>
             {podcast.description && (
               <div className="mb-4">
                 <p
-                  className={`text-sm text-[color:var(--text-secondary)] ${descExpanded ? "" : "line-clamp-2"}`}
+                  className={`text-sm text-(--text-secondary) ${descExpanded ? "" : "line-clamp-2"}`}
                 >
                   {podcast.description}
                 </p>
                 {podcast.description.length > 120 && (
                   <button
                     onClick={() => setDescExpanded(!descExpanded)}
-                    className="mt-1 text-xs font-medium text-[color:var(--text-secondary)] hover:text-white/90"
+                    className="mt-1 text-xs font-medium text-(--text-secondary) hover:text-white/90"
                   >
                     {descExpanded ? "Show less" : "Show more"}
                   </button>
@@ -200,7 +200,7 @@ export function PodcastDetailPage({ feedUrl }: { feedUrl: string }) {
                 {podcast.categories.map((cat) => (
                   <span
                     key={cat}
-                    className="rounded-full border border-white/20 px-2.5 py-0.5 text-xs text-[color:var(--text-secondary)]"
+                    className="rounded-full border border-white/20 px-2.5 py-0.5 text-xs text-(--text-secondary)"
                   >
                     {cat}
                   </span>
@@ -238,7 +238,7 @@ export function PodcastDetailPage({ feedUrl }: { feedUrl: string }) {
               </button>
             </div>
 
-            <p className="mt-3 text-xs text-[color:var(--text-muted)]">
+            <p className="mt-3 text-xs text-(--text-muted)">
               {playableEpisodes.length} episode
               {playableEpisodes.length !== 1 ? "s" : ""}
               {podcast.language && ` · ${podcast.language.toUpperCase()}`}
@@ -250,7 +250,7 @@ export function PodcastDetailPage({ feedUrl }: { feedUrl: string }) {
       {/* Episode list */}
       <div className="broadcast-episodes">
         <h2 className="mb-4">Episodes</h2>
-        <div className="divide-y divide-[var(--border-subtle)]">
+        <div className="divide-y divide-(--border-subtle)">
           {playableEpisodes.map((ep, i) => {
             const trackId = episodeTracks[i]?.id
             const episodePlaying =

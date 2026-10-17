@@ -123,7 +123,7 @@ function RadioPlayerBar() {
 
   return (
     <PlaybackPalette src={buildExternalImageUrl(currentStation.favicon)}>
-    <div data-player-bar data-shell-transparency={backgroundArtworkEnabled ? "enabled" : undefined} className="app-playbar shell-artwork-surface shell-artwork-player relative border-t border-[var(--border)] bg-app-card">
+    <div data-player-bar data-shell-transparency={backgroundArtworkEnabled ? "enabled" : undefined} className="app-playbar shell-artwork-surface shell-artwork-player relative border-t border-(--border) bg-app-card">
       <div className="shell-artwork-player-inner flex h-fit w-screen min-w-[620px] flex-col overflow-clip bg-app-card">
         <div style={{ height: "var(--player-height)" }}>
           <div className="flex h-full items-center justify-between" style={{ paddingInline: "var(--spacing-player)" }}>
@@ -131,7 +131,7 @@ function RadioPlayerBar() {
             {/* Left: station info */}
             <div className="w-[30%] min-w-[11.25rem]">
               <div className="flex items-center">
-                <div className="mr-3 h-14 w-14 flex-shrink-0 rounded-lg overflow-hidden bg-app-surface flex items-center justify-center">
+                <div className="mr-3 h-14 w-14 shrink-0 rounded-lg overflow-hidden bg-app-surface flex items-center justify-center">
                   {currentStation.favicon ? (
                     <ArtworkImage src={buildExternalImageUrl(currentStation.favicon)!} alt="" loading="eager" className="h-full w-full object-cover" />
                   ) : (
@@ -170,7 +170,7 @@ function RadioPlayerBar() {
                 {/* Play/Pause */}
                 <button
                   onClick={isStreamPlaying ? pauseStream : resumeStream}
-                  className="shell-control-primary flex h-8 w-8 items-center justify-center rounded-full bg-[var(--text-primary)] text-[var(--bg-base)] hover:scale-[1.06]"
+                  className="shell-control-primary flex h-8 w-8 items-center justify-center rounded-full bg-(--text-primary) text-(--bg-base) hover:scale-[1.06]"
                 >
                   {isStreamPlaying ? (
                     <svg aria-hidden="true" focusable="false" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
@@ -218,7 +218,7 @@ function RadioPlayerBar() {
               </button>
 
               {/* Volume icon */}
-              <button onClick={toggleMute} aria-label={volume === 0 ? "Unmute" : "Mute"} className="flex-shrink-0 flex h-8 w-8 items-center justify-center text-white/70 hover:text-white transition-colors">
+              <button onClick={toggleMute} aria-label={volume === 0 ? "Unmute" : "Mute"} className="shrink-0 flex h-8 w-8 items-center justify-center text-white/70 hover:text-white transition-colors">
                 {volume === 0 ? (
                   <svg aria-hidden="true" focusable="false" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
                     <path d="M13.86 5.47a.75.75 0 0 0-1.061 0l-1.47 1.47-1.47-1.47A.75.75 0 0 0 8.8 6.53L10.269 8l-1.47 1.47a.75.75 0 1 0 1.06 1.06l1.47-1.47 1.47 1.47a.75.75 0 0 0 1.06-1.06L12.39 8l1.47-1.47a.75.75 0 0 0 0-1.06z" />
@@ -237,7 +237,7 @@ function RadioPlayerBar() {
               {/* Volume slider */}
               <div ref={volumeSliderRef} className="relative flex h-7 w-32 items-center">
                 {volumeTooltipVisible && (
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-0.5 rounded-md bg-app-card border border-[var(--border)] text-xs font-bold text-white shadow-lg pointer-events-none whitespace-nowrap">
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-0.5 rounded-md bg-app-card border border-(--border) text-xs font-bold text-white shadow-lg pointer-events-none whitespace-nowrap">
                     {Math.round(volume)}%
                   </div>
                 )}
@@ -520,7 +520,7 @@ export function Player() {
 
   return (
     <PlaybackPalette src={thumbUrl}>
-    <div data-player-bar data-shell-transparency={backgroundArtworkEnabled ? "enabled" : undefined} className="app-playbar shell-artwork-surface shell-artwork-player relative z-20 border-t border-[var(--border)] bg-app-card">
+    <div data-player-bar data-shell-transparency={backgroundArtworkEnabled ? "enabled" : undefined} className="app-playbar shell-artwork-surface shell-artwork-player relative z-20 border-t border-(--border) bg-app-card">
       {/* Expanded album art sits above the player, within the sidebar area. */}
       {isArtExpanded && thumbUrl && (
         <div
@@ -583,7 +583,7 @@ export function Player() {
             >
               <div className="flex min-w-0 items-center">
                 <div className="flex min-w-0 items-center gap-3">
-                  <div className={`group/art relative h-14 w-14 flex-shrink-0 ${isArtExpanded && thumbUrl ? "hidden" : ""}`}>
+                  <div className={`group/art relative h-14 w-14 shrink-0 ${isArtExpanded && thumbUrl ? "hidden" : ""}`}>
                     {/* Album art — click navigates to album */}
                     <ArtworkContainer
                       href={albumId ? `/album/${albumId}` : undefined}
@@ -673,7 +673,7 @@ export function Player() {
                             const rect = threeDotRef.current?.getBoundingClientRect()
                             if (rect) showContextMenu(rect.left, rect.bottom + 4, "track", currentTrack)
                           }}
-                          className="flex-shrink-0 flex h-5 w-5 items-center justify-center rounded text-white/30 hover:text-white/70 transition-colors opacity-0 group-hover/left:opacity-100 group-focus-within/left:opacity-100"
+                          className="shrink-0 flex h-5 w-5 items-center justify-center rounded text-white/30 hover:text-white/70 transition-colors opacity-0 group-hover/left:opacity-100 group-focus-within/left:opacity-100"
                           title="More options"
                         >
                           <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
@@ -745,7 +745,7 @@ export function Player() {
                   disabled={!currentTrack}
                   aria-label={isPlaying ? "Pause" : "Play"}
                   title={isPlaying ? "Pause (hold to stop)" : "Play (hold to stop)"}
-                  className="shell-control-primary flex h-8 w-8 items-center justify-center rounded-full bg-[var(--text-primary)] text-[var(--bg-base)] enabled:hover:scale-[1.06] select-none disabled:opacity-30 disabled:cursor-default"
+                  className="shell-control-primary flex h-8 w-8 items-center justify-center rounded-full bg-(--text-primary) text-(--bg-base) enabled:hover:scale-[1.06] select-none disabled:opacity-30 disabled:cursor-default"
                 >
                   {isBuffering ? (
                     <svg className="animate-spin" height="16" width="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
@@ -862,7 +862,7 @@ export function Player() {
 
             {/* Right: DJ, lyrics, sleep, visualization, queue and volume */}
             <div className="player-tools flex w-[30%] min-w-[11.25rem] flex-wrap items-center justify-end gap-1" role="group" aria-label="Player tools">
-              <div className="player-tools-buttons flex flex-shrink-0 items-center gap-1">
+              <div className="player-tools-buttons flex shrink-0 items-center gap-1">
                 {/* Guest DJ — icon only when inactive, icon+name pill when active */}
                 {hasDjModes && <PlayerPopover
                   icon={
@@ -929,7 +929,7 @@ export function Player() {
                 <button
                   onClick={cycleCompactMode}
                   title={`Visualizer: ${compactMode}`}
-                  className="flex-shrink-0 flex h-8 w-8 items-center justify-center transition-colors text-white/40 hover:text-white/70"
+                  className="shrink-0 flex h-8 w-8 items-center justify-center transition-colors text-white/40 hover:text-white/70"
                   aria-label="Cycle visualizer mode"
                 >
                   <IconActivity size={18} stroke={1.5} />
@@ -939,7 +939,7 @@ export function Player() {
                 <button
                   onClick={event => { event.currentTarget.focus({ preventScroll: true }); openFullscreen() }}
                   title="Open fullscreen visualizer"
-                  className="flex-shrink-0 flex h-8 w-8 items-center justify-center transition-colors text-white/40 hover:text-white/70"
+                  className="shrink-0 flex h-8 w-8 items-center justify-center transition-colors text-white/40 hover:text-white/70"
                   aria-label="Open fullscreen visualizer"
                 >
                   <IconMaximize size={18} stroke={1.5} />
@@ -960,16 +960,16 @@ export function Player() {
                 {/* Queue toggle */}
                 <button
                   onClick={() => setQueueOpen(!isQueueOpen)}
-                  className={`flex-shrink-0 mr-1 flex h-8 w-8 items-center justify-center transition-colors ${isQueueOpen ? "text-accent" : "text-white/40 hover:text-white/70"}`}
+                  className={`shrink-0 mr-1 flex h-8 w-8 items-center justify-center transition-colors ${isQueueOpen ? "text-accent" : "text-white/40 hover:text-white/70"}`}
                   aria-label="Queue"
                 >
                   <IconPlaylist size={18} stroke={1.5} />
                 </button>
 
               </div>
-              <div className="flex flex-shrink-0 items-center gap-1">
+              <div className="flex shrink-0 items-center gap-1">
                 {/* Volume icon — muted / low / full */}
-                <button onClick={toggleMute} aria-label={volume === 0 ? "Unmute" : "Mute"} className="flex-shrink-0 flex h-8 w-8 items-center justify-center text-white/70 hover:text-white transition-colors">
+                <button onClick={toggleMute} aria-label={volume === 0 ? "Unmute" : "Mute"} className="shrink-0 flex h-8 w-8 items-center justify-center text-white/70 hover:text-white transition-colors">
                   {volume === 0 ? (
                     <IconVolumeOff size={18} stroke={1.5} />
                   ) : volume < 50 ? (
@@ -981,7 +981,7 @@ export function Player() {
                 {/* Squiggly volume slider */}
                 <div ref={volumeSliderRef} className="relative flex items-center">
                   {volumeTooltipVisible && (
-                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-0.5 rounded-md bg-app-card border border-[var(--border)] text-xs font-bold text-white shadow-lg pointer-events-none whitespace-nowrap">
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-0.5 rounded-md bg-app-card border border-(--border) text-xs font-bold text-white shadow-lg pointer-events-none whitespace-nowrap">
                       {Math.round(volume)}%
                     </div>
                   )}

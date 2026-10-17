@@ -65,8 +65,8 @@ export default function RadioPanel({ onClose }: Props) {
         } />
 
       {/* Variety */}
-      <div className="px-5 py-4 border-b border-[var(--border)]">
-        <p className="text-[0.625rem] font-semibold uppercase tracking-widest text-[color:var(--text-muted)] mb-3">
+      <div className="px-5 py-4 border-b border-(--border)">
+        <p className="text-[0.625rem] font-semibold uppercase tracking-widest text-(--text-muted) mb-3">
           Variety
         </p>
         <div className="grid grid-cols-3 gap-1.5 mb-3">
@@ -86,38 +86,38 @@ export default function RadioPanel({ onClose }: Props) {
           })}
         </div>
         {activeVariety && (
-          <p className="text-[0.6875rem] text-[color:var(--text-muted)] leading-snug">{activeVariety.desc}</p>
+          <p className="text-[0.6875rem] text-(--text-muted) leading-snug">{activeVariety.desc}</p>
         )}
       </div>
 
       {/* Queue buffer */}
       <div className="px-5 py-4">
-        <p className="text-[0.625rem] font-semibold uppercase tracking-widest text-[color:var(--text-muted)] mb-3">
+        <p className="text-[0.625rem] font-semibold uppercase tracking-widest text-(--text-muted) mb-3">
           Queue Buffer
         </p>
         <div className="flex items-center justify-between">
-          <span className="text-[0.6875rem] text-[color:var(--text-secondary)]">Always keep ahead</span>
+          <span className="text-[0.6875rem] text-(--text-secondary)">Always keep ahead</span>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setRadioMinQueue(Math.max(MIN_QUEUE, radioMinQueue - 1))}
               aria-label="Fewer queued radio tracks"
               disabled={radioMinQueue <= MIN_QUEUE}
-              className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--bg-surface)] text-[color:var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[color:var(--text-primary)] transition-colors disabled:opacity-30 disabled:cursor-default font-bold text-base leading-none"
+              className="flex h-7 w-7 items-center justify-center rounded-full bg-(--bg-surface) text-(--text-secondary) hover:bg-(--bg-surface-hover) hover:text-(--text-primary) transition-colors disabled:opacity-30 disabled:cursor-default font-bold text-base leading-none"
             >
               <IconMinus size={16} aria-hidden="true" />
             </button>
-            <span className="w-8 text-center text-sm font-semibold text-[color:var(--text-primary)] tabular-nums">
+            <span className="w-8 text-center text-sm font-semibold text-(--text-primary) tabular-nums">
               {radioMinQueue}
             </span>
             <button
               onClick={() => setRadioMinQueue(Math.min(MAX_QUEUE, radioMinQueue + 1))}
               aria-label="More queued radio tracks"
               disabled={radioMinQueue >= MAX_QUEUE}
-              className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--bg-surface)] text-[color:var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[color:var(--text-primary)] transition-colors disabled:opacity-30 disabled:cursor-default font-bold text-base leading-none"
+              className="flex h-7 w-7 items-center justify-center rounded-full bg-(--bg-surface) text-(--text-secondary) hover:bg-(--bg-surface-hover) hover:text-(--text-primary) transition-colors disabled:opacity-30 disabled:cursor-default font-bold text-base leading-none"
             >
               <IconPlus size={16} aria-hidden="true" />
             </button>
-            <span className="text-[0.6875rem] text-[color:var(--text-secondary)]">tracks</span>
+            <span className="text-[0.6875rem] text-(--text-secondary)">tracks</span>
           </div>
         </div>
       </div>

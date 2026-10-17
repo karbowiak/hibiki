@@ -560,13 +560,10 @@ fn cached_levels_impl(
     // analysis version. Never select an arbitrary older waveform for a track.
     use sha2::{Digest, Sha256};
     let media = best_media(&track)?;
-    let legacy = format!(
-        "{:x}",
-        Sha256::digest(
+    let legacy = hex::encode(Sha256::digest(
             serde_json::to_vec(&(media, track.music_analysis_version, track.updated_at))
                 .map_err(|_| "Invalid legacy analysis revision")?
-        )
-    );
+        ));
     let Some(levels) = crate::db::catalogue::levels(
         conn,
         &client.library_scope,
@@ -1877,17 +1874,14 @@ mod tests {
         let track: Track = serde_json::from_value(raw.clone()).unwrap();
         let current = binding(&client, 1, 42, &track).unwrap().0;
         let version = current.metadata["localAnalysisVersion"].as_str().unwrap();
-        let legacy = format!(
-            "{:x}",
-            Sha256::digest(
+        let legacy = hex::encode(Sha256::digest(
                 serde_json::to_vec(&(
                     best_media(&track).unwrap(),
                     track.music_analysis_version,
                     track.updated_at
                 ))
                 .unwrap()
-            )
-        );
+            ));
         let levels = json!({"Level":[{"v":0.4},{"v":0.8}],"futureField":"retained"});
         crate::db::catalogue::save(&conn, &client.library_scope, "track", 42, &raw, true).unwrap();
         crate::db::catalogue::save_levels(

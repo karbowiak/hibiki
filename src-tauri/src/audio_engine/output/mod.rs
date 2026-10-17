@@ -24,7 +24,7 @@ pub fn initial_mix_params() -> OutputParams {
     let sample_rate = cpal::default_host()
         .default_output_device()
         .and_then(|device| device.default_output_config().ok())
-        .map(|config| config.sample_rate().0)
+        .map(|config| config.sample_rate())
         .filter(|rate| (8000..=768000).contains(rate))
         // Starting on a call/headset output must not discard music bandwidth.
         .map(|rate| rate.max(44100))
@@ -95,9 +95,12 @@ impl OutputDriver<AudioCallbackState> for CpalDriver {
                 .default_output_config()
                 .map_err(|error| format!("default output config: {error}"))?;
             let spec = DeviceSpec {
-                name: device.name().unwrap_or_else(|_| "System default".into()),
+                name: device
+                    .description()
+                    .map(|description| description.name().to_owned())
+                    .unwrap_or_else(|_| "System default".into()),
                 params: OutputParams {
-                    sample_rate: config.sample_rate().0,
+                    sample_rate: config.sample_rate(),
                     channels: config.channels(),
                 },
                 format: config.sample_format(),
@@ -130,7 +133,7 @@ impl OutputDriver<AudioCallbackState> for CpalDriver {
                 .ok_or("audio output device disappeared")?;
             let config = StreamConfig {
                 channels: spec.params.channels,
-                sample_rate: cpal::SampleRate(spec.params.sample_rate),
+                sample_rate: spec.params.sample_rate,
                 buffer_size: cpal::BufferSize::Default,
             };
             let stream = match spec.format {
@@ -184,11 +187,11 @@ fn build_stream<T: SizedSample + FromSample<f32>>(
     config: &StreamConfig,
     mut callback: CallbackOwner<AudioCallbackState>,
     failed: Arc<AtomicBool>,
-) -> Result<Stream, cpal::BuildStreamError> {
+) -> Result<Stream, cpal::Error> {
     let channels = config.channels;
     let mut scratch = [0.0; format::SCRATCH_SAMPLES];
     device.build_output_stream(
-        config,
+        *config,
         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
             format::render(data, channels, &mut scratch, |pcm| callback.render(pcm));
         },

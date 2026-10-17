@@ -42,30 +42,30 @@ const verticalScrollPositions = new Map<string, number>()
  */
 
 const bg = {
-  home: "bg-gradient-to-b from-[var(--bg-elevated)] from-10% via-[var(--bg-base)] via-40% to-[var(--bg-base)] to-90%",
+  home: "bg-linear-to-b from-(--bg-elevated) from-10% via-(--bg-base) via-40% to-(--bg-base) to-90%",
   search:
-    "bg-gradient-to-b from-[var(--bg-base)] from-10% via-[var(--bg-base)] via-40% to-[var(--bg-base)] to-90%",
+    "bg-linear-to-b from-(--bg-base) from-10% via-(--bg-base) via-40% to-(--bg-base) to-90%",
   library:
-    "bg-gradient-to-b from-[var(--bg-base)] from-10% via-[var(--bg-base)] via-40% to-[var(--bg-base)] to-90%",
+    "bg-linear-to-b from-(--bg-base) from-10% via-(--bg-base) via-40% to-(--bg-base) to-90%",
   collection:
-    "bg-gradient-to-b from-[var(--bg-elevated)] from-10% via-[var(--bg-base)] via-40% to-[var(--bg-base)] to-90%",
+    "bg-linear-to-b from-(--bg-elevated) from-10% via-(--bg-base) via-40% to-(--bg-base) to-90%",
   playlist:
-    "bg-gradient-to-b from-[var(--bg-base)] from-10% via-[var(--bg-base)] via-40% to-[var(--bg-base)] to-90%",
+    "bg-linear-to-b from-(--bg-base) from-10% via-(--bg-base) via-40% to-(--bg-base) to-90%",
   artist:
-    "bg-gradient-to-b from-[var(--bg-base)] from-10% via-[var(--bg-base)] via-40% to-[var(--bg-base)] to-90%",
+    "bg-linear-to-b from-(--bg-base) from-10% via-(--bg-base) via-40% to-(--bg-base) to-90%",
   album:
-    "bg-gradient-to-b from-[var(--bg-base)] from-10% via-[var(--bg-base)] via-40% to-[var(--bg-base)] to-90%",
+    "bg-linear-to-b from-(--bg-base) from-10% via-(--bg-base) via-40% to-(--bg-base) to-90%",
   stations:
-    "bg-gradient-to-b from-[var(--bg-base)] from-10% via-[var(--bg-base)] via-40% to-[var(--bg-base)] to-90%",
+    "bg-linear-to-b from-(--bg-base) from-10% via-(--bg-base) via-40% to-(--bg-base) to-90%",
   radio:
-    "bg-gradient-to-b from-[var(--bg-base)] from-10% via-[var(--bg-base)] via-40% to-[var(--bg-base)] to-90%",
+    "bg-linear-to-b from-(--bg-base) from-10% via-(--bg-base) via-40% to-(--bg-base) to-90%",
   "internet-radio":
-    "bg-gradient-to-b from-[var(--bg-base)] from-10% via-[var(--bg-base)] via-40% to-[var(--bg-base)] to-90%",
+    "bg-linear-to-b from-(--bg-base) from-10% via-(--bg-base) via-40% to-(--bg-base) to-90%",
   podcasts:
-    "bg-gradient-to-b from-[var(--bg-base)] from-10% via-[var(--bg-base)] via-40% to-[var(--bg-base)] to-90%",
+    "bg-linear-to-b from-(--bg-base) from-10% via-(--bg-base) via-40% to-(--bg-base) to-90%",
   podcast:
-    "bg-gradient-to-b from-[var(--bg-base)] from-10% via-[var(--bg-base)] via-40% to-[var(--bg-base)] to-90%",
-  settings: "bg-[var(--bg-base)]",
+    "bg-linear-to-b from-(--bg-base) from-10% via-(--bg-base) via-40% to-(--bg-base) to-90%",
+  settings: "bg-(--bg-base)",
 }
 
 const NO_PADDING_ROUTES = new Set([
@@ -124,7 +124,7 @@ export function Page() {
             verticalScrollPositions.set(location, e.currentTarget.scrollTop)
           }
           className={clsx(
-            "app-page-content scrollbar-thumb-[var(--scrollbar-thumb)] hover:scrollbar-thumb-[var(--scrollbar-thumb-hover)] flex-1 overflow-auto border-[var(--border)] transition-colors scrollbar scrollbar-track-transparent scrollbar-track-rounded-lg scrollbar-w-3"
+            "app-page-content scrollbar-thumb-(--scrollbar-thumb) hover:scrollbar-thumb-(--scrollbar-thumb-hover) flex-1 overflow-auto border-(--border) transition-colors scrollbar scrollbar-track-transparent scrollbar-track-rounded-lg scrollbar-w-3"
           )}
           style={
             hasPadding

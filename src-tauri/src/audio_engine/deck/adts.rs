@@ -9,17 +9,30 @@
 //! Duration comes from Plex metadata; bitrate estimates are not packet bounds.
 
 use std::io::{Seek, SeekFrom};
-use symphonia::core::audio::Channels;
-use symphonia::core::codecs::{CodecParameters, CODEC_TYPE_AAC};
-use symphonia::core::errors::{Error, Result, SeekErrorKind};
-use symphonia::core::formats::{
-    Cue, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo, Track,
+use std::num::NonZeroU32;
+use symphonia::core as symphonia_core;
+use symphonia::core::audio::Position as Channels;
+use symphonia::core::codecs::{
+    CodecParameters,
+    audio::{AudioCodecParameters, well_known::CODEC_ID_AAC},
 };
+use symphonia::core::errors::{Error, Result, SeekErrorKind};
+use symphonia::core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
+use symphonia::core::formats::{
+    FormatInfo, FormatOptions, FormatReader, MediaInfo, SeekMode, SeekTo, SeekedTo, Track,
+};
+use symphonia::core::io::ScopedStream;
 use symphonia::core::io::{MediaSource, MediaSourceStream, ReadBytes};
 use symphonia::core::meta::{Metadata, MetadataLog};
-use symphonia::core::probe::{Descriptor, Instantiate, QueryDescriptor};
+use symphonia::core::packet::Packet;
 use symphonia::core::support_format;
-use symphonia::core::units::TimeBase;
+use symphonia::core::units::{Duration, TimeBase, Timestamp};
+
+const FORMAT_INFO: FormatInfo = FormatInfo {
+    format: symphonia::core::formats::well_known::FORMAT_ID_ADTS,
+    short_name: "aac",
+    long_name: "Audio Data Transport Stream",
+};
 
 const FRAMES_PER_PACKET: u64 = 1024;
 const RATES: [u32; 13] = [
@@ -48,26 +61,26 @@ impl Header {
             .ok_or(Error::DecodeError("adts: reserved sample rate"))?;
         let channel_config = ((bytes[2] & 1) << 2) | (bytes[3] >> 6);
         let stereo = Channels::FRONT_LEFT | Channels::FRONT_RIGHT;
-        let front = stereo | Channels::FRONT_CENTRE;
+        let front = stereo | Channels::FRONT_CENTER;
         let rear = Channels::REAR_LEFT | Channels::REAR_RIGHT;
         let channels = match channel_config {
-            1 => Channels::FRONT_CENTRE,
+            1 => Channels::FRONT_CENTER,
             2 => stereo,
             3 => front,
-            4 => front | Channels::REAR_CENTRE,
+            4 => front | Channels::REAR_CENTER,
             5 => front | rear,
             6 => front | rear | Channels::LFE1,
             7 => {
                 front
                     | rear
-                    | Channels::FRONT_LEFT_CENTRE
-                    | Channels::FRONT_RIGHT_CENTRE
+                    | Channels::FRONT_LEFT_CENTER
+                    | Channels::FRONT_RIGHT_CENTER
                     | Channels::LFE1
             }
             _ => {
                 return Err(Error::Unsupported(
                     "adts: program-config channel layout is unsupported",
-                ))
+                ));
             }
         };
         if bytes[6] & 3 != 0 {
@@ -98,17 +111,18 @@ impl Header {
     }
 }
 
-pub(super) struct AdtsReader {
-    reader: MediaSourceStream,
+pub(super) struct AdtsReader<'s> {
+    reader: MediaSourceStream<'s>,
     tracks: Vec<Track>,
     metadata: MetadataLog,
+    media: MediaInfo,
     first_frame_pos: u64,
     next_packet_ts: u64,
     pending: Option<Header>,
     config: [u8; 2],
 }
 
-impl AdtsReader {
+impl<'s> AdtsReader<'s> {
     fn header(&mut self) -> Result<Header> {
         let header = match self.pending.take() {
             Some(header) => header,
@@ -123,67 +137,93 @@ impl AdtsReader {
     }
 }
 
-impl QueryDescriptor for AdtsReader {
-    fn query() -> &'static [Descriptor] {
+impl Scoreable for AdtsReader<'_> {
+    fn score(_source: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
+        Ok(Score::Supported(255))
+    }
+}
+impl ProbeableFormat<'_> for AdtsReader<'_> {
+    fn try_probe_new(
+        reader: MediaSourceStream<'_>,
+        options: FormatOptions,
+    ) -> Result<Box<dyn FormatReader + '_>> {
+        Ok(Box::new(AdtsReader::try_new(reader, &options)?))
+    }
+    fn probe_data() -> &'static [ProbeFormatData] {
         &[support_format!(
-            "aac",
-            "Audio Data Transport Stream",
+            FORMAT_INFO,
             &["aac"],
             &["audio/aac", "audio/aacp"],
             &[&[0xff, 0xf0], &[0xff, 0xf1], &[0xff, 0xf8], &[0xff, 0xf9]]
         )]
     }
-
-    fn score(_context: &[u8]) -> u8 {
-        255
-    }
 }
-
-impl FormatReader for AdtsReader {
-    fn try_new(mut reader: MediaSourceStream, _options: &FormatOptions) -> Result<Self> {
+impl<'s> AdtsReader<'s> {
+    fn try_new(mut reader: MediaSourceStream<'s>, _options: &FormatOptions) -> Result<Self> {
         let first_frame_pos = reader.pos();
         let header = Header::read(&mut reader)?;
-        let mut params = CodecParameters::new();
+        let mut params = AudioCodecParameters::new();
         params
-            .for_codec(CODEC_TYPE_AAC)
+            .for_codec(CODEC_ID_AAC)
             .with_sample_rate(header.rate)
-            .with_time_base(TimeBase::new(1, header.rate))
-            .with_channels(header.channels)
+            .with_channels(header.channels.into())
             .with_extra_data(Box::new(header.config));
         Ok(Self {
             reader,
-            tracks: vec![Track::new(0, params)],
+            tracks: vec![{
+                let mut track = Track::new(0);
+                track
+                    .with_codec_params(CodecParameters::Audio(params))
+                    .with_time_base(TimeBase::new(
+                        NonZeroU32::MIN,
+                        NonZeroU32::new(header.rate).unwrap(),
+                    ));
+                track
+            }],
             metadata: MetadataLog::default(),
+            media: MediaInfo::default(),
             first_frame_pos,
             next_packet_ts: 0,
             pending: Some(header),
             config: header.config,
         })
     }
-
-    fn next_packet(&mut self) -> Result<Packet> {
+}
+impl FormatReader for AdtsReader<'_> {
+    fn format_info(&self) -> &FormatInfo {
+        &FORMAT_INFO
+    }
+    fn media_info(&self) -> &MediaInfo {
+        &self.media
+    }
+    fn next_packet(&mut self) -> Result<Option<Packet>> {
         let header = self.header()?;
         let payload = self.reader.read_boxed_slice_exact(header.payload_len)?;
         let ts = self.next_packet_ts;
         self.next_packet_ts = ts
             .checked_add(FRAMES_PER_PACKET)
             .ok_or(Error::DecodeError("adts: timestamp overflow"))?;
-        Ok(Packet::new_from_boxed_slice(
+        Ok(Some(Packet::new(
             0,
-            ts,
-            FRAMES_PER_PACKET,
+            Timestamp::new(ts as i64),
+            Duration::new(FRAMES_PER_PACKET),
             payload,
-        ))
+        )))
     }
 
     fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
         let required_ts = match to {
-            SeekTo::TimeStamp { ts, track_id: 0 } => ts,
+            SeekTo::Timestamp { ts, track_id: 0 } => ts.get().max(0) as u64,
             SeekTo::Time {
                 time,
                 track_id: None | Some(0),
-            } => TimeBase::new(1, self.tracks[0].codec_params.sample_rate.unwrap())
-                .calc_timestamp(time),
+            } => self.tracks[0]
+                .time_base
+                .unwrap()
+                .calc_timestamp(time)
+                .ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?
+                .get()
+                .max(0) as u64,
             _ => return Err(Error::SeekError(SeekErrorKind::InvalidTrack)),
         };
         if required_ts < self.next_packet_ts {
@@ -210,21 +250,21 @@ impl FormatReader for AdtsReader {
         }
         Ok(SeekedTo {
             track_id: 0,
-            required_ts,
-            actual_ts: self.next_packet_ts,
+            required_ts: Timestamp::new(required_ts as i64),
+            actual_ts: Timestamp::new(self.next_packet_ts as i64),
         })
     }
 
     fn metadata(&mut self) -> Metadata<'_> {
         self.metadata.metadata()
     }
-    fn cues(&self) -> &[Cue] {
-        &[]
-    }
     fn tracks(&self) -> &[Track] {
         &self.tracks
     }
-    fn into_inner(self: Box<Self>) -> MediaSourceStream {
+    fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
+    where
+        Self: 's,
+    {
         self.reader
     }
 }
@@ -234,7 +274,7 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
-    fn source(data: Vec<u8>) -> MediaSourceStream {
+    fn source(data: Vec<u8>) -> MediaSourceStream<'static> {
         MediaSourceStream::new(Box::new(Cursor::new(data)), Default::default())
     }
 
@@ -251,7 +291,7 @@ mod tests {
         let original = fixture();
         let mut baseline =
             AdtsReader::try_new(source(original.clone()), &FormatOptions::default()).unwrap();
-        let expected = baseline.next_packet().unwrap();
+        let expected = baseline.next_packet().unwrap().unwrap();
         for profile in 0..=3 {
             for mpeg2 in [false, true] {
                 for crc in [false, true] {
@@ -272,9 +312,17 @@ mod tests {
                     }
                     let mut reader =
                         AdtsReader::try_new(source(bytes), &FormatOptions::default()).unwrap();
-                    let config = reader.tracks()[0].codec_params.extra_data.as_ref().unwrap();
+                    let config = reader.tracks()[0]
+                        .codec_params
+                        .as_ref()
+                        .unwrap()
+                        .audio()
+                        .unwrap()
+                        .extra_data
+                        .as_ref()
+                        .unwrap();
                     assert_eq!(config[0] >> 3, profile + 1);
-                    assert_eq!(reader.next_packet().unwrap().buf(), expected.buf());
+                    assert_eq!(reader.next_packet().unwrap().unwrap().data, expected.data);
                 }
             }
         }
@@ -300,12 +348,12 @@ mod tests {
         assert!(AdtsReader::try_new(source(short), &FormatOptions::default()).is_err());
         let mut reader =
             AdtsReader::try_new(source(original.clone()), &FormatOptions::default()).unwrap();
-        let first = reader.next_packet().unwrap();
-        let end = first.buf().len() + 7;
+        let first = reader.next_packet().unwrap().unwrap();
+        let end = first.data.len() + 7;
         let mut changed = original;
         changed[end + 2] ^= 1 << 2;
         let mut reader = AdtsReader::try_new(source(changed), &FormatOptions::default()).unwrap();
-        reader.next_packet().unwrap();
+        reader.next_packet().unwrap().unwrap();
         assert!(reader.next_packet().is_err());
     }
 
@@ -314,28 +362,34 @@ mod tests {
         let bytes = fixture();
         let mut reader =
             AdtsReader::try_new(source(bytes.clone()), &FormatOptions::default()).unwrap();
-        let first = reader.next_packet().unwrap();
+        let first = reader.next_packet().unwrap().unwrap();
         let mut truncated = AdtsReader::try_new(
-            source(bytes[..7 + first.buf().len() - 1].to_vec()),
+            source(bytes[..7 + first.data.len() - 1].to_vec()),
             &FormatOptions::default(),
         )
         .unwrap();
         assert!(truncated.next_packet().is_err());
-        let second = reader.next_packet().unwrap();
+        let second = reader.next_packet().unwrap().unwrap();
         let seeked = reader
             .seek(
                 SeekMode::Accurate,
-                SeekTo::TimeStamp {
-                    ts: 1200,
+                SeekTo::Timestamp {
+                    ts: Timestamp::new(1200),
                     track_id: 0,
                 },
             )
             .unwrap();
-        assert_eq!(seeked.actual_ts, 1024);
-        assert_eq!(reader.next_packet().unwrap().buf(), second.buf());
+        assert_eq!(seeked.actual_ts.get(), 1024);
+        assert_eq!(reader.next_packet().unwrap().unwrap().data, second.data);
         reader
-            .seek(SeekMode::Accurate, SeekTo::TimeStamp { ts: 0, track_id: 0 })
+            .seek(
+                SeekMode::Accurate,
+                SeekTo::Timestamp {
+                    ts: Timestamp::ZERO,
+                    track_id: 0,
+                },
+            )
             .unwrap();
-        assert_eq!(reader.next_packet().unwrap().buf(), first.buf());
+        assert_eq!(reader.next_packet().unwrap().unwrap().data, first.data);
     }
 }

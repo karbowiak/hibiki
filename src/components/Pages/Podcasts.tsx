@@ -99,7 +99,7 @@ function ErrorBanner({
       role="alert"
       className="mb-4 flex flex-wrap items-center gap-3 rounded-lg bg-red-500/10 px-4 py-2.5 text-sm text-red-700 ring-1 ring-red-500/20 dark:text-red-300"
     >
-      <span className="min-w-0 flex-1 break-words">{message}</span>
+      <span className="min-w-0 flex-1 wrap-break-word">{message}</span>
       {onRetry && (
         <button
           onClick={onRetry}
@@ -309,7 +309,7 @@ export function PodcastsPage() {
             width="16"
             height="16"
             fill="currentColor"
-            className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[color:var(--text-secondary)]"
+            className="absolute left-3.5 top-1/2 -translate-y-1/2 text-(--text-secondary)"
           >
             <path d="M10.533 1.279c-5.18 0-9.407 4.14-9.407 9.279s4.226 9.279 9.407 9.279c2.234 0 4.29-.77 5.907-2.058l4.353 4.353a1 1 0 1 0 1.414-1.414l-4.344-4.344a9.157 9.157 0 0 0 2.077-5.816c0-5.14-4.226-9.28-9.407-9.28zm-7.407 9.279c0-4.006 3.302-7.28 7.407-7.28s7.407 3.274 7.407 7.28-3.302 7.279-7.407 7.279-7.407-3.273-7.407-7.28z" />
           </svg>
@@ -318,7 +318,7 @@ export function PodcastsPage() {
               type="button"
               aria-label="Clear podcast search"
               onClick={() => handleSearch("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[color:var(--text-secondary)] hover:text-white"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-(--text-secondary) hover:text-white"
             >
               <svg
                 viewBox="0 0 16 16"
@@ -342,7 +342,7 @@ export function PodcastsPage() {
               : `Results for "${query}"`}
           </h2>
           {!isSearching && !searchQueued && searchResults.length === 0 && (
-            <p className="text-[color:var(--text-secondary)]">
+            <p className="text-(--text-secondary)">
               No podcasts found.
             </p>
           )}
@@ -451,7 +451,7 @@ export function PodcastsPage() {
                   ))}
                 </MediaGrid>
               ) : categoryPodcasts.length === 0 ? (
-                <p className="text-[color:var(--text-secondary)]">
+                <p className="text-(--text-secondary)">
                   No podcasts found in this category.
                 </p>
               ) : (

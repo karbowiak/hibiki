@@ -145,21 +145,21 @@ export function PlaylistInformationDialog({
       <div className="space-y-6">
         <dl className="flex flex-wrap gap-x-8 gap-y-3 text-sm">
           <div>
-            <dt className="text-[var(--text-secondary)]">Songs</dt>
+            <dt className="text-(--text-secondary)">Songs</dt>
             <dd className="mt-1 font-medium tabular-nums">
               {playlist.trackCount.toLocaleString()}
             </dd>
           </div>
           {!!playlist.duration && (
             <div>
-              <dt className="text-[var(--text-secondary)]">Runtime</dt>
+              <dt className="text-(--text-secondary)">Runtime</dt>
               <dd className="mt-1 font-medium tabular-nums">
                 {formatTotalMs(playlist.duration)}
               </dd>
             </div>
           )}
           <div>
-            <dt className="text-[var(--text-secondary)]">Type</dt>
+            <dt className="text-(--text-secondary)">Type</dt>
             <dd className="mt-1 font-medium">
               {playlist.smart ? "Smart playlist" : "Playlist"}
             </dd>
@@ -168,12 +168,12 @@ export function PlaylistInformationDialog({
         {playlist.summary && (
           <RichText
             html={playlist.summary}
-            className="text-sm leading-relaxed text-[var(--text-secondary)]"
+            className="text-sm leading-relaxed text-(--text-secondary)"
           />
         )}
         <section
           aria-labelledby="playlist-download-heading"
-          className="border-t border-[var(--border)] pt-5"
+          className="border-t border-(--border) pt-5"
         >
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h3 id="playlist-download-heading" className="font-semibold">
@@ -189,25 +189,25 @@ export function PlaylistInformationDialog({
               </button>
             )}
           </div>
-          <p className="mt-2 text-sm text-[var(--text-secondary)]">
+          <p className="mt-2 text-sm text-(--text-secondary)">
             {downloads?.requested
               ? `${downloads.downloaded.toLocaleString()} of ${downloads.total.toLocaleString()} songs saved${downloads.pending ? ` · ${downloads.pending} downloading` : ""}${downloads.failed ? ` · ${downloads.failed} failed` : ""}. New songs are checked at startup and hourly while connected.`
               : "This playlist is not set to stay downloaded."}
           </p>
           {issues.length > 0 && (
-            <ul className="mt-4 divide-y divide-[var(--border)]">
+            <ul className="mt-4 divide-y divide-(--border)">
               {issues.map((issue) => (
                 <li key={issue.trackId} className="py-3">
                   <p className="text-sm font-medium">
                     {issue.title}
                     {issue.artist && (
-                      <span className="font-normal text-[var(--text-secondary)]">
+                      <span className="font-normal text-(--text-secondary)">
                         {" "}
                         · {issue.artist}
                       </span>
                     )}
                   </p>
-                  <p className="mt-1 text-sm leading-relaxed text-[var(--text-secondary)]">
+                  <p className="mt-1 text-sm leading-relaxed text-(--text-secondary)">
                     {issue.error}
                   </p>
                 </li>
@@ -217,7 +217,7 @@ export function PlaylistInformationDialog({
           {loading && (
             <p
               role="status"
-              className="mt-3 text-sm text-[var(--text-secondary)]"
+              className="mt-3 text-sm text-(--text-secondary)"
             >
               Loading download details…
             </p>
@@ -233,7 +233,7 @@ export function PlaylistInformationDialog({
         </section>
         <section
           aria-labelledby="playlist-sync-heading"
-          className="border-t border-[var(--border)] pt-5"
+          className="border-t border-(--border) pt-5"
         >
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h3 id="playlist-sync-heading" className="font-semibold">
@@ -248,7 +248,7 @@ export function PlaylistInformationDialog({
               </button>
             )}
           </div>
-          <p className="mt-2 text-sm text-[var(--text-secondary)]">
+          <p className="mt-2 text-sm text-(--text-secondary)">
             {syncError ||
               (link
                 ? playlistNeedsReview(link)
@@ -259,7 +259,7 @@ export function PlaylistInformationDialog({
                 : "No playlist sync is configured.")}
           </p>
           {link?.message && (
-            <p className="mt-2 text-sm leading-relaxed text-[var(--text-secondary)]">
+            <p className="mt-2 text-sm leading-relaxed text-(--text-secondary)">
               {link.message}
             </p>
           )}
@@ -269,7 +269,7 @@ export function PlaylistInformationDialog({
                 {unmatched.length.toLocaleString()} unmatched{" "}
                 {unmatched.length === 1 ? "song" : "songs"}
               </h4>
-              <ul className="mt-2 space-y-2 text-sm text-[var(--text-secondary)]">
+              <ul className="mt-2 space-y-2 text-sm text-(--text-secondary)">
                 {unmatched.slice(0, 8).map((item) => (
                   <li key={item.occurrenceId}>
                     {item.track.title} · {item.track.artist}
@@ -277,7 +277,7 @@ export function PlaylistInformationDialog({
                 ))}
               </ul>
               {unmatched.length > 8 && (
-                <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                <p className="mt-2 text-sm text-(--text-secondary)">
                   Open Sync review to see all unmatched songs and choose their
                   matches.
                 </p>
@@ -286,7 +286,7 @@ export function PlaylistInformationDialog({
           )}
         </section>
         {error && (
-          <p role="alert" className="text-sm text-[var(--text-primary)]">
+          <p role="alert" className="text-sm text-(--text-primary)">
             {error}{" "}
             <button
               className="underline"

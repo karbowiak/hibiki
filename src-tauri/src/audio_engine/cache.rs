@@ -1512,7 +1512,7 @@ fn valid_entry(directory: &Path, key: &str, entry: &CacheEntry) -> bool {
 #[cfg(test)]
 pub fn cache_key(url: &str) -> String {
     use md5::{Digest, Md5};
-    format!("{:x}", Md5::digest(url.as_bytes()))
+    hex::encode(Md5::digest(url.as_bytes()))
 }
 
 fn now_secs() -> u64 {

@@ -153,7 +153,7 @@ export function RadioPage({ stationType }: Props) {
     <div className="flex flex-col items-center py-16 text-center">
       {loadError && <PageRecovery title="Could not play this station." description="The station remains available. Try starting playback again." onRetry={handlePlay} />}
       {/* Station art / icon */}
-      <div className="mb-6 h-40 w-40 overflow-hidden rounded-xl shadow-2xl flex items-center justify-center bg-gradient-to-br from-[#2d1b4e] to-[#1a3a5c]">
+      <div className="mb-6 h-40 w-40 overflow-hidden rounded-xl shadow-2xl flex items-center justify-center bg-linear-to-br from-[#2d1b4e] to-[#1a3a5c]">
         {thumb ? (
           <ArtworkImage loading="eager" src={thumb} alt="" className="h-full w-full object-cover" />
         ) : (
@@ -185,9 +185,9 @@ export function RadioPage({ stationType }: Props) {
           </div>
           <div className="flex items-center gap-3">
             {nowPlayingThumb ? (
-              <ArtworkImage loading="eager" src={nowPlayingThumb} alt="" className="h-12 w-12 rounded object-cover flex-shrink-0" />
+              <ArtworkImage loading="eager" src={nowPlayingThumb} alt="" className="h-12 w-12 rounded object-cover shrink-0" />
             ) : (
-              <div className="h-12 w-12 rounded bg-white/10 flex-shrink-0" />
+              <div className="h-12 w-12 rounded bg-white/10 shrink-0" />
             )}
             <div className="min-w-0">
               <div className="truncate font-semibold text-white">{currentTrack.title}</div>

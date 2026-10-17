@@ -113,7 +113,7 @@ export function VersionReviewPanel({
   ])
   if (!ownsOrigin)
     return (
-      <p role="status" className="text-sm text-[var(--text-secondary)]">
+      <p role="status" className="text-sm text-(--text-secondary)">
         The library changed. Close this review and reopen versions from the
         current library.
       </p>
@@ -121,26 +121,26 @@ export function VersionReviewPanel({
   return (
     <section
       aria-labelledby="version-review-title"
-      className="space-y-5 text-[var(--text-primary)]"
+      className="space-y-5 text-(--text-primary)"
     >
       <header>
         <h2 id="version-review-title" className="text-lg font-semibold">
           Album copies
         </h2>
-        <p className="mt-2 text-sm text-[var(--text-secondary)]">
+        <p className="mt-2 text-sm text-(--text-secondary)">
           Compare the copies Plex already knows about. Opening an album below
           does not merge, delete or move any files.
         </p>
       </header>
       {loading && (
-        <p role="status" className="text-sm text-[var(--text-secondary)]">
+        <p role="status" className="text-sm text-(--text-secondary)">
           Loading saved album and media details…
         </p>
       )}
       {failed && (
         <div
           role="status"
-          className="rounded-lg border border-[var(--border)] p-3 text-sm"
+          className="rounded-lg border border-(--border) p-3 text-sm"
         >
           <p>
             Some versions could not be loaded. Saved details remain available;
@@ -149,7 +149,7 @@ export function VersionReviewPanel({
           <button
             type="button"
             onClick={() => setAttempt((value) => value + 1)}
-            className="mt-2 rounded-lg border border-[var(--border)] px-3 py-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="mt-2 rounded-lg border border-(--border) px-3 py-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >
             Retry version details
           </button>
@@ -159,7 +159,7 @@ export function VersionReviewPanel({
         {versions.map((version) => (
           <li
             key={version.id}
-            className="rounded-lg border border-[var(--border)] p-3"
+            className="rounded-lg border border-(--border) p-3"
           >
             <Link
               href={`/album/${encodeURIComponent(version.id)}`}
@@ -167,7 +167,7 @@ export function VersionReviewPanel({
             >
               {version.title}
             </Link>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">
+            <p className="mt-1 text-sm text-(--text-secondary)">
               {version.artistName} · {version.year || "Year unknown"} ·{" "}
               {version.trackCount} {version.trackCount === 1 ? "track" : "tracks"} · Library item {version.id}
               {version.id === album.id ? " · Current overview copy" : ""}
@@ -176,25 +176,25 @@ export function VersionReviewPanel({
         ))}
       </ul>
       {allIds.length > 16 && (
-        <p className="text-sm text-[var(--text-secondary)]">
+        <p className="text-sm text-(--text-secondary)">
           Showing the first 16 album copies in this review.
         </p>
       )}
       <div className="space-y-3">
         <h3 className="font-medium">Track media</h3>
-        <p className="text-sm text-[var(--text-secondary)]">
+        <p className="text-sm text-(--text-secondary)">
           Automatic playback selects its preferred playable quality. This review
           leaves that choice unchanged.
         </p>
         {tracks.length === 0 && !loading && (
-          <p className="text-sm text-[var(--text-secondary)]">
+          <p className="text-sm text-(--text-secondary)">
             No track media details have been loaded for this album yet.
           </p>
         )}
         {tracks.slice(0, 200).map((track, trackIndex) => (
           <article
             key={`${track.id}:${track.playlistItemId ?? ""}:${trackIndex}`}
-            className="rounded-lg border border-[var(--border)] p-3"
+            className="rounded-lg border border-(--border) p-3"
           >
             <h4 className="font-medium">{track.title}</h4>
             {track.mediaInfo?.versions?.length ? (
@@ -205,7 +205,7 @@ export function VersionReviewPanel({
                 {track.mediaInfo.versions.map((version, index) => (
                   <li
                     key={`${version.mediaId}:${index}`}
-                    className="text-sm text-[var(--text-secondary)]"
+                    className="text-sm text-(--text-secondary)"
                   >
                     Version {version.versionNumber} ·{" "}
                     {version.codec?.toUpperCase() ?? "Codec unknown"}
@@ -222,12 +222,12 @@ export function VersionReviewPanel({
                 ))}
               </ul>
             ) : (
-              <p className="mt-1 text-sm text-[var(--text-secondary)]">
+              <p className="mt-1 text-sm text-(--text-secondary)">
                 Version details are unavailable in this cached response.
               </p>
             )}
             {track.mediaInfo?.versionsTruncated && (
-              <p className="mt-2 text-xs text-[var(--text-secondary)]">
+              <p className="mt-2 text-xs text-(--text-secondary)">
                 Up to 32 versions are shown, including the automatic playback
                 choice.
               </p>
@@ -235,7 +235,7 @@ export function VersionReviewPanel({
           </article>
         ))}
         {tracks.length > 200 && (
-          <p className="text-sm text-[var(--text-secondary)]">
+          <p className="text-sm text-(--text-secondary)">
             Showing the first 200 tracks; album files remain untouched.
           </p>
         )}

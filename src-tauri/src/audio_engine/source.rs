@@ -45,7 +45,7 @@ impl MediaSource {
                 field(value.as_bytes());
             }
         }
-        let cache_key = format!("s1-{:x}", hash.finalize());
+        let cache_key = format!("s1-{}", hex::encode(hash.finalize()));
         let extension = super::cache::extract_extension(request.url().path());
         Ok(Self {
             request: Some(reqwest::RequestBuilder::from_parts(client, request)),

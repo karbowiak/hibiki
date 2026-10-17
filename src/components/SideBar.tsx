@@ -155,14 +155,14 @@ function SortablePlaylistItem({
         className={clsx(
           "sidebar-playlist-link group flex cursor-default items-center gap-3 rounded-md px-1 py-[5px] no-underline transition-colors duration-200 hover:bg-accent-tint hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
           location !== href
-            ? "text-[color:var(--text-secondary)]"
-            : "bg-accent-tint-strong text-[color:var(--text-primary)]",
+            ? "text-(--text-secondary)"
+            : "bg-accent-tint-strong text-(--text-primary)",
           isHovered && isDropTarget && "bg-accent/10 ring-2 ring-accent/60",
           dropFlash === "success" && "bg-green-500/10 ring-2 ring-green-500/60",
           dropFlash === "error" && "bg-red-500/10 ring-2 ring-red-500/60"
         )}
       >
-        <div className="relative h-10 w-10 flex-shrink-0 overflow-hidden rounded bg-app-surface">
+        <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded bg-app-surface">
           {artUrl && (
             <ArtworkImage
               loading="eager"
@@ -398,7 +398,7 @@ export function SideBar({
       role="navigation"
       aria-label="Main navigation"
       data-shell-transparency={backgroundArtworkEnabled ? "enabled" : undefined}
-      className="app-sidebar shell-artwork-surface relative flex h-full flex-shrink-0 flex-col bg-app-bg"
+      className="app-sidebar shell-artwork-surface relative flex h-full shrink-0 flex-col bg-app-bg"
       style={{
         width,
         padding: "var(--spacing-sidebar)",
@@ -410,7 +410,7 @@ export function SideBar({
         className="absolute bottom-0 right-0 top-0 z-10 w-1 cursor-ew-resize transition-colors hover:bg-white/10"
         onMouseDown={onMouseDown}
       />
-      <ul className="sidebar-navigation flex-shrink-0 pt-1 text-sm font-medium">
+      <ul className="sidebar-navigation shrink-0 pt-1 text-sm font-medium">
         {routes1
           .filter((i) => i.href !== "/stations" || hasStations)
           .map((i, index) => {
@@ -438,9 +438,9 @@ export function SideBar({
                       }
                     }}
                     className={clsx(
-                      "shell-nav-link sidebar-nav-link flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded px-3 no-underline transition-colors duration-200 hover:bg-accent-tint hover:fill-[var(--text-primary)] hover:text-[var(--text-primary)] hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
+                      "shell-nav-link sidebar-nav-link flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded px-3 no-underline transition-colors duration-200 hover:bg-accent-tint hover:fill-(--text-primary) hover:text-(--text-primary) hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
                       !isActive
-                        ? "fill-[var(--text-secondary)] text-[var(--text-secondary)]"
+                        ? "fill-(--text-secondary) text-(--text-secondary)"
                         : "fill-accent text-accent"
                     )}
                   >
@@ -473,7 +473,7 @@ export function SideBar({
                           return next
                         })
                       }
-                      className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded border-0 bg-transparent text-[var(--text-secondary)] transition-colors hover:bg-accent-tint hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded border-0 bg-transparent text-(--text-secondary) transition-colors hover:bg-accent-tint hover:text-(--text-primary) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
                     >
                       <svg
                         width="16"
@@ -503,10 +503,10 @@ export function SideBar({
                             location === sub.href ? "page" : undefined
                           }
                           className={clsx(
-                            "shell-nav-link flex h-8 items-center rounded px-2 no-underline transition-colors duration-200 hover:bg-accent-tint hover:text-[var(--text-primary)] hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
+                            "shell-nav-link flex h-8 items-center rounded px-2 no-underline transition-colors duration-200 hover:bg-accent-tint hover:text-(--text-primary) hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
                             location === sub.href
                               ? "shell-nav-active bg-accent-tint-strong text-accent"
-                              : "text-[var(--text-secondary)]"
+                              : "text-(--text-secondary)"
                           )}
                         >
                           {sub.title}
@@ -520,14 +520,14 @@ export function SideBar({
           })}
       </ul>
 
-      <div className="sidebar-create-wrap flex-shrink-0 pb-1 pt-4 text-sm font-medium">
+      <div className="sidebar-create-wrap shrink-0 pb-1 pt-4 text-sm font-medium">
         <button
           onClick={onCreatePlaylist}
           disabled={!canEditPlaylists}
           style={
             { "--playlist-create-accent": savedAccent } as React.CSSProperties
           }
-          className="sidebar-create group flex w-full items-center gap-3 rounded-md px-3 text-[var(--text-primary)] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+          className="sidebar-create group flex w-full items-center gap-3 rounded-md px-3 text-(--text-primary) transition-colors disabled:cursor-not-allowed disabled:opacity-40"
         >
           <span className="sidebar-create-icon flex h-5 w-5 items-center justify-center">
             <svg
@@ -552,7 +552,7 @@ export function SideBar({
       </div>
       <div
         ref={playlistScroll}
-        className="sidebar-playlists scrollbar-track-[var(--bg-base)] scrollbar-thumb-[var(--bg-surface)] hover:scrollbar-thumb-[var(--bg-surface-hover)] mt-2 min-h-0 flex-1 overflow-y-scroll scrollbar scrollbar-w-1"
+        className="sidebar-playlists scrollbar-track-(--bg-base) scrollbar-thumb-(--bg-surface) hover:scrollbar-thumb-(--bg-surface-hover) mt-2 min-h-0 flex-1 overflow-y-scroll scrollbar scrollbar-w-1"
       >
         <DndContext
           sensors={sensors}
@@ -608,7 +608,7 @@ export function SideBar({
           The expanded art is (sidebarWidth × sidebarWidth), overlapping the player bar (h-24 = 96px). */}
       {isArtExpanded && (
         <div
-          className="flex-shrink-0 transition-all duration-300"
+          className="shrink-0 transition-all duration-300"
           style={{ height: width - 120 }}
         />
       )}

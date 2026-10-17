@@ -169,10 +169,7 @@ impl ImageContext {
                 client.library_scope.as_str(),
             ]
         });
-        format!(
-            "{:x}",
-            Sha256::digest(serde_json::to_vec(&binding).expect("image context strings"))
-        )
+        hex::encode(Sha256::digest(serde_json::to_vec(&binding).expect("image context strings")))
     }
 
     pub fn matches(&self, revision: u64, client: Option<&PlexClient>) -> bool {

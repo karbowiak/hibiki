@@ -7,12 +7,17 @@
 
 use anyhow::{Context, Result};
 use once_cell::sync::Lazy;
-use symphonia::core::audio::{Channels, SampleBuffer};
-use symphonia::core::codecs::{self, CodecRegistry, DecoderOptions, CODEC_TYPE_NULL};
+use symphonia::core::audio::{Channels as ChannelDescriptor, Position as Channels};
+use symphonia::core::codecs::audio::well_known::*;
+use symphonia::core::codecs::audio::{
+    self as codecs, AudioDecoder as Decoder, AudioDecoderOptions as DecoderOptions,
+};
+use symphonia::core::codecs::registry::CodecRegistry;
 use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::probe::{Hint, Probe};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::{Hint, Probe};
+use symphonia::core::units::{Duration, Timestamp};
 use tracing::{debug, warn};
 
 /// Custom codec registry with all symphonia built-in codecs plus external adapters
@@ -22,32 +27,41 @@ static CODEC_REGISTRY: Lazy<CodecRegistry> = Lazy::new(|| {
     // Register symphonia's built-in codecs
     symphonia::default::register_enabled_codecs(&mut registry);
     // Register external adapters
-    registry.register_all::<super::opus::OpusDecoder>();
-    registry.register_all::<super::aac::AacDecoder>();
+    registry.register_audio_decoder::<super::opus::OpusDecoder>();
+    registry.register_audio_decoder::<super::aac::AacDecoder>();
     registry
 });
 
 static AUDIO_PROBE: Lazy<Probe> = Lazy::new(|| {
     let mut probe = Probe::default();
     symphonia::default::register_enabled_formats(&mut probe);
-    probe.register_all::<super::adts::AdtsReader>();
+    probe.register_format::<super::adts::AdtsReader>();
     probe
 });
 
 use super::streaming::StreamingReader;
 
+fn positional_layout(channels: &ChannelDescriptor) -> Result<Channels> {
+    match channels {
+        ChannelDescriptor::Positioned(layout) => Ok(*layout),
+        ChannelDescriptor::Discrete(1) => Ok(Channels::FRONT_LEFT),
+        ChannelDescriptor::Discrete(2) => Ok(Channels::FRONT_LEFT | Channels::FRONT_RIGHT),
+        _ => anyhow::bail!("unsupported non-positional audio channel layout"),
+    }
+}
+
 /// Active decoder state — kept alive between batch decode calls.
 pub struct DecoderSetup {
     pub resampler: Option<super::super::output::resample::StreamingResampler>,
     pub output_frames_decoded: u64,
-    pub format: Box<dyn symphonia::core::formats::FormatReader>,
-    pub decoder: Box<dyn symphonia::core::codecs::Decoder>,
+    pub format: Box<dyn symphonia::core::formats::FormatReader + 'static>,
+    pub decoder: Box<dyn Decoder>,
     pub track_id: u32,
     pub sample_rate: u32,
     pub channels: u16,
     pub channel_layout: Channels,
     /// Reusable sample buffer (avoids per-packet allocation).
-    sample_buf: Option<SampleBuffer<f32>>,
+    sample_buf: Option<Vec<f32>>,
     /// Whether we've reached end of stream.
     pub finished: bool,
     /// Whether the stream was aborted (download error, not normal EOF).
@@ -60,8 +74,8 @@ pub struct DecoderSetup {
         String,
         super::super::cache::CacheStamp,
     )>,
-    expected_end_ts: Option<u64>,
-    last_packet_end_ts: u64,
+    expected_end_ts: Option<Timestamp>,
+    last_packet_end_ts: Timestamp,
     time_base: Option<symphonia::core::units::TimeBase>,
     seek_skip_samples: usize,
     seek_skip_seconds: Option<f64>,
@@ -74,8 +88,10 @@ impl DecoderSetup {
         let parameters = self.decoder.codec_params();
         super::super::types::SourceAudioFormat {
             codec: codec_type_name(parameters.codec),
-            // Encoded-stream parameters, never SampleBuffer<f32>'s precision.
-            bit_depth: parameters.bits_per_sample.filter(|bits| *bits > 0 && *bits <= 64),
+            // Encoded-stream parameters, never the interleaved f32 buffer's precision.
+            bit_depth: parameters
+                .bits_per_sample
+                .filter(|bits| *bits > 0 && *bits <= 64),
             sample_rate: self.sample_rate,
             channels: self.channels,
         }
@@ -111,67 +127,69 @@ pub fn probe_stream(reader: StreamingReader, ext: Option<&str>) -> Result<Decode
 
 /// Probe and set up a decoder. Pass a file extension hint (e.g. "opus", "ogg",
 /// "flac") for reliable format detection — some containers like OGG/Opus need it.
-pub fn probe_from_source(mss: MediaSourceStream, ext: Option<&str>) -> Result<DecoderSetup> {
+pub fn probe_from_source(
+    mss: MediaSourceStream<'static>,
+    ext: Option<&str>,
+) -> Result<DecoderSetup> {
     let mut hint = Hint::new();
     if let Some(ext) = ext {
         hint.with_extension(ext);
     }
-    let format_opts = FormatOptions {
-        enable_gapless: true,
-        ..Default::default()
-    };
+    // Gapless trimming is always enabled by Symphonia 0.6.
+    let format_opts = FormatOptions::default();
 
-    let probed = AUDIO_PROBE
-        .format(&hint, mss, &format_opts, &MetadataOptions::default())
+    let format = AUDIO_PROBE
+        .probe(&hint, mss, format_opts, MetadataOptions::default())
         .context("failed to probe audio format")?;
 
-    let format = probed.format;
-
     let track = format
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .first_track_known_codec(symphonia::core::formats::TrackType::Audio)
         .context("no audio track found")?;
-
-    let sample_rate = track
+    let params = track
         .codec_params
+        .as_ref()
+        .and_then(|parameters| parameters.audio())
+        .context("no audio codec parameters")?;
+    let sample_rate = params
         .sample_rate
         .context("no sample rate in codec params")?;
-    let channel_layout = track
-        .codec_params
+    let descriptor = params
         .channels
-        .unwrap_or(Channels::FRONT_LEFT | Channels::FRONT_RIGHT);
-    let channels = channel_layout.count() as u16;
+        .clone()
+        .unwrap_or_else(|| (Channels::FRONT_LEFT | Channels::FRONT_RIGHT).into());
+    let channel_layout = positional_layout(&descriptor)?;
+    let channels = channel_layout.iter().count() as u16;
     anyhow::ensure!(
         (8000..=768000).contains(&sample_rate) && (1..=32).contains(&channels),
         "unsupported audio sample rate or channel count"
     );
-    let duration_samples = track.codec_params.n_frames;
+    let duration_samples = track.num_frames;
     let track_id = track.id;
-    let time_base = track.codec_params.time_base;
-
-    let (decoder, aac_seek_from_start): (Box<dyn codecs::Decoder>, _) =
-        if track.codec_params.codec == codecs::CODEC_TYPE_AAC {
-            let decoder = <super::aac::AacDecoder as codecs::Decoder>::try_new(
-                &track.codec_params,
-                &DecoderOptions::default(),
-            )
+    let time_base = track.time_base;
+    let (decoder, aac_seek_from_start): (Box<dyn Decoder>, _) = if params.codec == CODEC_ID_AAC {
+        let decoder = super::aac::AacDecoder::try_new(params, &DecoderOptions::default())
             .context("failed to create AAC decoder")?;
-            let policy = decoder.seek_policy();
-            (Box::new(decoder), Some(policy))
-        } else {
-            (
-                CODEC_REGISTRY
-                    .make(&track.codec_params, &DecoderOptions::default())
-                    .context("failed to create decoder")?,
-                None,
-            )
-        };
+        let policy = decoder.seek_policy();
+        (Box::new(decoder), Some(policy))
+    } else {
+        (
+            CODEC_REGISTRY
+                .make_audio_decoder(params, &DecoderOptions::default())
+                .context("failed to create decoder")?,
+            None,
+        )
+    };
     let sample_rate = decoder.codec_params().sample_rate.unwrap_or(sample_rate);
-    let channel_layout = decoder.codec_params().channels.unwrap_or(channel_layout);
-    let channels = channel_layout.count() as u16;
+    let channel_layout = decoder
+        .codec_params()
+        .channels
+        .as_ref()
+        .map(positional_layout)
+        .transpose()?
+        .unwrap_or(channel_layout);
+    let channels = channel_layout.iter().count() as u16;
 
-    let codec_name = codec_type_name(track.codec_params.codec);
+    let codec_name = codec_type_name(params.codec);
     debug!(
         sample_rate,
         channels,
@@ -181,10 +199,9 @@ pub fn probe_from_source(mss: MediaSourceStream, ext: Option<&str>) -> Result<De
     );
 
     let expected_end_ts = track
-        .codec_params
-        .n_frames
-        .map(|frames| track.codec_params.start_ts.saturating_add(frames));
-    let start_ts = track.codec_params.start_ts;
+        .duration
+        .map(|duration| Timestamp::new(track.start_ts.get().max(0)).saturating_add(duration));
+    let start_ts = track.start_ts;
     Ok(DecoderSetup {
         resampler: None,
         output_frames_decoded: 0,
@@ -216,7 +233,7 @@ pub fn seek_to_ms(setup: &mut DecoderSetup, position_ms: u64) -> Result<()> {
     use symphonia::core::units::Time;
     // Learn in-band SBR/PS headers before a cold AAC seek. reset() retains
     // that configuration while retiring old PCM and transport input.
-    if setup.decoder.codec_params().codec == codecs::CODEC_TYPE_AAC && setup.sample_buf.is_none() {
+    if setup.decoder.codec_params().codec == CODEC_ID_AAC && setup.sample_buf.is_none() {
         anyhow::ensure!(
             !decode_batch(setup, 16384)?.is_empty(),
             "AAC has no decodable initialization packets"
@@ -236,7 +253,7 @@ pub fn seek_to_ms(setup: &mut DecoderSetup, position_ms: u64) -> Result<()> {
         0
     } else if matches!(
         setup.decoder.codec_params().codec,
-        codecs::CODEC_TYPE_OPUS | codecs::CODEC_TYPE_AAC | codecs::CODEC_TYPE_MP3
+        CODEC_ID_OPUS | CODEC_ID_AAC | CODEC_ID_MP3
     ) {
         position_ms.saturating_sub(160)
     } else {
@@ -245,10 +262,7 @@ pub fn seek_to_ms(setup: &mut DecoderSetup, position_ms: u64) -> Result<()> {
     let seeked = setup.format.seek(
         SeekMode::Accurate,
         SeekTo::Time {
-            time: Time::new(
-                seek_position_ms / 1000,
-                (seek_position_ms % 1000) as f64 / 1000.0,
-            ),
+            time: Time::from_millis_u64(seek_position_ms),
             track_id: Some(setup.track_id),
         },
     )?;
@@ -260,10 +274,18 @@ pub fn seek_to_ms(setup: &mut DecoderSetup, position_ms: u64) -> Result<()> {
     if let Some(resampler) = &mut setup.resampler {
         resampler.reset();
     }
-    let delta = seeked.required_ts.saturating_sub(seeked.actual_ts);
+    // Negative packet timestamps include encoder delay, already trimmed by the decoder.
+    // Count only presentation PCM when discarding seek pre-roll.
+    let delta = seeked
+        .required_ts
+        .get()
+        .saturating_sub(seeked.actual_ts.get().max(0))
+        .max(0) as u64;
     let delta_seconds = if let Some(base) = setup.time_base {
-        let time = base.calc_time(delta);
-        time.seconds as f64 + time.frac
+        let time = base
+            .calc_duration(Duration::new(delta))
+            .context("seek time overflow")?;
+        time.as_secs_f64()
     } else {
         delta as f64 / f64::from(setup.sample_rate)
     };
@@ -322,7 +344,18 @@ fn decode_batch_inner(
         }
 
         let packet = match setup.format.next_packet() {
-            Ok(p) => p,
+            Ok(Some(p)) => p,
+            Ok(None) => {
+                setup.finished = true;
+                setup.aborted = setup
+                    .stream_buffer
+                    .as_ref()
+                    .is_some_and(|buffer| buffer.is_aborted())
+                    || setup
+                        .expected_end_ts
+                        .is_some_and(|expected| setup.last_packet_end_ts < expected);
+                break;
+            }
             Err(symphonia::core::errors::Error::IoError(ref e))
                 if e.kind() == std::io::ErrorKind::UnexpectedEof =>
             {
@@ -344,11 +377,11 @@ fn decode_batch_inner(
             }
         };
 
-        if packet.track_id() != setup.track_id {
+        if packet.track_id != setup.track_id {
             continue;
         }
 
-        setup.last_packet_end_ts = packet.ts().saturating_add(packet.dur());
+        setup.last_packet_end_ts = packet.pts.saturating_add(packet.dur);
         let decoded = match setup.decoder.decode(&packet) {
             Ok(d) => d,
             Err(symphonia::core::errors::Error::DecodeError(msg)) => {
@@ -364,40 +397,34 @@ fn decode_batch_inner(
             }
         };
 
-        let spec = *decoded.spec();
+        let spec = decoded.spec();
+        let layout = positional_layout(spec.channels())?;
         if setup.sample_buf.is_none() {
-            // HE-AAC SBR/PS can reveal a higher rate or stereo layout only
-            // when the first packet is decoded.
+            // In-band SBR/PS can reveal the true decoded format on the first packet.
             anyhow::ensure!(
-                (8000..=768000).contains(&spec.rate) && (1..=32).contains(&spec.channels.count()),
+                (8000..=768000).contains(&spec.rate())
+                    && (1..=32).contains(&spec.channels().count()),
                 "unsupported decoded audio format"
             );
-            setup.sample_rate = spec.rate;
-            setup.channels = spec.channels.count() as u16;
-            setup.channel_layout = spec.channels;
+            setup.sample_rate = spec.rate();
+            setup.channels = spec.channels().count() as u16;
+            setup.channel_layout = layout;
         } else {
             anyhow::ensure!(
-                spec.rate == setup.sample_rate && spec.channels == setup.channel_layout,
+                spec.rate() == setup.sample_rate && layout == setup.channel_layout,
                 "audio format changed during decoding"
             );
         }
-        let capacity = decoded.capacity();
-        let buf = setup
-            .sample_buf
-            .get_or_insert_with(|| SampleBuffer::new(capacity as u64, spec));
-
-        if buf.capacity() < capacity {
-            *buf = SampleBuffer::new(capacity as u64, spec);
-        }
-        buf.copy_interleaved_ref(decoded);
+        let buf = setup.sample_buf.get_or_insert_with(Vec::new);
+        decoded.copy_to_vec_interleaved(buf);
 
         if let Some(seconds) = setup.seek_skip_seconds.take() {
-            setup.seek_skip_samples = ((seconds * f64::from(spec.rate)).round() as usize)
-                .saturating_mul(spec.channels.count());
+            setup.seek_skip_samples = ((seconds * f64::from(spec.rate())).round() as usize)
+                .saturating_mul(spec.channels().count());
         }
-        let skip = setup.seek_skip_samples.min(buf.samples().len());
+        let skip = setup.seek_skip_samples.min(buf.len());
         setup.seek_skip_samples -= skip;
-        batch.extend_from_slice(&buf.samples()[skip..]);
+        batch.extend_from_slice(&buf[skip..]);
     }
 
     for sample in &mut batch {
@@ -431,17 +458,19 @@ pub fn decode_all(setup: &mut DecoderSetup) -> Result<Vec<f32>> {
 }
 
 /// Human-readable name for a symphonia codec type.
-fn codec_type_name(ct: codecs::CodecType) -> &'static str {
+fn codec_type_name(ct: codecs::AudioCodecId) -> &'static str {
     match ct {
-        codecs::CODEC_TYPE_FLAC => "FLAC",
-        codecs::CODEC_TYPE_MP3 => "MP3",
-        codecs::CODEC_TYPE_MP2 => "MP2",
-        codecs::CODEC_TYPE_MP1 => "MP1",
-        codecs::CODEC_TYPE_AAC => "AAC",
-        codecs::CODEC_TYPE_OPUS => "Opus",
-        codecs::CODEC_TYPE_VORBIS => "Vorbis",
-        codecs::CODEC_TYPE_ALAC => "ALAC",
-        _ => CODEC_REGISTRY.get_codec(ct).map_or("Unknown", |codec| codec.short_name),
+        CODEC_ID_FLAC => "FLAC",
+        CODEC_ID_MP3 => "MP3",
+        CODEC_ID_MP2 => "MP2",
+        CODEC_ID_MP1 => "MP1",
+        CODEC_ID_AAC => "AAC",
+        CODEC_ID_OPUS => "Opus",
+        CODEC_ID_VORBIS => "Vorbis",
+        CODEC_ID_ALAC => "ALAC",
+        _ => CODEC_REGISTRY
+            .get_audio_decoder(ct)
+            .map_or("Unknown", |decoder| decoder.codec.info.short_name),
     }
 }
 
@@ -555,7 +584,7 @@ pub(crate) mod tests {
         wav.extend_from_slice(&16u16.to_le_bytes());
         wav.extend_from_slice(&22u16.to_le_bytes());
         wav.extend_from_slice(&16u16.to_le_bytes());
-        wav.extend_from_slice(&layout.bits().to_le_bytes());
+        wav.extend_from_slice(&(layout.bits() as u32).to_le_bytes());
         wav.extend_from_slice(&[
             1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71,
         ]);
@@ -877,7 +906,10 @@ pub(crate) mod tests {
                         .map(|(a, b)| (a - b).abs())
                         .sum::<f32>()
                         / actual.len() as f32;
-                    assert!(error < 1e-3, "AAC fixture {index}, seek {position}, prior decoding {already_decoded}: mean error {error}");
+                    assert!(
+                        error < 1e-3,
+                        "AAC fixture {index}, seek {position}, prior decoding {already_decoded}: mean error {error}"
+                    );
                 }
             }
         }
@@ -1044,22 +1076,34 @@ pub(crate) mod tests {
     #[test]
     fn mp3_cold_and_repeated_seeks_match_linear_playback() {
         let data = include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/audio/mp3-stereo.mp3"
-        )).to_vec();
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/audio/mp3-stereo.mp3"
+        ))
+        .to_vec();
         let mut setup = probe_audio(data.clone()).unwrap();
         let original = decode_all(&mut setup).unwrap();
         for cold in [true, false] {
             for position in [333, 720, 1250, 0] {
-                if cold { setup = probe_audio(data.clone()).unwrap(); }
+                if cold {
+                    setup = probe_audio(data.clone()).unwrap();
+                }
                 seek_to_ms(&mut setup, position).unwrap();
                 let actual = decode_batch(&mut setup, 4096).unwrap();
                 assert!(!actual.is_empty());
-                let start = (position as f64 * f64::from(setup.sample_rate) / 1000.0).round() as usize
+                let start = (position as f64 * f64::from(setup.sample_rate) / 1000.0).round()
+                    as usize
                     * setup.channels as usize;
                 let expected = &original[start..start + actual.len()];
-                let error = actual.iter().zip(expected)
-                    .map(|(&a, &b)| f64::from((a - b).abs())).sum::<f64>() / actual.len() as f64;
-                assert!(error < 1e-3, "MP3 seek {position}, cold={cold}: mean PCM error {error}");
+                let error = actual
+                    .iter()
+                    .zip(expected)
+                    .map(|(&a, &b)| f64::from((a - b).abs()))
+                    .sum::<f64>()
+                    / actual.len() as f64;
+                assert!(
+                    error < 1e-3,
+                    "MP3 seek {position}, cold={cold}: mean PCM error {error}"
+                );
                 assert!(!setup.had_decode_errors && !setup.aborted);
             }
         }

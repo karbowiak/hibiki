@@ -33,13 +33,13 @@ struct Proof {
 impl Proof {
     fn of(bytes: &[u8]) -> Option<Self> {
         Some(Self {
-            sha256: format!("{:x}", Sha256::digest(bytes)),
+            sha256: hex::encode(Sha256::digest(bytes)),
             mime: crate::image_content::mime(bytes)?.to_owned(),
         })
     }
     fn matches(&self, bytes: &[u8]) -> bool {
         crate::image_content::mime(bytes) == Some(self.mime.as_str())
-            && self.sha256 == format!("{:x}", Sha256::digest(bytes))
+            && self.sha256 == hex::encode(Sha256::digest(bytes))
     }
     fn valid(&self) -> bool {
         self.sha256.len() == 64

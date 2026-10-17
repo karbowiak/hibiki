@@ -107,7 +107,7 @@ pub(super) async fn cleanup(config: &Path, run: &str, execute: bool) -> Result<(
     let (client, section) = verified(config, &manifest).await?;
     proof(config, &manifest, &client, section).await?;
     let resource = json!({"runId":run,"title":manifest["title"],"id":manifest["libraryId"],"binding":manifest["nativeBinding"],"orderedOccurrences":0});
-    let digest = format!("{:x}", Sha256::digest(resource.to_string().as_bytes()));
+    let digest = hex::encode(Sha256::digest(resource.to_string().as_bytes()));
     if !execute {
         manifest["cleanupPlan"] = json!({"resource":resource,"digest":digest,"requests":1,"postGetStatus":404});
         private_write(&path, &manifest)?;

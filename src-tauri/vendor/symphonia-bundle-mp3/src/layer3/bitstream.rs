@@ -1,16 +1,16 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBitsLtr;
 
 use crate::common::{ChannelMode, FrameHeader};
 
-use super::{common::*, FrameData, Granule, GranuleChannel};
+use super::{FrameData, Granule, GranuleChannel, common::*};
 
 /// Pairs of bit lengths for MPEG version 1 scale factors. For MPEG version 1, there are two
 /// possible bit lengths for scale factors: slen1 and slen2. The first N of bands have scale factors
@@ -42,7 +42,7 @@ const SCALE_FACTOR_SLEN: [(u32, u32); 16] = [
 /// scale factors that have length slen[0..4]. Slen[0..4] is calculated from scalefac_compress.
 ///
 /// This table is indexed by channel_mode, scalefac_compress, and block_type.
-const SCALE_FACTOR_MPEG2_NSFB: [[[usize; 4]; 3]; 6] = [
+static SCALE_FACTOR_MPEG2_NSFB: [[[usize; 4]; 3]; 6] = [
     // Intensity stereo channel modes.
     [[7, 7, 7, 0], [12, 12, 12, 0], [6, 15, 12, 0]],
     [[6, 6, 6, 3], [12, 9, 9, 6], [6, 12, 9, 6]],
@@ -294,7 +294,10 @@ pub(super) fn read_scale_factors_mpeg1<B: ReadBitsLtr>(
             // channel indicates that the scale factors should be copied from the first granule,
             // do so.
             if gr > 0 && frame_data.scfsi[ch][i] {
-                let (granule0, granule1) = frame_data.granules.split_first_mut().unwrap();
+                let (granule0, granule1) = match frame_data.granules.split_first_mut() {
+                    Some(v) => v,
+                    None => return decode_error("mp3: granule list is empty"),
+                };
 
                 granule1[0].channels[ch].scalefacs[*start..*end]
                     .copy_from_slice(&granule0.channels[ch].scalefacs[*start..*end]);

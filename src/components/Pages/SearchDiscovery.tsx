@@ -218,7 +218,7 @@ export function SearchDiscovery() {
         <div key={h.identifier}>{row(h.title, h.items)}</div>
       ))}
       {!hasSuggestions && (
-        <p className="text-sm text-[var(--text-secondary)]">
+        <p className="text-sm text-(--text-secondary)">
           {provider
             ? "Your listening suggestions will appear here when your library has them."
             : "Connect your music library in Settings to see listening suggestions."}

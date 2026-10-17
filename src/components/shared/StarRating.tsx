@@ -53,7 +53,7 @@ export function StarRating({
     variant === "hero"
       ? onHero
         ? "text-white/40"
-        : "text-[color:var(--text-muted)]"
+        : "text-(--text-muted)"
       : "text-amber-800/30 dark:text-gray-600"
   return (
     <div
@@ -74,7 +74,7 @@ export function StarRating({
       }}
     >
       {inMenu && (
-        <span className="mr-1 w-10 text-xs text-[var(--text-secondary)]">
+        <span className="mr-1 w-10 text-xs text-(--text-secondary)">
           Rating
         </span>
       )}
@@ -89,7 +89,7 @@ export function StarRating({
             save(null)
           }}
           onMouseEnter={() => setHovered(0)}
-          className="flex h-[15px] w-3.5 items-center justify-center rounded-sm text-[var(--text-secondary)] opacity-0 group-hover/rating:opacity-70 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-30"
+          className="flex h-[15px] w-3.5 items-center justify-center rounded-sm text-(--text-secondary) opacity-0 group-hover/rating:opacity-70 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-30"
         >
           <span aria-hidden="true">×</span>
         </button>
@@ -132,7 +132,7 @@ export function StarRating({
           title="Clear rating"
           aria-label="Clear rating"
           disabled={rating.saving || !rating.enabled}
-          className="ml-1 rounded-sm px-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          className="ml-1 rounded-sm px-1 text-xs text-(--text-secondary) hover:text-(--text-primary) focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           onClick={(event) => {
             event.stopPropagation()
             save(null)
@@ -143,7 +143,7 @@ export function StarRating({
       )}
       {inMenu && rating.error && (
         <p
-          className="mt-1 w-full text-xs text-[var(--text-secondary)]"
+          className="mt-1 w-full text-xs text-(--text-secondary)"
           role="status"
         >
           {rating.error}

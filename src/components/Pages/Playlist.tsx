@@ -450,16 +450,16 @@ export function Playlist({ playlistId }: { playlistId: string }) {
               loading="eager"
               src={thumbUrl}
               alt=""
-              className="h-44 w-44 flex-shrink-0 rounded-lg object-cover shadow-xl"
+              className="h-44 w-44 shrink-0 rounded-lg object-cover shadow-xl"
             />
           ) : (
-            <div className="h-44 w-44 flex-shrink-0 rounded-lg bg-app-surface shadow-xl" />
+            <div className="h-44 w-44 shrink-0 rounded-lg bg-app-surface shadow-xl" />
           )}
 
           {/* Info column */}
           <div className="flex min-h-44 min-w-0 flex-[1_1_16rem] flex-col justify-between gap-4">
             <div className="min-w-0">
-              <h1 className="media-detail-title break-words">
+              <h1 className="media-detail-title wrap-break-word">
                 {currentPlaylist.title}
               </h1>
               {currentPlaylist.summary && (
@@ -639,7 +639,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                 {syncError && (
                   <p
                     role="status"
-                    className="basis-full text-sm text-[var(--text-secondary)]"
+                    className="basis-full text-sm text-(--text-secondary)"
                   >
                     {syncError}
                   </p>
@@ -853,7 +853,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
               onClick={() =>
                 void fetchMorePlaylistItems(playlistId, { force: true })
               }
-              className="rounded-full bg-app-surface px-4 py-2 text-sm text-[var(--text-primary)] hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
+              className="rounded-full bg-app-surface px-4 py-2 text-sm text-(--text-primary) hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
             >
               {isFetchingMore
                 ? "Loading more…"
@@ -865,13 +865,13 @@ export function Playlist({ playlistId }: { playlistId: string }) {
               <button
                 type="button"
                 onClick={() => invalidatePlaylistItems(playlistId)}
-                className="rounded-full border border-white/20 px-4 py-2 text-sm text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                className="rounded-full border border-white/20 px-4 py-2 text-sm text-(--text-primary) focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
               >
                 Reload playlist
               </button>
             )}
             {filterQuery && (
-              <span className="text-xs text-[var(--text-secondary)]">
+              <span className="text-xs text-(--text-secondary)">
                 Filter applies to loaded songs; loading more is optional.
               </span>
             )}

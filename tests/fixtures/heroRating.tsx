@@ -72,7 +72,7 @@ const clear = document.querySelector<HTMLButtonElement>(
   '[aria-label="Clear rating"]'
 )!
 assert.match(clear.className, /focus-visible:opacity-100/)
-assert.match(star(5).className, /var\(--text-muted\)/)
+assert.match(star(5).className, /text-\(--text-muted\)/)
 if (scenario === "capabilities") {
   await act(async () =>
     useProviderStore.setState({ capabilities: { ratings: false } as any })

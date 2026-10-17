@@ -1,12 +1,12 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
-use symphonia_core::errors::{decode_error, Error, Result};
+use symphonia_core::errors::{Error, Result, decode_error};
 
-use crate::atoms::{stsz::SampleSize, Co64Atom, MoofAtom, MoovAtom, MvexAtom, StcoAtom, TrafAtom};
+use crate::atoms::{Co64Atom, MoofAtom, MoovAtom, StcoAtom, TrafAtom, stsz::SampleSize};
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -33,6 +33,9 @@ pub struct SampleTiming {
 pub trait StreamSegment: Send + Sync {
     /// Gets the sequence number of this segment.
     fn sequence_num(&self) -> u32;
+
+    /// Returns `true` if all tracks end in this segment.
+    fn all_tracks_ended(&self) -> bool;
 
     /// Gets the first and last sample numbers for the track `track_num`.
     fn track_sample_range(&self, track_num: usize) -> Range<u32>;
@@ -79,13 +82,15 @@ struct SequenceInfo {
 
 pub struct MoofSegment {
     moof: MoofAtom,
-    mvex: Arc<MvexAtom>,
+    moov: Arc<MoovAtom>,
     seq: Vec<SequenceInfo>,
 }
 
 impl MoofSegment {
     /// Instantiate a new segment from a `MoofAtom`.
-    pub fn new(moof: MoofAtom, mvex: Arc<MvexAtom>, prev: &dyn StreamSegment) -> MoofSegment {
+    pub fn new(moof: MoofAtom, moov: Arc<MoovAtom>, prev: &dyn StreamSegment) -> MoofSegment {
+        let mvex = moov.mvex.as_ref().expect("mvex atom present");
+
         let mut seq = Vec::with_capacity(mvex.trexs.len());
 
         // Calculate the sequence information for each track, even if not present in the fragment.
@@ -117,7 +122,7 @@ impl MoofSegment {
             seq.push(info);
         }
 
-        MoofSegment { moof, mvex, seq }
+        MoofSegment { moof, moov, seq }
     }
 
     /// Try to get the Track Fragment atom associated with the track identified by `track_num`.
@@ -132,6 +137,11 @@ impl StreamSegment for MoofSegment {
         self.moof.mfhd.sequence_number
     }
 
+    fn all_tracks_ended(&self) -> bool {
+        // The end of a fragmented MP4 can only be detected by an EOF.
+        false
+    }
+
     fn sample_timing(&self, track_num: usize, sample_num: u32) -> Result<Option<SampleTiming>> {
         // Get the track fragment associated with track_num.
         let traf = match self.try_get_traf(track_num) {
@@ -142,10 +152,14 @@ impl StreamSegment for MoofSegment {
         let mut sample_num_rel = sample_num - self.seq[track_num].first_sample;
         let mut trun_ts_offset = self.seq[track_num].first_ts;
 
+        let mvex = match self.moov.mvex.as_ref() {
+            Some(v) => v,
+            None => return decode_error("isomp4: fragmented stream missing mvex atom"),
+        };
         let default_dur = traf
             .tfhd
             .default_sample_duration
-            .unwrap_or(self.mvex.trexs[track_num].default_sample_duration);
+            .unwrap_or(mvex.trexs[track_num].default_sample_duration);
 
         for trun in traf.truns.iter() {
             // If the sample is contained within the this track run, get the timing of of the
@@ -174,10 +188,14 @@ impl StreamSegment for MoofSegment {
         let mut sample_num = self.seq[track_num].first_sample;
         let mut ts_accum = self.seq[track_num].first_ts;
 
+        let mvex = match self.moov.mvex.as_ref() {
+            Some(v) => v,
+            None => return decode_error("isomp4: fragmented stream missing mvex atom"),
+        };
         let default_dur = traf
             .tfhd
             .default_sample_duration
-            .unwrap_or(self.mvex.trexs[track_num].default_sample_duration);
+            .unwrap_or(mvex.trexs[track_num].default_sample_duration);
 
         for trun in traf.truns.iter() {
             // Get the total duration of this track run.
@@ -204,7 +222,10 @@ impl StreamSegment for MoofSegment {
         get_offset: bool,
     ) -> Result<SampleDataDesc> {
         // Get the track fragment associated with track_num.
-        let traf = self.try_get_traf(track_num).unwrap();
+        let traf = match self.try_get_traf(track_num) {
+            Some(t) => t,
+            None => return decode_error("isomp4: no track fragment for track"),
+        };
 
         // If an explicit anchor-point is set, then use that for the position, otherwise use the
         // first-byte of the enclosing moof atom.
@@ -216,8 +237,12 @@ impl StreamSegment for MoofSegment {
         let mut sample_num_rel = sample_num - self.seq[track_num].first_sample;
         let mut trun_offset = traf_base_pos;
 
+        let mvex = match self.moov.mvex.as_ref() {
+            Some(v) => v,
+            None => return decode_error("isomp4: fragmented stream missing mvex atom"),
+        };
         let default_size =
-            traf.tfhd.default_sample_size.unwrap_or(self.mvex.trexs[track_num].default_sample_size);
+            traf.tfhd.default_sample_size.unwrap_or(mvex.trexs[track_num].default_sample_size);
 
         for trun in traf.truns.iter() {
             // If a data offset is present for this track fragment run, then calculate the new base
@@ -305,12 +330,12 @@ fn get_chunk_offset(
 }
 
 pub struct MoovSegment {
-    moov: MoovAtom,
+    moov: Arc<MoovAtom>,
 }
 
 impl MoovSegment {
     /// Instantiate a segment from the provide moov atom.
-    pub fn new(moov: MoovAtom) -> MoovSegment {
+    pub fn new(moov: Arc<MoovAtom>) -> MoovSegment {
         MoovSegment { moov }
     }
 }
@@ -319,6 +344,22 @@ impl StreamSegment for MoovSegment {
     fn sequence_num(&self) -> u32 {
         // The segment defined by the moov atom is always 0.
         0
+    }
+
+    fn all_tracks_ended(&self) -> bool {
+        // The end of a fragmented MP4 can only be detected by an EOF.
+        if self.moov.is_fragmented() {
+            return false;
+        }
+
+        // If a track does not end in this segment, then this cannot be the last segment.
+        for trak in &self.moov.traks {
+            if trak.mdia.minf.stbl.stts.total_duration < trak.mdia.mdhd.duration {
+                return false;
+            }
+        }
+
+        true
     }
 
     fn sample_timing(&self, track_num: usize, sample_num: u32) -> Result<Option<SampleTiming>> {
@@ -330,12 +371,7 @@ impl StreamSegment for MoovSegment {
         // Find the sample timing. Note, complexity of O(N).
         let timing = trak.mdia.minf.stbl.stts.find_timing_for_sample(sample_num);
 
-        if let Some((ts, dur)) = timing {
-            Ok(Some(SampleTiming { ts, dur }))
-        }
-        else {
-            Ok(None)
-        }
+        if let Some((ts, dur)) = timing { Ok(Some(SampleTiming { ts, dur })) } else { Ok(None) }
     }
 
     fn ts_sample(&self, track_num: usize, ts: u64) -> Result<Option<u32>> {
@@ -380,7 +416,10 @@ impl StreamSegment for MoovSegment {
         let chunk_in_stream = group.first_chunk + chunk_in_group;
 
         // Get the byte position of the first sample of the chunk containing the sample.
-        let base_pos = get_chunk_offset(stco, co64, chunk_in_stream as usize)?.unwrap();
+        let base_pos = match get_chunk_offset(stco, co64, chunk_in_stream as usize)? {
+            Some(pos) => pos,
+            None => return decode_error("isomp4: chunk offset not found"),
+        };
 
         // Determine the absolute sample byte position if requested by calculating the offset of
         // the sample from the base position of the chunk.

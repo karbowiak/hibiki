@@ -73,16 +73,13 @@ fn reference(source: &str) -> Result<(String, String), String> {
 }
 fn cache_key(configuration: &Configuration, scope: &str, id: &str) -> String {
     use sha2::{Digest, Sha256};
-    let binding = format!(
-        "{:x}",
-        Sha256::digest(
+    let binding = hex::encode(Sha256::digest(
             serde_json::to_vec(&[
                 configuration.base_url.as_str(),
                 configuration.api_key.as_str()
             ])
             .expect("service identity strings")
-        )
-    );
+        ));
     crate::image_fetch::cache_key(
         scope,
         "ext",

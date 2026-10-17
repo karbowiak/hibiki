@@ -130,7 +130,7 @@ function DesktopApp() {
     }
   }, [isLoading, isConnected, isOffline])
 
-  if (process.env.NODE_ENV === "production") {
+  if (import.meta.env.PROD) {
     document.addEventListener("contextmenu", (event) => event.preventDefault())
   }
 

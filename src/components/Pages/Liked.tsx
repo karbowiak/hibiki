@@ -260,10 +260,10 @@ export function Liked() {
       <div className="collection-header">
         <div className="flex min-w-0 flex-[1_1_14rem] flex-col gap-3">
           <h1 className="discovery-title">Liked Songs</h1>
-          <p className="max-w-xl text-sm text-[var(--text-secondary)]">
+          <p className="max-w-xl text-sm text-(--text-secondary)">
             Your saved favorites and songs you've rated.
           </p>
-          <p className="text-sm text-[var(--text-secondary)]">
+          <p className="text-sm text-(--text-secondary)">
             {count === null
               ? "Preparing all saved songs…"
               : `${count.toLocaleString()} ${count === 1 ? "song" : "songs"}`}
@@ -332,7 +332,7 @@ export function Liked() {
         ))}
       </div>
       {unavailable > 0 && kind !== "rated" && (
-        <p className="mx-8 mb-4 text-sm text-[var(--text-secondary)]">
+        <p className="mx-8 mb-4 text-sm text-(--text-secondary)">
           {unavailable.toLocaleString()} saved favorites still need a library
           match. Review them in Sync.
         </p>
@@ -356,7 +356,7 @@ export function Liked() {
       {preparing ? (
         <p
           role={ratedIndex.error ? "alert" : "status"}
-          className="px-8 py-12 text-sm text-[var(--text-secondary)]"
+          className="px-8 py-12 text-sm text-(--text-secondary)"
         >
           {ratedIndex.error || "Preparing your complete collection…"}
           {ratedIndex.error && <button type="button" onClick={ratedIndex.retry} className="ml-2 underline">Try again</button>}

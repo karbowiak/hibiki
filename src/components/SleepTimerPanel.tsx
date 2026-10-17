@@ -107,8 +107,8 @@ export default function SleepTimerPanel({ onClose }: Props) {
         </div>
 
         {/* Custom duration input */}
-        <div className="border-t border-[var(--border)] pt-3">
-          <label htmlFor={durationId} className="mb-2 block text-xs font-medium text-[color:var(--text-secondary)]">Custom duration</label>
+        <div className="border-t border-(--border) pt-3">
+          <label htmlFor={durationId} className="mb-2 block text-xs font-medium text-(--text-secondary)">Custom duration</label>
           <div className="flex gap-1.5">
             <input
               id={durationId}

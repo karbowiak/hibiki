@@ -161,10 +161,7 @@ fn positive(value: &str) -> Result<i64, String> {
         .ok_or("Invalid favorite track ID".into())
 }
 fn hash(title: &str, ids: &[String]) -> String {
-    format!(
-        "{:x}",
-        Sha256::digest(serde_json::json!([title, ids]).to_string().as_bytes())
-    )
+    hex::encode(Sha256::digest(serde_json::json!([title, ids]).to_string().as_bytes()))
 }
 async fn snapshot(
     client: &PlexClient,

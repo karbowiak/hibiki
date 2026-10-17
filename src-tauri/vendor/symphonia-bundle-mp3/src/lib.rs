@@ -1,5 +1,5 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -49,4 +49,4 @@ pub use demuxer::MpaReader;
 pub type Mp3Decoder = MpaDecoder;
 
 #[deprecated = "use `symphonia_bundle_mp3::MpaReader` instead"]
-pub type Mp3Reader = MpaReader;
+pub type Mp3Reader<'s> = MpaReader<'s>;

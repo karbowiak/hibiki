@@ -250,7 +250,7 @@ export function TopBar() {
             role="img"
             height="16"
             width="16"
-            className="fill-[var(--text-primary)]"
+            className="fill-(--text-primary)"
             viewBox="0 0 16 16"
           >
             <path d="M11.03.47a.75.75 0 0 1 0 1.06L4.56 8l6.47 6.47a.75.75 0 1 1-1.06 1.06L2.44 8 9.97.47a.75.75 0 0 1 1.06 0z" />
@@ -267,7 +267,7 @@ export function TopBar() {
             role="img"
             height="16"
             width="16"
-            className="fill-[var(--text-primary)]"
+            className="fill-(--text-primary)"
             viewBox="0 0 16 16"
           >
             <path d="M4.97.47a.75.75 0 0 0 0 1.06L11.44 8l-6.47 6.47a.75.75 0 1 0 1.06 1.06L13.56 8 6.03.47a.75.75 0 0 0-1.06 0z" />
@@ -275,11 +275,11 @@ export function TopBar() {
         </button>
 
         {/* Search input — always visible, wired to store */}
-        <div className="relative w-[364px] min-w-0 max-w-full shrink text-sm text-[var(--text-primary)]">
+        <div className="relative w-[364px] min-w-0 max-w-full shrink text-sm text-(--text-primary)">
           <svg
             height="16"
             width="16"
-            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 fill-[var(--text-secondary)]"
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 fill-(--text-secondary)"
             viewBox="0 0 24 24"
           >
             <path d="M10.533 1.279c-5.18 0-9.407 4.14-9.407 9.279s4.226 9.279 9.407 9.279c2.234 0 4.29-.77 5.907-2.058l4.353 4.353a1 1 0 1 0 1.414-1.414l-4.344-4.344a9.157 9.157 0 0 0 2.077-5.816c0-5.14-4.226-9.28-9.407-9.28zm-7.407 9.279c0-4.006 3.302-7.28 7.407-7.28s7.407 3.274 7.407 7.28-3.302 7.279-7.407 7.279-7.407-3.273-7.407-7.28z" />
@@ -319,7 +319,7 @@ export function TopBar() {
                 inputRef.current?.focus()
                 setShowDropdown(false)
               }}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-(--text-muted) hover:text-(--text-primary)"
             >
               <svg
                 height="12"
@@ -364,7 +364,7 @@ export function TopBar() {
             width="15"
             viewBox="0 0 24 24"
             fill="currentColor"
-            className={`text-[color:var(--text-secondary)] ${isRefreshing ? "animate-spin" : ""}`}
+            className={`text-(--text-secondary) ${isRefreshing ? "animate-spin" : ""}`}
           >
             <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
           </svg>
@@ -391,7 +391,7 @@ export function TopBar() {
           }
         >
           <span
-            className={`h-2 w-2 flex-shrink-0 rounded-full ${
+            className={`h-2 w-2 shrink-0 rounded-full ${
               !isConnected
                 ? "bg-red-500"
                 : wsConnected
@@ -407,7 +407,7 @@ export function TopBar() {
             className={
               location.startsWith("/settings")
                 ? "text-accent"
-                : "text-[color:var(--text-secondary)]"
+                : "text-(--text-secondary)"
             }
           >
             <path d="M12 15.5A3.5 3.5 0 0 1 8.5 12 3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5 3.5 3.5 0 0 1-3.5 3.5m7.43-2.92c.04-.34.07-.68.07-1.08s-.03-.73-.07-1.08l2.32-1.8c.21-.16.27-.44.14-.67l-2.2-3.81c-.13-.24-.41-.31-.65-.24l-2.74 1.1c-.57-.44-1.18-.81-1.86-1.09l-.42-2.9c-.04-.26-.26-.44-.52-.44H9.5c-.26 0-.48.18-.52.44l-.42 2.9c-.68.28-1.29.65-1.86 1.09l-2.74-1.1c-.24-.07-.52 0-.65.24l-2.2 3.81c-.13.24-.07.52.14.67l2.32 1.8c-.04.35-.07.69-.07 1.08s.03.73.07 1.08L2.25 14.3c-.21.16-.27.44-.14.67l2.2 3.81c.13.24.41.31.65.24l2.74-1.1c.57.44 1.18.81 1.86 1.09l.42 2.9c.04.26.26.44.52.44h4.4c.26 0 .48-.18.52-.44l.42-2.9c.68-.28 1.29-.65 1.86-1.09l2.74 1.1c.24.07.52 0 .65-.24l2.2-3.81c.13-.24.07-.52-.14-.67l-2.32-1.8z" />
@@ -416,7 +416,7 @@ export function TopBar() {
             className={`topbar-settings-label ${
               location.startsWith("/settings")
                 ? "text-accent"
-                : "text-[color:var(--text-primary)]"
+                : "text-(--text-primary)"
             }`}
           >
             Settings

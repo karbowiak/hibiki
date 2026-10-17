@@ -65,7 +65,7 @@ You need access to a Plex Media Server with a music library. Sign in with Plex o
 
 ## Build and test
 
-Requires [Bun](https://bun.sh/), a stable Rust toolchain and the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/).
+Requires [Bun](https://bun.sh/), Rust 1.90 or newer and the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/). The renderer uses Tailwind 4 and needs a current system WebView with [Safari 16.4+ or Chromium 111+ CSS support](https://tailwindcss.com/docs/compatibility).
 
 ```sh
 git clone https://github.com/karbowiak/hibiki.git

@@ -146,7 +146,7 @@ export function AdvancedMetadataPanel({
   }
   if (loading)
     return (
-      <p role="status" className="p-4 text-[var(--text-muted)]">
+      <p role="status" className="p-4 text-(--text-muted)">
         Loading Plex values and field locks…
       </p>
     )
@@ -156,18 +156,18 @@ export function AdvancedMetadataPanel({
     provider.isOffline
   )
     return (
-      <p className="p-4 text-[var(--text-muted)]">
+      <p className="p-4 text-(--text-muted)">
         Advanced fields require an online Plex music library.
       </p>
     )
   return (
     <section aria-label="Advanced Plex metadata" className="space-y-5">
-      <p className="text-sm text-[var(--text-muted)]">
+      <p className="text-sm text-(--text-muted)">
         Changes are saved to Plex. Locked fields are protected from automatic
         metadata refresh.
       </p>
       {error && (
-        <p role="alert" className="text-[var(--text-muted)]">
+        <p role="alert" className="text-(--text-muted)">
           {error}
         </p>
       )}
@@ -224,7 +224,7 @@ export function AdvancedMetadataPanel({
                 )}
               </label>
               {unknown ? (
-                <p className="text-sm text-[var(--text-muted)]">
+                <p className="text-sm text-(--text-muted)">
                   Lock state not reported by Plex.
                 </p>
               ) : (
@@ -232,7 +232,7 @@ export function AdvancedMetadataPanel({
                   <input
                     type="checkbox"
                     checked={field.locked === true}
-                    className="accent-[var(--artwork-primary)]"
+                    className="accent-(--artwork-primary)"
                     disabled={saving || disabled}
                     onChange={(e) =>
                       update(key, { ...field, locked: e.target.checked })
@@ -242,7 +242,7 @@ export function AdvancedMetadataPanel({
                 </label>
               )}
               {tags && (
-                <p className="text-xs text-[var(--text-muted)]">
+                <p className="text-xs text-(--text-muted)">
                   One tag per line.
                 </p>
               )}
@@ -253,7 +253,7 @@ export function AdvancedMetadataPanel({
       {review && (
         <div
           role="status"
-          className="space-y-2 rounded border border-[var(--border)] p-3"
+          className="space-y-2 rounded border border-(--border) p-3"
         >
           <p>Review the changed values and locks before saving.</p>
           {(Object.keys(review.changes) as AdvancedMetadataKey[]).map((key) => (

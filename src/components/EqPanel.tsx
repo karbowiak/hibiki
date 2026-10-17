@@ -32,7 +32,7 @@ function GainSlider({
   const pct = ((value + 24) / 48) * 100
   return (
     <div className="flex items-center gap-3">
-      <span className="w-16 shrink-0 text-[10px] text-[color:var(--text-muted)]">
+      <span className="w-16 shrink-0 text-[10px] text-(--text-muted)">
         {label}
       </span>
       <div
@@ -40,7 +40,7 @@ function GainSlider({
         style={{ height: 20 }}
       >
         {/* Track background */}
-        <div className="absolute inset-x-0 h-[3px] rounded-full bg-[var(--border)]" />
+        <div className="absolute inset-x-0 h-[3px] rounded-full bg-(--border)" />
         {/* Filled portion */}
         <div
           className="absolute left-0 h-[3px] rounded-full bg-accent/40"
@@ -71,7 +71,7 @@ function GainSlider({
           }}
         />
       </div>
-      <span className="w-12 shrink-0 text-right text-[10px] tabular-nums text-[color:var(--text-muted)]">
+      <span className="w-12 shrink-0 text-right text-[10px] tabular-nums text-(--text-muted)">
         {value > 0 ? "+" : ""}
         {value} dB
       </span>
@@ -245,8 +245,8 @@ export default function EqPanel({ onClose }: Props) {
             aria-label="Equalizer"
             className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
               enabled
-                ? "bg-accent text-[color:var(--bg-base)]"
-                : "bg-[var(--bg-surface)] text-[color:var(--text-muted)]"
+                ? "bg-accent text-(--bg-base)"
+                : "bg-(--bg-surface) text-(--text-muted)"
             }`}
           >
             {enabled ? "ON" : "OFF"}
@@ -256,7 +256,7 @@ export default function EqPanel({ onClose }: Props) {
       {eqError && (
         <div
           role="alert"
-          className="flex items-center gap-2 border-b border-[var(--border)] px-4 py-2 text-xs text-[color:var(--text-primary)]"
+          className="flex items-center gap-2 border-b border-(--border) px-4 py-2 text-xs text-(--text-primary)"
         >
           <span>{eqError}</span>
           <button
@@ -270,11 +270,11 @@ export default function EqPanel({ onClose }: Props) {
 
       {/* Active output device */}
       {(currentDevice || deviceStoreDevice) && (
-        <div className="flex items-center gap-2 border-b border-[var(--border)] px-4 py-2">
-          <span className="shrink-0 text-[10px] text-[color:var(--text-muted)]">
+        <div className="flex items-center gap-2 border-b border-(--border) px-4 py-2">
+          <span className="shrink-0 text-[10px] text-(--text-muted)">
             Output
           </span>
-          <span className="min-w-0 flex-1 truncate text-[11px] text-[color:var(--text-primary)]">
+          <span className="min-w-0 flex-1 truncate text-[11px] text-(--text-primary)">
             {currentDevice || deviceStoreDevice || "System default"}
           </span>
         </div>
@@ -282,7 +282,7 @@ export default function EqPanel({ onClose }: Props) {
 
       {/* Preset grid */}
       <div
-        className={`grid grid-cols-3 gap-1.5 border-b border-[var(--border)] px-4 py-3 transition-opacity ${!enabled ? "pointer-events-none opacity-40" : ""}`}
+        className={`grid grid-cols-3 gap-1.5 border-b border-(--border) px-4 py-3 transition-opacity ${!enabled ? "pointer-events-none opacity-40" : ""}`}
       >
         {EQ_PRESETS.map((preset) => {
           const active = preset.gains.every(
@@ -297,7 +297,7 @@ export default function EqPanel({ onClose }: Props) {
               className={`rounded-lg border px-2 py-1.5 text-xs font-medium transition-all ${
                 active
                   ? "border-accent/50 text-accent"
-                  : "border-[var(--border)] text-[color:var(--text-muted)] hover:text-[color:var(--text-secondary)]"
+                  : "border-(--border) text-(--text-muted) hover:text-(--text-secondary)"
               }`}
               style={{
                 background: active
@@ -321,7 +321,7 @@ export default function EqPanel({ onClose }: Props) {
         <div className="relative flex items-start justify-between gap-1">
           {/* 0dB reference line */}
           <div
-            className="pointer-events-none absolute left-0 right-0 border-t border-[var(--border)]"
+            className="pointer-events-none absolute left-0 right-0 border-t border-(--border)"
             style={{ top: `calc(24px + ${BAR_HEIGHT / 2}px)` }}
           />
 
@@ -337,8 +337,8 @@ export default function EqPanel({ onClose }: Props) {
                 <span
                   className={`h-4 text-[10px] tabular-nums leading-4 ${
                     db === 0
-                      ? "text-[color:var(--text-muted)]"
-                      : "text-[color:var(--text-primary)]"
+                      ? "text-(--text-muted)"
+                      : "text-(--text-primary)"
                   }`}
                 >
                   {formatDb(db)}
@@ -358,7 +358,7 @@ export default function EqPanel({ onClose }: Props) {
                   aria-valuemax={MAX_DB}
                   aria-valuenow={db}
                   aria-label={`${EQ_LABELS[i].endsWith("K") ? `${EQ_LABELS[i].slice(0, -1)} kHz` : `${EQ_LABELS[i]} Hz`} band`}
-                  className="relative cursor-pointer touch-none overflow-hidden rounded-md bg-[var(--bg-surface)] focus-visible:ring-2 focus-visible:ring-accent"
+                  className="relative cursor-pointer touch-none overflow-hidden rounded-md bg-(--bg-surface) focus-visible:ring-2 focus-visible:ring-accent"
                   style={{ width: 32, height: BAR_HEIGHT }}
                   onPointerDown={(e) => handlePointerDown(e, i)}
                   onDoubleClick={() => enabled && setBand(i, 0)}
@@ -383,7 +383,7 @@ export default function EqPanel({ onClose }: Props) {
                 </div>
 
                 {/* Frequency label */}
-                <span className="text-[9px] tabular-nums text-[color:var(--text-muted)]">
+                <span className="text-[9px] tabular-nums text-(--text-muted)">
                   {EQ_LABELS[i]}
                 </span>
               </div>
@@ -394,10 +394,10 @@ export default function EqPanel({ onClose }: Props) {
 
       {/* Gain controls */}
       <div
-        className={`space-y-2 border-t border-[var(--border)] px-4 py-3 transition-opacity ${!enabled ? "pointer-events-none opacity-40" : ""}`}
+        className={`space-y-2 border-t border-(--border) px-4 py-3 transition-opacity ${!enabled ? "pointer-events-none opacity-40" : ""}`}
       >
         <div className="mb-2 flex items-center gap-2">
-          <span className="shrink-0 text-[11px] text-[color:var(--text-muted)]">
+          <span className="shrink-0 text-[11px] text-(--text-muted)">
             Gain
           </span>
           <button
@@ -407,14 +407,14 @@ export default function EqPanel({ onClose }: Props) {
             title="Reduce gain to compensate for EQ boosts"
             className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold transition-colors ${
               autoPostgain
-                ? "bg-accent text-[color:var(--bg-base)]"
-                : "bg-[var(--bg-surface)] text-[color:var(--text-muted)] hover:bg-[var(--bg-surface-hover)]"
+                ? "bg-accent text-(--bg-base)"
+                : "bg-(--bg-surface) text-(--text-muted) hover:bg-(--bg-surface-hover)"
             }`}
           >
             Auto
           </button>
           {autoPostgain && (
-            <span className="text-[11px] tabular-nums text-[color:var(--text-muted)]">
+            <span className="text-[11px] tabular-nums text-(--text-muted)">
               {applying
                 ? "Applying…"
                 : `${postgainDb > 0 ? "+" : ""}${postgainDb.toFixed(1)} dB`}
@@ -433,8 +433,8 @@ export default function EqPanel({ onClose }: Props) {
 
       {/* Device Profiles */}
       {currentDevice && (
-        <div className="border-t border-[var(--border)] px-4 py-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-[color:var(--text-muted)]">
+        <div className="border-t border-(--border) px-4 py-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-(--text-muted)">
             Device Profiles
           </span>
           <div className="mt-1.5 flex flex-col gap-1">
@@ -442,9 +442,9 @@ export default function EqPanel({ onClose }: Props) {
             {(() => {
               const hasProfile = Object.hasOwn(deviceProfiles, currentDevice)
               return (
-                <div className="flex items-center gap-2 rounded bg-[var(--accent-tint-subtle)] px-2 py-1 text-xs">
+                <div className="flex items-center gap-2 rounded bg-(--accent-tint-subtle) px-2 py-1 text-xs">
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
-                  <span className="flex-1 truncate text-[color:var(--text-primary)]">
+                  <span className="flex-1 truncate text-(--text-primary)">
                     {currentDevice}
                   </span>
                   {hasProfile && (
@@ -458,14 +458,14 @@ export default function EqPanel({ onClose }: Props) {
                   )}
                   <button
                     onClick={() => saveProfileForDevice(currentDevice)}
-                    className="shrink-0 rounded bg-[var(--bg-surface)] px-1.5 py-0.5 text-[10px] text-[color:var(--text-muted)] transition-colors hover:bg-[var(--bg-surface-hover)] hover:text-[color:var(--text-primary)]"
+                    className="shrink-0 rounded bg-(--bg-surface) px-1.5 py-0.5 text-[10px] text-(--text-muted) transition-colors hover:bg-(--bg-surface-hover) hover:text-(--text-primary)"
                   >
                     Save
                   </button>
                   {hasProfile && (
                     <button
                       onClick={() => deleteProfileForDevice(currentDevice)}
-                      className="shrink-0 rounded bg-[var(--bg-surface)] px-1.5 py-0.5 text-[10px] text-[color:var(--text-muted)] transition-colors hover:bg-red-500/20 hover:text-red-400"
+                      className="shrink-0 rounded bg-(--bg-surface) px-1.5 py-0.5 text-[10px] text-(--text-muted) transition-colors hover:bg-red-500/20 hover:text-red-400"
                     >
                       Clear
                     </button>
@@ -481,7 +481,7 @@ export default function EqPanel({ onClose }: Props) {
                   key={dev}
                   className="flex items-center gap-2 rounded px-2 py-1 text-xs"
                 >
-                  <span className="flex-1 truncate text-[color:var(--text-muted)]">
+                  <span className="flex-1 truncate text-(--text-muted)">
                     {dev}
                   </span>
                   <svg
@@ -493,7 +493,7 @@ export default function EqPanel({ onClose }: Props) {
                   </svg>
                   <button
                     onClick={() => deleteProfileForDevice(dev)}
-                    className="shrink-0 rounded bg-[var(--bg-surface)] px-1.5 py-0.5 text-[10px] text-[color:var(--text-muted)] transition-colors hover:bg-red-500/20 hover:text-red-400"
+                    className="shrink-0 rounded bg-(--bg-surface) px-1.5 py-0.5 text-[10px] text-(--text-muted) transition-colors hover:bg-red-500/20 hover:text-red-400"
                   >
                     Clear
                   </button>

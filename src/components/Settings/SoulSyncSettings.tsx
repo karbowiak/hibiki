@@ -19,14 +19,14 @@ export function SoulSyncSettings({ embedded = false }: { embedded?: boolean } = 
   }, [status?.revision])
   return (
     <section
-      className={embedded ? "space-y-3" : "rounded-xl border border-[var(--border)] bg-app-surface p-5"}
+      className={embedded ? "space-y-3" : "rounded-xl border border-(--border) bg-app-surface p-5"}
       aria-labelledby={embedded ? undefined : `${id}-title`}
     >
       {!embedded && <h3 id={`${id}-title`} className="font-semibold">
         SoulSync{" "}
-        <span className="text-xs text-[var(--text-muted)]">Optional</span>
+        <span className="text-xs text-(--text-muted)">Optional</span>
       </h3>}
-      <p className="mt-2 text-sm text-[var(--text-secondary)]">
+      <p className="mt-2 text-sm text-(--text-secondary)">
         Enrich artist, album and track metadata from your own SoulSync library,
         including descriptions and genres where available. Lookups are
         read-only and do not request downloads or library changes.
@@ -53,13 +53,13 @@ export function SoulSyncSettings({ embedded = false }: { embedded?: boolean } = 
           onChange={(event) => setBaseUrl(event.target.value)}
           placeholder="https://soulsync.example.com"
           autoComplete="url"
-          className="rounded-lg border border-[var(--border)] bg-app-bg px-3 py-2 text-sm"
+          className="rounded-lg border border-(--border) bg-app-bg px-3 py-2 text-sm"
           disabled={loading}
         />
         <label className="text-sm" htmlFor={`${id}-key`}>
           API key{" "}
           {(status?.hasApiKey || status?.configured) && (
-            <span className="text-[var(--text-muted)]">
+            <span className="text-(--text-muted)">
               (saved natively; leave blank only for the same server)
             </span>
           )}
@@ -72,7 +72,7 @@ export function SoulSyncSettings({ embedded = false }: { embedded?: boolean } = 
           onChange={(event) => setKey(event.target.value)}
           autoComplete="new-password"
           spellCheck={false}
-          className="rounded-lg border border-[var(--border)] bg-app-bg px-3 py-2 text-sm"
+          className="rounded-lg border border-(--border) bg-app-bg px-3 py-2 text-sm"
           disabled={loading}
         />
         <label className="flex items-center gap-2 text-sm">
@@ -84,7 +84,7 @@ export function SoulSyncSettings({ embedded = false }: { embedded?: boolean } = 
           />
           Enable SoulSync metadata
         </label>
-        <p className="text-xs text-[var(--text-muted)]">
+        <p className="text-xs text-(--text-muted)">
           Generate a key in SoulSync Settings → SoulSync API. Saving does not
           contact the service. Enter an API key when changing the server URL or
           path; saved keys stay with their original server. Choose SoulSync for
@@ -96,7 +96,7 @@ export function SoulSyncSettings({ embedded = false }: { embedded?: boolean } = 
           </p>
         )}
         {saved && (
-          <p role="status" className="text-sm text-[var(--text-secondary)]">
+          <p role="status" className="text-sm text-(--text-secondary)">
             SoulSync settings saved.
           </p>
         )}
@@ -115,7 +115,7 @@ export function SoulSyncSettings({ embedded = false }: { embedded?: boolean } = 
               setSaved(false)
               void load()
             }}
-            className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm"
+            className="rounded-lg border border-(--border) px-4 py-2 text-sm"
           >
             Reload settings
           </button>
@@ -129,7 +129,7 @@ export function SoulSyncSettings({ embedded = false }: { embedded?: boolean } = 
                 setSaved(true)
               }
             }}
-            className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm disabled:opacity-50"
+            className="rounded-lg border border-(--border) px-4 py-2 text-sm disabled:opacity-50"
           >
             Clear credentials
           </button>

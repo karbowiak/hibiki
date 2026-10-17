@@ -1,12 +1,12 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::audio::{AudioBuffer, Signal};
-use symphonia_core::errors::{decode_error, Result};
+use symphonia_core::audio::{AudioBuffer, AudioMut};
+use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr, ReadBytes};
 use symphonia_core::util::bits::sign_extend_leq32_to_i32;
 
@@ -70,6 +70,7 @@ impl Layer1 {
 }
 
 impl Layer for Layer1 {
+    #[allow(clippy::needless_range_loop)]
     fn decode(
         &mut self,
         reader: &mut BufReader<'_>,
@@ -99,7 +100,7 @@ impl Layer for Layer1 {
 
         // Read bit allocations for each non-intensity coded sub-bands.
         for sb in 0..bound {
-            for chan in &mut alloc {
+            for chan in &mut alloc[..num_channels] {
                 let bits = bs.read_bits_leq32(4)? as u8;
 
                 if bits > 0xe {
@@ -111,6 +112,7 @@ impl Layer for Layer1 {
         }
 
         // Read bit allocations for the intensity coded sub-bands.
+        // NOTE: This loop causes a false positive with clippy.
         for sb in bound..32 {
             let bits = bs.read_bits_leq32(4)? as u8;
 
@@ -180,11 +182,15 @@ impl Layer for Layer1 {
 
         // Each packet will yield 384 audio frames. After reserving frames, all steps must be
         // infalliable.
-        out.render_reserved(Some(384));
+        out.render_uninit(Some(384));
 
         for (ch, samples) in samples.iter().enumerate().take(num_channels) {
             // Perform polyphase synthesis and generate PCM samples.
-            synthesis::synthesis(&mut self.synthesis[ch], 12, samples, out.chan_mut(ch));
+            let plane = match out.plane_mut(ch) {
+                Some(p) => p,
+                None => return decode_error("mp1: missing audio plane"),
+            };
+            synthesis::synthesis(&mut self.synthesis[ch], 12, samples, plane);
         }
 
         Ok(())

@@ -12,7 +12,8 @@ function contrast(foreground: string, background: string) {
       .map(Number)
     assert.equal(channels?.length, 3, `Unsupported computed color ${color}`)
     const linear = channels!.map((value) => {
-      const channel = value / 255
+      // CSS Color 4 serialization uses unit channels; rgb() uses byte channels.
+      const channel = color.startsWith("color(srgb ") ? value : value / 255
       return channel <= 0.04045
         ? channel / 12.92
         : ((channel + 0.055) / 1.055) ** 2.4

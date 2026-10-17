@@ -19,7 +19,7 @@ pub struct InventoryEntry { pub id: String, pub key: String, pub preview: Option
 pub struct Inventory { pub baseline: String, pub entries: Vec<InventoryEntry> }
 pub struct PreparedArtworkEdit { pub item_id: i64, pub section_id: i64, pub kind: MetadataEditKind, pub role: ArtworkRole,
     pub inventory: Inventory, choice: Option<String>, upload: Option<Vec<u8>> }
-fn fingerprint(values: &Value) -> String { format!("{:x}", Sha256::digest(values.to_string().as_bytes())) }
+fn fingerprint(values: &Value) -> String { hex::encode(Sha256::digest(values.to_string().as_bytes())) }
 fn numeric(value: Option<&Value>) -> Option<i64> { value.and_then(|v| v.as_i64().or_else(|| v.as_str()?.parse().ok())) }
 fn bounded(value: Option<&Value>, max: usize) -> Option<String> { value?.as_str().filter(|s| !s.is_empty() && s.len() <= max && !s.chars().any(char::is_control)).map(str::to_owned) }
 fn truth(value: Option<&Value>) -> bool { matches!(value, Some(Value::Bool(true))) || numeric(value) == Some(1) }

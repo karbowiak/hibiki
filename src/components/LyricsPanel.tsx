@@ -27,8 +27,8 @@ function LyricsOffsetBar({ hidden }: { hidden?: boolean }) {
   const { offsetMs, setOffset, resetOffset } = useLyricsOffsetStore()
   if (hidden) return null
   return (
-    <div className="lyrics-timing flex items-center gap-3 border-t border-[var(--border)] px-4 py-3 shrink-0">
-      <span className="shrink-0 text-[10px] font-medium uppercase tracking-wider text-[color:var(--text-muted)]">
+    <div className="lyrics-timing flex items-center gap-3 border-t border-(--border) px-4 py-3 shrink-0">
+      <span className="shrink-0 text-[10px] font-medium uppercase tracking-wider text-(--text-muted)">
         Timing
       </span>
       <input
@@ -39,7 +39,7 @@ function LyricsOffsetBar({ hidden }: { hidden?: boolean }) {
         step={100}
         value={offsetMs}
         onChange={e => setOffset(parseInt(e.target.value, 10))}
-        className="flex-1 range-styled accent-[var(--accent)] cursor-pointer"
+        className="flex-1 range-styled accent-(--accent) cursor-pointer"
       />
       <button
         onClick={resetOffset}
@@ -48,8 +48,8 @@ function LyricsOffsetBar({ hidden }: { hidden?: boolean }) {
         aria-label="Reset lyrics timing offset"
         className={`shrink-0 text-xs tabular-nums transition-colors ${
           offsetMs !== 0
-            ? "text-[color:var(--text-secondary)] hover:text-[color:var(--text-primary)] cursor-pointer"
-            : "text-[color:var(--text-muted)]"
+            ? "text-(--text-secondary) hover:text-(--text-primary) cursor-pointer"
+            : "text-(--text-muted)"
         }`}
       >
         {formatOffset(offsetMs)}
@@ -81,7 +81,7 @@ function LyricsSourceSelector() {
   const unloadedHits = geniusHits.filter(h => !loadedIds.has(String(h.id)))
 
   return (
-    <div className="shrink-0 border-b border-[var(--border)] px-4 py-2">
+    <div className="shrink-0 border-b border-(--border) px-4 py-2">
       <div className="flex items-center gap-1.5 flex-wrap">
         {sources.map(source => (
           <button
@@ -90,7 +90,7 @@ function LyricsSourceSelector() {
             className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
               activeSourceId === source.id
                 ? "bg-accent text-white"
-                : "bg-[var(--bg-surface)] text-[color:var(--text-secondary)] hover:bg-[var(--bg-surface-hover)]"
+                : "bg-(--bg-surface) text-(--text-secondary) hover:bg-(--bg-surface-hover)"
             }`}
           >
             {source.label}
@@ -98,15 +98,15 @@ function LyricsSourceSelector() {
           </button>
         ))}
         {isSearching && (
-          <span className="text-xs text-[color:var(--text-muted)] animate-pulse">Searching Genius...</span>
+          <span className="text-xs text-(--text-muted) animate-pulse">Searching Genius...</span>
         )}
         {isFetchingLyrics && (
-          <span className="text-xs text-[color:var(--text-muted)] animate-pulse">Loading lyrics...</span>
+          <span className="text-xs text-(--text-muted) animate-pulse">Loading lyrics...</span>
         )}
         {unloadedHits.length > 0 && (
           <button
             onClick={() => setExpanded(!expanded)}
-            className="rounded-full px-2 py-1 text-xs text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)] transition-colors"
+            className="rounded-full px-2 py-1 text-xs text-(--text-muted) hover:text-(--text-primary) transition-colors"
           >
             {expanded ? "Less" : `+${unloadedHits.length} more`}
           </button>
@@ -122,14 +122,14 @@ function LyricsSourceSelector() {
                 void fetchGeniusLyrics(hit)
                 setExpanded(false)
               }}
-              className="flex items-center gap-2 w-full rounded-lg px-2 py-1.5 text-left hover:bg-[var(--bg-surface-hover)] transition-colors"
+              className="flex items-center gap-2 w-full rounded-lg px-2 py-1.5 text-left hover:bg-(--bg-surface-hover) transition-colors"
             >
               {hit.thumbnail_url && (
                 <img src={hit.thumbnail_url} alt="" className="w-6 h-6 rounded object-cover shrink-0" />
               )}
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium text-[color:var(--text-primary)] truncate">{hit.title}</p>
-                <p className="text-[10px] text-[color:var(--text-muted)] truncate">{hit.artist}</p>
+                <p className="text-xs font-medium text-(--text-primary) truncate">{hit.title}</p>
+                <p className="text-[10px] text-(--text-muted) truncate">{hit.artist}</p>
               </div>
             </button>
           ))}
@@ -229,16 +229,16 @@ export function LyricsContent() {
         </div>
       )}
       <LyricsSourceSelector />
-      <div ref={scrollRef} className="lyrics-scroll scrollbar scrollbar-w-1 scrollbar-track-transparent scrollbar-thumb-[var(--scrollbar-thumb)] hover:scrollbar-thumb-[var(--scrollbar-thumb-hover)]">
+      <div ref={scrollRef} className="lyrics-scroll scrollbar scrollbar-w-1 scrollbar-track-transparent scrollbar-thumb-(--scrollbar-thumb) hover:scrollbar-thumb-(--scrollbar-thumb-hover)">
         {!currentTrack ? (
-          <div className="flex items-center justify-center h-full px-3"><p role="status" className="text-[color:var(--text-secondary)] text-sm text-center">Play a track to see its lyrics</p></div>
+          <div className="flex items-center justify-center h-full px-3"><p role="status" className="text-(--text-secondary) text-sm text-center">Play a track to see its lyrics</p></div>
         ) : !lyricsLines ? (
           <div className="flex items-center justify-center h-full">
-            <p role="status" className="text-[color:var(--text-secondary)] text-sm text-center">Loading lyrics…</p>
+            <p role="status" className="text-(--text-secondary) text-sm text-center">Loading lyrics…</p>
           </div>
         ) : lyricsLines.length === 0 ? (
           <div className="flex items-center justify-center h-full">
-            <p role="status" className="text-[color:var(--text-secondary)] text-sm text-center">No lyrics available</p>
+            <p role="status" className="text-(--text-secondary) text-sm text-center">No lyrics available</p>
           </div>
         ) : (
           <div className="lyrics-lines">
@@ -319,18 +319,18 @@ export default function LyricsPanel() {
 
   const header = (
     <div className="shrink-0">
-      <div className={`${isLyricsPinned ? "app-docked-header " : ""}flex items-center justify-between px-4 py-3 border-b border-[var(--border)]`}>
-        <span className="text-xs font-semibold text-[color:var(--text-muted)] uppercase tracking-wider">
+      <div className={`${isLyricsPinned ? "app-docked-header " : ""}flex items-center justify-between px-4 py-3 border-b border-(--border)`}>
+        <span className="text-xs font-semibold text-(--text-muted) uppercase tracking-wider">
           Lyrics
         </span>
-        <div className="flex items-center gap-0.5 flex-shrink-0">
+        <div className="flex items-center gap-0.5 shrink-0">
           <button
             onClick={() => setLyricsPinned(!isLyricsPinned)}
             title={isLyricsPinned ? "Unpin lyrics" : "Pin lyrics to sidebar"}
             className={`panel-toolbar-button panel-toolbar-icon flex items-center justify-center rounded-full transition-colors ${
               isLyricsPinned
                 ? "text-accent hover:text-accent/70"
-                : "text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)]"
+                : "text-(--text-muted) hover:text-(--text-primary)"
             }`}
             aria-label={isLyricsPinned ? "Unpin lyrics" : "Pin lyrics"}
           >
@@ -338,7 +338,7 @@ export default function LyricsPanel() {
           </button>
           <button
             onClick={() => setLyricsOpen(false)}
-            className="panel-toolbar-button panel-toolbar-icon flex items-center justify-center rounded-full text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)] transition-colors"
+            className="panel-toolbar-button panel-toolbar-icon flex items-center justify-center rounded-full text-(--text-muted) hover:text-(--text-primary) transition-colors"
             aria-label="Close lyrics"
           >
             <CloseIcon />
@@ -354,12 +354,12 @@ export default function LyricsPanel() {
       <div
         aria-hidden={!isLyricsOpen}
         inert={!isLyricsOpen}
-        className={`flex-shrink-0 overflow-hidden ${isResizing ? "" : "transition-[width] duration-300 ease-in-out"}`}
+        className={`shrink-0 overflow-hidden ${isResizing ? "" : "transition-[width] duration-300 ease-in-out"}`}
         style={{ width: isLyricsOpen ? lyricsWidth : 0 }}
       >
         <div
           data-shell-transparency={backgroundArtworkEnabled ? "enabled" : undefined}
-          className={`app-docked-panel shell-artwork-surface relative flex h-full flex-col bg-app-bg border-l border-[var(--border)] transition-transform duration-300 ease-in-out ${
+          className={`app-docked-panel shell-artwork-surface relative flex h-full flex-col bg-app-bg border-l border-(--border) transition-transform duration-300 ease-in-out ${
             isLyricsOpen ? "translate-x-0" : "translate-x-full"
           }`}
           style={{ width: lyricsWidth }}
@@ -388,7 +388,7 @@ export default function LyricsPanel() {
       <div
         aria-hidden={!isLyricsOpen}
         inert={!isLyricsOpen}
-        className={`app-overlay-surface fixed right-0 top-0 bottom-24 z-50 w-80 flex flex-col bg-app-bg border-l border-[var(--border)] shadow-2xl rounded-l-2xl overflow-hidden transition-transform duration-300 ease-in-out ${
+        className={`app-overlay-surface fixed right-0 top-0 bottom-24 z-50 w-80 flex flex-col bg-app-bg border-l border-(--border) shadow-2xl rounded-l-2xl overflow-hidden transition-transform duration-300 ease-in-out ${
           isLyricsOpen ? "translate-x-0" : "translate-x-full"
         }`}
       >

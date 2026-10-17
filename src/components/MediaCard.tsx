@@ -293,7 +293,7 @@ function MediaCardInner({
 
   const cardClass = clsx(
     "media-card group",
-    scrollItem && "flex-shrink-0",
+    scrollItem && "shrink-0",
     unavailable && "media-card--unavailable"
   )
   const primaryClass = "media-card__primary"

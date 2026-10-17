@@ -1,9 +1,10 @@
 import { defineConfig } from "vite"
 import react from "@vitejs/plugin-react"
+import tailwindcss from "@tailwindcss/vite"
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   // prevent vite from obscuring rust errors
@@ -25,9 +26,9 @@ export default defineConfig({
     // The production font-src policy allows local files, not data URLs.
     assetsInlineLimit: (filePath) =>
       /\.(?:woff2?|ttf|otf)$/i.test(filePath) ? false : undefined,
-    // Tauri supports es2021
+    // Match the modern WebViews required by Tailwind 4.
     target:
-      process.env.TAURI_ENV_PLATFORM == "windows" ? "chrome105" : "safari13",
+      process.env.TAURI_ENV_PLATFORM == "windows" ? "chrome111" : "safari16.4",
     // don't minify for debug builds
     minify: !process.env.TAURI_DEBUG ? "oxc" : false,
     // produce sourcemaps for debug builds

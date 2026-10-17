@@ -1,12 +1,12 @@
 // Symphonia
-// Copyright (c) 2019-2022 The Project Symphonia Developers.
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::checksum::Crc32;
-use symphonia_core::errors::{decode_error, Error, Result};
+use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{BufReader, Monitor, MonitorStream, ReadBytes, SeekBuffered};
 
 use log::{debug, warn};
@@ -98,12 +98,7 @@ impl<'a> PagePackets<'a> {
         // Consume the rest of the packets.
         let discard = usize::from(self.lens.sum::<u16>());
 
-        if self.data.len() > discard {
-            Some(&self.data[discard..])
-        }
-        else {
-            None
-        }
+        if self.data.len() > discard { Some(&self.data[discard..]) } else { None }
     }
 }
 
@@ -284,13 +279,9 @@ impl PageReader {
         B: ReadBytes + SeekBuffered,
     {
         loop {
+            // Exit if a page with the specific serial is found.
             match self.try_next_page(reader) {
-                Ok(_) => {
-                    // Exit if a page with the specific serial is found.
-                    if self.header.serial == serial && !self.header.is_continuation {
-                        break;
-                    }
-                }
+                Ok(_) if self.header.serial == serial && !self.header.is_continuation => break,
                 Err(Error::IoError(e)) => return Err(Error::from(e)),
                 _ => (),
             }
@@ -326,7 +317,7 @@ impl PageReader {
         if len > self.page_buf.len() {
             // New page buffer size, rounded up to the nearest 8K block.
             let new_buf_len = (len + (8 * 1024 - 1)) & !(8 * 1024 - 1);
-            debug!("grow page buffer to {} bytes", new_buf_len);
+            debug!("grow page buffer to {new_buf_len} bytes");
 
             self.page_buf.resize(new_buf_len, Default::default());
         }

@@ -28,16 +28,16 @@ export function MetadataServiceSettings({
   }, [status?.revision])
   const name = service === "fanart" ? "Fanart.tv" : "HeyaMetadata"
   const input =
-    "rounded-lg border border-[var(--border)] bg-app-bg px-3 py-2 text-sm"
+    "rounded-lg border border-(--border) bg-app-bg px-3 py-2 text-sm"
   return (
     <section
-      className={embedded ? "space-y-3" : "mt-6 rounded-xl border border-[var(--border)] p-4"}
+      className={embedded ? "space-y-3" : "mt-6 rounded-xl border border-(--border) p-4"}
       aria-labelledby={embedded ? undefined : `${id}-heading`}
     >
       {!embedded && <h3 id={`${id}-heading`} className="text-base font-semibold">
         {name}
       </h3>}
-      <p className="mt-1 text-sm text-[var(--text-muted)]">
+      <p className="mt-1 text-sm text-(--text-muted)">
         {service === "fanart"
           ? "Artist backgrounds, portraits, and album covers matched by MusicBrainz identity."
           : "Use metadata from your HeyaMetadata server, with its original source provenance."}
@@ -72,7 +72,7 @@ export function MetadataServiceSettings({
             ? "Project API key"
             : "API key (optional for public servers)"}
           {status?.hasApiKey && (
-            <span className="text-[var(--text-muted)]">
+            <span className="text-(--text-muted)">
               {" "}
               · Saved natively; leave blank only for the same server
             </span>
@@ -98,7 +98,7 @@ export function MetadataServiceSettings({
           />
           Enable {name} metadata
         </label>
-        <p className="text-xs text-[var(--text-muted)]">
+        <p className="text-xs text-(--text-muted)">
           {service === "fanart" ? (
             <>
               Requests use Fanart.tv’s official server. Get a project key from{" "}
@@ -128,14 +128,14 @@ export function MetadataServiceSettings({
         <div className="mt-2 flex flex-wrap gap-2">
           <button
             type="submit"
-            className="rounded-lg bg-accent px-3 py-2 text-sm text-[var(--artwork-ink,var(--accent-foreground,#111))] disabled:opacity-50"
+            className="rounded-lg bg-accent px-3 py-2 text-sm text-(--artwork-ink,var(--accent-foreground,#111)) disabled:opacity-50"
             disabled={loading || !status}
           >
             {loading ? "Saving…" : "Save settings"}
           </button>
           <button
             type="button"
-            className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+            className="rounded-lg border border-(--border) px-3 py-2 text-sm disabled:opacity-50"
             disabled={loading}
             onClick={() => void load()}
           >
@@ -144,7 +144,7 @@ export function MetadataServiceSettings({
           {status?.hasApiKey && (
             <button
               type="button"
-              className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+              className="rounded-lg border border-(--border) px-3 py-2 text-sm disabled:opacity-50"
               disabled={loading}
               onClick={async () => {
                 if (await configure({ baseUrl, enabled: false, clear: true }))

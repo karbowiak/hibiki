@@ -173,10 +173,7 @@ pub fn revision(raw: &Value) -> Result<String, String> {
         }
         object.retain(|key, _| !key.starts_with("_hibikiInvalidUtf8"));
     }
-    Ok(format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(&raw).map_err(|_| "Invalid catalogue revision")?)
-    ))
+    Ok(hex::encode(Sha256::digest(serde_json::to_vec(&raw).map_err(|_| "Invalid catalogue revision")?)))
 }
 fn publication_value(value: &Value) -> Value {
     match value {

@@ -233,7 +233,7 @@ function TrackRowCells({
             e.stopPropagation()
             onPlay(track, tracks, idx)
           }}
-          className={`group/play flex h-7 w-7 items-center justify-center rounded-full hover:bg-hl-menu focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${isActive ? "text-accent" : "text-[var(--text-secondary)]"}`}
+          className={`group/play flex h-7 w-7 items-center justify-center rounded-full hover:bg-hl-menu focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${isActive ? "text-accent" : "text-(--text-secondary)"}`}
         >
           {!compact && (
             <span
@@ -276,17 +276,17 @@ function TrackRowCells({
           {presentation !== "album" &&
             (track.thumbUrl ? (
               <ArtworkImage
-                className="h-10 w-10 flex-shrink-0 rounded-sm object-cover"
+                className="h-10 w-10 shrink-0 rounded-sm object-cover"
                 src={track.thumbUrl}
                 alt=""
               />
             ) : (
-              <div className="h-10 w-10 flex-shrink-0 rounded-sm bg-app-surface" />
+              <div className="h-10 w-10 shrink-0 rounded-sm bg-app-surface" />
             ))}
           <div className="min-w-0 flex-1">
             <div className="track-row-title-line flex min-w-0 items-center gap-2">
               <span
-                className={`truncate ${isActive ? "text-accent" : "text-[var(--text-primary)]"}`}
+                className={`truncate ${isActive ? "text-accent" : "text-(--text-primary)"}`}
               >
                 {track.title}
               </span>
@@ -297,7 +297,7 @@ function TrackRowCells({
                 <Link
                   href={`/album/${track.albumId}`}
                   onClick={(e) => e.stopPropagation()}
-                  className="min-w-0 truncate text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:underline"
+                  className="min-w-0 truncate text-xs text-(--text-muted) hover:text-(--text-primary) hover:underline"
                 >
                   · {track.albumName}
                 </Link>
@@ -312,13 +312,13 @@ function TrackRowCells({
                     {track.artistId ? (
                       <Link
                         href={`/artist/${track.artistId}`}
-                        className="text-[var(--text-muted)] transition-colors hover:text-[var(--text-primary)] hover:underline"
+                        className="text-(--text-muted) transition-colors hover:text-(--text-primary) hover:underline"
                         onClick={(e) => e.stopPropagation()}
                       >
                         {track.originalTitle || track.artistName}
                       </Link>
                     ) : (
-                      <span className="text-[var(--text-muted)]">
+                      <span className="text-(--text-muted)">
                         {track.originalTitle || track.artistName}
                       </span>
                     )}
@@ -335,7 +335,7 @@ function TrackRowCells({
           {track.artistId ? (
             <Link
               href={`/artist/${track.artistId}`}
-              className="transition-colors hover:text-[var(--text-primary)] hover:underline"
+              className="transition-colors hover:text-(--text-primary) hover:underline"
               onClick={(e) => e.stopPropagation()}
             >
               {track.artistName}
@@ -351,7 +351,7 @@ function TrackRowCells({
           {track.albumId ? (
             <Link
               href={`/album/${track.albumId}`}
-              className="transition-colors hover:text-[var(--text-primary)] hover:underline"
+              className="transition-colors hover:text-(--text-primary) hover:underline"
               onClick={(e) => e.stopPropagation()}
             >
               {track.albumName}
@@ -488,7 +488,7 @@ function TrackTableBody({
         </td>
         <td className="p-2">
           <div className="flex items-center gap-3">
-            <Skeleton className="h-10 w-10 flex-shrink-0 rounded-sm" />
+            <Skeleton className="h-10 w-10 shrink-0 rounded-sm" />
             <div className="min-w-0 flex-1 space-y-1.5">
               <Skeleton className="h-3 w-2/3" />
               <Skeleton className="h-2.5 w-1/3" />
@@ -547,7 +547,7 @@ function TrackTableBody({
             data-loading-index={idx}
             style={{ height: window.size }}
           >
-            <td className="p-2 text-center text-[var(--text-muted)]">
+            <td className="p-2 text-center text-(--text-muted)">
               {idx + 1}
             </td>
             <td colSpan={visibleCols.size + 2} className="p-2">
@@ -756,7 +756,7 @@ export function TrackTable({
   )
   const table = (
     <table
-      className="track-table w-full table-fixed text-sm text-[var(--text-secondary)]"
+      className="track-table w-full table-fixed text-sm text-(--text-secondary)"
       aria-rowcount={(paged?.total ?? tracks.length) + 1}
       style={
         compact
@@ -771,7 +771,7 @@ export function TrackTable({
       }
     >
       {fixedColumns}
-      <thead className="border-b border-[var(--border)]">
+      <thead className="border-b border-(--border)">
         <tr>
           <th
             className="p-2 text-center"
@@ -877,7 +877,7 @@ export function TrackTable({
         <div className="flex items-center justify-between pb-1">
           <div className="relative">
             <svg
-              className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[var(--text-muted)]"
+              className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-(--text-muted)"
               viewBox="0 0 16 16"
               width="13"
               height="13"
@@ -946,7 +946,7 @@ export function TrackTable({
       {sentinel && spacerHeight > 0 && (
         <div style={{ height: `${spacerHeight}px` }} className="relative">
           {isFetchingMore && (
-            <div className="flex items-center justify-center gap-2 pt-4 text-sm text-[var(--text-muted)]">
+            <div className="flex items-center justify-center gap-2 pt-4 text-sm text-(--text-muted)">
               <svg
                 className="h-4 w-4 animate-spin text-white/30"
                 viewBox="0 0 24 24"
@@ -977,12 +977,12 @@ export function TrackTable({
         !isLoading &&
         !paged?.error &&
         !paged?.loading && (
-          <div className="py-12 text-center text-sm text-[var(--text-muted)]">
+          <div className="py-12 text-center text-sm text-(--text-muted)">
             {emptyMessage}
           </div>
         )}
       {paged?.error && (
-        <div role="alert" className="py-4 text-sm text-[var(--text-secondary)]">
+        <div role="alert" className="py-4 text-sm text-(--text-secondary)">
           {paged.error}{" "}
           <button className="media-secondary ml-3" onClick={paged.retry}>
             Try again

@@ -1,17 +1,7 @@
-# symphonia-bundle-mp3 0.5.5
+Upstream: `symphonia-bundle-mp3 0.6.1`, Project Symphonia commit `ee35874b571a35a9a6e15d3bc9a3aaf8f11fbeee`. Original source headers, manifests and MPL-2.0 license are retained.
 
-Source: published Project Symphonia 0.5.5. Original source headers, manifest and
-MPL-2.0 license are retained.
+Hibiki changes:
 
-`layer3/mod.rs`: classify unavailable preceding reservoir bytes as debug-level
-warm-up until the first complete reservoir fill following initialization or
-reset. Accurate MP3 seeks deliberately supply preceding reference packets; the
-first of those packets can itself refer to older bytes. That is not evidence
-of corruption. Underflows after the reservoir is primed still warn, and all
-underflow recovery, returned counts, decoded samples and fatal errors remain
-unchanged. No global warning filter is applied.
+- `layer3/mod.rs`: report missing reservoir bytes at debug level until the first complete fill after construction/reset. Later underflows still warn. Recovery counts, decoded PCM and error propagation are unchanged.
 
-The unit regression exercises multiple initial underflows, successful priming,
-a later damaged-frame underflow, and reset. Application regressions compare
-cold/repeated MP3 seeks with linear decoding. Retain these checks if the patch
-is removed after an upstream update.
+The crate unit regression covers repeated warm-up underflows, priming, a later damaged frame and reset. Application regressions compare cold/repeated seeks with linear PCM and preserve discarded synthesis pre-roll.

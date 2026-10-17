@@ -63,7 +63,7 @@ export function DownloadBadge({
       title={intentOnly ? "Saved for offline listening" : label}
       aria-label={intentOnly ? "Saved for offline listening" : label}
       role="img"
-      className={`inline-flex shrink-0 items-center justify-center text-[var(--text-primary)] ${className}`}
+      className={`inline-flex shrink-0 items-center justify-center text-(--text-primary) ${className}`}
     >
       <Icon
         aria-hidden="true"

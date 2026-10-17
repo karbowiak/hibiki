@@ -18,21 +18,21 @@ export function MenuItem({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent enabled:hover:bg-hl-menu disabled:cursor-default disabled:opacity-40 ${danger ? "text-red-400" : "text-[var(--text-primary)]"}`}
+      className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent enabled:hover:bg-hl-menu disabled:cursor-default disabled:opacity-40 ${danger ? "text-red-400" : "text-(--text-primary)"}`}
     >
-      {icon && <span className="h-4 w-4 flex-shrink-0 opacity-70">{icon}</span>}
+      {icon && <span className="h-4 w-4 shrink-0 opacity-70">{icon}</span>}
       {label}
     </button>
   )
 }
 
 export function MenuDivider() {
-  return <div className="my-1 border-t border-[var(--border)]" />
+  return <div className="my-1 border-t border-(--border)" />
 }
 
 export function MenuSectionLabel({ label }: { label: string }) {
   return (
-    <div className="px-3 pb-0.5 pt-2 text-xs font-semibold text-[var(--text-secondary)]">
+    <div className="px-3 pb-0.5 pt-2 text-xs font-semibold text-(--text-secondary)">
       {label}
     </div>
   )
