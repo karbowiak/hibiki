@@ -5,6 +5,7 @@ for (const scenario of [
   "collection-recent-provider",
   "collection-hubs-error",
   "collection-recent-error",
+  "collection-recent-offline",
   "library-provider",
   "liked-tracks-provider",
   "liked-artists-provider",

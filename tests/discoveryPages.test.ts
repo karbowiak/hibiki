@@ -21,3 +21,13 @@ test("a repeated token or a duplicate continuation page ends paging", () => {
   pages.set("one", { items: [{ id: "second" }], next: "one" })
   expect(pages.read()?.next).toBeUndefined()
 })
+
+test("ordered collections preserve repeated songs and continue through repeated-only pages", () => {
+  const pages = discoveryPages<{ id: string }>(item => item.id, true)
+  pages.set(null, { items: [{ id: "A" }, { id: "B" }, { id: "A" }], next: "one" })
+  pages.set("one", { items: [{ id: "A" }], next: "two" })
+  expect(pages.read()?.next).toBe("two")
+  pages.set("two", { items: [{ id: "C" }], next: "one" })
+  expect(pages.read()?.items.map(item => item.id)).toEqual(["A", "B", "A", "A", "C"])
+  expect(pages.read()?.next).toBeUndefined()
+})

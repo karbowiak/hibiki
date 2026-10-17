@@ -57,7 +57,7 @@ export function YoutubeMusicCollection({ browseId }: { browseId: string }) {
       const page = await browseYoutubeMusic(destination, typeof cursor === "string" ? cursor : null,
         cursor === null && refresh !== openedAtRefresh.current)
       return slice(typeof cursor === "string" ? cursor : null, page)
-    } : null, receive => observeYoutubeMusicPages(destination, (cursor, page) => receive(cursor, slice(cursor, page))))
+    } : null, receive => observeYoutubeMusicPages(destination, (cursor, page) => receive(cursor, slice(cursor, page))), true)
   const tracks = useMemo(() => feed.items.map(item => {
     const track = youtubeMusicItemTrack(item)
     return browseId.startsWith("MPRE") ? { ...track, albumId: track.albumId ?? `ytmusic:${browseId}`, albumName: track.albumName || metadata?.title || card?.title || "" } : track

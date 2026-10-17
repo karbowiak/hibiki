@@ -100,6 +100,7 @@ async function unmount() {
 }
 try {
   if (scenario.startsWith("collection-")) {
+    if (scenario.endsWith("offline")) first.isOffline = true
     const kind = scenario.split("-")[1]!
     const field = kind === "hubs" ? "hubs" : "recentlyAdded"
     const timestamp = `_${field}FetchedAt`
@@ -116,7 +117,7 @@ try {
       },
     } as any)
     mock.module("../../src/lib/mediaCardInfo", () => ({
-      getMediaInfo: () => null,
+      getMediaInfo: (item: any) => ({ id: item.id, title: item.title, desc: "", thumb: null, isArtist: false, itemType: "album", href: `/album/${item.id}` }),
       makeDragPayload: () => null,
     }))
     const { HubPage } = await import("../../src/components/Pages/HubPage")
@@ -137,31 +138,40 @@ try {
     assert.ok(document.querySelector('[role="status"]'))
     const emptyMessage = "No music in this collection"
     assert.ok(!document.body.textContent?.includes(emptyMessage))
-    if (scenario.endsWith("provider")) {
-      const second = provider()
-      await act(async () => useProviderStore.getState().setProvider(second))
-      assert.equal(pending.length, 2)
-      assert.equal(pending[1]!.owner, second)
-      await act(async () => pending[0]!.reply.reject(new Error("retired")))
-      assert.ok(document.querySelector('[role="status"]'))
-      assert.ok(!document.querySelector('[role="alert"]'))
-    } else {
-      await act(async () => pending[0]!.reply.resolve())
-      assert.ok(document.querySelector('[role="alert"]'))
+    if (scenario.endsWith("offline")) {
+      await act(async () => {
+        library.setState({ recentlyAdded: [album("Saved offline album")], [timestamp]: 1 } as any)
+        pending[0]!.reply.resolve()
+      })
+      assert.ok(document.body.textContent?.includes("Saved offline album"))
       assert.ok(!document.body.textContent?.includes(emptyMessage))
-      await act(async () =>
-        document
-          .querySelector<HTMLButtonElement>('[role="alert"] button')!
-          .click()
-      )
-      assert.equal(pending.length, 2)
+    } else {
+      if (scenario.endsWith("provider")) {
+        const second = provider()
+        await act(async () => useProviderStore.getState().setProvider(second))
+        assert.equal(pending.length, 2)
+        assert.equal(pending[1]!.owner, second)
+        await act(async () => pending[0]!.reply.reject(new Error("retired")))
+        assert.ok(document.querySelector('[role="status"]'))
+        assert.ok(!document.querySelector('[role="alert"]'))
+      } else {
+        await act(async () => pending[0]!.reply.resolve())
+        assert.ok(document.querySelector('[role="alert"]'))
+        assert.ok(!document.body.textContent?.includes(emptyMessage))
+        await act(async () =>
+          document
+            .querySelector<HTMLButtonElement>('[role="alert"] button')!
+            .click()
+        )
+        assert.equal(pending.length, 2)
+      }
+      await act(async () => {
+        library.setState({ [timestamp]: 1 } as any)
+        pending[1]!.reply.resolve()
+      })
+      assert.ok(document.body.textContent?.includes(emptyMessage))
+      assert.ok(!document.querySelector('[role="alert"]'))
     }
-    await act(async () => {
-      library.setState({ [timestamp]: 1 } as any)
-      pending[1]!.reply.resolve()
-    })
-    assert.ok(document.body.textContent?.includes(emptyMessage))
-    assert.ok(!document.querySelector('[role="alert"]'))
   } else if (scenario === "library-provider") {
     const owners: any[] = []
     library.setState({

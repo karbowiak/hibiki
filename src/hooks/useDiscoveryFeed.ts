@@ -7,12 +7,13 @@ export interface DiscoverySlice<T> { items: T[]; next: DiscoveryCursor | undefin
 /** Sequential cursor paging with one request in flight and route ownership. */
 export function useDiscoveryFeed<T>(owner: unknown, key: string | null, seeds: T[], identify: (item: T) => string,
   load: ((cursor: DiscoveryCursor) => Promise<DiscoverySlice<T>>) | null,
-  observe?: (receive: (cursor: DiscoveryCursor, page: DiscoverySlice<T>) => void) => () => void) {
+  observe?: (receive: (cursor: DiscoveryCursor, page: DiscoverySlice<T>) => void) => () => void,
+  preserveOccurrences = false) {
   const feed = useMemo(() => {
     let active = true, cursor: DiscoveryCursor | undefined = null, revision = 0
     let unobserve: (() => void) | undefined
     const listeners = new Set<() => void>()
-    const pages = discoveryPages(identify)
+    const pages = discoveryPages(identify, preserveOccurrences)
     const updates = new Map<DiscoveryCursor, number>()
     const state = { items: seeds, title: "", initialized: false, loading: false, error: false, more: !!load && !!key,
       nextCursor: undefined as DiscoveryCursor | undefined }
@@ -55,8 +56,8 @@ export function useDiscoveryFeed<T>(owner: unknown, key: string | null, seeds: T
     }, dispose: () => { active = false; unobserve?.(); unobserve = undefined } }
     // The identity owns its initial seeds and loader; departed requests never
     // borrow the replacement route's data through mutable loader refs.
-  }, [owner, key])
+  }, [owner, key, preserveOccurrences])
   useSyncExternalStore(feed.subscribe, feed.snapshot)
   useEffect(() => { feed.activate(); void feed.next(); return feed.dispose }, [feed])
-  return { ...feed.state, loadMore: feed.next }
+  return { ...feed.state, items: feed.state.initialized ? feed.state.items : seeds, loadMore: feed.next }
 }

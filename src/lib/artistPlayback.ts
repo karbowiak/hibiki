@@ -2,10 +2,8 @@ import type { MusicProvider } from "../providers/types"
 import type { MusicTrack } from "../types/music"
 import type { PagedTrackSource } from "./pagedPlayback"
 import { useProviderStore } from "../stores/providerStore"
+import { sameRecording } from "./musicMatching"
 import { useYoutubeMusicDiscoveryStore, youtubeMusicCollectionSource, youtubeMusicItemTrack, type YoutubeMusicBrowsePage } from "../backends/ytmusic/discovery"
-
-const recordingKey = (track: MusicTrack) => [track.artistName, track.title]
-  .map(value => value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim()).join("\n")
 
 /** Resolve on selection, then page a mixed artist queue without crawling YTM albums. */
 export function artistPlaybackSource(provider: MusicProvider | null, plexId: string | null,
@@ -19,7 +17,6 @@ export function artistPlaybackSource(provider: MusicProvider | null, plexId: str
     if (!owns()) throw Error("Music connection changed.")
     const local = plexId && provider?.getArtistTracks ? await provider.getArtistTracks(plexId) : localPreview
     if (!owns()) throw Error("Music connection changed.")
-    const known = new Set(local.map(recordingKey))
     const seen = new Set<string>()
     const destination = youtube.artist?.songs ?? youtube.artist?.shuffle
     const remote = destination ? youtubeMusicCollectionSource(destination) : null
@@ -31,7 +28,7 @@ export function artistPlaybackSource(provider: MusicProvider | null, plexId: str
       for (;;) {
         while (pending.length) {
           const track = pending.shift()!
-          if (seen.has(track.id) || known.has(recordingKey(track))) continue
+          if (seen.has(track.id) || local.some(known => sameRecording(known, track))) continue
           seen.add(track.id)
           return track
         }

@@ -1,7 +1,7 @@
 import type { DiscoveryCursor, DiscoverySlice } from "../hooks/useDiscoveryFeed"
 
 /** Retain only the loaded pages reachable through the current cursor chain. */
-export function discoveryPages<T>(identify: (item: T) => string) {
+export function discoveryPages<T>(identify: (item: T) => string, preserveOccurrences = false) {
   const pages = new Map<DiscoveryCursor, DiscoverySlice<T>>()
   return {
     has: (cursor: DiscoveryCursor) => pages.has(cursor),
@@ -18,11 +18,11 @@ export function discoveryPages<T>(identify: (item: T) => string) {
         let fresh = 0
         for (const item of page.items) {
           const id = identify(item)
-          if (!seen.has(id)) { seen.add(id); items.push(item); fresh++ }
+          if (preserveOccurrences || !seen.has(id)) { seen.add(id); items.push(item); fresh++ }
         }
         // First-page emptiness does not rule out a valid continuation, while
         // duplicate continuation pages must not create an endless pager.
-        cursor = cursor !== null && !fresh ? undefined : page.next
+        cursor = !preserveOccurrences && cursor !== null && !fresh ? undefined : page.next
       }
       if (cursor !== undefined && visited.has(cursor)) cursor = undefined
       return { items, next: cursor, title, pageCount: visited.size }
