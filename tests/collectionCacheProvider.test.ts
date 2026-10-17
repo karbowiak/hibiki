@@ -10,6 +10,30 @@ import { deferred } from "./helpers/radioAudioFakes"
 import type { MusicTrack } from "../src/types/music"
 const cached = { id: "1", title: "Cached song", type: "track" }
 
+test("clearing library caches retires a collection page still arriving from Plex", async () => {
+  const started = deferred<void>(), gate = deferred<void>()
+  const writes: string[] = []
+  const raw = {
+    cacheScope: "owner", playbackSession: {}, isConnected: () => true,
+    getPlaylists: async () => [],
+    getRatedItemsPage: async () => { started.resolve(); await gate.promise; return { items: [cached], total: 1, offset: 0 } },
+  } as unknown as MusicProvider
+  const provider = createCollectionCacheProvider(raw, raw, { connectionRevision: 1, cacheScope: "owner" }, async <T>(command: string, args: any): Promise<T> => {
+    writes.push(command === "collection_cache" ? args.request.op : command)
+    return (args.request?.op === "begin" ? { generation: 1, offset: 0 } : null) as T
+  })
+  provider.warmCollections!()
+  await started.promise
+  await provider.clearLibraryCache!()
+  const clearedAt = writes.length
+  gate.resolve()
+  await Bun.sleep(250)
+  provider.stopCollectionWarmup!()
+  expect(writes).toContain("offline_cache_clear")
+  expect(writes.slice(clearedAt)).not.toContain("put")
+  expect(writes.slice(clearedAt)).not.toContain("commit")
+})
+
 test("mix pages upgrade a linear snapshot once and share its stable full membership with playback", async () => {
   const rows = Array.from(
     { length: 1200 },
@@ -87,7 +111,7 @@ test("mix pages upgrade a linear snapshot once and share its stable full members
           total: saved.length,
           offset: request.offset,
         } as T
-      case "refs":
+      case "capture":
         return saved.map((track) => [track.id, null]) as T
       case "items":
         return request.ids.map((id: string) =>
@@ -176,7 +200,7 @@ function fixture() {
     return (
       op === "page"
         ? { items: [cached], total: 1, offset: args.request.offset }
-        : op === "refs"
+        : op === "capture"
           ? [
               ["1", "occurrence-8"],
               ["1", "occurrence-9"],

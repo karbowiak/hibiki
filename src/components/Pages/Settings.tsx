@@ -6,6 +6,7 @@ import { useLocation } from "wouter"
 import { openUrl as open } from "@tauri-apps/plugin-opener"
 import clsx from "clsx"
 import { ImageCacheControls } from "../ImageCacheControls"
+import { LibraryCacheControls } from "../LibraryCacheControls"
 import { engine } from "../../audio/RustAudioEngine"
 import { DownloadStorageControls } from "../DownloadStorageControls"
 import { AudioCacheControls } from "../AudioCacheControls"
@@ -33,7 +34,6 @@ import { useCustomColorStore, SEMANTIC_COLOR_LABELS, UI_COLOR_COUNT, type Semant
 import { useVisualizerStore } from "../../stores/visualizerStore"
 import { useTranslation } from "react-i18next"
 import { setLanguage } from "../../i18n"
-import { useLibraryStore } from "../../stores/libraryStore"
 import { clearMetadataCache, getMetadataCacheStats } from "../../stores/metadataCache"
 import "../../styles/settings.css"
 
@@ -718,26 +718,13 @@ function VisualizerColorsCard() {
 // ---------------------------------------------------------------------------
 
 function CacheSection() {
-  const [libClearing, setLibClearing] = useState(false)
   const [metaClearing, setMetaClearing] = useState(false)
   const [, forceUpdate] = useState(0)
 
   const cacheMaxBytes = useAudioSettingsStore(s => s.cacheMaxBytes)
   const setCacheMaxBytes = useAudioSettingsStore(s => s.setCacheMaxBytes)
 
-  const libStore = useLibraryStore.getState()
-  const playlistCount = libStore.playlists.length
-  const hubCount = libStore.hubs.length
-  const recentlyAddedCount = libStore.recentlyAdded.length
-  const playlistCacheCount = Object.keys(libStore.playlistItemsCache).length
-
   const metaStats = getMetadataCacheStats()
-
-  function handleClearLibrary() {
-    setLibClearing(true)
-    useLibraryStore.getState().invalidateCache()
-    setTimeout(() => { setLibClearing(false); forceUpdate(n => n + 1) }, 300)
-  }
 
   function handleClearMetadata() {
     setMetaClearing(true)
@@ -762,22 +749,8 @@ function CacheSection() {
       </SettingCard>
 
       {/* Library Cache */}
-      <SettingCard title="Library Cache" description="Cached playlists, hubs, and recently added items. Clearing forces a fresh fetch from your Plex server.">
-        <div className="flex items-center gap-4">
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-white">Library Data</p>
-            <p className="text-xs text-(--text-secondary) mt-0.5">
-              {playlistCount} playlists · {hubCount} hubs · {recentlyAddedCount} recently added · {playlistCacheCount} playlist caches
-            </p>
-          </div>
-          <button
-            onClick={handleClearLibrary}
-            disabled={libClearing}
-            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 hover:border-white/20 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-          >
-            {libClearing ? "Clearing..." : "Clear"}
-          </button>
-        </div>
+      <SettingCard title="Library Cache" description="Saved collection metadata and browsing pages for this Plex library. Clearing reloads them as needed and keeps queue metadata, favorites and downloads.">
+        <LibraryCacheControls />
       </SettingCard>
 
       {/* Metadata Cache */}

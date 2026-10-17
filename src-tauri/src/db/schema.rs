@@ -27,6 +27,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (14, include_str!("migrations/V14__collection_search.sql")),
     (15, include_str!("migrations/V15__playback_queue.sql")),
     (16, include_str!("migrations/V16__collection_query_revision.sql")),
+    (17, include_str!("migrations/V17__collection_pins.sql")),
 ];
 
 /// Run all pending migrations against the given connection.

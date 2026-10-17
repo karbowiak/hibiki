@@ -28,6 +28,7 @@ export function createNativeOfflineCache(
 ): OfflineCache {
   const owned = Object.freeze({ ...context })
   return {
+    clear: () => invoke<void>("offline_cache_clear", { context: owned }),
     get: async (key) => {
       const method = JSON.parse(key)[1] as string
       const timing = startTiming(method)

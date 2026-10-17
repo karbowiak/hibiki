@@ -19,7 +19,8 @@ pub async fn collection_cache(
         .as_millis()
         .min(i64::MAX as u128) as i64;
     if !request.read_only() {
-        return crate::offline_commands::owned_write(&app, &context, true, move |conn, scope| {
+        let online = !matches!(request, Request::Capture { .. } | Request::Maintain { .. });
+        return crate::offline_commands::owned_write(&app, &context, online, move |conn, scope| {
             collection_cache::run(conn, scope, &request, now)
         })
         .await;

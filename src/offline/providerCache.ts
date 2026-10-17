@@ -9,6 +9,7 @@ export interface OfflineCache {
   get(key: string): Promise<OfflineSnapshot | null>
   put(key: string, payload: unknown): Promise<void>
   invalidate?(prefixes: string[]): Promise<void>
+  clear?(): Promise<void>
 }
 export interface OfflineReadNotice {
   key: string
@@ -281,6 +282,23 @@ export function createOfflineProvider<T extends MusicProvider>(
   const refreshed = new Map<string, number>()
   const proxy = new Proxy(provider, {
     get(target, property) {
+      if (property === "clearLibraryCache" && cache.clear) {
+        return async () => {
+          const owns = () => target.cacheScope === initialScope && target.playbackSession === initialSession && (options.owns?.() ?? true)
+          if (!owns()) throw Error("Saved library request was superseded")
+          cacheEpoch++
+          refreshed.clear()
+          revalidations.clear()
+          const clearing = writes.then(async () => {
+            if (!owns()) throw Error("Saved library request was superseded")
+            await cache.clear!()
+            if (!owns()) throw Error("Saved library request was superseded")
+          })
+          writes = clearing.catch(() => {})
+          invalidations = writes
+          await clearing
+        }
+      }
       if (
         options.isOffline?.() &&
         typeof property === "string" &&

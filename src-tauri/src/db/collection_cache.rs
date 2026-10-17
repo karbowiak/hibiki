@@ -2,10 +2,14 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 mod query;
+mod maintenance;
 
 #[derive(Clone, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase")]
 pub enum Request {
+    Stats { key: String },
+    Maintain { key: String, pins: Vec<String>, playlists: Option<Vec<String>> },
+    Capture { key: String, pin: String, query: Option<maintenance::Order> },
     Info {
         key: String,
     },
@@ -69,6 +73,7 @@ impl Request {
         matches!(
             self,
             Self::Info { .. }
+                | Self::Stats { .. }
                 | Self::Index { .. }
                 | Self::Page { .. }
                 | Self::Query { .. }
@@ -81,6 +86,9 @@ impl Request {
     fn key(&self) -> &str {
         match self {
             Self::Info { key }
+            | Self::Stats { key }
+            | Self::Maintain { key, .. }
+            | Self::Capture { key, .. }
             | Self::Index { key, .. }
             | Self::Page { key, .. }
             | Self::Query { key, .. }
@@ -226,14 +234,7 @@ fn order_mix_membership(
 
 pub fn clear(conn: &Connection, scope: &str) -> Result<(), String> {
     super::offline::check_identity(scope, "clear")?;
-    for table in [
-        "collection_cache_members",
-        "collection_cache_items",
-        "collection_cache",
-    ] {
-        sql(conn.execute(&format!("DELETE FROM {table} WHERE scope=?1"), [scope]))?;
-    }
-    Ok(())
+    maintenance::clean(conn, scope, None, None, 0, true)
 }
 pub fn run(conn: &Connection, scope: &str, request: &Request, now: i64) -> Result<Value, String> {
     let key = request.key();
@@ -242,6 +243,25 @@ pub fn run(conn: &Connection, scope: &str, request: &Request, now: i64) -> Resul
         return Err("Invalid collection cache key".into());
     }
     match request {
+        Request::Stats { .. } => maintenance::stats(conn, scope),
+        Request::Maintain { pins, playlists, .. } => {
+            maintenance::clean(conn, scope, Some(pins), playlists.as_deref(), now, false)?;
+            Ok(Value::Null)
+        }
+        Request::Capture { pin, query, .. } => {
+            maintenance::check_pin(pin)?;
+            super::atomic_upsert(conn, |conn| {
+                let request = match query {
+                    Some(order) => Request::QueryRefs { key: key.into(), filter: order.filter.clone(), sort: order.sort.clone(), dir: order.dir.clone() },
+                    None => Request::Refs { key: key.into() },
+                };
+                let refs = run(conn, scope, &request, now)?;
+                if !refs.is_null() {
+                    sql(conn.execute("INSERT OR REPLACE INTO collection_cache_pins(scope,pin,key,generation) SELECT scope,?3,key,active_generation FROM collection_cache WHERE scope=?1 AND key=?2 AND active_generation IS NOT NULL", params![scope,key,pin]))?;
+                }
+                Ok(refs)
+            })
+        }
         Request::Info { .. } => {
             let Some((generation, total, cached_at, dirty)) = metadata(conn, scope, key)? else {
                 return Ok(Value::Null);
@@ -425,7 +445,7 @@ pub fn run(conn: &Connection, scope: &str, request: &Request, now: i64) -> Resul
             if &old_stamp == stamp && staged > 0 {
                 return Ok(json!({"generation":revision,"offset":staged}));
             }
-            sql(conn.execute("DELETE FROM collection_cache_members WHERE scope=?1 AND key=?2 AND generation!=COALESCE((SELECT active_generation FROM collection_cache WHERE scope=?1 AND key=?2),-1)",params![scope,key]))?;
+            sql(conn.execute("DELETE FROM collection_cache_members WHERE scope=?1 AND key=?2 AND generation!=COALESCE((SELECT active_generation FROM collection_cache WHERE scope=?1 AND key=?2),-1) AND NOT EXISTS(SELECT 1 FROM collection_cache_pins p WHERE p.scope=collection_cache_members.scope AND p.key=collection_cache_members.key AND p.generation=collection_cache_members.generation)",params![scope,key]))?;
             sql(conn.execute("UPDATE collection_cache SET revision=revision+1,stamp=?3,staged_count=0,staged_total=0,changed=0 WHERE scope=?1 AND key=?2",params![scope,key,stamp]))?;
             Ok(json!({"generation":revision+1,"offset":0}))
         }),
@@ -509,7 +529,7 @@ pub fn run(conn: &Connection, scope: &str, request: &Request, now: i64) -> Resul
                 }
                 let membership_changed=active.is_none() || sql(conn.query_row("SELECT EXISTS(SELECT position,kind,item_id,occurrence FROM collection_cache_members WHERE scope=?1 AND key=?2 AND generation=?3 EXCEPT SELECT position,kind,item_id,occurrence FROM collection_cache_members WHERE scope=?1 AND key=?2 AND generation=?4) OR EXISTS(SELECT position,kind,item_id,occurrence FROM collection_cache_members WHERE scope=?1 AND key=?2 AND generation=?4 EXCEPT SELECT position,kind,item_id,occurrence FROM collection_cache_members WHERE scope=?1 AND key=?2 AND generation=?3)",params![scope,key,generation,active],|r|r.get::<_,bool>(0)))?;
                 sql(conn.execute("UPDATE collection_cache SET active_generation=?3,total=staged_total,cached_at=?4,dirty=0,staged_count=0 WHERE scope=?1 AND key=?2",params![scope,key,generation,now]))?;
-                sql(conn.execute("DELETE FROM collection_cache_members WHERE scope=?1 AND key=?2 AND generation!=?3",params![scope,key,generation]))?;
+                sql(conn.execute("DELETE FROM collection_cache_members WHERE scope=?1 AND key=?2 AND generation!=?3 AND NOT EXISTS(SELECT 1 FROM collection_cache_pins p WHERE p.scope=collection_cache_members.scope AND p.key=collection_cache_members.key AND p.generation=collection_cache_members.generation)",params![scope,key,generation]))?;
                 Ok(json!({"changed":changed||membership_changed,"total":total}))
             })
         }
@@ -557,6 +577,49 @@ mod tests {
         )["generation"]
             .as_i64()
             .unwrap()
+    }
+    #[test]
+    fn maintenance_reclaims_orphans_without_breaking_captured_saved_or_explicit_music() {
+        let conn = db();
+        let pin = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa".to_string();
+        for id in 1..=3 {
+            let key = format!("playlist:{id}");
+            let generation = begin(&conn, &key, "initial");
+            request(&conn, Request::Put { key: key.clone(), generation, offset: 0, total: 1, items: vec![item(&id.to_string(), "a")] });
+            request(&conn, Request::Commit { key, generation });
+        }
+        request(&conn, Request::Capture { key: "playlist:1".into(), pin: pin.clone(), query: None });
+        let generation = begin(&conn, "playlist:1", "changed");
+        request(&conn, Request::Put { key: "playlist:1".into(), generation, offset: 0, total: 1, items: vec![item("4", "b")] });
+        request(&conn, Request::Commit { key: "playlist:1".into(), generation });
+        for id in 5..=8 {
+            conn.execute("INSERT INTO collection_cache_items(scope,kind,id,payload,search_text) VALUES(?1,'track',?2,?3,'')", params![scope(),id.to_string(),item(&id.to_string(), "a").to_string()]).unwrap();
+        }
+        conn.execute("INSERT INTO playback_queue(scope,total,entries,state) VALUES(?1,1,'[{\"id\":\"5\"}]','{\"sourceKey\":\"playlist:2\"}')",[scope()]).unwrap();
+        conn.execute("INSERT INTO favorites_entries(scope,id,payload) VALUES(?1,'favorite','{\"localTrackIds\":[\"6\"]}')",[scope()]).unwrap();
+        conn.execute("INSERT INTO audio_download_claims(scope,kind,entity_id,track_id) VALUES(?1,'track',7,7)",[scope()]).unwrap();
+        request(&conn, Request::Maintain { key: "playlists".into(), pins: vec![pin], playlists: Some(vec!["1".into()]) });
+        let ids = || conn.prepare("SELECT id FROM collection_cache_items WHERE scope=?1 ORDER BY id").unwrap().query_map([scope()],|r|r.get::<_,String>(0)).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+        assert_eq!(ids(), vec!["1","2","4","5","6","7"]);
+        assert!(request(&conn, Request::Info { key: "playlist:3".into() }).is_null());
+        clear(&conn, &scope()).unwrap();
+        assert_eq!(ids(), vec!["1","2","4","5","6","7"]);
+        assert!(request(&conn, Request::Info { key: "playlist:1".into() })["dirty"].as_bool().unwrap());
+        conn.execute("DELETE FROM playback_queue",[]).unwrap();
+        request(&conn, Request::Maintain { key: "playlists".into(), pins: vec![], playlists: Some(vec![]) });
+        assert_eq!(ids(), vec!["6","7"]);
+    }
+    #[test]
+    fn maintenance_bounds_mix_history_without_touching_other_scopes() {
+        let conn = db();
+        for i in 0..40 {
+            conn.execute("INSERT INTO collection_cache(scope,key,active_generation,cached_at) VALUES(?1,?2,1,?3)",params![scope(),format!("mix:{i:064x}"),i+1]).unwrap();
+        }
+        let other = format!("plex-{}", "b".repeat(64));
+        conn.execute("INSERT INTO collection_cache(scope,key) VALUES(?1,'playlist:99')",[&other]).unwrap();
+        request(&conn, Request::Maintain { key: "playlists".into(), pins: vec![], playlists: None });
+        assert_eq!(conn.query_row("SELECT count(*) FROM collection_cache WHERE scope=?1",[scope()],|r|r.get::<_,i64>(0)).unwrap(),32);
+        assert_eq!(conn.query_row("SELECT count(*) FROM collection_cache WHERE scope=?1",[other],|r|r.get::<_,i64>(0)).unwrap(),1);
     }
     #[test]
     fn rated_index_omits_full_metadata_and_album_ids_hydrate_by_kind() {

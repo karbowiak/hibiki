@@ -7,7 +7,7 @@ import type {
 } from "../backends/plex/scopedApi"
 import { sanitizeOfflineData, forwardFreshPlaylistReads } from "./providerCache"
 import { shuffled } from "../lib/pagedPlayback"
-import type { CollectionOrder } from "../lib/pagedPlayback"
+import type { CollectionOrder, PagedTrackSource } from "../lib/pagedPlayback"
 import { projectOfflineAvailability } from "./catalogue"
 
 const TTL = 15 * 60_000
@@ -37,6 +37,13 @@ export function createCollectionCacheProvider(
   let stopped = false,
     running = false
   let activeJob: Job | null = null
+  let epoch = 0
+  const sources = new Map<string, WeakRef<PagedTrackSource>>()
+  const pendingPins = new Set<string>()
+  function livePins() {
+    for (const [pin, source] of sources) if (!source.deref()) sources.delete(pin)
+    return [...sources.keys(), ...pendingPins]
+  }
   let timer: ReturnType<typeof setInterval> | undefined
   const jobs = new Map<string, Job>()
   const methods = new Map<PropertyKey, unknown>()
@@ -77,11 +84,12 @@ export function createCollectionCacheProvider(
     args: Record<string, unknown> = {}
   ): Promise<T> => {
     if (!owns()) throw Error("Collection request was superseded")
+    const version = epoch
     const value = await transport<T>("collection_cache", {
       context,
       request: { op, key, ...args },
     })
-    if (!owns()) throw Error("Collection request was superseded")
+    if (!owns() || version !== epoch) throw Error("Collection request was superseded")
     return value
   }
   const notify = (key: string) => {
@@ -105,6 +113,7 @@ export function createCollectionCacheProvider(
           jobs.values().next().value!
         jobs.delete(job.key)
         activeJob = job
+        const version = epoch
         try {
           const info = await call<Info | null>("info", job.key)
           if (
@@ -126,7 +135,7 @@ export function createCollectionCacheProvider(
           // Yield large collections to the remaining queue after four bounded pages.
           for (let page = 0; page < 4 && online(); page++) {
             const result = await job.load(offset, 500)
-            if (!online()) return
+            if (!online() || version !== epoch) break
             if (result.offset !== undefined && result.offset !== offset)
               throw Error("Collection paging did not advance")
             const total = result.total || offset + result.items.length
@@ -158,9 +167,10 @@ export function createCollectionCacheProvider(
             }
             await new Promise((resolve) => setTimeout(resolve, 100))
           }
-          if (!done && online() && !jobs.has(job.key))
+          if (!done && online() && version === epoch && !jobs.has(job.key))
             jobs.set(job.key, { ...job, force: true })
         } catch (error) {
+          if (version !== epoch) continue
           failures.add(job.key)
           if (
             /Collection changed|membership page|did not advance/i.test(
@@ -177,6 +187,7 @@ export function createCollectionCacheProvider(
       }
     } finally {
       running = false
+      if (jobs.size && online()) void pump()
     }
   }
   let rosterRequest: ReturnType<MusicProvider["getPlaylists"]> | undefined
@@ -191,6 +202,7 @@ export function createCollectionCacheProvider(
   }
   async function schedule(keys?: readonly string[]) {
     if (!online()) return
+    const version = epoch
     for (const kind of ["track", "album", "artist"] as const) {
       if (!raw.getRatedItemsPage || (keys && !keys.includes(`rated:${kind}`)))
         continue
@@ -208,7 +220,13 @@ export function createCollectionCacheProvider(
       return
     try {
       const playlists = await roster()
-      if (!online()) return
+      if (!online() || version !== epoch) return
+      if (!keys || keys.includes("playlists")) {
+        await call("maintain", "playlists", { pins: livePins(), playlists: playlists.map(playlist => playlist.id) })
+        if (!online() || version !== epoch) return
+        const present = new Set(playlists.map(playlist => `playlist:${playlist.id}`))
+        for (const key of jobs.keys()) if (key.startsWith("playlist:") && !present.has(key)) jobs.delete(key)
+      }
       if (!keys || keys.includes("playlists")) {
         const digest = await crypto.subtle.digest(
           "SHA-256",
@@ -216,6 +234,7 @@ export function createCollectionCacheProvider(
             JSON.stringify(sanitizeOfflineData(playlists))
           )
         )
+        if (!online() || version !== epoch) return
         enqueue({
           key: "playlists",
           stamp: [...new Uint8Array(digest)]
@@ -282,13 +301,16 @@ export function createCollectionCacheProvider(
     if (existing) return existing
     foreground.add(key)
     const pending = prepare(key).finally(() => {
-      preparing.delete(key)
-      foreground.delete(key)
+      if (preparing.get(key) === pending) {
+        preparing.delete(key)
+        foreground.delete(key)
+      }
     })
     preparing.set(key, pending)
     return pending
   }
   async function prepare(key: string) {
+    const version = epoch
     const info = await call<Info | null>("info", key)
     const current = (info: Info | null) =>
       info?.complete &&
@@ -309,6 +331,7 @@ export function createCollectionCacheProvider(
     } else if (key.startsWith("playlist:")) {
       const id = key.slice(9)
       const playlist = (await raw.getPlaylists()).find((item) => item.id === id)
+      if (version !== epoch) throw Error("Collection request was superseded")
       if (!playlist) throw Error("This playlist is no longer available.")
       job = {
         key,
@@ -360,7 +383,7 @@ export function createCollectionCacheProvider(
       waiting.forEach(([key, value]) => jobs.set(key, value))
     }
     const start = Date.now()
-    while (online() && Date.now() - start < 120_000) {
+    while (online() && version === epoch && Date.now() - start < 120_000) {
       const ready = await call<Info | null>("info", key)
       if (current(ready)) return
       if (failures.has(key)) break
@@ -396,6 +419,20 @@ export function createCollectionCacheProvider(
         }
       if (property === "warmCollections") return warm
       if (property === "stopCollectionWarmup") return stop
+      if (property === "getLibraryCacheInfo") return () => call("stats", "playlists")
+      if (property === "clearLibraryCache") return async () => {
+        epoch++
+        jobs.clear()
+        failures.clear()
+        preparing.clear()
+        foreground.clear()
+        rosterRequest = undefined
+        await call("maintain", "playlists", { pins: livePins(), playlists: null })
+        if (provider.clearLibraryCache) await provider.clearLibraryCache()
+        else await transport("offline_cache_clear", { context })
+        if (!owns()) throw Error("Collection request was superseded")
+        notify("*")
+      }
       if (methods.has(property)) return methods.get(property)
       const value = Reflect.get(target, property, target)
       if (property === "favorites" && value) {
@@ -458,16 +495,19 @@ export function createCollectionCacheProvider(
         ) => {
           key = await resolveKey(key)
           if (query || mixPaths.has(key)) await ensure(key)
-          const refs = query
-            ? await call<[string, string | null][] | null>("queryRefs", key, {
-                ...query,
-              })
-            : await call<[string, string | null][] | null>("refs", key).catch(
-                () => null
-              )
+          const pin = crypto.randomUUID()
+          pendingPins.add(pin)
+          let refs: [string, string | null][] | null
+          try {
+            refs = await call("capture", key, { pin, query: query ?? null })
+          } catch (error) {
+            pendingPins.delete(pin)
+            throw error
+          }
+          pendingPins.delete(pin)
           if (!refs) return null
           const order = shuffle ? shuffled(refs) : refs
-          return {
+          const source: PagedTrackSource = {
             key,
             ...(query ? { restoreQuery: { key, ...query } } : {}),
             total: order.length,
@@ -512,6 +552,8 @@ export function createCollectionCacheProvider(
               })
             },
           }
+          sources.set(pin, new WeakRef(source))
+          return source
         }
       else if (property === "getRatedIndexPage")
         method = async (kind: "track" | "album", offset: number, limit: number) => {

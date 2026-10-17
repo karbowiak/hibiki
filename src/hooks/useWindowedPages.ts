@@ -151,7 +151,7 @@ export function useWindowedPages<T>(
             if (!entry.value.observed) cache.delete(key)
         publishCache(provider)
       }
-      let matches = changed === key || changed?.startsWith("item:")
+      let matches = changed === "*" || changed === key || changed?.startsWith("item:")
       if (key?.startsWith("[")) {
         const [kind, id] = JSON.parse(key) as string[]
         matches ||= kind === "playlist-query" && changed === `playlist:${id}`
