@@ -1,3 +1,5 @@
+import { formatMs } from "../lib/formatters"
+
 /** The transition computed by the native engine, including its fallback reason. */
 export interface TransitionInfo {
   outgoing_rating_key: number
@@ -17,7 +19,7 @@ const reasons: Record<NonNullable<TransitionInfo["reason"]>, string> = {
   noOverlap: "No overlap needed",
 }
 
-export function transitionRows(plan: TransitionInfo | null, hasNext: boolean, repeatOne: boolean): [string, string][] {
+export function transitionRows(plan: TransitionInfo | null, hasNext: boolean, repeatOne: boolean, trackDurationMs?: number): [string, string][] {
   if (repeatOne) return [["Transition", "Repeat current track"]]
   if (!hasNext) return [["Transition", "End of queue"]]
   if (!plan) return [["Transition", "Preparing next track…"]]
@@ -29,7 +31,19 @@ export function transitionRows(plan: TransitionInfo | null, hasNext: boolean, re
   if (plan.reason) rows.push(["Reason", reasons[plan.reason]])
   if (plan.mode !== "gapless") {
     rows.push(["Overlap", `${Number((plan.duration_ms / 1000).toFixed(2))}s`])
-    rows.push(["Starts at", `${Number((plan.start_time_ms / 1000).toFixed(2))}s`])
+    const start = plan.start_time_ms
+    if (Number.isFinite(start) && start >= 0 && typeof trackDurationMs === "number" && Number.isFinite(trackDurationMs) && trackDurationMs > 0 && start <= trackDurationMs) {
+      const remainingMs = trackDurationMs - start
+      const seconds = Math.round(remainingMs / 1000)
+      const beforeEnd = remainingMs < 1000
+        ? `${Number((remainingMs / 1000).toFixed(2))}s`
+        : seconds < 60
+          ? `${seconds}s`
+          : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+      rows.push(["Starts", `${beforeEnd} before end`])
+    } else {
+      rows.push(["Starts at", Number.isFinite(start) && start >= 0 ? formatMs(start) : "Unknown"])
+    }
   }
   return rows
 }

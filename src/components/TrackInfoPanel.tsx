@@ -128,7 +128,8 @@ export default function TrackInfoPanel({ onClose }: Props) {
   const analysisRows = transitionRows(
     transitionInfo,
     !!nextTrackShallow,
-    repeat === 1
+    repeat === 1,
+    track.duration
   )
 
   // Debug rows — intentionally backend-aware (shows raw provider data)
@@ -157,7 +158,7 @@ export default function TrackInfoPanel({ onClose }: Props) {
     mono?: boolean
   }) => (
     <dl
-      className={`track-info-values${mono ? "track-info-values--technical" : ""}`}
+      className={`track-info-values${mono ? " track-info-values--technical" : ""}`}
     >
       {r.map(([label, value]) => (
         <div key={label}>

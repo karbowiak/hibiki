@@ -9,8 +9,19 @@ const plan: TransitionInfo = {
 describe("native transition display", () => {
   test("keeps a short valid smart overlap instead of inventing a fallback", () => {
     expect(transitionRows(plan, true, false)).toEqual([
-      ["Transition", "MixRamp overlap"], ["Overlap", "0.12s"], ["Starts at", "9.88s"],
+      ["Transition", "MixRamp overlap"], ["Overlap", "0.12s"], ["Starts at", "0:09"],
     ])
+  })
+  test("shows a duration-relative start with seconds or minutes and seconds", () => {
+    expect(transitionRows(plan, true, false, 22_880)).toContainEqual(["Starts", "13s before end"])
+    expect(transitionRows(plan, true, false, 82_880)).toContainEqual(["Starts", "1m 13s before end"])
+    expect(transitionRows(plan, true, false, 10_000)).toContainEqual(["Starts", "0.12s before end"])
+    expect(transitionRows(plan, true, false, 69_680)).toContainEqual(["Starts", "1m 0s before end"])
+  })
+  test("falls back to a clock position when duration is unknown or inconsistent", () => {
+    const later = { ...plan, start_time_ms: 209_580 }
+    for (const duration of [undefined, 0, NaN, 10_000])
+      expect(transitionRows(later, true, false, duration)).toContainEqual(["Starts at", "3:29"])
   })
   test("shows the engine's actual timed fallback and its reason", () => {
     expect(transitionRows({ ...plan, mode: "timed", reason: "missingRamps", duration_ms: 4000 }, true, false))
