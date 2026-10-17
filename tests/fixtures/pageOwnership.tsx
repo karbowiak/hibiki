@@ -436,7 +436,7 @@ try {
           >
             Move occurrence
           </button>
-          {props.tracks.map((track: any) => (
+          {(props.paged?.loadedItems ?? props.tracks).map((track: any) => (
             <p key={track.playlistItemId}>{track.playlistItemId}</p>
           ))}
         </div>
@@ -499,21 +499,14 @@ try {
       moved: unknown[][] = []
     const movement = deferred<void>()
     let failLoad = scenario === "playlist-load"
-    const fetch = async (id: string) => {
+    const load = async (id: string, offset = 0, limit = 200) => {
       fetched.push(id)
-      const cache = (library.getState() as any).playlistItemsCache
-      library.setState({
-        currentPlaylist: playlists[id],
-        currentPlaylistId: id,
-        currentPlaylistItems: failLoad ? [] : (cache[id] ?? songs),
-        playlistItemsCache: failLoad
-          ? {}
-          : { ...cache, [id]: cache[id] ?? songs },
-        isLoading: false,
-        error: failLoad ? "Synthetic load failure" : null,
-      } as any)
+      if (failLoad) throw Error("Synthetic load failure")
+      return {items:songs.slice(offset,offset+limit),total:songs.length,offset}
     }
+    first.getPlaylistItems = load
     library.setState({
+      playlists: Object.values(playlists),
       currentPlaylist: null,
       currentPlaylistId: null,
       currentPlaylistItems: [],
@@ -522,7 +515,7 @@ try {
       isFetchingMore: false,
       error: null,
       playlistIsFullyLoaded: { "1": true, "2": true },
-      fetchPlaylistItems: fetch,
+      fetchPlaylistItems: () => { throw Error("The page must use only its windowed loader") },
       fetchMorePlaylistItems: async () => {},
       reorderPlaylistItems: (id: string, from: number, to: number) => {
         const items = [...(library.getState() as any).currentPlaylistItems]
@@ -541,7 +534,7 @@ try {
         const cache = { ...(library.getState() as any).playlistItemsCache }
         delete cache[id]
         library.setState({ playlistItemsCache: cache } as any)
-        if ((library.getState() as any).currentPlaylistId === id) void fetch(id)
+
       },
     } as any)
     first.movePlaylistItem = (...args: unknown[]) => {
@@ -551,6 +544,7 @@ try {
     const render = (id: string) =>
       act(() => root.render(<Playlist playlistId={id} />))
     await render("1")
+    assert.deepEqual(fetched,["1"],"opening a playlist reads its first page once")
     if (scenario === "playlist-smart-sync") {
       const sync = [
         ...document.querySelectorAll<HTMLButtonElement>("button"),
@@ -615,18 +609,15 @@ try {
       if (scenario === "reorder-route") await render("2")
       if (scenario === "reorder-provider") {
         playlists["1"] = { ...playlists["1"], title: "New library playlist" }
-        await act(() => useProviderStore.getState().setProvider(provider()))
+        const replacement = provider()
+        replacement.getPlaylistItems = load
+        await act(() => { library.setState({playlists:Object.values(playlists)} as any); useProviderStore.getState().setProvider(replacement) })
       }
       if (scenario === "reorder-unmount") await unmount()
       await act(async () => movement.reject(new Error("Move failed")))
       if (scenario === "reorder-recover") {
-        assert.deepEqual(invalidated, ["1"])
-        assert.deepEqual(
-          (library.getState() as any).currentPlaylistItems.map(
-            (song: any) => song.playlistItemId
-          ),
-          ["occurrence-one", "occurrence-two"]
-        )
+        assert.deepEqual(invalidated, [])
+        assert.ok(document.body.textContent!.includes("occurrence-one"))
         assert.ok(
           document
             .querySelector("[role=alert]")!
@@ -648,7 +639,6 @@ try {
           "late recovery must not invalidate or replace the new view"
         )
         if (scenario === "reorder-route") {
-          assert.equal((library.getState() as any).currentPlaylistId, "2")
           assert.ok(document.body.textContent!.includes("Second playlist"))
         }
         if (scenario === "reorder-provider")
