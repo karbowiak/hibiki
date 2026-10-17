@@ -43,6 +43,47 @@ async function checkPlaybackQuality(page: Page, name: string) {
     assert.equal(await info.evaluate(e => e === document.activeElement), true)
   }
 }
+async function checkPlaybackDiagnostics(page: Page, name: string) {
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text: string) => { (window as any).fixtureCopiedDiagnostics = text } } })
+  })
+  for (const [width, height, theme] of [[1940, 1214, "dark"], [1000, 760, "light"]] as const) {
+    await page.setViewportSize({ width, height })
+    await page.evaluate(({ theme }) => {
+      ;(window as any).fixtureAppearance.apply({ theme })
+      ;(window as any).fixtureAppearance.panel(null)
+      ;(window as any).fixtureAppearance.lyricsPreview()
+      ;(window as any).fixtureAppearance.playingFormat({ codec: "FLAC", bit_depth: 16, sample_rate: 44100, channels: 2 })
+    }, { theme })
+    const info = page.getByRole("button", { name: "Track info", exact: true })
+    await info.click()
+    const panel = page.getByRole("dialog", { name: "Track info", exact: true })
+    const before = await page.evaluate(() => (window as any).fixtureDiagnostics.calls())
+    await panel.getByRole("button", { name: "Playback", exact: true }).click()
+    await panel.getByText("Device output", { exact: true }).waitFor()
+    await panel.locator('.playback-history svg').first().waitFor()
+    await panel.locator('.playback-history svg').nth(1).waitFor()
+    assert.match(await panel.evaluate(element => getComputedStyle(element).backdropFilter), /blur\(18px\)/)
+    assert.equal(await panel.getByText("FLAC 16bit/44.1kHz", { exact: true }).count(), 1)
+    assert.equal(await panel.getByText("32-bit float · 96 kHz · 2 channels", { exact: true }).count(), 1)
+    const bounds = await panel.boundingBox()
+    assert.ok(bounds && bounds.x >= 8 && bounds.y >= 8 && bounds.x + bounds.width <= width - 7 && bounds.y + bounds.height <= height, `${name}: diagnostics leave viewport`)
+    assert.equal(await panel.evaluate(element => element.scrollWidth <= element.clientWidth + 1), true)
+    assert.ok(await page.evaluate(() => (window as any).fixtureDiagnostics.calls()) > before)
+    await page.screenshot({ path: join(artifacts, `${name}-${width}-playback-diagnostics.png`) })
+    await panel.getByRole("button", { name: "Copy diagnostics", exact: true }).click()
+    await panel.getByRole("button", { name: "Copied", exact: true }).waitFor()
+    const copied = await page.evaluate(() => JSON.parse((window as any).fixtureCopiedDiagnostics))
+    assert.equal(copied.schema, 1); assert.equal(copied.playback.playbackId, 1)
+    assert.ok(copied.samples.length <= 60)
+    assert.ok(!/streamUrl|_providerData|X-Plex-Token|https?:/.test(JSON.stringify(copied)))
+    await page.keyboard.press("Escape")
+    assert.equal(await info.evaluate(e => e === document.activeElement), true)
+    const stopped = await page.evaluate(() => (window as any).fixtureDiagnostics.calls())
+    await page.waitForTimeout(700)
+    assert.equal(await page.evaluate(() => (window as any).fixtureDiagnostics.calls()), stopped, `${name}: diagnostics kept polling after close`)
+  }
+}
 async function checkTrackRowLayout(page: Page, name: string) {
   for (const [width, theme] of [[1440, "dark"], [1000, "light"]] as const) {
     await page.setViewportSize({ width, height: 900 })
@@ -649,6 +690,13 @@ try {
         `${origin}/tests/fixtures/libraryLayout/index.html?appearance=1&player=1&discovery=1${process.argv.includes("--album-hover-only") ? "&virtual=1" : ""}`
       )
       await page.waitForFunction(() => (window as any).visualFixtureReady)
+      if (process.argv.includes('--playback-info-only')) {
+        await checkPlaybackQuality(page, name)
+        await checkPlaybackDiagnostics(page, name)
+        assert.deepEqual(errors, [], `${name}: renderer errors`)
+        console.log(`${name}: track/diagnostics layout, bounded telemetry, copy redaction and teardown passed`)
+        continue
+      }
       if (process.argv.includes('--quality-only')) {
         await checkPlaybackQuality(page, name)
         assert.deepEqual(errors, [], `${name}: renderer errors`)

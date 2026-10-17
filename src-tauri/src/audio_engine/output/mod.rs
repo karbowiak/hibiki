@@ -155,6 +155,10 @@ impl OutputDriver<AudioCallbackState> for CpalDriver {
         match &result {
             Ok(_) => {
                 debug!(device = %spec.name, rate = spec.params.sample_rate, channels = spec.params.channels, "audio output opened");
+                let metrics = &self.atomics.diagnostics;
+                metrics.output_rate.store(spec.params.sample_rate, Ordering::Relaxed);
+                metrics.output_channels.store(u32::from(spec.params.channels), Ordering::Relaxed);
+                metrics.output_format.store(super::diagnostics::format_code(spec.format), Ordering::Relaxed);
                 self.last_error = None;
                 if let Some(app) = &self.app {
                     let _ = app.emit("audio-device-changed", &spec.name);

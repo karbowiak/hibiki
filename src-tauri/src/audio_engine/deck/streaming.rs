@@ -6,10 +6,27 @@
 //! the downloaded region blocks until enough data arrives.
 
 use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
 use symphonia::core::io::MediaSource;
+
+/// Transfer counters survive the decoder without retaining its temporary audio file.
+#[derive(Default)]
+pub(in crate::audio_engine) struct TransferProgress {
+    bytes: AtomicU64,
+    total: AtomicU64,
+    complete: AtomicBool,
+    failed: AtomicBool,
+}
+impl TransferProgress {
+    pub(in crate::audio_engine) fn snapshot(&self) -> (u64, Option<u64>, bool, bool) {
+        let complete = self.complete.load(Ordering::Acquire);
+        let failed = self.failed.load(Ordering::Acquire);
+        let total = self.total.load(Ordering::Relaxed);
+        (self.bytes.load(Ordering::Relaxed), (total > 0).then_some(total), complete && !failed, failed)
+    }
+}
 
 /// Shared state between the async downloader and the sync reader.
 struct Inner {
@@ -31,6 +48,7 @@ struct Inner {
 /// the `abandoned` flag is set. Subsequent `push()` calls skip the temporary file
 /// accumulation — the download task should keep writing to disk (cache) only.
 pub struct SharedBuffer {
+    progress: Arc<TransferProgress>,
     inner: Mutex<Inner>,
     condvar: Condvar,
     /// Set to `true` when the StreamingReader is dropped. `push()` skips
@@ -41,7 +59,10 @@ pub struct SharedBuffer {
 impl SharedBuffer {
     pub fn new(content_length: Option<u64>) -> io::Result<Arc<Self>> {
         let file = tempfile::tempfile()?;
+        let progress = Arc::new(TransferProgress::default());
+        progress.total.store(content_length.unwrap_or(0), Ordering::Relaxed);
         Ok(Arc::new(Self {
+            progress,
             inner: Mutex::new(Inner {
                 file,
                 downloaded_len: 0,
@@ -60,6 +81,7 @@ impl SharedBuffer {
     /// accumulation to avoid wasting disk space on a skipped track.
     pub fn push(&self, chunk: &[u8]) -> io::Result<()> {
         if self.abandoned.load(Ordering::Relaxed) {
+            self.progress.bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed);
             return Ok(());
         }
         let mut inner = self.inner.lock().unwrap();
@@ -68,6 +90,7 @@ impl SharedBuffer {
             .seek(SeekFrom::End(0))
             .and_then(|_| inner.file.write_all(chunk));
         if let Err(error) = write {
+            self.progress.failed.store(true, Ordering::Release);
             inner.aborted = true;
             inner.done = true;
             self.condvar.notify_all();
@@ -78,12 +101,14 @@ impl SharedBuffer {
         inner.prefix[prefix_start..prefix_start + prefix_count]
             .copy_from_slice(&chunk[..prefix_count]);
         inner.downloaded_len += chunk.len() as u64;
+        self.progress.bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed);
         self.condvar.notify_all();
         Ok(())
     }
 
     /// Signal that the download is complete.
     pub fn finish(&self) {
+        self.progress.complete.store(true, Ordering::Release);
         let mut inner = self.inner.lock().unwrap();
         inner.done = true;
         self.condvar.notify_all();
@@ -92,6 +117,7 @@ impl SharedBuffer {
     /// Signal a download error. The reader will return `ConnectionAborted`
     /// instead of normal EOF so the decoder can detect the truncation.
     pub fn abort(&self) {
+        self.progress.failed.store(true, Ordering::Release);
         let mut inner = self.inner.lock().unwrap();
         inner.aborted = true;
         inner.done = true;
@@ -144,8 +170,12 @@ impl SharedBuffer {
         Ok(file)
     }
 
+    /// Read-only counters do not keep the audio spool file alive.
+    pub(in crate::audio_engine) fn transfer_progress(&self) -> Arc<TransferProgress> { self.progress.clone() }
+
     /// Set the content length once known (from HTTP Content-Length header).
     pub fn set_content_length(&self, len: u64) {
+        self.progress.total.store(len, Ordering::Relaxed);
         let mut inner = self.inner.lock().unwrap();
         inner.content_length = Some(len);
         // Content-Length is untrusted and can describe multi-hour recordings.

@@ -20,6 +20,8 @@ pub struct Limiter {
 }
 
 impl Limiter {
+    pub fn is_enabled(&self) -> bool { self.enabled }
+
     pub fn new(sample_rate: u32) -> Self {
         let mut l = Self {
             enabled: true,

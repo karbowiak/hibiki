@@ -57,6 +57,8 @@ impl Equalizer {
         }
     }
 
+    pub fn is_enabled(&self) -> bool { self.enabled }
+
     pub fn new(sample_rate: u32) -> Self {
         let filters = std::array::from_fn(|i| {
             let (ftype, q) = match i {

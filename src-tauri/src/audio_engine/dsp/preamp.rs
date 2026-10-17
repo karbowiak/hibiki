@@ -15,6 +15,10 @@ impl Preamp {
         }
     }
 
+    pub fn current_gain(&self) -> f32 {
+        if self.enabled { self.gain_linear } else { 1.0 }
+    }
+
     pub fn set_gain_db(&mut self, db: f32) {
         self.gain_linear = super::gain_from_db(db);
     }

@@ -16,6 +16,7 @@ pub mod callback;
 pub mod command;
 pub mod crossfade;
 pub mod deck;
+pub(crate) mod diagnostics;
 pub(crate) mod download;
 pub mod dsp;
 pub(crate) mod event;
@@ -473,6 +474,10 @@ impl AudioEngine {
         &self.cache
     }
 
+    pub(crate) fn diagnostics(&self) -> Option<diagnostics::Snapshot> {
+        self.atomics.diagnostics.snapshot(&self.atomics)
+    }
+
     pub fn output_available(&self) -> bool {
         self.atomics.output_available.load(Ordering::Acquire)
     }
@@ -797,6 +802,10 @@ fn handle_play(
             if !request.is_current() {
                 return;
             }
+            let source_kind = if result.cached_stamp.is_some() {
+                if source.local_cache.as_ref().is_some_and(|local| !Arc::ptr_eq(local, cache)) { "download" } else { "cache" }
+            } else { "network" };
+            atomics.diagnostics.record_source(deck, request.load_id, source_kind, result.source_bytes, result.spool.as_ref().map(|spool| spool.transfer_progress()));
             let mut resolved_meta = meta.clone();
             resolved_meta.gain_db = gain_db;
             resolved_meta.source_format = result.source_format;
@@ -958,6 +967,10 @@ fn handle_preload(
             if !request.is_current() {
                 return;
             }
+            let source_kind = if result.cached_stamp.is_some() {
+                if source.local_cache.as_ref().is_some_and(|local| !Arc::ptr_eq(local, cache)) { "download" } else { "cache" }
+            } else { "network" };
+            atomics.diagnostics.record_source(deck, request.load_id, source_kind, result.source_bytes, result.spool.as_ref().map(|spool| spool.transfer_progress()));
             let mut resolved_meta = meta.clone();
             resolved_meta.gain_db = gain_db;
             resolved_meta.source_format = result.source_format;
@@ -1305,6 +1318,7 @@ fn spawn_background_decode(
 /// Result of fetch + incremental decode.
 struct IncrementalDecodeResult {
     source_format: Option<types::SourceAudioFormat>,
+    source_bytes: Option<u64>,
     cached_stamp: Option<cache::CacheStamp>,
     spool: Option<Arc<deck::streaming::SharedBuffer>>,
     initial_samples: Vec<f32>,
@@ -1343,6 +1357,7 @@ fn fetch_and_decode_incremental(
     // ---- Cache HIT: decode from local file ----
     if let Some((file, stamp)) = cache.open_with_stamp(cache_key) {
         debug!(rating_key, "cache hit — decoding from file");
+        let source_bytes = file.metadata().ok().map(|metadata| metadata.len());
         let cached: Result<IncrementalDecodeResult, String> = (|| {
             let mss = MediaSourceStream::new(Box::new(file), Default::default());
             let mut setup = decode::probe_from_source(mss, Some(ext)).map_err(|error| format!("{error}"))?;
@@ -1350,6 +1365,7 @@ fn fetch_and_decode_incremental(
             let mut result = decode_initial_batch(&mut setup, device_rate, device_channels)?;
             if setup.aborted || setup.had_decode_errors { return Err("cached audio contains incomplete or invalid frames".into()); }
             result.cached_stamp = Some(stamp.clone());
+            result.source_bytes = source_bytes;
             result.decoder = if setup.finished { None } else { Some(setup) };
             Ok(result)
         })();
@@ -1469,6 +1485,7 @@ fn decode_initial_batch(
     setup.output_frames_decoded = (samples.len() / out_channels.max(1) as usize) as u64;
     Ok(IncrementalDecodeResult {
         source_format: Some(setup.source_format()),
+        source_bytes: None,
         cached_stamp: None,
         spool: None,
         initial_samples: samples,
@@ -1994,6 +2011,7 @@ mod control_tests {
         );
         let decoded = IncrementalDecodeResult {
             source_format: None,
+            source_bytes: None,
             cached_stamp: None,
             spool: Some(deck::streaming::SharedBuffer::new(None).unwrap()),
             initial_samples: vec![1.0, 1.0],
@@ -2150,6 +2168,7 @@ mod control_tests {
         spool.finish();
         let decoded = IncrementalDecodeResult {
             source_format: None,
+            source_bytes: None,
             cached_stamp: None,
             spool: Some(spool),
             initial_samples: vec![1.0, 1.0],

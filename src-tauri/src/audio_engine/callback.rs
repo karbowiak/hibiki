@@ -31,6 +31,7 @@ mod tests;
 /// Atomics shared between the audio callback and other threads.
 /// The audio callback WRITES, other threads READ.
 pub struct SharedAtomics {
+    pub diagnostics: super::diagnostics::Diagnostics,
     /// Preference observed by preparation without waiting for the render callback.
     pub normalization_enabled: Arc<AtomicBool>,
     /// Preparation/command admission only. Never acquired on the audio callback.
@@ -76,6 +77,7 @@ impl SharedAtomics {
 
     pub fn new() -> Self {
         Self {
+            diagnostics: super::diagnostics::Diagnostics::default(),
             normalization_enabled: Arc::new(AtomicBool::new(true)),
             normalization_admission: Mutex::new(()),
             request_epoch: Arc::new(AtomicU64::new(0)),
@@ -239,6 +241,9 @@ impl AudioCallbackState {
     }
 
     pub fn process_callback(&mut self, data: &mut [f32]) {
+        let block_start = std::time::Instant::now();
+        let was_playing = self.state() == EngineState::Playing && !self.paused;
+        let playback_before = self.deck_mgr.active_deck().playback_id;
         let frames = data.len() / self.device_channels.max(1) as usize;
         // Consume already decoded data before seeking: the decoder may have
         // finished and queued its final batch since the preceding callback.
@@ -305,6 +310,15 @@ impl AudioCallbackState {
 
         // 11. Send visualizer data (~60fps)
         self.maybe_send_vis_frame(&data[..rendered_samples]);
+        let metrics = &self.atomics.diagnostics;
+        metrics.block_ns.store(block_start.elapsed().as_nanos().min(u64::MAX as u128) as u64, Ordering::Relaxed);
+        metrics.block_frames.store(frames as u64, Ordering::Relaxed);
+        metrics.blocks.fetch_add(1, Ordering::Relaxed);
+        if was_playing && !self.waiting_for_play && playback_before != 0
+            && playback_before == self.deck_mgr.active_deck().playback_id
+            && self.state() == EngineState::Buffering && self.deck_mgr.active_deck().played_frames > 0 {
+            metrics.starvations.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     pub(crate) fn output_is_idle(&self) -> bool {
@@ -633,7 +647,6 @@ impl AudioCallbackState {
                 d.samples = initial_samples;
                 d.fully_decoded = fully_decoded;
                 d.seek_tx = seek_tx;
-                self.update_position_atomics();
                 match deck {
                     DeckId::A => self
                         .atomics
@@ -644,6 +657,7 @@ impl AudioCallbackState {
                         .deck_b_loaded_id
                         .store(load_id, Ordering::SeqCst),
                 }
+                self.update_position_atomics();
                 if !self.waiting_for_play {
                     self.compute_and_set_schedule();
                 }
@@ -1245,6 +1259,24 @@ impl AudioCallbackState {
             );
         }
         let active = self.deck_mgr.active_deck();
+        let metrics = &self.atomics.diagnostics;
+        if self.atomics.active_playback_id.load(Ordering::Relaxed) != active.playback_id {
+            metrics.starvations.store(0, Ordering::Relaxed);
+        }
+        let (deck, loaded) = match self.deck_mgr.active_id() {
+            DeckId::A => (0, &self.atomics.deck_a_loaded_id),
+            DeckId::B => (1, &self.atomics.deck_b_loaded_id),
+        };
+        metrics.source_deck.store(deck, Ordering::Relaxed);
+        metrics.source_load_id.store(loaded.load(Ordering::Relaxed), Ordering::Relaxed);
+        metrics.buffered_frames.store((active.samples.len().saturating_sub(active.position) / usize::from(active.channels.max(1))) as u64, Ordering::Relaxed);
+        metrics.decoded_complete.store(active.fully_decoded, Ordering::Relaxed);
+        metrics.normalization_gain.store((if self.normalization_enabled { active.norm_gain } else { 1.0 }).to_bits(), Ordering::Relaxed);
+        metrics.preamp_gain.store(self.dsp_chain.preamp.current_gain().to_bits(), Ordering::Relaxed);
+        metrics.post_gain.store(self.dsp_chain.postgain.current_gain().to_bits(), Ordering::Relaxed);
+        metrics.volume.store(self.dsp_chain.volume.gain().to_bits(), Ordering::Relaxed);
+        metrics.eq_enabled.store(self.dsp_chain.equalizer.is_enabled(), Ordering::Relaxed);
+        metrics.limiter_enabled.store(self.dsp_chain.limiter.is_enabled(), Ordering::Relaxed);
         self.atomics
             .active_playback_id
             .store(active.playback_id, Ordering::Relaxed);

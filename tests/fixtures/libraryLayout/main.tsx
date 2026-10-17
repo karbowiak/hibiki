@@ -55,6 +55,8 @@ async function setup() {
   const virtual = params.get("virtual") === "1"
   const queueProof = params.get("queue") === "1"
   const informationProof=params.get("information")==="1"
+  let diagnosticCalls = 0
+  w.fixtureDiagnostics = { calls: () => diagnosticCalls }
   let callback = 0
   let loadingGate = Promise.resolve()
   let releaseLoading: (() => void) | null = null
@@ -100,6 +102,16 @@ async function setup() {
       if (command === "plugin:window|is_minimized") return false
       if (command === "plugin:window|is_fullscreen") return false
       if (command === "plugin:window|set_fullscreen") return null
+      if (command === "audio_get_diagnostics") {
+        diagnosticCalls++
+        return { requestId: 1, playbackId: 1, ratingKey: 42, state: "playing", positionMs: 42000,
+          bufferedSeconds: 24 + Math.sin(diagnosticCalls) * 2, decodedComplete: false,
+          mixerRate: 48000, mixerChannels: 2, outputAvailable: true, outputRate: 96000, outputChannels: 2,
+          outputFormat: "32-bit float", blockUs: 180, blockBudgetUs: 10000, blocks: diagnosticCalls * 50,
+          bufferStarvations: 0, normalizationGain: 0.708, preampGain: 1, postGain: 0.89, volume: 0.7,
+          eqEnabled: true, limiterEnabled: true, crossfading: false,
+          source: { kind: "network", downloadedBytes: 2097152 + diagnosticCalls * 262144, totalBytes: 10485760, complete: false, failed: false } }
+      }
       if (command === "audio_get_waveform") return []
       if (command === "get_image_cache_info")
         return { files: 0, bytes: 0, max_files: 4096, max_bytes: 536870912 }

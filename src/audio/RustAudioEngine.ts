@@ -352,6 +352,11 @@ export class RustAudioEngine {
     return this.lastFrequencyBins
   }
 
+  /** Read-only telemetry. Call only while a diagnostics surface is visible. */
+  getDiagnostics(): Promise<import("./playbackDiagnostics").PlaybackDiagnosticsSnapshot | null> {
+    return this.ipc.invoke("audio_get_diagnostics")
+  }
+
   /** Return the audio device sample rate. */
   getSampleRate(): number {
     return this.cachedSampleRate

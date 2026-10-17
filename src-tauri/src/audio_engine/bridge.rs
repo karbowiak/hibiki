@@ -301,6 +301,12 @@ pub async fn audio_get_output_available(
     Ok(state.0.output_available())
 }
 
+/// A bounded snapshot only: no filesystem, network or callback locking.
+#[tauri::command]
+pub async fn audio_get_diagnostics(state: State<'_, AudioEngineState>) -> Result<Option<super::diagnostics::Snapshot>, String> {
+    Ok(state.0.diagnostics())
+}
+
 // ---------------------------------------------------------------------------
 // Cache
 // ---------------------------------------------------------------------------
