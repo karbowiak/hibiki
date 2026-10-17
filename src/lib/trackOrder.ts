@@ -7,6 +7,7 @@ export type TrackSortColumn =
   | "album"
   | "year"
   | "plays"
+  | "views"
   | "popularity"
   | "label"
   | "bitrate"
@@ -26,6 +27,7 @@ const comparators = {
   album: (a, b) => a.albumName.localeCompare(b.albumName),
   year: (a, b) => (a.albumYear ?? a.year) - (b.albumYear ?? b.year),
   plays: (a, b) => a.playCount - b.playCount,
+  views: (a, b) => (a.viewCount ?? 0) - (b.viewCount ?? 0),
   popularity: (a, b) => (a.ratingCount ?? 0) - (b.ratingCount ?? 0),
   label: (a, b) => (a.parentStudio ?? "").localeCompare(b.parentStudio ?? ""),
   bitrate: (a, b) => (a.bitrate ?? 0) - (b.bitrate ?? 0),

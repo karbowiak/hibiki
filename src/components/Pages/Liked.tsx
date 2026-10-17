@@ -24,6 +24,12 @@ import { TrackTable } from "../shared/TrackTable"
 import { FavoritesSyncDialog } from "../FavoritesSyncDialog"
 import { favoritesNeedReview } from "../../lib/syncAttention"
 import { SyncReviewIndicator } from "../shared/SyncReviewIndicator"
+import { loadAllYoutubeMusicLibrary, useYoutubeMusicLibrary } from "../../backends/ytmusic/library"
+import { useYoutubeMusicDiscoveryStore, youtubeMusicItemTrack } from "../../backends/ytmusic/discovery"
+import { mergeDiscoveryItems, type DiscoveryItem } from "../../lib/discovery"
+import { useUIStore } from "../../stores/uiStore"
+import type { MusicTrack } from "../../types/music"
+import { PlexLogo, YoutubeMusicLogo } from "../shared/MusicSource"
 
 const LIKED_COLUMNS = [...ALL_COLUMNS, LIKED_DATE_COLUMN]
 const LIKED_DEFAULT_COLS = ["album", "rating", "rated_at", "liked_at"] as const
@@ -43,6 +49,19 @@ export function Liked() {
   const { collection } = favorites
   const syncNeedsReview = favoritesNeedReview(collection, favorites.issues)
   const [kind, setKind] = useState<"loved" | "rated" | "all">("loved")
+  const [service, setService] = useState<"all" | "plex" | "ytmusic">("all")
+  const youtube = useYoutubeMusicLibrary("songs")
+  const activeService = youtube.connected ? service : "all"
+  const includesPlex = activeService !== "ytmusic"
+  const includesYoutube = activeService !== "plex" && youtube.connected && kind !== "rated"
+  const youtubeRevision = useYoutubeMusicDiscoveryStore(state => state.revision)
+  const refresh = useUIStore(state => state.pageRefreshKey)
+  useEffect(() => {
+    if (!includesYoutube || youtube.error) return
+    let active = true
+    void loadAllYoutubeMusicLibrary("songs", () => active)
+    return () => { active = false }
+  }, [includesYoutube, youtube.error, youtubeRevision, refresh, youtube.version])
   const [syncOpen, setSyncOpen] = useState(false)
   const [filterQuery, setFilterQuery] = useState("")
   const [query, setQuery] = useState("")
@@ -51,7 +70,7 @@ export function Liked() {
     resetKey: provider,
   })
   const ratedIndex = useRatedIndex(
-    kind !== "loved" || !collection.ratingsImported
+    includesPlex && (kind !== "loved" || !collection.ratingsImported)
   )
   const { visible: visibleCols, toggle: toggleCol } = usePlaylistColumns(
     "plex-liked-columns",
@@ -74,7 +93,7 @@ export function Liked() {
     return () => clearTimeout(timer)
   }, [filterQuery])
   useEffect(() => {
-    if (ratedIndex.ready && favorites.loaded && !collection.ratingsImported)
+    if (includesPlex && ratedIndex.ready && favorites.loaded && !collection.ratingsImported)
       void useFavoritesStore
         .getState()
         .seedRatings(ratedIndex.tracks)
@@ -84,6 +103,7 @@ export function Liked() {
     ratedIndex.tracks,
     favorites.loaded,
     collection.ratingsImported,
+    includesPlex,
   ])
 
   const entries = useMemo(() => {
@@ -109,6 +129,7 @@ export function Liked() {
     [collection.entries]
   )
   const needsFavoriteMetadata =
+    includesPlex &&
     kind !== "rated" &&
     !["default", "title", "artist", "album", "liked_at"].includes(sortCol)
   const favoriteIndex = useFavoriteIndex(needsFavoriteMetadata)
@@ -166,6 +187,13 @@ export function Liked() {
               ...loved,
               ...explicitRated.filter((track) => !used.has(track.id)),
             ])
+    if (!includesPlex) items = []
+    if (includesYoutube) {
+      items = mergeDiscoveryItems(
+        items.map(item => ({ source: "plex", item: { ...item, type: "track" } } as DiscoveryItem)),
+        youtube.items.map(item => ({ source: "ytmusic", item } as DiscoveryItem))
+      ).map(entry => entry.source === "ytmusic" ? youtubeMusicItemTrack(entry.item) : entry.item as MusicTrack)
+    }
     if (query)
       items = items.filter((track) =>
         `${track.title}\n${track.artistName}\n${track.albumName}`
@@ -185,6 +213,10 @@ export function Liked() {
     sortDir,
     collection.entries,
     favorites.ratingsByTrackId,
+    youtube.connected,
+    youtube.items,
+    includesPlex,
+    includesYoutube,
   ])
   const source = useMemo<PagedTrackSource>(() => {
     const loadItems = async (positions: number[]) => {
@@ -212,7 +244,7 @@ export function Liked() {
       )
     }
     return {
-      key: `liked:${kind}`,
+      key: `liked:${kind}:${activeService}`,
       total: indexed.items.length,
       entries: indexed.items,
       loadItems,
@@ -230,11 +262,13 @@ export function Liked() {
         }
       },
     }
-  }, [provider, kind, indexed, collection, seeds])
-  const queryKey = JSON.stringify(["liked", kind, sortCol, sortDir, query])
+  }, [provider, kind, activeService, indexed, collection, seeds])
+  const queryKey = JSON.stringify(["liked", kind, activeService, sortCol, sortDir, query])
   const preparing =
-    (kind !== "loved" && !ratedIndex.ready) ||
-    (needsFavoriteMetadata && !favoriteIndex.ready)
+    (includesPlex && kind !== "loved" && !ratedIndex.ready) ||
+    (needsFavoriteMetadata && !favoriteIndex.ready) ||
+    (includesYoutube && !youtube.error &&
+      (!youtube.initialized || youtube.loading || youtube.more))
   const selectedPages = useWindowedPages(
     preparing ? null : queryKey,
     source.loadPage,
@@ -243,7 +277,7 @@ export function Liked() {
   )
   const pages = selectedPages
   const count =
-    preparing || (favorites.loading && kind !== "rated") ? null : pages.total
+    preparing || (includesPlex && favorites.loading && kind !== "rated") ? null : pages.total
   const play = async (shuffle = false, index = 0) => {
     if (preparing || !provider) return
     await playPagedTracks(
@@ -266,7 +300,7 @@ export function Liked() {
           <p className="text-sm text-(--text-secondary)">
             {count === null
               ? "Preparing all saved songs…"
-              : `${count.toLocaleString()} ${count === 1 ? "song" : "songs"}`}
+              : `${count.toLocaleString()}${includesYoutube && youtube.more ? "+" : ""} ${count === 1 ? "song" : "songs"}`}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -308,13 +342,11 @@ export function Liked() {
           </button>
         </div>
       </div>
-      <div
-        className="flex flex-wrap gap-2 px-8 pb-4"
-        role="group"
-        aria-label="Liked Songs filter"
-      >
+      <div className="flex flex-wrap items-center gap-4 px-8 pb-4">
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Liked Songs filter">
         {(["loved", "rated", "all"] as const).map((value) => (
           <button
+            type="button"
             key={value}
             aria-pressed={kind === value}
             title={
@@ -330,14 +362,33 @@ export function Liked() {
             {value === "loved" ? "Loved" : value === "rated" ? "Rated" : "All"}
           </button>
         ))}
+        </div>
+        {youtube.connected && (
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Music source">
+            {(["all", "plex", "ytmusic"] as const).map(value => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={activeService === value}
+                title={value === "all" ? "Show songs from both services" : value === "plex" ? "Show only Plex songs" : "Show only YouTube Music songs"}
+                className={activeService === value ? "media-primary" : "media-secondary"}
+                onClick={() => setService(value)}
+              >
+                {value === "plex" && <PlexLogo size={14} />}
+                {value === "ytmusic" && <YoutubeMusicLogo size={14} />}
+                {value === "all" ? "Both" : value === "plex" ? "Plex" : "YTM"}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
-      {unavailable > 0 && kind !== "rated" && (
+      {includesPlex && unavailable > 0 && kind !== "rated" && (
         <p className="mx-8 mb-4 text-sm text-(--text-secondary)">
           {unavailable.toLocaleString()} saved favorites still need a library
           match. Review them in Sync.
         </p>
       )}
-      {favorites.error && (
+      {includesPlex && favorites.error && (
         <p role="alert" className="mx-8 mb-4 text-sm text-red-400">
           {favorites.error}{" "}
           <button
@@ -353,13 +404,19 @@ export function Liked() {
           </button>
         </p>
       )}
+      {includesYoutube && youtube.error && (
+        <p role="alert" className="mx-8 mb-4 text-sm text-(--text-secondary)">
+          Could not load all YouTube Music likes. Loaded songs are still available.{" "}
+          <button className="underline" onClick={() => void youtube.retry()}>Try again</button>
+        </p>
+      )}
       {preparing ? (
         <p
-          role={ratedIndex.error ? "alert" : "status"}
+          role={includesPlex && ratedIndex.error ? "alert" : "status"}
           className="px-8 py-12 text-sm text-(--text-secondary)"
         >
-          {ratedIndex.error || "Preparing your complete collection…"}
-          {ratedIndex.error && <button type="button" onClick={ratedIndex.retry} className="ml-2 underline">Try again</button>}
+          {(includesPlex && ratedIndex.error) || "Preparing your complete collection…"}
+          {includesPlex && ratedIndex.error && <button type="button" onClick={ratedIndex.retry} className="ml-2 underline">Try again</button>}
         </p>
       ) : (
         <TrackTable
@@ -377,11 +434,15 @@ export function Liked() {
           searchPlaceholder="Search in liked songs…"
           filterQuery={filterQuery}
           onFilterChange={setFilterQuery}
-          isLoading={favorites.loading || (pages.loading && !pages.total)}
+          isLoading={(includesPlex && favorites.loading) || (pages.loading && !pages.total)}
           currentTrackId={currentTrack?.id ?? null}
           emptyMessage={
             query
               ? "No songs match this filter."
+              : activeService === "ytmusic"
+                ? kind === "rated"
+                  ? "No rated YTM songs. Choose Loved or All to see your YouTube Music likes."
+                  : "No liked songs in YouTube Music yet."
               : kind === "rated"
                 ? "No rated songs yet. Set a song’s stars to see it here."
                 : "Give a song three stars or more, or connect your favorites in Sync."

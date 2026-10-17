@@ -21,6 +21,10 @@ pub enum Command {
         meta: TrackMeta,
     },
     ClearPreload,
+    PrepareQueue {
+        revision: u64,
+        tracks: Vec<super::preparation::Track>,
+    },
     PreloadNext {
         source: super::source::MediaSource,
         meta: TrackMeta,

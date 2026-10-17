@@ -39,6 +39,7 @@ import { setFont } from "../../../src/stores/fontStore.ts"
 import { useCardSizeStore } from "../../../src/stores/cardSizeStore.ts"
 import { useCustomColorStore } from "../../../src/stores/customColorStore.ts"
 import { QueuePanel } from "../../../src/components/QueuePanel.tsx"
+import { youtubeMusicTrack } from "../../../src/backends/ytmusic/tracks.ts"
 import { HoverInformation } from "../../../src/components/HoverInformation.tsx"
 import { useCatalogueStore } from "../../../src/offline/catalogueStore.ts"
 import { initializeQueuePersistence, flushQueuePersistence } from "../../../src/lib/queuePersistence.ts"
@@ -56,6 +57,8 @@ async function setup() {
   const queueProof = params.get("queue") === "1"
   const informationProof=params.get("information")==="1"
   let diagnosticCalls = 0
+  let diagnosticSource = "network"
+  const youtubeMetadataCalls: string[] = []
   w.fixtureDiagnostics = { calls: () => diagnosticCalls }
   let callback = 0
   let loadingGate = Promise.resolve()
@@ -110,7 +113,7 @@ async function setup() {
           outputFormat: "32-bit float", blockUs: 180, blockBudgetUs: 10000, blocks: diagnosticCalls * 50,
           bufferStarvations: 0, normalizationGain: 0.708, preampGain: 1, postGain: 0.89, volume: 0.7,
           eqEnabled: true, limiterEnabled: true, crossfading: false,
-          source: { kind: "network", downloadedBytes: 2097152 + diagnosticCalls * 262144, totalBytes: 10485760, complete: false, failed: false } }
+          source: { kind: diagnosticSource, downloadedBytes: 2097152 + diagnosticCalls * 262144, totalBytes: 10485760, complete: diagnosticSource === "cache", failed: false } }
       }
       if (command === "audio_get_waveform") return []
       if (command === "get_image_cache_info")
@@ -281,6 +284,7 @@ async function setup() {
     guid: null,
   }))
   const provider = {
+    name: "Plex",
     cacheScope: "synthetic-visual-library",
     capabilities: {
       radio: true,
@@ -303,12 +307,14 @@ async function setup() {
     buildRadioUri: (key: string) => 'synthetic://radio/' + key,
     getAlbum: async () => { await loadingGate; return album },
     getAlbumTracks: async () => tracks,
-    getTrack: async (id: string) => ({ ...tracks.find(t => t.id === id)!,
+    getTrack: async (id: string) => {
+      if (id.startsWith("ytmusic:")) youtubeMetadataCalls.push(id)
+      return ({ ...tracks.find(t => t.id === id)!,
       bitDepth: 24, samplingRate: 44100, channels: 2, gain: -3.4,
       albumGain: -3.4, loudness: -15, peak: 0.965,
       mediaInfo: { fileSize: 9200000, container: "m4a" },
       _providerData: { media: [{ parts: [{ file: "/synthetic/An exceptionally long directory name/An exceptionally long album name/Opening Track.m4a" }] }] },
-    }),
+    }) },
     getLikedTracks: async () => tracks,
     getLikedAlbums: async () => albums,
     getLikedArtists: async () => [artist],
@@ -495,6 +501,24 @@ async function setup() {
   }
   setHome(5)
   w.fixtureAppearance = {
+    youtubePreview: (mode: "playing" | "saved" | "cache" | "plex" = "playing") => {
+      const song = (videoId: string, title: string) => ({ ...youtubeMusicTrack({
+        videoId, title, artist: "Fixture Artist", album: "Fixture Album", duration: "3:14", thumbnail: null,
+      }), thumbUrl: thumb, albumThumbUrl: thumb })
+      const current = song("abcdefghijk", "YouTube fixture song with a long title")
+      const cold = { ...song("lmnopqrstuv", "Saved upcoming song"), streamUrl: null }
+      diagnosticSource = mode === "cache" ? "cache" : "network"
+      usePlayerStore.setState({
+        currentTrack: mode === "plex" ? tracks[0] : current,
+        queue: [song("ZYXWVUTSRQP", "Previously played song"), current, tracks[1], cold],
+        queueIndex: 1, isPlaying: mode !== "saved", repeat: 0,
+        playbackFormat: mode === "saved" || mode === "plex" ? null : {
+          trackId: current.id, playbackId: 1,
+          format: { codec: "AAC", bit_depth: null, sample_rate: 44100, channels: 2 },
+        },
+      })
+    },
+    youtubeMetadataCalls: () => youtubeMetadataCalls,
     liked: (id: string, liked: boolean) => {
       const ids = new Set(useFavoritesStore.getState().likedTrackIds)
       if (liked) ids.add(id); else ids.delete(id)

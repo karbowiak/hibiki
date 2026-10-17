@@ -1,3 +1,4 @@
+import { albumArtistEntity, trackEntity } from "../../lib/musicLinks"
 import { deduplicateAlbumItems } from "../../lib/dedup"
 import { useUIStore } from "../../stores/uiStore"
 import { Link } from "wouter"
@@ -20,6 +21,11 @@ import { SearchDiscovery } from "./SearchDiscovery"
 import { TrackTable } from "../shared/TrackTable"
 import { useCapability } from "../../hooks/useCapability"
 import type { ColId } from "../../hooks/useColumnPicker"
+import { DiscoveryCard } from "../shared/DiscoveryCard"
+import { MusicSourceBadge } from "../shared/MusicSource"
+import { originalYoutubeMusicItem } from "../../backends/ytmusic/discovery"
+import { useYoutubeMusicDiscoveryStore } from "../../backends/ytmusic/discovery"
+import { useProviderStore } from "../../stores/providerStore"
 
 type MediaType = "artist" | "album" | "track" | "playlist"
 
@@ -42,16 +48,16 @@ const TRACK_COLUMNS: { id: ColId; label: string }[] = [
 ]
 const VISIBLE_TRACK_COLUMNS = new Set<ColId>(["album"])
 type SearchView = {
-  results: MusicItem[]
+  owner: object
   query: string
   filter: MediaType | "all"
   limits: Record<MediaType, number>
   sortCol: string
   sortDir: "asc" | "desc"
 }
-function newView(results: MusicItem[], query: string): SearchView {
+function newView(owner: object, query: string): SearchView {
   return {
-    results,
+    owner,
     query,
     filter: "all",
     limits: { ...PAGE_SIZE },
@@ -125,6 +131,10 @@ function getInfo(item: MusicItem) {
 }
 
 export function Search() {
+  const provider = useProviderStore(state => state.provider)
+  const youtubeRevision = useYoutubeMusicDiscoveryStore(state => state.revision)
+  const youtubeConnected = useYoutubeMusicDiscoveryStore(state => state.connected)
+  const owner = useMemo(() => ({}), [provider, provider?.playbackSession, provider?.cacheScope, youtubeRevision, youtubeConnected])
   const { results, isSearching, error, query, search } = useSearchStore(
     useShallow((s) => ({
       results: s.results,
@@ -158,19 +168,19 @@ export function Search() {
   const showResults = query.trim().length > 0
   const shouldDeduplicate=useUIStore(s=>s.deduplicateAlbums)
   const groups = useMemo(() => groupByType(shouldDeduplicate ? deduplicateAlbumItems(results) : results), [results,shouldDeduplicate])
-  const [storedView, setView] = useState(() => newView(results, query))
-  // Scope local presentation to the actual result snapshot, including account
-  // switches that reuse the same query text. No retired filter/page hides new data.
+  const [storedView, setView] = useState(() => newView(owner, query))
+  // Keep presentation choices while either service streams/revalidates results;
+  // changing the query or connected account starts a fresh view.
   const view =
-    storedView.results === results && storedView.query === query
+    storedView.owner === owner && storedView.query === query
       ? storedView
-      : newView(results, query)
+      : newView(owner, query)
   const updateView = (change: (current: SearchView) => SearchView) =>
     setView((current) =>
       change(
-        current.results === results && current.query === query
+        current.owner === owner && current.query === query
           ? current
-          : newView(results, query)
+          : newView(owner, query)
       )
     )
   const tracks = useMemo(() => {
@@ -201,10 +211,10 @@ export function Search() {
         <p className="mt-2 text-sm text-(--text-secondary)">
           {showResults
             ? isSearching
-              ? "Searching your library…"
+              ? "Searching music…"
               : error
                 ? "Search could not be completed."
-                : `${total} ${total === 1 ? "result" : "results"} in your library`
+                : `${total} ${total === 1 ? "result" : "results"}`
             : "Pick up where you left off, or find your next favorite."}
         </p>
       </header>
@@ -318,6 +328,8 @@ export function Search() {
                 ) : (
                   <MediaGrid gap={3}>
                     {items.slice(0, limit).map((item, index) => {
+                      const remote = originalYoutubeMusicItem(item)
+                      if (remote) return <DiscoveryCard key={item.id} entry={{ source: "ytmusic", item: remote }} />
                       const info = getInfo(item)
                       if (!info) return null
                       const prefetch =
@@ -337,7 +349,9 @@ export function Search() {
                           key={`${info.id}-${index}`}
                           title={info.title}
                           desc={info.desc}
+                          descriptionEntity={item.type === "album" ? albumArtistEntity(item) : item.type === "track" ? trackEntity(item, "artist") : null}
                           thumb={info.thumb}
+                          artworkBadge={<MusicSourceBadge source="plex" />}
                           isArtist={info.isArtist}
                           href={info.href ?? undefined}
                           prefetch={prefetch}

@@ -12,6 +12,7 @@ pub struct PlaybackRequest {
     stop_revision: Option<Arc<AtomicU64>>,
     preload_revision: Option<(Arc<AtomicU64>, u64)>,
     audible_deck: Option<(Arc<AtomicU8>, u8, Arc<AtomicBool>, Arc<AtomicU64>)>,
+    background_guard: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 }
 
 impl PlaybackRequest {
@@ -25,11 +26,20 @@ impl PlaybackRequest {
             stop_revision: None,
             preload_revision: None,
             audible_deck: None,
+            background_guard: None,
         }
     }
 
     pub fn for_preload(mut self, revision: Arc<AtomicU64>, value: u64) -> Self {
         self.preload_revision = Some((revision, value));
+        self
+    }
+
+    pub(super) fn while_background(
+        mut self,
+        current: impl Fn() -> bool + Send + Sync + 'static,
+    ) -> Self {
+        self.background_guard = Some(Arc::new(current));
         self
     }
 
@@ -54,6 +64,13 @@ impl PlaybackRequest {
     }
 
     pub fn is_current(&self) -> bool {
+        if self
+            .background_guard
+            .as_ref()
+            .is_some_and(|current| !current())
+        {
+            return false;
+        }
         if self
             .stop_revision
             .as_ref()

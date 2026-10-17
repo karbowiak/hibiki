@@ -1,17 +1,13 @@
 import { useState } from "react"
 import { PlaylistSyncDialog } from "../PlaylistSync/PlaylistSyncDialog"
-import { MediaCard } from "../MediaCard"
-import { useShallow } from "zustand/react/shallow"
-import { useLibraryStore } from "../../stores"
-import { usePlayerStore } from "../../stores/playerStore"
-import { useContextMenu } from "../../hooks/useContextMenu"
 import { MediaGrid } from "../shared/MediaGrid"
+import { useLibraryPlaylists } from "../../hooks/useLibraryPlaylists"
+import { LibraryPlaylistCard } from "../shared/LibraryPlaylistCard"
+import { DiscoveryMore } from "../shared/DiscoveryMore"
 
 export function Playlists() {
   const [showSync, setShowSync] = useState(false)
-  const playlists = useLibraryStore((s) => s.playlists)
-  const playPlaylist = usePlayerStore(useShallow((s) => s.playPlaylist))
-  const { handler: ctxMenu } = useContextMenu()
+  const { playlists, youtube } = useLibraryPlaylists()
 
   const count = playlists.length
 
@@ -49,24 +45,10 @@ export function Playlists() {
           </div>
         ) : (
           <MediaGrid>
-            {playlists.map((pl) => {
-              const href = `/playlist/${pl.id}`
-              return (
-                <MediaCard
-                  key={pl.id}
-                  href={href}
-                  title={pl.title}
-                  desc={`${pl.trackCount.toLocaleString()} ${pl.trackCount === 1 ? "song" : "songs"}`}
-                  thumb={pl.thumbUrl}
-                  onContextMenu={ctxMenu("playlist", pl)}
-                  onPlay={() =>
-                    void playPlaylist(pl.id, pl.trackCount, pl.title, href)
-                  }
-                />
-              )
-            })}
+            {playlists.map(playlist => <LibraryPlaylistCard key={playlist.id} playlist={playlist} />)}
           </MediaGrid>
         )}
+        {youtube.connected && <DiscoveryMore more={youtube.more} loading={youtube.loading} error={youtube.error} load={() => void (youtube.error ? youtube.retry() : youtube.loadMore())} />}
       </div>
     </div>
   )

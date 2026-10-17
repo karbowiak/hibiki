@@ -316,6 +316,11 @@ export class PlexProvider implements MusicProvider {
     return hubs.map((h) => plexHubToMusicHub(h, this.img))
   }
 
+  async getDiscoveryPage(kind: "recent" | "latest" | "hub", offset: number, limit: number, hub?: MusicHub): Promise<PagedResult<MusicItem>> {
+    const page = await this.api.getDiscoveryPage(this.requireSection(), kind, offset, limit, hub?.identifier, hub?.key)
+    return { ...page, items: page.items.map(item => plexMediaToMusicItem(item, this.img)).filter((item): item is MusicItem => item !== null) }
+  }
+
   async getLatestReleases(limit = 30): Promise<MusicAlbum[]> {
     const albums = await this.api.getLatestReleases(
       this.requireSection(),

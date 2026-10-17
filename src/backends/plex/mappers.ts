@@ -249,6 +249,7 @@ function deriveHubLayout(identifier: string, style: string | null): HubLayout {
 
 export function plexHubToMusicHub(h: Hub, img: ImgResolver): MusicHub {
   return {
+    key: h.key || h.hub_key || null,
     title: h.title,
     identifier: h.hub_identifier,
     items: h.metadata

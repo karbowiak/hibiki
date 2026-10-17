@@ -1,4 +1,4 @@
-import { useArtistPage } from "../../hooks/useMetadataPage"
+import { useArtistCatalog } from "../../hooks/useArtistCatalog"
 import { DownloadBadge } from "../shared/DownloadBadge"
 import { makeOnPlay } from "../../lib/mediaPlay"
 import { DownloadMenuItems } from "../shared/DownloadMenuItems"
@@ -19,6 +19,7 @@ import { useContextMenu } from "../../hooks/useContextMenu"
 import type {
   MusicArtist,
   MusicAlbum,
+  MusicTrack,
 } from "../../types/music"
 import { MediaCard } from "../MediaCard"
 import { ScrollRow } from "../ScrollRow"
@@ -43,6 +44,12 @@ import { useMetadataSnapshot } from "../../hooks/useMetadataSnapshot"
 import { MetadataEditDialog } from "../shared/MetadataEditDialog"
 import { AppDialog } from "../shared/AppDialog"
 import { VersionReviewPanel } from "../VersionReview/VersionReviewPanel"
+import { DiscoveryCard } from "../shared/DiscoveryCard"
+import { ArtistCatalogSection } from "../shared/ArtistCatalogSection"
+import { MusicSourceBadge } from "../shared/MusicSource"
+import { mergeDiscoveryItems, plexDiscoveryItems, youtubeDiscoveryItems, type DiscoveryItem } from "../../lib/discovery"
+import { youtubeMusicItemTrack, type YoutubeMusicHub } from "../../backends/ytmusic/discovery"
+import { artistPlaybackSource } from "../../lib/artistPlayback"
 
 const DETAIL_SOURCES = ["lastfm", "deezer"] as const
 
@@ -93,9 +100,12 @@ export function SimilarArtistAvatar({
   )
 }
 
-export function ArtistPage({ artistId }: { artistId: string }) {
+export function ArtistPage({ artistId: routeArtistId }: { artistId: string }) {
   const [, navigate] = useLocation()
   const provider = useProviderStore((s) => s.provider)
+  const catalog = useArtistCatalog(routeArtistId)
+  const artistId = catalog.plexId ?? routeArtistId
+  const isPlex = !!catalog.plexId
   const { playTrack, playFromUri, playRadio, addToQueue, currentTrack } =
     usePlayerStore(
       useShallow((s) => ({
@@ -108,14 +118,16 @@ export function ArtistPage({ artistId }: { artistId: string }) {
     )
   const { handler: ctxMenu } = useContextMenu()
   const shouldDedup = useUIStore((s) => s.deduplicateAlbums)
-  const hasRadio = useCapability("radio")
-  const hasSonicSimilarity = useCapability("sonicSimilarity")
+  const hasRadio = useCapability("radio") && isPlex
+  const hasSonicSimilarity = useCapability("sonicSimilarity") && isPlex
 
-  const { entry, isLoading, error, retry } = useArtistPage(artistId)
-  const artist = entry?.artist ?? null
+  const { entry, isLoading, error, retry, artist } = catalog
   const fullAlbums = entry?.albums ?? []
   const singles = entry?.singles ?? []
-  const popularTracks = entry?.popularTracks ?? []
+  const popularTracks = useMemo(() => mergeDiscoveryItems(
+    plexDiscoveryItems((entry?.popularTracks ?? []).map(track => ({ ...track, type: "track" as const }))),
+    youtubeDiscoveryItems(catalog.youtube?.items.filter(item => item.kind === "song") ?? [])
+  ).map(item => item.source === "ytmusic" ? youtubeMusicItemTrack(item.item) : item.item as MusicTrack), [entry?.popularTracks, catalog.youtube])
   const similarArtists = entry?.similarArtists ?? []
   const sonicallySimilar = entry?.sonicallySimilar ?? []
   const relatedHubs = entry?.relatedHubs ?? []
@@ -149,26 +161,26 @@ export function ArtistPage({ artistId }: { artistId: string }) {
     setEditOpen(false)
     setVersionAlbum(null)
     setShowHeroModal(false)
+    setMenuOpen(false)
   }, [provider, artistId])
 
   const { failures, onFailure } = useArtworkFailures(
     JSON.stringify([artistId, artist?.title, artist?.thumbUrl, artist?.artUrl])
   )
   const artUrl = useArtistBackground(
-    artist?.title ?? null,
+    isPlex ? artist?.title ?? null : null,
     artist?.artUrl ?? null,
     artistId,
     failures
   )
   const thumbUrl = useArtistImage(
-    artist?.title ?? null,
+    isPlex ? artist?.title ?? null : null,
     artist?.thumbUrl ?? null,
     artistId,
     failures
   )
 
-  // Map from lowercase artist name → library artist for "Fans Also Like" linking.
-  // Covers both Plex-similar and sonically-similar artists that are in the library.
+  // Last.fm recommendations keep their existing Plex links.
   const plexArtistMap = useMemo(() => {
     const map = new Map<string, MusicArtist>()
     for (const a of [...similarArtists, ...sonicallySimilar]) {
@@ -223,8 +235,41 @@ export function ArtistPage({ artistId }: { artistId: string }) {
     }
     return { albumHubs, displayAlbums: da, displaySingles: ds, genres: g }
   }, [relatedHubs, fullAlbums, singles, shouldDedup])
+  const ownedReleases = useMemo(() => plexDiscoveryItems([
+    ...fullAlbums, ...singles, ...albumHubs.flatMap(hub => hub.items.filter(item => item.type === "album")),
+  ].map(album => ({ ...album, type: "album" as const }))), [fullAlbums, singles, albumHubs])
+  const sections = useMemo(() => {
+    const remaining = [...(catalog.youtube?.hubs ?? [])].filter(hub => !["songs", "similar"].includes(hub.category))
+    const take = (category: string) => {
+      const index = remaining.findIndex(hub => hub.category === category)
+      return index >= 0 ? remaining.splice(index, 1)[0] : undefined
+    }
+    const rows: { id: string; title: string; plex: DiscoveryItem[]; youtube?: YoutubeMusicHub }[] = [
+      { id: "albums", title: "Albums", plex: plexDiscoveryItems(displayAlbums.map(album => ({ ...album, type: "album" as const }))), youtube: take("albums") },
+      { id: "singles", title: "Singles & EPs", plex: plexDiscoveryItems(displaySingles.map(album => ({ ...album, type: "album" as const }))), youtube: take("singles") },
+    ]
+    for (const hub of albumHubs) {
+      const role = /live|performance/i.test(hub.title) ? "live" : /featured|appears on/i.test(hub.title) ? "features" : ""
+      rows.push({ id: hub.identifier, title: hub.title, plex: plexDiscoveryItems(hub.items.filter(item => item.type === "album")), youtube: role ? take(role) : undefined })
+    }
+    remaining.forEach(hub => rows.push({ id: hub.id, title: hub.category === "features" ? "Featured On" : hub.category === "live" ? "Live Performances" : hub.title, plex: [], youtube: hub }))
+    return rows
+  }, [catalog.youtube, displayAlbums, displaySingles, albumHubs])
+  const similarPlex = useMemo(() => plexDiscoveryItems(similarArtists.map(artist => ({ ...artist, type: "artist" as const }))), [similarArtists])
+  const similarYoutube = useMemo(() => {
+    const hubs = catalog.youtube?.hubs.filter(hub => hub.category === "similar") ?? []
+    return hubs.length ? { ...hubs[0], items: hubs.flatMap(hub => hub.items) } : undefined
+  }, [catalog.youtube])
+  const releaseCounts = useMemo(() => {
+    const count = (local: MusicAlbum[], category: string) => {
+      const hubs = catalog.youtube?.hubs.filter(hub => hub.category === category) ?? []
+      const mixed = mergeDiscoveryItems(plexDiscoveryItems(local.map(album => ({ ...album, type: "album" as const }))), youtubeDiscoveryItems(hubs.flatMap(hub => hub.items)))
+      return `${mixed.length}${hubs.some(hub => hub.destination || hub.continuation) ? "+" : ""}`
+    }
+    return { albums: count(fullAlbums, "albums"), singles: count(singles, "singles") }
+  }, [fullAlbums, singles, catalog.youtube])
   const sharedMetadata = useMetadataSnapshot(
-    artist && provider?.cacheScope
+    artist && isPlex && provider?.cacheScope
       ? {
           kind: "artist",
           entityId: artist.id,
@@ -275,14 +320,18 @@ export function ArtistPage({ artistId }: { artistId: string }) {
       <div className="p-6">
         <PageRecovery
           title={
-            !provider
+            routeArtistId.startsWith("ytmusic:") && !catalog.connected
+              ? "Connect YouTube Music"
+              : !provider
               ? "Connect your music library"
               : error
                 ? "Couldn't load this artist"
                 : "Artist unavailable"
           }
           description={
-            !provider
+            routeArtistId.startsWith("ytmusic:") && !catalog.connected
+              ? "Sign in with the YTM button to browse this artist."
+              : !provider
               ? "Choose a music server in Settings to browse artists."
               : "Check your connection and try again, or choose another artist from your library."
           }
@@ -305,13 +354,36 @@ export function ArtistPage({ artistId }: { artistId: string }) {
       { ...artist, type: "artist" },
       { ...usePlayerStore.getState(), provider }
     )?.()
-  const artistUri = provider?.buildItemUri
+  const artistUri = isPlex && provider?.buildItemUri
     ? provider.buildItemUri(`/library/metadata/${artistId}`)
     : null
 
-  // Bio: pick from the highest-priority source that has text.
-  // Only Plex and Last.fm have artist bios; Deezer and Apple are skipped.
-  const displayBio = sharedMetadata.resolveField("biography")?.value
+  // Keep the existing metadata preference, with YTM's biography as a fallback.
+  const displayBio = sharedMetadata.resolveField("biography")?.value || catalog.youtube?.artist?.description
+  const playArtist = (shuffle = false) => {
+    if (catalog.youtube && !provider?.isOffline) {
+      void usePlayerStore.getState().playPagedTracks(
+        artistPlaybackSource(provider, catalog.plexId, entry?.popularTracks ?? [], catalog.youtube),
+        artist.title, catalog.href, shuffle)
+    } else if (provider?.isOffline) playOfflineArtist()
+    else if (artistUri) void playFromUri(artistUri, shuffle, artist.title, catalog.href)
+  }
+  const renderCatalogItem = (entry: DiscoveryItem) => {
+    if (entry.source === "ytmusic") return <DiscoveryCard key={`ytmusic:${entry.item.id}`} entry={entry} scrollItem showYear />
+    const item = entry.item
+    if (item.type === "album") return <MediaCard key={`plex:${item.id}`} title={item.title} desc={item.year ? String(item.year) : ""}
+      versionCount={1 + (item._alternateIds?.length ?? 0)} onViewVersions={() => setVersionAlbum(item)}
+      thumb={item.thumbUrl} href={`/album/${item.id}`} prefetch={() => prefetchAlbum(item.id)}
+      artworkBadge={<MusicSourceBadge source="plex" />}
+      onPlay={() => { const uri = provider?.buildItemUri?.(`/library/metadata/${item.id}`)
+        if (uri) void playFromUri(uri, false, item.title, `/album/${item.id}`, item.id) }}
+      onContextMenu={ctxMenu("album", item)} dragPayload={{ type: "album", ids: [item.id], label: item.title }} scrollItem />
+    if (item.type === "artist") return <MediaCard key={`plex:${item.id}`} title={item.title} desc="Artist" thumb={item.thumbUrl}
+      artworkBadge={<MusicSourceBadge source="plex" />}
+      href={`/artist/${item.id}`} prefetch={() => prefetchArtist(item.id)} onPlay={makeOnPlay(item, { ...usePlayerStore.getState(), provider })}
+      onContextMenu={ctxMenu("artist", item)} dragPayload={{ type: "artist", ids: [item.id], label: item.title }} isArtist scrollItem />
+    return null
+  }
 
   // Enrichment choices retain only tags that can open a real library collection.
   const resolvedGenres = sharedMetadata.resolveField("genres")
@@ -405,7 +477,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
             ) : (
               <div className="h-36 w-36 shrink-0 rounded-lg bg-app-surface shadow-2xl" />
             )}
-            <ArtworkSourcePicker
+            {isPlex && <ArtworkSourcePicker
               kind="artist"
               artistName={artist.title}
               plexThumb={artist.thumbUrl}
@@ -413,14 +485,16 @@ export function ArtistPage({ artistId }: { artistId: string }) {
               label={`Edit ${artist.title} artwork sources`}
               iconOnly
               className="artwork-edit-trigger"
-            />
+            />}
           </div>
 
           {/* Info column — no fixed height, flows naturally */}
           <div className="flex min-w-0 flex-[1_1_20rem] flex-col gap-2">
             <div className="flex items-center gap-2">
               <div className="media-detail-eyebrow">Artist</div>
-              <DownloadBadge kind="artist" id={artistId} />
+              {isPlex && <DownloadBadge kind="artist" id={artistId} />}
+              {isPlex && <MusicSourceBadge source="plex" label />}
+              {catalog.youtube && <MusicSourceBadge source="ytmusic" label />}
             </div>
             <h1 className="media-detail-title select-text wrap-break-word">
               {artist.title}
@@ -471,16 +545,18 @@ export function ArtistPage({ artistId }: { artistId: string }) {
             )}
 
             {/* Rating */}
-            <HeroRating
+            {isPlex && <HeroRating
               itemId={artistId}
               userRating={artist.userRating}
               itemType="artist"
               onHero
-            />
+            />}
 
             {/* Metadata stats row */}
-            {(lastfmData || deezerData || dedupStats) && (
+            {(lastfmData || deezerData || dedupStats || catalog.youtube?.artist?.monthlyListeners || catalog.youtube?.artist?.subscribers) && (
               <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-white/80">
+                {catalog.youtube?.artist?.monthlyListeners && <span>{catalog.youtube.artist.monthlyListeners} · YTM</span>}
+                {catalog.youtube?.artist?.subscribers && <span>{catalog.youtube.artist.subscribers} · YTM</span>}
                 {lastfmData && lastfmData.listeners > 0 && (
                   <span>{lastfmData.listeners.toLocaleString()} listeners</span>
                 )}
@@ -514,21 +590,11 @@ export function ArtistPage({ artistId }: { artistId: string }) {
           <div className="relative z-20 flex w-full flex-wrap items-center gap-2 pt-3">
             {/* Play */}
             <button
-              onClick={() =>
-                provider?.isOffline
-                  ? playOfflineArtist()
-                  : artistUri &&
-                    void playFromUri(
-                      artistUri,
-                      false,
-                      artist.title,
-                      `/artist/${artistId}`
-                    )
-              }
+              onClick={() => playArtist()}
               disabled={
                 provider?.isOffline
                   ? artist.offlineAvailable !== true
-                  : !artistUri
+                  : !artistUri && !catalog.youtube
               }
               title="Play"
               className="media-primary"
@@ -545,17 +611,9 @@ export function ArtistPage({ artistId }: { artistId: string }) {
             </button>
             {/* Shuffle */}
             <button
-              onClick={() =>
-                artistUri &&
-                void playFromUri(
-                  artistUri,
-                  true,
-                  artist.title,
-                  `/artist/${artistId}`
-                )
-              }
+              onClick={() => playArtist(true)}
               disabled={
-                !artistUri ||
+                (!artistUri && !catalog.youtube) ||
                 (!!provider?.isOffline && artist.offlineAvailable !== true)
               }
               title="Shuffle play"
@@ -625,7 +683,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                           right: window.innerWidth - (rect?.right ?? 0),
                         }}
                       >
-                        <DownloadMenuItems
+                        {isPlex && <DownloadMenuItems
                           kind="artist"
                           id={artistId}
                           title={artist.title}
@@ -634,9 +692,9 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                             menuOpen &&
                             useProviderStore.getState().provider === provider
                           }
-                        />
+                        />}
                         {/* Queue */}
-                        <button
+                        {isPlex && <button
                           type="button"
                           onClick={() => {
                             setMenuOpen(false)
@@ -645,7 +703,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                           className="flex w-full items-center gap-2 px-3 py-2 text-sm text-(--text-primary) hover:bg-(--bg-surface-hover)"
                         >
                           Edit metadata and sources…
-                        </button>
+                        </button>}
                         <button
                           onClick={() => {
                             addToQueue(popularTracks)
@@ -664,10 +722,8 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                           Add popular to queue
                         </button>
 
-                        <hr className="my-1 border-t border-(--border)" />
-
                         {/* Rating */}
-                        <StarRating
+                        {isPlex && <StarRating
                           itemId={artist.id}
                           itemType="artist"
                           userRating={artist.userRating ?? null}
@@ -676,7 +732,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                           track=""
                           size={14}
                           onRated={() => setMenuOpen(false)}
-                        />
+                        />}
 
                         <hr className="my-1 border-t border-(--border)" />
 
@@ -684,6 +740,10 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                         <div className="px-3 pb-0.5 pt-2 text-xs font-semibold text-(--text-secondary)">
                           Share
                         </div>
+                        {catalog.youtube?.artist && <button type="button" onClick={() => {
+                          void open(`https://music.youtube.com/channel/${catalog.youtube!.artist!.id}`)
+                          setMenuOpen(false)
+                        }} className="flex w-full items-center gap-2 px-3 py-2 text-sm text-(--text-primary) hover:bg-(--bg-surface-hover)">YouTube Music</button>}
                         <button
                           onClick={() => {
                             void open(
@@ -724,7 +784,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                         )}
 
                         {/* Debug */}
-                        {debugEnabled && (
+                        {isPlex && debugEnabled && (
                           <>
                             <hr className="my-1 border-t border-(--border)" />
                             <div className="px-3 pb-0.5 pt-2 text-xs font-semibold text-(--text-secondary)">
@@ -762,11 +822,11 @@ export function ArtistPage({ artistId }: { artistId: string }) {
       <dl className="media-ledger" aria-label="Artist overview">
         <div>
           <dt>Albums</dt>
-          <dd>{fullAlbums.length}</dd>
+          <dd>{releaseCounts.albums}</dd>
         </div>
         <div>
           <dt>Singles &amp; EPs</dt>
-          <dd>{singles.length}</dd>
+          <dd>{releaseCounts.singles}</dd>
         </div>
         {lastfmData?.listeners != null && (
           <div>
@@ -776,6 +836,10 @@ export function ArtistPage({ artistId }: { artistId: string }) {
         )}
       </dl>
       <div className="flex flex-col gap-10 p-8">
+        {catalog.youtubeLoading && <p role="status" className="text-sm text-(--text-secondary)">Loading YouTube Music releases…</p>}
+        {catalog.youtubeError && artist && <p role="alert" className="text-sm text-(--text-secondary)">
+          Could not load YouTube Music releases.{" "}<button type="button" className="underline" onClick={retry}>Try again</button>
+        </p>}
         {error && metadataRefreshMessage(error, "artist") && (
           <PageRecovery
             title="Couldn't refresh this artist"
@@ -795,7 +859,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                       popularTracks[0],
                       popularTracks,
                       artist.title,
-                      `/artist/${artistId}`
+                      catalog.href
                     )
                   }
                   title="Play popular tracks"
@@ -815,7 +879,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                 <button
                   onClick={() => {
                     const s = [...popularTracks].sort(() => Math.random() - 0.5)
-                    void playTrack(s[0], s, artist.title, `/artist/${artistId}`)
+                    void playTrack(s[0], s, artist.title, catalog.href)
                   }}
                   title="Shuffle popular tracks"
                   className="group flex items-center gap-1.5 rounded-full border border-(--border) bg-app-surface px-3 py-1 text-xs font-semibold text-(--text-secondary) transition-all duration-200 hover:border-(--border-strong) hover:bg-app-surface-hover hover:text-(--text-primary) active:scale-95"
@@ -844,7 +908,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                   track,
                   playablePopularTracks,
                   artist.title,
-                  `/artist/${artistId}`
+                  catalog.href
                 )
               }}
               onAddToQueue={addToQueue}
@@ -853,188 +917,26 @@ export function ArtistPage({ artistId }: { artistId: string }) {
           </section>
         )}
 
-        {displayAlbums.length > 0 && (
-          <ScrollRow title="Albums" restoreKey={`artist-${artistId}-albums`}>
-            {displayAlbums.map((album) => (
-              <MediaCard
-                key={album.id}
-                title={album.title}
-                desc={String(album.year)}
-                versionCount={1 + (album._alternateIds?.length ?? 0)}
-                onViewVersions={() => setVersionAlbum(album)}
-                thumb={album.thumbUrl}
-                href={`/album/${album.id}`}
-                prefetch={() => prefetchAlbum(album.id)}
-                onPlay={() => {
-                  const uri = provider?.buildItemUri?.(
-                    `/library/metadata/${album.id}`
-                  )
-                  if (uri)
-                    void playFromUri(
-                      uri,
-                      false,
-                      album.title,
-                      `/album/${album.id}`,
-                      album.id
-                    )
-                }}
-                onContextMenu={ctxMenu("album", album)}
-                dragPayload={{
-                  type: "album",
-                  ids: [album.id],
-                  label: album.title,
-                }}
-                scrollItem
-              />
-            ))}
-          </ScrollRow>
-        )}
+        {sections.map(section => (
+          <ArtistCatalogSection key={`${routeArtistId}:${section.id}`} title={section.title}
+            restoreKey={`artist-${routeArtistId}-${section.id}`} plex={section.plex} youtube={section.youtube}
+            ownedReleases={ownedReleases} renderItem={renderCatalogItem} artistName={artist.title} />
+        ))}
 
-        {displaySingles.length > 0 && (
-          <ScrollRow
-            title="Singles & EPs"
-            restoreKey={`artist-${artistId}-singles`}
-          >
-            {displaySingles.map((album) => (
-              <MediaCard
-                key={album.id}
-                title={album.title}
-                desc={`Single · ${album.year}`}
-                versionCount={1 + (album._alternateIds?.length ?? 0)}
-                onViewVersions={() => setVersionAlbum(album)}
-                thumb={album.thumbUrl}
-                href={`/album/${album.id}`}
-                prefetch={() => prefetchAlbum(album.id)}
-                onPlay={() => {
-                  const uri = provider?.buildItemUri?.(
-                    `/library/metadata/${album.id}`
-                  )
-                  if (uri)
-                    void playFromUri(
-                      uri,
-                      false,
-                      album.title,
-                      `/album/${album.id}`,
-                      album.id
-                    )
-                }}
-                onContextMenu={ctxMenu("album", album)}
-                dragPayload={{
-                  type: "album",
-                  ids: [album.id],
-                  label: album.title,
-                }}
-                scrollItem
-              />
-            ))}
-          </ScrollRow>
-        )}
-
-        {albumHubs.map((hub) => {
-          const albums = hub.items.filter((m) => m.type === "album")
-          if (albums.length === 0) return null
-          return (
-            <ScrollRow
-              key={hub.identifier}
-              title={hub.title}
-              restoreKey={`artist-${artistId}-${hub.identifier}`}
-            >
-              {albums.map((a) => (
-                <MediaCard
-                  key={a.id}
-                  title={a.title}
-                  desc={String(a.year)}
-                  versionCount={
-                    1 + ((a as MusicAlbum)._alternateIds?.length ?? 0)
-                  }
-                  onViewVersions={() => setVersionAlbum(a as MusicAlbum)}
-                  thumb={a.thumbUrl}
-                  href={`/album/${a.id}`}
-                  prefetch={() => prefetchAlbum(a.id)}
-                  onPlay={() => {
-                    const uri = provider?.buildItemUri?.(
-                      `/library/metadata/${a.id}`
-                    )
-                    if (uri)
-                      void playFromUri(
-                        uri,
-                        false,
-                        a.title,
-                        `/album/${a.id}`,
-                        a.id
-                      )
-                  }}
-                  onContextMenu={ctxMenu("album", a)}
-                  dragPayload={{ type: "album", ids: [a.id], label: a.title }}
-                  scrollItem
-                />
-              ))}
-            </ScrollRow>
-          )
-        })}
-
-        {similarArtists.length > 0 && (
-          <ScrollRow
-            title="Similar Artists"
-            restoreKey={`artist-${artistId}-similar`}
-          >
-            {similarArtists.map((a) => (
-              <MediaCard
-                key={a.id}
-                title={a.title}
-                desc="Artist"
-                thumb={a.thumbUrl}
-                href={`/artist/${a.id}`}
-                prefetch={() => prefetchArtist(a.id)}
-                onPlay={() => {
-                  const uri = provider?.buildItemUri?.(
-                    `/library/metadata/${a.id}`
-                  )
-                  if (uri)
-                    void playFromUri(uri, false, a.title, `/artist/${a.id}`)
-                }}
-                onContextMenu={ctxMenu("artist", a)}
-                dragPayload={{ type: "artist", ids: [a.id], label: a.title }}
-                isArtist
-                scrollItem
-              />
-            ))}
-          </ScrollRow>
+        {(similarPlex.length > 0 || !!similarYoutube?.items.length) && (
+          <ArtistCatalogSection title="Similar Artists" restoreKey={`artist-${routeArtistId}-similar`}
+            plex={similarPlex} youtube={similarYoutube} renderItem={renderCatalogItem} artistName={artist.title} />
         )}
 
         {hasSonicSimilarity && sonicallySimilar.length > 0 && (
-          <ScrollRow
-            title="Sonically Similar Artists"
-            restoreKey={`artist-${artistId}-sonic`}
-          >
-            {sonicallySimilar.map((a) => {
-              const distance = a.distance
-              const matchPct =
-                distance != null
-                  ? `${Math.round((1 - distance) * 100)}% match`
-                  : "Artist"
-              return (
-                <MediaCard
-                  key={a.id}
-                  title={a.title}
-                  desc={matchPct}
-                  thumb={a.thumbUrl}
-                  href={`/artist/${a.id}`}
-                  prefetch={() => prefetchArtist(a.id)}
-                  onPlay={() => {
-                    const uri = provider?.buildItemUri?.(
-                      `/library/metadata/${a.id}`
-                    )
-                    if (uri)
-                      void playFromUri(uri, false, a.title, `/artist/${a.id}`)
-                  }}
-                  onContextMenu={ctxMenu("artist", a)}
-                  dragPayload={{ type: "artist", ids: [a.id], label: a.title }}
-                  isArtist
-                  scrollItem
-                />
-              )
-            })}
+          <ScrollRow title="Sonically Similar Artists" restoreKey={`artist-${routeArtistId}-sonic`}>
+            {sonicallySimilar.map(item => <MediaCard key={item.id} title={item.title}
+              desc={item.distance != null ? `${Math.round((1 - item.distance) * 100)}% match` : "Artist"}
+              thumb={item.thumbUrl} href={`/artist/${item.id}`} prefetch={() => prefetchArtist(item.id)}
+              artworkBadge={<MusicSourceBadge source="plex" />}
+              onPlay={makeOnPlay({ ...item, type: "artist" }, { ...usePlayerStore.getState(), provider })}
+              onContextMenu={ctxMenu("artist", item)} dragPayload={{ type: "artist", ids: [item.id], label: item.title }}
+              isArtist scrollItem />)}
           </ScrollRow>
         )}
 

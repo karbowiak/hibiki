@@ -8,7 +8,7 @@
  * Module-level singleton: `import { engine } from "../audio/RustAudioEngine"`
  */
 
-import type { TrackPlaybackInfo } from "../providers/types"
+import type { LevelData, TrackPlaybackInfo } from "../providers/types"
 import type { TransitionInfo } from "./transitionInfo"
 import type { TrackStarted, TrackEnded } from "./playbackJournal"
 import { PlaybackEventGate } from "./playbackEventGate"
@@ -31,6 +31,16 @@ export interface AudioEngineCallbacks {
 }
 
 export interface PlaybackLabels { artist: string; track: string; album: string; album_artist: string }
+
+export interface QueuePreparationTrack {
+  url: string
+  ratingKey: number
+  durationMs: number
+  gainDb: number | null
+  /** Generate from cached audio only when the provider has no waveform. */
+  prepareWaveform?: boolean
+  context?: TrackPlaybackInfo["plexContext"]
+}
 
 export interface AudioCacheStats {
   total_bytes: number
@@ -72,6 +82,9 @@ export class RustAudioEngine {
   constructor(private ipc: AudioTransport = { invoke, listen }) {}
   private cb: AudioEngineCallbacks | null = null
   private eventGate = new PlaybackEventGate()
+  private selectionVersion = 0
+  private playbackRequestId: number | null = null
+  private preparationBatch = 0
   private listenerGeneration = 0
   private unlisteners: UnlistenFn[] = []
   private eqConfigurationBusy = false
@@ -96,6 +109,8 @@ export class RustAudioEngine {
   }
 
   beginSelection(): void {
+    ++this.selectionVersion
+    this.playbackRequestId = null
     this.eventGate.begin()
   }
 
@@ -170,6 +185,8 @@ export class RustAudioEngine {
     context?: TrackPlaybackInfo["plexContext"],
     labels?: PlaybackLabels,
   ): Promise<void> {
+    const selection = ++this.selectionVersion
+    this.playbackRequestId = null
     const ticket = this.eventGate.begin()
     const requestId = await this.ipc.invoke<number>("audio_play", {
       url,
@@ -184,7 +201,26 @@ export class RustAudioEngine {
       labels: labels ?? null,
       context: context ? { connectionRevision: context.connectionRevision, cacheScope: context.cacheScope } : null,
     })
+    if (selection === this.selectionVersion) this.playbackRequestId = requestId
     this.eventGate.confirm(ticket, requestId)
+  }
+
+  async prepareQueue(tracks: QueuePreparationTrack[]): Promise<void> {
+    if (this.playbackRequestId === null) return
+    await this.ipc.invoke("audio_prepare_queue", {
+      requestId: this.playbackRequestId, batch: ++this.preparationBatch,
+      tracks: tracks.slice(0, 3).map(track => ({ ...track, context: track.context ? {
+        connectionRevision: track.context.connectionRevision, cacheScope: track.context.cacheScope,
+      } : null })),
+    })
+  }
+
+  async getWaveform(url: string, ratingKey: number, context?: TrackPlaybackInfo["plexContext"]): Promise<LevelData[]> {
+    if (this.playbackRequestId === null) return []
+    return this.ipc.invoke("audio_get_waveform", {
+      requestId: this.playbackRequestId, url, ratingKey,
+      context: context ? { connectionRevision: context.connectionRevision, cacheScope: context.cacheScope } : null,
+    })
   }
 
   async preloadNext(
@@ -216,6 +252,8 @@ export class RustAudioEngine {
   }
 
   async prepareShutdown(): Promise<TrackEnded[]> {
+    ++this.selectionVersion
+    this.playbackRequestId = null
     this.eventGate.disable()
     return this.ipc.invoke<TrackEnded[]>("prepare_app_shutdown")
   }
@@ -233,6 +271,8 @@ export class RustAudioEngine {
   }
 
   stop(): void {
+    ++this.selectionVersion
+    this.playbackRequestId = null
     this.eventGate.disable()
     this.sendControl("audio_stop")
   }

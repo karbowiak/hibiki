@@ -58,6 +58,9 @@ const StationsPage = lazy(() =>
 const HubPage = lazy(() =>
   import("./Pages/HubPage").then((module) => ({ default: module.HubPage }))
 )
+const YoutubeMusicCollection = lazy(() =>
+  import("./Pages/YoutubeMusicCollection").then(module => ({ default: module.YoutubeMusicCollection }))
+)
 const RecentlyAddedPage = lazy(() =>
   import("./Pages/RecentlyAddedPage").then((module) => ({
     default: module.RecentlyAddedPage,
@@ -126,6 +129,7 @@ const bg = {
 
 const NO_PADDING_ROUTES = new Set([
   "playlist",
+  "ytmusic",
   "mix",
   "artist",
   "album",
@@ -304,6 +308,13 @@ export function Page() {
               {(params: { "*"?: string }) => (
                 <SettingsPage section={params["*"]} />
               )}
+            </Route>
+
+            <Route path="/ytmusic/:browseId" key="ytmusic">
+              {() => {
+                const id = libraryRouteSegment(rawLocation, `${routeBase}/ytmusic/`)
+                return id ? id.startsWith("UC") ? <ArtistPage artistId={`ytmusic:${id}`} /> : <YoutubeMusicCollection browseId={id} /> : invalidLibraryLink
+              }}
             </Route>
 
             <Route path="/hub/:hubId" key="hub">

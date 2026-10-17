@@ -26,6 +26,9 @@ export interface SavedQueueEntry {
   title?: string
   artistName?: string
   albumName?: string
+  thumbUrl?: string
+  albumThumbUrl?: string
+  artistThumbUrl?: string
   duration?: number
   playlistItemId?: string
   sourceIndex?: number
@@ -50,6 +53,21 @@ export interface SavedQueueStorage {
   save(value: SavedQueue): Promise<void>
   position(state: SavedQueueState): Promise<void>
   clear(): Promise<void>
+}
+
+/** Display metadata only; playback sources are rebuilt by their backend. */
+export function snapshotQueueEntry(track: MusicTrack): SavedQueueEntry {
+  return {
+    id: track.id.startsWith("pending:") ? "" : track.id,
+    title: track.title || undefined,
+    artistName: track.artistName || undefined,
+    albumName: track.albumName || undefined,
+    thumbUrl: track.thumbUrl || undefined,
+    albumThumbUrl: track.albumThumbUrl || undefined,
+    artistThumbUrl: track.artistThumbUrl || undefined,
+    duration: track.duration || undefined,
+    playlistItemId: track.playlistItemId ?? undefined,
+  }
 }
 
 /** Complete membership stays lightweight; only visited/upcoming metadata is resident. */
@@ -88,6 +106,8 @@ export class QueueSession {
       duration: entry?.duration ?? 0,
       playlistItemId: entry?.playlistItemId,
       thumbUrl: entry?.thumbUrl ?? null,
+      albumThumbUrl: entry?.albumThumbUrl ?? null,
+      artistThumbUrl: entry?.artistThumbUrl ?? null,
       [position]: index,
       [placeholder]: true,
       [owner]: this.identity,
@@ -205,21 +225,11 @@ export class QueueSession {
   snapshot(queue: MusicTrack[]): SavedQueueEntry[] {
     return queue.map((track) => {
       const sourceIndex = this.sourcePosition(track)
-      return {
-        id: track.id.startsWith("pending:") ? "" : track.id,
-        title: track.title || undefined,
-        artistName: track.artistName || undefined,
-        albumName: track.albumName || undefined,
-        duration: track.duration || undefined,
-        playlistItemId: track.playlistItemId ?? undefined,
-        sourceIndex:
-          sourceIndex === undefined
-            ? undefined
-            : ((
-                this.source.entries?.[sourceIndex] as
-                  SavedQueueEntry | undefined
-              )?.sourceIndex ?? sourceIndex),
-      }
+      const entry = snapshotQueueEntry(track)
+      entry.sourceIndex = sourceIndex === undefined
+        ? undefined
+        : (this.source.entries?.[sourceIndex] as SavedQueueEntry | undefined)?.sourceIndex ?? sourceIndex
+      return entry
     })
   }
 }

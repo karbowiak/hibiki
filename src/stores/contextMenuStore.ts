@@ -5,7 +5,14 @@ import type { MusicTrack, MusicAlbum, MusicArtist, MusicPlaylist } from "../type
 
 export type MediaContextMenuType = "track" | "album" | "artist" | "playlist"
 export type ContextMenuType = MediaContextMenuType | "actions"
-export interface ContextAction { label: string; run: () => void | Promise<void> }
+export type ContextActionIcon = "play" | "shuffle" | "next" | "queue" | "radio" | "heart" | "share" | "artist" | "album"
+export interface ContextAction {
+  label: string
+  icon?: ContextActionIcon
+  section?: "playback" | "rating" | "share" | "navigation"
+  disabled?: boolean
+  run: (current?: () => boolean) => void | Promise<void>
+}
 export interface ContextActionsData { title: string; owner: object; actions: readonly ContextAction[] }
 
 export type MediaContextMenuData = MusicTrack | MusicAlbum | MusicArtist | MusicPlaylist

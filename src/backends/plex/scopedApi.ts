@@ -173,6 +173,10 @@ export function createPlexApi(
     return invoke("get_hubs", { sectionId })
   }
 
+  function getDiscoveryPage(sectionId: number, kind: "recent" | "latest" | "hub", offset: number, limit: number, hubId?: string, key?: string | null): Promise<{ items: PlexMedia[]; total: number; offset: number }> {
+    return invoke("get_discovery_page", { sectionId, kind, offset, limit, hubId: hubId ?? null, key: key ?? null })
+  }
+
   /** Get "on deck" / continue listening items for a section. */
   function getOnDeck(sectionId: number): Promise<PlexMedia[]> {
     return invoke("get_on_deck", { sectionId })
@@ -893,6 +897,7 @@ export function createPlexApi(
     getRecentlyAdded,
     getLatestReleases,
     getHubs,
+    getDiscoveryPage,
     getOnDeck,
     getSectionTags,
     getItemsByTag,

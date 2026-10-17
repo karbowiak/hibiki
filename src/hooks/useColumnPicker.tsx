@@ -18,6 +18,7 @@ export type ColId =
   | "album"
   | "year"
   | "plays"
+  | "views"
   | "popularity"
   | "label"
   | "bitrate"
@@ -34,6 +35,7 @@ export const ALL_COLUMNS: { id: ColId; label: string; defaultOn: boolean }[] = [
   { id: "added_at", label: "Date Added (Library)", defaultOn: true },
   { id: "year", label: "Year", defaultOn: false },
   { id: "plays", label: "Plays", defaultOn: false },
+  { id: "views", label: "Views", defaultOn: false },
   { id: "popularity", label: "Popularity", defaultOn: false },
   { id: "label", label: "Label", defaultOn: false },
   { id: "bitrate", label: "Bit Rate", defaultOn: false },

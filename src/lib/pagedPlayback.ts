@@ -8,6 +8,8 @@ export interface CollectionOrder {
 
 export interface PagedTrackSource {
   key: string
+  /** Cursor services can start with smaller batches than indexed library collections. */
+  pageSize?: number
   total?: number
   /** Resolve a cached full-membership order inside the player's selection fence. */
   prepare?: () => Promise<PagedTrackSource | null>
@@ -28,7 +30,7 @@ export function shuffled<T>(items: readonly T[], random = Math.random): T[] {
 
 /** Fetch each page once, in random page order for shuffle. Never drains a list to start audio. */
 export class TrackQueuePager {
-  readonly pageSize = 500
+  readonly pageSize: number
   private visited = new Set<number>()
   private total: number | undefined
   private finished = false
@@ -39,6 +41,7 @@ export class TrackQueuePager {
     private random = Math.random,
     private startIndex = 0
   ) {
+    this.pageSize = Number.isFinite(source.pageSize) ? Math.max(1, Math.min(500, Math.trunc(source.pageSize!))) : 500
     this.total = source.total && source.total > 0 ? source.total : undefined
     if (!shuffle)
       for (let i = 0; i < Math.floor(startIndex / this.pageSize); i++)

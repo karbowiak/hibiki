@@ -151,6 +151,7 @@ fn query_order(sort: &str, dir: &str) -> Result<String, String> {
         "album" => Some("albumName"),
         "year" => Some("year"),
         "plays" => Some("playCount"),
+        "views" => Some("viewCount"),
         "popularity" => Some("ratingCount"),
         "label" => Some("parentStudio"),
         "bitrate" => Some("bitrate"),

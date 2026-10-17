@@ -3,6 +3,7 @@ import { JSDOM } from "jsdom"
 import type { MusicTrack } from "../src/types/music"
 import type { MusicProvider } from "../src/providers/types"
 import type { AudioEngineCallbacks } from "../src/audio/RustAudioEngine"
+import { youtubeMusicTrack } from "../src/backends/ytmusic/tracks"
 import {
   deferred,
   FakeAudio,
@@ -37,12 +38,13 @@ mock.module("idb-keyval", () => ({
 }))
 const core = await import("@tauri-apps/api/core")
 const lyricRequests = new Map<string, ReturnType<typeof deferred<any[]>>>()
+let youtubeBrowsePage: import("../src/backends/ytmusic/discovery").YoutubeMusicBrowsePage | undefined
 mock.module("@tauri-apps/api/core", () => ({
   ...core,
   invoke: async (command: string, args: any) =>
     command === "genius_get_lyrics"
       ? lyricRequests.get(args.songUrl)?.promise
-      : undefined,
+      : command === "ytmusic_browse" ? youtubeBrowsePage : undefined,
 }))
 const events = await import("@tauri-apps/api/event")
 mock.module("@tauri-apps/api/event", () => ({
@@ -64,6 +66,8 @@ const original = {
   stop: engine.stop,
   beginSelection: engine.beginSelection,
   preloadNext: engine.preloadNext,
+  prepareQueue: engine.prepareQueue,
+  getWaveform: engine.getWaveform,
   clearPreload: engine.clearPreload,
   pause: engine.pause,
   resume: engine.resume,
@@ -79,6 +83,8 @@ engine.play = mock(async () => {})
 engine.stop = mock(() => {})
 engine.beginSelection = mock(() => {})
 engine.preloadNext = mock(async () => {})
+engine.prepareQueue = mock(async () => {})
+engine.getWaveform = mock(async () => [])
 engine.clearPreload = mock(() => {})
 engine.pause = mock(() => {})
 engine.resume = mock(() => {})
@@ -123,18 +129,20 @@ function provider(name: string, extra: Partial<MusicProvider> = {}) {
 
 afterEach(() => {
   lyricRequests.clear()
+  youtubeBrowsePage = undefined
   state().stop()
   radioElements.length = 0
   useProviderStore.getState().clearProvider()
   ;(engine.play as any).mockClear()
   ;(engine.preloadNext as any).mockClear()
+  ;(engine.prepareQueue as any).mockClear()
+  engine.getWaveform = mock(async () => [])
   ;(engine.beginSelection as any).mockClear()
   ;(engine.clearPreload as any).mockClear()
   ;(engine.pause as any).mockClear()
   ;(engine.resume as any).mockClear()
   ;(engine.seek as any).mockClear()
   ;(engine.seekTo as any).mockClear()
-  state().setRadioMinQueue(5)
 })
 
 async function audiblyPlay(track: MusicTrack, context?: MusicTrack[]) {
@@ -519,7 +527,6 @@ test("a paused radio seed stays paused when the station arrives without the seed
   const response = deferred<{ queueId: number; tracks: MusicTrack[] }>()
   const p = provider("radio", { createRadioQueue: () => response.promise })
   useProviderStore.getState().setProvider(p)
-  state().setRadioMinQueue(1)
   await audiblyPlay(source("1"))
   const radio = state().playRadio("1", "track")
   state().pause()
@@ -544,7 +551,6 @@ test("radio for a different song still starts that song normally", async () => {
       }),
     })
   )
-  state().setRadioMinQueue(1)
   await audiblyPlay(source("1"))
   await state().playRadio("2", "track")
   expect(state().currentTrack?.id).toBe("2")
@@ -557,7 +563,6 @@ test("skipping while radio loads cancels its response", async () => {
   useProviderStore
     .getState()
     .setProvider(provider("radio", { createRadioQueue: () => pending.promise }))
-  state().setRadioMinQueue(1)
   await audiblyPlay(source("1"), [source("1"), source("2")])
   const radio = state().playRadio("1", "track")
   state().next()
@@ -632,7 +637,6 @@ test("an automatic transition while seed radio loads never jumps back to the see
   useProviderStore
     .getState()
     .setProvider(provider("radio", { createRadioQueue: () => pending.promise }))
-  state().setRadioMinQueue(1)
   await audiblyPlay(source("1"), [source("1"), source("2")])
   const radio = state().playRadio("1", "track")
   audioCallbacks.onTrackStarted({
@@ -673,7 +677,6 @@ test("a late server queue ID cannot overwrite a new radio queue", async () => {
       }),
     })
   )
-  state().setRadioMinQueue(1)
   const playing = state().playTrack(source("1"))
   await settle()
   await state().playRadio("1", "track")
@@ -695,7 +698,6 @@ test("a late URI queue cannot replace a newer radio request", async () => {
       }),
     })
   )
-  state().setRadioMinQueue(1)
   const old = state().playFromUri("old")
   await state().playRadio("2", "track")
   oldQueue.resolve({ queueId: 99, tracks: [source("1")] })
@@ -719,7 +721,6 @@ test("a late playlist page cannot append tracks to a radio queue", async () => {
       }),
     })
   )
-  state().setRadioMinQueue(1)
   await state().initAudioEvents()
   await state().playPlaylist("old", 4, "Old", "/playlist/old")
   audioCallbacks.onTrackStarted({
@@ -737,32 +738,49 @@ test("a late playlist page cannot append tracks to a radio queue", async () => {
   expect(state().playlistLoadedCount).toBe(0)
 })
 
-test("DJ results from the old queue cannot enter the new radio queue or release its request", async () => {
+test("mixed radio for a YTM-only recording uses ten YTM recommendations", async () => {
+  const { useYoutubeMusicDiscoveryStore } = await import("../src/backends/ytmusic/discovery")
+  const previous = useYoutubeMusicDiscoveryStore.getState()
+  const createRadioQueue = mock(async () => ({ queueId: 5, tracks: [] }))
+  useProviderStore.getState().setProvider(provider("radio", { search: async () => [], createRadioQueue }))
+  useYoutubeMusicDiscoveryStore.setState({ connected: true, revision: previous.revision + 1 })
+  youtubeBrowsePage = { title: "Radio", hubs: [], continuation: null, items: Array.from({ length: 15 }, (_, i) => ({
+    id: String(i + 1).padStart(11, "0"), kind: "song", title: `Recommendation ${i + 1}`, artist: "Artist",
+    thumbnail: null, duration: "3:00", album: null, year: null,
+  })) }
+  try {
+    const seed = youtubeMusicTrack({ videoId: "abcdefghijk", title: "YTM only", artist: "Artist", duration: "3:00", album: null, thumbnail: null })
+    await state().playTrack(seed)
+    const starts = (engine.play as any).mock.calls.length
+    await state().playRadio(seed.id, "track", seed.title, "mixed", seed)
+    expect(state().playerError).toBeNull()
+    expect(state().radioMode).toBe("ytmusic")
+    expect(state().queue).toHaveLength(11)
+    expect(state().queue.slice(1).every(track => track.streamUrl?.startsWith("ytmusic:"))).toBe(true)
+    expect((engine.play as any).mock.calls.length).toBe(starts)
+    expect(createRadioQueue.mock.calls.length).toBe(0)
+  } finally { useYoutubeMusicDiscoveryStore.setState(previous) }
+})
+
+test("starting radio retires Guest DJ requests and keeps DJ out of the station", async () => {
   const old = deferred<{ queueId: number; tracks: MusicTrack[] }>()
-  const fresh = deferred<{ queueId: number; tracks: MusicTrack[] }>()
   let calls = 0
+  const tracks = Array.from({ length: 11 }, (_, i) => source(String(i + 1)))
   useProviderStore.getState().setProvider(
     provider("radio", {
-      createRadioQueue: async () =>
-        ++calls === 1
-          ? old.promise
-          : calls === 2
-            ? { queueId: 5, tracks: [source("1"), source("2")] }
-            : fresh.promise,
+      createRadioQueue: async () => ++calls === 1 ? old.promise : { queueId: 5, tracks },
     })
   )
-  state().setRadioMinQueue(1)
   await audiblyPlay(source("1"))
   state().setDjMode("freeze")
   await state().playRadio("1", "track")
-  expect(calls).toBe(3)
-  old.resolve({ queueId: 6, tracks: [source("9")] })
+  expect(calls).toBe(2)
+  expect(state().djMode).toBeNull()
+  expect(state().queue).toHaveLength(11)
+  old.resolve({ queueId: 6, tracks: [source("99")] })
   await settle()
-  expect(state().queue.map((track) => track.id)).toEqual(["1", "2"])
-  fresh.resolve({ queueId: 7, tracks: [source("3")] })
-  await settle()
-  expect(state().queue.map((track) => track.id)).toEqual(["1", "3", "2"])
-  expect((engine.preloadNext as any).mock.calls.at(-1)[1]).toBe(3)
+  expect(state().queue.map(track => track.id)).toEqual(tracks.map(track => track.id))
+  expect(state().queueId).toBe(5)
 })
 test("mute restores the selected volume and keeps the native gain curve", () => {
   const previous = {
@@ -1269,4 +1287,196 @@ test("active decoder format follows the accepted native occurrence and clears on
   // A repeated/retired start cannot bring the old format back.
   audioCallbacks.onTrackStarted({ playback_id: id, rating_key: 4401, duration_ms: first.duration, source_format: format })
   expect(state().playbackFormat).toBeNull()
+})
+
+test("YouTube Music uses native opaque sources and skips Plex queues, metadata and progress", async () => {
+  const p = provider("ytmusic", {
+    createPlayQueue: mock(async () => ({ queueId: 1, tracks: [] })),
+    getTrack: mock(async id => source(id)),
+    getLyrics: mock(async () => []),
+  })
+  useProviderStore.getState().setProvider(p)
+  await state().initAudioEvents()
+  const track = youtubeMusicTrack({ videoId: "abcdefghijk", title: "External song", artist: "Artist", album: null, duration: "3:14", thumbnail: null })
+  await state().playTrack(track)
+  const args = (engine.play as any).mock.calls.at(-1)
+  expect(args[0]).toBe("ytmusic:abcdefghijk")
+  expect(args[1]).toBeLessThan(0)
+  expect(args[2]).toBe(194000)
+  expect(args[9]).toBeUndefined()
+  expect(args[10].track).toBe("External song")
+  const native = { playback_id: ++playbackId, rating_key: args[1], duration_ms: 194000 }
+  audioCallbacks.onTrackStarted(native)
+  audioCallbacks.onPosition(25000, 194000, native.playback_id)
+  state().pause()
+  state().resume()
+  await settle()
+  expect((p.createPlayQueue as any).mock.calls.length).toBe(0)
+  expect((p.getTrack as any).mock.calls.length).toBe(0)
+  expect((p.getLyrics as any).mock.calls.length).toBe(0)
+  expect((p.reportProgress as any).mock.calls.length).toBe(0)
+  expect((p.onTrackStart as any).mock.calls.length).toBe(0)
+})
+
+test("mixed Plex and YouTube Music queues preload and advance with separate native keys", async () => {
+  const p = provider("mixed")
+  useProviderStore.getState().setProvider(p)
+  await state().initAudioEvents()
+  const plex = source("7001"), nextPlex = source("7002")
+  const youtube = youtubeMusicTrack({ videoId: "abcdefghijk", title: "External song", artist: "Artist", album: null, duration: "3:14", thumbnail: null })
+  await state().playTrack(plex, [plex, youtube, nextPlex])
+  audioCallbacks.onTrackStarted({ playback_id: ++playbackId, rating_key: 7001, duration_ms: plex.duration })
+  await settle()
+  const next = (engine.preloadNext as any).mock.calls.at(-1)
+  expect(next[0]).toBe("ytmusic:abcdefghijk")
+  expect(next[1]).toBeLessThan(0)
+  const warm = (engine.prepareQueue as any).mock.calls.at(-1)[0]
+  expect(warm.map((track: any) => track.url)).toEqual(["ytmusic:abcdefghijk", "https://mixed.test/7002"])
+  expect(warm[0].ratingKey).toBe(next[1])
+  expect(warm[0].gainDb).toBeNull()
+  expect(warm[1].gainDb).toBe(-3)
+  audioCallbacks.onTrackStarted({ playback_id: ++playbackId, rating_key: next[1], duration_ms: youtube.duration })
+  expect(state().currentTrack?.id).toBe(youtube.id)
+  expect(state().queueIndex).toBe(1)
+  await settle()
+  expect((engine.preloadNext as any).mock.calls.at(-1)[1]).toBe(7002)
+  audioCallbacks.onTrackStarted({ playback_id: ++playbackId, rating_key: 7002, duration_ms: nextPlex.duration })
+  expect(state().currentTrack?.id).toBe("7002")
+  expect(state().queueIndex).toBe(2)
+})
+
+test("YouTube waveforms arrive after playback starts and only update their own occurrence", async () => {
+  const first = deferred<{ loudness: number }[]>(), second = deferred<{ loudness: number }[]>(), stopped = deferred<{ loudness: number }[]>()
+  let requested = 0
+  engine.getWaveform = mock(() => [first, second, stopped][requested++].promise)
+  const p = provider("yt-waveforms", { getStreamLevels: mock(async () => [{ loudness: -1 }]) })
+  useProviderStore.getState().setProvider(p)
+  await state().initAudioEvents()
+  const song = youtubeMusicTrack({ videoId: "abcdefghijk", title: "Waveform song", artist: "Artist", album: null, duration: "3:14", thumbnail: null })
+  const start = async () => {
+    await state().playTrack(song)
+    const key = (engine.play as any).mock.calls.at(-1)[1]
+    audioCallbacks.onTrackStarted({ playback_id: ++playbackId, rating_key: key, duration_ms: song.duration })
+  }
+  await start()
+  expect(state().isPlaying).toBe(true)
+  expect(state().waveformLevels).toBeNull()
+  expect(requested).toBe(1)
+  await start()
+  first.resolve([{ loudness: -25 }])
+  await settle()
+  expect(state().waveformLevels).toBeNull()
+  second.resolve([{ loudness: -12 }, { loudness: -20 }])
+  await settle()
+  expect(state().waveformLevels).toEqual([{ loudness: -12 }, { loudness: -20 }])
+  expect((p.getStreamLevels as any).mock.calls).toHaveLength(0)
+  await start()
+  state().stop()
+  stopped.resolve([{ loudness: -3 }])
+  await settle()
+  expect(state().waveformLevels).toBeNull()
+})
+
+test("provider waveforms win and queue generation is requested only for missing waveforms", async () => {
+  const levels = [{ loudness: -18 }, { loudness: -6 }]
+  const p = provider("waveform-priority", { getStreamLevels: async id => id === 2 ? [] : levels })
+  useProviderStore.getState().setProvider(p)
+  const songs = [1, 2, 3].map(id => source(String(id), { mediaInfo: { audioStreamId: id } }))
+  await audiblyPlay(songs[0], songs)
+  expect(state().waveformLevels).toEqual(levels)
+  expect((engine.getWaveform as any).mock.calls).toHaveLength(0)
+  const warm = (engine.prepareQueue as any).mock.calls.at(-1)[0]
+  expect(warm.map((track: any) => [track.ratingKey, track.prepareWaveform])).toEqual([[2, true], [3, false]])
+})
+
+test("missing and failed Plex waveforms fall back to the owned cached audio", async () => {
+  const context = { connectionRevision: 9, cacheScope: `plex-${"a".repeat(64)}` }
+  for (const failed of [false, true]) {
+    const pending = deferred<{ loudness: number }[]>()
+    engine.getWaveform = mock(() => pending.promise)
+    const p = provider(`waveform-fallback-${failed}`, {
+      getStreamLevels: async () => { if (failed) throw Error("Analysis unavailable"); return [] },
+      getPlaybackInfo: async track => ({ url: "https://plex.test/audio", trackKey: Number(track.id), partId: 1,
+        parentKey: "album", startRamp: null, endRamp: null, plexContext: context }),
+    })
+    useProviderStore.getState().setProvider(p)
+    await audiblyPlay(source("42"))
+    expect((engine.getWaveform as any).mock.calls).toEqual([["https://plex.test/audio", 42, context]])
+    expect(state().waveformLevels).toBeNull()
+    pending.resolve([{ loudness: -24 }, { loudness: -12 }])
+    await settle()
+    expect(state().waveformLevels).toEqual([{ loudness: -24 }, { loudness: -12 }])
+    state().stop()
+  }
+})
+
+test("a missing Plex waveform uses the active transcode cache after a playback retry", async () => {
+  engine.getWaveform = mock(async () => [{ loudness: -18 }])
+  const context = { connectionRevision: 9, cacheScope: `plex-${"a".repeat(64)}` }
+  const p = provider("waveform-transcode", {
+    getTranscodePlaybackInfo: async () => ({ url: "https://plex.test/transcoded.mp3", trackKey: 42, partId: 1,
+      parentKey: "album", startRamp: null, endRamp: null, plexContext: context }),
+  })
+  useProviderStore.getState().setProvider(p)
+  await state().initAudioEvents()
+  await state().playTrack(source("42"))
+  await audioCallbacks.onError("Unsupported encoding")
+  audioCallbacks.onTrackStarted({ playback_id: ++playbackId, rating_key: 42, duration_ms: 180000 })
+  await settle()
+  expect((engine.getWaveform as any).mock.calls).toEqual([["https://plex.test/transcoded.mp3", 42, context]])
+})
+
+test("a restored mixed queue rebuilds YouTube identities without sending them to Plex", async () => {
+  const { restoredQueueSource } = await import("../src/lib/queuePersistence")
+  const getTrack = mock(async (id: string) => source(id))
+  const p = provider("restore-mixed", { getTrack })
+  const saved = { entries: [
+    { id: "7001" },
+    { id: "ytmusic:abcdefghijk", title: "Saved external song", artistName: "Artist", duration: 194000 },
+  ], state: { index: 1, positionMs: 12345, contextName: null, contextHref: null, albumPlaybackId: null, shuffle: false, repeat: 0 as const } }
+  const result = await restoredQueueSource(p, saved).loadItems!([0, 1])
+  expect(result.map(track => track.id)).toEqual(["7001", "ytmusic:abcdefghijk"])
+  expect(result[1].streamUrl).toBe("ytmusic:abcdefghijk")
+  expect(result[1].duration).toBe(194000)
+  expect(getTrack.mock.calls).toEqual([["7001"]])
+  expect(new URL(result[1].thumbUrl!).searchParams.get("src")).toBe("https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg")
+})
+
+test("YouTube artwork survives saving a mixed queue and repeated restores, including cold rows", async () => {
+  const { initializeQueuePersistence, flushQueuePersistence } = await import("../src/lib/queuePersistence")
+  let saved: any = null
+  const p = provider("restore-artwork", { savedQueue: {
+    load: async () => saved,
+    save: async value => { saved = JSON.parse(JSON.stringify(value)) },
+    position: async value => { if (saved) saved.state = value },
+    clear: async () => { saved = null },
+  } })
+  const youtube = youtubeMusicTrack({ videoId: "abcdefghijk", title: "Saved song", artist: "Artist", album: "Album", duration: "3:14", thumbnail: "https://lh3.googleusercontent.com/album-cover=w600-h600" })
+  const next = youtubeMusicTrack({ videoId: "lmnopqrstuv", title: "Queued song", artist: "Artist", album: null, duration: "2:34", thumbnail: "https://i.ytimg.com/vi/lmnopqrstuv/hqdefault.jpg" })
+  useProviderStore.getState().setProvider(p)
+  let cleanup = initializeQueuePersistence()
+  try {
+    await settle()
+    await state().playTrack(youtube, [youtube, source("7001"), next])
+    await flushQueuePersistence()
+    expect(saved.entries[0].thumbUrl).toBe(youtube.thumbUrl)
+    expect(saved.entries[2].albumThumbUrl).toBe(next.albumThumbUrl)
+    cleanup()
+    state().stop()
+    // Restore, reorder and save again: the second YTM row stays a cold stub.
+    for (let restart = 0; restart < 2; restart++) {
+      cleanup = initializeQueuePersistence()
+      for (let i = 0; i < 20 && !state().queue.length; i++) await settle()
+      expect(state().currentTrack?.thumbUrl).toBe(youtube.thumbUrl)
+      expect(state().currentTrack?.albumThumbUrl).toBe(youtube.albumThumbUrl)
+      const queued = state().queue.find(track => track.id === next.id)!
+      expect(queued.thumbUrl).toBe(next.thumbUrl)
+      expect(queued.albumThumbUrl).toBe(next.albumThumbUrl)
+      state().reorderQueue(1, 2)
+      await flushQueuePersistence()
+      expect(saved.entries.find((entry: any) => entry.id === next.id).thumbUrl).toBe(next.thumbUrl)
+      cleanup()
+      state().stop()
+    }
+  } finally { cleanup() }
 })

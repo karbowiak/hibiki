@@ -167,6 +167,7 @@ export interface MusicProvider {
   /** Albums ordered by original release date, independently of library import date. */
   getLatestReleases?(limit?: number): Promise<MusicAlbum[]>
   getHubs(): Promise<MusicHub[]>
+  getDiscoveryPage?(kind: "recent" | "latest" | "hub", offset: number, limit: number, hub?: MusicHub): Promise<PagedResult<MusicItem>>
 
   // --- Library ---
   getTrack(id: string): Promise<MusicTrack>

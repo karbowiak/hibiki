@@ -1,3 +1,7 @@
+import { MusicSourceBadge } from "../shared/MusicSource"
+import { useYoutubeMusicDiscovery } from "../../backends/ytmusic/discovery"
+import { mixDiscoveryItems } from "../../lib/discovery"
+import { DiscoveryCard } from "../shared/DiscoveryCard"
 import { useContextMenu } from "../../hooks/useContextMenu"
 import { useContextMenuStore } from "../../stores/contextMenuStore"
 import { ArtworkImage } from "../shared/ArtworkImage"
@@ -569,6 +573,7 @@ export function TagGridMixBuilder({
 // ---------------------------------------------------------------------------
 
 export function StationsPage() {
+  const youtube = useYoutubeMusicDiscovery(true)
   const [, navigate] = useLocation()
   const hasStations = useCapability("stations")
   const provider = useProviderStore((s) => s.provider)
@@ -613,6 +618,7 @@ export function StationsPage() {
     }
   }, [hubs])
 
+  const mixedMixes = useMemo(() => mixDiscoveryItems(mixesItems, youtube.connected ? youtube.hubs : []), [mixesItems, youtube.connected, youtube.hubs])
   const mixThumbs = useMixThumbnails(hasStations ? provider : null, mixesItems)
   const playbackView = useRef({ active: false, revision: 0 })
   const [playError, setPlayError] = useState(false)
@@ -723,9 +729,11 @@ export function StationsPage() {
       {playError && <p role="alert" className="text-sm text-red-400">Could not play this mix. Please try again.</p>}
 
       {/* Mixes for You */}
-      {mixesItems.length > 0 && (
+      {mixedMixes.length > 0 && (
         <ScrollRow title={mixesTitle} restoreKey="stations-mixes">
-          {mixesItems.map((item) => {
+          {mixedMixes.map((entry) => {
+            if (entry.source === "ytmusic") return <DiscoveryCard key={`ytmusic:${entry.item.id}`} entry={entry} scrollItem large mix />
+            const item = entry.item
             if (item.type !== "playlist") return null
             const thumb =
               mixThumbs[mixThumbnailKey(item)] ?? item.thumbUrl ?? null
@@ -734,6 +742,7 @@ export function StationsPage() {
                 key={mixThumbnailKey(item)}
                 title={item.title}
                 desc="Mix for You"
+                artworkBadge={<MusicSourceBadge source="plex" />}
                 thumb={thumb}
                 isArtist
                 artistName={mixTitleToArtistName(item.title)}

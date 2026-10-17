@@ -1,3 +1,5 @@
+import { MusicEntityLink } from "./shared/MusicEntityLink"
+import { albumArtistEntity, trackEntity } from "../lib/musicLinks"
 import { deduplicateAlbumItems } from "../lib/dedup"
 import { useUIStore } from "../stores/uiStore"
 import "../styles/discovery.css"
@@ -8,6 +10,8 @@ import { useLocation } from "wouter"
 import { useShallow } from "zustand/react/shallow"
 import { useSearchStore } from "../stores"
 import { usePlayerStore } from "../stores/playerStore"
+import { MusicSourceBadge } from "./shared/MusicSource"
+import { YoutubeMusicLikeButton } from "./shared/YoutubeMusicLikeButton"
 import type {
   MusicItem,
   MusicTrack,
@@ -123,13 +127,13 @@ export function buildSearchItems(results: MusicItem[]): DropdownItem[] {
       artists.push({
         kind: "artist",
         item: item as MusicArtist & { type: "artist" },
-        href: `/artist/${item.id}`,
+        href: item.providerKey === "ytmusic" ? `/ytmusic/${encodeURIComponent(item.id.slice(8))}` : `/artist/${item.id}`,
       })
     } else if (item.type === "album" && albums.length < 3) {
       albums.push({
         kind: "album",
         item: item as MusicAlbum & { type: "album" },
-        href: `/album/${item.id}`,
+        href: item.providerKey === "ytmusic" ? `/ytmusic/${encodeURIComponent(item.id.slice(8))}` : `/album/${item.id}`,
       })
     } else if (item.type === "track" && tracks.length < 3) {
       tracks.push({
@@ -143,17 +147,18 @@ export function buildSearchItems(results: MusicItem[]): DropdownItem[] {
 }
 
 function SearchArtwork({ item }: { item: MusicItem }) {
+  const remote = item.providerKey === "ytmusic"
   const { failures, onFailure } = useArtworkFailures(
     JSON.stringify([item.type, item.id, item.thumbUrl])
   )
   const artist = useArtistImage(
-    item.type === "artist" ? item.title : null,
+    !remote && item.type === "artist" ? item.title : null,
     item.type === "artist" ? item.thumbUrl : null,
     item.id,
     failures
   )
   const album = useAlbumImage(
-    item.type === "album" || item.type === "track" ? item.artistName : null,
+    !remote && (item.type === "album" || item.type === "track") ? item.artistName : null,
     item.type === "album"
       ? item.title
       : item.type === "track"
@@ -163,7 +168,7 @@ function SearchArtwork({ item }: { item: MusicItem }) {
     item.id,
     failures
   )
-  const src = item.type === "artist" ? artist : album
+  const src = remote ? item.thumbUrl : item.type === "artist" ? artist : album
   return src ? (
     <ArtworkImage
       src={src}
@@ -302,7 +307,7 @@ export function SearchDropdown({
       className="app-overlay-surface discovery-search-popup absolute left-0 top-full z-50 mt-2 w-full max-w-[calc(100vw-24px)] overflow-y-auto overscroll-contain rounded-xl border border-(--border) bg-app-card py-1 text-(--text-primary) shadow-2xl"
     >
       <div className="discovery-search-caption">
-        {emptyQuery ? "A shortcut to your music" : "Search your library"}
+        {emptyQuery ? "A shortcut to your music" : "Search music"}
       </div>
       {emptyQuery ? (
         <>
@@ -456,18 +461,21 @@ export function SearchDropdown({
                       >
                         <SearchArtwork item={row.item} />
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm font-medium">
-                            {row.item.title}
+                          <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
+                            <MusicSourceBadge source={row.item.providerKey === "ytmusic" ? "ytmusic" : "plex"} />
+                            <span className="truncate">{row.item.title}</span>
                           </div>
                           {row.kind !== "artist" && (
                             <div className="truncate text-xs text-(--text-secondary)">
-                              {row.item.artistName}
-                              {row.kind === "track" && row.item.albumName
-                                ? ` · ${row.item.albumName}`
-                                : ""}
+                              <MusicEntityLink onNavigate={onClose} entity={row.item.type === "track" ? trackEntity(row.item, "artist") : row.item.type === "album" ? albumArtistEntity(row.item) : null} className="hover:underline">
+                                {row.item.artistName}
+                              </MusicEntityLink>
+                              {row.kind === "track" && row.item.albumName && <><span> · </span>
+                                <MusicEntityLink onNavigate={onClose} entity={trackEntity(row.item, "album")} className="hover:underline">{row.item.albumName}</MusicEntityLink></>}
                             </div>
                           )}
                         </div>
+                        {row.kind === "track" && <YoutubeMusicLikeButton track={row.item} />}
                       </div>
                     ))}
                   </div>

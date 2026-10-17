@@ -1,3 +1,4 @@
+import { rememberYoutubeMusicPlay } from "../backends/ytmusic/history"
 import { create } from "zustand"
 import { safeLocalPersist } from "./localPreferenceStorage"
 import { listen } from "@tauri-apps/api/event"
@@ -10,8 +11,9 @@ import { dispatchPlaybackWhenReady } from "../audio/playbackRequests"
 import { isAlbumPlayback, playbackAlbumKey, preparedReplayGain } from "../audio/playbackContext"
 import type { TransitionInfo } from "../audio/transitionInfo"
 import { engine } from "../audio/RustAudioEngine"
+import type { QueuePreparationTrack } from "../audio/RustAudioEngine"
 import type { MusicTrack } from "../types/music"
-import type { LevelData, LyricLineData } from "../providers/types"
+import type { LevelData, LyricLineData, TrackPlaybackInfo } from "../providers/types"
 import { useProviderStore } from "./providerStore"
 import { useNotificationStore } from "./notificationStore"
 import { filterPlayable, selectDjTracks } from "../audio/queueExpansion"
@@ -27,7 +29,10 @@ import { radioSetVolume } from "../lib/radioAudio"
 import { podcastIdentity, savePodcastProgress, podcastResumePosition } from "../audio/podcastProgress"
 import { useLyricsStore } from "./lyricsStore"
 import { TrackQueuePager, shuffled, type PagedTrackSource } from "../lib/pagedPlayback"
-import { QueueSession, isQueuePlaceholder, copyQueueTrack, type SavedQueue } from "../lib/queueSession"
+import { QueueSession, isQueuePlaceholder, copyQueueTrack, snapshotQueueEntry, type SavedQueue } from "../lib/queueSession"
+import { hasIndependentAudio, isYoutubeMusicId, isYoutubeMusicTrack } from "../backends/ytmusic/tracks"
+import { createMusicRadio } from "../lib/radioSources"
+import { MusicRadioSession, orderRadioUpcoming, RADIO_UPCOMING, type MusicRadioMode } from "../lib/musicRadio"
 
 type RadioType = 'track' | 'artist' | 'album' | 'playlist'
 
@@ -63,8 +68,11 @@ interface PlayerState {
   playlistLoadedCount: number
   isLoadingMoreTracks: boolean
 
-  /** Radio mode: true while a radio/Guest DJ station is active. */
+  /** Radio recommendations, independent of Guest DJ. */
   isRadioMode: boolean
+  radioMode: MusicRadioMode | null
+  radioError: string | null
+  radioLoading: boolean
   /** ID of the item that seeded the current radio station. */
   radioSeedKey: string | null
   /** Type of seed item used to start radio. */
@@ -78,10 +86,7 @@ interface PlayerState {
    * -1 = unlimited (anything goes). Maps to Plex `degreesOfSeparation`.
    */
   radioDegreesOfSeparation: number
-  /** Minimum number of tracks to keep queued ahead before triggering a refill. */
-  radioMinQueue: number
   setRadioDegreesOfSeparation: (v: number) => void
-  setRadioMinQueue: (v: number) => void
 
   /** Waveform level data fetched on track-start. Null when unavailable. Not persisted. */
   waveformLevels: LevelData[] | null
@@ -110,17 +115,18 @@ interface PlayerState {
   playPagedTracks: (source: PagedTrackSource, title: string, href: string, shuffle?: boolean, startIndex?: number) => Promise<void>
   /**
    * Start a radio station seeded from the given item.
-   * Uses `createRadioQueue` normally, or `createSmartShuffleQueue` when Guest DJ is enabled.
+   * Uses the services' radio recommendations, independently of Guest DJ.
    * Pass `seedName` to set a human-readable context label ("Ado Radio").
    */
-  playRadio: (seedId: string, radioType: RadioType, seedName?: string) => Promise<void>
+  playRadio: (seedId: string, radioType: RadioType, seedName?: string, mode?: MusicRadioMode, seedTrack?: MusicTrack) => Promise<void>
+  refillRadio: () => Promise<void>
   /** Insert tracks immediately after the current track (play next). */
   addNext: (tracks: MusicTrack[]) => void
-  /** Append tracks to the end of the queue without touching radio/playlist state. */
+  /** Append tracks to the queue, taking manual control from radio autofill. */
   addToQueue: (tracks: MusicTrack[]) => void
   /** Stop radio auto-refill without clearing the existing queue. */
   stopRadio: () => void
-  /** Set the active DJ personality (null = off). Re-seeds the current station immediately. */
+  /** Set the active DJ personality (null = off), independently of radio. */
   setDjMode: (mode: DjMode | null) => void
   stop: () => void
   pause: () => void
@@ -162,6 +168,7 @@ function getProvider() {
 
 let _activeTrackGeneration = 0
 let _playbackErrorRevision = 0
+let _activeProviderWaveform: Promise<LevelData[]> = Promise.resolve([])
 
 // ---------------------------------------------------------------------------
 // Track ID resolution — maps numeric rating_key → MusicTrack.id
@@ -221,13 +228,16 @@ export { capturePlaybackSelectionVersion } from "../lib/playbackSelection"
 
 function beginQueueSelection(): number {
   _shutdownResumePosition = null
-  _radioRefillRequest = null
+  _radioSelectionRequest = null
   return advancePlaybackSelection()
 }
 function ownsQueueSelection(generation: number, provider: MusicProvider | null): boolean {
   return generation === capturePlaybackSelectionVersion() && getProvider() === provider
 }
 function replaceQueueContext(): void {
+  _musicRadio?.retire()
+  _musicRadio = null
+  _musicRadioRefill = null
   _queueSession?.retire()
   ++_queueContextGeneration
   _djInsertRequest = null
@@ -243,6 +253,7 @@ let _playbackDesired = false
 // Transcode fallback state — tracks whether we've already retried with transcoding
 // for the current track, to avoid infinite retry loops.
 let _transcodeRetriedTrackId: string | null = null
+let _activeRetryInfo: TrackPlaybackInfo | null = null
 
 
 // ---------------------------------------------------------------------------
@@ -257,7 +268,7 @@ const TIMELINE_REPORT_INTERVAL_MS = 10_000
 const _reportProgress = (trackId: string, state: string, positionMs: number, duration: number) => {
   const provider = getProvider()
   const current = usePlayerStore.getState().currentTrack
-  if (provider && (!current || !_isPodcastTrack(current))) fireAndForget(provider.reportProgress(trackId, positionMs, state, duration))
+  if (provider && (!current || usesLibraryMetadata(current))) fireAndForget(provider.reportProgress(trackId, positionMs, state, duration))
 }
 
 // Each native play retains its own metadata and provider across outgoing overlaps.
@@ -320,57 +331,58 @@ export function isRadioGenerated(trackId: string): boolean {
   return _radioGeneratedKeys.has(trackId)
 }
 
-let _radioRefillRequest: symbol | null = null
+let _radioSelectionRequest: symbol | null = null
+let _musicRadio: MusicRadioSession | null = null
+let _musicRadioRefill: Promise<void> | null = null
 
-/** Silently append a fresh batch of radio tracks when the queue is running low. */
-async function appendRadioTracks(
+/** A refill belongs to the station, so skips do not discard in-flight results. */
+function appendRadioTracks(
   get: () => PlayerState,
   set: (updater: (s: PlayerState) => Partial<PlayerState>) => void,
-) {
-  const { isRadioMode, radioSeedKey, radioType, queue, queueIndex, radioDegreesOfSeparation, radioMinQueue } = get()
-  if (!isRadioMode || radioSeedKey === null || radioType === null || _radioRefillRequest !== null) return
-  // `queue.length - queueIndex - 1` = tracks strictly after current position
-  if (queue.length - queueIndex - 1 >= radioMinQueue) return  // plenty of tracks ahead
-
-  const provider = getProvider()
-  if (!provider?.createRadioQueue) return
-
-  const generation = capturePlaybackSelectionVersion()
-  const request = Symbol('radio refill')
-  _radioRefillRequest = request
-  try {
-    const result = await provider.createRadioQueue(radioSeedKey, radioType, radioDegreesOfSeparation)
-    if (!ownsQueueSelection(generation, provider)) return
-    const newTracks = filterPlayable(result.tracks)
-
-    // Append only tracks not already in the queue to avoid duplicates
-    const existingKeys = new Set(get().queue.map(t => t.id))
-    const candidates = newTracks.filter(t => {
-      if (existingKeys.has(t.id)) return false
-      existingKeys.add(t.id)  // deduplicate within batch too
-      return true
-    })
-
-    // Cap the batch: only add enough to bring the queue to radioMinQueue + 1 ahead.
-    // This prevents 3+ tracks popping in at once — at most 1–2 appear at a time.
-    const { queue: latestQueue, queueIndex: latestIdx } = get()
-    const tracksAhead = latestQueue.length - latestIdx - 1
-    const needed = Math.max(0, radioMinQueue + 1 - tracksAhead)
-    const capped = candidates.slice(0, needed)
-    if (capped.length === 0) return
-
-    capped.forEach(t => _radioGeneratedKeys.add(t.id))
-    set(s => ({ queue: [...s.queue, ...capped] }))
-    if (tracksAhead === 0) usePlayerStore.getState().refreshPreload()
-  } catch (err) {
-    console.error("Radio queue refill failed:", err)
-  } finally {
-    if (_radioRefillRequest === request) _radioRefillRequest = null
+): Promise<void> {
+  if (_musicRadioRefill) return _musicRadioRefill
+  const radio = _musicRadio
+  if (!get().isRadioMode || !radio || _radioSelectionRequest) return Promise.resolve()
+  const owns = () => _musicRadio === radio && get().isRadioMode
+  if (!radio.current()) {
+    set(() => ({ radioLoading: false, radioError: "The radio connection changed. Start radio again to reconnect." }))
+    return Promise.resolve()
   }
+  if (get().queue.length - get().queueIndex - 1 >= RADIO_UPCOMING) return Promise.resolve()
+  if (!radio.canRefill(get().queue.slice(get().queueIndex + 1))) return Promise.resolve()
+  const job = (async () => {
+    set(() => ({ radioLoading: true }))
+    try {
+      // Two bounded pages allow a short continuation to fill the window.
+      for (let pass = 0; pass < 2; pass++) {
+        const before = get()
+        await radio.fill(before.queue.slice(before.queueIndex + 1), before.currentTrack)
+        if (!owns() || !radio.current()) return
+        let changedNext = false
+        set(state => {
+          const upcoming = state.queue.slice(state.queueIndex + 1)
+          const added = radio.take(upcoming, state.currentTrack)
+          if (!added.length) return { radioError: radio.error }
+          added.forEach(track => _radioGeneratedKeys.add(track.id))
+          const ordered = orderRadioUpcoming(radio.mode, [...upcoming, ...added], state.currentTrack)
+          changedNext = ordered[0] !== upcoming[0]
+          return { queue: [...state.queue.slice(0, state.queueIndex + 1), ...ordered], radioError: radio.error }
+        })
+        if (changedNext) get().refreshPreload()
+        prefetchAhead(get().queue, get().queueIndex, 3)
+        if (get().queue.length - get().queueIndex - 1 >= RADIO_UPCOMING || radio.error) break
+      }
+    } finally {
+      if (owns()) set(() => ({ radioLoading: false, radioError: radio.current() ? radio.error
+        : "The radio connection changed. Start radio again to reconnect." }))
+    }
+  })().finally(() => { if (_musicRadioRefill === job) _musicRadioRefill = null })
+  _musicRadioRefill = job
+  return job
 }
 
 // ---------------------------------------------------------------------------
-// DJ track insertion — works in any playback context (playlist, album, radio)
+// DJ track insertion — independent of radio recommendations
 // ---------------------------------------------------------------------------
 
 let _djInsertRequest: symbol | null = null
@@ -391,7 +403,7 @@ async function insertDjTracks(
   set: (updater: (s: PlayerState) => Partial<PlayerState>) => void,
 ) {
   const { djMode, currentTrack, queue, queueIndex } = get()
-  if (!djMode || !currentTrack) return
+  if (!djMode || !currentTrack || isYoutubeMusicTrack(currentTrack)) return
   if (_djInsertRequest !== null) return
 
   const provider = getProvider()
@@ -438,7 +450,7 @@ async function insertDjTracks(
 
 /** Pre-resolve playback URL for a track on hover. Deduped per track id. */
 export function prefetchTrackAudio(track: MusicTrack): void {
-  if (track.streamUrl && /^https?:\/\//i.test(track.streamUrl)) return
+  if (hasIndependentAudio(track)) return
   const provider = getProvider()
   if (provider) fireAndForget(playbackMetadata.playbackInfo(provider, track))
 }
@@ -467,14 +479,19 @@ function _isPodcastTrack(track: MusicTrack): boolean {
   return pd?.isPodcast === true
 }
 
+function usesLibraryMetadata(track: MusicTrack): boolean {
+  return !_isPodcastTrack(track) && !isYoutubeMusicTrack(track)
+}
+
 /** Send a track to the Web Audio engine for playback. */
 async function sendToAudioEngine(track: MusicTrack, generation: number): Promise<void> {
   // Direct URL tracks (podcasts, external audio) bypass provider.getPlaybackInfo()
-  if (track.streamUrl && /^https?:\/\//i.test(track.streamUrl)) {
+  if (hasIndependentAudio(track)) {
     const syntheticKey = directTrackKey(track)
     if (generation !== _playGeneration) return
     rememberPlaybackKey(syntheticKey, track, "selection")
-    await engine.play(track.streamUrl, syntheticKey, track.duration, "", null, true)
+    await engine.play(track.streamUrl, syntheticKey, track.duration, "", null, true,
+      null, null, false, undefined, playbackLabels(track))
     return
   }
   const provider = getProvider()
@@ -537,12 +554,13 @@ async function preloadNextTrack(queue: MusicTrack[], queueIndex: number, repeat:
   if (isQueuePlaceholder(nextTrack)) return
 
   // Direct URL tracks (podcasts) — preload without provider
-  if (nextTrack.streamUrl?.startsWith("http")) {
+  if (hasIndependentAudio(nextTrack)) {
     try {
       const syntheticKey = directTrackKey(nextTrack)
       if (!isCurrent()) return
       rememberPlaybackKey(syntheticKey, nextTrack, "preload")
-      await engine.preloadNext(nextTrack.streamUrl, syntheticKey, nextTrack.duration, "", null, true)
+      await engine.preloadNext(nextTrack.streamUrl, syntheticKey, nextTrack.duration, "", null, true,
+        null, null, false, undefined, playbackLabels(nextTrack))
     } catch { /* non-critical */ }
     return
   }
@@ -579,7 +597,7 @@ export const currentQueueOwner = () => _queueOwner
 export const currentQueueOrderVersion = () => `${_queueContextGeneration}:${_queueOrderVersion}`
 export function snapshotQueueEntries() {
   const queue = usePlayerStore.getState().queue
-  return _queueSession ? _queueSession.snapshot(queue) : queue.map(track => ({ id: track.id, title: track.title, artistName: track.artistName, albumName: track.albumName, duration: track.duration, playlistItemId: track.playlistItemId ?? undefined }))
+  return _queueSession ? _queueSession.snapshot(queue) : queue.map(snapshotQueueEntry)
 }
 export const queueSource = () => _queueSession?.source
 export async function ensureQueueRange(start: number, end: number, options: QueueLoadOptions = {}) {
@@ -610,7 +628,7 @@ export async function restorePlaybackQueue(provider: MusicProvider, saved: Saved
     isPlaying: false, isBuffering: false, shuffle: saved.state.shuffle, repeat: saved.state.repeat,
     contextName: saved.state.contextName, contextHref: saved.state.contextHref, albumPlaybackId: saved.state.albumPlaybackId,
     queueId: null, playlistKey: null, playlistTotalCount: queue.length, playlistLoadedCount: queue.length,
-    isRadioMode: false, radioSeedKey: null, radioType: null, transitionInfo: null, waveformLevels: null, lyricsLines: null })
+    isRadioMode: false, radioMode: null, radioError: null, radioLoading: false, radioSeedKey: null, radioType: null, transitionInfo: null, waveformLevels: null, lyricsLines: null })
 }
 let _playlistRefill: Promise<void> | null = null
 
@@ -648,6 +666,9 @@ async function fetchMorePlaylistTracks(get: () => PlayerState, set: (fn: (s: Pla
         playlistTotalCount: pager && !pager.hasMore ? playlistLoadedCount + result.items.length : result.total > 0 ? result.total : 0,
         isLoadingMoreTracks: false,
       }))
+      const latest = get()
+      fireAndForget(preloadNextTrack(latest.queue, latest.queueIndex, latest.repeat))
+      prefetchAhead(latest.queue, latest.queueIndex, 3)
     } else {
       set(() => ({ isLoadingMoreTracks: false, playlistTotalCount: playlistLoadedCount }))
     }
@@ -672,10 +693,10 @@ async function fetchMorePlaylistTracks(get: () => PlayerState, set: (fn: (s: Pla
  * previously 2–3 separate getTrack() calls into one.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function enrichCurrentTrack(track: MusicTrack, provider: MusicProvider, isCurrent: () => boolean, set: any): Promise<void> {
+async function enrichCurrentTrack(track: MusicTrack, provider: MusicProvider, isCurrent: () => boolean, set: any): Promise<LevelData[]> {
   try {
     const full = await playbackMetadata.fullTrack(provider, track.id)
-    if (!isCurrent()) return
+    if (!isCurrent()) return []
     set((state: PlayerState) => {
       const current = state.currentTrack!
       const enriched: MusicTrack = {...current, ...full, playlistItemId: current.playlistItemId,
@@ -685,8 +706,10 @@ async function enrichCurrentTrack(track: MusicTrack, provider: MusicProvider, is
     if (isCurrent()) {
       const levels = await playbackMetadata.levels(provider, full)
       if (levels.length && isCurrent()) set({waveformLevels: levels})
+      return levels
     }
   } catch { /* Playback continues when optional enrichment is unavailable. */ }
+  return []
 }
 
 // ---------------------------------------------------------------------------
@@ -704,30 +727,34 @@ function _onTrackBecomesActive(track: MusicTrack, index: number, get: () => Play
   const active = ++_activeTrackGeneration
   _djInsertRequest = null
   const isCurrent = () => active === _activeTrackGeneration && getProvider() === provider && get().currentTrack?.id === track.id
-  const isPodcast = _isPodcastTrack(track)
+  _activeProviderWaveform = Promise.resolve([])
   set({ currentTrack: track, playbackFormat: null, transitionInfo: null, queueIndex: index, isPlaying: _playbackDesired, positionMs: 0,
         waveformLevels: null, lyricsLines: null })
   _lastTimelineReportedAt = 0
   _transcodeRetriedTrackId = null
+  _activeRetryInfo = null
 
-  if (!isPodcast) {
+  if (usesLibraryMetadata(track)) {
     // If the track lacks stream details (from a list endpoint), enrich it.
     // Resolve stream ID and gain together from one full-track request.
     const needsEnrichment = track.codec == null && track.mediaInfo?.audioStreamId == null
     if (needsEnrichment) {
-      if (provider) fireAndForget(enrichCurrentTrack(track, provider, isCurrent, set))
+      if (provider) _activeProviderWaveform = enrichCurrentTrack(track, provider, isCurrent, set)
     } else {
       // Track already has full data (from PlayQueue/radio) — just fetch waveform
-      if (provider) fireAndForget(playbackMetadata.levels(provider,track)
-        .then(levels => { if (isCurrent() && levels.length > 0) set({ waveformLevels: levels }) }))
+      if (provider) _activeProviderWaveform = playbackMetadata.levels(provider,track)
+        .then(levels => {
+          if (isCurrent() && levels.length > 0) set({ waveformLevels: levels })
+          return levels
+        }).catch(() => [])
     }
     fetchLyricsForTrack(track)
-  }
+  } else useLyricsStore.getState().clear()
   if (get().djMode) fireAndForget(insertDjTracks(get, set))
 }
 
 function _onTrackAudiblyStarted(track: MusicTrack, provider: MusicProvider | null, playbackId: number): void {
-  const isPodcast = _isPodcastTrack(track)
+  const libraryTrack = usesLibraryMetadata(track)
   _lastTimelineReportedAt = Date.now()
   if (useNotificationStore.getState().notificationsEnabled) {
     sendNotification({
@@ -736,7 +763,7 @@ function _onTrackAudiblyStarted(track: MusicTrack, provider: MusicProvider | nul
     })
   }
 
-  if (!isPodcast && provider) fireAndForget(provider.reportProgress(track.id, 0, "playing", track.duration))
+  if (libraryTrack && provider) fireAndForget(provider.reportProgress(track.id, 0, "playing", track.duration))
   if (provider?.updateNowPlaying) {
     fireAndForget(provider.updateNowPlaying(
       track.title,
@@ -756,7 +783,7 @@ function _onTrackAudiblyStarted(track: MusicTrack, provider: MusicProvider | nul
   )
 
   // Notify provider of track start (scrobbling, external integrations) — skip for podcasts
-  if (provider?.onTrackStart && !isPodcast) {
+  if (provider?.onTrackStart && libraryTrack) {
     provider.onTrackStart(track, () => _playbackJournal.currentId === playbackId && getProvider() === provider)
   }
 
@@ -767,31 +794,53 @@ function _onTrackAudiblyStarted(track: MusicTrack, provider: MusicProvider | nul
  * in the queue so that skip-ahead is instant and smart crossfade analysis
  * is ready well in advance.
  */
+let _prefetchVersion = 0
 function prefetchAhead(queue: MusicTrack[], fromIndex: number, count: number): void {
+  const version = ++_prefetchVersion
   const provider = getProvider()
   const generation = _playGeneration
   const active = _activeTrackGeneration
-  if (queue.slice(fromIndex + 1, fromIndex + count + 1).some(isQueuePlaceholder)) {
+  const context = _queueContextGeneration
+  const order = _queueOrderVersion
+  const upcoming = queue.slice(fromIndex + 1, fromIndex + Math.min(count, 3) + 1)
+  const ids = upcoming.map(track => track.id).join("\0")
+  const ownsSelection = () => {
+    const state = usePlayerStore.getState()
+    return version === _prefetchVersion && generation === _playGeneration && active === _activeTrackGeneration
+      && context === _queueContextGeneration && getProvider() === provider && state.currentTrack?.id === queue[fromIndex]?.id
+      && order === _queueOrderVersion
+  }
+  const isCurrent = () => ownsSelection() && usePlayerStore.getState().queue.slice(fromIndex + 1, fromIndex + Math.min(count, 3) + 1).map(track => track.id).join("\0") === ids
+  if (usePlayerStore.getState().repeat === 1 || useSleepTimerStore.getState().endOfTrack) {
+    fireAndForget(engine.prepareQueue([]))
+    return
+  }
+  if (upcoming.some(isQueuePlaceholder)) {
     fireAndForget(ensureQueueRange(fromIndex + 1, fromIndex + count + 1, { priority: "prefetch" }).then(() => {
-      if (generation === _playGeneration && active === _activeTrackGeneration && getProvider() === provider)
+      if (ownsSelection())
         prefetchAhead(usePlayerStore.getState().queue, fromIndex, count)
     }))
     return
   }
-  for (let i = 1; i <= count; i++) {
-    const t = queue[fromIndex + i]
-    if (!t) continue
-    if (t.streamUrl?.startsWith("http")) {
+  fireAndForget(Promise.all(upcoming.map(async (t): Promise<QueuePreparationTrack | null> => {
+    if (hasIndependentAudio(t)) {
       const key = directTrackKey(t)
-      rememberPlaybackKey(key, t)
-      continue
+      if (isCurrent()) rememberPlaybackKey(key, t)
+      return { url: t.streamUrl, ratingKey: key, durationMs: t.duration, gainDb: null, prepareWaveform: true }
     }
-    if (!provider) continue
-    fireAndForget(playbackMetadata.playbackInfo(provider, t).then(info => {
-      if (generation !== _playGeneration || active !== _activeTrackGeneration || getProvider() !== provider) return
+    if (!provider) return null
+    try {
+      const [gain, info, levels] = await Promise.all([fetchGainDb(t, provider), playbackMetadata.playbackInfo(provider, t),
+        playbackMetadata.levels(provider, t).catch(() => [])])
+      if (!isCurrent()) return null
       rememberPlaybackKey(info.trackKey, t)
-    }))
-  }
+      return { url: info.url, ratingKey: info.trackKey, durationMs: t.duration, context: info.plexContext,
+        prepareWaveform: levels.length === 0,
+        gainDb: preparedReplayGain(t, info, usePlayerStore.getState().albumPlaybackId, gain) }
+    } catch { return null }
+  })).then(async tracks => {
+    if (isCurrent()) await engine.prepareQueue(tracks.filter((track): track is QueuePreparationTrack => track !== null))
+  }))
 }
 
 /**
@@ -856,7 +905,13 @@ async function playAtIndex(index: number, get: () => PlayerState, set: any): Pro
       ? _queueSession?.sourcePosition(track) === selectedPosition : track === selectedTrack)
     const track = get().queue[index]
     if (!track || isQueuePlaceholder(track)) throw Error("This queued song is unavailable. Try another song or reconnect to Plex.")
+    if (get().isRadioMode && _musicRadio) {
+      const state = get()
+      const upcoming = orderRadioUpcoming(_musicRadio.mode, state.queue.slice(index + 1), track)
+      set({ queue: [...state.queue.slice(0, index + 1), ...upcoming] })
+    }
     await _startPlayback(track, index, get, set)
+    if (get().isRadioMode) fireAndForget(appendRadioTracks(get, set as never))
   } catch (err) {
     if (ownsQueueSelection(generation, provider)) set({ playerError: err instanceof Error ? err.message : "Could not load this queued song." })
     console.error("playAtIndex failed:", err)
@@ -884,11 +939,11 @@ export const usePlayerStore = create<PlayerState>()(
   playlistLoadedCount: 0,
   isLoadingMoreTracks: false,
   isRadioMode: false,
+  radioMode: null, radioError: null, radioLoading: false,
   radioSeedKey: null,
   radioType: null,
   radioSeedArtist: null,
   radioDegreesOfSeparation: 2,
-  radioMinQueue: 5,
   djMode: null,
   waveformLevels: null,
   lyricsLines: null,
@@ -900,8 +955,8 @@ export const usePlayerStore = create<PlayerState>()(
 
   playTrack: async (track: MusicTrack, context?: MusicTrack[], contextName?: string | null, contextHref?: string | null, albumPlaybackId?: string | null) => {
     const provider = getProvider()
-    if(provider?.isOffline && !track.mediaInfo?.localAudio && track.mediaInfo?.offlineAvailable!==true){set({playerError:"This track is not available offline. Reconnect to Plex to download it."});return}
-    if(provider?.isOffline && context)context=context.filter(item=>item.mediaInfo?.localAudio || item.mediaInfo?.offlineAvailable===true)
+    if(provider?.isOffline && !isYoutubeMusicTrack(track) && !track.mediaInfo?.localAudio && track.mediaInfo?.offlineAvailable!==true){set({playerError:"This track is not available offline. Reconnect to Plex to download it."});return}
+    if(provider?.isOffline && context)context=context.filter(item=>isYoutubeMusicTrack(item) || item.mediaInfo?.localAudio || item.mediaInfo?.offlineAvailable===true)
     const generation = beginQueueSelection()
     const itemKey = `/library/metadata/${track.id}`
     const uri = provider?.buildItemUri ? provider.buildItemUri(itemKey) : itemKey
@@ -915,18 +970,21 @@ export const usePlayerStore = create<PlayerState>()(
     replaceQueueContext()
     set({ queue, queueId: null, shuffle: false, playerError: null,
       playlistKey: null, playlistTotalCount: 0, playlistLoadedCount: 0, isLoadingMoreTracks: false,
-      isRadioMode: false, radioSeedKey: null, radioType: null, radioSeedArtist: null,
+      isRadioMode: false, radioMode: null, radioError: null, radioLoading: false, radioSeedKey: null, radioType: null, radioSeedArtist: null,
       contextName: contextName ?? null, contextHref: contextHref ?? null, albumPlaybackId: albumPlaybackId ?? null })
 
     try {
       // Start audio + register server-side queue in parallel
       const [playQueue] = await Promise.all([
-        provider?.createPlayQueue ? provider.createPlayQueue(uri, false, repeat) : Promise.resolve({ queueId: 0, tracks: [] }),
+        provider?.createPlayQueue && !hasIndependentAudio(track) ? provider.createPlayQueue(uri, false, repeat) : Promise.resolve({ queueId: 0, tracks: [] }),
         _startPlayback(track, queueIndex, get, set),
       ])
       if (ownsQueueSelection(generation, provider)) set({ queueId: playQueue.queueId })
     } catch (err) {
       console.error("playTrack failed:", err)
+      if (ownsQueueSelection(generation, provider) && isYoutubeMusicTrack(track)) {
+        set({ playerError: err instanceof Error ? err.message : String(err) })
+      }
     }
   },
 
@@ -952,7 +1010,7 @@ export const usePlayerStore = create<PlayerState>()(
       set({
         queue: result.tracks, queueId: result.queueId, shuffle: shouldShuffle, playerError: null,
         playlistKey: null, playlistTotalCount: 0, playlistLoadedCount: 0, isLoadingMoreTracks: false,
-        isRadioMode: false, radioSeedKey: null, radioType: null, radioSeedArtist: null,
+        isRadioMode: false, radioMode: null, radioError: null, radioLoading: false, radioSeedKey: null, radioType: null, radioSeedArtist: null,
         contextName: contextName ?? null, contextHref: contextHref ?? null, albumPlaybackId: albumPlaybackId ?? null,
       })
 
@@ -984,7 +1042,7 @@ export const usePlayerStore = create<PlayerState>()(
         replaceQueueContext(); _queueSession = session
         set({ queue, queueIndex: index, queueId: null, shuffle, playerError: null, playlistKey: null,
           playlistTotalCount: queue.length, playlistLoadedCount: queue.length, isLoadingMoreTracks: false,
-          isRadioMode: false, radioSeedKey: null, radioType: null, radioSeedArtist: null,
+          isRadioMode: false, radioMode: null, radioError: null, radioLoading: false, radioSeedKey: null, radioType: null, radioSeedArtist: null,
           contextName: title, contextHref: href, albumPlaybackId: null })
         await _startPlayback(queue[index], index, get, set)
         return
@@ -1001,7 +1059,7 @@ export const usePlayerStore = create<PlayerState>()(
       set({ queue: tracks, queueId: null, queueIndex: 0, shuffle, playerError: null,
         playlistKey: `paged:${source.key}`, playlistTotalCount: pager.hasMore ? pager.totalCount : page.length,
         playlistLoadedCount: page.length, isLoadingMoreTracks: false,
-        isRadioMode: false, radioSeedKey: null, radioType: null, radioSeedArtist: null,
+        isRadioMode: false, radioMode: null, radioError: null, radioLoading: false, radioSeedKey: null, radioType: null, radioSeedArtist: null,
         contextName: title, contextHref: href, albumPlaybackId: null })
       await _startPlayback(tracks[0], 0, get, set)
     } catch (error) {
@@ -1034,7 +1092,7 @@ export const usePlayerStore = create<PlayerState>()(
         queue: tracks, queueId: null, shuffle: false, playerError: null,
         playlistKey: playlistId, playlistTotalCount: result.total > 0 ? result.total : 0,
         playlistLoadedCount: result.items.length, isLoadingMoreTracks: false,
-        isRadioMode: false, radioSeedKey: null, radioType: null, radioSeedArtist: null,
+        isRadioMode: false, radioMode: null, radioError: null, radioLoading: false, radioSeedKey: null, radioType: null, radioSeedArtist: null,
         contextName: title, contextHref: href, albumPlaybackId: null,
       })
 
@@ -1048,142 +1106,119 @@ export const usePlayerStore = create<PlayerState>()(
     }
   },
 
-  playRadio: async (seedId: string, radioType: RadioType, seedName?: string) => {
+  playRadio: async (seedId, radioType, seedName, requestedMode, seedTrack) => {
     const provider = getProvider()
-    if (!provider?.createRadioQueue) return
-
+    const mode = requestedMode ?? (isYoutubeMusicId(seedId) ? "ytmusic" : "plex")
     const generation = beginQueueSelection()
     const active = _activeTrackGeneration
     const before = get()
     const audible = _playbackJournal.current()
-    const keepSeedPlaying = radioType === 'track' && before.currentTrack?.id === seedId
+    const keepSeedPlaying = radioType === "track" && before.currentTrack?.id === seedId
       && !before.isInternetRadioActive
       && (_pendingSelectedTrackId === seedId || (audible?.track.id === seedId && audible.provider === provider))
-    let selectionApplied = false
+    let installed = false
+    let radio: MusicRadioSession | null = null
     const isCurrent = () => ownsQueueSelection(generation, provider)
       && (!keepSeedPlaying || active === _activeTrackGeneration)
-      && (selectionApplied || get().isInternetRadioActive === before.isInternetRadioActive)
-    // Block the position-listener refill from firing during our own async init.
-    const request = Symbol('radio selection')
-    _radioRefillRequest = request
-
+      && (installed || get().isInternetRadioActive === before.isInternetRadioActive)
+    const request = Symbol("radio selection")
+    _radioSelectionRequest = request
     try {
-      const { radioDegreesOfSeparation, radioMinQueue } = get()
-      const result = await provider.createRadioQueue(seedId, radioType, radioDegreesOfSeparation)
+      let track = seedTrack ?? (radioType === "track" && before.currentTrack?.id === seedId ? before.currentTrack : null)
+      if (!track && radioType === "track" && !isYoutubeMusicId(seedId) && provider) track = await provider.getTrack(seedId)
       if (!isCurrent()) return
-
-      // Filter to playable tracks then deduplicate by id.
-      const seenKeys = new Set<string>()
-      let tracks = filterPlayable(result.tracks).filter(
-        t => seenKeys.has(t.id) ? false : (seenKeys.add(t.id), true)
-      )
-
-      if (tracks.length === 0) {
-        set({ playerError: "Radio returned no playable tracks — the server may not support sonic analysis for this item." })
-        setTimeout(() => { if (isCurrent()) set({ playerError: null }) }, 5000)
-        return
+      const created = await createMusicRadio({ mode, provider, seedId, seedType: radioType, track,
+        degrees: () => get().radioDegreesOfSeparation,
+        current: () => installed ? _musicRadio === radio : isCurrent(),
+      })
+      radio = created.radio
+      let first = keepSeedPlaying ? get().currentTrack : created.seed
+      let upcoming: MusicTrack[] = []
+      for (let pass = 0; pass < 3; pass++) {
+        await radio.fill(upcoming, first)
+        if (!isCurrent() || !radio.current()) return
+        first ??= created.seed
+        if (first) radio.remember([first])
+        upcoming = orderRadioUpcoming(radio.mode, [...upcoming, ...radio.take(upcoming, first)], first)
+        if (upcoming.length >= RADIO_UPCOMING || radio.error) break
       }
-
-      // The server may omit or reorder the seed. Keep the current occurrence
-      // first, retaining its duration, selected media, and playback position.
-      if (keepSeedPlaying) {
-        tracks = [get().currentTrack!, ...tracks.filter(track => track.id !== seedId)]
-        seenKeys.add(seedId)
-      }
-
-      // Pre-fill to exactly radioMinQueue tracks after seed before setting queue state.
-      // Only fetch a second batch if the initial one is short, and take only what's needed.
-      const neededAfterSeed = radioMinQueue - (tracks.length - 1)
-      if (neededAfterSeed > 0) {
-        try {
-          const pq2 = await provider.createRadioQueue(seedId, radioType, radioDegreesOfSeparation)
-          if (!isCurrent()) return
-          let added = 0
-          filterPlayable(pq2.tracks).forEach(t => {
-            if (added >= neededAfterSeed || seenKeys.has(t.id)) return
-            seenKeys.add(t.id)
-            tracks = [...tracks, t]
-            added++
-          })
-        } catch { /* non-critical — start with fewer tracks if this fails */ }
-      }
+      // Catalog seeds (album/artist/playlist) choose their first playable song.
+      first ??= upcoming.shift() ?? null
+      if (!first || !upcoming.length) throw Error(radio.error ?? "Radio returned no new playable songs for this item.")
       if (!isCurrent()) return
-
       _djGeneratedKeys.clear()
       _radioGeneratedKeys.clear()
       replaceQueueContext()
-      // Mark all tracks except the seed (index 0) as radio-generated.
-      tracks.slice(1).forEach(t => _radioGeneratedKeys.add(t.id))
-
-      // Derive context name from queue results when not explicitly supplied.
-      const derivedSeedName = seedName
-        ?? (radioType === 'artist' ? tracks[0]?.artistName
-           : radioType === 'album'  ? tracks[0]?.albumName
-           : tracks[0]?.title)
-        ?? null
-
-      const radioHref = radioType === 'artist' ? `/artist/${seedId}`
-        : radioType === 'album' ? `/album/${seedId}`
-        : radioType === 'playlist' ? `/playlist/${seedId}`
-        : null
-
-      const seedArtist = (radioType === 'track' || radioType === 'album')
-        ? (tracks[0]?.artistName ?? null)
-        : null
-
-      selectionApplied = true
-      set({
-        queue: keepSeedPlaying ? [get().currentTrack!, ...tracks.slice(1)] : tracks,
-        queueIndex: 0, queueId: result.queueId, shuffle: false,
-        isRadioMode: true, radioSeedKey: seedId, radioType, albumPlaybackId: null,
-        radioSeedArtist: seedArtist,
+      _musicRadio = radio
+      installed = true
+      upcoming.forEach(item => _radioGeneratedKeys.add(item.id))
+      const derivedName = seedName ?? (radioType === "artist" ? first.artistName
+        : radioType === "album" ? first.albumName : first.title)
+      const href = isYoutubeMusicId(seedId) ? null
+        : radioType === "artist" ? `/artist/${seedId}` : radioType === "album" ? `/album/${seedId}`
+        : radioType === "playlist" ? `/playlist/${seedId}` : null
+      set({ queue: [first, ...upcoming], queueIndex: 0, queueId: created.queueId, shuffle: false, repeat: 0,
+        isRadioMode: true, radioMode: radio.mode, radioError: radio.error, radioLoading: false,
+        radioSeedKey: seedId, radioType, radioSeedArtist: first.artistName || null,
+        djMode: null, albumPlaybackId: null,
         playlistKey: null, playlistTotalCount: 0, playlistLoadedCount: 0, isLoadingMoreTracks: false,
-        playerError: null,
-        contextName: derivedSeedName ? `${derivedSeedName} Radio` : null, contextHref: radioHref,
-      })
-
+        playerError: null, contextName: derivedName ? `${derivedName} Radio` : "Radio", contextHref: href })
       if (keepSeedPlaying) {
-        // Keep the existing native playback identity and listened time. Only
-        // replace the upcoming transition; pause/buffering intent stays intact.
         get().refreshPreload()
         prefetchAhead(get().queue, 0, 3)
-        if (get().djMode) fireAndForget(insertDjTracks(get, set as never))
-      } else {
-        await _startPlayback(tracks[0], 0, get, set)
-      }
+      } else await _startPlayback(first, 0, get, set)
     } catch (err) {
       if (!isCurrent()) return
-      console.error("playRadio failed:", err)
-      const msg = err instanceof Error ? err.message : String(err)
-      set({ playerError: `Radio failed: ${msg}` })
-      setTimeout(() => { if (isCurrent()) set({ playerError: null }) }, 6000)
+      const message = `Radio failed: ${err instanceof Error ? err.message : String(err)}`
+      set({ playerError: message })
+      setTimeout(() => { if (get().playerError === message) set({ playerError: null }) }, 6000)
     } finally {
-      if (_radioRefillRequest === request) _radioRefillRequest = null
+      if (!installed) radio?.retire()
+      if (_radioSelectionRequest === request) _radioSelectionRequest = null
     }
   },
 
+  refillRadio: async () => {
+    _musicRadio?.retry()
+    await appendRadioTracks(get, set as never)
+  },
+
   addNext: (tracks: MusicTrack[]) => {
+    if (!tracks.length) return
+    if (get().isRadioMode || _radioSelectionRequest) get().stopRadio()
     set(s => {
       const next = [...s.queue]
       next.splice(s.queueIndex + 1, 0, ...tracks.map(copyQueueTrack))
       return { queue: next }
     })
+    get().refreshPreload()
   },
 
   addToQueue: (tracks: MusicTrack[]) => {
-    const provider=getProvider();const available=provider?.isOffline?tracks.filter(track=>track.mediaInfo?.localAudio || track.mediaInfo?.offlineAvailable===true):tracks
+    if (!tracks.length) return
+    if (get().isRadioMode || _radioSelectionRequest) get().stopRadio()
+    const provider=getProvider();const available=provider?.isOffline?tracks.filter(track=>isYoutubeMusicTrack(track) || track.mediaInfo?.localAudio || track.mediaInfo?.offlineAvailable===true):tracks
     set(s => ({ queue: [...s.queue, ...available.map(copyQueueTrack)] }))
+    const { queue, queueIndex, repeat } = get()
+    fireAndForget(preloadNextTrack(queue, queueIndex, repeat))
+    prefetchAhead(queue, queueIndex, 3)
   },
 
   stopRadio: () => {
     beginQueueSelection()
-    set({ isRadioMode: false, radioSeedKey: null, radioType: null, radioSeedArtist: null })
+    _musicRadio?.retire()
+    _musicRadio = null
+    _musicRadioRefill = null
+    set({ isRadioMode: false, radioMode: null, radioError: null, radioLoading: false, radioSeedKey: null, radioType: null, radioSeedArtist: null })
   },
 
-  setRadioDegreesOfSeparation: (v) => set({ radioDegreesOfSeparation: v }),
-  setRadioMinQueue: (v) => set({ radioMinQueue: v }),
+  setRadioDegreesOfSeparation: (v) => {
+    set({ radioDegreesOfSeparation: v })
+    _musicRadio?.resetSource("plex")
+  },
 
   setDjMode: (mode: DjMode | null) => {
+    if (mode && (get().isRadioMode || _radioSelectionRequest)) get().stopRadio()
     // Remove future DJ-generated bonus tracks from the queue
     set(s => ({
       queue: s.queue.filter((t, i) =>
@@ -1242,7 +1277,7 @@ export const usePlayerStore = create<PlayerState>()(
       playlistLoadedCount: 0,
       isLoadingMoreTracks: false,
       playerError: null,
-      isRadioMode: false,
+      isRadioMode: false, radioMode: null, radioError: null, radioLoading: false,
       radioSeedKey: null,
       radioType: null,
       radioSeedArtist: null,
@@ -1264,7 +1299,7 @@ export const usePlayerStore = create<PlayerState>()(
     set({ isPlaying: false })
     const audible = _playbackJournal.current()
     if (audible?.provider && audible.provider === getProvider()) {
-      if (!_isPodcastTrack(audible.track)) fireAndForget(audible.provider.reportProgress(audible.track.id, audible.positionMs, "paused", audible.track.duration))
+      if (usesLibraryMetadata(audible.track)) fireAndForget(audible.provider.reportProgress(audible.track.id, audible.positionMs, "paused", audible.track.duration))
       if (audible.provider.setNowPlayingState) fireAndForget(audible.provider.setNowPlayingState("paused", audible.positionMs))
     }
   },
@@ -1298,14 +1333,14 @@ export const usePlayerStore = create<PlayerState>()(
     set({ isPlaying: true })
     const audible = _playbackJournal.current()
     if (audible?.provider && audible.provider === getProvider()) {
-      if (!_isPodcastTrack(audible.track)) fireAndForget(audible.provider.reportProgress(audible.track.id, audible.positionMs, "playing", audible.track.duration))
+      if (usesLibraryMetadata(audible.track)) fireAndForget(audible.provider.reportProgress(audible.track.id, audible.positionMs, "playing", audible.track.duration))
       if (audible.provider.setNowPlayingState) fireAndForget(audible.provider.setNowPlayingState("playing", audible.positionMs))
     }
   },
 
   next: () => {
     const { queue, queueIndex, repeat, playlistKey, playlistLoadedCount, playlistTotalCount,
-            isRadioMode, radioSeedKey, radioType } = get()
+            isRadioMode } = get()
     if (queue.length === 0) return
 
     // Proactively load the next page when within 20 tracks of the end.
@@ -1326,9 +1361,13 @@ export const usePlayerStore = create<PlayerState>()(
       }
       if (repeat === 2) {
         nextIndex = 0
-      } else if (isRadioMode && radioSeedKey !== null && radioType !== null) {
-        // Radio mode: re-seed with a fresh station when the queue runs out
-        fireAndForget(get().playRadio(radioSeedKey, radioType))
+      } else if (isRadioMode) {
+        const radio = _musicRadio
+        fireAndForget(appendRadioTracks(get, set as never).then(() => {
+          if (radio !== _musicRadio || get().queueIndex !== queueIndex) return
+          if (get().queue.length > queue.length) get().next()
+          else set({ playerError: get().radioError ?? "No new radio songs. Retry from the queue." })
+        }))
         return
       } else {
         beginQueueSelection()
@@ -1412,6 +1451,7 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   toggleShuffle: () => {
+    if (get().isRadioMode || _radioSelectionRequest) get().stopRadio()
     _queueOrderVersion++
     const { shuffle, queue, queueIndex } = get()
     if (!shuffle && queue.length > 1) {
@@ -1426,14 +1466,17 @@ export const usePlayerStore = create<PlayerState>()(
     } else {
       set({ shuffle: !shuffle })
     }
+    get().refreshPreload()
   },
 
   cycleRepeat: () => {
     const repeat = ((get().repeat + 1) % 3) as 0 | 1 | 2
+    if (repeat === 2 && get().isRadioMode) get().stopRadio()
     set({ repeat })
     _preloadPlaybackKey = null
     engine.clearPreload()
     if (repeat !== 1) fireAndForget(preloadNextTrack(get().queue, get().queueIndex, repeat))
+    prefetchAhead(get().queue, get().queueIndex, 3)
   },
 
   updatePosition: (ms: number) => set({ positionMs: ms }),
@@ -1442,6 +1485,7 @@ export const usePlayerStore = create<PlayerState>()(
     _queueOrderVersion++
     const { queue, queueIndex } = get()
     if (from === to || from < 0 || to < 0 || from >= queue.length || to >= queue.length) return
+    if (get().isRadioMode || _radioSelectionRequest) get().stopRadio()
     const next = [...queue]
     const [moved] = next.splice(from, 1)
     next.splice(to, 0, moved)
@@ -1456,20 +1500,26 @@ export const usePlayerStore = create<PlayerState>()(
     }
     set({ queue: next, queueIndex: newIndex })
     // Re-preload the (potentially new) next track for analysis + gapless
-    fireAndForget(preloadNextTrack(next, newIndex, get().repeat))
+    get().refreshPreload()
   },
 
   removeFromQueue: (index: number) => {
     const { queue, queueIndex } = get()
     if (index < 0 || index >= queue.length) return
+    if (_radioSelectionRequest) get().stopRadio()
     const next = [...queue]
     next.splice(index, 1)
     let newIndex = queueIndex
     if (index < queueIndex) newIndex = queueIndex - 1
     else if (index === queueIndex) newIndex = Math.min(queueIndex, next.length - 1)
-    set({ queue: next, queueIndex: Math.max(0, newIndex) })
+    if (index === queueIndex && get().isRadioMode) get().stopRadio()
+    const radio = _musicRadio
+    const ordered = radio ? [...next.slice(0, newIndex + 1),
+      ...orderRadioUpcoming(radio.mode, next.slice(newIndex + 1), get().currentTrack)] : next
+    set({ queue: ordered, queueIndex: Math.max(0, newIndex) })
     // Re-preload the (potentially new) next track for analysis + gapless
-    fireAndForget(preloadNextTrack(next, Math.max(0, newIndex), get().repeat))
+    get().refreshPreload()
+    if (get().isRadioMode) fireAndForget(appendRadioTracks(get, set as never))
   },
 
   jumpToQueueItem: (index: number) => {
@@ -1481,6 +1531,8 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   clearUpcoming: () => {
+    if (get().isRadioMode || _radioSelectionRequest) get().stopRadio()
+    ++_prefetchVersion
     _preloadPlaybackKey = null
     engine.clearPreload()
     set(s => ({ queue: s.queue.slice(0, s.queueIndex + 1), transitionInfo: null }))
@@ -1492,6 +1544,7 @@ export const usePlayerStore = create<PlayerState>()(
     set({ transitionInfo: null })
     const { queue, queueIndex, repeat } = get()
     fireAndForget(preloadNextTrack(queue, queueIndex, repeat))
+    prefetchAhead(queue, queueIndex, 3)
   },
 
   initAudioEvents: async () => {
@@ -1519,7 +1572,7 @@ export const usePlayerStore = create<PlayerState>()(
         }
         audible.positionMs = positionMs
         savePodcastProgress(audible, positionMs, seekAcknowledged || !get().isPlaying)
-        const { currentTrack, queue, queueIndex, repeat, isRadioMode, isPlaying, radioMinQueue } = get()
+        const { currentTrack, queue, queueIndex, repeat, isRadioMode, isPlaying } = get()
         set({ positionMs })
 
         // Trigger pre-load when approaching end of track (30s before end)
@@ -1530,8 +1583,8 @@ export const usePlayerStore = create<PlayerState>()(
           }
         }
 
-        // Proactively refill the queue when tracks strictly ahead fall below the configured minimum
-        if (isRadioMode && queue.length - queueIndex - 1 < radioMinQueue) {
+        // Keep ten upcoming radio tracks, excluding the current song.
+        if (isRadioMode && queue.length - queueIndex - 1 < RADIO_UPCOMING) {
           fireAndForget(appendRadioTracks(get, set as never))
         }
 
@@ -1618,12 +1671,29 @@ export const usePlayerStore = create<PlayerState>()(
           queue: s.queue.map((item, i) => i === index ? { ...item, duration: track.duration } : item),
         }))
         set({ playbackFormat: event.source_format ? { trackId: track.id, playbackId: event.playback_id, format: event.source_format } : null })
+        rememberYoutubeMusicPlay(track)
         _onTrackAudiblyStarted(track, provider, event.playback_id)
+        if (track.duration > 0) {
+          const active = _activeTrackGeneration
+          const preferred = _activeProviderWaveform
+          const current = () => active === _activeTrackGeneration && _playbackJournal.currentId === event.playback_id
+            && get().currentTrack?.id === track.id && getProvider() === provider
+          fireAndForget((async () => {
+            // Provider data wins; generation reads only the same cached item as playback.
+            const supplied = await preferred
+            if (!current() || supplied.length || get().waveformLevels?.length) return
+            const info = _activeRetryInfo ?? (hasIndependentAudio(track) ? { url: track.streamUrl! }
+              : provider ? await playbackMetadata.playbackInfo(provider, track) : null)
+            if (!info || !current()) return
+            const levels = await engine.getWaveform(info.url, event.rating_key, "plexContext" in info ? info.plexContext : undefined)
+            if (levels.length && current() && !get().waveformLevels?.length) set({ waveformLevels: levels })
+          })())
+        }
         if (resumePosition > 0) {
           set({ positionMs: resumePosition })
           engine.seekTo(resumePosition)
         }
-        const { queue, repeat, isRadioMode, radioMinQueue, playlistKey, playlistLoadedCount, playlistTotalCount } = get()
+        const { queue, repeat, isRadioMode, playlistKey, playlistLoadedCount, playlistTotalCount } = get()
         const nextIndex = index
 
         // Pre-buffer the track after this one for the next gapless transition
@@ -1636,7 +1706,7 @@ export const usePlayerStore = create<PlayerState>()(
         }
 
         // Radio: refill queue if running low
-        if (isRadioMode && queue.length - nextIndex - 1 < radioMinQueue) {
+        if (isRadioMode && queue.length - nextIndex - 1 < RADIO_UPCOMING) {
           fireAndForget(appendRadioTracks(get, set as never))
         }
       },
@@ -1673,6 +1743,7 @@ export const usePlayerStore = create<PlayerState>()(
               console.log("[Transcode fallback] Retrying with transcoded audio for:", currentTrack.title)
               const info = await providerAtError.getTranscodePlaybackInfo(currentTrack, 320, "mp3")
               if (!isCurrent()) return
+              _activeRetryInfo = info
               rememberPlaybackKey(info.trackKey, currentTrack, "selection")
               _pendingSelectedTrackId = currentTrack.id
               await engine.play(info.url, info.trackKey, currentTrack.duration, info.parentKey, null, true, null, null, false, info.plexContext, playbackLabels(currentTrack))

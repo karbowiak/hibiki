@@ -1,7 +1,10 @@
 import { useCallback } from "react"
+import { useLocation } from "wouter"
+import { youtubeMusicContext } from "../backends/ytmusic/contextActions"
 import { useProviderStore } from "../stores/providerStore"
 import { useContextMenuStore, type MediaContextMenuType, type ContextActionsData } from "../stores/contextMenuStore"
-import type { MusicTrack, MusicAlbum, MusicArtist, MusicPlaylist } from "../types/music"
+import type { MusicTrack, MusicAlbum, MusicArtist, MusicPlaylist, MusicItem } from "../types/music"
+import { originalYoutubeMusicItem, type YoutubeMusicItem } from "../backends/ytmusic/discovery"
 
 type ContextMenuData = MusicTrack | MusicAlbum | MusicArtist | MusicPlaylist
 
@@ -13,6 +16,7 @@ type ContextMenuData = MusicTrack | MusicAlbum | MusicArtist | MusicPlaylist
  * - `isTarget(id)` — true if this id's row should be highlighted
  */
 export function useContextMenu() {
+  const [, navigate] = useLocation()
   const provider = useProviderStore(s => s.provider)
   const scope = provider?.cacheScope
   const showActions = useContextMenuStore(s => s.showActions)
@@ -25,15 +29,28 @@ export function useContextMenu() {
       (e: React.MouseEvent) => {
         e.preventDefault()
         e.stopPropagation()
-        if (!provider || useProviderStore.getState().provider !== provider || provider.cacheScope !== scope) return
+        if (useProviderStore.getState().provider !== provider || provider?.cacheScope !== scope) return
         const root = e.currentTarget as HTMLElement
         const target = (e.target as HTMLElement).closest?.("button, a[href]") ?? root.querySelector?.("button, a[href]")
         if (target instanceof window.HTMLElement) target.focus({ preventScroll: true })
         const bounds = root.getBoundingClientRect()
         const keyboard = e.clientX === 0 && e.clientY === 0
+        if (data.id.startsWith("ytmusic:")) {
+          const raw = originalYoutubeMusicItem({ ...data, type } as MusicItem)
+          const item: YoutubeMusicItem = raw ?? {
+            id: data.id.slice(8), kind: type === "track" ? "song" : type, title: data.title,
+            artist: "artistName" in data ? data.artistName : "", album: type === "album" ? data.title : null,
+            thumbnail: null, duration: null, year: "year" in data ? data.year : null,
+            artistId: "artistId" in data && data.artistId?.startsWith("ytmusic:") ? data.artistId.slice(8) : null,
+          }
+          showActions(keyboard ? bounds.left : e.clientX, keyboard ? bounds.bottom : e.clientY,
+            youtubeMusicContext(type === "track" ? data as MusicTrack : item, navigate))
+          return
+        }
+        if (!provider) return
         show(keyboard ? bounds.left : e.clientX, keyboard ? bounds.bottom : e.clientY, type, data, playlistId)
       },
-    [show, provider, scope],
+    [show, showActions, provider, scope, navigate],
   )
 
   const actionsHandler = useCallback(

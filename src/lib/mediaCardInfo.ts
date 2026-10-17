@@ -1,5 +1,6 @@
 import type { MusicItem, MusicTrack } from "../types/music"
 import type { DragPayload } from "../stores/dragStore"
+import { musicEntityHref } from "./musicEntity"
 
 export function getMediaInfo(item: MusicItem, opts?: { showYear?: boolean }) {
   switch (item.type) {
@@ -12,7 +13,7 @@ export function getMediaInfo(item: MusicItem, opts?: { showYear?: boolean }) {
             : item.artistName,
         thumb: item.thumbUrl,
         isArtist: false,
-        href: `/album/${item.id}`,
+        href: musicEntityHref("album", item.id),
         id: item.id,
         itemType: "album" as const,
         artistName: item.artistName,
@@ -24,7 +25,7 @@ export function getMediaInfo(item: MusicItem, opts?: { showYear?: boolean }) {
         desc: "Artist",
         thumb: item.thumbUrl,
         isArtist: true,
-        href: `/artist/${item.id}`,
+        href: musicEntityHref("artist", item.id),
         id: item.id,
         itemType: "artist" as const,
         artistName: item.title,
@@ -39,7 +40,7 @@ export function getMediaInfo(item: MusicItem, opts?: { showYear?: boolean }) {
             : item.artistName,
         thumb: item.thumbUrl,
         isArtist: false,
-        href: item.albumId ? `/album/${item.albumId}` : null,
+        href: musicEntityHref("album", item.albumId),
         id: item.id,
         itemType: "track" as const,
         artistName: item.artistName,

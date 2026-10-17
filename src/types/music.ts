@@ -49,6 +49,8 @@ export interface AlbumReview {
 }
 
 export interface MusicTrack {
+  explicit?: boolean
+  viewCount?: number
   id: string
   title: string
   trackNumber: number
@@ -172,6 +174,8 @@ export type MusicItem =
 export type HubLayout = "scroller" | "list" | "hero" | "pills"
 
 export interface MusicHub {
+  /** Server-supplied destination for a paginated discovery view. */
+  key?: string | null
   title: string
   identifier: string
   items: MusicItem[]

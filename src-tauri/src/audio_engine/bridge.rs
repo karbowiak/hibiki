@@ -10,6 +10,24 @@ use super::AudioEngine;
 /// Tauri managed state wrapper.
 pub struct AudioEngineState(pub Arc<AudioEngine>);
 
+async fn dispatch_source(
+    app: &tauri::AppHandle,
+    plex: &crate::commands::PlexState,
+    db: &crate::db::DbState,
+    downloads: &crate::offline_audio::AudioDownloads,
+    automatic: &Arc<super::cache::AudioCache>,
+    context: Option<&crate::commands::PlexRequestContext>,
+    url: &str,
+    track_key: i64,
+    send: impl FnOnce(super::source::MediaSource) -> Result<u64, String>,
+) -> Result<u64, String> {
+    if url.starts_with("ytmusic:") {
+        send(crate::ytmusic::playback_source(app, url, track_key, context.is_some())?)
+    } else {
+        crate::offline_audio::dispatch(plex, db, downloads, automatic, context, url, track_key, send).await
+    }
+}
+
 fn reporting_binding(app: &tauri::AppHandle) -> Result<crate::listening_history::Binding, String> {
     use tauri::Manager;
     let directory = app
@@ -45,7 +63,7 @@ pub async fn audio_play(
     app: tauri::AppHandle,
 ) -> Result<u64, String> {
     let binding = reporting_binding(&app)?;
-    crate::offline_audio::dispatch(&plex_state, &db, &downloads, state.0.cache(), context.as_ref(), &url, rating_key, |source| {
+    dispatch_source(&app, &plex_state, &db, &downloads, state.0.cache(), context.as_ref(), &url, rating_key, |source| {
             state.0.send(Command::Play {
                 source,
                 meta: TrackMeta {
@@ -85,7 +103,7 @@ pub async fn audio_preload_next(
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let binding = reporting_binding(&app)?;
-    crate::offline_audio::dispatch(&plex_state, &db, &downloads, state.0.cache(), context.as_ref(), &url, rating_key, |source| {
+    dispatch_source(&app, &plex_state, &db, &downloads, state.0.cache(), context.as_ref(), &url, rating_key, |source| {
             state.0.send(Command::PreloadNext {
                 source,
                 meta: TrackMeta {
@@ -109,6 +127,85 @@ pub async fn audio_preload_next(
 #[tauri::command]
 pub async fn audio_clear_preload(state: State<'_, AudioEngineState>) -> Result<(), String> {
     state.0.send(Command::ClearPreload).map(|_| ())
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueuePreparationTrack {
+    url: String,
+    rating_key: i64,
+    duration_ms: u64,
+    gain_db: Option<f32>,
+    #[serde(default)]
+    prepare_waveform: bool,
+    context: Option<crate::commands::PlexRequestContext>,
+}
+
+#[tauri::command]
+pub async fn audio_prepare_queue(
+    request_id: u64, batch: u64, tracks: Vec<QueuePreparationTrack>,
+    plex_state: State<'_, crate::commands::PlexState>, state: State<'_, AudioEngineState>,
+    db: State<'_, crate::db::DbState>, downloads: State<'_, crate::offline_audio::AudioDownloads>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    if tracks.len() > 3 { return Err("Prepare at most three upcoming songs".into()); }
+    let Some(revision) = state.0.begin_queue_preparation(request_id, batch)? else { return Ok(()); };
+    let mut prepared = Vec::new();
+    for track in tracks {
+        let mut admitted = None;
+        let result = dispatch_source(&app, &plex_state, &db, &downloads, state.0.cache(), track.context.as_ref(),
+            &track.url, track.rating_key, |mut source| {
+                source.prepare_waveform |= track.prepare_waveform;
+                admitted = Some(source); Ok(0)
+            }).await;
+        if result.is_ok() {
+            if let Some(source) = admitted {
+                prepared.push(super::preparation::Track { source, duration_ms: track.duration_ms, gain_db: track.gain_db });
+            }
+        }
+    }
+    state.0.finish_queue_preparation(request_id, revision, prepared)
+}
+
+#[tauri::command]
+pub async fn audio_get_waveform(
+    request_id: u64,
+    url: String,
+    rating_key: i64,
+    context: Option<crate::commands::PlexRequestContext>,
+    plex_state: State<'_, crate::commands::PlexState>,
+    state: State<'_, AudioEngineState>,
+    db: State<'_, crate::db::DbState>,
+    downloads: State<'_, crate::offline_audio::AudioDownloads>,
+    app: tauri::AppHandle,
+) -> Result<Vec<super::waveform::Level>, String> {
+    let request = state.0.waveform_request(request_id)?;
+    let mut source = None;
+    dispatch_source(
+        &app,
+        &plex_state,
+        &db,
+        &downloads,
+        state.0.cache(),
+        context.as_ref(),
+        &url,
+        rating_key,
+        |admitted| {
+            source = Some(admitted);
+            Ok(0)
+        },
+    )
+    .await?;
+    let source = source.ok_or("Waveform source unavailable")?;
+    super::waveform::levels(
+        source
+            .local_cache
+            .unwrap_or_else(|| state.0.cache().clone()),
+        source.cache_key,
+        request,
+        true,
+    )
+    .await
 }
 
 #[tauri::command]

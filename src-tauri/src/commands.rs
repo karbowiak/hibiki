@@ -486,6 +486,23 @@ pub async fn get_hubs(
         .map_err(|e| format!("{:#}", e))
 }
 
+/// Page a discovery destination independently of its short home preview.
+#[tauri::command]
+pub async fn get_discovery_page(
+    context: PlexRequestContext,
+    section_id: i64,
+    kind: String,
+    offset: i64,
+    limit: i64,
+    hub_id: Option<String>,
+    key: Option<String>,
+    state: State<'_, PlexState>,
+) -> Result<crate::plex::discovery::DiscoveryPage, String> {
+    let c = client!(state, context);
+    c.discovery_page(section_id, &kind, offset, limit, hub_id.as_deref(), key.as_deref())
+        .await.map_err(|error| format!("{error:#}"))
+}
+
 /// Get "on deck" / continue listening items.
 #[tauri::command]
 pub async fn get_on_deck(

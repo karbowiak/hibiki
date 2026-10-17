@@ -1,3 +1,5 @@
+import { MusicEntityLink } from "./shared/MusicEntityLink"
+import { trackEntity } from "../lib/musicLinks"
 import "../styles/shellArtwork.css"
 import { useArtworkAppearanceStore } from "../stores/artworkAppearanceStore"
 import { useContextMenu } from "../hooks/useContextMenu"
@@ -37,30 +39,37 @@ import { LyricsContent } from "./LyricsPanel"
 import { useVirtualWindow, virtualRef } from "../hooks/useVirtualWindow"
 import { ensureQueueRange } from "../stores/playerStore"
 import { isQueuePlaceholder, queueMemberKey } from "../lib/queueSession"
+import { MusicSourceBadge, trackMusicSource, type MusicSource } from "./shared/MusicSource"
+import { YoutubeMusicLikeButton } from "./shared/YoutubeMusicLikeButton"
 
 /* ------------------------------------------------------------------ */
 /*  Track row shared between Played / Now Playing / Next Up           */
 /* ------------------------------------------------------------------ */
 
 interface TrackRowProps {
+  track?: MusicTrack
   thumb: string | null
   title: string
   artist: string
   durationMs: number
   isGuestDj: boolean
   isRadio: boolean
+  source: MusicSource | null
   onContextMenu?: (event: React.MouseEvent) => void
 }
 
 function TrackBadges({
   isGuestDj,
   isRadio,
+  source,
 }: {
   isGuestDj: boolean
   isRadio: boolean
+  source: MusicSource | null
 }) {
   return (
     <>
+      <MusicSourceBadge source={source} />
       {isGuestDj && <span className="queue-track-badge">DJ</span>}
       {isRadio && !isGuestDj && (
         <span className="queue-track-badge">Radio</span>
@@ -72,12 +81,14 @@ function TrackBadges({
 /* --- Played track (static, faded, no drag/remove) --- */
 
 function PlayedRow({
+  track,
   thumb,
   title,
   artist,
   durationMs,
   isGuestDj,
   isRadio,
+  source,
   onJump,
   onContextMenu,
 }: TrackRowProps & { onJump: () => void }) {
@@ -114,13 +125,18 @@ function PlayedRow({
           </button>
         </div>
         <div className="queue-track-meta">
-          <span className="truncate">{artist}</span>
-          <TrackBadges isGuestDj={isGuestDj} isRadio={isRadio} />
+          <span className="min-w-0 truncate">
+            <MusicEntityLink entity={trackEntity(track, "artist")} className="hover:underline">{artist}</MusicEntityLink>
+            {track?.albumName && <><span className="mx-1">·</span>
+              <MusicEntityLink entity={trackEntity(track, "album")} className="hover:underline">{track.albumName}</MusicEntityLink></>}
+          </span>
+          <TrackBadges isGuestDj={isGuestDj} isRadio={isRadio} source={source} />
         </div>
       </div>
       <span className="shrink-0 text-xs tabular-nums text-(--text-muted)">
         {formatMs(durationMs)}
       </span>
+      {track && <YoutubeMusicLikeButton track={track} />}
       <span className="queue-remove-spacer" aria-hidden="true" />
     </div>
   )
@@ -129,12 +145,14 @@ function PlayedRow({
 /* --- Now Playing track (static, accent styling, no drag/remove) --- */
 
 function NowPlayingRow({
+  track,
   thumb,
   title,
   artist,
   durationMs,
   isGuestDj,
   isRadio,
+  source,
   onContextMenu,
 }: TrackRowProps) {
   return (
@@ -169,13 +187,18 @@ function NowPlayingRow({
           </span>
         </div>
         <div className="queue-track-meta">
-          <span className="truncate">{artist}</span>
-          <TrackBadges isGuestDj={isGuestDj} isRadio={isRadio} />
+          <span className="min-w-0 truncate">
+            <MusicEntityLink entity={trackEntity(track, "artist")} className="hover:underline">{artist}</MusicEntityLink>
+            {track?.albumName && <><span className="mx-1">·</span>
+              <MusicEntityLink entity={trackEntity(track, "album")} className="hover:underline">{track.albumName}</MusicEntityLink></>}
+          </span>
+          <TrackBadges isGuestDj={isGuestDj} isRadio={isRadio} source={source} />
         </div>
       </div>
       <span className="shrink-0 text-xs tabular-nums text-(--text-muted)">
         {formatMs(durationMs)}
       </span>
+      {track && <YoutubeMusicLikeButton track={track} eager />}
       <span className="queue-remove-spacer" aria-hidden="true" />
     </div>
   )
@@ -191,6 +214,7 @@ interface SortableUpcomingProps extends TrackRowProps {
 }
 
 function SortableUpcomingItem({
+  track,
   id,
   index,
   thumb,
@@ -199,6 +223,7 @@ function SortableUpcomingItem({
   durationMs,
   isGuestDj,
   isRadio,
+  source,
   onJump,
   onRemove,
   onContextMenu,
@@ -275,8 +300,12 @@ function SortableUpcomingItem({
           </button>
         </div>
         <div className="queue-track-meta">
-          <span className="truncate">{artist}</span>
-          <TrackBadges isGuestDj={isGuestDj} isRadio={isRadio} />
+          <span className="min-w-0 truncate">
+            <MusicEntityLink entity={trackEntity(track, "artist")} className="hover:underline">{artist}</MusicEntityLink>
+            {track?.albumName && <><span className="mx-1">·</span>
+              <MusicEntityLink entity={trackEntity(track, "album")} className="hover:underline">{track.albumName}</MusicEntityLink></>}
+          </span>
+          <TrackBadges isGuestDj={isGuestDj} isRadio={isRadio} source={source} />
         </div>
       </div>
 
@@ -284,6 +313,7 @@ function SortableUpcomingItem({
         {formatMs(durationMs)}
       </span>
 
+      {track && <YoutubeMusicLikeButton track={track} />}
       <button
         className="queue-remove-button shrink-0 text-(--text-muted) opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 hover:text-(--text-primary) focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
         onClick={(e) => {
@@ -308,6 +338,7 @@ function QueueTrackList({
   start,
   end,
   played,
+  libraryName,
   scrollRef,
   active,
   jump,
@@ -318,6 +349,7 @@ function QueueTrackList({
   start: number
   end: number
   played?: boolean
+  libraryName?: string
   scrollRef: React.RefObject<HTMLDivElement | null>
   active: boolean
   jump: (index: number) => void
@@ -367,12 +399,14 @@ function QueueTrackList({
         const track = queue[index]
         if (!track) return null
         const props = {
+          track,
           thumb: track.thumbUrl ?? null,
           title: track.title || "Loading song…",
           artist: track.artistName || "",
           durationMs: track.duration || 0,
           isGuestDj: isDjGenerated(track.id),
           isRadio: isRadioGenerated(track.id),
+          source: trackMusicSource(track, libraryName),
           onContextMenu: isQueuePlaceholder(track)
             ? undefined
             : contextMenu("track", track),
@@ -546,6 +580,7 @@ export function QueuePanel() {
     repeat,
     shuffle,
     clearUpcoming,
+    isRadioMode, radioError, radioLoading, refillRadio,
   } = usePlayerStore(
     useShallow((s) => ({
       queue: s.queue,
@@ -556,6 +591,7 @@ export function QueuePanel() {
       repeat: s.repeat,
       shuffle: s.shuffle,
       clearUpcoming: s.clearUpcoming,
+      isRadioMode: s.isRadioMode, radioError: s.radioError, radioLoading: s.radioLoading, refillRadio: s.refillRadio,
     }))
   )
   const {
@@ -810,6 +846,7 @@ export function QueuePanel() {
             />
             <QueueTrackList
               queue={queue}
+              libraryName={provider?.name}
               start={0}
               end={queueIndex}
               played
@@ -835,12 +872,14 @@ export function QueuePanel() {
                 }
               />
               <NowPlayingRow
+                track={currentTrack}
                 thumb={currentTrack.thumbUrl}
                 title={currentTrack.title}
                 artist={currentTrack.artistName}
                 durationMs={currentTrack.duration}
                 isGuestDj={isDjGenerated(currentTrack.id)}
                 isRadio={isRadioGenerated(currentTrack.id)}
+                source={trackMusicSource(currentTrack, provider?.name)}
                 onContextMenu={contextMenu("track", currentTrack)}
               />
             </div>
@@ -872,6 +911,7 @@ export function QueuePanel() {
             >
               <QueueTrackList
                 queue={queue}
+                libraryName={provider?.name}
                 start={queueIndex + 1}
                 end={queue.length}
                 scrollRef={scrollRef}
@@ -885,6 +925,13 @@ export function QueuePanel() {
               <IndicatorRow icon={<RepeatIcon />} text="Queue will repeat" />
             )}
           </>
+        )}
+        {isRadioMode && (
+          <div className="px-5 py-4 text-center text-xs leading-relaxed text-(--text-secondary)">
+            <p role="status">{radioError ?? (radioLoading ? "Loading more radio songs…" : "More songs will load as the queue progresses.")}</p>
+            {radioError && <button type="button" disabled={radioLoading} onClick={() => { void refillRadio() }}
+              className="player-panel-action mt-2">{radioLoading ? "Retrying…" : "Retry"}</button>}
+          </div>
         )}
       </div>
     )

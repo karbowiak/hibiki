@@ -127,6 +127,60 @@ function transport() {
   return { ipc, emit: (name: string, payload: unknown) => handlers.get(name)?.({ payload }) }
 }
 
+test("queue preparation follows the confirmed selection and drops late play replies", async () => {
+  const calls: { command: string; args: any }[] = []
+  const first = deferred<number>(), second = deferred<number>()
+  const audio = new RustAudioEngine({
+    invoke: ((command: string, args: any) => {
+      calls.push({ command, args })
+      if (command === "audio_play") return args.ratingKey === 1 ? first.promise : second.promise
+      return Promise.resolve()
+    }) as AudioTransport["invoke"], listen: async () => () => {},
+  })
+  const track = { url: "ytmusic:abcdefghijk", ratingKey: -2, durationMs: 180000, gainDb: null, prepareWaveform: true }
+  const old = audio.play("https://plex.test/one", 1, 180000, "", null)
+  const latest = audio.play("https://plex.test/two", 2, 180000, "", null)
+  await audio.prepareQueue([track])
+  expect(calls.filter(call => call.command === "audio_prepare_queue")).toHaveLength(0)
+  second.resolve(2)
+  await latest
+  first.resolve(1)
+  await old
+  await audio.prepareQueue([track])
+  expect(calls.at(-1)).toEqual({ command: "audio_prepare_queue", args: { requestId: 2, batch: 1, tracks: [{ ...track, context: null }] } })
+  audio.beginSelection()
+  await audio.prepareQueue([track])
+  audio.stop()
+  await audio.prepareQueue([track])
+  expect(calls.filter(call => call.command === "audio_prepare_queue")).toHaveLength(1)
+})
+
+test("a buffered native start can request its waveform with the confirmed native ID", async () => {
+  const native = deferred<number>()
+  const calls: { command: string; args: any }[] = []
+  const handlers = new Map<string, (event: any) => void>()
+  const audio = new RustAudioEngine({
+    invoke: ((command: string, args: any) => {
+      calls.push({ command, args })
+      if (command === "audio_play") return native.promise
+      return Promise.resolve(command === "audio_get_waveform" ? [{ loudness: -12 }] : 44100)
+    }) as AudioTransport["invoke"],
+    listen: async (event, receive) => { handlers.set(event, receive); return () => {} },
+  })
+  await audio.init({ onPosition() {}, onState() {}, onTrackEnded() {}, onError() {},
+    onTrackStarted() { void audio.getWaveform("ytmusic:abcdefghijk", -2) },
+  })
+  const playing = audio.play("ytmusic:abcdefghijk", -2, 180000, "", null)
+  handlers.get("audio://track-started")!({ payload: { request_id: 9, playback_id: 1, rating_key: -2, duration_ms: 180000 } })
+  expect(calls.filter(call => call.command === "audio_get_waveform")).toHaveLength(0)
+  native.resolve(9)
+  await playing
+  await settle()
+  expect(calls.at(-1)).toEqual({ command: "audio_get_waveform", args: { requestId: 9, url: "ytmusic:abcdefghijk", ratingKey: -2, context: null } })
+  audio.beginSelection()
+  expect(await audio.getWaveform("ytmusic:abcdefghijk", -2)).toEqual([])
+})
+
 test("native ends finish their known playback record after selection changes or Stop", async () => {
   const bus = transport()
   const audio = new RustAudioEngine(bus.ipc)

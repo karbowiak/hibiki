@@ -1,16 +1,20 @@
-import { MediaCard } from "../MediaCard"
+import { DiscoveryCard } from "../shared/DiscoveryCard"
 import { useMemo } from "react"
 import { useUIStore } from "../../stores/uiStore"
 import { deduplicateAlbums } from "../../lib/dedup"
 import { useRatedAlbumIndex } from "../../hooks/useRatedIndex"
 import { useWindowedPages } from "../../hooks/useWindowedPages"
 import { useRatedItems } from "../../hooks/useRatedItems"
-import { prefetchAlbum } from "../../stores/metadataCache"
 import { MediaGrid } from "../shared/MediaGrid"
+import { DiscoveryMore } from "../shared/DiscoveryMore"
+import { useYoutubeMusicLibrary } from "../../backends/ytmusic/library"
+import { interleavePages } from "../../lib/interleavedPages"
+import type { DiscoveryItem } from "../../lib/discovery"
 
 export function LikedAlbums() {
   const page = useRatedItems("album")
-  const retry = page.retry
+  const youtube = useYoutubeMusicLibrary("albums")
+  const retry = () => { page.retry(); void youtube.retry() }
   const status =
     page.loading && !page.items.length
       ? "loading"
@@ -33,7 +37,10 @@ export function LikedAlbums() {
     albums.length
   )
   const active = shouldDeduplicate && index.ready ? grouped : page.pages
-  const count = active.total
+  const mixed = interleavePages(active, youtube.connected ? youtube.items : [],
+    item => ({ source: "plex", item: { ...item, type: "album" } } as DiscoveryItem),
+    item => ({ source: "ytmusic", item } as DiscoveryItem))
+  const count = mixed.total
 
   return (
     <div className="pb-12">
@@ -43,25 +50,25 @@ export function LikedAlbums() {
           <div>
             <h1 className="discovery-title">Liked Albums</h1>
             <p className="mt-2 max-w-xl select-text text-sm text-gray-400">
-              Albums you've rated in Plex, all in one place.
+              {youtube.connected ? "Rated albums from Plex and albums saved in YouTube Music." : "Your rated albums."}
             </p>
           </div>
           <p className="text-sm text-gray-400">
-            {count.toLocaleString()} {count === 1 ? "album" : "albums"}
+            {count.toLocaleString()}{youtube.connected && youtube.more ? "+" : ""} {count === 1 ? "album" : "albums"}
           </p>
         </div>
       </div>
 
       {/* Album grid */}
       <div className="px-8 pt-2">
-        {status === "loading" && !count ? (
+        {(status === "loading" || youtube.loading) && !count ? (
           <p
             role="status"
             className="px-8 py-12 text-center text-sm text-gray-400"
           >
             Loading rated albums…
           </p>
-        ) : status === "error" ? (
+        ) : status === "error" && !count ? (
           <div
             role="alert"
             className="mx-8 my-4 rounded-lg border border-red-400/30 p-4 text-sm text-red-400"
@@ -76,32 +83,15 @@ export function LikedAlbums() {
           </div>
         ) : count === 0 ? (
           <div className="py-12 text-center text-sm text-gray-500">
-            No rated albums yet. Rate an album in Plex to see it here.
+            {youtube.connected ? "No saved albums yet. Rate an album in Plex or save one in YouTube Music." : "No rated albums yet. Rate an album to see it here."}
           </div>
         ) : (
           <MediaGrid
-            paged={active}
-            renderItem={(album) => (
-              <MediaCard
-                key={album.id}
-                title={album.title}
-                desc={`${album.artistName}${album.year ? ` · ${album.year}` : ""}`}
-                href={`/album/${album.id}`}
-                thumb={album.thumbUrl}
-                artistName={album.artistName}
-                albumName={album.title}
-                contextItem={{ ...album, type: "album" }}
-                userRating={album.userRating}
-                prefetch={() => prefetchAlbum(album.id)}
-                dragPayload={{
-                  type: "album",
-                  ids: [album.id],
-                  label: album.title,
-                }}
-              />
-            )}
+            paged={mixed}
+            renderItem={entry => <DiscoveryCard key={`${entry.source}:${entry.item.id}`} entry={entry} showYear />}
           />
         )}
+        {youtube.connected && <DiscoveryMore more={youtube.more} loading={youtube.loading} error={youtube.error} load={() => void (youtube.error ? youtube.retry() : youtube.loadMore())} />}
         {page.error && count > 0 && (
           <p role="alert" className="py-4 text-sm">
             {page.error}{" "}

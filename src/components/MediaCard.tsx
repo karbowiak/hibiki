@@ -18,9 +18,14 @@ import { useContextMenu } from "../hooks/useContextMenu"
 import type { MusicItem } from "../types/music"
 import type { DragPayload } from "../stores/dragStore"
 import { useNearViewport } from "../hooks/useNearViewport"
-import type { Ref } from "react"
+import type { Ref, ReactNode } from "react"
+import { MusicEntityLink } from "./shared/MusicEntityLink"
+import { albumArtistEntity, trackEntity, type MusicEntityRef } from "../lib/musicLinks"
 
 interface MediaCardProps {
+  navigationEntity?: MusicEntityRef | null
+  descriptionEntity?: MusicEntityRef | null
+  artworkBadge?: ReactNode
   artworkRef?: Ref<HTMLDivElement>
   title: string
   desc: string
@@ -120,6 +125,7 @@ function ArtistImageCard({
     <>
       <MediaCardInner
         {...rest}
+        artistName={artistName}
         artworkRef={ref}
         thumb={url}
         onImageFailure={onFailure}
@@ -150,6 +156,7 @@ function AlbumImageCard({
     <>
       <MediaCardInner
         {...rest}
+        artistName={artistName}
         artworkRef={ref}
         thumb={url}
         onImageFailure={onFailure}
@@ -189,6 +196,11 @@ export function MediaCard(props: MediaCardProps) {
 }
 
 function MediaCardInner({
+  navigationEntity,
+  descriptionEntity,
+  artistName,
+  isArtist,
+  artworkBadge,
   artworkRef,
   title,
   desc,
@@ -268,6 +280,8 @@ function MediaCardInner({
     .map((word) => Array.from(word)[0] ?? "")
     .join("")
     .toLocaleUpperCase()
+  const credit = descriptionEntity !== undefined ? descriptionEntity : contextItem?.type === "album" ? albumArtistEntity(contextItem)
+    : contextItem?.type === "track" ? trackEntity(contextItem, "artist") : !isArtist && artistName ? { kind: "artist" as const, name: artistName } : null
   const cardContent = (
     <>
       <div className="media-card__art aspect-square">
@@ -286,6 +300,7 @@ function MediaCardInner({
         )}
       </div>
       <div className="media-card__gradient" aria-hidden="true" />
+      {artworkBadge && <span className="absolute top-2 right-2 z-10 flex h-7 min-w-7 items-center justify-center rounded-full bg-black/70 p-1.5 pointer-events-none">{artworkBadge}</span>}
       {onViewVersions && (versionCount ?? 0) > 1 && (
         <button
           type="button"
@@ -303,6 +318,7 @@ function MediaCardInner({
       <div
         className={clsx(
           "media-card__caption",
+          credit && "media-card__caption--links",
           onPlay && "media-card__caption--play"
         )}
       >
@@ -311,7 +327,7 @@ function MediaCardInner({
         </div>
         <div className="flex items-center gap-1.5">
           <div className="media-card__meta min-w-0" title={desc}>
-            {desc}
+            {credit ? <MusicEntityLink entity={credit} className="relative z-4 pointer-events-auto hover:underline">{desc}</MusicEntityLink> : desc}
           </div>
           {contextItem && (
             <DownloadBadge
@@ -420,7 +436,11 @@ function MediaCardInner({
       className={cardClass}
       {...(!href && !onClick ? dragHandlers : undefined)}
     >
-      {href ? (
+      {navigationEntity ? (
+        <MusicEntityLink entity={navigationEntity} className={primaryClass} onNavigate={onClick}>
+          <span className="sr-only">{title}</span>
+        </MusicEntityLink>
+      ) : href ? (
         <Link
           href={href}
           onClick={onClick}

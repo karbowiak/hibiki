@@ -104,10 +104,11 @@ test("reordering pending metadata and repeated recordings preserves each occurre
 })
 
 test("queue metadata stays bounded while the complete order is retained", async () => {
+  const artwork = { thumbUrl: "image://localhost/ext/img?src=https%3A%2F%2Fimages.test%2Ftrack.jpg", albumThumbUrl: "https://images.test/album.jpg", artistThumbUrl: "https://images.test/artist.jpg" }
   const session = new QueueSession({
     key: "large",
-    total: 2000,
-    loadItems: async (selected) => selected.map(track),
+    entries: Array.from({ length: 2000 }, (_, i) => ({ ...track(i), ...artwork })),
+    loadItems: async (selected) => selected.map(i => ({ ...track(i), ...artwork })),
     loadPage: async () => {
       throw Error("unexpected")
     },
@@ -122,6 +123,9 @@ test("queue metadata stays bounded while the complete order is retained", async 
     queue.filter((track) => !isQueuePlaceholder(track)).length
   ).toBeLessThanOrEqual(805)
   expect(session.snapshot(queue)[1999].sourceIndex).toBe(1999)
+  expect(isQueuePlaceholder(queue[100])).toBe(true)
+  expect(queue[100]).toMatchObject(artwork)
+  expect(session.snapshot(queue)[100]).toMatchObject(artwork)
 })
 
 test("a second snapshot retains original offsets of cold, reordered source slots", () => {

@@ -62,6 +62,7 @@ pub struct AudioCache {
     limit_initialized: AtomicBool,
     entry_limit: usize,
     evictable: bool,
+    fills: Mutex<HashMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>>,
 }
 
 struct CacheOwner {
@@ -139,6 +140,8 @@ struct CacheEntry {
     gain_analysis_version: u8,
     #[serde(default)]
     revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    waveform: Option<super::waveform::StoredWaveform>,
 }
 
 /// Names an accepted completed download, rather than just its reusable URL key.
@@ -147,6 +150,15 @@ pub(super) struct CacheStamp {
     filename: String,
     size_bytes: u64,
     revision: String,
+}
+impl CacheStamp {
+    pub(super) fn extension(&self) -> String {
+        Path::new(&self.filename)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("dat")
+            .into()
+    }
 }
 
 impl From<&CacheEntry> for CacheStamp {
@@ -189,11 +201,47 @@ impl CacheIndex {
                 false
             }
         });
-        if index.entries.len() != before || index.total_bytes != total {
+        let derived_changed = index.bound_waveforms(None);
+        if index.entries.len() != before || index.total_bytes != total || derived_changed {
             index.total_bytes = total;
             index.save(&path);
         }
         index
+    }
+
+    fn bound_waveforms(&mut self, keep: Option<&str>) -> bool {
+        let mut changed = false;
+        if keep.is_none() {
+            for entry in self.entries.values_mut() {
+                if entry
+                    .waveform
+                    .as_ref()
+                    .is_some_and(|waveform| waveform.levels().is_none())
+                {
+                    entry.waveform = None;
+                    changed = true;
+                }
+            }
+        }
+        let retained = usize::from(
+            keep.and_then(|key| self.entries.get(key))
+                .is_some_and(|entry| entry.waveform.is_some()),
+        );
+        let mut candidates: Vec<_> = self
+            .entries
+            .iter()
+            .filter(|(key, entry)| Some(key.as_str()) != keep && entry.waveform.is_some())
+            .map(|(key, entry)| (entry.last_accessed, key.clone()))
+            .collect();
+        if candidates.len() > 512 - retained {
+            candidates.sort_unstable();
+            let remove = candidates.len() - (512 - retained);
+            for (_, key) in candidates.into_iter().take(remove) {
+                self.entries.get_mut(&key).unwrap().waveform = None;
+                changed = true;
+            }
+        }
+        changed
     }
 
     fn load(path: &Path) -> Self {
@@ -338,6 +386,7 @@ impl AudioCache {
             limit_initialized: AtomicBool::new(max_bytes.is_some()),
             entry_limit,
             evictable,
+            fills: Mutex::new(HashMap::new()),
         };
         if available {
             cache.remove_crash_orphans();
@@ -400,6 +449,17 @@ impl AudioCache {
     /// Updates `last_accessed` on hit.
     pub fn lookup(&self, key: &str) -> Option<PathBuf> {
         self.lookup_file(key).map(|(path, _, _)| path)
+    }
+
+    /// Playback, preload and speculative preparation share one fill per encoded
+    /// identity. Weak entries disappear when the last downloader/waiter finishes.
+    pub(super) fn fill_lock(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut fills = self.fills.lock().unwrap_or_else(|error| error.into_inner());
+        fills.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = fills.get(key).and_then(std::sync::Weak::upgrade) { return lock; }
+        let lock = Arc::new(tokio::sync::Mutex::new(()));
+        fills.insert(key.into(), Arc::downgrade(&lock));
+        lock
     }
 
     pub(crate) fn remove(&self, key: &str) -> Result<(), String> {
@@ -531,6 +591,51 @@ impl AudioCache {
         }
         entry.computed_gain_db = Some(gain_db);
         entry.gain_analysis_version = GAIN_ANALYSIS_VERSION;
+        idx.save(&self.index_path());
+        true
+    }
+
+    pub(super) fn waveform(
+        &self,
+        key: &str,
+        stamp: &CacheStamp,
+    ) -> Option<Vec<super::waveform::Level>> {
+        if self.check_directory().is_err() {
+            return None;
+        }
+        let idx = self.index.lock().ok()?;
+        let entry = idx.entries.get(key)?;
+        if CacheStamp::from(entry) != *stamp {
+            return None;
+        }
+        entry.waveform.as_ref()?.levels()
+    }
+
+    pub(super) fn set_waveform(
+        &self,
+        key: &str,
+        stamp: &CacheStamp,
+        levels: &[super::waveform::Level],
+    ) -> bool {
+        let Some(waveform) = super::waveform::StoredWaveform::new(levels) else {
+            return false;
+        };
+        if self.check_directory().is_err() {
+            return false;
+        }
+        let Ok(mut idx) = self.index.lock() else {
+            return false;
+        };
+        let Some(entry) = idx.entries.get_mut(key) else {
+            return false;
+        };
+        if CacheStamp::from(&*entry) != *stamp {
+            return false;
+        }
+        entry.waveform = Some(waveform);
+        // Keep derived data below ~1 MiB even if the encoded cache contains many
+        // thousands of tiny files. Audio and gain remain when a waveform ages out.
+        idx.bound_waveforms(Some(key));
         idx.save(&self.index_path());
         true
     }
@@ -1254,6 +1359,7 @@ impl CacheWriter {
                 computed_gain_db: None,
                 gain_analysis_version: 0,
                 revision: self.id.to_string(),
+                waveform: None,
             },
         );
         idx.total_bytes = total;
@@ -2258,6 +2364,7 @@ mod tests {
                 computed_gain_db: None,
                 gain_analysis_version: 0,
                 revision: String::new(),
+                waveform: None,
             },
         );
         index.total_bytes = size;

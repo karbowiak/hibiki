@@ -1,4 +1,6 @@
-import { useAlbumPage } from "../../hooks/useMetadataPage"
+import { MusicEntityLink } from "../shared/MusicEntityLink"
+import { albumArtistEntity } from "../../lib/musicLinks"
+import { useAlbumCatalog } from "../../hooks/useAlbumCatalog"
 import { DownloadBadge } from "../shared/DownloadBadge"
 import { DownloadMenuItems } from "../shared/DownloadMenuItems"
 import {
@@ -36,6 +38,7 @@ import { useMetadataSnapshot } from "../../hooks/useMetadataSnapshot"
 import { MetadataEditDialog } from "../shared/MetadataEditDialog"
 import { AppDialog } from "../shared/AppDialog"
 import { VersionReviewPanel } from "../VersionReview/VersionReviewPanel"
+import { MusicSourceBadge } from "../shared/MusicSource"
 
 const DETAIL_SOURCES = ["deezer"] as const
 
@@ -71,9 +74,9 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     )
   const hasRadio = useCapability("radio")
 
-  const { entry, isLoading, error, retry } = useAlbumPage(albumId)
+  const catalog = useAlbumCatalog(albumId)
+  const { entry, tracks, isLoading, error, retry } = catalog
   const album = entry?.album ?? null
-  const tracks = entry?.tracks ?? []
   const relatedHubs = entry?.relatedHubs ?? []
 
   // UI state
@@ -241,7 +244,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
           description={album.title}
           onClose={() => setVersionsOpen(false)}
         >
-          <VersionReviewPanel album={album} tracks={tracks} />
+          <VersionReviewPanel album={album} tracks={entry?.tracks ?? []} />
         </AppDialog>
       )}
       {editOpen && (
@@ -312,6 +315,8 @@ export function AlbumPage({ albumId }: { albumId: string }) {
             </h1>
 
             <div className="flex flex-wrap items-center gap-2 text-sm text-gray-300">
+              <MusicSourceBadge source="plex" />
+              {catalog.youtube && <MusicSourceBadge source="ytmusic" />}
               {parentThumbUrl && (
                 <ArtworkImage
                   src={parentThumbUrl}
@@ -319,12 +324,12 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                   className="h-6 w-6 shrink-0 rounded object-cover"
                 />
               )}
-              <Link
-                href={`/artist/${album.artistId}`}
+              <MusicEntityLink
+                entity={albumArtistEntity(album)}
                 className="font-semibold hover:underline"
               >
                 {album.artistName}
-              </Link>
+              </MusicEntityLink>
               <span className="text-gray-500">·</span>
               <span className="text-gray-400">{album.year}</span>
               <span className="text-gray-500">·</span>
@@ -663,9 +668,9 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                         <hr className="my-1 border-t border-(--border)" />
 
                         {/* Navigation */}
-                        <Link
-                          href={`/artist/${album.artistId}`}
-                          onClick={() => setMenuOpen(false)}
+                        <MusicEntityLink
+                          entity={albumArtistEntity(album)}
+                          onNavigate={() => setMenuOpen(false)}
                           className="flex w-full items-center gap-2 px-3 py-2 text-sm text-(--text-primary) hover:bg-(--bg-surface-hover)"
                         >
                           <svg
@@ -677,7 +682,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                             <path d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10zm0 2c-5.33 0-8 2.67-8 4v1h16v-1c0-1.33-2.67-4-8-4z" />
                           </svg>
                           Go to artist
-                        </Link>
+                        </MusicEntityLink>
 
                         {/* Debug */}
                         {debugEnabled && (
@@ -742,6 +747,8 @@ export function AlbumPage({ albumId }: { albumId: string }) {
       </dl>
       {/* Track list */}
       <div className="px-8">
+        {catalog.youtubeLoading && <p role="status" className="mb-3 text-sm text-(--text-secondary)">Loading YouTube Music tracks…</p>}
+        {catalog.youtubeError && <p className="mb-3 text-sm text-(--text-secondary)">Couldn’t load YouTube Music tracks. <button type="button" onClick={retry} className="text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Try again</button></p>}
         {error && metadataRefreshMessage(error, "album") && (
           <PageRecovery
             title="Couldn't refresh this album"

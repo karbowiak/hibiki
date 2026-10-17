@@ -40,6 +40,8 @@ pub struct SharedAtomics {
     /// Guaranteed Stop admission, independent of ordinary command capacity.
     pub stop_revision: Arc<AtomicU64>,
     pub preload_revision: Arc<AtomicU64>,
+    pub(super) preparation_revision: Arc<AtomicU64>,
+    pub(super) preparation_order: Mutex<(u64, u64)>,
     pub active_request_id: Arc<AtomicU64>,
     pub deck_a_load_id: Arc<AtomicU64>,
     pub deck_b_load_id: Arc<AtomicU64>,
@@ -83,6 +85,8 @@ impl SharedAtomics {
             request_epoch: Arc::new(AtomicU64::new(0)),
             stop_revision: Arc::new(AtomicU64::new(0)),
             preload_revision: Arc::new(AtomicU64::new(0)),
+            preparation_revision: Arc::new(AtomicU64::new(0)),
+            preparation_order: Mutex::new((0, 0)),
             active_request_id: Arc::new(AtomicU64::new(0)),
             deck_a_load_id: Arc::new(AtomicU64::new(0)),
             deck_b_load_id: Arc::new(AtomicU64::new(0)),

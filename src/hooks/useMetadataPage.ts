@@ -34,11 +34,11 @@ const albumSource: PageSource<AlbumCacheEntry> = {
 }
 
 /** Navigation shares prefetches; only an explicit refresh/retry supersedes a read. */
-function useMetadataPage<T>(id: string, source: PageSource<T>) {
+function useMetadataPage<T>(id: string | null, source: PageSource<T>) {
   const provider = useProviderStore((state) => state.provider)
   const refresh = useUIStore((state) => state.pageRefreshKey)
   const deduplicate = useUIStore((state) => state.deduplicateAlbums)
-  const [entry, setEntry] = useState(() => source.read(id, deduplicate))
+  const [entry, setEntry] = useState(() => id ? source.read(id, deduplicate) : undefined)
   const [isLoading, setIsLoading] = useState(!entry)
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
@@ -55,12 +55,13 @@ function useMetadataPage<T>(id: string, source: PageSource<T>) {
         previous.current.attempt !== attempt)
     previous.current = { provider, id, refresh, attempt }
     setError(null)
-    const saved = source.read(id, deduplicate)
+    const saved = id ? source.read(id, deduplicate) : undefined
     if (saved || !samePage) {
       setEntry(saved)
       setIsLoading(!saved)
     }
-    if (!provider || !session) {
+    if (!id || !provider || !session) {
+      if (!id) setEntry(undefined)
       setIsLoading(false)
       return
     }
@@ -92,5 +93,5 @@ function useMetadataPage<T>(id: string, source: PageSource<T>) {
   }
 }
 
-export const useArtistPage = (id: string) => useMetadataPage(id, artistSource)
+export const useArtistPage = (id: string | null) => useMetadataPage(id, artistSource)
 export const useAlbumPage = (id: string) => useMetadataPage(id, albumSource)

@@ -13,7 +13,7 @@ use symphonia::core::io::MediaSourceStream;
 use tracing::debug;
 
 /// ReplayGain 2.0 reference loudness in LUFS.
-const REFERENCE_LUFS: f64 = -18.0;
+pub(crate) const REFERENCE_LUFS: f64 = -18.0;
 
 /// Keep metadata-derived gain finite; the wide range permits quiet recordings.
 pub fn replay_gain(db: Option<f32>) -> f32 {

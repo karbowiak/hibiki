@@ -7,6 +7,7 @@ import { useCapability } from "./useCapability"
 import { effectiveTrackRating, trackRatingHint } from "../favorites/ratings"
 import { saveTrackRatingToPlex } from "../favorites/saveRating"
 import type { MusicTrack } from "../types/music"
+import { isYoutubeMusicId } from "../backends/ytmusic/tracks"
 
 /** Shared by every star control; artist and album ratings retain their Plex behavior. */
 export function useItemRating({
@@ -29,6 +30,7 @@ export function useItemRating({
   const scope = provider?.cacheScope
   const captureOwner = useProviderMutationOwner(provider)
   const hasRatings = useCapability("ratings")
+  const independent = isYoutubeMusicId(itemId)
   const localTrack =
     itemType === "track" &&
     !!provider?.favorites &&
@@ -63,7 +65,7 @@ export function useItemRating({
       : optimistic
   const hint = localTrack ? trackRatingHint(userRating, favorite) : undefined
   const rate = async (value: number | null) => {
-    if (!provider || pending.current || !ready || (!hasRatings && !localTrack))
+    if (independent || !provider || pending.current || !ready || (!hasRatings && !localTrack))
       return false
     const owned = captureOwner(),
       revision = ++request.current
@@ -108,7 +110,7 @@ export function useItemRating({
     error,
     hint,
     rate,
-    available: hasRatings || localTrack,
-    enabled: (hasRatings || localTrack) && ready,
+    available: !independent && (hasRatings || localTrack),
+    enabled: !independent && (hasRatings || localTrack) && ready,
   }
 }

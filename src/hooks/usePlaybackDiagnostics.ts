@@ -21,8 +21,8 @@ const empty: Observation = {
   unavailable: false,
 }
 
-/** Mounted only by the open diagnostics tab; never starts an app-wide telemetry loop. */
-export function usePlaybackDiagnostics() {
+/** Observe only an open information view; never starts app-wide polling. */
+export function usePlaybackDiagnostics(enabled = true) {
   const trackId = usePlayerStore((s) => s.currentTrack?.id)
   const binding = usePlayerStore((s) => s.playbackFormat)
   const browserAudio = usePlayerStore((s) => s.isInternetRadioActive)
@@ -37,7 +37,7 @@ export function usePlaybackDiagnostics() {
 
   useEffect(() => {
     setObservation(empty)
-    if (browserAudio || playbackId == null) return
+    if (!enabled || browserAudio || playbackId == null) return
     let cancelled = false
     let busy = false
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -99,11 +99,11 @@ export function usePlaybackDiagnostics() {
       clearTimeout(timer)
       document.removeEventListener("visibilitychange", visibilityChanged)
     }
-  }, [owner])
+  }, [owner, enabled])
 
   // Do not show the preceding track's sample during an effect transition.
   const valid =
-    observation.owner === owner &&
+    enabled && observation.owner === owner &&
     observation.snapshot?.playbackId === playbackId &&
     binding?.trackId === trackId &&
     !browserAudio

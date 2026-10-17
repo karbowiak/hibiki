@@ -1,5 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
 import { createSearchStore } from "../src/stores/searchStore"
+import { youtubeMusicItemMusic } from "../src/backends/ytmusic/discovery"
+import { mergeMusicSearchResults } from "../src/lib/musicMatching"
 import {
   clearRecentSearches,
   getRecentSearches,
@@ -97,6 +99,37 @@ test("a current search failure clears old results and supports retry", async () 
   await store.getState().search("Query")
   expect(store.getState().error).toBeNull()
   expect(store.getState().results).toEqual(result("Recovered"))
+})
+test("an artist absent from Plex remains searchable through YTM with cached artwork", async () => {
+  const provider = { search: async () => [] } as unknown as MusicProvider
+  const store = createSearchStore(() => provider, () => {}, {
+    owner: () => "ytmusic:1",
+    search: async () => [youtubeMusicItemMusic({
+      id: "UC_winking_owl", kind: "artist", title: "The Winking Owl", artist: "",
+      thumbnail: "https://lh3.googleusercontent.com/winking-owl", duration: null, album: null, year: null,
+    })],
+    merge: mergeMusicSearchResults,
+  })
+  await store.getState().search("the winking owl")
+  const state = store.getState()
+  expect(state.error).toBeNull()
+  expect(state.isSearching).toBe(false)
+  expect(state.results).toHaveLength(1)
+  expect(state.results[0].title).toBe("The Winking Owl")
+  expect(state.results[0].providerKey).toBe("ytmusic")
+  expect(state.results[0].thumbUrl).toContain("/ext/img?src=")
+})
+test("an empty Plex response cannot hide a failed YTM search", async () => {
+  const provider = { search: async () => [] } as unknown as MusicProvider
+  const store = createSearchStore(() => provider, () => {}, {
+    owner: () => "ytmusic:1",
+    search: async () => { throw new Error("Temporary failure") },
+    merge: mergeMusicSearchResults,
+  })
+  await store.getState().search("the winking owl")
+  expect(store.getState().results).toEqual([])
+  expect(store.getState().isSearching).toBe(false)
+  expect(store.getState().error).toContain("YouTube Music: Error: Temporary failure")
 })
 const originalStorage = globalThis.localStorage
 afterEach(() => {
