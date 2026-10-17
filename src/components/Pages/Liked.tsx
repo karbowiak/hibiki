@@ -1,3 +1,4 @@
+import { sortTracks, type TrackSortColumn } from "../../lib/trackOrder"
 import { useEffect, useMemo, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 import { usePlayerStore } from "../../stores"
@@ -17,7 +18,6 @@ import { favoritePlaybackSource, favoriteStub } from "../../favorites/playback"
 import { favoriteLikedAt } from "../../favorites/model"
 import { effectiveTrackRating } from "../../favorites/ratings"
 import type { FavoriteEntry } from "../../favorites/types"
-import type { MusicTrack } from "../../types/music"
 import { type PagedTrackSource } from "../../lib/pagedPlayback"
 import { IconPlayerPlay, IconArrowsShuffle } from "@tabler/icons-react"
 import { TrackTable } from "../shared/TrackTable"
@@ -46,7 +46,7 @@ export function Liked() {
   const [syncOpen, setSyncOpen] = useState(false)
   const [filterQuery, setFilterQuery] = useState("")
   const [query, setQuery] = useState("")
-  const { sortCol, sortDir, handleSort } = useTableSort<string>({
+  const { sortCol, sortDir, handleSort } = useTableSort<TrackSortColumn>({
     descByDefault: ["rating", "liked_at", "rated_at"],
     resetKey: provider,
   })
@@ -173,7 +173,7 @@ export function Liked() {
           .includes(query)
       )
     return {
-      items: orderedTracks(items, sortCol, sortDir, favorites.ratingsByTrackId),
+      items: sortTracks(items, sortCol, sortDir, track => effectiveTrackRating(track.userRating, favorites.ratingsByTrackId.get(track.id))),
       entryById,
     }
   }, [
@@ -391,74 +391,4 @@ export function Liked() {
       {syncOpen && <FavoritesSyncDialog onClose={() => setSyncOpen(false)} />}
     </div>
   )
-}
-function orderedTracks(
-  filteredTracks: MusicTrack[],
-  sortCol: string,
-  sortDir: "asc" | "desc",
-  ratings: ReturnType<typeof useFavoritesStore.getState>["ratingsByTrackId"]
-) {
-  if (sortCol === "default") return filteredTracks
-  const items = [...filteredTracks]
-  items.sort((a, b) => {
-    let cmp = 0
-    switch (sortCol) {
-      case "title":
-        cmp = a.title.localeCompare(b.title)
-        break
-      case "artist":
-        cmp = a.artistName.localeCompare(b.artistName)
-        break
-      case "album":
-        cmp = a.albumName.localeCompare(b.albumName)
-        break
-      case "year":
-        cmp = (a.albumYear ?? a.year) - (b.albumYear ?? b.year)
-        break
-      case "plays":
-        cmp = a.playCount - b.playCount
-        break
-      case "popularity":
-        cmp = (a.ratingCount ?? 0) - (b.ratingCount ?? 0)
-        break
-      case "label":
-        cmp = (a.parentStudio ?? "").localeCompare(b.parentStudio ?? "")
-        break
-      case "bitrate":
-        cmp = (a.bitrate ?? 0) - (b.bitrate ?? 0)
-        break
-      case "format":
-        cmp = (a.codec ?? "").localeCompare(b.codec ?? "")
-        break
-      case "added_at":
-        cmp =
-          (a.addedAt ? +new Date(a.addedAt) : 0) -
-          (b.addedAt ? +new Date(b.addedAt) : 0)
-        break
-      case "rating":
-        cmp =
-          (effectiveTrackRating(a.userRating, ratings.get(a.id)) ?? 0) -
-          (effectiveTrackRating(b.userRating, ratings.get(b.id)) ?? 0)
-        break
-      case "rated_at": {
-        cmp =
-          (a.lastRatedAt ? +new Date(a.lastRatedAt) : 0) -
-          (b.lastRatedAt ? +new Date(b.lastRatedAt) : 0)
-        break
-      }
-      case "liked_at": {
-        const at = Date.parse(a.likedAt ?? ""),
-          bt = Date.parse(b.likedAt ?? "")
-        if (!Number.isFinite(at) || !Number.isFinite(bt))
-          return Number.isFinite(at) ? -1 : Number.isFinite(bt) ? 1 : 0
-        cmp = at - bt
-        break
-      }
-      case "duration":
-        cmp = a.duration - b.duration
-        break
-    }
-    return sortDir === "asc" ? cmp : -cmp
-  })
-  return items
 }

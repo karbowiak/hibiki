@@ -1,3 +1,4 @@
+import { filterTracks, sortTracks, type TrackSortColumn } from "../../lib/trackOrder"
 import { useEntityDownloadStatus } from "../shared/DownloadBadge"
 import { PlaylistInformationDialog } from "../PlaylistInformationDialog"
 import { IconInfoCircle } from "@tabler/icons-react"
@@ -30,7 +31,6 @@ import {
 import { useTableSort } from "../../hooks/useTableSort"
 import { RichText } from "../RichText"
 import "../../styles/media-detail-controls.css"
-import { useScrollContainer } from "../Page"
 import { ALL_COLUMNS, usePlaylistColumns } from "../../hooks/useColumnPicker"
 import { TrackTable } from "../shared/TrackTable"
 import { PageLoading } from "../shared/PageLoading"
@@ -119,7 +119,6 @@ export function Playlist({ playlistId }: { playlistId: string }) {
     currentPlaylist?.trackCount ?? 0
   )
   const pageRefreshKey = useUIStore((s) => s.pageRefreshKey)
-  const scrollContainerRef = useScrollContainer()
   const heroRef = useRef<HTMLDivElement>(null)
 
   const { visible: visibleCols, toggle: toggleCol } = usePlaylistColumns(
@@ -135,90 +134,19 @@ export function Playlist({ playlistId }: { playlistId: string }) {
     return () => clearTimeout(t)
   }, [filterQuery])
 
-  const filteredItems = useMemo(() => {
-    if (!debouncedQuery) return currentPlaylistItems
-    const q = debouncedQuery.toLowerCase()
-    return currentPlaylistItems.filter(
-      (t) =>
-        t.title.toLowerCase().includes(q) ||
-        t.artistName.toLowerCase().includes(q) ||
-        t.albumName.toLowerCase().includes(q)
-    )
-  }, [currentPlaylistItems, debouncedQuery])
+  const filteredItems = useMemo(
+    () => filterTracks(currentPlaylistItems, debouncedQuery),
+    [currentPlaylistItems, debouncedQuery]
+  )
 
-  type SortCol =
-    | "default"
-    | "title"
-    | "artist"
-    | "album"
-    | "year"
-    | "plays"
-    | "popularity"
-    | "label"
-    | "bitrate"
-    | "format"
-    | "added_at"
-    | "rating"
-    | "rated_at"
-    | "duration"
-  const { sortCol, sortDir, handleSort } = useTableSort<SortCol>({
+  const { sortCol, sortDir, handleSort } = useTableSort<TrackSortColumn>({
     resetKey: playlistId,
   })
 
-  const sortedItems = useMemo(() => {
-    if (sortCol === "default") return filteredItems
-    const items = [...filteredItems]
-    items.sort((a, b) => {
-      let cmp = 0
-      switch (sortCol) {
-        case "title":
-          cmp = a.title.localeCompare(b.title)
-          break
-        case "artist":
-          cmp = a.artistName.localeCompare(b.artistName)
-          break
-        case "album":
-          cmp = a.albumName.localeCompare(b.albumName)
-          break
-        case "year":
-          cmp = (a.albumYear ?? a.year) - (b.albumYear ?? b.year)
-          break
-        case "plays":
-          cmp = a.playCount - b.playCount
-          break
-        case "popularity":
-          cmp = (a.ratingCount ?? 0) - (b.ratingCount ?? 0)
-          break
-        case "label":
-          cmp = (a.parentStudio ?? "").localeCompare(b.parentStudio ?? "")
-          break
-        case "bitrate":
-          cmp = (a.bitrate ?? 0) - (b.bitrate ?? 0)
-          break
-        case "format":
-          cmp = (a.codec ?? "").localeCompare(b.codec ?? "")
-          break
-        case "added_at":
-          cmp =
-            (a.addedAt ? +new Date(a.addedAt) : 0) -
-            (b.addedAt ? +new Date(b.addedAt) : 0)
-          break
-        case "rating":
-          cmp = (a.userRating ?? 0) - (b.userRating ?? 0)
-          break
-        case "rated_at":
-          cmp =
-            (a.lastRatedAt ? +new Date(a.lastRatedAt) : 0) -
-            (b.lastRatedAt ? +new Date(b.lastRatedAt) : 0)
-          break
-        case "duration":
-          cmp = a.duration - b.duration
-          break
-      }
-      return sortDir === "asc" ? cmp : -cmp
-    })
-    return items
-  }, [filteredItems, sortCol, sortDir])
+  const sortedItems = useMemo(
+    () => sortTracks(filteredItems, sortCol, sortDir),
+    [filteredItems, sortCol, sortDir]
+  )
 
   const useQuery = !!debouncedQuery || sortCol !== "default"
   const queried = useWindowedPages(
