@@ -118,7 +118,9 @@ jobs:
         run: bun run build
 
       - name: Run frontend regression tests
-        run: bun run test:frontend
+        # Older release tags predate the packaging test's explicit timeout.
+        # Windows process startup needs more than Bun's five-second default.
+        run: bun run test:frontend --timeout ${{ runner.os == 'Windows' && '30000' || '5000' }}
 
       - name: Check Rust compilation
         working-directory: src-tauri
