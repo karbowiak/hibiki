@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { QueueSession, isQueuePlaceholder } from "../src/lib/queueSession"
+import { QueueSession, isQueuePlaceholder, copyQueueTrack } from "../src/lib/queueSession"
 import type { MusicTrack } from "../src/types/music"
 import { deferred } from "./helpers/radioAudioFakes"
 const track = (index: number) =>
@@ -9,6 +9,23 @@ const track = (index: number) =>
     artistName: "Artist",
     duration: 180000,
   }) as MusicTrack
+
+test("copied queue rows and foreign sessions cannot borrow another source's positions", async () => {
+  const source = (key:string, id:string) => ({key,entries:[{id}],loadPage:async()=>({items:[],total:1}),
+    loadItems:async()=>[{...track(0),id,title:key}]})
+  const first = new QueueSession(source("first","1")), second = new QueueSession(source("second","2"))
+  await first.ensure(first.entries,0,1)
+  const original = first.project(first.entries,0)[0]
+  const copy = copyQueueTrack(original)
+  expect(copy).not.toBe(original)
+  expect(first.sourcePosition(copy)).toBeUndefined()
+  expect(second.sourcePosition(original)).toBeUndefined()
+  const queue = [...second.entries,original,copy]
+  await second.ensure(queue,0,3)
+  const projected = second.project(queue,0)
+  expect(projected.map(track=>track.title)).toEqual(["second","first","first"])
+  expect(second.snapshot(projected).map(entry=>entry.sourceIndex)).toEqual([0,undefined,undefined])
+})
 
 test("the full 1831-song queue exists before hydrating a distant item", async () => {
   const requests: number[][] = []

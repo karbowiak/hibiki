@@ -5,13 +5,21 @@ import { QueueHydration, type QueueLoadOptions } from "./queueHydration"
 
 const position = Symbol("queueSourcePosition")
 const placeholder = Symbol("queuePlaceholder")
-type Member = MusicTrack & { [position]?: number; [placeholder]?: boolean }
+const owner = Symbol("queueSourceOwner")
+let nextOwner = 0
+type Member = MusicTrack & { [position]?: number; [placeholder]?: boolean; [owner]?: number }
 export const isQueuePlaceholder = (track: MusicTrack) =>
   !!(track as Member)[placeholder]
-export const queueSourcePosition = (track: MusicTrack) =>
-  (track as Member)[position]
 export const queueMemberKey = (track: MusicTrack, fallback: number) =>
-  `${(track as Member)[position] ?? fallback}:${track.playlistItemId ?? track.id}`
+  `${(track as Member)[owner] ?? "added"}:${(track as Member)[position] ?? fallback}:${track.playlistItemId ?? track.id}`
+
+/** Appending an existing queue row creates a distinct, independently owned entry. */
+export function copyQueueTrack(track: MusicTrack): MusicTrack {
+  const copy = { ...track } as Member
+  delete copy[position]
+  delete copy[owner]
+  return copy
+}
 
 export interface SavedQueueEntry {
   id: string
@@ -46,6 +54,7 @@ export interface SavedQueueStorage {
 
 /** Complete membership stays lightweight; only visited/upcoming metadata is resident. */
 export class QueueSession {
+  private identity = ++nextOwner
   readonly source: PagedTrackSource
   readonly entries: Member[]
   private hydration = new QueueHydration(positions => this.load(positions))
@@ -81,6 +90,7 @@ export class QueueSession {
       thumbUrl: entry?.thumbUrl ?? null,
       [position]: index,
       [placeholder]: true,
+      [owner]: this.identity,
     } as Member
   }
   private async load(positions: number[]) {
@@ -135,12 +145,16 @@ export class QueueSession {
     return positions.map((index) => found.get(index)!).filter(Boolean)
   }
   retire() { this.hydration.retire() }
+  sourcePosition(track: MusicTrack) {
+    return (track as Member)[owner] === this.identity ? (track as Member)[position] : undefined
+  }
   ensure(queue: MusicTrack[], start: number, end: number, options?: QueueLoadOptions) {
     const wanted = queue
       .slice(Math.max(0, start), Math.min(queue.length, end))
       .flatMap(track => {
         const member = track as Member
-        return member[position] !== undefined && member[placeholder] ? [member[position]!] : []
+        const source = this.sourcePosition(member)
+        return source !== undefined && member[placeholder] ? [source] : []
       })
     return this.hydration.ensure(wanted, options)
   }
@@ -150,7 +164,7 @@ export class QueueSession {
       this.duplicates.clear()
       this.projected.clear()
       queue.forEach((track, index) => {
-        const source = (track as Member)[position]
+        const source = this.sourcePosition(track)
         if (source === undefined || source < 0 || source >= this.indices.length) return
         const previous = this.indices[source]
         if (previous >= 0) {
@@ -173,7 +187,7 @@ export class QueueSession {
         if (index < 0) continue
         const track = result[index] as Member
         let next = track
-        if (detail && track[placeholder]) next = { ...detail, [position]: source }
+        if (detail && track[placeholder]) next = { ...detail, [position]: source, [owner]: this.identity }
         else if (!detail && !track[placeholder] && Math.abs(index - protectedIndex) > 4)
           next = this.stub(source)
         if (!next[placeholder]) projected = true
@@ -190,7 +204,7 @@ export class QueueSession {
   }
   snapshot(queue: MusicTrack[]): SavedQueueEntry[] {
     return queue.map((track) => {
-      const sourceIndex = (track as Member)[position]
+      const sourceIndex = this.sourcePosition(track)
       return {
         id: track.id.startsWith("pending:") ? "" : track.id,
         title: track.title || undefined,

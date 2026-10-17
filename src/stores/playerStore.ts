@@ -27,7 +27,7 @@ import { radioSetVolume } from "../lib/radioAudio"
 import { podcastIdentity, savePodcastProgress, podcastResumePosition } from "../audio/podcastProgress"
 import { useLyricsStore } from "./lyricsStore"
 import { TrackQueuePager, shuffled, type PagedTrackSource } from "../lib/pagedPlayback"
-import { QueueSession, isQueuePlaceholder, queueSourcePosition, type SavedQueue } from "../lib/queueSession"
+import { QueueSession, isQueuePlaceholder, copyQueueTrack, type SavedQueue } from "../lib/queueSession"
 
 type RadioType = 'track' | 'artist' | 'album' | 'playlist'
 
@@ -845,13 +845,15 @@ async function _startPlayback(track: MusicTrack, index: number, get: () => Playe
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function playAtIndex(index: number, get: () => PlayerState, set: any): Promise<void> {
   if (!get().queue[index]) return
-  const selectedPosition = queueSourcePosition(get().queue[index])
+  const selectedTrack = get().queue[index]
+  const selectedPosition = _queueSession?.sourcePosition(selectedTrack)
   const generation = beginQueueSelection()
   const provider = getProvider()
   try {
     await ensureQueueRange(index, index + 1)
     if (!ownsQueueSelection(generation, provider)) return
-    if (selectedPosition !== undefined) index = get().queue.findIndex(track => queueSourcePosition(track) === selectedPosition)
+    index = get().queue.findIndex(track => selectedPosition !== undefined
+      ? _queueSession?.sourcePosition(track) === selectedPosition : track === selectedTrack)
     const track = get().queue[index]
     if (!track || isQueuePlaceholder(track)) throw Error("This queued song is unavailable. Try another song or reconnect to Plex.")
     await _startPlayback(track, index, get, set)
@@ -1163,14 +1165,14 @@ export const usePlayerStore = create<PlayerState>()(
   addNext: (tracks: MusicTrack[]) => {
     set(s => {
       const next = [...s.queue]
-      next.splice(s.queueIndex + 1, 0, ...tracks)
+      next.splice(s.queueIndex + 1, 0, ...tracks.map(copyQueueTrack))
       return { queue: next }
     })
   },
 
   addToQueue: (tracks: MusicTrack[]) => {
     const provider=getProvider();const available=provider?.isOffline?tracks.filter(track=>track.mediaInfo?.localAudio || track.mediaInfo?.offlineAvailable===true):tracks
-    set(s => ({ queue: [...s.queue, ...available] }))
+    set(s => ({ queue: [...s.queue, ...available.map(copyQueueTrack)] }))
   },
 
   stopRadio: () => {
