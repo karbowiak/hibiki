@@ -9,7 +9,7 @@ import { prefetchArtist, prefetchAlbum } from "../../stores/metadataCache"
 import { makeOnPlay } from "../../lib/mediaPlay"
 import { MediaCard } from "../MediaCard"
 import { MediaGrid } from "../shared/MediaGrid"
-import { getMediaInfo, makeDragPayload } from "./Home"
+import { getMediaInfo, makeDragPayload } from "../../lib/mediaCardInfo"
 
 export function HubPage({ hubId }: { hubId: string }) {
   const [, navigate] = useLocation()

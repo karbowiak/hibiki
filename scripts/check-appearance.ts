@@ -314,7 +314,13 @@ async function checkBackgroundSeparation(page: Page, name: string) {
     await page.evaluate(value => (window as any).fixtureAppearance.route(value), path)
     await page.locator('.app-artwork-shell[data-artwork-mode="global"]').waitFor()
     assert.equal(await page.locator('.app-artwork-sharp').count(), 0, `${name}/${path}: a general page has a sharp hero`)
-    assert.match(await page.locator('.app-artwork-pixels').first().evaluate(element => getComputedStyle(element).filter), /blur\(28px\)/)
+    // Crossfades can retire a pixel node between Playwright resolving it and
+    // reading its styles. Query from the persistent shell in the same JS turn.
+    const blur = await page.locator('.app-artwork-shell').evaluate(shell => {
+      const pixels = shell.querySelector('.app-artwork-pixels')
+      return pixels ? getComputedStyle(pixels).filter : null
+    })
+    assert.match(blur ?? "", /blur\(28px\)/, `${name}/${path}: global artwork must stay blurred`)
   }
   await page.evaluate(() => (window as any).fixtureArtwork.detailBackground("cover.svg"))
   for (const path of ["/album/fixture-album", "/playlist/fixture-playlist-0"]) {

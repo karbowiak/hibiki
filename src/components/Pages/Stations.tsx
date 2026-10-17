@@ -13,7 +13,7 @@ import { usePlayerStore } from "../../stores/playerStore"
 import { useProviderStore } from "../../stores/providerStore"
 import { useCapability } from "../../hooks/useCapability"
 import type { RecentMix, SeedItem } from "../../stores/libraryStore"
-import { selectMix, shuffleTracks } from "./Mix"
+import { selectMix, shuffleTracks } from "../../lib/mixSelection"
 import {
   mixTitleToArtistName,
   mixThumbnailKey,
@@ -604,10 +604,9 @@ export function StationsPage() {
   const [stationAttempt, setStationAttempt] = useState(0)
   const [activeTab, setActiveTab] = useState<BuilderTab>("artist")
   // Mixes for You from hubs store
-  const { mixesHubs, mixesItems, mixesTitle } = useMemo(() => {
+  const { mixesItems, mixesTitle } = useMemo(() => {
     const mh = hubs.filter((h) => h.identifier?.startsWith("music.mixes"))
     return {
-      mixesHubs: mh,
       mixesItems: mh.flatMap((h) => h.items),
       mixesTitle: mh[0]?.title ?? "Mixes for You",
     }

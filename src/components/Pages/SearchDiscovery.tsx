@@ -19,8 +19,8 @@ import { prefetchAlbum, prefetchArtist } from "../../stores/metadataCache"
 import type { MusicItem, MusicPlaylist } from "../../types/music"
 import { MediaGrid } from "../shared/MediaGrid"
 import { MediaCard } from "../MediaCard"
-import { getMediaInfo, makeDragPayload } from "./Home"
-import { selectMix, shuffleTracks } from "./Mix"
+import { getMediaInfo, makeDragPayload } from "../../lib/mediaCardInfo"
+import { selectMix, shuffleTracks } from "../../lib/mixSelection"
 
 function RecentTile({
   item,

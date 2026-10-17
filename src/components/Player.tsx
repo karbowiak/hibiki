@@ -3,7 +3,7 @@ import { PlaybackPalette } from "./PlaybackPalette"
 import { useAlbumImage } from "../hooks/useMediaImage"
 import { useArtworkAppearanceStore } from "../stores/artworkAppearanceStore"
 import { ArtworkImage } from "./shared/ArtworkImage"
-import { useEffect, useRef, useState } from "react"
+import { lazy, Suspense, useEffect, useRef, useState } from "react"
 import { Link } from "wouter"
 import { useShallow } from "zustand/react/shallow"
 import { usePlayerStore } from "../stores"
@@ -14,7 +14,6 @@ import { useDeviceStore } from "../stores/deviceStore"
 import { useAudioSettingsStore } from "../stores/audioSettingsStore"
 import { useVisualizerStore } from "../stores/visualizerStore"
 import { engine } from "../audio/RustAudioEngine"
-import { formatMs } from "../lib/formatters"
 import { formatAudioQuality, playbackAudioQuality } from "../lib/audioQuality"
 import { IconBlockquote, IconZzz, IconActivity, IconMaximize, IconAdjustments, IconPlaylist, IconVolume, IconVolume2, IconVolumeOff, IconHeadphones, IconMusic } from "@tabler/icons-react"
 import { useCapability } from "../hooks/useCapability"
@@ -25,12 +24,11 @@ import TrackInfoPanel from "./TrackInfoPanel"
 import DjPanel from "./DjPanel"
 import RadioPanel from "./RadioPanel"
 import PlayerPopover from "./PlayerPopover"
-import VisualizerCanvas from "./VisualizerCanvas"
+import { PlayerProgress } from "./PlayerProgress"
 import { StarRating } from "./shared/StarRating"
 import { useContextMenu } from "../hooks/useContextMenu"
 import { useContextMenuStore } from "../stores/contextMenuStore"
 import { useTrackDrag } from "../hooks/useTrackDrag"
-import VisualizerFullscreen from "./VisualizerFullscreen"
 import SquigglyVolumeSlider from "./SquigglyVolumeSlider"
 import { useSleepTimerStore } from "../stores/sleepTimerStore"
 import { useRadioStreamStore } from "../stores/radioStreamStore"
@@ -39,6 +37,8 @@ import { useEasterEggStore } from "../stores/easterEggStore"
 import { useVisualizationVisibility } from "../hooks/useVisualizationVisibility"
 import { ImageModal } from "./shared/ImageModal"
 import { IconChevronUp, IconChevronDown } from "@tabler/icons-react"
+
+const VisualizerFullscreen = lazy(() => import("./VisualizerFullscreen"))
 
 // ---------------------------------------------------------------------------
 // RadioPlayerBar — shown when internet radio is active
@@ -271,16 +271,11 @@ export function Player() {
   const threeDotRef = useRef<HTMLButtonElement>(null)
   const volumeSliderRef = useRef<HTMLDivElement>(null)
   const volumeTooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [seekHoverPct, setSeekHoverPct] = useState<number | null>(null)
   const [volumeTooltipVisible, setVolumeTooltipVisible] = useState(false)
 
   useEffect(() => () => {
     if (volumeTooltipTimer.current) clearTimeout(volumeTooltipTimer.current)
   }, [])
-
-  // positionMs updates at ~4 Hz — isolate it as a primitive selector so only
-  // the progress bar re-renders on each tick, not the entire Player subtree.
-  const positionMs = usePlayerStore(s => s.positionMs)
 
   const {
     currentTrack,
@@ -293,20 +288,17 @@ export function Player() {
     djMode,
     contextName,
     contextHref,
-    waveformLevels,
     lyricsLines,
     isInternetRadioActive,
     pause,
     resume,
     next,
     prev,
-    seekTo,
     setVolume,
     toggleMute,
     toggleShuffle,
     cycleRepeat,
     stop,
-    stopRadio,
     initAudioEvents,
   } = usePlayerStore(useShallow(s => ({
     currentTrack: s.currentTrack,
@@ -319,20 +311,17 @@ export function Player() {
     djMode: s.djMode,
     contextName: s.contextName,
     contextHref: s.contextHref,
-    waveformLevels: s.waveformLevels,
     lyricsLines: s.lyricsLines,
     isInternetRadioActive: s.isInternetRadioActive,
     pause: s.pause,
     resume: s.resume,
     next: s.next,
     prev: s.prev,
-    seekTo: s.seekTo,
     setVolume: s.setVolume,
     toggleMute: s.toggleMute,
     toggleShuffle: s.toggleShuffle,
     cycleRepeat: s.cycleRepeat,
     stop: s.stop,
-    stopRadio: s.stopRadio,
     initAudioEvents: s.initAudioEvents,
   })))
 
@@ -493,13 +482,6 @@ export function Player() {
   const artistId = currentTrack?.artistId
   const albumId = currentTrack?.albumId
   const ArtworkContainer = albumId ? Link : "div"
-
-  const progressPct = currentTrack?.duration
-    ? (positionMs / currentTrack.duration) * 100
-    : 0
-  // Clock glyph widths must not resize/resample the waveform on every tick.
-  const timeColumnWidth = `${Math.max(5, formatMs(currentTrack?.duration ?? 0).length)}ch`
-
   const repeatActive = repeat > 0
   const shuffleActive = shuffle
 
@@ -567,7 +549,9 @@ export function Player() {
         />
       )}
 
-      {fullscreenOpen && <VisualizerFullscreen />}
+      {fullscreenOpen && (
+        <Suspense fallback={null}><VisualizerFullscreen /></Suspense>
+      )}
       <div className="shell-artwork-player-inner flex h-fit w-screen min-w-[620px] flex-col overflow-clip bg-app-card">
         <div className="player-body">
           <div className="player-layout relative flex h-full items-center justify-between" style={{ paddingInline: "var(--spacing-player)" }}>
@@ -814,49 +798,7 @@ export function Player() {
                 </div>
               </div>
 
-              {/* Progress / seek bar */}
-              <div className="mt-1.5 flex w-full items-center gap-x-2 pointer-events-auto">
-                <div className="shrink-0 whitespace-nowrap text-right text-[0.688rem] tabular-nums text-white text-opacity-70" style={{ width: timeColumnWidth }}>
-                  {formatMs(seekHoverPct !== null
-                    ? (currentTrack?.duration ?? 0) * seekHoverPct / 100
-                    : positionMs)}
-                </div>
-                <div
-                  className={`relative min-w-0 flex-1 h-7 select-none ${currentTrack ? "cursor-pointer" : "cursor-default opacity-40"}`}
-                  onMouseMove={e => {
-                    if (!currentTrack) return
-                    const rect = e.currentTarget.getBoundingClientRect()
-                    setSeekHoverPct(Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100)))
-                  }}
-                  onMouseLeave={() => setSeekHoverPct(null)}
-                  onClick={e => {
-                    if (!currentTrack) return
-                    const rect = e.currentTarget.getBoundingClientRect()
-                    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
-                    seekTo((currentTrack?.duration ?? 0) * pct)
-                  }}
-                >
-                  <VisualizerCanvas
-                    progressPct={progressPct}
-                    hoverPct={seekHoverPct}
-                    levels={waveformLevels}
-                    mode={compactMode}
-                  />
-                  <input
-                    type="range"
-                    disabled={!currentTrack}
-                    min={0}
-                    max={currentTrack?.duration ?? 0}
-                    value={positionMs}
-                    onChange={(e) => seekTo(parseFloat(e.target.value))}
-                    className="absolute inset-0 h-full w-full opacity-0"
-                    aria-label="Seek"
-                  />
-                </div>
-                <div className="shrink-0 whitespace-nowrap text-[0.688rem] tabular-nums text-white text-opacity-70" style={{ width: timeColumnWidth }}>
-                  {formatMs(currentTrack?.duration ?? 0)}
-                </div>
-              </div>
+              <PlayerProgress />
             </div>
             </div>
 

@@ -47,7 +47,7 @@ mock.module("../../src/hooks/useMixThumbnails", () => ({
   mixTitleToArtistName: (title: string) => title.replace(/ Mix$/, ""),
   useMixThumbnails: () => ({}),
 }))
-mock.module("../../src/components/Pages/Mix", () => ({
+mock.module("../../src/lib/mixSelection", () => ({
   selectMix: (item: any) => selectedMixes.push(item),
   shuffleTracks: (items: any[]) => items,
 }))
@@ -99,7 +99,7 @@ mock.module("../../src/hooks/useTrackDrag", () => ({
     onPointerUp() {},
   }),
 }))
-mock.module("../../src/components/Pages/Home", () => ({
+mock.module("../../src/lib/mediaCardInfo", () => ({
   getMediaInfo: (item: any) => ({
     title: item.title,
     desc: item.artistName || item.type,

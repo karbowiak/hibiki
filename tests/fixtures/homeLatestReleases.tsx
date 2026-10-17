@@ -27,7 +27,7 @@ mock.module("../../src/stores/metadataCache", () => ({ prefetchAlbum: (id: strin
 mock.module("../../src/hooks/useMixThumbnails", () => ({ mixTitleToArtistName: (name: string) => name, mixThumbnailKey: (item: any) => item.id, useMixThumbnails: () => ({}) }))
 mock.module("../../src/hooks/useContextMenu", () => ({ useContextMenu: () => ({ handler: (type: string, item: any) => () => contexts.push(`${type}:${item.id}`) }) }))
 mock.module("../../src/lib/mediaPlay", () => ({ makeOnPlay: (item: any) => () => played.push(`${item.type}:${item.id}`) }))
-mock.module("../../src/components/Pages/Mix", () => ({ selectMix() {}, shuffleTracks: (items: any[]) => items }))
+mock.module("../../src/lib/mixSelection", () => ({ selectMix() {}, shuffleTracks: (items: any[]) => items }))
 mock.module("../../src/components/shared/MediaBackdrop", () => ({ AmbientHeroBackdrop: () => null }))
 mock.module("../../src/components/ScrollRow", () => ({ ScrollRow: ({ title, titleHref, onPlayAll, children }: any) => <section data-shelf={title}><h2>{titleHref ? <a href={titleHref}>{title}</a> : title}</h2>{onPlayAll && <button onClick={onPlayAll}>Play all {title}</button>}{children}</section> }))
 mock.module("../../src/components/MediaCard", () => ({ MediaCard: (props: any) => <button data-card={props.title} data-href={props.href} data-thumb={props.thumb} data-drag={JSON.stringify(props.dragPayload)} onClick={props.onPlay} onContextMenu={props.onContextMenu} onMouseOver={props.prefetch}>{props.title}</button> }))
