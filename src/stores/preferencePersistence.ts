@@ -63,6 +63,10 @@ function decode(raw: unknown, entry: Entry): Envelope | null {
     (entry.validate && !entry.validate(value.state))
   )
     throw new Error("Invalid saved preferences")
+  if (entry.rules.discardFields?.length) {
+    value.state = { ...value.state }
+    for (const field of entry.rules.discardFields) delete value.state[field]
+  }
   return value as Envelope
 }
 

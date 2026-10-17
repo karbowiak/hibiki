@@ -21,7 +21,10 @@ mock.module("@tauri-apps/api/event", () => ({ listen: async () => () => {} }))
 mock.module("@tauri-apps/api/core", () => ({ invoke(command: string, args: any) {
   const pending = deferred<any>(); requests.push({ command, args, pending }); return pending.promise
 } }))
-mock.module("../../src/stores/idbStorage", () => ({ safePersist: (creator: any) => creator }))
+mock.module("../../src/stores/idbStorage", () => ({
+  safePersist: (creator: any) => creator,
+  idbStorage: { getItem: async () => null, setItem: async () => {}, removeItem: async () => {} },
+}))
 const player = create<any>((set) => ({ currentTrack: null, isPlaying: false, playTrack: mock(async () => {}), pause: mock(() => set({ isPlaying: false })), resume: mock(() => set({ isPlaying: true })) }))
 mock.module("../../src/stores/playerStore", () => ({ usePlayerStore: player }))
 mock.module("../../src/components/ScrollRow", () => ({ ScrollRow: ({ title, children }: any) => <section><h2>{title}</h2>{children}</section> }))

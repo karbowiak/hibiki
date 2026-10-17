@@ -6,7 +6,9 @@
  */
 
 import { create } from "zustand"
-import { safePersist } from "../../stores/idbStorage"
+import { ScopedPersistence } from "../../stores/scopedPersistence"
+import { boundPodcastCaches } from "./cache"
+import { safePersist, idbStorage } from "../../stores/idbStorage"
 import {
   podcastSearch,
   podcastGetFeed,
@@ -111,6 +113,7 @@ export const usePodcastStore = create<PodcastState>()(
       },
 
       getFeed: async (feedUrl) => {
+        await ensurePodcastCaches()
         const cached = get().feedCache[feedUrl]
         if (cached && Date.now() - cached.cachedAt < FEED_TTL_MS) return cached.data
 
@@ -120,7 +123,8 @@ export const usePodcastStore = create<PodcastState>()(
         const promise = (async () => {
           try {
             const detail = await podcastGetFeed(feedUrl)
-            set(s => ({
+            set(s => boundPodcastCaches({
+              ...s,
               feedCache: {
                 ...s.feedCache,
                 [feedUrl]: { data: detail, cachedAt: Date.now() },
@@ -141,6 +145,7 @@ export const usePodcastStore = create<PodcastState>()(
       },
 
       getTopChart: async (category?, limit?) => {
+        await ensurePodcastCaches()
         const key = `${category ?? "all"}-${limit ?? 20}`
         const cached = get().topChartCache[key]
         if (cached && Date.now() - cached.cachedAt < TOP_CHART_TTL_MS) return cached.data
@@ -151,7 +156,8 @@ export const usePodcastStore = create<PodcastState>()(
         const promise = (async () => {
           try {
             const results = await podcastGetTop(category, limit)
-            set(s => ({
+            set(s => boundPodcastCaches({
+              ...s,
               topChartCache: {
                 ...s.topChartCache,
                 [key]: { data: results, cachedAt: Date.now() },
@@ -227,16 +233,36 @@ export const usePodcastStore = create<PodcastState>()(
     }),
     {
       name: "podcast-store-v1",
+      discardFields: ["feedCache", "topChartCache"],
       keyedArrays: { subscriptions: "feedUrl", "completedEpisodes.*": "$value" },
       validate: state => (state.subscriptions === undefined || (Array.isArray(state.subscriptions)
         && state.subscriptions.every(subscription => typeof subscription?.feedUrl === "string" && !!subscription.feedUrl))),
       partialize: (s) => ({
         subscriptions: s.subscriptions,
-        feedCache: s.feedCache,
-        topChartCache: s.topChartCache,
         listenProgress: s.listenProgress,
         completedEpisodes: s.completedEpisodes,
       }),
     },
   ),
 )
+
+const cachePersistence = new ScopedPersistence(idbStorage, "hibiki-podcast-cache-v1")
+let cacheLoading: Promise<void> | undefined
+/** Import legacy disposable snapshots once; primary subscriptions/progress stay in place. */
+function ensurePodcastCaches() {
+  if (!cacheLoading) cacheLoading = (async () => {
+    const saved = await cachePersistence.activate("feeds") as any
+    let legacy: any
+    if (!saved) {
+      try { legacy = JSON.parse(await idbStorage.getItem("podcast-store-v1") ?? "null")?.state } catch { /* Optional browsing data. */ }
+    }
+    const current = usePodcastStore.getState()
+    usePodcastStore.setState(boundPodcastCaches({
+      feedCache: { ...(saved?.feedCache ?? legacy?.feedCache), ...current.feedCache },
+      topChartCache: { ...(saved?.topChartCache ?? legacy?.topChartCache), ...current.topChartCache },
+    }))
+  })()
+  return cacheLoading
+}
+usePodcastStore.subscribe(state => cachePersistence.save({ feedCache: state.feedCache, topChartCache: state.topChartCache }))
+void ensurePodcastCaches()

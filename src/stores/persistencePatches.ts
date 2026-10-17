@@ -1,5 +1,7 @@
 export type SavedState = Record<string, unknown>
 export interface PatchRules {
+  /** Explicitly retired fields; unrelated future fields still survive writes. */
+  discardFields?: string[]
   keyedArrays?: Record<string, string>
   replaceEmptyArrays?: string[]
 }
