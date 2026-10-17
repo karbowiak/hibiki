@@ -1,6 +1,7 @@
 import type { MusicTrack } from "../types/music"
 import type { PagedTrackSource } from "./pagedPlayback"
 import { shuffled } from "./pagedPlayback"
+import { QueueHydration, type QueueLoadOptions } from "./queueHydration"
 
 const position = Symbol("queueSourcePosition")
 const placeholder = Symbol("queuePlaceholder")
@@ -47,10 +48,12 @@ export interface SavedQueueStorage {
 export class QueueSession {
   readonly source: PagedTrackSource
   readonly entries: Member[]
-  private pending = new Map<number, Promise<void>>()
-  private hydrated = new Map<number, MusicTrack>()
+  private hydration = new QueueHydration(positions => this.load(positions))
+  private indexedQueue: MusicTrack[] | null = null
+  private indices: Int32Array
+  private duplicates = new Map<number, number[]>()
+  private projected = new Set<number>()
   private pages = new Map<number, Promise<MusicTrack[]>>()
-  private serial = Promise.resolve()
   constructor(source: PagedTrackSource, shuffle = false) {
     this.source = source
     const total = source.entries?.length ?? source.total ?? 0
@@ -58,9 +61,10 @@ export class QueueSession {
       this.stub(index)
     )
     this.entries = shuffle ? shuffled(members) : members
+    this.indices = new Int32Array(total)
     if (source.initialPage) {
       const { offset, items } = source.initialPage
-      items.forEach((track, index) => this.hydrated.set(offset + index, track))
+      items.forEach((track, index) => this.hydration.items.set(offset + index, track))
       if (offset % 200 === 0 && items.length <= 200)
         this.pages.set(offset / 200, Promise.resolve(items))
     }
@@ -130,62 +134,59 @@ export class QueueSession {
     }
     return positions.map((index) => found.get(index)!).filter(Boolean)
   }
-  async ensure(queue: MusicTrack[], start: number, end: number) {
+  retire() { this.hydration.retire() }
+  ensure(queue: MusicTrack[], start: number, end: number, options?: QueueLoadOptions) {
     const wanted = queue
       .slice(Math.max(0, start), Math.min(queue.length, end))
-      .flatMap((track) => {
-        const item = track as Member
-        return item[position] !== undefined && item[placeholder]
-          ? [item[position]!]
-          : []
+      .flatMap(track => {
+        const member = track as Member
+        return member[position] !== undefined && member[placeholder] ? [member[position]!] : []
       })
-    const missing = [...new Set(wanted)].filter(
-      (index) => !this.hydrated.has(index) && !this.pending.has(index)
-    )
-    for (let offset = 0; offset < missing.length; offset += 100) {
-      const selected = missing.slice(offset, offset + 100)
-      const work = this.serial
-        .catch(() => {})
-        .then(async () => {
-          const rows = await this.load(selected)
-          if (rows.length !== selected.length)
-            throw Error("Some queued songs could not be loaded. Try again.")
-          rows.forEach((track, index) => {
-            this.hydrated.delete(selected[index])
-            this.hydrated.set(selected[index], track)
-          })
-          while (this.hydrated.size > 800)
-            this.hydrated.delete(this.hydrated.keys().next().value!)
-        })
-      this.serial = work
-      selected.forEach((index) => this.pending.set(index, work))
-      void work
-        .finally(() => selected.forEach((index) => this.pending.delete(index)))
-        .catch(() => {})
-    }
-    await Promise.all(wanted.map((index) => this.pending.get(index)))
+    return this.hydration.ensure(wanted, options)
   }
   project(queue: MusicTrack[], protectedIndex: number) {
-    let changed = false
-    const result = queue.map((track, index) => {
-      const sourceIndex = (track as Member)[position]
-      if (sourceIndex === undefined) return track
-      const detail = this.hydrated.get(sourceIndex)
-      if (detail && (track as Member)[placeholder]) {
-        changed = true
-        return { ...detail, [position]: sourceIndex } as Member
+    if (this.indexedQueue !== queue) {
+      this.indices.fill(-1)
+      this.duplicates.clear()
+      this.projected.clear()
+      queue.forEach((track, index) => {
+        const source = (track as Member)[position]
+        if (source === undefined || source < 0 || source >= this.indices.length) return
+        const previous = this.indices[source]
+        if (previous >= 0) {
+          const indices = this.duplicates.get(source) ?? [previous]
+          indices.push(index)
+          this.duplicates.set(source, indices)
+        } else this.indices[source] = index
+        if (!(track as Member)[placeholder]) this.projected.add(source)
+      })
+      this.indexedQueue = queue
+    }
+    let result = queue
+    // Only resident metadata and its evictions need visiting. Compact cold
+    // membership is indexed once per structural queue change.
+    for (const source of new Set([...this.projected, ...this.hydration.items.keys()])) {
+      const detail = this.hydration.items.get(source)
+      const indices = this.duplicates.get(source) ?? [this.indices[source]]
+      let projected = false
+      for (const index of indices) {
+        if (index < 0) continue
+        const track = result[index] as Member
+        let next = track
+        if (detail && track[placeholder]) next = { ...detail, [position]: source }
+        else if (!detail && !track[placeholder] && Math.abs(index - protectedIndex) > 4)
+          next = this.stub(source)
+        if (!next[placeholder]) projected = true
+        if (next !== track) {
+          if (result === queue) result = queue.slice()
+          result[index] = next
+        }
       }
-      if (
-        !detail &&
-        !(track as Member)[placeholder] &&
-        Math.abs(index - protectedIndex) > 4
-      ) {
-        changed = true
-        return this.stub(sourceIndex)
-      }
-      return track
-    })
-    return changed ? result : queue
+      if (projected) this.projected.add(source)
+      else this.projected.delete(source)
+    }
+    this.indexedQueue = result
+    return result
   }
   snapshot(queue: MusicTrack[]): SavedQueueEntry[] {
     return queue.map((track) => {

@@ -16,6 +16,7 @@ import { useProviderStore } from "./providerStore"
 import { useNotificationStore } from "./notificationStore"
 import { PlaybackMetadata } from "../audio/playbackMetadata"
 import { advancePlaybackSelection, capturePlaybackSelectionVersion } from "../lib/playbackSelection"
+import type { QueueLoadOptions } from "../lib/queueHydration"
 import { sendNotification } from "@tauri-apps/plugin-notification"
 import { useSleepTimerStore } from "./sleepTimerStore"
 import { useAnnouncerStore } from "./announcerStore"
@@ -227,6 +228,7 @@ function ownsQueueSelection(generation: number, provider: MusicProvider | null):
   return generation === capturePlaybackSelectionVersion() && getProvider() === provider
 }
 function replaceQueueContext(): void {
+  _queueSession?.retire()
   ++_queueContextGeneration
   _djInsertRequest = null
   _playlistLoadRequest = null
@@ -702,12 +704,20 @@ export function snapshotQueueEntries() {
   return _queueSession ? _queueSession.snapshot(queue) : queue.map(track => ({ id: track.id, title: track.title, artistName: track.artistName, albumName: track.albumName, duration: track.duration, playlistItemId: track.playlistItemId ?? undefined }))
 }
 export const queueSource = () => _queueSession?.source
-export async function ensureQueueRange(start: number, end: number) {
+export async function ensureQueueRange(start: number, end: number, options: QueueLoadOptions = {}) {
   const session = _queueSession, context = _queueContextGeneration
+  const selection = capturePlaybackSelectionVersion()
   if (!session) return
-  await session.ensure(usePlayerStore.getState().queue, start, end)
+  await session.ensure(usePlayerStore.getState().queue, start, end, {
+    ...options,
+    current: () => session === _queueSession && context === _queueContextGeneration &&
+      (options.priority === "viewport" || selection === capturePlaybackSelectionVersion()) && options.current?.() !== false,
+  })
   if (session !== _queueSession || context !== _queueContextGeneration) return
-  usePlayerStore.setState(state => ({ queue: session.project(state.queue, state.queueIndex) }))
+  usePlayerStore.setState(state => {
+    const queue = session.project(state.queue, state.queueIndex)
+    return queue === state.queue ? state : { queue }
+  })
 }
 export async function restorePlaybackQueue(provider: MusicProvider, saved: SavedQueue, source: PagedTrackSource) {
   const generation = capturePlaybackSelectionVersion()
@@ -884,7 +894,7 @@ function prefetchAhead(queue: MusicTrack[], fromIndex: number, count: number): v
   const generation = _playGeneration
   const active = _activeTrackGeneration
   if (queue.slice(fromIndex + 1, fromIndex + count + 1).some(isQueuePlaceholder)) {
-    fireAndForget(ensureQueueRange(fromIndex + 1, fromIndex + count + 1).then(() => {
+    fireAndForget(ensureQueueRange(fromIndex + 1, fromIndex + count + 1, { priority: "prefetch" }).then(() => {
       if (generation === _playGeneration && active === _activeTrackGeneration && getProvider() === provider)
         prefetchAhead(usePlayerStore.getState().queue, fromIndex, count)
     }))

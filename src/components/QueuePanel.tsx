@@ -332,11 +332,13 @@ function QueueTrackList({
     scrollRef
   )
   const [error, setError] = useState("")
-  const load = () => ensureQueueRange(start + view.start, start + view.end)
+  const load = (current = () => true) => ensureQueueRange(start + view.start, start + view.end, {
+    priority: "viewport", consumer: played ? "history" : "upcoming", current,
+  })
   useEffect(() => {
     if (!active) return
     let current = true
-    void load().then(
+    void load(() => current).then(
       () => {
         if (current) setError("")
       },

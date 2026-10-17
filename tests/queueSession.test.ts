@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { QueueSession, isQueuePlaceholder } from "../src/lib/queueSession"
 import type { MusicTrack } from "../src/types/music"
+import { deferred } from "./helpers/radioAudioFakes"
 const track = (index: number) =>
   ({
     id: String(index + 1),
@@ -118,4 +119,56 @@ test("a second snapshot retains original offsets of cold, reordered source slots
   expect(
     session.snapshot(session.entries).map((entry) => entry.sourceIndex)
   ).toEqual([1800, 20])
+})
+
+test("playback overtakes scrolling and obsolete viewports never enter the loader", async () => {
+  const gate = deferred<MusicTrack[]>()
+  const loaded: number[][] = []
+  const session = new QueueSession({ key: "large", total: 1000,
+    loadItems: async positions => {
+      loaded.push(positions)
+      return loaded.length === 1 ? gate.promise : positions.map(track)
+    }, loadPage: async () => { throw Error("unexpected") },
+  })
+  const first = session.ensure(session.entries, 0, 10, { priority: "viewport" })
+  const abandoned = session.ensure(session.entries, 100, 110, { priority: "viewport" })
+  const visible = session.ensure(session.entries, 900, 910, { priority: "viewport" })
+  const next = session.ensure(session.entries, 50, 51)
+  gate.resolve(Array.from({ length: 10 }, (_, index) => track(index)))
+  await Promise.all([first, abandoned, visible, next])
+  expect(loaded.map(positions => positions[0])).toEqual([0, 50, 900])
+  expect(session.project(session.entries, 50)[50].id).toBe("51")
+})
+
+test("retiring a queue drops deferred reads and never publishes a late hydration", async () => {
+  const gate = deferred<MusicTrack[]>()
+  let reads = 0
+  const session = new QueueSession({ key: "old", total: 1000,
+    loadItems: () => { reads++; return gate.promise },
+    loadPage: async () => { throw Error("unexpected") },
+  })
+  const first = session.ensure(session.entries, 0, 1)
+  const waiting = session.ensure(session.entries, 900, 901)
+  session.retire()
+  await waiting
+  gate.resolve([track(0)])
+  await first
+  expect(reads).toBe(1)
+  expect(session.project(session.entries, 0)).toBe(session.entries)
+})
+
+test("projection changes only resident slots and handles moved and repeated members", async () => {
+  const session = new QueueSession({ key: "large", total: 100000,
+    loadItems: async positions => positions.map(track),
+    loadPage: async () => { throw Error("unexpected") },
+  })
+  await session.ensure(session.entries, 99999, 100000)
+  let queue = session.project(session.entries, 0)
+  expect(queue[0]).toBe(session.entries[0])
+  expect(session.project(queue, 0)).toBe(queue)
+  const moved = [...queue.slice(0, 3), queue[99999], ...queue.slice(3, 99999), queue[99999]]
+  queue = session.project(moved, 0)
+  expect(queue[3].id).toBe("100000")
+  expect(queue.at(-1)?.id).toBe("100000")
+  expect(session.project(queue, 0)).toBe(queue)
 })
