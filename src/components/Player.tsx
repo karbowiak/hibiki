@@ -27,7 +27,6 @@ import RadioPanel from "./RadioPanel"
 import PlayerPopover from "./PlayerPopover"
 import VisualizerCanvas from "./VisualizerCanvas"
 import { StarRating } from "./shared/StarRating"
-import { FavoriteButton } from "./shared/FavoriteButton"
 import { useContextMenu } from "../hooks/useContextMenu"
 import { useContextMenuStore } from "../stores/contextMenuStore"
 import { useTrackDrag } from "../hooks/useTrackDrag"
@@ -659,15 +658,14 @@ export function Player() {
                             )}
                           </p>
                         )}
-                        <div className="flex flex-shrink-0 items-center gap-1.5">
-                          <StarRating
-                            itemId={currentTrack.id}
-                            userRating={currentTrack.userRating}
-                            artist={currentTrack.artistName}
-                            track={currentTrack.title}
-                            size={11}
-                          />
-                        </div>
+                        <StarRating
+                          itemId={currentTrack.id}
+                          userRating={currentTrack.userRating}
+                          musicTrack={currentTrack}
+                          artist={currentTrack.artistName}
+                          track={currentTrack.title}
+                          size={11}
+                        />
                         <button
                           ref={threeDotRef}
                           onClick={e => {
@@ -797,8 +795,6 @@ export function Player() {
                     <span className="absolute -top-0.5 -right-1.5 flex h-3.5 w-auto min-w-[14px] px-0.5 items-center justify-center rounded-full bg-accent text-[7px] font-bold text-black">ALL</span>
                   )}
                 </button>
-
-                {currentTrack && <FavoriteButton key={currentTrack.id} track={currentTrack} size={18} className="h-8 w-8 rounded-full" />}
 
                 {/* Track info — plain text quality label, clickable */}
                 {currentTrack && (

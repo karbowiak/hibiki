@@ -4,7 +4,6 @@ import { usePlayerStore } from "../../stores"
 import { useProviderStore } from "../../stores/providerStore"
 import { useFavoritesStore } from "../../stores/favoritesStore"
 import { useTableSort } from "../../hooks/useTableSort"
-import { useRatedItems } from "../../hooks/useRatedItems"
 import { useFavoriteIndex } from "../../hooks/useFavoriteIndex"
 import { useRatedIndex } from "../../hooks/useRatedIndex"
 import { useWindowedPages } from "../../hooks/useWindowedPages"
@@ -16,6 +15,7 @@ import {
 import { sortLikedTracks } from "../../favorites/collection"
 import { favoritePlaybackSource, favoriteStub } from "../../favorites/playback"
 import { favoriteLikedAt } from "../../favorites/model"
+import { effectiveTrackRating } from "../../favorites/ratings"
 import type { FavoriteEntry } from "../../favorites/types"
 import type { MusicTrack } from "../../types/music"
 import { type PagedTrackSource } from "../../lib/pagedPlayback"
@@ -37,11 +37,11 @@ export function Liked() {
       loading: state.loading,
       error: state.error,
       issues: state.issues,
+      ratingsByTrackId: state.ratingsByTrackId,
     }))
   )
   const { collection } = favorites
   const syncNeedsReview = favoritesNeedReview(collection, favorites.issues)
-  const rated = useRatedItems("track")
   const [kind, setKind] = useState<"loved" | "rated" | "all">("loved")
   const [syncOpen, setSyncOpen] = useState(false)
   const [filterQuery, setFilterQuery] = useState("")
@@ -50,11 +50,9 @@ export function Liked() {
     descByDefault: ["rating", "liked_at", "rated_at"],
     resetKey: provider,
   })
-  const needsRatedIndex =
-    kind === "all" ||
-    (kind === "rated" && (!!query || sortCol !== "default")) ||
-    !collection.ratingsImported
-  const ratedIndex = useRatedIndex(needsRatedIndex)
+  const ratedIndex = useRatedIndex(
+    kind !== "loved" || !collection.ratingsImported
+  )
   const { visible: visibleCols, toggle: toggleCol } = usePlaylistColumns(
     "plex-liked-columns",
     [...LIKED_DEFAULT_COLS]
@@ -116,10 +114,10 @@ export function Liked() {
   const favoriteIndex = useFavoriteIndex(needsFavoriteMetadata)
   const seeds = useMemo(
     () => [
-      ...(ratedIndex.ready ? ratedIndex.tracks : rated.items),
+      ...(ratedIndex.ready ? ratedIndex.tracks : []),
       ...favoriteIndex.tracks,
     ],
-    [ratedIndex.ready, ratedIndex.tracks, rated.items, favoriteIndex.tracks]
+    [ratedIndex.ready, ratedIndex.tracks, favoriteIndex.tracks]
   )
   const indexed = useMemo(() => {
     const entryById = new Map<string, FavoriteEntry>()
@@ -133,15 +131,40 @@ export function Liked() {
       entryById.set(track.id, entry)
       return track
     })
+    const manual = Object.values(collection.entries)
+      .filter(
+        (entry) => entry.rating?.value != null && entry.localTrackIds.length
+      )
+      .map((entry) => {
+        const detail =
+          entry.localTrackIds.map((id) => available.get(id)).find(Boolean) ??
+          favoriteStub(entry)
+        entryById.set(detail.id, entry)
+        return detail
+      })
+    const explicitRated = [
+      ...new Map(
+        [
+          ...seeds.filter((track) => (track.userRating ?? 0) > 0),
+          ...manual,
+        ].map((track) => [track.id, track])
+      ).values(),
+    ].filter(
+      (track) =>
+        (effectiveTrackRating(
+          track.userRating,
+          favorites.ratingsByTrackId.get(track.id)
+        ) ?? 0) > 0
+    )
     const used = new Set(entries.flatMap((entry) => entry.localTrackIds))
     let items =
       kind === "loved"
         ? loved
         : kind === "rated"
-          ? seeds
+          ? explicitRated
           : sortLikedTracks([
               ...loved,
-              ...seeds.filter((track) => !used.has(track.id)),
+              ...explicitRated.filter((track) => !used.has(track.id)),
             ])
     if (query)
       items = items.filter((track) =>
@@ -149,9 +172,20 @@ export function Liked() {
           .toLowerCase()
           .includes(query)
       )
-    return { items: orderedTracks(items, sortCol, sortDir), entryById }
-  }, [entries, seeds, kind, query, sortCol, sortDir])
-  const plainRated = kind === "rated" && !query && sortCol === "default"
+    return {
+      items: orderedTracks(items, sortCol, sortDir, favorites.ratingsByTrackId),
+      entryById,
+    }
+  }, [
+    entries,
+    seeds,
+    kind,
+    query,
+    sortCol,
+    sortDir,
+    collection.entries,
+    favorites.ratingsByTrackId,
+  ])
   const source = useMemo<PagedTrackSource>(() => {
     const loadItems = async (positions: number[]) => {
       const selected = positions.map((position) => indexed.items[position])
@@ -179,29 +213,10 @@ export function Liked() {
     }
     return {
       key: `liked:${kind}`,
-      total: plainRated ? rated.total : indexed.items.length,
-      entries: plainRated ? undefined : indexed.items,
-      loadItems: plainRated ? undefined : loadItems,
+      total: indexed.items.length,
+      entries: indexed.items,
+      loadItems,
       loadPage: async (offset, limit) => {
-        if (plainRated) {
-          if (provider?.getRatedItemsPage) {
-            const page = await provider.getRatedItemsPage(
-              "track",
-              offset,
-              limit
-            )
-            return {
-              ...page,
-              items: page.items.filter((item) => item.type === "track"),
-            }
-          }
-          const items = (await provider?.getLikedTracks()) ?? []
-          return {
-            items: items.slice(offset, offset + limit),
-            total: items.length,
-            offset,
-          }
-        }
         const positions = Array.from(
           {
             length: Math.max(0, Math.min(limit, indexed.items.length - offset)),
@@ -215,36 +230,22 @@ export function Liked() {
         }
       },
     }
-  }, [provider, kind, plainRated, rated.total, indexed, collection, seeds])
+  }, [provider, kind, indexed, collection, seeds])
   const queryKey = JSON.stringify(["liked", kind, sortCol, sortDir, query])
   const preparing =
-    ((kind === "all" || (kind === "rated" && !plainRated)) &&
-      !ratedIndex.ready) ||
+    (kind !== "loved" && !ratedIndex.ready) ||
     (needsFavoriteMetadata && !favoriteIndex.ready)
   const selectedPages = useWindowedPages(
-    preparing || plainRated ? null : queryKey,
+    preparing ? null : queryKey,
     source.loadPage,
     source.total,
     source
   )
-  const pages = plainRated ? rated.pages : selectedPages
+  const pages = selectedPages
   const count =
     preparing || (favorites.loading && kind !== "rated") ? null : pages.total
   const play = async (shuffle = false, index = 0) => {
     if (preparing || !provider) return
-    if (plainRated && provider.getCachedTrackSource) {
-      await playPagedTracks(
-        {
-          ...source,
-          prepare: () => provider.getCachedTrackSource!("rated:track", shuffle),
-        },
-        "Liked Songs",
-        "/collection/tracks",
-        shuffle,
-        index
-      )
-      return
-    }
     await playPagedTracks(
       source,
       "Liked Songs",
@@ -271,8 +272,16 @@ export function Liked() {
         <div className="flex flex-wrap items-center gap-3">
           <button
             className="media-secondary"
-            title={syncNeedsReview ? "Some likes or sync changes need review" : "Manage liked songs sync"}
-            aria-label={syncNeedsReview ? "Sync liked songs — review needed" : "Sync liked songs"}
+            title={
+              syncNeedsReview
+                ? "Some likes or sync changes need review"
+                : "Manage liked songs sync"
+            }
+            aria-label={
+              syncNeedsReview
+                ? "Sync liked songs — review needed"
+                : "Sync liked songs"
+            }
             disabled={!favorites.loaded || !provider?.favorites}
             onClick={() => setSyncOpen(true)}
           >
@@ -308,6 +317,13 @@ export function Liked() {
           <button
             key={value}
             aria-pressed={kind === value}
+            title={
+              value === "rated"
+                ? "Ratings you set yourself or saved in Plex"
+                : value === "loved"
+                  ? "Songs liked in Hibiki, including connected services"
+                  : "All likes and explicit ratings"
+            }
             className={kind === value ? "media-primary" : "media-secondary"}
             onClick={() => setKind(value)}
           >
@@ -343,6 +359,7 @@ export function Liked() {
           className="px-8 py-12 text-sm text-[var(--text-secondary)]"
         >
           {ratedIndex.error || "Preparing your complete collection…"}
+          {ratedIndex.error && <button type="button" onClick={ratedIndex.retry} className="ml-2 underline">Try again</button>}
         </p>
       ) : (
         <TrackTable
@@ -366,8 +383,8 @@ export function Liked() {
             query
               ? "No songs match this filter."
               : kind === "rated"
-                ? "No rated songs yet. Rate a song in Plex to see it here."
-                : "Tap a song’s heart to save it here, or connect your favorites in Sync."
+                ? "No rated songs yet. Set a song’s stars to see it here."
+                : "Give a song three stars or more, or connect your favorites in Sync."
           }
         />
       )}
@@ -378,7 +395,8 @@ export function Liked() {
 function orderedTracks(
   filteredTracks: MusicTrack[],
   sortCol: string,
-  sortDir: "asc" | "desc"
+  sortDir: "asc" | "desc",
+  ratings: ReturnType<typeof useFavoritesStore.getState>["ratingsByTrackId"]
 ) {
   if (sortCol === "default") return filteredTracks
   const items = [...filteredTracks]
@@ -418,7 +436,9 @@ function orderedTracks(
           (b.addedAt ? +new Date(b.addedAt) : 0)
         break
       case "rating":
-        cmp = (a.userRating ?? 0) - (b.userRating ?? 0)
+        cmp =
+          (effectiveTrackRating(a.userRating, ratings.get(a.id)) ?? 0) -
+          (effectiveTrackRating(b.userRating, ratings.get(b.id)) ?? 0)
         break
       case "rated_at": {
         cmp =

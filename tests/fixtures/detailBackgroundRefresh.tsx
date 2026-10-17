@@ -81,7 +81,6 @@ for (const [path, name] of [
   ["../../src/components/shared/DownloadMenuItems", "DownloadMenuItems"],
   ["../../src/components/HeroRating", "HeroRating"],
   ["../../src/components/shared/StarRating", "StarRating"],
-  ["../../src/components/shared/FavoriteButton", "FavoriteButton"],
 ])
   mock.module(path!, () => ({ [name!]: () => null }))
 mock.module("../../src/components/shared/MediaBackdrop", () => ({

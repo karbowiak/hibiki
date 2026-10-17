@@ -88,7 +88,7 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
         <p className="text-sm text-[var(--text-secondary)]">
           Each enabled connection syncs both ways. The first sync merges
           existing favorites; later likes and unlikes are shared between
-          connected services. Star ratings stay separate.
+          connected services. Three stars or more means liked in Hibiki.
         </p>
         {(["plex", "listenbrainz", "lastfm"] as FavoriteService[]).map(
           (service) => {
@@ -225,39 +225,14 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
             )
           }
         )}
-        <label className="block text-sm">
-          New ratings that add a favorite
-          <span className="relative ml-3 inline-flex">
-            <select
-              className="min-h-9 appearance-none rounded-lg border border-[var(--border)] bg-app-surface px-3 py-2 pr-9"
-              value={collection.settings.ratingThreshold}
-              disabled={busy}
-              onChange={(event) => {
-                const rating = Number(event.target.value)
-                void useFavoritesStore
-                  .getState()
-                  .update((state) => ({
-                    ...state,
-                    settings: { ...state.settings, ratingThreshold: rating },
-                  }))
-                  .catch((error) => setFailure(error.message))
-              }}
-            >
-              {[2, 4, 6, 8, 10].map((value) => (
-                <option key={value} value={value}>
-                  {value / 2} stars or higher
-                </option>
-              ))}
-            </select>
-            <IconChevronDown
-              className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2"
-              size={16}
-            />
-          </span>
-        </label>
+        <p className="text-sm text-[var(--text-secondary)]">
+          Three stars or more means liked. Lowering a rating below three stars
+          or clearing it also unlikes the song in connected services. Imported
+          likes display three stars in Hibiki and never write a rating to Plex.
+        </p>
         <p className="text-xs text-[var(--text-muted)]">
-          Existing high ratings are included once. Hearts you set yourself take
-          priority over later rating changes.
+          Existing ratings and original liked dates are retained. Explicit star
+          changes update the local liked state.
         </p>
         {collection.settings.listenbrainz && unresolvedIds > 0 && (
           <section className="space-y-3">

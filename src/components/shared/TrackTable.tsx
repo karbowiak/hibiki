@@ -1,3 +1,5 @@
+import { useFavoritesStore } from "../../stores/favoritesStore"
+import { useProviderStore } from "../../stores/providerStore"
 import { DownloadBadge } from "./DownloadBadge"
 import { IconDownload } from "@tabler/icons-react"
 import { useOfflineStatusStore } from "../../offline/statusStore"
@@ -27,7 +29,6 @@ import { StarRating } from "./StarRating"
 import { HeroRating } from "../HeroRating"
 import "../../styles/trackRows.css"
 import { TrackRowActions } from "./TrackRowActions"
-import { FavoriteButton } from "./FavoriteButton"
 import { formatMs, formatDate, formatBitrate } from "../../lib/formatters"
 import { prefetchTrackAudio } from "../../stores/playerStore"
 import { useContextMenu } from "../../hooks/useContextMenu"
@@ -197,6 +198,12 @@ function TrackRowCells({
   compact: boolean
   showRadio: boolean
 }) {
+  const provider = useProviderStore((state) => state.provider)
+  const ratingDate = useFavoritesStore((state) =>
+    state.provider === provider && state.session === provider?.playbackSession
+      ? state.ratingsByTrackId.get(track.id)?.manual?.changedAt
+      : undefined
+  )
   const offline = useOfflineStatusStore((state) => state.offlineMode)
   const unavailable =
     offline &&
@@ -386,7 +393,11 @@ function TrackRowCells({
       )}
       {visibleCols.has("rated_at") && (
         <td className="whitespace-nowrap p-2">
-          {formatDate(track.lastRatedAt ?? null)}
+          {formatDate(
+            ratingDate
+              ? new Date(ratingDate).toISOString()
+              : (track.lastRatedAt ?? null)
+          )}
         </td>
       )}
       {visibleCols.has("liked_at") && (
@@ -397,11 +408,6 @@ function TrackRowCells({
       {visibleCols.has("rating") && (
         <td className="p-2 text-right" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-end gap-3">
-            <FavoriteButton
-              track={track}
-              size={15}
-              className="track-row-heart"
-            />
             {presentation ? (
               <HeroRating
                 itemId={track.id}
@@ -413,6 +419,7 @@ function TrackRowCells({
               <StarRating
                 itemId={track.id}
                 userRating={track.userRating}
+                musicTrack={track}
                 artist={track.artistName ?? ""}
                 track={track.title}
               />

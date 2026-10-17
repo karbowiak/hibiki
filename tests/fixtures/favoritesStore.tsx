@@ -208,13 +208,11 @@ if (
     await act(async () => root.unmount())
   } else {
     const account = { service: "lastfm", user: "listener", revision: "lease" }
-    await useFavoritesStore
-      .getState()
-      .update((state) => ({
-        ...state,
-        settings: { ...state.settings, lastfm: true },
-        bindings: { lastfm: { account, initialized: true } },
-      }))
+    await useFavoritesStore.getState().update((state) => ({
+      ...state,
+      settings: { ...state.settings, lastfm: true },
+      bindings: { lastfm: { account, initialized: true } },
+    }))
     useFavoritesStore.setState({ running: true })
     await assert.rejects(useFavoritesStore.getState().resetSync(), /finish/)
     assert.equal(resets, 0)
@@ -423,8 +421,8 @@ if (
     await useFavoritesStore
       .getState()
       .ratingChanged("42", track.title, track.artistName, 10)
-    assert(!useFavoritesStore.getState().likedTrackIds.has("42"))
-    assert.equal(rows["local:42"].liked, false)
+    assert(useFavoritesStore.getState().likedTrackIds.has("42"))
+    assert.equal(rows["local:42"].liked, true)
     await useFavoritesStore
       .getState()
       .ratingChanged("43", "Rated song", "Artist", 10)
@@ -459,7 +457,9 @@ if (
       assert(
         document.body.textContent?.includes("Create a new Liked Songs playlist")
       )
-      assert(document.body.textContent?.includes("Star ratings stay separate"))
+      assert(
+        document.body.textContent?.includes("Three stars or more means liked")
+      )
       assert(document.body.textContent?.includes("Sync likes with Last.fm"))
       assert(
         document.body.textContent?.includes("Sync likes with ListenBrainz")
@@ -494,42 +494,107 @@ if (
         )
       }
     } else if (scenario === "heart") {
-      const { FavoriteButton } =
-        await import("../../src/components/shared/FavoriteButton")
-      await act(async () => root.render(<FavoriteButton track={track} />))
+      mock.module("../../src/stores/libraryStore", () => ({
+        useLibraryStore: { getState: () => ({ onItemRated() {} }) },
+      }))
+      let ratingWrites = 0
+      provider.rate = async () => {
+        ratingWrites++
+      }
+      const { StarRating } =
+        await import("../../src/components/shared/StarRating")
       await act(async () =>
-        document.querySelector<HTMLButtonElement>("button")!.click()
+        root.render(
+          <StarRating
+            itemId={track.id}
+            userRating={null}
+            artist={track.artistName}
+            track={track.title}
+            musicTrack={track}
+          />
+        )
       )
+      const star = (n: number) =>
+        document.querySelector<HTMLButtonElement>(
+          `button[aria-label="${n} stars"]`
+        )!
+      await act(async () => star(3).click())
       assert.equal(rows["local:42"].liked, true)
+      assert.equal(ratingWrites, 1)
       assert.equal(calls, 0)
       await act(async () => {
         useFavoritesStore.setState({ loaded: false })
         await useFavoritesStore.getState().load()
       })
-      assert.equal(
-        document.querySelector("button")!.getAttribute("aria-pressed"),
-        "true"
-      )
-      await act(async () =>
-        document.querySelector<HTMLButtonElement>("button")!.click()
-      )
+      assert.equal(star(3).getAttribute("aria-pressed"), "true")
+      assert.equal(ratingWrites, 1)
+      await act(async () => star(3).click())
       assert.equal(rows["local:42"].liked, false)
+      assert.equal(ratingWrites, 2)
       assert.equal(calls, 0)
     } else {
       await useFavoritesStore.getState().toggle(track, true)
-      const low = { ...track, id: "44", type: "track", title: "Low rated song", userRating: 2, lastRatedAt: "2019-01-01T00:00:00.000Z" }
+      const low = {
+        ...track,
+        id: "44",
+        type: "track",
+        title: "Low rated song",
+        userRating: 2,
+        lastRatedAt: "2019-01-01T00:00:00.000Z",
+      }
       provider.getLikedTracks = async () => [low]
-      provider.favorites.cachedTracks = async (ids: string[]) => ids.map(id => ({ ...track, id, title: id === "42" ? "Local song" : id === "46" ? "Older love" : "Unknown love" }))
+      provider.favorites.cachedTracks = async (ids: string[]) =>
+        ids.map((id) => ({
+          ...track,
+          id,
+          title:
+            id === "42"
+              ? "Local song"
+              : id === "46"
+                ? "Older love"
+                : "Unknown love",
+        }))
       const state = useFavoritesStore.getState().collection
       const base = state.entries["local:42"]
-      useFavoritesStore.setState({ collection: { ...state, ratingsImported: true, entries: {
-        ...state.entries,
-        "local:42": { ...base, likedAt: Date.parse("2017-01-01"), changedAt: Date.parse("2017-01-01") },
-        "local:46": { ...base, id: "local:46", key: "local:46", title: "Older love", localTrackIds: ["46"], likedAt: Date.parse("2015-01-01"), changedAt: Date.parse("2015-01-01") },
-        "local:45": { ...base, id: "local:45", key: "local:45", title: "Unknown love", localTrackIds: ["45"], likedAt: undefined, explicit: false },
-      } } })
+      useFavoritesStore.setState({
+        collection: {
+          ...state,
+          ratingsImported: true,
+          entries: {
+            ...state.entries,
+            "local:42": {
+              ...base,
+              likedAt: Date.parse("2017-01-01"),
+              changedAt: Date.parse("2017-01-01"),
+            },
+            "local:46": {
+              ...base,
+              id: "local:46",
+              key: "local:46",
+              title: "Older love",
+              localTrackIds: ["46"],
+              likedAt: Date.parse("2015-01-01"),
+              changedAt: Date.parse("2015-01-01"),
+            },
+            "local:45": {
+              ...base,
+              id: "local:45",
+              key: "local:45",
+              title: "Unknown love",
+              localTrackIds: ["45"],
+              likedAt: undefined,
+              explicit: false,
+            },
+          },
+        },
+      })
       mock.module("../../src/stores", () => ({
-        usePlayerStore: create(() => ({ playPagedTracks: () => {}, playRadio: () => {}, addToQueue: () => {}, currentTrack: null })),
+        usePlayerStore: create(() => ({
+          playPagedTracks: () => {},
+          playRadio: () => {},
+          addToQueue: () => {},
+          currentTrack: null,
+        })),
       }))
       mock.module("../../src/components/shared/TrackTable", () => ({
         TrackTable: ({ paged, onSort, columns }: any) => (
@@ -537,9 +602,13 @@ if (
             {columns.some((column: any) => column.id === "liked_at") && (
               <button onClick={() => onSort("liked_at")}>Date Liked</button>
             )}
-            {Array.from({ length: paged.total }, (_, index) => paged.getItem(index)).filter(Boolean).map((track: any) => (
-              <span key={track.id}>{track.title}</span>
-            ))}
+            {Array.from({ length: paged.total }, (_, index) =>
+              paged.getItem(index)
+            )
+              .filter(Boolean)
+              .map((track: any) => (
+                <span key={track.id}>{track.title}</span>
+              ))}
           </div>
         ),
       }))

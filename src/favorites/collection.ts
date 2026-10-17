@@ -5,7 +5,8 @@ const lossless = new Set(["flac", "alac", "wav", "aiff", "dsd"])
 export function favoriteTracks(
   state: FavoriteState,
   available: Map<string, MusicTrack>,
-  offline = false
+  offline = false,
+  includeUnliked = false
 ): MusicTrack[] {
   const quality = (track: MusicTrack) => {
     const uncompressed = lossless.has(track.codec?.toLowerCase() ?? "")
@@ -24,7 +25,7 @@ export function favoriteTracks(
   }
   const seen = new Set<string>()
   return Object.values(state.entries)
-    .filter((item) => item.liked)
+    .filter((item) => item.liked || includeUnliked)
     .sort(
       (a, b) =>
         (favoriteLikedAt(b) ?? 0) - (favoriteLikedAt(a) ?? 0) ||

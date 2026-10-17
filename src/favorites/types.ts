@@ -30,6 +30,8 @@ export interface FavoriteEntry extends FavoriteRecording {
     >
   >
   changedAt: number
+  /** A deliberate star edit; imported likes only derive their display rating. */
+  rating?: import("./ratings").FavoriteRatingIntent
   matchCheckedAt?: number
 }
 export interface FavoritePending {
@@ -60,6 +62,7 @@ export interface FavoriteMetadata {
   settings: Record<FavoriteService, boolean> & { ratingThreshold: number }
   bindings: Partial<Record<FavoriteService, FavoriteBinding>>
   ratingsImported?: boolean
+  ratingModel?: 1
 }
 export interface FavoriteState extends FavoriteMetadata {
   revision: number

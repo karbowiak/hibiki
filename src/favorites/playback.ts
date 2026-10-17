@@ -61,7 +61,8 @@ export function favoritePlaybackSource(
           ),
         },
         available,
-        !!provider.isOffline
+        !!provider.isOffline,
+        !!order
       )
       const byId = new Map(resolved.map((track) => [track.id, track]))
       const items = selected.map(
@@ -94,6 +95,9 @@ export function favoriteStub(entry: FavoriteEntry): MusicTrack {
     artistThumbUrl: null,
     summary: null,
     userRating: null,
+    lastRatedAt: entry.rating
+      ? new Date(entry.rating.changedAt).toISOString()
+      : null,
     addedAt: null,
     lastPlayedAt: null,
     guid: null,

@@ -1,18 +1,35 @@
 # Liked Songs
 
-Hearts save compact recording references to native SQLite (V12), scoped to the
-Plex account/server/music library. A heart does not rate a song or change Plex,
-Last.fm or ListenBrainz by default. Unlike records remain as tombstones so a
-reconnect does not silently restore an explicit local unlike.
-Profiles currently follow the saved library's native cache identity: changing
-Plex credentials or server endpoint selects another local profile. Existing
-profiles remain in SQLite.
+Stars and likes share one local state. **Three stars or more** (6/10 on Plex's
+scale) means liked. A deliberate lower rating or clear removes the local like
+and flows through enabled two-way Last.fm/ListenBrainz sync. Artist and album
+ratings retain their existing meaning.
 
-Liked Songs has Loved, Rated and All views. On its first successful rated-track
-load, existing ratings at or above the local threshold are included once. New
-ratings at the threshold also add a local favorite. Explicit hearts override
-later rating changes. Stars continue to use Plex ratings; Last.fm scrobbling and
-favorites syncing have separate switches.
+Imported likes and legacy local likes display at least three stars in Hibiki;
+higher existing ratings remain higher. This display is derived from the saved
+favorite and never writes a rating to Plex. Original Plex metadata remains
+separate, with its own rating dates. Manual star edits are saved to scoped native
+SQLite first, including the exact value, edit date and intent identity. Online
+edits then update Plex. A failed/offline Plex write keeps the local choice;
+**More → Save rating to Plex** explicitly retries it, with no automatic replay.
+Newer edits and library/account changes fence old acknowledgments. Ratings for
+the same song are serialized so an older request cannot overwrite a newer edit.
+
+Remote unlikes clear the local star display without changing Plex's original
+rating. Last manual values and original Plex ratings remain available as
+provenance, so a later remote like preserves a higher rating. Explicit local
+unlikes remain tombstones and are not silently restored on reconnect. Imports,
+matching, cache hydration and migration never enter the Plex rating-write path.
+
+The one-time profile migration fixes the like threshold at three stars and
+reimports eligible existing Plex ratings locally. It preserves saved entries,
+liked dates, service observations, pending sync operations and user choices.
+Liked Songs keeps Loved, Rated and All: Loved shows local likes; Rated shows
+explicit local/Plex ratings; All combines both. Imported three-star displays do
+not invent a manual rating date. Sorting uses the effective local rating.
+Profiles follow the saved library's native cache identity; changing Plex
+credentials or server endpoint selects another local profile. Existing profiles
+remain in SQLite.
 
 The Sync dialog enables each connection independently, with all three disabled
 initially. Plex uses a regular audio playlist, defaulting to a new **Liked Songs**
@@ -29,7 +46,7 @@ complete, stable rosters reconcile remote likes/unlikes against per-service
 observations and captured local intent. Local changes during a write survive its
 acknowledgment. Read failures, truncated pages and account changes do not admit
 roster removals. Distinct legacy ListenBrainz MSIDs retain separate feedback
-identities; shared library songs display once and local hearts update the linked
+identities; shared library songs display once and local star edits update the linked
 identities together. Plex/Last.fm removals wait while another retained identity
 still loves the same song. Last.fm cannot distinguish recordings sharing the
 same artist/title labels.
@@ -48,13 +65,13 @@ minutes, with bounded writes and matching work. Unmatched favorites retry daily
 or through Find more matches. SQLite updates serialize only changed compact
 rows in batches of 1,000. Indexed identity maps make large roster merges linear;
 unchanged observations do not rewrite the collection. Browsing publishes saved
-metadata in native batches of 200 with a bounded Plex fallback. Offline hearts
+metadata in native batches of 200 with a bounded Plex fallback. Offline ratings
 remain editable; playback still requires complete cached/downloaded audio.
 
 Original love dates are retained in milliseconds: Last.fm's `date.uts` and
 ListenBrainz's feedback `created` timestamp. Each service observation keeps its
 own date. Continuous imported loves use the earliest known date across sources;
-sync acknowledgements and matching do not bump it. Explicit local hearts retain
+sync acknowledgements and matching do not bump it. Explicit local likes retain
 their local date, and an unlike followed by a new love starts a new date. Legacy
 imports can acquire dates on the next complete roster without a reset. Missing
 service dates stay unknown rather than being replaced with an import timestamp.
@@ -91,7 +108,7 @@ different local editions still require review. Existing mappings are retained.
 
 Settings → General → Liked Songs sync offers Manage sync and Reset liked sync.
 Reset clears imported likes, automatic library matches and per-service sync
-observations for the current library. Explicit local hearts and unlike
+observations for the current library. Explicit local ratings, likes and unlike
 tombstones, service settings, account bindings, Plex playlist destinations and
 Plex ratings are retained. Enabled services are imported again with the current
 matcher, and rated favorites may be seeded again. The native reset is atomic,

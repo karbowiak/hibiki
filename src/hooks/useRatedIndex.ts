@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useProviderStore } from "../stores/providerStore"
 import { useUIStore } from "../stores/uiStore"
 import type { MusicAlbum, MusicTrack } from "../types/music"
@@ -113,9 +113,13 @@ function useRatedCollectionIndex<T>(enabled: boolean, kind: "track" | "album") {
       active = false
     }
   }, [provider, enabled, kind, attempt, refresh])
+  const retry = useCallback(() => {
+    if (provider) caches.get(provider)?.delete(kind)
+    setAttempt(value => value + 1)
+  }, [provider, kind])
   return value.provider === provider
-    ? value
-    : { tracks: EMPTY_ITEMS as T[], ready: false, error: "", at: 0 }
+    ? { ...value, retry }
+    : { tracks: EMPTY_ITEMS as T[], ready: false, error: "", at: 0, retry }
 }
 export const useRatedIndex = (enabled: boolean) =>
   useRatedCollectionIndex<MusicTrack>(enabled, "track")

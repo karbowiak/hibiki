@@ -1,9 +1,6 @@
-import { useEffect, useRef, useState } from "react"
-import { useFavoritesStore } from "../../stores/favoritesStore"
-import { useLibraryStore } from "../../stores/libraryStore"
-import { useProviderStore } from "../../stores/providerStore"
-import { useProviderMutationOwner } from "../../hooks/useProviderMutationOwner"
-import { useCapability } from "../../hooks/useCapability"
+import { useEffect, useState } from "react"
+import { useItemRating } from "../../hooks/useItemRating"
+import type { MusicTrack } from "../../types/music"
 
 interface StarRatingProps {
   itemId: string
@@ -11,92 +8,146 @@ interface StarRatingProps {
   userRating: number | null
   artist: string
   track: string
-  size?: number         // default 12; Liked uses 12, Playlist uses 11
-  enableLove?: boolean  // default true; pass false for non-track items
-  onRated?: () => void  // called after rating; ContextMenu uses to close menu
+  size?: number
+  enableLove?: boolean
+  onRated?: () => void
+  musicTrack?: MusicTrack
+  variant?: "row" | "hero"
+  onHero?: boolean
 }
 
-export function StarRating({ itemId, itemType = "track", userRating, artist, track, size = 12, enableLove = true, onRated }: StarRatingProps) {
-  const hasRatings = useCapability("ratings")
-  const provider = useProviderStore(s => s.provider)
-  const captureOwner = useProviderMutationOwner(provider)
-  const request = useRef(0)
-  const pending = useRef(false)
-  const [saving, setSaving] = useState(false)
-  const [local, setLocal] = useState<number | null | undefined>(undefined)
-  const [hoverStar, setHoverStar] = useState(0)
-  const display = local !== undefined ? local : userRating
-  const filled = Math.round((display ?? 0) / 2)
-
-  useEffect(() => { ++request.current; pending.current = false; setSaving(false); setLocal(undefined); setHoverStar(0) }, [provider, itemId, itemType])
-
+export function StarRating({
+  itemId,
+  itemType = "track",
+  userRating,
+  artist,
+  track,
+  size = 12,
+  onRated,
+  musicTrack,
+  variant = "row",
+  onHero = false,
+}: StarRatingProps) {
+  const rating = useItemRating({
+    itemId,
+    itemType,
+    userRating,
+    artist,
+    title: track,
+    track: musicTrack,
+  })
+  const [hovered, setHovered] = useState<number | null>(null)
+  useEffect(() => setHovered(null), [itemId, itemType])
+  const filled = Math.round((rating.display ?? 0) / 2)
+  const visual = hovered ?? filled
   const inMenu = !!onRated
-
-  function rate(value: number | null) {
-    if (pending.current) return
-    const owned = captureOwner(), sequence = ++request.current
-    const current = () => owned() && sequence === request.current
-    if (!provider || !current()) return
-    pending.current = true
-    setSaving(true)
-    setLocal(value)
-    void provider.rate(itemId, value).then(() => {
-      if (!current()) return
-      useLibraryStore.getState().onItemRated(itemId, itemType, value)
-      if (enableLove && artist && track) {
-        void useFavoritesStore.getState().ratingChanged(itemId,track,artist,value).catch(() => {})
-      }
-      onRated?.()
-    }).catch(() => {
-      if (!current()) return
-      setLocal(undefined)
-      useLibraryStore.setState({ error: "Unable to save the rating. Please try again." })
-    }).finally(() => {
-      if (sequence === request.current) { pending.current = false; if (owned()) setSaving(false) }
+  if (!rating.available) return null
+  const save = (value: number | null) => {
+    void rating.rate(value).then((saved) => {
+      if (saved) onRated?.()
     })
   }
-
-  if (!hasRatings) return null
-
-  // When hovering, show the hovered level; otherwise show the persisted rating
-  const visual = hoverStar > 0 ? hoverStar : filled
-
+  const selectedClass =
+    variant === "hero" ? "text-accent" : "text-amber-600 dark:text-amber-400"
+  const emptyClass =
+    variant === "hero"
+      ? onHero
+        ? "text-white/40"
+        : "text-[color:var(--text-muted)]"
+      : "text-amber-800/30 dark:text-gray-600"
   return (
     <div
-      className={`flex items-center ${inMenu ? "gap-1 px-3 py-2" : "gap-0.5"}`}
-      aria-busy={saving}
-      onClick={e => e.stopPropagation()}
-      onMouseLeave={() => setHoverStar(0)}
+      className={`group/rating flex shrink-0 items-center gap-0.5 ${inMenu ? "flex-wrap px-3 py-2" : ""}`}
+      role="group"
+      aria-label={`Rating for ${track || itemType}: ${filled} of 5 stars${itemType === "track" && filled >= 3 ? ", liked" : ""}`}
+      aria-description={rating.error ?? rating.hint}
+      aria-busy={rating.saving}
+      title={rating.error ?? rating.hint}
+      onClick={(event) => event.stopPropagation()}
+      onMouseLeave={() => setHovered(null)}
+      onKeyDown={(event) => {
+        if (event.key === "Delete" || event.key === "Backspace") {
+          event.preventDefault()
+          event.stopPropagation()
+          save(null)
+        }
+      }}
     >
-      {inMenu && <span className="text-xs text-white/40 mr-1 w-10">Rating</span>}
-      {[1, 2, 3, 4, 5].map(star => (
+      {inMenu && (
+        <span className="mr-1 w-10 text-xs text-[var(--text-secondary)]">
+          Rating
+        </span>
+      )}
+      {variant === "hero" && !inMenu && (
+        <button
+          type="button"
+          aria-label="Clear rating"
+          title="Clear rating"
+          disabled={rating.saving || !rating.enabled}
+          onClick={(event) => {
+            event.stopPropagation()
+            save(null)
+          }}
+          onMouseEnter={() => setHovered(0)}
+          className="flex h-[15px] w-3.5 items-center justify-center rounded-sm text-[var(--text-secondary)] opacity-0 group-hover/rating:opacity-70 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-30"
+        >
+          <span aria-hidden="true">×</span>
+        </button>
+      )}
+      {[1, 2, 3, 4, 5].map((star) => (
         <button
           key={star}
-          disabled={saving}
-          title={`${inMenu ? "" : "Rate "}${star} star${star > 1 ? "s" : ""}`}
-          className={`transition-colors ${
-            visual >= star
-              ? hoverStar > 0 ? "text-amber-600/70 dark:text-amber-400/70" : "text-amber-600 dark:text-amber-400"
-              : inMenu ? "text-white/30 hover:text-amber-600/70 dark:hover:text-amber-400/70" : "text-amber-800/30 dark:text-gray-600 hover:text-amber-600/70 dark:hover:text-amber-400/70"
-          }`}
-          onMouseEnter={() => setHoverStar(star)}
-          onClick={e => {
-            e.stopPropagation()
-            rate(filled === star ? null : star * 2)
+          type="button"
+          disabled={rating.saving || !rating.enabled}
+          aria-label={`${star} star${star > 1 ? "s" : ""}`}
+          aria-pressed={filled === star}
+          title={
+            filled === star
+              ? "Clear rating"
+              : `Rate ${star} star${star > 1 ? "s" : ""}${itemType === "track" ? (star >= 3 ? " · liked" : " · not liked") : ""}`
+          }
+          className={`rounded-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-wait ${visual >= star ? selectedClass : emptyClass}`}
+          onMouseEnter={() => setHovered(star)}
+          onFocus={() => setHovered(star)}
+          onBlur={() => setHovered(null)}
+          onClick={(event) => {
+            event.stopPropagation()
+            save(filled === star ? null : star * 2)
           }}
         >
-          <svg viewBox="0 0 16 16" width={size} height={size} fill="currentColor">
+          <svg
+            viewBox="0 0 16 16"
+            width={size}
+            height={size}
+            fill="currentColor"
+            aria-hidden="true"
+          >
             <path d="M3.612 15.443c-.386.198-.824-.149-.746-.592l.83-4.73L.173 6.765c-.329-.314-.158-.888.283-.95l4.898-.696L7.538.792c.197-.39.73-.39.927 0l2.184 4.327 4.898.696c.441.062.612.636.282.95l-3.522 3.356.83 4.73c.078.443-.36.79-.746.592L8 13.187l-4.389 2.256z" />
           </svg>
         </button>
       ))}
       {inMenu && filled > 0 && (
         <button
+          type="button"
           title="Clear rating"
-          disabled={saving}
-          onClick={e => { e.stopPropagation(); rate(null) }}
-          className="ml-1 text-white/25 hover:text-white/60 text-xs"
-        >✕</button>
+          aria-label="Clear rating"
+          disabled={rating.saving || !rating.enabled}
+          className="ml-1 rounded-sm px-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          onClick={(event) => {
+            event.stopPropagation()
+            save(null)
+          }}
+        >
+          ×
+        </button>
+      )}
+      {inMenu && rating.error && (
+        <p
+          className="mt-1 w-full text-xs text-[var(--text-secondary)]"
+          role="status"
+        >
+          {rating.error}
+        </p>
       )}
     </div>
   )

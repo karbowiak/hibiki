@@ -23,6 +23,12 @@ async function checkPlaybackQuality(page: Page, name: string) {
     const info = page.getByRole('button', { name: 'Track info', exact: true })
     const transport = page.getByRole('button', { name: 'Pause', exact: true }).or(page.getByRole('button', { name: 'Play', exact: true })).last()
     const before = await transport.boundingBox()
+    const stars = page.locator('.player-track').getByRole('group', { name: /^Rating for / })
+    assert.equal(await stars.count(), 1)
+    const starBounds = await stars.boundingBox()
+    const detailsBounds = await page.locator('.player-track').boundingBox()
+    assert.ok(starBounds && detailsBounds && starBounds.x >= detailsBounds.x && starBounds.x + starBounds.width <= detailsBounds.x + detailsBounds.width, `${name}/${width}: stars leave bottom-left track details`)
+    assert.equal(await page.locator('.player-center').getByRole('group', { name: /^Rating for / }).count(), 0)
     for (const [format, label] of [
       [{ codec: 'FLAC', bit_depth: 16, sample_rate: 44100, channels: 2 }, 'FLAC 16bit/44.1kHz'],
       [{ codec: 'FLAC', bit_depth: 24, sample_rate: 192000, channels: 2 }, 'FLAC 24bit/192kHz'],

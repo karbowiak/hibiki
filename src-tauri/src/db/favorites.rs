@@ -29,7 +29,7 @@ pub fn load(conn: &Connection, scope: &str) -> Result<FavoriteProfile, String> {
         ),
         None => (
             0,
-            json!({"version":1,"settings":{"plex":false,"listenbrainz":false,"lastfm":false,"ratingThreshold":6},"bindings":{}}),
+            json!({"version":1,"ratingModel":1,"settings":{"plex":false,"listenbrainz":false,"lastfm":false,"ratingThreshold":6},"bindings":{}}),
         ),
     };
     let total = conn

@@ -50,7 +50,9 @@ import type {
 } from "../types/music"
 import { makeOnPlay } from "../lib/mediaPlay"
 import { DownloadMenuItems } from "./shared/DownloadMenuItems"
-import { IconHeart, IconHeartFilled } from "@tabler/icons-react"
+import { IconStar } from "@tabler/icons-react"
+import { saveTrackRatingToPlex } from "../favorites/saveRating"
+import { effectiveTrackRating } from "../favorites/ratings"
 import { useFavoritesStore } from "../stores/favoritesStore"
 
 // ---------------------------------------------------------------------------
@@ -260,18 +262,12 @@ export function ContextMenu() {
   const provider = useProviderStore((s) => s.provider)
   const favoriteId =
     type === "track" ? (data as MusicTrack | null)?.id : undefined
-  const favoriteLiked = useFavoritesStore(
-    (state) =>
-      state.provider === provider &&
-      state.session === provider?.playbackSession &&
-      !!favoriteId &&
-      state.likedTrackIds.has(favoriteId)
-  )
-  const favoritesReady = useFavoritesStore(
-    (state) =>
-      state.loaded &&
-      state.provider === provider &&
-      state.session === provider?.playbackSession
+  const favoriteRating = useFavoritesStore((state) =>
+    state.provider === provider &&
+    state.session === provider?.playbackSession &&
+    favoriteId
+      ? state.ratingsByTrackId.get(favoriteId)
+      : undefined
   )
   const extraActions = useContextMenuStore((s) => s.extraActions) ?? []
   const captureOwner = useProviderMutationOwner(provider)
@@ -895,33 +891,26 @@ export function ContextMenu() {
 
         {/* Rating */}
         {track &&
-          /^[1-9]\d*$/.test(track.id) &&
-          Number.isSafeInteger(Number(track.id)) &&
-          provider?.favorites &&
-          favoritesReady && (
+          provider &&
+          favoriteRating?.manual &&
+          !favoriteRating.manual.plexSaved &&
+          favoriteRating.manual.trackId === track.id &&
+          effectiveTrackRating(track.userRating, favoriteRating) ===
+            favoriteRating.manual.value && (
             <Item
-              icon={
-                favoriteLiked ? (
-                  <IconHeartFilled size={16} />
-                ) : (
-                  <IconHeart size={16} />
-                )
-              }
-              label={
-                favoriteLiked
-                  ? "Remove from Liked Songs"
-                  : "Save to Liked Songs"
-              }
+              icon={<IconStar size={16} />}
+              label="Save rating to Plex"
+              disabled={provider.isOffline}
               onClick={() =>
                 void invokeAction({
-                  label: "Save favorite",
+                  label: "Save rating to Plex",
                   run: () =>
-                    useFavoritesStore.getState().toggle(track, !favoriteLiked),
+                    saveTrackRatingToPlex(provider, favoriteRating.manual!),
                 })
               }
             />
           )}
-        {hasRatings && (
+        {(hasRatings || (type === "track" && provider?.favorites)) && (
           <StarRating
             key={generation}
             itemId={itemId}
@@ -933,7 +922,7 @@ export function ContextMenu() {
                   : "track"
             }
             userRating={userRating}
-            enableLove={type === "track"}
+            musicTrack={track ?? undefined}
             artist={artistName}
             track={itemTitle}
             size={14}

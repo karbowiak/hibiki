@@ -11,6 +11,7 @@ export function emptyFavorites(): FavoriteState {
   return {
     version: 1,
     revision: 0,
+    ratingModel: 1,
     settings: {
       plex: false,
       lastfm: false,

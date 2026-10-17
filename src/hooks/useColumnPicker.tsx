@@ -38,7 +38,7 @@ export const ALL_COLUMNS: { id: ColId; label: string; defaultOn: boolean }[] = [
   { id: "label", label: "Label", defaultOn: false },
   { id: "bitrate", label: "Bit Rate", defaultOn: false },
   { id: "format", label: "Format", defaultOn: false },
-  { id: "rating", label: "Rating & like", defaultOn: true },
+  { id: "rating", label: "Rating", defaultOn: true },
   { id: "rated_at", label: "Date Rated", defaultOn: false },
   { id: "downloads", label: "Download status", defaultOn: true },
 ]

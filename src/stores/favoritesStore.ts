@@ -5,7 +5,6 @@ import { useListenBrainzStore } from "../metadata/listenbrainz/authStore"
 import {
   emptyFavorites,
   setFavorite,
-  findFavorite,
   seedFavoriteRatings,
 } from "../favorites/model"
 import {
@@ -15,6 +14,13 @@ import {
   type FavoriteMetadata,
   type FavoriteRecording,
 } from "../favorites/types"
+import {
+  favoriteRatingIndex,
+  favoriteRatingIntent,
+  LIKED_RATING,
+  type FavoriteTrackRating,
+  type FavoriteRatingIntent,
+} from "../favorites/ratings"
 import { favoritesRemote } from "../favorites/native"
 import { syncFavorites, type FavoriteSyncServices } from "../favorites/sync"
 import { validFavorite, validFavoriteMetadata } from "../favorites/validation"
@@ -26,6 +32,7 @@ import type { MusicTrack } from "../types/music"
 interface State {
   collection: FavoriteState
   likedTrackIds: Set<string>
+  ratingsByTrackId: Map<string, FavoriteTrackRating>
   provider: MusicProvider | null
   session: unknown
   loaded: boolean
@@ -46,7 +53,12 @@ interface State {
     id: string,
     title: string,
     artist: string,
-    rating: number | null
+    rating: number | null,
+    track?: MusicTrack
+  ): Promise<FavoriteRatingIntent>
+  confirmRating(
+    intent: FavoriteRatingIntent,
+    provider: MusicProvider
   ): Promise<void>
   configure(
     service: FavoriteService,
@@ -83,6 +95,7 @@ function likedIds(collection: FavoriteState) {
 export const useFavoritesStore = create<State>((set, get) => ({
   collection: emptyFavorites(),
   likedTrackIds: new Set(),
+  ratingsByTrackId: new Map(),
   provider: null,
   session: null,
   loaded: false,
@@ -98,6 +111,7 @@ export const useFavoritesStore = create<State>((set, get) => ({
         session: null,
         collection: emptyFavorites(),
         likedTrackIds: new Set(),
+        ratingsByTrackId: new Map(),
         loaded: false,
         loading: false,
         running: false,
@@ -131,6 +145,7 @@ export const useFavoritesStore = create<State>((set, get) => ({
       error: null,
       collection: emptyFavorites(),
       likedTrackIds: new Set(),
+      ratingsByTrackId: new Map(),
       issues: {},
     })
     const native = provider.favorites
@@ -170,14 +185,30 @@ export const useFavoritesStore = create<State>((set, get) => ({
         const verified = await native.load()
         if (verified.revision !== profile.revision)
           throw Error("Favorites changed while loading; retry")
-        const collection = {
+        let collection = {
           ...profile.metadata,
           entries,
           revision: profile.revision,
         }
+        if (!owns(provider, session)) return
+        if (
+          collection.ratingModel !== 1 ||
+          collection.settings.ratingThreshold !== LIKED_RATING
+        ) {
+          const metadata: FavoriteMetadata = {
+            ...profile.metadata,
+            ratingModel: 1,
+            settings: { ...collection.settings, ratingThreshold: LIKED_RATING },
+            ratingsImported: false,
+          }
+          const revision = await native.save(collection.revision, metadata, [])
+          if (!owns(provider, session)) return
+          collection = { ...metadata, entries, revision }
+        }
         if (owns(provider, session))
           set({
             collection,
+            ratingsByTrackId: favoriteRatingIndex(collection),
             likedTrackIds: likedIds(collection),
             loaded: true,
             loading: false,
@@ -220,6 +251,7 @@ export const useFavoritesStore = create<State>((set, get) => ({
           settings: next.settings,
           bindings: next.bindings,
           ratingsImported: next.ratingsImported,
+          ratingModel: next.ratingModel,
         }
         const rows = Object.values(next.entries)
           .filter((item) => item !== previous.entries[item.id])
@@ -232,6 +264,7 @@ export const useFavoritesStore = create<State>((set, get) => ({
               settings: previous.settings,
               bindings: previous.bindings,
               ratingsImported: previous.ratingsImported,
+              ratingModel: previous.ratingModel,
             })
         )
           return previous
@@ -252,6 +285,7 @@ export const useFavoritesStore = create<State>((set, get) => ({
                     settings: previous.settings,
                     bindings: previous.bindings,
                     ratingsImported: previous.ratingsImported,
+                    ratingModel: previous.ratingModel,
                   },
               rows.slice(offset, offset + 1000)
             )
@@ -262,6 +296,10 @@ export const useFavoritesStore = create<State>((set, get) => ({
           set({
             collection: saved,
             likedTrackIds: likedIds(saved),
+            ratingsByTrackId: favoriteRatingIndex(
+              saved,
+              get().ratingsByTrackId
+            ),
             error: null,
           })
           return saved
@@ -335,18 +373,36 @@ export const useFavoritesStore = create<State>((set, get) => ({
       )
     })
   },
-  async ratingChanged(id, title, artist, rating) {
+  async ratingChanged(id, title, artist, rating, track) {
+    const intent = favoriteRatingIntent(rating, id)
     await get().update((state) => {
-      const row: FavoriteRecording = {
-        key: `local:${id}`,
-        localTrackId: id,
-        title,
-        artist,
-      }
-      const liked = (rating ?? 0) >= state.settings.ratingThreshold
-      if (!liked && !findFavorite(state, row)) return state
-      return setFavorite(state, row, liked, false)
+      const row: FavoriteRecording =
+        track?.id === id
+          ? favoriteReference(track)
+          : { key: `local:${id}`, localTrackId: id, title, artist }
+      const next = setFavorite(state, row, (rating ?? 0) >= LIKED_RATING, true)
+      const entries = { ...next.entries }
+      for (const [key, entry] of Object.entries(entries))
+        if (entry.localTrackIds.includes(id))
+          entries[key] = { ...entry, rating: intent }
+      return { ...next, entries }
     })
+    return intent
+  },
+  async confirmRating(intent, provider) {
+    await get().update((state) => {
+      let changed = false
+      const entries = { ...state.entries }
+      for (const [id, entry] of Object.entries(entries))
+        if (entry.rating?.id === intent.id && !entry.rating.plexSaved) {
+          entries[id] = {
+            ...entry,
+            rating: { ...entry.rating, plexSaved: true },
+          }
+          changed = true
+        }
+      return changed ? { ...state, entries } : state
+    }, provider)
   },
   async configure(service, enabled, playlistId) {
     await get().update((state) => {

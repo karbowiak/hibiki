@@ -22,7 +22,7 @@ export function useFavoriteIndex(enabled: boolean) {
     const ids = [
       ...new Set(
         Object.values(entries)
-          .filter((entry) => entry.liked)
+          .filter((entry) => entry.liked || entry.rating?.value != null)
           .flatMap((entry) => entry.localTrackIds)
       ),
     ]

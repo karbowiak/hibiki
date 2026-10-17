@@ -58,18 +58,18 @@ if(scenario.startsWith("sidebar")){
  const {StarRating}=await import("../../src/components/shared/StarRating")
  let closes=0;const render=(id="same")=><StarRating itemId={id} itemType={scenario==="rating-album-success"?"album":"track"} userRating={null} artist={scenario.includes("love")?"Artist":""} track={scenario.includes("love")?"Track":""} onRated={()=>closes++}/>
  await act(async()=>root.render(render()))
- const rate=async()=>{const button=document.querySelector('button[title="4 stars"]') as HTMLButtonElement;assert(button);await act(async()=>button.click())}
+ const rate=async()=>{const button=document.querySelector('button[aria-label="4 stars"]') as HTMLButtonElement;assert(button);await act(async()=>button.click())}
  await rate();assert.equal(calls.length,1);assert.deepEqual(loves,[])
  if(scenario==="rating-provider")await replace()
  if(scenario==="rating-unmount")await unmount()
  if(scenario==="rating-row")await act(async()=>root.render(render("other")))
- if(scenario==="rating-failure" || scenario==="rating-love-failure"){first.reject(Error("synthetic secret"));await settle();assert.equal(closes,0);assert.equal(library.getState().error,"Unable to save the rating. Please try again.");assert(!(document.querySelector('button[title="4 stars"]') as HTMLButtonElement).disabled)}
+ if(scenario==="rating-failure" || scenario==="rating-love-failure"){first.reject(Error("synthetic secret"));await settle();assert.equal(closes,0);assert.equal(library.getState().error,null);assert(document.querySelector('[aria-description="Unable to save the rating. Please try again."]'));assert(!(document.querySelector('button[aria-label="4 stars"]') as HTMLButtonElement).disabled)}
  else if(scenario==="rating-success" || scenario==="rating-love-success" || scenario==="rating-album-success"){await rate();assert.equal(calls.length,1);await resolve();assert.deepEqual(writes,[["rate","same",scenario==="rating-album-success"?"album":"track",8]]);assert.equal(closes,1)}
  else if(scenario==="rating-capability"){await act(async()=>useProviderStore.getState().setProvider({...b,capabilities:{ratings:false}}));await resolve();assert.equal(document.querySelectorAll("button").length,0);assert.deepEqual(writes,[])}
  else{await resolve();assert.deepEqual(writes,[]);assert.equal(closes,0)}
  assert.deepEqual(loves,[])
  if(scenario==="rating-love-failure")assert.deepEqual(localFavorites,[])
- if(scenario==="rating-love-success")assert.deepEqual(localFavorites,[["same","Track","Artist",8]])
+ if(scenario==="rating-love-success")assert.deepEqual(localFavorites,[])
  if(scenario!=="rating-unmount")await unmount()
 }else{
  const {ContextMenu}=await import("../../src/components/ContextMenu")
@@ -83,13 +83,13 @@ if(scenario.startsWith("sidebar")){
  else if(scenario.startsWith("remove"))await click("Remove from playlist")
  else if(scenario.startsWith("queue"))await click("Add to bottom")
  else if(scenario.startsWith("add"))await click("Original")
- else if(scenario.startsWith("menu-rating")){await act(async()=>(document.querySelector('button[title="4 stars"]') as HTMLButtonElement).click())}
+ else if(scenario.startsWith("menu-rating")){await act(async()=>(document.querySelector('button[aria-label="4 stars"]') as HTMLButtonElement).click())}
  assert.equal(calls.length,1)
  if(scenario.endsWith("provider") || scenario.includes("provider-failure"))await replace()
  else if(scenario.endsWith("unmount"))await unmount()
  else if(scenario.endsWith("closed"))await act(async()=>menu.getState().close())
  else if(scenario.endsWith("new-menu"))await act(async()=>menu.getState().show(20,20,"track",{...data,id:"new"}))
- if(scenario.endsWith("failure")){first.reject(Error("synthetic secret"));await settle();if(scenario.includes("provider-failure"))assert.equal(library.getState().error,null);else assert(library.getState().error?.includes("Unable"))}
+ if(scenario.endsWith("failure")){first.reject(Error("synthetic secret"));await settle();if(scenario.includes("provider-failure"))assert.equal(library.getState().error,null);else if(scenario.startsWith("menu-rating"))assert(document.querySelector('[aria-description="Unable to save the rating. Please try again."]'));else assert(library.getState().error?.includes("Unable"))}
  else await resolve([{id:"old-track"}])
  if(scenario==="delete-route"){assert.deepEqual(writes,[["delete","1"]]);assert.equal(location.pathname,"/playlist/10")}
  else if(scenario.endsWith("success")){assert.equal(writes.length,1)}else if(scenario.endsWith("new-menu")){assert.equal(menu.getState().data?.id,"new");assert.equal(menu.getState().open,true);if(scenario.startsWith("queue"))assert.deepEqual(writes,[])}else{assert.deepEqual(writes,[]);if(!scenario.endsWith("failure"))assert.equal(library.getState().error,null)}

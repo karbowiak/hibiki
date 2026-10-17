@@ -39,6 +39,16 @@ export function validFavorite(value: unknown): value is FavoriteEntry {
     typeof value.liked === "boolean" &&
     typeof value.explicit === "boolean" &&
     number(value.changedAt) &&
+    (value.rating === undefined ||
+      (object(value.rating) &&
+        text(value.rating.id, 80) &&
+        !!value.rating.id &&
+        localId(value.rating.trackId) &&
+        (value.rating.value === null ||
+          [2, 4, 6, 8, 10].includes(value.rating.value as number)) &&
+        timestamp(value.rating.changedAt) &&
+        value.rating.changedAt != null &&
+        typeof value.rating.plexSaved === "boolean")) &&
     Array.isArray(value.localTrackIds) &&
     value.localTrackIds.length <= 16 &&
     value.localTrackIds.every(localId) &&
@@ -60,6 +70,7 @@ export function validFavoriteMetadata(
   if (
     !object(value) ||
     value.version !== 1 ||
+    (value.ratingModel !== undefined && value.ratingModel !== 1) ||
     !object(value.settings) ||
     !object(value.bindings) ||
     !sides.every(

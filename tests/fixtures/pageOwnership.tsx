@@ -245,8 +245,8 @@ try {
         </Router>
       )
     )
-    assert.equal(pending.length, 1)
     if(kind==="tracks") await act(async()=>{[...document.querySelectorAll("button")].find(button=>button.textContent==="Rated")!.click()})
+    assert.equal(pending.length, 1)
     assert.ok(document.querySelector('[role="status"]'))
     assert.ok(!document.body.textContent?.includes("No rated"))
     if (scenario.endsWith("provider")) {
@@ -273,7 +273,7 @@ try {
       await act(async () => retry.click())
       assert.equal(pending.length, 2)
       assert.equal(pending[1]!.offset, 0)
-      assert.equal(pending[1]!.limit, 200)
+      assert.equal(pending[1]!.limit, kind === "tracks" ? 500 : 200)
       await act(async () => pending[1]!.reply.resolve({ items: [], total: 0, offset: 0 }))
       assert.ok(!document.querySelector('[role="alert"]'))
       assert.ok(document.body.textContent?.includes("No rated"))
