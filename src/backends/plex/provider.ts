@@ -55,6 +55,8 @@ import { createFavoritesNative } from "../../favorites/native"
 import { projectOfflineAvailability } from "../../offline/catalogue"
 
 export class PlexProvider implements MusicProvider {
+  matchingIndexStatus() { return this.api.matchingIndexStatus() }
+  matchingIndexControl(action: import("../../matching/types").MatchingAction) { return this.api.matchingIndexControl(action) }
   private nowPlayingGeneration = 0
   constructor(private transport?: PlexTransport) {}
   readonly name = "Plex"

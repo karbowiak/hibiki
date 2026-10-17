@@ -2,7 +2,8 @@
 //!
 //! Keeps focused collection caches, favorites, playback state and downloads.
 //! Legacy catalogue readers preserve access to previously saved/offline data;
-//! full-library indexing and its background workers are retired.
+//! the raw full-library mirror and its background workers are retired. Compact
+//! matching evidence has a separate lifecycle in matching_index/.
 
 pub mod albums;
 pub mod artists;

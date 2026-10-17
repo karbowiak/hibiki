@@ -265,12 +265,25 @@ impl PlexState {
         *self.3.write().unwrap_or_else(|error| error.into_inner()) =
             crate::image_protocol::ImageContext::new(self.1.load(Ordering::SeqCst), client);
     }
+    /// SQL preparation can be expensive. Fence only its final commit against
+    /// native owner publication, leaving connection/audio admission available
+    /// while the matching writer prepares a bounded transaction.
+    pub(crate) fn cache_commit_guard(&self, context: &PlexRequestContext) -> Result<std::sync::RwLockReadGuard<'_, crate::image_protocol::ImageContext>, String> {
+        let guard = self.3.read().map_err(|_| "Plex ownership unavailable")?;
+        if !self.is_current(context.connection_revision) || guard.revision != context.connection_revision ||
+            guard.client.as_ref().is_none_or(|client| client.offline_only || client.library_scope != context.cache_scope) {
+            return Err("Plex matching owner was superseded".into());
+        }
+        Ok(guard)
+    }
 
     pub(crate) async fn image_context(&self) -> crate::image_protocol::ImageContext {
         // Refresh from an uncontended owner; a busy maintenance writer retains
         // the last published owner without blocking image admission or delivery.
         if let Ok(client) = self.0.try_lock() {
-            self.publish_image_context(client.clone());
+            let matches = self.3.read().unwrap_or_else(|error| error.into_inner())
+                .matches(self.1.load(Ordering::SeqCst), client.as_ref());
+            if !matches { self.publish_image_context(client.clone()); }
         }
         self.3.read().unwrap_or_else(|error| error.into_inner()).clone()
     }
@@ -2994,6 +3007,34 @@ mod connection_tests {
             uri.query_pairs_mut().append_pair("src", &format!("https://server.test/proxy{path}")).append_pair("scope", requested);
             assert!(state.refresh_selected_image(uri.as_str(), cache.clone(), &crate::image_protocol::WorkQueue::default()).await.is_err());
         }
+    }
+
+    #[tokio::test]
+    async fn matching_preparation_keeps_native_audio_admission_available_and_retires_at_commit() {
+        use crate::matching_index::{row,store};
+        let state=Arc::new(PlexState::new());let revision=state.begin_connection().await;
+        let client=scoped_client("https://server.test","dummy",4);let scope=client.library_scope.clone();
+        let context=PlexRequestContext{connection_revision:revision,cache_scope:scope.clone()};
+        state.publish(revision,client).await.unwrap();
+        let db=crate::db::DbState::open_in_memory().unwrap();
+        let (ready_tx,ready_rx)=tokio::sync::oneshot::channel();
+        let (finish_tx,finish_rx)=std::sync::mpsc::channel();let writer=db.0.clone();let background=state.clone();let captured=context.clone();
+        let work=std::thread::spawn(move||{
+            let conn=writer.lock().unwrap();store::ensure_scope(&conn,&captured.cache_scope).unwrap();
+            let task=store::begin(&conn,&captured.cache_scope,"artist",0).unwrap();
+            let row=row::parse(&serde_json::json!({"type":"artist","ratingKey":1,"title":"Artist"}),"artist",4).unwrap();
+            store::publish_fenced(&conn,&captured.cache_scope,&task,0,&[row],1,1,||{
+                ready_tx.send(()).unwrap();finish_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+                background.cache_commit_guard(&captured)
+            })
+        });
+        ready_rx.await.unwrap();
+        let mut current=tokio::time::timeout(std::time::Duration::from_millis(100),state.0.lock()).await.expect("matching SQL must not hold audio admission");
+        state.checked_client(&context,&current).unwrap();
+        current.as_mut().unwrap().library_scope="replacement-library".into();state.publish_image_context(current.clone());drop(current);
+        finish_tx.send(()).unwrap();
+        assert!(tokio::task::spawn_blocking(move||work.join().unwrap()).await.unwrap().is_err());
+        assert_eq!(db.0.lock().unwrap().query_row("SELECT count(*) FROM matching_rows",[],|r|r.get::<_,i64>(0)).unwrap(),0);
     }
 
     #[tokio::test]

@@ -349,6 +349,21 @@ async function setup() {
     buildItemUri: (key: string) => "synthetic://" + key,
     disconnect: async () => {},
   }
+  let indexInfo: import("../../../src/matching/types").MatchingStatus = { paused:false,epoch:0,revision:1,tasks:[
+    { kind:"artist",phase:"complete",offset:0,total:8306,started:1700000000000,completed:1700000010000,count:8306,requests:34,bytes:1000000,error:null,retryAt:0 },
+    { kind:"album",phase:"verify",offset:10000,total:87130,started:1700000000000,completed:null,count:87130,requests:180,bytes:10000000,error:null,retryAt:0 },
+    { kind:"track",phase:"scan",offset:20000,total:377386,started:1700000000000,completed:null,count:20000,requests:40,bytes:9000000,error:null,retryAt:0 },
+  ] }
+  const indexActions: string[] = []
+  Object.assign(provider, {
+    matchingIndexStatus: async () => structuredClone(indexInfo),
+    matchingIndexControl: async (action:string) => {
+      indexActions.push(action)
+      indexInfo = { ...indexInfo,epoch:indexInfo.epoch+1,paused:action==="pause"||action==="clear",tasks:action==="clear"?[]:indexInfo.tasks }
+      return structuredClone(indexInfo)
+    },
+  })
+  w.fixtureMatchingIndex = { actions: () => indexActions }
   const pageRequests: { kind: string; offset: number; limit: number }[] = []
   const syntheticTrack = (index: number) => ({ ...tracks[0], id: String(100000 + index), title: `Synthetic song ${String(index).padStart(5, "0")}`, playlistItemId: String(index + 1), type: "track" as const })
   if (virtual) Object.assign(provider, {

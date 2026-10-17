@@ -85,7 +85,7 @@ function savedProvider(
   const audio = createPlexApi(context, undefined, owns)
   const project = (track: import("../../types/music").MusicTrack) =>
     localAudioTrack(track, baseUrl, context.cacheScope)
-  return createSavedLibraryProvider(
+  const saved = createSavedLibraryProvider(
     context.cacheScope,
     cache,
     owns,
@@ -131,6 +131,10 @@ function savedProvider(
       )) as import("../../types/music").MusicTrack[]
     })
   )
+  return Object.assign(saved, {
+    matchingIndexStatus: audio.matchingIndexStatus,
+    matchingIndexControl: audio.matchingIndexControl,
+  })
 }
 
 export const useConnectionStore = createPlexConnectionStore({
@@ -251,6 +255,7 @@ export const useConnectionStore = createPlexConnectionStore({
     let retired = false,
       running = false,
       revision = 0
+    void createPlexApi(captured, undefined, ownsRequest).matchingIndexStart().catch(() => {})
     const refreshes = createCatalogueRefreshQueue(
       () =>
         !retired &&

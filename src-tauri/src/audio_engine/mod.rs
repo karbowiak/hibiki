@@ -553,6 +553,9 @@ impl AudioEngine {
     pub fn output_available(&self) -> bool {
         self.atomics.output_available.load(Ordering::Acquire)
     }
+    pub(crate) fn is_buffering(&self) -> bool {
+        self.atomics.get_state() == EngineState::Buffering
+    }
 
     pub fn sample_rate(&self) -> Result<u32, String> {
         if let Some(error) = &self.startup_error {

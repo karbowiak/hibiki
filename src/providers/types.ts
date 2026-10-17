@@ -137,6 +137,8 @@ export interface MusicProvider {
   stopCollectionWarmup?(): void
   getLibraryCacheInfo?(): Promise<{ collections: number; items: number; snapshots: number; bytes: number }>
   clearLibraryCache?(): Promise<void>
+  matchingIndexStatus?(): Promise<import("../matching/types").MatchingStatus>
+  matchingIndexControl?(action: import("../matching/types").MatchingAction): Promise<import("../matching/types").MatchingStatus>
   getCachedTrackSource?(key: string, shuffle?: boolean, query?: import("../lib/pagedPlayback").CollectionOrder): Promise<import("../lib/pagedPlayback").PagedTrackSource | null>
   readonly savedQueue?: import("../lib/queueSession").SavedQueueStorage
   getCollectionPage?(key: string, offset: number, limit: number, filter: string, sort: string, dir: "asc" | "desc"): Promise<PagedResult<MusicItem>>

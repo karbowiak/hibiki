@@ -7,6 +7,7 @@ import { openUrl as open } from "@tauri-apps/plugin-opener"
 import clsx from "clsx"
 import { ImageCacheControls } from "../ImageCacheControls"
 import { LibraryCacheControls } from "../LibraryCacheControls"
+import { MatchingIndexControls } from "../MatchingIndexControls"
 import { engine } from "../../audio/RustAudioEngine"
 import { DownloadStorageControls } from "../DownloadStorageControls"
 import { AudioCacheControls } from "../AudioCacheControls"
@@ -751,6 +752,10 @@ function CacheSection() {
       {/* Library Cache */}
       <SettingCard title="Library Cache" description="Saved collection metadata and browsing pages for this Plex library. Clearing reloads them as needed and keeps queue metadata, favorites and downloads.">
         <LibraryCacheControls />
+      </SettingCard>
+
+      <SettingCard title="Plex Matching Index" description="Compact artist, release and recording metadata shared by Plex and YouTube Music matching. Clearing the library cache keeps this index. Clearing this index keeps your ratings, playlists, queue and downloads.">
+        <MatchingIndexControls />
       </SettingCard>
 
       {/* Metadata Cache */}

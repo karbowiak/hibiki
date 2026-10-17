@@ -82,10 +82,28 @@ against a user's playlists. No release tag is created by this work.
 
 ## Recorded checks
 
+The compact-index foundation for #27 adds native paging/ownership, storage,
+restart and cache-retention checks and a Chromium/WebKit settings check. The
+400,000-track native SQLite fixture completed a two-pass census in **121.66 s**,
+using **380,977,152 bytes (363.3 MiB)**, without loading the library into renderer
+memory. During indexing, **8,904** separate WAL reads measured **0.036 ms p50 /
+0.074 ms p95**; warm exact reads measured **0.012 / 0.014 ms**. SQL page preparation
+measured **80.8 / 123.8 ms**, and the final commit guard measured **20.3 ms p95**.
+Only that final commit guard holds native owner publication; SQL preparation and
+writer waits do not hold connection/audio admission. The benchmark process's
+observed RSS was approximately **26 MiB**; the outer Cargo timing includes the
+compiler and is not an index-process peak-memory measurement.
+
+These are synthetic database/foreground measurements; a complete live census and
+audible playback under indexing were not measured. See
+[the index contract](plex-matching-index.md) for the read-only live page sample and
+the distinction between matching metadata and full browse/offline data.
+
 - Full frontend suite: **1,220 passed**, zero failures, including the draft and
   mixed-playlist regression cases above.
 - Focused acceptance suite including those cases: **102 passed**, zero failures.
-- Full native suite: **820 passed**, 11 ignored; remote integration tests excluded.
+- Full native suite: **829 passed**, 12 ignored; remote integration tests excluded
+  (followed by the focused index/connection checks for the latest additions).
 - Native discovery parser rerun: **9 passed**, zero failures.
 - Application and script TypeScript projects pass `--noEmit`.
 - Chromium and WebKit issue interaction checks pass.

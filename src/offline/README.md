@@ -1,9 +1,14 @@
 # Saved browsing, collections and audio
 
 Hibiki retains the data needed for visited pages, favorites, selected collections
-and offline audio. It does not crawl or mirror the entire Plex library. Historical
+and offline audio. Browsing does not crawl or mirror the entire Plex library. Historical
 catalogue tables and readers remain compatible with previously saved data; their
 old census, catch-up and waveform-discovery workers are retired.
+
+The separately requested [compact matching index](../../docs/plex-matching-index.md)
+retains scoped artist/release/recording identities and matching evidence. It is
+independent of saved browse DTOs, survives focused-cache eviction and does not
+claim offline availability or authorize playback/remote mutations.
 
 ## Ownership and saved pages
 

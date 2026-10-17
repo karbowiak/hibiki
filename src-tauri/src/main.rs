@@ -14,6 +14,7 @@ mod queue_commands;
 mod performance;
 mod offline_audio;
 mod catalogue_commands;
+mod matching_index;
 mod library_picker;
 mod download_entities;
 mod download_library;
@@ -266,6 +267,7 @@ pub fn run() {
         .plugin(ytmusic::app_only_plugin(tauri_plugin_updater::Builder::new().build()))
         .plugin(ytmusic::app_only_plugin(tauri_plugin_notification::init()))
         .manage(PlexState::new())
+        .manage(matching_index::IndexState::default())
         .manage(artwork_commands::ArtworkInventoryState::default())
         .manage(std::sync::Arc::new(soulsync::SoulSyncState::default()))
         .manage(std::sync::Arc::new(theaudiodb::TheAudioDbState::default()))
@@ -389,6 +391,10 @@ pub fn run() {
             });
         })
         .invoke_handler(tauri::generate_handler![
+            matching_index::matching_index_status,
+            matching_index::matching_index_start,
+            matching_index::matching_index_control,
+            matching_index::matching_index_yield,
             ytmusic::ytmusic_status,
             ytmusic::ytmusic_playlist_read,
             ytmusic::ytmusic_playlist_write,

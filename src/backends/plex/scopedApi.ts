@@ -883,6 +883,9 @@ export function createPlexApi(
 
   return {
     context: requestContext,
+    matchingIndexStatus: () => invoke<import("../../matching/types").MatchingStatus>("matching_index_status"),
+    matchingIndexControl: (action: import("../../matching/types").MatchingAction) => invoke<import("../../matching/types").MatchingStatus>("matching_index_control", { action }),
+    matchingIndexStart: () => invoke<import("../../matching/types").MatchingStatus>("matching_index_start"),
     prepareTrackAudio,
     trackLevels,
     localTrack,

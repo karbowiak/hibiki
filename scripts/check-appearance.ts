@@ -83,6 +83,29 @@ async function checkIssueRegressions(page: Page, name: string) {
   await page.screenshot({ path: join(artifacts, `${name}-liked-source-entries.png`) })
   console.log(`${name}: issue regressions passed, including complete liked pagination, provider identities, video inclusion and matching playback counts`)
 }
+async function checkMatchingIndex(page: Page, name: string) {
+  await page.evaluate(() => { (window as any).fixtureAppearance.panel(null); (window as any).fixtureAppearance.route("/settings/cache") })
+  const heading = page.getByRole("heading", { name: "Plex Matching Index", exact: true })
+  await heading.waitFor()
+  const section = heading.locator("..").locator("..")
+  await section.getByText(/8,306 · Complete/).waitFor()
+  await section.getByRole("button", { name: "Pause indexing", exact: true }).click()
+  await section.getByText("Paused. Existing matching evidence remains available.", { exact: true }).waitFor()
+  for (const [width, theme] of [[1440,"dark"],[960,"light"]] as const) {
+    await page.setViewportSize({ width,height:900 })
+    await page.evaluate(theme => (window as any).fixtureAppearance.apply({ theme }),theme)
+    await section.scrollIntoViewIfNeeded()
+    assert.ok(await section.evaluate(element=>element.scrollWidth<=element.clientWidth+1), `${name}: index controls overflow`)
+    await page.screenshot({ path:join(artifacts,`${name}-${width}-${theme}-matching-index.png`) })
+  }
+  await section.getByRole("button",{name:"Resume indexing",exact:true}).click()
+  await section.getByRole("button",{name:"Rebuild index",exact:true}).click()
+  await section.getByRole("button",{name:"Clear index",exact:true}).click()
+  await section.getByRole("button",{name:"Resume indexing",exact:true}).waitFor()
+  assert.deepEqual(await page.evaluate(()=>(window as any).fixtureMatchingIndex.actions()),["pause","resume","rebuild","clear"])
+  assert.equal(await section.getByText("Waiting",{exact:true}).count(),3)
+  console.log(`${name}: compact index progress, partial/complete coverage and scoped lifecycle controls passed`)
+}
 async function checkPlaylistDrafts(page: Page, name: string) {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.evaluate(() => { (window as any).fixtureAppearance.route("/library"); (window as any).fixtureAppearance.drafts.disconnect() })
@@ -838,6 +861,11 @@ try {
         `${origin}/tests/fixtures/libraryLayout/index.html?appearance=1&player=1&discovery=1${process.argv.includes("--album-hover-only") ? "&virtual=1" : ""}`
       )
       await page.waitForFunction(() => (window as any).visualFixtureReady)
+      if (process.argv.includes('--matching-index-only')) {
+        await checkMatchingIndex(page,name)
+        assert.deepEqual(errors,[],`${name}: renderer errors`)
+        continue
+      }
       if (process.argv.includes('--playlist-drafts-only')) {
         await checkPlaylistDrafts(page, name)
         assert.deepEqual(errors, [], `${name}: renderer errors`)
