@@ -1,3 +1,4 @@
+import { isCollectionIndexItem } from "../../lib/collectionIndexItem"
 import { sortTracks, type TrackSortColumn } from "../../lib/trackOrder"
 import { useEffect, useMemo, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
@@ -238,9 +239,16 @@ export function Liked() {
       const byEntry = new Map(
         selectedEntries.map((entry, i) => [entry.id, details.items[i]])
       )
+      const indexIds = selected.filter(track => isCollectionIndexItem(track) && !indexed.entryById.has(track.id)).map(track => track.id)
+      const hydrated = indexIds.length && provider
+        ? provider.getCollectionItems
+          ? await provider.getCollectionItems("rated:track", indexIds)
+          : await Promise.all(indexIds.map(id => provider.getTrack(id)))
+        : []
+      const byId = new Map<string, MusicTrack>(hydrated.map(item => [item.id, item as MusicTrack] as const))
       return selected.map(
         (track) =>
-          byEntry.get(indexed.entryById.get(track.id)?.id ?? "") ?? track
+          byEntry.get(indexed.entryById.get(track.id)?.id ?? "") ?? byId.get(track.id) ?? track
       )
     }
     return {
@@ -410,13 +418,19 @@ export function Liked() {
           <button className="underline" onClick={() => void youtube.retry()}>Try again</button>
         </p>
       )}
+      {includesPlex && !preparing && (ratedIndex.error || favoriteIndex.error) && (
+        <p role="alert" className="mx-8 mb-4 text-sm text-(--text-secondary)">
+          {favoriteIndex.error || ratedIndex.error}{" "}
+          <button type="button" className="underline" onClick={() => { if (favoriteIndex.error) favoriteIndex.retry(); if (ratedIndex.error) ratedIndex.retry() }}>Try again</button>
+        </p>
+      )}
       {preparing ? (
         <p
-          role={includesPlex && ratedIndex.error ? "alert" : "status"}
+          role={ratedIndex.error || favoriteIndex.error ? "alert" : "status"}
           className="px-8 py-12 text-sm text-(--text-secondary)"
         >
-          {(includesPlex && ratedIndex.error) || "Preparing your complete collection…"}
-          {includesPlex && ratedIndex.error && <button type="button" onClick={ratedIndex.retry} className="ml-2 underline">Try again</button>}
+          {favoriteIndex.error || ratedIndex.error || "Preparing your complete collection…"}
+          {(ratedIndex.error || favoriteIndex.error) && <button type="button" className="ml-2 underline" onClick={() => { if (favoriteIndex.error) favoriteIndex.retry(); if (ratedIndex.error) ratedIndex.retry() }}>Try again</button>}
         </p>
       ) : (
         <TrackTable

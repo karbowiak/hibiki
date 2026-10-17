@@ -1,85 +1,66 @@
-import { useCallback, useEffect, useState } from "react"
+import { useEffect, useMemo, useSyncExternalStore } from "react"
 import { useProviderStore } from "../stores/providerStore"
 import { useUIStore } from "../stores/uiStore"
+import { useProviderOwner } from "./useProviderOwner"
+import { collectionIndexItem } from "../lib/collectionIndexItem"
+import { CollectionIndex } from "../lib/collectionIndex"
 import type { MusicAlbum, MusicTrack } from "../types/music"
+import type { MusicProvider } from "../providers/types"
 
-const EMPTY_ITEMS: never[] = []
-
-// Feature indexes support global ordering and album grouping without mounting offscreen artwork.
 const caches = new WeakMap<
-  object,
+  MusicProvider,
   Map<
     string,
-    { session: unknown; at: number; items: unknown[]; refresh: number }
+    {
+      session: unknown
+      scope: unknown
+      refresh: number
+      resource: CollectionIndex<unknown>
+    }
   >
 >()
+// Inactive indexes must also expire when background refreshes finish.
+if (typeof window !== "undefined")
+  window.addEventListener("collection-cache-updated", (event) => {
+    const provider = useProviderStore.getState().provider
+    const key = (event as CustomEvent<string>).detail
+    if (!provider) return
+    for (const [kind, cached] of caches.get(provider) ?? [])
+      if (key === "*" || key === `rated:${kind}` || key?.startsWith("item:"))
+        cached.resource.retry()
+  })
 function useRatedCollectionIndex<T>(enabled: boolean, kind: "track" | "album") {
-  const provider = useProviderStore((s) => s.provider)
-  const refresh = useUIStore((s) => s.pageRefreshKey)
-  const [attempt, setAttempt] = useState(0)
-  const [value, setValue] = useState<{
-    provider: unknown
-    tracks: T[]
-    ready: boolean
-    error: string
-    at: number
-  }>({ provider: null, tracks: [], ready: false, error: "", at: 0 })
-  useEffect(() => {
-    const update = (event: Event) => {
-      const changed = (event as CustomEvent).detail as string
-      if (changed === `rated:${kind}` || changed?.startsWith("item:")) {
-        if (provider) caches.get(provider)?.delete(kind)
-        setAttempt((value) => value + 1)
-      }
-    }
-    window.addEventListener("collection-cache-updated", update)
-    return () => window.removeEventListener("collection-cache-updated", update)
-  }, [provider, kind])
-  useEffect(() => {
-    if (!enabled || !provider) return
-    let active = true
-    const session = provider.playbackSession
+  const { provider, scope, session } = useProviderOwner()
+  const refresh = useUIStore((state) => state.pageRefreshKey)
+  const resource = useMemo(() => {
     const owns = () =>
-      active &&
-      useProviderStore.getState().provider === provider &&
+      enabled &&
+      !!provider &&
+      provider === useProviderStore.getState().provider &&
+      provider.cacheScope === scope &&
       provider.playbackSession === session
-    const cached = caches.get(provider)?.get(kind)
-    if (
-      cached &&
-      cached.session === session &&
-      cached.refresh === refresh &&
-      Date.now() - cached.at < 5 * 60_000
-    ) {
-      setValue({
-        provider,
-        tracks: cached.items as T[],
-        ready: true,
-        error: "",
-        at: cached.at,
-      })
-      return
-    }
-    setValue((previous) =>
-      previous.provider === provider && previous.ready
-        ? { ...previous, error: "" }
-        : { provider, tracks: [], ready: false, error: "", at: 0 }
-    )
-    void (async () => {
-      const tracks: T[] = []
+    const load = async () => {
+      const items: T[] = []
+      if (!provider) return items
       if (provider.getRatedItemsPage) {
         let offset = 0
+        let generation: unknown
         for (;;) {
-          const page = await provider.getRatedItemsPage(kind, offset, 500)
-          if (!owns()) return
+          const page = await (
+            provider.getRatedIndexPage ?? provider.getRatedItemsPage
+          ).call(provider, kind, offset, 500)
+          if (!owns()) throw Error("Library changed")
+          if (offset === 0) generation = page.generation
+          else if (generation !== page.generation) throw Error("Collection changed while indexing")
           if (
             page.items.length > 500 ||
-            (page.offset !== undefined && page.offset !== offset)
+            (page.offset !== undefined && page.offset !== offset) ||
+            offset + page.items.length > 1_000_000
           )
-            throw Error("The server repeated a rated page.")
+            throw Error("Invalid rated collection page")
           for (const item of page.items)
             if (item.type === kind) {
-              const { _providerData, ...track } = item
-              tracks.push(track as T)
+              items.push(collectionIndexItem(item) as T)
             }
           offset += page.items.length
           if (
@@ -89,37 +70,42 @@ function useRatedCollectionIndex<T>(enabled: boolean, kind: "track" | "album") {
             break
           await new Promise((resolve) => setTimeout(resolve, 0))
         }
-      } else
-        tracks.push(
-          ...((kind === "track"
-            ? await provider.getLikedTracks()
-            : await provider.getLikedAlbums()) as T[])
-        )
-      if (!owns()) return
-      let cache = caches.get(provider)
-      if (!cache) caches.set(provider, (cache = new Map()))
-      const at = Date.now()
-      cache.set(kind, { session, items: tracks, at, refresh })
-      setValue({ provider, tracks, ready: true, error: "", at })
-    })().catch(() => {
-      if (owns())
-        setValue((previous) => ({
-          ...previous,
-          error:
-            "Could not refresh this collection. Refresh the page to try again.",
-        }))
-    })
-    return () => {
-      active = false
+      } else {
+        const rows = kind === "track" ? await provider.getLikedTracks() : await provider.getLikedAlbums()
+        items.push(...rows.map(row => collectionIndexItem({ ...row, type: kind } as any) as T))
+      }
+      return items
     }
-  }, [provider, enabled, kind, attempt, refresh])
-  const retry = useCallback(() => {
-    if (provider) caches.get(provider)?.delete(kind)
-    setAttempt(value => value + 1)
-  }, [provider, kind])
-  return value.provider === provider
-    ? { ...value, retry }
-    : { tracks: EMPTY_ITEMS as T[], ready: false, error: "", at: 0, retry }
+    if (!provider || !enabled) return new CollectionIndex<T>(load, owns)
+    let cache = caches.get(provider)
+    if (!cache) caches.set(provider, (cache = new Map()))
+    const cached = cache.get(kind)
+    if (
+      cached?.scope === scope &&
+      cached.session === session &&
+      cached.refresh === refresh
+    )
+      return cached.resource as CollectionIndex<T>
+    const resource = new CollectionIndex<T>(load, owns)
+    cache.set(kind, {
+      session,
+      scope,
+      refresh,
+      resource: resource as CollectionIndex<unknown>,
+    })
+    return resource
+  }, [provider, scope, session, refresh, enabled, kind])
+  const value = useSyncExternalStore(resource.subscribe, resource.snapshot)
+  useEffect(() => {
+    if (enabled) resource.read()
+  }, [resource, enabled])
+  return {
+    tracks: value.items,
+    ready: value.ready,
+    error: value.error,
+    at: value.at,
+    retry: resource.retry,
+  }
 }
 export const useRatedIndex = (enabled: boolean) =>
   useRatedCollectionIndex<MusicTrack>(enabled, "track")

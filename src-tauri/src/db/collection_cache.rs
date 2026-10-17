@@ -14,6 +14,7 @@ pub enum Request {
         offset: i64,
         limit: i64,
     },
+    Index { key: String, offset: i64, limit: i64 },
     Query {
         key: String,
         offset: i64,
@@ -68,6 +69,7 @@ impl Request {
         matches!(
             self,
             Self::Info { .. }
+                | Self::Index { .. }
                 | Self::Page { .. }
                 | Self::Query { .. }
                 | Self::QueryRefs { .. }
@@ -79,6 +81,7 @@ impl Request {
     fn key(&self) -> &str {
         match self {
             Self::Info { key }
+            | Self::Index { key, .. }
             | Self::Page { key, .. }
             | Self::Query { key, .. }
             | Self::QueryRefs { key, .. }
@@ -257,6 +260,18 @@ pub fn run(conn: &Connection, scope: &str, request: &Request, now: i64) -> Resul
                 refreshing: generation != Some(revision)
             }))
         }
+        Request::Index { offset, limit, .. } => {
+            if *offset < 0 || !(1..=500).contains(limit) || !matches!(key, "rated:track" | "rated:album") {
+                return Err("Invalid collection index page".into());
+            }
+            let Some((Some(generation), total, _, false)) = metadata(conn, scope, key)? else { return Ok(Value::Null); };
+            const FIELDS: &[&str] = &["id","type","title","artistId","artistName","albumId","albumName","albumYear","year","trackNumber","discNumber","trackCount","guid","duration","playCount","viewCount","userRating","ratingCount","parentStudio","addedAt","lastPlayedAt","lastRatedAt","codec","bitrate","bitDepth","samplingRate","channels"];
+            let projection = FIELDS.iter().map(|field| format!("'{field}',json_extract(i.payload,'$.{field}')")).collect::<Vec<_>>().join(",");
+            let mut stmt = sql(conn.prepare_cached(&format!("SELECT json_object({projection}) FROM collection_cache_members m JOIN collection_cache_items i ON i.scope=m.scope AND i.kind=m.kind AND i.id=m.item_id WHERE m.scope=?1 AND m.key=?2 AND m.generation=?3 AND m.position>=?4 ORDER BY m.position LIMIT ?5")))?;
+            let rows = sql(stmt.query_map(params![scope,key,generation,offset,limit], |r| r.get::<_,String>(0)))?;
+            let items = sql(rows.collect::<rusqlite::Result<Vec<_>>>())?.into_iter().map(|row| serde_json::from_str::<Value>(&row).map_err(|_| "Invalid collection index".to_string())).collect::<Result<Vec<_>,_>>()?;
+            Ok(json!({"items":items,"total":total,"offset":offset,"generation":generation}))
+        }
         Request::Page { offset, limit, .. } => {
             if *offset < 0 || !(1..=500).contains(limit) {
                 return Err("Invalid collection cache page".into());
@@ -381,11 +396,12 @@ pub fn run(conn: &Connection, scope: &str, request: &Request, now: i64) -> Resul
             if ids.len() > 500 || ids.iter().any(|id| id.len() > 128) {
                 return Err("Invalid collection item page".into());
             }
-            let mut stmt=sql(conn.prepare_cached("SELECT payload FROM collection_cache_items WHERE scope=?1 AND kind='track' AND id=?2"))?;
+            let kind = match key { "rated:album" => "album", "rated:artist" => "artist", _ => "track" };
+            let mut stmt=sql(conn.prepare_cached("SELECT payload FROM collection_cache_items WHERE scope=?1 AND kind=?3 AND id=?2"))?;
             let mut items = Vec::new();
             for id in ids {
                 let payload: Option<String> =
-                    sql(stmt.query_row(params![scope, id], |r| r.get(0)).optional())?;
+                    sql(stmt.query_row(params![scope, id, kind], |r| r.get(0)).optional())?;
                 items.push(
                     payload
                         .map(|p| {
@@ -541,6 +557,25 @@ mod tests {
         )["generation"]
             .as_i64()
             .unwrap()
+    }
+    #[test]
+    fn rated_index_omits_full_metadata_and_album_ids_hydrate_by_kind() {
+        let conn = db();
+        for (key, kind) in [("rated:track", "track"), ("rated:album", "album")] {
+            let generation = begin(&conn, key, "test");
+            request(&conn, Request::Put { key: key.into(), generation, offset: 0, total: 1,
+                items: vec![json!({"id":"1","type":kind,"title":kind,"artistName":"Artist","userRating":8,"summary":"x".repeat(30000),"thumbUrl":"image://cover"})] });
+            request(&conn, Request::Commit { key: key.into(), generation });
+            let page = request(&conn, Request::Index { key: key.into(), offset: 0, limit: 10 });
+            assert_eq!(page["items"][0]["title"], kind);
+            assert_eq!(page["items"][0]["userRating"], 8);
+            assert!(page["items"][0].get("summary").is_none());
+            assert!(page["items"][0].get("thumbUrl").is_none());
+            assert!(page.to_string().len() < 2000);
+            let items = request(&conn, Request::Items { key: key.into(), ids: vec!["1".into()] });
+            assert_eq!(items[0]["type"], kind);
+            assert_eq!(items[0]["thumbUrl"], "image://cover");
+        }
     }
     #[test]
     fn mix_order_blends_complete_membership_and_survives_refreshes_and_metadata_edits() {

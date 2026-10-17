@@ -1,4 +1,5 @@
 import { DiscoveryCard } from "../shared/DiscoveryCard"
+import { useProviderStore } from "../../stores/providerStore"
 import { useMemo } from "react"
 import { useUIStore } from "../../stores/uiStore"
 import { deduplicateAlbums } from "../../lib/dedup"
@@ -12,31 +13,32 @@ import { interleavePages } from "../../lib/interleavedPages"
 import type { DiscoveryItem } from "../../lib/discovery"
 
 export function LikedAlbums() {
-  const page = useRatedItems("album")
-  const youtube = useYoutubeMusicLibrary("albums")
-  const retry = () => { page.retry(); void youtube.retry() }
-  const status =
-    page.loading && !page.items.length
-      ? "loading"
-      : page.error && !page.items.length
-        ? "error"
-        : "ready"
-
+  const provider = useProviderStore(state => state.provider)
   const shouldDeduplicate = useUIStore((s) => s.deduplicateAlbums)
   const index = useRatedAlbumIndex(shouldDeduplicate)
+  const page = useRatedItems("album", !shouldDeduplicate)
+  const youtube = useYoutubeMusicLibrary("albums")
+  const plexError = shouldDeduplicate ? index.error : page.error
+  const plexLoading = shouldDeduplicate ? !index.ready && !index.error : page.loading && !page.items.length
+  const retryPlex = shouldDeduplicate ? index.retry : page.retry
+  const retry = () => { retryPlex(); void youtube.retry() }
+  const status = plexLoading ? "loading" : plexError ? "error" : "ready"
+
   const albums = useMemo(() => deduplicateAlbums(index.tracks), [index.tracks])
   const grouped = useWindowedPages(
     shouldDeduplicate && index.ready
       ? `rated:albums:grouped:${index.at}`
       : null,
-    async (offset, limit) => ({
-      items: albums.slice(offset, offset + limit),
-      total: albums.length,
-      offset,
-    }),
+    async (offset, limit) => {
+      const selected = albums.slice(offset, offset + limit)
+      const details = provider?.getCollectionItems
+        ? await provider.getCollectionItems("rated:album", selected.map(album => album.id))
+        : await Promise.all(selected.map(album => provider.getAlbum(album.id)))
+      return { items: selected.map((album, index) => ({ ...details[index], _alternateIds: album._alternateIds }) as typeof album), total: albums.length, offset }
+    },
     albums.length
   )
-  const active = shouldDeduplicate && index.ready ? grouped : page.pages
+  const active = shouldDeduplicate ? grouped : page.pages
   const mixed = interleavePages(active, youtube.connected ? youtube.items : [],
     item => ({ source: "plex", item: { ...item, type: "album" } } as DiscoveryItem),
     item => ({ source: "ytmusic", item } as DiscoveryItem))
@@ -92,10 +94,10 @@ export function LikedAlbums() {
           />
         )}
         {youtube.connected && <DiscoveryMore more={youtube.more} loading={youtube.loading} error={youtube.error} load={() => void (youtube.error ? youtube.retry() : youtube.loadMore())} />}
-        {page.error && count > 0 && (
+        {plexError && count > 0 && (
           <p role="alert" className="py-4 text-sm">
-            {page.error}{" "}
-            <button className="underline" onClick={page.retry}>
+            {plexError}{" "}
+            <button className="underline" onClick={retryPlex}>
               Try again
             </button>
           </p>

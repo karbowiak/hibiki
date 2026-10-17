@@ -11,16 +11,7 @@ import { WindowedPages } from "../lib/windowedPages"
 import { useProviderStore } from "../stores/providerStore"
 import { useUIStore } from "../stores/uiStore"
 import type { MusicProvider } from "../providers/types"
-import { useShallow } from "zustand/react/shallow"
-
-const usePageOwner = () =>
-  useProviderStore(
-    useShallow((state) => ({
-      provider: state.provider,
-      session: state.provider?.playbackSession,
-      scope: state.provider?.cacheScope,
-    }))
-  )
+import { useProviderOwner as usePageOwner } from "./useProviderOwner"
 
 function ownedLoader<T>(
   provider: MusicProvider,

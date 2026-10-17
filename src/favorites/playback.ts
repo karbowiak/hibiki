@@ -3,6 +3,7 @@ import type { MusicTrack } from "../types/music"
 import type { PagedTrackSource } from "../lib/pagedPlayback"
 import type { FavoriteState, FavoriteEntry } from "./types"
 import { favoriteLikedAt } from "./model"
+import { isCollectionIndexItem } from "../lib/collectionIndexItem"
 import { favoriteTracks } from "./collection"
 
 /** Capture membership, not a huge hydrated track array. Playback resolves bounded pages. */
@@ -21,7 +22,7 @@ export function favoritePlaybackSource(
           (favoriteLikedAt(b) ?? 0) - (favoriteLikedAt(a) ?? 0) ||
           a.id.localeCompare(b.id)
       )
-  const seed = new Map(rated.map((track) => [track.id, track]))
+  const seed = new Map(rated.filter(track => !isCollectionIndexItem(track)).map((track) => [track.id, track]))
   return {
     key: "favorites",
     total: entries.length,

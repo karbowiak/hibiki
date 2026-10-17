@@ -3,7 +3,7 @@ import type { MusicAlbum, MusicArtist, MusicTrack } from "../types/music"
 import { useWindowedPages } from "./useWindowedPages"
 import { useMemo } from "react"
 
-export function useRatedItems<K extends "track" | "album" | "artist">(kind: K) {
+export function useRatedItems<K extends "track" | "album" | "artist">(kind: K, enabled = true) {
   const provider = useProviderStore((state) => state.provider)
   type Item = K extends "track"
     ? MusicTrack
@@ -11,7 +11,7 @@ export function useRatedItems<K extends "track" | "album" | "artist">(kind: K) {
       ? MusicAlbum
       : MusicArtist
   const page = useWindowedPages<Item>(
-    provider ? `rated:${kind}` : null,
+    provider && enabled ? `rated:${kind}` : null,
     async (offset, limit) => {
       if (!provider) return { items: [], total: 0 }
       if (provider.getRatedItemsPage) {

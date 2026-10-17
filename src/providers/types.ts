@@ -257,6 +257,9 @@ export interface MusicProvider {
   ): Promise<void>
 
   // --- Liked ---
+  /** Compact global ordering/grouping projection; hydrate only visible IDs. */
+  getRatedIndexPage?(kind: "track" | "album", offset: number, limit: number): Promise<PagedResult<MusicItem> & { generation?: number }>
+  getCollectionItems?(key: string, ids: string[]): Promise<MusicItem[]>
   getRatedItemsPage?(kind: "track" | "album" | "artist", offset: number, limit: number): Promise<PagedResult<MusicItem>>
   getLikedTracks(limit?: number): Promise<MusicTrack[]>
   getLikedAlbums(limit?: number): Promise<MusicAlbum[]>

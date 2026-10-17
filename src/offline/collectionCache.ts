@@ -513,6 +513,20 @@ export function createCollectionCacheProvider(
             },
           }
         }
+      else if (property === "getRatedIndexPage")
+        method = async (kind: "track" | "album", offset: number, limit: number) => {
+          const key = `rated:${kind}`
+          await ensure(key)
+          const page = await call<PagedResult<MusicItem> | null>("index", key, { offset, limit })
+          if (!page) throw Error("Could not read this collection index. Try again.")
+          return page
+        }
+      else if (property === "getCollectionItems")
+        method = async (key: string, ids: string[]) => {
+          const rows = await call<(MusicItem | null)[]>("items", key, { ids })
+          if (rows.some(row => !row)) throw Error("Some collection items are unavailable. Refresh and try again.")
+          return project(rows as MusicItem[])
+        }
       else if (property === "getPlaylistItems")
         method = async (id: string, offset = 0, limit = 100) => {
           const page = await call<PagedResult<MusicTrack> | null>(
