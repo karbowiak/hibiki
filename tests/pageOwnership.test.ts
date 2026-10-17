@@ -23,6 +23,7 @@ for (const scenario of [
   "playlist-provider",
   "playlist-focus",
   "playlist-followup",
+  "playlist-items",
   "search-errors",
   "search-topbar",
   "reorder-route",

@@ -3,6 +3,7 @@ import type { MusicProvider } from "../providers/types"
 import { useProviderStore } from "../stores/providerStore"
 import { useAnnouncerStore } from "../stores/announcerStore"
 import { loadAlbumTracks } from "./albumContents"
+import { advancePlaybackSelection } from "./playbackSelection"
 
 interface PlayStore {
   playTrack: (
@@ -30,6 +31,7 @@ interface PlayStore {
 interface PlaybackOwnership {
   getProvider: () => MusicProvider | null
   prepare?: () => void
+  select?: () => void
   captureSelection: () => (() => boolean) | Promise<() => boolean>
   reportError: (message: string, current: () => boolean) => void | Promise<void>
 }
@@ -50,6 +52,7 @@ export function createMediaPlayController(ownership: PlaybackOwnership) {
     ownership.prepare?.()
     return () => {
       if (ownership.getProvider() !== provider) return
+      ownership.select?.()
       const request = ++revision
       let selected: (() => boolean) | null = null
       const current = () =>
@@ -174,6 +177,7 @@ function selectionFence(module: typeof import("../stores/playerStore")) {
   return () => module.capturePlaybackSelectionVersion() === version
 }
 export const makeOnPlay = createMediaPlayController({
+  select: advancePlaybackSelection,
   getProvider: () => useProviderStore.getState().provider,
   prepare: () => {
     void loadPlayer().catch(() => {})

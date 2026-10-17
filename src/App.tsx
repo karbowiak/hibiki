@@ -182,16 +182,11 @@ function DesktopApp() {
         {showCreatePlaylist && (
           <CreatePlaylist
             onClose={() => { setShowCreatePlaylist(false); setPendingPlaylistItemIds(null) }}
-            onCreated={pendingPlaylistItemIds ? (playlist) => {
-              const provider = useProviderStore.getState().provider
-              if (provider) {
-                void provider.addToPlaylist(playlist.id, pendingPlaylistItemIds.map(String))
-                  .then(() => { if (useProviderStore.getState().provider === provider) useLibraryStore.getState().invalidatePlaylistItems(playlist.id) })
-                  .catch(() => {})
-              }
+            itemIds={pendingPlaylistItemIds ?? undefined}
+            onCreated={(playlist) => {
               recordRecentPlaylist(playlist.id)
               setPendingPlaylistItemIds(null)
-            } : undefined}
+            }}
           />
         )}
       </Suspense>

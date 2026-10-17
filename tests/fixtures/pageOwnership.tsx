@@ -881,9 +881,11 @@ try {
       await import("../../src/components/Pages/CreatePlaylist")
     const pending: ReturnType<typeof deferred<any>>[] = []
     const names: string[] = []
+    const selectedIds: string[][] = []
     library.setState({
-      createPlaylist: (name) => {
+      createPlaylist: (name, ids) => {
         names.push(name)
+        selectedIds.push(ids)
         const request = deferred<any>()
         pending.push(request)
         return request.promise
@@ -904,6 +906,7 @@ try {
       act(() =>
         root.render(
           <CreatePlaylist
+            itemIds={scenario === "playlist-items" ? ["1", "2", "1"] : undefined}
             onClose={() => {
               closed++
             }}
@@ -932,7 +935,18 @@ try {
       })
     await render()
     await name()
-    if (scenario === "playlist-followup") {
+    if (scenario === "playlist-items") {
+      await act(submit)
+      await act(async () => pending[0].reject(Error("Could not create playlist")))
+      assert.deepEqual(selectedIds, [["1", "2", "1"]])
+      assert.equal(created, 0)
+      assert.equal(document.querySelector("input")!.value, "  My playlist  ")
+      assert(document.querySelector("[role=alert]"))
+      await act(submit)
+      assert.deepEqual(selectedIds[1], ["1", "2", "1"], "retry retains the original songs")
+      await act(async () => pending[1].resolve({ id: "created" }))
+      assert.equal(created, 1)
+    } else if (scenario === "playlist-followup") {
       await act(submit)
       await act(async () => pending[0].resolve({ id: "created" }))
       assert.equal(created, 1)

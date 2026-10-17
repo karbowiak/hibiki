@@ -15,6 +15,7 @@ import type { LevelData, LyricLineData } from "../providers/types"
 import { useProviderStore } from "./providerStore"
 import { useNotificationStore } from "./notificationStore"
 import { PlaybackMetadata } from "../audio/playbackMetadata"
+import { advancePlaybackSelection, capturePlaybackSelectionVersion } from "../lib/playbackSelection"
 import { sendNotification } from "@tauri-apps/plugin-notification"
 import { useSleepTimerStore } from "./sleepTimerStore"
 import { useAnnouncerStore } from "./announcerStore"
@@ -213,18 +214,17 @@ let _gaplessTimeoutId: ReturnType<typeof setTimeout> | null = null
 let _playGeneration = 0
 // Explicit queue selections also own their asynchronous server responses.
 // Skipping cancels a pending station/playlist selection without stopping audio.
-let _queueGeneration = 0
 let _queueContextGeneration = 0
 /** Read-only fence for external asynchronous playback fallbacks. */
-export function capturePlaybackSelectionVersion(): number { return _queueGeneration }
+export { capturePlaybackSelectionVersion } from "../lib/playbackSelection"
 
 function beginQueueSelection(): number {
   _shutdownResumePosition = null
   _radioRefillRequest = null
-  return ++_queueGeneration
+  return advancePlaybackSelection()
 }
 function ownsQueueSelection(generation: number, provider: MusicProvider | null): boolean {
-  return generation === _queueGeneration && getProvider() === provider
+  return generation === capturePlaybackSelectionVersion() && getProvider() === provider
 }
 function replaceQueueContext(): void {
   ++_queueContextGeneration
@@ -365,7 +365,7 @@ async function appendRadioTracks(
   const provider = getProvider()
   if (!provider?.createRadioQueue) return
 
-  const generation = _queueGeneration
+  const generation = capturePlaybackSelectionVersion()
   const request = Symbol('radio refill')
   _radioRefillRequest = request
   try {

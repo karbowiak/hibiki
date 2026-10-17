@@ -28,6 +28,8 @@ import { mixPlaybackSource, orderMixTracks } from "../../lib/mixOrder"
 import { Link } from "wouter"
 import "../../styles/discovery.css"
 import { PageLoading } from "../shared/PageLoading"
+import { advancePlaybackSelection, capturePlaybackSelectionVersion } from "../../lib/playbackSelection"
+import { shuffled } from "../../lib/pagedPlayback"
 
 function getItemYear(item: MusicItem): number {
   if (item.type === "album") return item.year
@@ -46,15 +48,6 @@ async function resolveItemsToTracks(items: MusicItem[], provider: MusicProvider)
     }
   }))
   return results.flat()
-}
-
-function shuffleArray<T>(arr: T[]): T[] {
-  const shuffled = [...arr]
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
-  }
-  return shuffled
 }
 
 export function Home() {
@@ -128,8 +121,10 @@ export function Home() {
   ) {
     const view = playbackView.current
     const revision = ++view.revision
+    const selection = advancePlaybackSelection()
     const current = () =>
       view.active &&
+      capturePlaybackSelectionVersion() === selection &&
       view.revision === revision &&
       useProviderStore.getState().provider === provider
     setPlayError(false)
@@ -137,7 +132,7 @@ export function Home() {
       try {
         const items = await load()
         if (!current() || !items.length) return
-        const tracks = shuffle ? shuffleArray(items) : items
+        const tracks = shuffle ? shuffled(items) : items
         await playTrack(tracks[0], tracks, title, route)
       } catch {
         if (current()) setPlayError(true)

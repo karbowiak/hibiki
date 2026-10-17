@@ -640,3 +640,13 @@ test("offline activation rechecks saved playlists instead of restoring online av
   await h.state().fetchPlaylists()
   expect(h.state().playlists[0].offlineAvailable).toBe(true)
 })
+
+
+test("playlist creation sends the selected occurrences in the original create request", async () => {
+  const createPlaylist = mock(async (_title: string, _ids: string[]) => playlist("new", 3))
+  const h = harness({ createPlaylist })
+  await h.activate()
+  await h.state().createPlaylist("Selected songs", ["1", "2", "1"])
+  expect(createPlaylist.mock.calls).toEqual([["Selected songs", ["1", "2", "1"]]])
+  expect(h.state().playlists.at(-1)?.trackCount).toBe(3)
+})

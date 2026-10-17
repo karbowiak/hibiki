@@ -553,27 +553,21 @@ export function ContextMenu() {
           close()
         })
         .catch(() => failed(() => current() && currentMenu()))
-    } else if (artist && provider?.isOffline && provider.getArtistTracks) {
+    } else if (artist && provider?.getArtistTracks) {
       const current = captureOwner()
       void provider
         .getArtistTracks(artist.id)
         .then((tracks) => {
           if (!current() || !currentMenu()) return
-          addToQueue(
+          addToQueue(provider.isOffline ?
             tracks.filter(
               (track) =>
                 track.mediaInfo?.offlineAvailable || track.mediaInfo?.localAudio
-            )
+            ) : tracks
           )
           close()
         })
         .catch(() => failed(() => current() && currentMenu()))
-    } else if (artist && provider?.buildItemUri) {
-      const uri = provider.buildItemUri(
-        artist.providerKey ?? `/library/metadata/${artist.id}`
-      )
-      void playFromUri(uri, true, artist.title, `/artist/${artist.id}`)
-      close()
     }
   }
 
@@ -872,7 +866,7 @@ export function ContextMenu() {
         {(track || album) && (
           <Item icon={IconNext} label="Play next" onClick={doAddNext} />
         )}
-        <Item icon={IconQueue} label="Add to bottom" onClick={doQueue} />
+        <Item icon={IconQueue} label="Add to bottom" disabled={unavailable || (!!artist && !provider?.getArtistTracks)} onClick={doQueue} />
         {hasRadio && (
           <Item icon={IconRadio} label="Start radio" onClick={doRadio} />
         )}

@@ -9,9 +9,11 @@ import { IconCheck, IconX } from "@tabler/icons-react"
 export function CreatePlaylist({
   onClose,
   onCreated,
+  itemIds = [],
 }: {
   onClose: () => void
   onCreated?: (playlist: MusicPlaylist) => void | Promise<void>
+  itemIds?: string[]
 }) {
   const provider = useProviderStore((s) => s.provider)
   const openedProvider = useRef(provider)
@@ -62,7 +64,7 @@ export function CreatePlaylist({
     setIsCreating(true)
     setError(null)
     try {
-      const playlist = await createPlaylist(playlistName.trim())
+      const playlist = await createPlaylist(playlistName.trim(), [...itemIds])
       if (!current()) return
       session.completed = true
       setCreated(true)
