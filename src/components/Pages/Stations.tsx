@@ -13,7 +13,8 @@ import { usePlayerStore } from "../../stores/playerStore"
 import { useProviderStore } from "../../stores/providerStore"
 import { useCapability } from "../../hooks/useCapability"
 import type { RecentMix, SeedItem } from "../../stores/libraryStore"
-import { selectMix, shuffleTracks } from "../../lib/mixSelection"
+import { selectMix } from "../../lib/mixSelection"
+import { mixPlaybackSource, orderMixTracks } from "../../lib/mixOrder"
 import {
   mixTitleToArtistName,
   mixThumbnailKey,
@@ -635,12 +636,12 @@ export function StationsPage() {
     void (async () => {
       try {
         if (provider.getMixTracksPage) {
-          await usePlayerStore.getState().playPagedTracks({ key: `mix:${item.providerKey}`, loadPage: (offset, limit) => provider.getMixTracksPage!(item.providerKey!, offset, limit) }, item.title, "/mix", true)
+          await usePlayerStore.getState().playPagedTracks(mixPlaybackSource(provider, item.providerKey!), item.title, "/mix")
           return
         }
         const items = await provider.getMixTracks!(item.providerKey!)
         if (!current() || !items.length) return
-        const tracks = shuffleTracks(items, item.title)
+        const tracks = orderMixTracks(items)
         await playTrack(tracks[0], tracks, item.title, "/mix")
       } catch {
         if (current()) setPlayError(true)

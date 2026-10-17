@@ -133,6 +133,57 @@ fn item_at(
     })
     .transpose()
 }
+
+/// Mix order belongs to the complete membership, not to a page or play action.
+/// Canonical identities keep metadata edits and upstream reordering from reseeding it.
+fn order_mix_membership(
+    conn: &Connection,
+    scope: &str,
+    key: &str,
+    generation: i64,
+) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    let mut members = {
+        let mut statement = sql(conn.prepare("SELECT position,kind,item_id,occurrence FROM collection_cache_members WHERE scope=?1 AND key=?2 AND generation=?3"))?;
+        let rows = sql(statement.query_map(params![scope, key, generation], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        }))?;
+        sql(rows.collect::<rusqlite::Result<Vec<_>>>())?
+    };
+    members.sort_by(|a, b| (&a.1, &a.2, &a.3).cmp(&(&b.1, &b.2, &b.3)));
+    let identities: Vec<_> = members
+        .iter()
+        .map(|(_, kind, id, occurrence)| (kind, id, occurrence))
+        .collect();
+    let seed = Sha256::digest(
+        serde_json::to_vec(&identities).map_err(|_| "Cannot encode mix membership")?,
+    );
+    let mut order: Vec<_> = members
+        .iter()
+        .enumerate()
+        .map(|(index, member)| {
+            let mut hash = Sha256::new();
+            hash.update(&seed);
+            hash.update((index as u64).to_le_bytes());
+            let rank: [u8; 32] = hash.finalize().into();
+            (rank, member.0)
+        })
+        .collect();
+    order.sort_unstable();
+    // Free the positive position range before assigning the new permutation.
+    sql(conn.execute("UPDATE collection_cache_members SET position=-position-1 WHERE scope=?1 AND key=?2 AND generation=?3", params![scope, key, generation]))?;
+    let mut update = sql(conn.prepare("UPDATE collection_cache_members SET position=?5 WHERE scope=?1 AND key=?2 AND generation=?3 AND position=?4"))?;
+    for (position, (_, old)) in order.iter().enumerate() {
+        sql(update.execute(params![scope, key, generation, -old - 1, position as i64]))?;
+    }
+    Ok(())
+}
+
 pub fn clear(conn: &Connection, scope: &str) -> Result<(), String> {
     super::offline::check_identity(scope, "clear")?;
     for table in [
@@ -395,6 +446,9 @@ pub fn run(conn: &Connection, scope: &str, request: &Request, now: i64) -> Resul
                 if revision != *generation || count != total {
                     return Err("Collection refresh is incomplete".into());
                 }
+                if key.starts_with("mix:") {
+                    order_mix_membership(conn, scope, key, *generation)?;
+                }
                 let membership_changed=active.is_none() || sql(conn.query_row("SELECT EXISTS(SELECT position,kind,item_id,occurrence FROM collection_cache_members WHERE scope=?1 AND key=?2 AND generation=?3 EXCEPT SELECT position,kind,item_id,occurrence FROM collection_cache_members WHERE scope=?1 AND key=?2 AND generation=?4) OR EXISTS(SELECT position,kind,item_id,occurrence FROM collection_cache_members WHERE scope=?1 AND key=?2 AND generation=?4 EXCEPT SELECT position,kind,item_id,occurrence FROM collection_cache_members WHERE scope=?1 AND key=?2 AND generation=?3)",params![scope,key,generation,active],|r|r.get::<_,bool>(0)))?;
                 sql(conn.execute("UPDATE collection_cache SET active_generation=?3,total=staged_total,cached_at=?4,dirty=0,staged_count=0 WHERE scope=?1 AND key=?2",params![scope,key,generation,now]))?;
                 sql(conn.execute("DELETE FROM collection_cache_members WHERE scope=?1 AND key=?2 AND generation!=?3",params![scope,key,generation]))?;
@@ -446,6 +500,132 @@ mod tests {
             .as_i64()
             .unwrap()
     }
+    #[test]
+    fn mix_order_blends_complete_membership_and_survives_refreshes_and_metadata_edits() {
+        let conn = db();
+        let key = format!("mix:{}", "a".repeat(64));
+        let mut items: Vec<_> = (0..1200)
+            .map(|index| {
+                json!({
+                    "type": "track", "id": format!("{index:04}"),
+                    "title": format!("Track {index}"), "artistName": format!("Artist {}", index / 400),
+                })
+            })
+            .collect();
+        for occurrence in ["repeat-a", "repeat-b"] {
+            let mut repeated = items[17].clone();
+            repeated["playlistItemId"] = json!(occurrence);
+            items.push(repeated);
+        }
+        let save = |rows: &[Value]| {
+            let generation = begin(&conn, &key, "content-seeded-mix-v1");
+            for (page, items) in rows.chunks(500).enumerate() {
+                request(
+                    &conn,
+                    Request::Put {
+                        key: key.clone(),
+                        generation,
+                        offset: (page * 500) as i64,
+                        total: rows.len() as i64,
+                        items: items.to_vec(),
+                    },
+                );
+            }
+            request(
+                &conn,
+                Request::Commit {
+                    key: key.clone(),
+                    generation,
+                },
+            )
+        };
+        save(&items);
+        let refs = request(&conn, Request::Refs { key: key.clone() });
+        let order = refs.as_array().unwrap();
+        assert_eq!(order.len(), items.len());
+        assert!(order[..30]
+            .iter()
+            .any(|entry| entry[0].as_str().unwrap() < "0400"));
+        assert!(order[..30]
+            .iter()
+            .any(|entry| entry[0].as_str().unwrap() >= "0800"));
+        assert_eq!(order.iter().filter(|entry| entry[0] == "0017").count(), 3);
+        for offset in [0, 490, 1000] {
+            let page = request(
+                &conn,
+                Request::Page {
+                    key: key.clone(),
+                    offset,
+                    limit: 30,
+                },
+            );
+            let ids: Vec<_> = page["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| item["id"].clone())
+                .collect();
+            assert_eq!(
+                ids,
+                order[offset as usize..offset as usize + 30]
+                    .iter()
+                    .map(|entry| entry[0].clone())
+                    .collect::<Vec<_>>()
+            );
+        }
+        let filtered = request(
+            &conn,
+            Request::Query {
+                key: key.clone(),
+                offset: 0,
+                limit: 30,
+                filter: "Artist 2".into(),
+                sort: "default".into(),
+                dir: "asc".into(),
+            },
+        );
+        let filtered_ids: Vec<_> = filtered["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["id"].clone())
+            .collect();
+        assert_eq!(
+            filtered_ids,
+            order
+                .iter()
+                .filter(|entry| entry[0].as_str().unwrap() >= "0800")
+                .take(30)
+                .map(|entry| entry[0].clone())
+                .collect::<Vec<_>>()
+        );
+        items.reverse();
+        assert_eq!(
+            save(&items)["changed"],
+            false,
+            "upstream order alone must not change the mix"
+        );
+        assert_eq!(request(&conn, Request::Refs { key: key.clone() }), refs);
+        for item in &mut items {
+            item["title"] = json!("Updated metadata");
+        }
+        save(&items);
+        assert_eq!(request(&conn, Request::Refs { key: key.clone() }), refs);
+        items.push(json!({ "type": "track", "id": "new", "title": "New member" }));
+        save(&items);
+        let updated = request(&conn, Request::Refs { key: key.clone() });
+        assert_eq!(updated.as_array().unwrap().len(), order.len() + 1);
+        assert_ne!(
+            updated
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|entry| entry[0] != "new")
+                .collect::<Vec<_>>(),
+            order.iter().collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn refresh_is_atomic_resumable_and_preserves_duplicate_occurrences() {
         let conn = db();

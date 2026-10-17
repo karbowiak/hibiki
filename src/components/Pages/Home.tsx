@@ -23,7 +23,8 @@ import { useContextMenu } from "../../hooks/useContextMenu"
 import { makeOnPlay } from "../../lib/mediaPlay"
 import { ScrollRow } from "../ScrollRow"
 import { MediaCard } from "../MediaCard"
-import { selectMix, shuffleTracks } from "../../lib/mixSelection"
+import { selectMix } from "../../lib/mixSelection"
+import { mixPlaybackSource, orderMixTracks } from "../../lib/mixOrder"
 import { Link } from "wouter"
 import "../../styles/discovery.css"
 import { PageLoading } from "../shared/PageLoading"
@@ -218,10 +219,10 @@ export function Home() {
               const mixKey = item.providerKey
               if (!mixKey || !provider?.getMixTracks) return
               if (provider.getMixTracksPage) {
-                void usePlayerStore.getState().playPagedTracks({ key: `mix:${mixKey}`, loadPage: (offset, limit) => provider.getMixTracksPage!(mixKey, offset, limit) }, item.title, "/mix", true)
+                void usePlayerStore.getState().playPagedTracks(mixPlaybackSource(provider, mixKey), item.title, "/mix")
                 return
               }
-              playResolved(async () => shuffleTracks(await provider.getMixTracks!(mixKey), item.title), item.title, "/mix", false)
+              playResolved(async () => orderMixTracks(await provider.getMixTracks!(mixKey)), item.title, "/mix", false)
             }
             return (
               <MediaCard

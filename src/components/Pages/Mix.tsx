@@ -1,4 +1,5 @@
-import { getSelection, subscribeSelection, shuffleTracks } from "../../lib/mixSelection"
+import { getSelection, subscribeSelection } from "../../lib/mixSelection"
+import { mixPlaybackSource, orderMixTracks, shuffleTracks } from "../../lib/mixOrder"
 import { filterTracks, sortTracks, type TrackSortColumn } from "../../lib/trackOrder"
 import { mixThumbnailKey, useMixThumbnails } from "../../hooks/useMixThumbnails"
 import { ArtworkImage } from "../shared/ArtworkImage"
@@ -62,7 +63,7 @@ export function MixPage() {
     async (offset, limit) => {
       if (provider?.getMixTracksPage)
         return provider.getMixTracksPage(mixKey!, offset, limit)
-      const items = (await provider?.getMixTracks?.(mixKey!)) ?? []
+      const items = orderMixTracks((await provider?.getMixTracks?.(mixKey!)) ?? [])
       return {
         items: items.slice(offset, offset + limit),
         total: items.length,
@@ -151,12 +152,7 @@ export function MixPage() {
 
   const playbackSource =
     provider?.getMixTracksPage && mixKey
-      ? {
-          key: `mix:${mixKey}`,
-          total: page.total,
-          loadPage: (offset: number, limit: number) =>
-            provider.getMixTracksPage!(mixKey, offset, limit),
-        }
+      ? mixPlaybackSource(provider, mixKey, page.total)
       : null
   const querySource = {
     key: `mix-query:${mixKey}`,
@@ -182,8 +178,8 @@ export function MixPage() {
       void playPagedTracks(querySource, mixItem!.title, "/mix")
     else if (playbackSource && !filterQuery)
       void playPagedTracks(playbackSource, mixItem!.title, "/mix")
-    else if (tracks.length)
-      void playTrack(tracks[0], sortedTracks, mixItem!.title, "/mix")
+    else if (sortedTracks.length)
+      void playTrack(sortedTracks[0], sortedTracks, mixItem!.title, "/mix")
   }
   function handlePlayShuffled() {
     if (useQuery && provider?.getCollectionPage)

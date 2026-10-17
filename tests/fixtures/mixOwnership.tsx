@@ -15,10 +15,12 @@ globalThis.localStorage = dom.window.localStorage
 const { createRoot } = await import("react-dom/client")
 const root = createRoot(document.getElementById("root")!)
 const plays: any[] = []
+const pagedPlays: any[] = []
 const player = create(() => ({
   playTrack: async (...args: any[]) => {
     plays.push(args)
   },
+  playPagedTracks: async (...args: any[]) => { pagedPlays.push(args) },
   playFromUri: async () => {},
   playRadio() {},
   addToQueue() {},
@@ -298,6 +300,7 @@ try {
         )
     }
   } else if (scenario.startsWith("home")) {
+    if (scenario === "home-paged") first.getMixTracksPage = async () => ({ items: [], total: 0 })
     const { Home } = await import("../../src/components/Pages/Home")
     library.setState({
       hubs: [{ identifier: "music.mixes", title: "Mixes", items: [mix()] }],
@@ -318,7 +321,13 @@ try {
         </Router>
       )
     )
-    if (scenario.endsWith("menu")) {
+    if (scenario === "home-paged") {
+      await act(async () => button("Play Artist Mix").click())
+      assert.equal(pagedPlays.length, 1)
+      assert.equal(pagedPlays[0][0].key, "mix:first")
+      assert.equal(pagedPlays[0][3], undefined, "normal mix playback must not apply a fresh shuffle")
+      assert.equal(typeof pagedPlays[0][0].prepare, "function")
+    } else if (scenario.endsWith("menu")) {
       assert.equal(document.body.textContent!.includes("Menu Delete"), false)
       await act(async () => button("Menu Open mix").click())
       assert.ok(navigation.includes("/mix"))
@@ -404,7 +413,19 @@ try {
       )
     )
     assert.equal(get("tracks").length, 1)
-    if (scenario.endsWith("selection")) {
+    if (scenario === "mix-stable") {
+      const { orderMixTracks } = await import("../../src/lib/mixOrder")
+      const content = Array.from({ length: 40 }, (_, index) => track(`Song ${index}`))
+      await settle(get("tracks")[0]!, content)
+      const expected = orderMixTracks(content).map(track => track.title).join(",")
+      assert.equal(document.querySelector("[data-tracks]")!.textContent, expected)
+      await act(async () => document.querySelector<HTMLButtonElement>('[title="Play in order"]')!.click())
+      assert.deepEqual(plays[0][1].map((track: any) => track.title).join(","), expected)
+      const { useUIStore } = await import("../../src/stores/uiStore")
+      await act(async () => useUIStore.setState({ pageRefreshKey: 1 }))
+      await settle(get("tracks")[1]!, [...content].reverse())
+      assert.equal(document.querySelector("[data-tracks]")!.textContent, expected)
+    } else if (scenario.endsWith("selection")) {
       await act(async () => selectMix(mix("second")))
       assert.equal(get("tracks").length, 2)
       await settle(get("tracks")[1]!, [track("current track")])

@@ -10,6 +10,7 @@ import { shuffled } from "../lib/pagedPlayback"
 import { projectOfflineAvailability } from "./catalogue"
 
 const TTL = 15 * 60_000
+const MIX_STAMP = "content-seeded-mix-v1"
 interface Info {
   total: number
   cachedAt: number
@@ -34,17 +35,21 @@ export function createCollectionCacheProvider(
 ): MusicProvider {
   let stopped = false,
     running = false
+  let activeJob: Job | null = null
   let timer: ReturnType<typeof setInterval> | undefined
   const jobs = new Map<string, Job>()
   const methods = new Map<PropertyKey, unknown>()
   const failures = new Set<string>()
+  const preparing = new Map<string, Promise<void>>()
   const mixPaths = new Map<string, string>()
   async function resolveKey(key: string) {
     if (!key.startsWith("mix:/")) return key
     const path = key.slice(4)
     const digest = await crypto.subtle.digest(
       "SHA-256",
-      new TextEncoder().encode(path)
+      // Old cache keys contain linear server order. Rebuild those snapshots
+      // without confusing a partially staged upgrade with an active mixed one.
+      new TextEncoder().encode(`${MIX_STAMP}\0${path}`)
     )
     const resolved =
       "mix:" +
@@ -95,6 +100,7 @@ export function createCollectionCacheProvider(
       while (jobs.size && online()) {
         const job = jobs.values().next().value!
         jobs.delete(job.key)
+        activeJob = job
         try {
           const info = await call<Info | null>("info", job.key)
           if (
@@ -160,6 +166,8 @@ export function createCollectionCacheProvider(
             await call("invalidate", job.key).catch(() => {})
           // Keep the previous complete snapshot. No tight retry loop or persistent warning.
           // The next scheduled pass resumes valid checkpoints or replaces invalidated ones.
+        } finally {
+          activeJob = null
         }
         await new Promise((resolve) => setTimeout(resolve, 100))
       }
@@ -238,9 +246,19 @@ export function createCollectionCacheProvider(
     clearInterval(timer)
     timer = undefined
   }
-  async function ensure(key: string) {
+  function ensure(key: string): Promise<void> {
+    const existing = preparing.get(key)
+    if (existing) return existing
+    const pending = prepare(key).finally(() => preparing.delete(key))
+    preparing.set(key, pending)
+    return pending
+  }
+  async function prepare(key: string) {
     const info = await call<Info | null>("info", key)
-    if (info?.complete && !info.dirty) return
+    const current = (info: Info | null) =>
+      info?.complete && !info.dirty &&
+      (!mixPaths.has(key) || info.stamp === MIX_STAMP)
+    if (current(info)) return
     if (!online())
       throw Error("Reconnect to Plex to prepare this collection for searching.")
     let job: Job
@@ -279,7 +297,7 @@ export function createCollectionCacheProvider(
     } else if (mixPaths.has(key) && raw.getMixTracksPage) {
       job = {
         key,
-        stamp: key,
+        stamp: MIX_STAMP,
         force: true,
         load: async (offset, limit) => {
           const page = await raw.getMixTracksPage!(
@@ -297,14 +315,16 @@ export function createCollectionCacheProvider(
         },
       }
     } else throw Error("This collection cannot be searched.")
-    const waiting = [...jobs.entries()].filter(([existing]) => existing !== key)
-    jobs.clear()
-    enqueue(job)
-    waiting.forEach(([key, value]) => jobs.set(key, value))
+    if (activeJob?.key !== key) {
+      const waiting = [...jobs.entries()].filter(([existing]) => existing !== key)
+      jobs.clear()
+      enqueue(job)
+      waiting.forEach(([key, value]) => jobs.set(key, value))
+    }
     const start = Date.now()
     while (online() && Date.now() - start < 120_000) {
       const ready = await call<Info | null>("info", key)
-      if (ready?.complete && !ready.dirty) return
+      if (current(ready)) return
       if (failures.has(key)) break
       await new Promise((resolve) => setTimeout(resolve, 150))
     }
@@ -364,6 +384,7 @@ export function createCollectionCacheProvider(
           dir: string
         ) => {
           key = await resolveKey(key)
+          if (mixPaths.has(key)) await ensure(key)
           const read = () =>
             call<PagedResult<MusicItem> | null>("query", key, {
               offset,
@@ -383,6 +404,7 @@ export function createCollectionCacheProvider(
       else if (property === "getCachedTrackSource")
         method = async (key: string, shuffle = false) => {
           key = await resolveKey(key)
+          if (mixPaths.has(key)) await ensure(key)
           const refs = await call<[string, string | null][] | null>(
             "refs",
             key
@@ -467,6 +489,8 @@ export function createCollectionCacheProvider(
       else if (property === "getMixTracksPage" && raw.getMixTracksPage)
         method = async (path: string, offset: number, limit: number) => {
           const key = await resolveKey(`mix:${path}`)
+          // Never expose a linear cold page or an older, unshuffled snapshot.
+          await ensure(key)
           const cached = await call<PagedResult<MusicTrack> | null>(
             "page",
             key,
@@ -475,7 +499,7 @@ export function createCollectionCacheProvider(
           if (online())
             enqueue({
               key,
-              stamp: key,
+              stamp: MIX_STAMP,
               force: false,
               load: async (start, size) => {
                 const page = await raw.getMixTracksPage!(path, start, size)
@@ -488,9 +512,8 @@ export function createCollectionCacheProvider(
                 }
               },
             })
-          return cached
-            ? project(cached)
-            : target.getMixTracksPage!(path, offset, limit)
+          if (!cached) throw Error("Could not read this mix. Try again.")
+          return project(cached)
         }
       else if (property === "disconnect")
         method = async () => {
