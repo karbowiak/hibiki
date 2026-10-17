@@ -25,6 +25,7 @@ globalThis.AudioContext = FakeContext as unknown as typeof AudioContext
 globalThis.localStorage = dom.window.localStorage
 const savedState = new Map<string, string>()
 mock.module("idb-keyval", () => ({
+  createStore: () => ({}),
   get: async (key: string) => savedState.get(key),
   set: async (key: string, value: string) => {
     savedState.set(key, value)

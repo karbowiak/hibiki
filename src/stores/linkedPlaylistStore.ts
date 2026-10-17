@@ -1,4 +1,4 @@
-import { createVerifiedPlaylistRefresh } from "../components/PlaylistSync/verifiedPlaylistRefresh"
+import { createVerifiedPlaylistRefresh } from "../playlistSync/verifiedPlaylistRefresh"
 import { create } from "zustand"
 import { linkedPlaylistRepository } from "../playlistSync/linkedJournal"
 import {

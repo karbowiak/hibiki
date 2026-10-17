@@ -20,7 +20,7 @@ import {
 import type { PlaylistAccount } from "../../playlistSync/types"
 import type { MusicPlaylist } from "../../types/music"
 import type { PlaylistCopyServices } from "./services"
-import type { LinkedPlaylistManagerServices } from "./LinkedPlaylistManager"
+import type { LinkedPlaylistManagerServices } from "../../playlistSync/managerServices"
 import { useLinkedPlaylistStore } from "../../stores/linkedPlaylistStore"
 import type { LinkedPlaylist } from "../../playlistSync/linked"
 import {

@@ -14,6 +14,7 @@ import type { MusicTrack } from "../types/music"
 import type { LevelData, LyricLineData } from "../providers/types"
 import { useProviderStore } from "./providerStore"
 import { useNotificationStore } from "./notificationStore"
+import { filterPlayable, selectDjTracks } from "../audio/queueExpansion"
 import { playbackMetadata } from "../audio/playbackMetadata"
 import { advancePlaybackSelection, capturePlaybackSelectionVersion } from "../lib/playbackSelection"
 import type { QueueLoadOptions } from "../lib/queueHydration"
@@ -23,7 +24,7 @@ import { useAnnouncerStore } from "./announcerStore"
 import { useVisualizerStore } from "./visualizerStore"
 import { useRadioStreamStore } from "./radioStreamStore"
 import { radioSetVolume } from "../lib/radioAudio"
-import { usePodcastStore } from "../backends/podcast/store"
+import { podcastIdentity, savePodcastProgress, podcastResumePosition } from "../audio/podcastProgress"
 import { useLyricsStore } from "./lyricsStore"
 import { TrackQueuePager, shuffled, type PagedTrackSource } from "../lib/pagedPlayback"
 import { QueueSession, isQueuePlaceholder, queueSourcePosition, type SavedQueue } from "../lib/queueSession"
@@ -268,33 +269,6 @@ interface PlaybackRecord {
   podcastResumeTarget: number | null
 }
 const _playbackJournal = new PlaybackJournal<PlaybackRecord>()
-const PODCAST_PROGRESS_INTERVAL_MS = 5000
-function podcastIdentity(track: MusicTrack): { feedUrl: string; guid: string } | null {
-  const data = track._providerData as Record<string, unknown> | undefined
-  return data?.isPodcast === true && typeof data.feedUrl === "string" && !!data.feedUrl
-    && typeof data.episodeGuid === "string" && !!data.episodeGuid
-    ? { feedUrl: data.feedUrl, guid: data.episodeGuid } : null
-}
-function savePodcastProgress(record: PlaybackRecord | null, positionMs: number, force = false, completed = false): void {
-  if (!record || !Number.isFinite(positionMs) || positionMs < 0) return
-  const identity = podcastIdentity(record.track)
-  const elapsed = Date.now() - record.podcastSavedAt
-  if (!identity || (!force && elapsed >= 0 && elapsed < PODCAST_PROGRESS_INTERVAL_MS)) return
-  record.podcastSavedAt = Date.now()
-  const podcasts = usePodcastStore.getState()
-  if (podcasts.getEpisodeProgress(identity.feedUrl, identity.guid) !== positionMs / 1000) {
-    podcasts.setEpisodeProgress(identity.feedUrl, identity.guid, positionMs / 1000)
-  }
-  if (completed) podcasts.markEpisodeCompleted(identity.feedUrl, identity.guid)
-}
-function podcastResumePosition(track: MusicTrack): number {
-  const identity = podcastIdentity(track)
-  if (!identity) return 0
-  const podcasts = usePodcastStore.getState()
-  if (podcasts.isEpisodeCompleted(identity.feedUrl, identity.guid)) return 0
-  const position = podcasts.getEpisodeProgress(identity.feedUrl, identity.guid) * 1000
-  return Number.isFinite(position) && position > 0 && (track.duration <= 0 || position < track.duration) ? position : 0
-}
 let _pendingSelectedTrackId: string | null = null
 let _shutdownResumePosition: number | null = null
 let _podcastRequestedSeek: { generation: number; trackId: string; positionMs: number } | null = null
@@ -347,11 +321,6 @@ export function isRadioGenerated(trackId: string): boolean {
 }
 
 let _radioRefillRequest: symbol | null = null
-
-/** Keep only items that have actual audio (at least one media part with a key). */
-function filterPlayable(tracks: MusicTrack[]): MusicTrack[] {
-  return tracks.filter(t => t.mediaInfo?.hasAudioStream)
-}
 
 /** Silently append a fresh batch of radio tracks when the queue is running low. */
 async function appendRadioTracks(
@@ -438,100 +407,10 @@ async function insertDjTracks(
   const isCurrent = () => context === _queueContextGeneration && active === _activeTrackGeneration
     && getProvider() === provider && get().djMode === djMode && _djInsertRequest === request
   try {
-    const existingKeys = new Set(queue.map(t => t.id))
     let picks: MusicTrack[] = []
 
-    switch (djMode) {
-      case 'freeze': {
-        // Sonically similar tracks seeded from the current track
-        if (!provider.createRadioQueue) break
-        const result = await provider.createRadioQueue(currentTrack.id, 'track')
-        picks = filterPlayable(result.tracks)
-          .filter(t => !existingKeys.has(t.id))
-          .slice(0, 1)
-        break
-      }
-
-      case 'twin': {
-        // Most sonically similar track
-        if (!provider.createSmartShuffleQueue) break
-        const result = await provider.createSmartShuffleQueue(currentTrack.id, 'track', 'twin')
-        picks = filterPlayable(result.tracks)
-          .filter(t => !existingKeys.has(t.id))
-          .slice(0, 1)
-        break
-      }
-
-      case 'stretch': {
-        // Sonic adventure between current track and the next original (non-DJ) track
-        const nextOriginal = queue.slice(queueIndex + 1).find(t => !_djGeneratedKeys.has(t.id))
-        if (nextOriginal && provider.computeSonicPath) {
-          try {
-            const pathTracks = await provider.computeSonicPath(currentTrack.id, nextOriginal.id)
-            picks = filterPlayable(pathTracks)
-              .filter(t =>
-                !existingKeys.has(t.id) &&
-                t.id !== currentTrack.id &&
-                t.id !== nextOriginal.id
-              )
-          } catch {
-            if (!isCurrent()) return
-            // Sonic path unavailable — fall back to smart shuffle
-            if (provider.createSmartShuffleQueue) {
-              const result = await provider.createSmartShuffleQueue(currentTrack.id, 'track', 'stretch')
-              picks = filterPlayable(result.tracks)
-                .filter(t => !existingKeys.has(t.id))
-                .slice(0, 2)
-            }
-          }
-        } else if (provider.createSmartShuffleQueue) {
-          // No next original track — use smart shuffle for a couple of bridge tracks
-          const result = await provider.createSmartShuffleQueue(currentTrack.id, 'track', 'stretch')
-          picks = filterPlayable(result.tracks)
-            .filter(t => !existingKeys.has(t.id))
-            .slice(0, 2)
-        }
-        break
-      }
-
-      case 'twofer': {
-        // Same-artist track
-        const artistId = currentTrack.artistId
-        if (artistId && provider.getArtistPopularTracksInSection) {
-          const tracks = await provider.getArtistPopularTracksInSection(artistId, 10)
-          const available = tracks.filter(t =>
-            t.id !== currentTrack.id &&
-            !existingKeys.has(t.id)
-          )
-          if (available.length > 0) {
-            picks = [available[Math.floor(Math.random() * available.length)]]
-          }
-        }
-        break
-      }
-
-      case 'anno': {
-        // Same era track
-        if (!provider.createSmartShuffleQueue) break
-        const result = await provider.createSmartShuffleQueue(currentTrack.id, 'track', 'anno')
-        picks = filterPlayable(result.tracks)
-          .filter(t => !existingKeys.has(t.id))
-          .slice(0, 1)
-        break
-      }
-
-      case 'groupie': {
-        // Same artist via artist radio
-        const artistId = currentTrack.artistId
-        if (artistId && provider.createRadioQueue) {
-          const result = await provider.createRadioQueue(artistId, 'artist')
-          picks = filterPlayable(result.tracks)
-            .filter(t => !existingKeys.has(t.id))
-            .slice(0, 1)
-        }
-        break
-      }
-    }
+    picks = await selectDjTracks({provider, mode:djMode, currentTrack, queue, queueIndex,
+      generated:_djGeneratedKeys, current:isCurrent})
 
     if (!isCurrent()) return
     const latestKeys = new Set(get().queue.map(track => track.id))

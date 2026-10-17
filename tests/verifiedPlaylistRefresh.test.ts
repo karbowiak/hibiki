@@ -1,6 +1,6 @@
 import { test, expect, mock } from "bun:test"
 import { createLibraryStore } from "../src/stores/libraryStore"
-import { createVerifiedPlaylistRefresh } from "../src/components/PlaylistSync/verifiedPlaylistRefresh"
+import { createVerifiedPlaylistRefresh } from "../src/playlistSync/verifiedPlaylistRefresh"
 import type { MusicProvider } from "../src/providers/types"
 import type { MusicPlaylist, MusicTrack } from "../src/types/music"
 import type { PlaylistSnapshot } from "../src/playlistSync/types"

@@ -1,9 +1,9 @@
-import type { MusicProvider } from "../../providers/types"
-import type { PlaylistSnapshot } from "../../playlistSync/types"
-import { samePlaylistIdentity } from "../../playlistSync/types"
-import { providerPlaylistAccount } from "../../playlistSync/provider"
-import { useProviderStore } from "../../stores/providerStore"
-import { useLibraryStore } from "../../stores/libraryStore"
+import type { MusicProvider } from "../providers/types"
+import type { PlaylistSnapshot } from "./types"
+import { samePlaylistIdentity } from "./types"
+import { providerPlaylistAccount } from "./provider"
+import { useProviderStore } from "../stores/providerStore"
+import { useLibraryStore } from "../stores/libraryStore"
 /** Capture the originating connection before a sync write; a replacement library is never invalidated. */
 export function createVerifiedPlaylistRefresh(
   provider: MusicProvider,
