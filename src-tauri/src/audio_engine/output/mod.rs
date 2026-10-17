@@ -243,7 +243,7 @@ mod tests {
         let (_, samples_a) = bounded(4);
         let (_, samples_b) = bounded(4);
         let (events, _event_rx) = bounded(256);
-        let (vis, _vis_rx) = bounded(16);
+        let (vis, _vis_rx) = crate::audio_engine::visualizer::transport::channel();
         let mut source =
             AudioCallbackState::new(commands, samples_a, samples_b, events, vis, atomics.clone());
         source.device_sample_rate = mix.sample_rate;
@@ -255,7 +255,7 @@ mod tests {
         active.sample_rate = mix.sample_rate;
         active.channels = 2;
         active.playback_id = 123;
-        active.samples = vec![0.0; mix.sample_rate as usize * 20];
+        active.samples = vec![0.0; mix.sample_rate as usize * 20].into();
         active.meta = Some(TrackMeta {
             rating_key: -1,
             duration_ms: 10000,

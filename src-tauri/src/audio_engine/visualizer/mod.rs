@@ -5,6 +5,7 @@
 //! FFT at ~60fps, and emits VisFrame events to JS.
 
 pub mod fft;
+pub mod transport;
 
 use self::fft::{downmix_to_mono, FftProcessor, FFT_SIZE};
 

@@ -163,7 +163,7 @@ pub struct AudioCallbackState {
     // ---- Lock-free outputs ----
     event_tx: Sender<EngineEvent>,
     history_tx: Option<Sender<crate::listening_history::HistoryEvent>>,
-    vis_tx: Sender<Vec<f32>>,
+    vis_tx: super::visualizer::transport::VisSender,
 
     // ---- Atomics (callback writes, others read) ----
     pub atomics: Arc<SharedAtomics>,
@@ -188,7 +188,7 @@ impl AudioCallbackState {
         deck_a_rx: Receiver<SampleBatch>,
         deck_b_rx: Receiver<SampleBatch>,
         event_tx: Sender<EngineEvent>,
-        vis_tx: Sender<Vec<f32>>,
+        vis_tx: super::visualizer::transport::VisSender,
         atomics: Arc<SharedAtomics>,
     ) -> Self {
         Self {
@@ -432,7 +432,7 @@ impl AudioCallbackState {
                 continue;
             }
 
-            deck.samples.extend_from_slice(&batch.samples);
+            deck.samples.extend(batch.samples.iter().copied());
             if let Some(error) = batch.error {
                 deck.decode_error = Some(error);
             }
@@ -656,7 +656,7 @@ impl AudioCallbackState {
                 let d = self.deck_mgr.deck_mut(deck);
                 d.ramps = ramps;
                 d.generation = generation;
-                d.samples = initial_samples;
+                d.samples = initial_samples.into();
                 d.fully_decoded = fully_decoded;
                 d.seek_tx = seek_tx;
                 match deck {
@@ -1342,7 +1342,7 @@ impl AudioCallbackState {
             return;
         }
         self.vis_frame_accum = 0;
-        let _ = self.vis_tx.try_send(data.to_vec());
+        self.vis_tx.send(data);
     }
 
     // -----------------------------------------------------------------------

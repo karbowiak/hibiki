@@ -146,7 +146,7 @@ mod tests {
             end_reported: false,
             history_start_reported: false,
             history_end_reported: false,
-            samples,
+            samples: samples.into(),
             position: 0,
             meta: None,
             ramps: Default::default(),

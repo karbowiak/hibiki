@@ -149,7 +149,7 @@ impl AudioEngine {
         let (event_tx, event_rx) = bounded::<EngineEvent>(256);
 
         // Audio callback → visualizer task (PCM chunks for FFT)
-        let (vis_tx, vis_rx) = crossbeam_channel::bounded::<Vec<f32>>(16);
+        let (vis_tx, vis_rx) = visualizer::transport::channel();
 
         // Create the callback state — it will be moved into the cpal closure
         let mut cb_state = AudioCallbackState::new(
@@ -252,6 +252,7 @@ impl AudioEngine {
                 let mut got_data = false;
                 while let Ok(samples) = vis_rx.try_recv() {
                     vis.push_samples(&samples);
+                    vis_rx.recycle(samples);
                     got_data = true;
                 }
                 if !got_data {
@@ -1486,6 +1487,15 @@ fn decode_initial_batch(
         setup.resampler = Some(resampler);
     }
 
+    // Allocate the bounded deck working set on the decoder worker. VecDeque
+    // adopts this allocation when the callback installs the initial PCM.
+    if !setup.finished {
+        let channels = out_channels.max(1) as usize;
+        let ahead = (device_rate as usize * 20 * channels).min(32 * 1024 * 1024 / 4);
+        let capacity = ahead + device_rate as usize * channels * 5;
+        samples.reserve(capacity.saturating_sub(samples.len()));
+    }
+
     setup.output_frames_decoded = (samples.len() / out_channels.max(1) as usize) as u64;
     Ok(IncrementalDecodeResult {
         source_format: Some(setup.source_format()),
@@ -1630,7 +1640,7 @@ mod control_tests {
         let (_a_tx, a_rx) = crossbeam_channel::bounded(4);
         let (_b_tx, b_rx) = crossbeam_channel::bounded(4);
         let (events, event_rx) = crossbeam_channel::unbounded();
-        let (visualizer, _vis_rx) = crossbeam_channel::bounded(4);
+        let (visualizer, _vis_rx) = visualizer::transport::channel();
         let callback = AudioCallbackState::new(audio_rx, a_rx, b_rx, events, visualizer, atomics);
         (engine, cmd_rx, callback, event_rx)
     }
@@ -2670,7 +2680,7 @@ mod control_tests {
                 .store(audible.load_id, Ordering::SeqCst);
             let deck = callback.deck_mgr.active_deck_mut();
             deck.loaded = true;
-            deck.samples = vec![0.1; 44100];
+            deck.samples = vec![0.1; 44100].into();
             deck.has_started_playing = true;
             deck.played_frames = 100;
             deck.playback_id = 1;
