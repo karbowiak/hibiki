@@ -1,6 +1,8 @@
 //! Crossfade types — shared across all crossfade strategies.
 
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
+use super::curves::GainCurve;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,7 +40,7 @@ pub struct TrackRamps {
 }
 
 /// A computed transition plan between two tracks.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct TransitionPlan {
     pub fallback_reason: Option<TransitionReason>,
     /// Absolute time in the outgoing track (seconds) to start the transition.
@@ -46,23 +48,23 @@ pub struct TransitionPlan {
     /// Duration of the overlap (seconds).
     pub duration_sec: f32,
     /// Fade-out gain curve for outgoing deck. `None` = MixRamp (no gain manipulation).
-    pub fade_out_curve: Option<Vec<f32>>,
+    pub fade_out_curve: Option<GainCurve>,
     /// Fade-in gain curve for incoming deck. `None` = MixRamp (no gain manipulation).
-    pub fade_in_curve: Option<Vec<f32>>,
+    pub fade_in_curve: Option<GainCurve>,
 }
 
 /// Parameters needed to compute a crossfade transition.
 #[derive(Debug, Clone)]
-pub struct CrossfadeParams {
+pub struct CrossfadeParams<'a> {
     pub out_duration_sec: f32,
     pub in_duration_sec: f32,
     pub out_gain_db: f32,
     pub in_gain_db: f32,
-    pub out_parent_key: String,
-    pub in_parent_key: String,
+    pub out_parent_key: Cow<'a, str>,
+    pub in_parent_key: Cow<'a, str>,
     pub album_playback: bool,
-    pub out_end_ramp: Option<Vec<RampPoint>>,
-    pub in_start_ramp: Option<Vec<RampPoint>>,
+    pub out_end_ramp: Option<Cow<'a, [RampPoint]>>,
+    pub in_start_ramp: Option<Cow<'a, [RampPoint]>>,
     pub crossfade_window_ms: u32,
     pub smart_crossfade_max_ms: u32,
     pub mixramp_db: f32,

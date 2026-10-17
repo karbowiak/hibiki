@@ -6,6 +6,7 @@
 use std::collections::VecDeque;
 
 use super::super::crossfade::types::TrackRamps;
+use super::super::crossfade::curves::GainCurve;
 use super::super::output::playback_envelope::PlaybackEnvelope;
 use super::super::types::{DeckId, TrackMeta};
 
@@ -13,7 +14,8 @@ use super::super::types::{DeckId, TrackMeta};
 #[derive(Debug, Clone)]
 pub struct FadeCurve {
     /// Gain values at each step (e.g., 400 steps for a 4s crossfade).
-    pub values: Vec<f32>,
+    pub values: GainCurve,
+    gain: Option<f32>,
     /// Current index into `values`.
     pub index: usize,
     /// Number of audio frames between each curve step.
@@ -24,13 +26,10 @@ pub struct FadeCurve {
 }
 
 impl FadeCurve {
-    pub fn new(values: Vec<f32>, total_frames: usize) -> Self {
-        let frames_per_step = if values.is_empty() {
-            1.0
-        } else {
-            total_frames as f32 / values.len() as f32
-        };
+    pub fn new(values: GainCurve, total_frames: usize) -> Self {
+        let frames_per_step = (total_frames as f32 / values.len() as f32).max(f32::EPSILON);
         Self {
+            gain: values.value(0),
             values,
             index: 0,
             frames_per_step,
@@ -40,7 +39,7 @@ impl FadeCurve {
 
     /// Get the current fade gain, or `None` if the curve is finished/empty.
     pub fn current_gain(&self) -> Option<f32> {
-        self.values.get(self.index).copied()
+        self.gain
     }
 
     /// Advance the curve by one audio frame. Call once per mixer frame.
@@ -49,15 +48,17 @@ impl FadeCurve {
             return;
         }
         self.frame_accum += 1.0;
+        let previous = self.index;
         while self.frame_accum >= self.frames_per_step && self.index < self.values.len() {
             self.frame_accum -= self.frames_per_step;
             self.index += 1;
         }
+        if previous != self.index { self.gain = self.values.value(self.index); }
     }
 
     /// Is the curve finished (all steps consumed)?
     pub fn is_finished(&self) -> bool {
-        self.values.is_empty() || self.index >= self.values.len()
+        self.index >= self.values.len()
     }
 }
 
@@ -342,6 +343,35 @@ impl DeckManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compact_curves_preserve_every_audio_frame_of_the_sampled_equal_power_fade() {
+        use super::super::super::crossfade::curves::{generate_fade_in, generate_fade_out, steps_for_duration};
+        for duration in [0.001_f32, 0.5, 4.0, 15.0] {
+            let steps = steps_for_duration(duration);
+            let frames = (duration * 44100.0) as usize;
+            for incoming in [true, false] {
+                let values = if incoming { generate_fade_in(steps, 0.8) } else { generate_fade_out(steps, 0.8) };
+                let expected: Vec<_> = (0..steps).map(|i| {
+                    let phase = i as f32 / (steps-1) as f32 * std::f32::consts::PI / 2.0;
+                    if incoming { phase.sin()*0.8 } else { phase.cos()*0.8 }
+                }).collect();
+                let mut curve = FadeCurve::new(values, frames);
+                let mut index = 0;
+                let mut accum = 0.0_f32;
+                let interval = frames as f32 / steps as f32;
+                for _ in 0..frames+2 {
+                    assert_eq!(curve.current_gain(), expected.get(index).copied());
+                    curve.advance_frame();
+                    if index < steps {
+                        accum += 1.0;
+                        while accum >= interval && index < steps { accum -= interval; index += 1; }
+                    }
+                }
+                assert_eq!(curve.values.last(), *expected.last().unwrap());
+            }
+        }
+    }
 
     #[test]
     fn deck_position_and_duration() {

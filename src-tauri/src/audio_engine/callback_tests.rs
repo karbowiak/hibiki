@@ -940,13 +940,13 @@ fn loaded_ramps_keep_two_media_variants_with_the_same_track_id_separate() {
         params.out_end_ramp,
         Some(super::super::crossfade::types::parse_ramp(Some(
             "-17 0.8;-3 2"
-        )))
+        )).into())
     );
     assert_eq!(
         params.in_start_ramp,
         Some(super::super::crossfade::types::parse_ramp(Some(
             "-17 0.4;-3 1"
-        )))
+        )).into())
     );
 }
 
@@ -965,7 +965,7 @@ fn loaded_ramps_are_cleared_when_a_reused_deck_receives_missing_metadata() {
         params.out_end_ramp,
         Some(super::super::crossfade::types::parse_ramp(Some(
             "-17 0.8;-3 2"
-        )))
+        )).into())
     );
     let plan = compute_transition(&params).unwrap();
     assert_eq!(
@@ -988,7 +988,7 @@ fn loaded_ramps_from_a_retired_load_cannot_change_the_audible_sources_plan() {
         params.out_end_ramp,
         Some(super::super::crossfade::types::parse_ramp(Some(
             "-17 0.8;-3 2"
-        )))
+        )).into())
     );
     assert!(params.in_start_ramp.is_none());
 }
@@ -1337,6 +1337,7 @@ fn mixramp_keeps_both_decks_for_the_entire_overlap() {
     }
     cb.deck_mgr.active_deck_mut().has_started_playing = true;
     cb.set_state(EngineState::Playing);
+    cb.compute_and_set_schedule();
     cb.handle_crossfade_transition();
     let mut buffer = [0.0; 960];
     cb.process_callback(&mut buffer);

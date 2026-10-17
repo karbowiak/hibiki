@@ -61,7 +61,7 @@ pub fn mix_decks(
             curve.advance_frame();
             if curve.is_finished() {
                 // Curve done — latch the final gain value
-                active.fade_gain = *curve.values.last().unwrap_or(&1.0);
+                active.fade_gain = curve.values.last();
             }
         }
 
@@ -70,7 +70,7 @@ pub fn mix_decks(
             if let Some(ref mut curve) = pending.fade_curve {
                 curve.advance_frame();
                 if curve.is_finished() {
-                    pending.fade_gain = *curve.values.last().unwrap_or(&1.0);
+                    pending.fade_gain = curve.values.last();
                 }
             }
         }
@@ -224,9 +224,9 @@ mod tests {
 
     #[test]
     fn fade_curve_ramps_gain() {
-        // 4 frames of audio, fade curve with 4 steps: 0.0, 0.33, 0.67, 1.0
+        // Four frames of audio, with four equal-power control points.
         let mut active = make_deck(DeckId::A, vec![1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], 2);
-        active.fade_curve = Some(FadeCurve::new(vec![0.0, 0.33, 0.67, 1.0], 4));
+        active.fade_curve = Some(FadeCurve::new(crate::audio_engine::crossfade::curves::generate_fade_in(4, 1.0), 4));
         let mut pending = DeckState::new(DeckId::B);
         let mut output = vec![0.0f32; 8]; // 4 frames stereo
         mix_decks(&mut active, &mut pending, &mut output, 2, false);

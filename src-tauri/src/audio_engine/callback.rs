@@ -141,6 +141,7 @@ pub struct AudioCallbackState {
     pub dsp_chain: DspChain,
     pub scheduler: Scheduler,
     pub crossfade_settings: CrossfadeSettings,
+    scheduled_transition: Option<TransitionPlan>,
     pub is_crossfading: bool,
     /// Rating key of the track being faded OUT during crossfade.
     /// Used by check_crossfade_complete to avoid resetting a newly preloaded deck.
@@ -200,6 +201,7 @@ impl AudioCallbackState {
             dsp_chain: DspChain::new(44100),
             scheduler: Scheduler::new(),
             crossfade_settings: CrossfadeSettings::default(),
+            scheduled_transition: None,
             is_crossfading: false,
             crossfade_out_rk: 0,
             crossfade_out_reason: TrackEndReason::Natural,
@@ -473,6 +475,7 @@ impl AudioCallbackState {
         self.report_track_ended(DeckId::A, TrackEndReason::Stopped);
         self.report_track_ended(DeckId::B, TrackEndReason::Stopped);
         self.emit_transition_info(request_id, None);
+        self.scheduled_transition = None;
         self.scheduler.reset();
         self.deck_mgr.stop_all();
         self.atomics.deck_a_loaded_id.store(0, Ordering::SeqCst);
@@ -546,6 +549,7 @@ impl AudioCallbackState {
                 self.report_track_ended(DeckId::A, TrackEndReason::Error);
                 self.report_track_ended(DeckId::B, TrackEndReason::Error);
                 self.emit_transition_info(request_id, None);
+                self.scheduled_transition = None;
                 self.scheduler.reset();
                 self.deck_mgr.stop_all();
                 self.atomics.deck_a_loaded_id.store(0, Ordering::SeqCst);
@@ -570,6 +574,7 @@ impl AudioCallbackState {
                 });
             }
             AudioCommand::ClearPreload => {
+                self.scheduled_transition = None;
                 self.scheduler.reset();
                 self.emit_transition_info(self.event_request_id, None);
                 if !self.is_crossfading {
@@ -581,6 +586,7 @@ impl AudioCallbackState {
                     return;
                 }
                 self.emit_transition_info(request_id, None);
+                self.scheduled_transition = None;
                 self.scheduler.reset();
                 if self.is_crossfading && self.paused && !self.playback_envelope.is_fading_out() {
                     self.crossfade_remaining_frames = 0;
@@ -615,6 +621,7 @@ impl AudioCallbackState {
                 {
                     return;
                 }
+                self.scheduled_transition = None;
                 self.scheduler.reset();
                 self.emit_transition_info(request_id, None);
                 self.deck_mgr.deck_mut(deck).reset();
@@ -896,6 +903,7 @@ impl AudioCallbackState {
     // -----------------------------------------------------------------------
 
     fn handle_transition_to_active(&mut self, user_skip: bool, allow_outgoing_fade: bool) {
+        self.scheduled_transition = None;
         self.scheduler.reset();
 
         let has_active = allow_outgoing_fade
@@ -1073,6 +1081,7 @@ impl AudioCallbackState {
             }
         }
         self.dsp_chain.reset();
+        self.scheduled_transition = None;
         self.scheduler.reset();
         self.compute_and_set_schedule();
     }
@@ -1150,10 +1159,7 @@ impl AudioCallbackState {
             return;
         }
 
-        let plan = {
-            let params = self.build_crossfade_params();
-            compute_transition(&params)
-        };
+        let plan = self.scheduled_transition.take();
 
         if let Some(plan) = plan {
             debug!(
@@ -1242,6 +1248,7 @@ impl AudioCallbackState {
         }
         if !self.is_crossfading && self.deck_mgr.pending_deck().decode_error.is_some() {
             self.deck_mgr.pending_deck_mut().reset();
+            self.scheduled_transition = None;
             self.scheduler.reset();
             self.emit_transition_info(self.event_request_id, None);
         }
@@ -1386,6 +1393,7 @@ impl AudioCallbackState {
 
     fn compute_and_set_schedule(&mut self) {
         use super::crossfade::types::{TransitionInfo, TransitionReason};
+        self.scheduled_transition = None;
         self.scheduler.reset();
         if self.waiting_for_play || self.is_crossfading {
             self.emit_transition_info(self.event_request_id, None);
@@ -1435,6 +1443,7 @@ impl AudioCallbackState {
         } else {
             let params = self.build_crossfade_params();
             if let Some(plan) = compute_transition(&params) {
+                self.scheduled_transition = Some(plan);
                 info.mode = if plan.fade_out_curve.is_none() {
                     "mixRamp"
                 } else {
@@ -1446,9 +1455,9 @@ impl AudioCallbackState {
                 self.scheduler.set_mode(SchedulerMode::Crossfade);
                 self.scheduler.set_transition_point(plan.start_time_sec);
                 debug!(
-                    trigger_sec = format!("{:.2}", plan.start_time_sec),
-                    duration_sec = format!("{:.2}", plan.duration_sec),
-                    track_duration = format!("{:.2}", active.duration_secs()),
+                    trigger_sec = plan.start_time_sec,
+                    duration_sec = plan.duration_sec,
+                    track_duration = active.duration_secs(),
                     "scheduled crossfade"
                 );
             } else {
@@ -1471,7 +1480,7 @@ impl AudioCallbackState {
         });
     }
 
-    fn build_crossfade_params(&self) -> CrossfadeParams {
+    fn build_crossfade_params(&self) -> CrossfadeParams<'_> {
         let active = self.deck_mgr.active_deck();
         let pending = self.deck_mgr.pending_deck();
 
@@ -1488,12 +1497,12 @@ impl AudioCallbackState {
             } else {
                 0.0
             },
-            out_parent_key: active.parent_key().to_string(),
-            in_parent_key: pending.parent_key().to_string(),
+            out_parent_key: std::borrow::Cow::Borrowed(active.parent_key()),
+            in_parent_key: std::borrow::Cow::Borrowed(pending.parent_key()),
             album_playback: self.is_album_playback(),
-            out_end_ramp: (!active.ramps.end_ramp.is_empty()).then(|| active.ramps.end_ramp.clone()),
+            out_end_ramp: (!active.ramps.end_ramp.is_empty()).then(|| std::borrow::Cow::Borrowed(active.ramps.end_ramp.as_slice())),
             in_start_ramp: (!pending.ramps.start_ramp.is_empty())
-                .then(|| pending.ramps.start_ramp.clone()),
+                .then(|| std::borrow::Cow::Borrowed(pending.ramps.start_ramp.as_slice())),
             crossfade_window_ms: self.crossfade_settings.crossfade_window_ms,
             smart_crossfade_max_ms: self.crossfade_settings.smart_crossfade_max_ms,
             mixramp_db: self.crossfade_settings.mixramp_db,
@@ -1600,10 +1609,10 @@ fn apply_fade_start(new_active: &mut DeckState, old_active: &mut DeckState, plan
 
     if let (Some(fade_in), Some(fade_out)) = (&plan.fade_in_curve, &plan.fade_out_curve) {
         new_active.fade_gain = 0.0;
-        new_active.fade_curve = Some(FadeCurve::new(fade_in.clone(), total_frames));
+        new_active.fade_curve = Some(FadeCurve::new(*fade_in, total_frames));
 
         old_active.fade_gain = 1.0;
-        old_active.fade_curve = Some(FadeCurve::new(fade_out.clone(), total_frames));
+        old_active.fade_curve = Some(FadeCurve::new(*fade_out, total_frames));
 
         debug!(
             steps = fade_in.len(),
