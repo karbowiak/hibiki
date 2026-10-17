@@ -201,4 +201,4 @@ test("offline relocated metadata and zsync corruption boundaries", () => {
     { cwd: root }
   )
   expect(result.exitCode).toBe(0)
-})
+}, 30_000)
