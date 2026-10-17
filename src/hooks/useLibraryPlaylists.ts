@@ -26,16 +26,28 @@ export function useLibraryPlaylists() {
       duration: null, thumbUrl: buildExternalImageUrl(item.thumbnail), summary: item.description || null,
       addedAt: null, providerKey: "ytmusic", youtubeMusic: item,
     })) : []
-    const linked = mixed.filter(item => item.owners.plex === scope && item.owners.ytmusic === account)
+    const linked = mixed.filter(item => item.local || item.owners.plex === scope && item.owners.ytmusic === account)
     const seen = new Set<string>()
     const combined: LibraryPlaylist[] = []
     for (const playlist of [...plex, ...remote]) {
       const link = linked.find(item => item.aliases.includes(playlist.id))
       if (!link) { combined.push(playlist); continue }
+      // App-owned lists keep their own slot before/after materialization. Their
+      // appearance must not inherit a new counterpart's provider sort position.
+      if (link.local) continue
       if (seen.has(link.id)) continue
       seen.add(link.id)
-      const alias = link.aliases[0]
+      const alias = link.local ? link.id : link.aliases[0]
       combined.push({ ...playlist, id: alias, title: link.title, trackCount: link.items.length, mixed: link, youtubeMusic: undefined })
+    }
+    for (const link of [...linked].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))) if (!seen.has(link.id)) combined.push({
+      id: link.local ? link.id : link.aliases[0] ?? link.id, title: link.title, smart: false, trackCount: link.items.length,
+      duration: null, thumbUrl: link.artwork ?? link.items[0]?.songs[link.items[0]?.original]?.track.thumbUrl ?? null,
+      summary: link.description ?? null, addedAt: new Date(link.createdAt).toISOString(), providerKey: "hibiki", mixed: link,
+    })
+    for (const item of combined) if (item.mixed?.local) {
+      item.thumbUrl = item.mixed.artwork ?? item.thumbUrl
+      item.summary = item.mixed.description ?? null
     }
     return sortPlaylists<LibraryPlaylist>(combined, order)
   }, [plex, youtube.items, youtube.connected, order, mixed, scope, account])

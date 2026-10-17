@@ -11,6 +11,7 @@ export interface MixedAdapter {
   read(id: string): Promise<RemotePlaylist>
   create(title: string): Promise<string>
   mutate(before: RemotePlaylist, operation: SequenceOperation): Promise<void>
+  describe?(before: RemotePlaylist, title: string, description: string): Promise<void>
 }
 export function mixedAdapters(capture = captureMusicOwner()): Partial<Record<Service, MixedAdapter>> {
   const { provider, owners, current } = capture
@@ -39,10 +40,19 @@ export function mixedAdapters(capture = captureMusicOwner()): Partial<Record<Ser
         }
         if (items.length > total) throw Error("Plex returned an inconsistent playlist.")
       } while (items.length < total)
-      return { service: "plex", owner: owners.plex!, id, title: metadata.title, readOnly: metadata.smart, items }
+      return { service: "plex", owner: owners.plex!, id, title: metadata.title, description: metadata.summary ?? "", readOnly: metadata.smart, items }
     }
     result.plex = { service: "plex", owner: owners.plex,
       read, create: async title => { assert(); const created = await provider.createPlaylist(title, []); assert(); return created.id },
+      describe: async (before, title, description) => {
+        const actual = await read(before.id)
+        assert()
+        if (actual.readOnly || actual.title !== before.title || actual.description !== before.description ||
+          JSON.stringify(actual.items.map(row => [row.occurrenceId, row.track.id])) !== JSON.stringify(before.items.map(row => [row.occurrenceId, row.track.id])))
+          throw Error("The Plex playlist changed before saving its details. Refresh and review it.")
+        await provider.editPlaylist(before.id, title, description)
+        assert()
+      },
       mutate: async (before, operation) => {
         assert()
         if (before.readOnly || before.owner !== owners.plex || !provider.mutatePlaylistOccurrence) throw Error("This Plex playlist cannot be edited.")
@@ -52,7 +62,7 @@ export function mixedAdapters(capture = captureMusicOwner()): Partial<Record<Ser
       } }
   }
   if (owners.ytmusic) {
-    type NativeSnapshot = { id: string; title: string; readOnly: boolean; items: YoutubeMusicItem[]; handles: { videoId: string; occurrenceId: string }[] }
+    type NativeSnapshot = { id: string; title: string; description: string; readOnly: boolean; items: YoutubeMusicItem[]; handles: { videoId: string; occurrenceId: string }[] }
     const write = async (playlistId: string | null, expected: RemotePlaylist["items"], operation: object) => {
       assert()
       const id = await invoke<string>("ytmusic_playlist_write", { playlistId, expectedAccount: owners.ytmusic,
@@ -66,13 +76,17 @@ export function mixedAdapters(capture = captureMusicOwner()): Partial<Record<Ser
         const snapshot = await invoke<NativeSnapshot>("ytmusic_playlist_read", { playlistId: id.replace(/^VL/, ""), expectedAccount: owners.ytmusic })
         assert()
         if (snapshot.items.length !== snapshot.handles.length) throw Error("Incomplete YouTube Music playlist.")
-        return { service: "ytmusic", owner: owners.ytmusic!, id: `VL${snapshot.id}`, title: snapshot.title, readOnly: snapshot.readOnly,
+        return { service: "ytmusic", owner: owners.ytmusic!, id: `VL${snapshot.id}`, title: snapshot.title, description: snapshot.description, readOnly: snapshot.readOnly,
           items: snapshot.items.map((item, index) => {
             if (snapshot.handles[index].videoId !== item.id) throw Error("YouTube Music occurrence identity changed.")
             return { occurrenceId: snapshot.handles[index].occurrenceId, track: youtubeMusicItemTrack(item) }
           }) }
       },
       create: async title => `VL${await write(null, [], { kind: "create", title })}`,
+      describe: async (before, title, description) => {
+        await write(before.id.replace(/^VL/, ""), before.items, { kind: "metadata", title, description,
+          expectedTitle: before.title, expectedDescription: before.description ?? "" })
+      },
       mutate: async (before, operation) => {
         if (before.readOnly || before.owner !== owners.ytmusic) throw Error("This YouTube Music playlist is read-only.")
         await write(before.id.replace(/^VL/, ""), before.items,

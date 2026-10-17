@@ -55,6 +55,10 @@ import { IconStar, IconHeart } from "@tabler/icons-react"
 import { saveTrackRatingToPlex } from "../favorites/saveRating"
 import { effectiveTrackRating } from "../favorites/ratings"
 import { useFavoritesStore } from "../stores/favoritesStore"
+import { useLibraryPlaylists, type LibraryPlaylist } from "../hooks/useLibraryPlaylists"
+import { useMixedPlaylistStore } from "../stores/mixedPlaylistStore"
+import { selectedPlaylistTracks } from "../mixedPlaylists/create"
+import { captureMusicOwner } from "../mixedPlaylists/counterparts"
 
 const ACTION_ICONS = { play: IconPlay, shuffle: IconShuffle, next: IconNext, queue: IconQueue,
   radio: IconRadio, share: IconShare, artist: IconArtist, album: IconAlbum, heart: <IconHeart size={14} /> }
@@ -90,7 +94,8 @@ function PlaylistSection({
   close,
   onNewPlaylist,
 }: PlaylistSectionProps) {
-  const playlists = useLibraryStore((s) => s.playlists).filter((p) => !p.smart)
+  const { playlists: libraryPlaylists } = useLibraryPlaylists()
+  const playlists = libraryPlaylists.filter(p => !p.smart && (!p.youtubeMusic || p.youtubeMusic.id.startsWith("VLPL")))
   const provider = useProviderStore((s) => s.provider)
 
   const captureOwner = useProviderMutationOwner(provider)
@@ -98,16 +103,23 @@ function PlaylistSection({
 
   const recentPlaylists = recentIds
     .map((id) => playlists.find((p) => p.id === id))
-    .filter((p): p is MusicPlaylist => p !== undefined)
+    .filter((p): p is LibraryPlaylist => p !== undefined)
 
   const otherPlaylists = playlists.filter((p) => !recentIds.includes(p.id))
 
-  async function addTo(playlist: MusicPlaylist) {
-    const current = captureOwner(),
+  async function addTo(playlist: LibraryPlaylist) {
+    const current = captureMusicOwner().current, writable = captureOwner(),
       generation = useContextMenuStore.getState().generation
-    if (!provider || !current()) return
+    if (!current()) return
     try {
-      await provider.addToPlaylist(playlist.id, itemIds)
+      if (playlist.mixed || playlist.youtubeMusic || itemIds.some(id => id.startsWith("ytmusic:"))) {
+        const tracks = await selectedPlaylistTracks(itemIds)
+        if (!current()) return
+        await useMixedPlaylistStore.getState().append(playlist.mixed?.id ?? playlist.id, tracks, crypto.randomUUID())
+      } else {
+        if (!provider || !writable()) return
+        await provider.addToPlaylist(playlist.id, itemIds)
+      }
     } catch {
       if (current() && useContextMenuStore.getState().generation === generation)
         useLibraryStore.setState({
@@ -476,6 +488,8 @@ export function ContextMenu() {
                   artist={actionData.ratingTrack.artistName} track={actionData.ratingTrack.title} onRated={() => {}} />}
             </Fragment>
           ))}
+          {actionData.ratingTrack && <><Divider /><SectionLabel label="Add to playlist" /><PlaylistSection itemIds={[actionData.ratingTrack.id]} close={close}
+            onNewPlaylist={() => { setPendingPlaylistItemIds([actionData.ratingTrack!.id]); setShowCreatePlaylist(true); close() }} /></>}
           {actionsError && (
             <p
               role="alert"
@@ -952,7 +966,7 @@ export function ContextMenu() {
         )}
 
         {/* Add to playlist — tracks only */}
-        {canEditPlaylists && track && (
+        {track && (
           <>
             <Divider />
             <SectionLabel label="Add to playlist" />

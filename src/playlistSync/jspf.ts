@@ -49,6 +49,7 @@ export function fromJspf(
     account,
     id,
     title: text(playlist.title, 500),
+    ...(playlist.annotation != null ? { description: text(playlist.annotation, 5000) } : {}),
     items: tracks.map((raw, index) => {
       const track = object(raw),
         mbid = mbidFromRecordingIdentifier(track.identifier)

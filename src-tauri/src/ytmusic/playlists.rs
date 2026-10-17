@@ -10,7 +10,7 @@ pub struct Handle { pub video_id: String, pub occurrence_id: String }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
-    id: String, title: String, read_only: bool,
+    id: String, title: String, description: String, read_only: bool,
     items: Vec<discovery::Item>, handles: Vec<Handle>,
 }
 #[derive(Deserialize)]
@@ -20,6 +20,8 @@ pub enum Operation {
     Append { #[serde(rename = "videoId")] video_id: String },
     Delete { index: usize },
     Move { from: usize, to: usize },
+    Metadata { title: String, description: String, #[serde(rename = "expectedTitle")] expected_title: String,
+        #[serde(rename = "expectedDescription")] expected_description: String },
 }
 fn valid_playlist(id: &str) -> bool {
     id.starts_with("PL") && id.len() <= 256 && id.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-'))
@@ -55,7 +57,7 @@ async fn read(app: &tauri::AppHandle, generation: u64, context: &api::Context, c
     let mut value = request(app, generation, context, cookies, "browse", json!({ "browseId": format!("VL{id}") })).await?;
     let first = discovery::parse(&value, false, false, false);
     let read_only = find(&value, "musicEditablePlaylistDetailHeaderRenderer", 0).is_none();
-    let mut output = Snapshot { id: id.into(), title: first.title, read_only, items: Vec::new(), handles: Vec::new() };
+    let mut output = Snapshot { id: id.into(), title: first.title, description: first.description.unwrap_or_default(), read_only, items: Vec::new(), handles: Vec::new() };
     let mut cursors = std::collections::HashSet::new();
     for _ in 0..100 {
         let body = find(&value, "musicPlaylistShelfRenderer", 0)
@@ -89,7 +91,7 @@ pub(super) async fn ytmusic_playlist_write(app: tauri::AppHandle, playlist_id: O
     let _guard = lock.lock().await;
     let (generation, context, cookies) = connection(&app, &expected_account).await?;
     if let Operation::Create { title } = &operation {
-        if playlist_id.is_some() || !expected.is_empty() || title.trim().is_empty() || title.len() > 500 || title.contains(['<', '>']) {
+        if playlist_id.is_some() || !expected.is_empty() || title.trim().is_empty() || title.len() > 500 {
             return Err("Choose a valid playlist title.".into());
         }
         let value = request(&app, generation, &context, &cookies, "playlist/create",
@@ -102,19 +104,25 @@ pub(super) async fn ytmusic_playlist_write(app: tauri::AppHandle, playlist_id: O
     let before = read(&app, generation, &context, &cookies, &id).await?;
     if before.read_only { return Err("This YouTube Music playlist is read-only.".into()); }
     if before.handles != expected { return Err("Playlist changed before the write. Read it again.".into()); }
-    let action = match operation {
-        Operation::Append { video_id } if api::valid_video_id(&video_id) => json!({ "action": "ACTION_ADD_VIDEO", "addedVideoId": video_id, "dedupeOption": "DEDUPE_OPTION_SKIP" }),
-        Operation::Delete { index } if index < expected.len() => json!({ "action": "ACTION_REMOVE_VIDEO", "removedVideoId": expected[index].video_id, "setVideoId": expected[index].occurrence_id }),
+    let actions = match operation {
+        Operation::Metadata { title, description, expected_title, expected_description } => {
+            if title.trim().is_empty() || title.len() > 500 || description.len() > 5000 ||
+                before.title != expected_title || before.description != expected_description { return Err("Playlist details changed. Refresh before saving.".into()); }
+            vec![json!({ "action": "ACTION_SET_PLAYLIST_NAME", "playlistName": title }),
+                json!({ "action": "ACTION_SET_PLAYLIST_DESCRIPTION", "playlistDescription": description })]
+        },
+        Operation::Append { video_id } if api::valid_video_id(&video_id) => vec![json!({ "action": "ACTION_ADD_VIDEO", "addedVideoId": video_id, "dedupeOption": "DEDUPE_OPTION_SKIP" })],
+        Operation::Delete { index } if index < expected.len() => vec![json!({ "action": "ACTION_REMOVE_VIDEO", "removedVideoId": expected[index].video_id, "setVideoId": expected[index].occurrence_id })],
         Operation::Move { from, to } if from < expected.len() && to < expected.len() && from != to => {
             let moved = &expected[from];
             let mut rest = expected.iter().collect::<Vec<_>>(); rest.remove(from);
             let mut action = json!({ "action": "ACTION_MOVE_VIDEO_BEFORE", "setVideoId": moved.occurrence_id });
             if let Some(next) = rest.get(to) { action["movedSetVideoIdSuccessor"] = json!(next.occurrence_id); }
-            action
+            vec![action]
         },
         _ => return Err("Invalid playlist operation.".into()),
     };
-    let value = request(&app, generation, &context, &cookies, "browse/edit_playlist", json!({ "playlistId": id, "actions": [action] })).await?;
+    let value = request(&app, generation, &context, &cookies, "browse/edit_playlist", json!({ "playlistId": id, "actions": actions })).await?;
     if value["status"] != "STATUS_SUCCEEDED" { return Err("Playlist write was not acknowledged. Read the playlist before retrying.".into()); }
     if let Ok(directory) = app.path().app_cache_dir() { state.discovery_cache.playlist_changed(directory.join("ytmusic-discovery"), format!("VL{id}")).await; }
     Ok(id)

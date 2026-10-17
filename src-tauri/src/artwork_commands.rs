@@ -1,7 +1,7 @@
 //! Only verified Plex inventory entries issue authenticated thumbnail references.
 use crate::commands::{PlexRequestContext, PlexState};
 use crate::plex::artwork_inventory::{ArtworkRole, Inventory};
-use crate::plex::metadata_edit::MetadataEditKind;
+use crate::plex::artwork_inventory::ArtworkKind;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, State};
@@ -49,7 +49,7 @@ impl ArtworkInventoryState {
 }
 
 #[tauri::command]
-pub async fn get_library_artwork(context: PlexRequestContext, section_id: i64, item_id: i64, kind: MetadataEditKind,
+pub async fn get_library_artwork(context: PlexRequestContext, section_id: i64, item_id: i64, kind: ArtworkKind,
     role: ArtworkRole, state: State<'_, PlexState>, inventory: State<'_, ArtworkInventoryState>) -> Result<ArtworkInventory, String> {
     let client = { let guard = state.0.lock().await; state.checked_client(&context, &guard)?.clone() };
     let result = tokio::time::timeout(std::time::Duration::from_secs(30), client.artwork_inventory(section_id, item_id, kind, role))
@@ -60,7 +60,7 @@ pub async fn get_library_artwork(context: PlexRequestContext, section_id: i64, i
 }
 
 #[tauri::command]
-pub async fn save_library_artwork(context: PlexRequestContext, section_id: i64, item_id: i64, kind: MetadataEditKind,
+pub async fn save_library_artwork(context: PlexRequestContext, section_id: i64, item_id: i64, kind: ArtworkKind,
     role: ArtworkRole, baseline: String, choice: Option<String>, upload: Option<Vec<u8>>,
     state: State<'_, PlexState>, inventory: State<'_, ArtworkInventoryState>) -> Result<ArtworkInventory, String> {
     let client = { let guard = state.0.lock().await; state.checked_client(&context, &guard)?.clone() };

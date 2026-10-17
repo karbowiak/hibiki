@@ -117,15 +117,16 @@ testWindow.mountArtworkRetry = () => {
 testWindow.mountPlaylistCreator = async () => {
   const { CreatePlaylist } =
     await import("../../../src/components/Pages/CreatePlaylist")
-  const { useLibraryStore } = await import("../../../src/stores/libraryStore")
-  const original = useLibraryStore.getState().createPlaylist
+  const { useMixedPlaylistStore } = await import("../../../src/stores/mixedPlaylistStore")
+  const { newDraft } = await import("../../../src/mixedPlaylists/drafts")
+  const original = useMixedPlaylistStore.getState().createDraft
   testWindow.playlistCreator = { fail: false, calls: 0, created: "" }
-  useLibraryStore.setState({
-    createPlaylist: async (title) => {
+  useMixedPlaylistStore.setState({
+    createDraft: async (metadata) => {
       testWindow.playlistCreator.calls++
       if (testWindow.playlistCreator.fail)
         throw new Error("Synthetic playlist failure")
-      return { id: "fixture-playlist", title } as any
+      return newDraft(metadata, "mixed:fixture-playlist")
     },
   })
   const host = document.createElement("div")
@@ -166,7 +167,7 @@ testWindow.mountPlaylistCreator = async () => {
   testWindow.unmountPlaylistCreator = () => {
     creatorRoot.unmount()
     host.remove()
-    useLibraryStore.setState({ createPlaylist: original })
+    useMixedPlaylistStore.setState({ createDraft: original })
   }
 }
 

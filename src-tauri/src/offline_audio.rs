@@ -1565,6 +1565,9 @@ mod tests {
                     std::thread::sleep(std::time::Duration::from_millis(5));
                     continue;
                 };
+                // macOS inherits O_NONBLOCK from the listener. Wait for the
+                // request headers rather than racing a just-accepted socket.
+                socket.set_nonblocking(false).unwrap();
                 socket
                     .set_read_timeout(Some(std::time::Duration::from_secs(1)))
                     .unwrap();

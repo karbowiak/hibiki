@@ -122,7 +122,7 @@ function SortablePlaylistItem({
   })
   const offline = useProviderStore((state) => state.provider?.isOffline)
   const youtubeConnected = useYoutubeMusicDiscoveryStore(state => state.connected)
-  const isDropTarget = !playlist.smart && (playlist.youtubeMusic ? youtubeConnected && playlist.youtubeMusic.id.startsWith("VLPL") : !offline)
+  const isDropTarget = !playlist.smart && (playlist.mixed?.local || (playlist.youtubeMusic ? youtubeConnected && playlist.youtubeMusic.id.startsWith("VLPL") : !offline))
   const { actionsHandler } = useContextMenu()
   const [, navigate] = useLocation()
   // Subscribe to hover state from pointer-based drag system
@@ -256,7 +256,6 @@ export function SideBar({
   )
   const [location] = useLocation()
   const hasStations = useCapability("stations")
-  const canEditPlaylists = useCapability("playlistEdit")
   const { playlists: sortedPlaylists, youtube: youtubePlaylists } = useLibraryPlaylists()
   const playPlexPlaylist = usePlayerStore(useShallow((s) => s.playPlaylist))
   const playPlaylist = (id: string, count: number, title: string, href: string) => {
@@ -287,9 +286,11 @@ export function SideBar({
       const capturedScope = provider?.cacheScope
       const currentRequest = () =>
         current() && owned() && provider?.cacheScope === capturedScope
-      if (!targetPlaylistId || !provider || !currentRequest()) return
+      if (!targetPlaylistId || !current()) return
       const target = sortedPlaylists.find(playlist => playlist.id === targetPlaylistId && !playlist.smart)
       if (!target) return
+      const ownsTarget = () => target.mixed?.local ? current() : currentRequest()
+      if (!ownsTarget()) return
       if (target.mixed || target.youtubeMusic || (payload.type === "track" && payload.ids.some((id: string) => id.startsWith("ytmusic:")))) {
         const owner = captureMusicOwner()
         try {
@@ -299,19 +300,20 @@ export function SideBar({
           for (let index = 0; index < payload.ids.length; index++) {
             const id = payload.ids[index]
             const cached = payload.tracks?.[index]
-            tracks.push(cached?.id === id ? cached : id.startsWith("ytmusic:") ? await youtubeMusicSongMetadata(id) : await provider.getTrack(id))
-            if (!owner.current() || !currentRequest()) return
+            tracks.push(cached?.id === id ? cached : id.startsWith("ytmusic:") ? await youtubeMusicSongMetadata(id) : await provider!.getTrack(id))
+            if (!owner.current() || !ownsTarget()) return
           }
           await useMixedPlaylistStore.getState().append(target.mixed?.id ?? targetPlaylistId, tracks, admission ?? crypto.randomUUID())
-          if (owner.current() && currentRequest()) window.dispatchEvent(new CustomEvent("plexify-playlist-drop-result", { detail: { targetPlaylistId, success: true } }))
+          if (owner.current() && ownsTarget()) window.dispatchEvent(new CustomEvent("plexify-playlist-drop-result", { detail: { targetPlaylistId, success: true } }))
         } catch (failure) {
-          if (owner.current() && currentRequest()) {
+          if (owner.current() && ownsTarget()) {
             useLibraryStore.setState({ error: String(failure instanceof Error ? failure.message : failure) })
             window.dispatchEvent(new CustomEvent("plexify-playlist-drop-result", { detail: { targetPlaylistId, success: false } }))
           }
         }
         return
       }
+      if (!provider) return
       if (
         sourceProvider !== undefined &&
         (sourceProvider !== provider || scope !== capturedScope)
@@ -571,7 +573,6 @@ export function SideBar({
       <div className="sidebar-create-wrap shrink-0 pb-1 pt-4 text-sm font-medium">
         <button
           onClick={onCreatePlaylist}
-          disabled={!canEditPlaylists}
           style={
             { "--playlist-create-accent": savedAccent } as React.CSSProperties
           }

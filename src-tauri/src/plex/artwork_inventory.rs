@@ -8,6 +8,13 @@ use sha2::{Digest, Sha256};
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+pub enum ArtworkKind { Artist, Album, Playlist }
+impl From<MetadataEditKind> for ArtworkKind {
+    fn from(kind: MetadataEditKind) -> Self { if kind == MetadataEditKind::Artist { Self::Artist } else { Self::Album } }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
 pub enum ArtworkRole { Poster, Background }
 impl ArtworkRole {
     pub fn inventory(self) -> &'static str { if self == Self::Poster { "posters" } else { "arts" } }
@@ -17,7 +24,7 @@ impl ArtworkRole {
 
 pub struct InventoryEntry { pub id: String, pub key: String, pub preview: Option<String>, pub provider: String, pub selected: bool }
 pub struct Inventory { pub baseline: String, pub entries: Vec<InventoryEntry> }
-pub struct PreparedArtworkEdit { pub item_id: i64, pub section_id: i64, pub kind: MetadataEditKind, pub role: ArtworkRole,
+pub struct PreparedArtworkEdit { pub item_id: i64, pub section_id: i64, pub kind: ArtworkKind, pub role: ArtworkRole,
     pub inventory: Inventory, choice: Option<String>, upload: Option<Vec<u8>> }
 fn fingerprint(values: &Value) -> String { hex::encode(Sha256::digest(values.to_string().as_bytes())) }
 fn numeric(value: Option<&Value>) -> Option<i64> { value.and_then(|v| v.as_i64().or_else(|| v.as_str()?.parse().ok())) }
@@ -68,22 +75,24 @@ fn inventory_preview_url(client: &PlexClient, item_id: i64, role: ArtworkRole, v
 }
 
 impl PlexClient {
-    async fn artwork_item(&self, section_id: i64, item_id: i64, kind: MetadataEditKind) -> Result<Value> {
+    async fn artwork_item(&self, section_id: i64, item_id: i64, kind: ArtworkKind) -> Result<Value> {
         if self.offline_only || section_id <= 0 || item_id <= 0 { bail!("Reconnect to the Plex music library.") }
         let section = self.get_section(section_id).await?;
         if section.key != section_id || section.section_type != "artist"
             || (self.library_scope != self.cache_scope_for_library(section_id, section.uuid.as_deref())
                 && self.library_scope != self.cache_scope_for_library(section_id, None)) { bail!("Plex music library changed.") }
+        if kind == ArtworkKind::Playlist { self.playlist_sync_state(section_id, item_id).await?; }
         let metadata: Value = self.get(&format!("/library/metadata/{item_id}")).await?;
         let items = metadata.get("Metadata").and_then(Value::as_array).context("Invalid Plex metadata.")?;
         if items.len() != 1 { bail!("Ambiguous Plex item.") }
         let item = &items[0];
-        let expected_kind = if kind == MetadataEditKind::Artist { "artist" } else { "album" };
-        if numeric(item.get("ratingKey")) != Some(item_id) || numeric(item.get("librarySectionID")) != Some(section_id)
+        let expected_kind = match kind { ArtworkKind::Artist => "artist", ArtworkKind::Album => "album", ArtworkKind::Playlist => "playlist" };
+        if numeric(item.get("ratingKey")) != Some(item_id) || (kind != ArtworkKind::Playlist && numeric(item.get("librarySectionID")) != Some(section_id))
             || item.get("type").and_then(Value::as_str) != Some(expected_kind) { bail!("Plex item or library changed.") }
         Ok(item.clone())
     }
-    pub async fn artwork_inventory(&self, section_id: i64, item_id: i64, kind: MetadataEditKind, role: ArtworkRole) -> Result<Inventory> {
+    pub async fn artwork_inventory(&self, section_id: i64, item_id: i64, kind: impl Into<ArtworkKind>, role: ArtworkRole) -> Result<Inventory> {
+        let kind = kind.into();
         let item = self.artwork_item(section_id, item_id, kind).await?;
         let response: Value = self.get(&format!("/library/metadata/{item_id}/{}", role.inventory())).await?;
         // PMS serializes XML <Photo> records under Metadata in its JSON
@@ -114,8 +123,9 @@ impl PlexClient {
         let baseline = fingerprint(&serde_json::json!([current, selected, locks]));
         Ok(Inventory { baseline, entries })
     }
-    pub async fn prepare_artwork_edit(&self, section_id: i64, item_id: i64, kind: MetadataEditKind, role: ArtworkRole,
+    pub async fn prepare_artwork_edit(&self, section_id: i64, item_id: i64, kind: impl Into<ArtworkKind>, role: ArtworkRole,
         baseline: &str, choice: Option<String>, upload: Option<Vec<u8>>) -> Result<PreparedArtworkEdit> {
+        let kind = kind.into();
         if choice.is_some() == upload.is_some() { bail!("Choose one artwork change.") }
         let upload = if let Some(bytes) = upload {
             if bytes.is_empty() || bytes.len() > crate::image_fetch::MAX_IMAGE_BYTES { bail!("Artwork upload exceeds 8 MiB.") }
@@ -195,6 +205,21 @@ mod tests {
             (200, serde_json::json!({"Metadata":[{"ratingKey":"11","librarySectionID":5,"type":"album","thumb":format!("/library/metadata/11/thumb/{selected}")}]})),
             (200, serde_json::json!({"size":2,"Metadata":[{"ratingKey":"metadata://poster/a","key":"/library/metadata/11/posters/a","selected":selected==1},{"ratingKey":"metadata://poster/b","key":"/library/metadata/11/posters/b","selected":selected==2}]})),
         ]
+    }
+    #[tokio::test]
+    async fn playlist_artwork_checks_the_selected_library_and_owned_occurrences_before_inventory() {
+        let section = serde_json::json!({"Directory":[{"key":"5","type":"artist","uuid":"fixture-library"}]});
+        let playlist = serde_json::json!({"Metadata":[{"ratingKey":"11","type":"playlist","playlistType":"audio","title":"Draft","smart":false,"radio":false,"leafCount":0,"thumb":"/library/metadata/11/thumb/1"}]});
+        let (client, server) = fixture(vec![
+            (200, section.clone()), (200, section), (200, playlist.clone()),
+            (200, serde_json::json!({"size":0,"totalSize":0,"offset":0,"Metadata":[]})), (200, playlist), replies(1)[2].clone(),
+        ]);
+        let inventory = client.artwork_inventory(5, 11, ArtworkKind::Playlist, ArtworkRole::Poster).await.unwrap();
+        assert_eq!(inventory.entries.len(), 2);
+        assert!(inventory.entries[0].selected);
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 6);
+        assert!(requests.iter().all(|request| request.starts_with(b"GET ")));
     }
     #[tokio::test] async fn json_metadata_inventory_preserves_both_posters_and_selection() {
         let mut sequence = replies(1);

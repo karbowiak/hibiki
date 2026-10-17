@@ -64,7 +64,8 @@ for (const [name, type] of [["Playlist", "playlist"], ["Track", "track"], ["Albu
   assert.equal(menu.getState().type, type); assert.equal(menu.getState().ownerScope, "library-one")
   assert.equal(document.querySelector('div[role="dialog"]')!.getAttribute("aria-label"), `${name} actions`)
   assert.ok(document.querySelector('div[role="dialog"]')!.contains(document.activeElement))
-  assert.equal(document.body.textContent!.includes("Add to playlist"), false)
+  // Local drafts remain available even when this provider cannot edit remote playlists.
+  assert.equal(document.body.textContent!.includes("Add to playlist"), type === "track")
   assert.equal(document.body.textContent!.includes("Start radio"), false)
   await key(document.activeElement as HTMLElement, "Escape"); assert.equal(menu.getState().open, false); assert.equal(document.activeElement, card)
 }

@@ -367,7 +367,7 @@ try {
           .click()
         await creator
           .getByRole("status")
-          .filter({ hasText: "Playlist created!" })
+          .filter({ hasText: "Saved in Hibiki" })
           .waitFor()
         assert.equal(
           await page.evaluate(() => (window as any).playlistCreator.created),

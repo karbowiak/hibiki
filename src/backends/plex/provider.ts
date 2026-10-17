@@ -525,7 +525,7 @@ export class PlexProvider implements MusicProvider {
   }
 
   async getArtworkInventory(
-    kind: "artist" | "album",
+    kind: "artist" | "album" | "playlist",
     itemId: string,
     role: "poster" | "background"
   ): Promise<LibraryArtworkInventory> {
@@ -539,7 +539,7 @@ export class PlexProvider implements MusicProvider {
     )
   }
   async saveArtwork(
-    kind: "artist" | "album",
+    kind: "artist" | "album" | "playlist",
     itemId: string,
     role: "poster" | "background",
     baseline: string,

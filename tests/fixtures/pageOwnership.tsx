@@ -878,6 +878,10 @@ try {
     assert.equal(document.querySelectorAll("[role=alert]").length, 0)
     assert.ok(document.body.textContent!.includes("No results"))
   } else {
+    mock.module("../../src/mixedPlaylists/create", () => ({
+      createLocalPlaylist: (metadata: { title: string }, ids: string[]) => library.getState().createPlaylist(metadata.title.trim(), ids),
+      draftPlaylistSummary: (playlist: unknown) => playlist,
+    }))
     const { CreatePlaylist } =
       await import("../../src/components/Pages/CreatePlaylist")
     const pending: ReturnType<typeof deferred<any>>[] = []
@@ -927,7 +931,7 @@ try {
     }
     const name = async () =>
       act(() => {
-        const input = document.querySelector("input")!
+        const input = document.querySelector<HTMLInputElement>('input:not([type="file"]):not([type="checkbox"])')!
         Object.getOwnPropertyDescriptor(
           dom.window.HTMLInputElement.prototype,
           "value"
@@ -941,7 +945,7 @@ try {
       await act(async () => pending[0].reject(Error("Could not create playlist")))
       assert.deepEqual(selectedIds, [["1", "2", "1"]])
       assert.equal(created, 0)
-      assert.equal(document.querySelector("input")!.value, "  My playlist  ")
+      assert.equal(document.querySelector<HTMLInputElement>('input:not([type="file"]):not([type="checkbox"])')!.value, "  My playlist  ")
       assert(document.querySelector("[role=alert]"))
       await act(submit)
       assert.deepEqual(selectedIds[1], ["1", "2", "1"], "retry retains the original songs")
@@ -954,7 +958,7 @@ try {
       assert.ok(
         document
           .querySelector("[role=status]")!
-          .textContent!.includes("created")
+          .textContent!.includes("Saved in Hibiki")
       )
       assert.ok(
         document
@@ -976,7 +980,7 @@ try {
       assert.ok(
         document
           .querySelector("[role=status]")!
-          .textContent!.includes("created")
+          .textContent!.includes("Saved in Hibiki")
       )
       await unmount()
       assert.equal(timers.size, 0, "unmount must cancel delayed close")
@@ -991,15 +995,10 @@ try {
     } else if (scenario === "playlist-provider") {
       await act(submit)
       await act(() => useProviderStore.getState().setProvider(provider()))
-      await act(async () => pending[0].reject(new Error("Old error")))
-      assert.equal(created, 0)
-      assert.equal(
-        closed,
-        1,
-        "library changes must dismiss the old playlist creation flow"
-      )
+      await act(async () => pending[0].resolve({ id: "created", title: "My playlist" }))
+      assert.equal(created, 1, "an empty local draft does not depend on a Plex session")
+      assert.equal(closed, 0, "changing Plex must not discard local draft details")
       assert.equal(document.querySelectorAll("[role=alert]").length, 0)
-      assert.equal(document.querySelector("input")!.disabled, false)
     } else if (scenario === "playlist-focus") {
       const dialog = document.querySelector("dialog")!
       assert.equal(dialog.getAttribute("aria-modal"), "true")
@@ -1008,9 +1007,9 @@ try {
           .getElementById(dialog.getAttribute("aria-labelledby")!)!
           .textContent!.includes("Create playlist")
       )
-      assert.equal(document.activeElement, document.querySelector("input"))
+      assert.equal(document.activeElement, document.querySelector<HTMLInputElement>('input:not([type="file"]):not([type="checkbox"])'))
       trigger.focus()
-      assert.equal(document.activeElement, document.querySelector("input"))
+      assert.equal(document.activeElement, document.querySelector<HTMLInputElement>('input:not([type="file"]):not([type="checkbox"])'))
       const buttons = [...dialog.querySelectorAll("button")]
       buttons.at(-1)!.disabled = false
       buttons.at(-1)!.focus()

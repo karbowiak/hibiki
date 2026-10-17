@@ -4,8 +4,12 @@ import { captureMusicOwner, resolveCounterpart } from "../mixedPlaylists/counter
 import { mixedAdapters } from "../mixedPlaylists/adapters"
 import { matchPlaylistBatch } from "../mixedPlaylists/matching"
 import { adoptRemote } from "../mixedPlaylists/reconcile"
-import { hydratePlaylist, newOccurrence, sameSequence, snapshotIds, type MixedPlaylist, type Service } from "../mixedPlaylists/model"
+import { hydratePlaylist, sameSequence, snapshotIds, playlistServices, type MixedPlaylist, type Service } from "../mixedPlaylists/model"
+import { appendDraftSongs, newDraft, reviewUnappliedCreation, validateDraftMetadata, type DraftMetadata } from "../mixedPlaylists/drafts"
 import { syncMixedPlaylist } from "../mixedPlaylists/sync"
+import { syncDraftDetails } from "../mixedPlaylists/details"
+import { syncDraftListenBrainz } from "../mixedPlaylists/listenbrainz"
+import { useListenBrainzStore } from "../metadata/listenbrainz/authStore"
 import type { MusicTrack } from "../types/music"
 
 interface State {
@@ -14,12 +18,15 @@ interface State {
   error: string | null
   running: Record<string, boolean>
   load(): Promise<void>
+  createDraft(metadata: DraftMetadata, id?: string): Promise<MixedPlaylist>
+  metadata(id: string, metadata: DraftMetadata): Promise<void>
+  externalSync(id: string, options?: { recoveryId?: string; prefer?: "hibiki" | "listenbrainz"; reviewNoCreation?: boolean }): Promise<void>
   convert(alias: string): Promise<MixedPlaylist>
   append(alias: string, tracks: MusicTrack[], admission: string): Promise<void>
   sync(id: string, retry?: boolean): Promise<void>
   edit(id: string, operation: { kind: "move"; from: number; to: number } | { kind: "delete"; index: number }): Promise<void>
   chooseOrder(id: string, side: Service | "hibiki"): Promise<void>
-  recover(id: string, destinationId?: string): Promise<void>
+  recover(id: string, destinationId?: string, reviewedNotApplied?: boolean): Promise<void>
   automatic(id: string, enabled: boolean): Promise<void>
 }
 const lanes = new Map<string, Promise<unknown>>()
@@ -45,11 +52,11 @@ async function latest(id: string) {
 }
 async function register(alias: string) {
   const capture = captureMusicOwner(), adapters = mixedAdapters(capture)
-  if (!capture.owners.plex || !capture.owners.ytmusic) throw Error("Connect Plex and YouTube Music to use mixed playlists.")
   const service = alias.startsWith("ytmusic:") ? "ytmusic" : "plex"
   const existing = (await mixedPlaylistRepository.load()).find(item => (item.id === alias || item.aliases.includes(alias)) &&
-    Object.entries(item.owners).every(([side, owner]) => capture.owners[side as Service] === owner))
+    (item.local || Object.entries(item.owners).every(([side, owner]) => capture.owners[side as Service] === owner)))
   if (existing) return existing
+  if (!capture.owners.plex || !capture.owners.ytmusic) throw Error("Connect Plex and YouTube Music to use mixed playlists.")
   const snapshot = await adapters[service]!.read(alias.replace(/^ytmusic:/, ""))
   if (!capture.current()) throw Error("Music accounts changed.")
   if (snapshot.readOnly) throw Error("Choose an owned, regular playlist. Smart playlists and generated mixes are read-only.")
@@ -67,6 +74,25 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
     void work.finally(() => { if (load === work) load = undefined }).catch(() => {})
     return work
   },
+  createDraft: (metadata, id = `mixed:${crypto.randomUUID()}`) => serial(id, async () => {
+    const existing = (await mixedPlaylistRepository.load()).find(item => item.id === id)
+    if (existing) {
+      const value = validateDraftMetadata(metadata)
+      if (JSON.stringify([existing.title, existing.description, existing.artwork, existing.external]) !== JSON.stringify([value.title, value.description, value.artwork, value.external])) {
+        if (existing.write || existing.detailsWrite || existing.artworkWrite) throw Error("This playlist was saved. Review its pending sync before changing details.")
+        return save({ ...existing, ...value })
+      }
+      publish(existing); return existing
+    }
+    return save(newDraft(metadata, id))
+  }),
+  metadata: (id, metadata) => serial(id, async () => {
+    const value = validateDraftMetadata(metadata), playlist = await latest(id)
+    if (!playlist.local) throw Error("This playlist’s metadata is managed by its source service.")
+    if (playlist.write || playlist.detailsWrite || playlist.artworkWrite || playlist.listenbrainz?.detailsWrite) throw Error("Review the pending provider write before editing playlist details.")
+    await save({ ...playlist, ...value })
+    void get().sync(id).catch(() => {})
+  }),
   convert: alias => serial(`alias:${alias}`, async () => {
     const playlist = await register(alias)
     void get().sync(playlist.id).catch(() => {})
@@ -80,23 +106,35 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
       playlist = await latest(playlist.id)
       if (!capture.current()) throw Error("Music accounts changed before the songs could be retained.")
       if (playlist.admittedDrops.includes(admission)) return
-      await save({ ...playlist, items: [...playlist.items, ...tracks.map(track => newOccurrence(track))],
-        admittedDrops: [...playlist.admittedDrops, admission], message: "Songs retained in Hibiki. Matching and provider sync will continue in the background." })
+      await save(appendDraftSongs(playlist, tracks, capture.owners, admission))
     })
     void get().sync(playlist.id).catch(() => {})
   }),
   sync: (id, retry = false) => serial(id, async () => {
     const capture = captureMusicOwner()
     let playlist = await latest(id)
+    if (!playlist.items.length && !Object.keys(playlist.providers).length) return
+    // Only an explicit retry can bind songs added without a connected owner.
+    if (playlist.local && retry) {
+      const owners = { ...playlist.owners }
+      for (const row of playlist.items) if (!owners[row.original] && capture.owners[row.original]) owners[row.original] = capture.owners[row.original]
+      playlist = await save({ ...playlist, owners })
+    }
+    if (playlist.items.some(row => !playlist.owners[row.original]))
+      throw Error("Connect the original music account, then choose Match and sync to connect these local songs.")
     const current = () => capture.current() && Object.entries(playlist.owners).every(([side, owner]) => capture.owners[side as Service] === owner)
     if (!current()) throw Error("Reconnect this playlist's original accounts to sync.")
     set(state => ({ running: { ...state.running, [id]: true } }))
     try {
+      if (useListenBrainzStore.getState().isAuthenticated)
+        playlist = await syncDraftListenBrainz(playlist, { current, save, provider: capture.provider, manual: retry, owners: capture.owners })
+      const adapters = mixedAdapters(capture)
+      playlist = await syncDraftDetails(playlist, { adapters, current, save, provider: capture.provider, review: retry, settleOnly: true })
       if (playlist.status === "conflict" || playlist.write) {
         playlist = await syncMixedPlaylist(playlist, { adapters: mixedAdapters(capture), current, save, maxWrites: 0 })
         if (playlist.status === "conflict" || playlist.write) return
       }
-      for (const target of ["plex", "ytmusic"] as const) {
+      for (const target of playlistServices(playlist)) {
         // Retry prior misses after catalog changes, without starving new rows.
         if (retry || playlist.items.some(row => !row.songs[target] && row.match.checkedAt && Date.now() - row.match.checkedAt > 3600000))
           playlist = await save({ ...playlist, items: playlist.items.map(row => row.songs[target] || (!retry && (!row.match.checkedAt || Date.now() - row.match.checkedAt <= 3600000)) ? row : { ...row, match: { status: "pending" } }) })
@@ -105,7 +143,8 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
         playlist = batch.playlist
       }
       if (!current()) return
-      await syncMixedPlaylist(playlist, { adapters: mixedAdapters(capture), current, save, maxWrites: 10 })
+      playlist = await syncMixedPlaylist(playlist, { adapters, current, save, maxWrites: 10 })
+      await syncDraftDetails(playlist, { adapters, current, save, provider: capture.provider, review: retry })
     } catch (failure) {
       if (current()) {
         const retained = await latest(id)
@@ -114,9 +153,23 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
       throw failure
     } finally { set(state => ({ running: { ...state.running, [id]: false } })) }
   }),
+  externalSync: (id, options = {}) => serial(id, async () => {
+    const capture = captureMusicOwner()
+    let playlist = await latest(id)
+    const current = () => capture.current() && Object.entries(playlist.owners).every(([side, owner]) => capture.owners[side as Service] === owner)
+    if (!current()) throw Error("Reconnect this playlist’s original music accounts.")
+    set(state => ({ running: { ...state.running, [id]: true } }))
+    try {
+      playlist = await syncDraftListenBrainz(playlist, { current, save, provider: capture.provider, owners: capture.owners, manual: true, ...options })
+      if (current()) void get().sync(id).catch(() => {})
+    } catch (failure) {
+      if (current()) await save({ ...await latest(id), status: "error", message: failure instanceof Error ? failure.message : String(failure) })
+      throw failure
+    } finally { set(state => ({ running: { ...state.running, [id]: false } })) }
+  }),
   edit: (id, operation) => serial(id, async () => {
     const playlist = await latest(id), capture = captureMusicOwner()
-    if (!Object.entries(playlist.owners).every(([side, owner]) => capture.owners[side as Service] === owner)) throw Error("Reconnect this playlist's original accounts.")
+    if (!playlist.local && !Object.entries(playlist.owners).every(([side, owner]) => capture.owners[side as Service] === owner)) throw Error("Reconnect this playlist's original accounts.")
     if (playlist.write || playlist.status === "conflict") throw Error("Resolve the pending playlist sync before editing its order.")
     const items = [...playlist.items]
     const index = operation.kind === "delete" ? operation.index : operation.from
@@ -144,11 +197,17 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
       baselineOrder: playlist.items.map(row => row.id), baselineTitle: playlist.title, status: "ready", message: "Order selected. Sync can continue." })
     void get().sync(id).catch(() => {})
   }),
-  recover: (id, destinationId) => serial(id, async () => {
+  recover: (id, destinationId, reviewedNotApplied) => serial(id, async () => {
     const capture = captureMusicOwner(), playlist = await latest(id), receipt = playlist.write
     if (!receipt) return
     const adapter = mixedAdapters(capture)[receipt.service]
     if (!adapter || adapter.owner !== playlist.owners[receipt.service]) throw Error("Reconnect the playlist's original account.")
+    if (reviewedNotApplied) {
+      if (!capture.current()) throw Error("Playlist account changed.")
+      await save(reviewUnappliedCreation(playlist))
+      void get().sync(id).catch(() => {})
+      return
+    }
     const target = destinationId ?? receipt.destinationId ?? playlist.providers[receipt.service]?.id
     if (!target) throw Error("Enter the ID of the playlist created on the service.")
     const actual = await adapter.read(target)

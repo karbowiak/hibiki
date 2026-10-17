@@ -66,7 +66,7 @@ pub struct BrowsePage {
     hubs: Vec<Shelf>,
     pub(super) continuation: Option<String>,
     thumbnail: Option<String>,
-    description: Option<String>,
+    pub(super) description: Option<String>,
     artist: Option<Artist>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     lyrics: Option<super::lyrics::Lyrics>,

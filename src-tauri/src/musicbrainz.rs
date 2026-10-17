@@ -42,6 +42,72 @@ impl RequestLimiter {
 }
 static LIMITER: Lazy<RequestLimiter> = Lazy::new(RequestLimiter::new);
 
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaylistRecordingSearch { title: String, artists: Vec<String>, duration_ms: u64 }
+fn exact_playlist_recording(value: &serde_json::Value, source: &PlaylistRecordingSearch) -> Option<String> {
+    let normalized = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    let rows = value["recordings"].as_array()?;
+    let count = value["count"].as_u64().or_else(|| value["recording-count"].as_u64())?;
+    if count != rows.len() as u64 || rows.len() > 25 || source.duration_ms == 0 { return None; }
+    let mut expected = source.artists.iter().map(|name| normalized(name)).collect::<Vec<_>>(); expected.sort(); expected.dedup();
+    if expected.is_empty() { return None; }
+    let mut found = std::collections::HashSet::new();
+    for row in rows {
+        if normalized(row["title"].as_str()?) != normalized(&source.title) { continue; }
+        let Some(duration) = row["length"].as_u64() else { continue; };
+        if duration.abs_diff(source.duration_ms) > 2000 || duration.min(source.duration_ms) == 0 ||
+            duration.abs_diff(source.duration_ms) as f64 / duration.min(source.duration_ms) as f64 > 0.02 { continue; }
+        let mut credits = row["artist-credit"].as_array()?.iter().filter_map(|credit| credit["artist"]["name"].as_str()).map(normalized).collect::<Vec<_>>();
+        credits.sort(); credits.dedup();
+        if credits != expected { continue; }
+        let id = row["id"].as_str()?;
+        if id.len() == 36 { found.insert(uuid::Uuid::parse_str(id).ok()?.to_string()); }
+    }
+    (found.len() == 1).then(|| found.into_iter().next().unwrap())
+}
+/// Optional playlist export only. No generic Plex MBID or first fuzzy hit can
+/// become a recording identity; all credits, title/version and duration agree.
+#[tauri::command]
+pub async fn musicbrainz_playlist_recording(source: PlaylistRecordingSearch) -> Result<Option<String>, String> {
+    if source.title.trim().is_empty() || source.title.len() > 500 || source.artists.is_empty() || source.artists.len() > 30 ||
+        source.artists.iter().any(|name| name.trim().is_empty() || name.len() > 500) || source.duration_ms == 0 || source.duration_ms > 86_400_000 {
+        return Err("Complete song metadata is needed to verify a recording.".into());
+    }
+    let query = format!("recording:{} AND artist:{}", lucene_phrase(&source.title), lucene_phrase(&source.artists[0]));
+    let response = musicbrainz_get(MB_CLIENT.get(format!("{MB_BASE}/recording")).query(&[("query", query.as_str()), ("fmt", "json"), ("limit", "25")])).await
+        .map_err(|_| "Recording lookup unavailable")?;
+    if !response.status().is_success() { return Err("Recording lookup unavailable".into()); }
+    let value = response.bounded_json(MAX_JSON_BYTES).await.map_err(|_| "Recording lookup unavailable")?;
+    Ok(exact_playlist_recording(&value, &source))
+}
+
+#[cfg(test)]
+mod playlist_metadata_identity_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn recording_search_requires_complete_unique_version_credits_and_duration_evidence() {
+        let source = PlaylistRecordingSearch { title: "夜の歌 (Live)".into(), artists: vec!["Artist A".into(), "Artist B".into()], duration_ms: 180000 };
+        let id = "11111111-1111-4111-8111-111111111111";
+        let exact = json!({"id":id,"title":source.title,"length":180200,"artist-credit":[{"artist":{"name":"Artist B"}},{"artist":{"name":"Artist A"}}]});
+        let response = json!({"count":1,"recordings":[exact]});
+        assert_eq!(exact_playlist_recording(&response, &source).as_deref(), Some(id));
+        for change in [json!({"title":"夜の歌"}), json!({"length":184000}), json!({"length":null}),
+            json!({"artist-credit":[{"artist":{"name":"Other"}}]})] {
+            let mut invalid = response.clone();
+            for (key, value) in change.as_object().unwrap() { invalid["recordings"][0][key] = value.clone(); }
+            assert!(exact_playlist_recording(&invalid, &source).is_none());
+        }
+        let mut partial = response.clone(); partial["count"] = json!(26);
+        assert!(exact_playlist_recording(&partial, &source).is_none());
+        let mut ambiguous = response;
+        let mut other = ambiguous["recordings"][0].clone(); other["id"] = json!("22222222-2222-4222-8222-222222222222");
+        ambiguous["recordings"].as_array_mut().unwrap().push(other); ambiguous["count"] = json!(2);
+        assert!(exact_playlist_recording(&ambiguous, &source).is_none());
+    }
+}
+
 async fn musicbrainz_get(request: reqwest::RequestBuilder) -> Result<reqwest::Response> {
     LIMITER.wait().await;
     request

@@ -425,6 +425,58 @@ async fn require_owned_destination(
     Ok(())
 }
 static SYNC_MUTATION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn details_payload(before: &Value, title: &str, description: &str) -> Result<Value> {
+    if title.trim().is_empty() || title.len() > 500 || description.len() > 5000 { bail!("Invalid playlist details") }
+    let extension = &before["playlist"]["extension"]["https://musicbrainz.org/doc/jspf#playlist"];
+    let public = extension["public"].as_bool().context("Playlist privacy is unavailable")?;
+    let collaborators = extension.get("collaborators").cloned().unwrap_or_else(|| json!([]));
+    let list = collaborators.as_array().context("Invalid playlist collaborators")?;
+    if list.len() > 100 || list.iter().any(|value| value.as_str().is_none_or(|name| name.len() > 500)) { bail!("Invalid playlist collaborators") }
+    Ok(json!({"playlist":{"title":title,"annotation":description,"extension":{"https://musicbrainz.org/doc/jspf#playlist":{"public":public,"collaborators":collaborators}}}}))
+}
+#[tauri::command]
+pub async fn playlist_sync_listenbrainz_describe(app: tauri::AppHandle, expected: PlaylistAccount, id: String,
+    before: ListenBrainzExpected, expected_description: String, title: String, description: String) -> Result<Value, String> {
+    if before.mbids.len() > MAX_ITEMS || before.title.len() > 500 || expected_description.len() > 5000 ||
+        title.trim().is_empty() || title.len() > 500 || description.len() > 5000 { return Err("Invalid playlist details".into()); }
+    let path = config(&app)?;
+    let _guard = SYNC_MUTATION_LOCK.lock().await;
+    let credentials = owned(&path, &expected).map_err(|_| "ListenBrainz account changed")?;
+    let work = async {
+        require_owned_destination(&CLIENT, BASE, &credentials.token, &id, &expected, || owned(&path, &expected).map(|_| ())).await?;
+        let actual = read_from(&CLIENT, BASE, &credentials.token, &id).await?;
+        if recording_ids(&actual, &id)? != before.mbids || actual["playlist"]["title"].as_str() != Some(&before.title) ||
+            actual["playlist"]["annotation"].as_str().unwrap_or("") != expected_description { bail!("Playlist changed before saving details") }
+        let payload = details_payload(&actual, &title, &description)?;
+        let result = response_guarded(CLIENT.post(endpoint(BASE, &["playlist", "edit", &canonical_mbid(&id)?])?)
+            .header("Authorization", format!("Token {}", credentials.token)).json(&payload), || owned(&path, &expected).map(|_| ())).await?;
+        if result["status"] != "ok" { bail!("Playlist details were not acknowledged") }
+        let result = read_from(&CLIENT, BASE, &credentials.token, &id).await?;
+        owned(&path, &expected)?;
+        if recording_ids(&result, &id)? != before.mbids || result["playlist"]["title"].as_str() != Some(&title) ||
+            result["playlist"]["annotation"].as_str().unwrap_or("") != description { bail!("Playlist details need review") }
+        Ok::<_, anyhow::Error>(result)
+    };
+    work.await.map_err(|_| "Playlist details need reconciliation before retrying.".into())
+}
+
+#[cfg(test)]
+mod description_payload_tests {
+    use super::*;
+    #[test]
+    fn description_edit_keeps_privacy_and_collaborators_and_does_not_upload_artwork() {
+        let before = json!({"playlist":{"extension":{"https://musicbrainz.org/doc/jspf#playlist":{"public":false,"collaborators":["friend"]}}}});
+        let payload = details_payload(&before, "Renamed", "Description").unwrap();
+        assert_eq!(payload["playlist"]["annotation"], "Description");
+        assert_eq!(payload["playlist"]["title"], "Renamed");
+        assert_eq!(payload["playlist"]["extension"], before["playlist"]["extension"]);
+        assert!(payload["playlist"].get("image").is_none());
+        assert!(details_payload(&json!({}), "Renamed", "Description").is_err());
+        let mut invalid = before; invalid["playlist"]["extension"]["https://musicbrainz.org/doc/jspf#playlist"]["collaborators"] = json!("not-a-list");
+        assert!(details_payload(&invalid, "Renamed", "Description").is_err());
+    }
+}
 #[tauri::command]
 pub async fn playlist_sync_listenbrainz_mutate(
     app: tauri::AppHandle,

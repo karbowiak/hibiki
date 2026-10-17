@@ -191,12 +191,12 @@ export interface MusicProvider {
     patch: import("../lib/metadataAdvanced").AdvancedMetadataPatch
   ): Promise<void>
   getArtworkInventory?(
-    kind: "artist" | "album",
+    kind: "artist" | "album" | "playlist",
     itemId: string,
     role: "poster" | "background"
   ): Promise<LibraryArtworkInventory>
   saveArtwork?(
-    kind: "artist" | "album",
+    kind: "artist" | "album" | "playlist",
     itemId: string,
     role: "poster" | "background",
     baseline: string,

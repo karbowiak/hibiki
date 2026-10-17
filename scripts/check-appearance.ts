@@ -83,6 +83,69 @@ async function checkIssueRegressions(page: Page, name: string) {
   await page.screenshot({ path: join(artifacts, `${name}-liked-source-entries.png`) })
   console.log(`${name}: issue regressions passed, including complete liked pagination, provider identities, video inclusion and matching playback counts`)
 }
+async function checkPlaylistDrafts(page: Page, name: string) {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.evaluate(() => { (window as any).fixtureAppearance.route("/library"); (window as any).fixtureAppearance.drafts.disconnect() })
+  const trigger = page.getByRole("button", { name: "Create Playlist", exact: true })
+  assert.equal(await trigger.isEnabled(), true, `${name}: empty creation needs no Plex connection`)
+  await trigger.click()
+  let dialog = page.getByRole("dialog", { name: "Create playlist", exact: true })
+  await dialog.getByLabel("Playlist name", { exact: true }).fill("Cancelled draft")
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
+  assert.equal(await page.evaluate(() => (window as any).fixtureAppearance.drafts.snapshot().length), 0)
+  await trigger.click()
+  dialog = page.getByRole("dialog", { name: "Create playlist", exact: true })
+  await dialog.getByLabel("Playlist name", { exact: true }).fill("Late nights")
+  await dialog.getByLabel(/^Description/).fill("A few favorites for the journey home.")
+  await dialog.getByRole("checkbox", { name: "ListenBrainz", exact: true }).check()
+  await dialog.getByRole("combobox", { name: "ListenBrainz sync direction", exact: true }).selectOption("two-way")
+  await dialog.getByRole("checkbox", { name: "Sync automatically", exact: true }).uncheck()
+  assert.equal(await dialog.getByRole("checkbox", { name: "Last.fm · unavailable", exact: true }).isDisabled(), true)
+  const pixel = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==", "base64")
+  await dialog.getByLabel("Playlist image", { exact: true }).setInputFiles({ name: "cover.png", mimeType: "image/png", buffer: pixel })
+  await dialog.getByRole("img", { name: "Playlist artwork preview", exact: true }).waitFor()
+  await dialog.getByRole("button", { name: "Remove image", exact: true }).click()
+  assert.equal(await dialog.getByRole("img", { name: "Playlist artwork preview", exact: true }).count(), 0)
+  await dialog.getByLabel("Playlist image", { exact: true }).setInputFiles({ name: "replacement.png", mimeType: "image/png", buffer: pixel })
+  await dialog.getByRole("img", { name: "Playlist artwork preview", exact: true }).waitFor()
+  for (const [width, height, theme] of [[1440, 900, "dark"], [1000, 760, "light"]] as const) {
+    await page.setViewportSize({ width, height })
+    await page.evaluate(theme => (window as any).fixtureAppearance.apply({ theme }), theme)
+    const surface = dialog.locator(".app-overlay-surface")
+    assert.ok(await surface.evaluate(element => element.scrollWidth <= element.clientWidth + 1), `${name}: playlist form overflows horizontally`)
+    await page.screenshot({ path: join(artifacts, `${name}-${width}-${theme}-playlist-draft-form.png`) })
+  }
+  await dialog.locator("form").evaluate(form => {
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }))
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }))
+  })
+  await dialog.getByRole("status").filter({ hasText: "Saved in Hibiki" }).waitFor()
+  await dialog.waitFor({ state: "hidden" })
+  assert.equal(await page.evaluate(() => (window as any).fixtureAppearance.drafts.snapshot().length), 1)
+  await page.locator('.sidebar-playlists').evaluate(element => { element.scrollTop = element.scrollHeight })
+  const link = page.locator('.app-sidebar a[href^="/mixed-playlist/"]').filter({ hasText: "Late nights" })
+  await link.waitFor()
+  const href = await link.getAttribute("href")
+  await link.click()
+  await page.getByRole("heading", { name: "Make it your playlist", exact: true }).waitFor()
+  await page.evaluate(() => (window as any).fixtureAppearance.drafts.reload())
+  await page.getByRole("heading", { name: "Late nights", exact: true }).waitFor()
+  assert.equal(await link.getAttribute("href"), href)
+  const saved = await page.evaluate(() => (window as any).fixtureAppearance.drafts.snapshot()[0])
+  assert.equal(saved.description, "A few favorites for the journey home.")
+  assert.ok(saved.artwork?.startsWith("data:image/jpeg;base64,"))
+  assert.deepEqual(saved.external.listenbrainz, { enabled: true, automatic: false, direction: "two-way" })
+  await page.screenshot({ path: join(artifacts, `${name}-playlist-draft-empty.png`) })
+  await page.getByRole("button", { name: "Edit details", exact: true }).click()
+  const editor = page.getByRole("dialog", { name: "Edit playlist", exact: true })
+  await editor.getByLabel("Playlist name", { exact: true }).fill("Journey home")
+  await editor.getByRole("button", { name: "Save changes", exact: true }).click()
+  await editor.waitFor({ state: "hidden" })
+  await page.getByRole("heading", { name: "Journey home", exact: true }).waitFor()
+  assert.equal(await page.locator('.app-sidebar a[href^="/mixed-playlist/"]').filter({ hasText: "Journey home" }).getAttribute("href"), href)
+  assert.deepEqual(await page.evaluate(() => (window as any).fixtureAppearance.drafts.writes()), [], `${name}: empty drafts must not mutate any service`)
+  console.log(`${name}: offline local drafts, artwork, metadata, sync preferences, cancellation, duplicate submit, restart and stable links passed`)
+}
 let artworkGate: Promise<void> | null = null
 async function checkPlaybackQuality(page: Page, name: string) {
   for (const [width, height, theme] of [[1940, 1214, "dark"], [1000, 760, "light"]] as const) {
@@ -775,6 +838,11 @@ try {
         `${origin}/tests/fixtures/libraryLayout/index.html?appearance=1&player=1&discovery=1${process.argv.includes("--album-hover-only") ? "&virtual=1" : ""}`
       )
       await page.waitForFunction(() => (window as any).visualFixtureReady)
+      if (process.argv.includes('--playlist-drafts-only')) {
+        await checkPlaylistDrafts(page, name)
+        assert.deepEqual(errors, [], `${name}: renderer errors`)
+        continue
+      }
       if (process.argv.includes('--issue-regressions-only')) {
         await checkIssueRegressions(page, name)
         assert.deepEqual(errors, [], `${name}: renderer errors`)

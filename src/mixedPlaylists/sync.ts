@@ -1,6 +1,6 @@
 import type { MixedAdapter } from "./adapters"
 import { bindSnapshot, nextMixedOperation, operationIds, projection, reconcileRemoteChanges, unsupportedPlexRepeats } from "./reconcile"
-import { sameSequence, snapshotIds, type MixedPlaylist, type RemotePlaylist, type Service } from "./model"
+import { playlistServices, sameSequence, snapshotIds, type MixedPlaylist, type RemotePlaylist, type Service } from "./model"
 
 export interface MixedSyncOptions {
   adapters: Partial<Record<Service, MixedAdapter>>
@@ -12,9 +12,12 @@ export interface MixedSyncOptions {
  * create again; unknown edits can settle only against a fresh exact post-read. */
 export async function syncMixedPlaylist(initial: MixedPlaylist, options: MixedSyncOptions) {
   let playlist = initial, budget = options.maxWrites ?? 10
+  const services = playlistServices(playlist)
+  // Empty drafts never create resources; existing lists can receive removals.
+  if (!services.length || (!playlist.items.length && !Object.keys(playlist.providers).length)) return playlist
   const owns = () => {
     if (!options.current()) throw Error("Music accounts changed. Sync will resume when the original accounts reconnect.")
-    for (const service of ["plex", "ytmusic"] as const) {
+    for (const service of services) {
       if (playlist.owners[service] && options.adapters[service]?.owner !== playlist.owners[service]) throw Error("Reconnect this playlist's original accounts to sync.")
     }
   }
@@ -32,16 +35,17 @@ export async function syncMixedPlaylist(initial: MixedPlaylist, options: MixedSy
     if (receipt.kind !== "create" && sameSequence(projection(playlist, receipt.service).map(row => row.songs[receipt.service]!.track.id), snapshotIds(actual)))
       await save(bindSnapshot(playlist, actual))
   }
-  for (const service of ["plex", "ytmusic"] as const) {
+  for (const service of services) {
     const ref = playlist.providers[service]
     if (ref) { const snapshot = await options.adapters[service]!.read(ref.id); owns(); snapshots.push(snapshot) }
   }
   if (playlist.status === "conflict") return playlist
   const reconciled = await save(reconcileRemoteChanges(playlist, snapshots))
   if (reconciled.status === "conflict") return reconciled
-  for (const service of ["plex", "ytmusic"] as const) {
+  for (const service of services) {
     const adapter = options.adapters[service]!
     if (!playlist.providers[service]) {
+      if (!playlist.items.length) continue
       if (!budget) return playlist
       await save({ ...playlist, status: "syncing", write: { id: crypto.randomUUID(), kind: "create", service, afterIds: [], state: "admitted" } })
       budget--
@@ -76,9 +80,9 @@ export async function syncMixedPlaylist(initial: MixedPlaylist, options: MixedSy
     if (!sameSequence(snapshotIds(before), desired)) return playlist
     await save(bindSnapshot(playlist, before))
   }
-  const unmatched = playlist.items.filter(row => !row.songs.plex || !row.songs.ytmusic).length
+  const unmatched = services.length === 2 ? playlist.items.filter(row => !row.songs.plex || !row.songs.ytmusic).length : 0
   const repeats = unsupportedPlexRepeats(playlist)
   return save({ ...playlist, status: "ready", baselineOrder: playlist.items.map(row => row.id), baselineTitle: playlist.title,
-    message: [unmatched ? `${unmatched} unmatched songs retained in Hibiki.` : "Both playlists are up to date.",
+    message: [unmatched ? `${unmatched} unmatched songs retained in Hibiki.` : services.length === 2 ? "Both playlists are up to date." : "Playlist is up to date.",
       repeats ? `${repeats} repeated copies are retained in Hibiki and YTM; Plex cannot retain these duplicates.` : ""].filter(Boolean).join(" ") })
 }

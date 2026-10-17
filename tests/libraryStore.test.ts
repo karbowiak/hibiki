@@ -8,7 +8,7 @@ const track = (id: string, userRating: number | null = null) => ({ id, title: id
 const playlist = (id: string, trackCount = 1) =>
   ({ id, title: id, trackCount, type: "playlist" }) as MusicPlaylist
 const release = (id: string) => ({ id, title: id, releaseDate: "2026-10-11" }) as MusicAlbum
-function harness(overrides: Partial<MusicProvider> = {}) {
+function harness(overrides: Partial<MusicProvider> = {}, createLocalPlaylist = mock(async (title: string, ids: string[]) => ({ ...playlist("mixed:local", ids.length), title, providerKey: "hibiki" }))) {
   const values = new Map<string, string>()
   const storage = {
     getItem: async (key: string) => values.get(key) ?? null,
@@ -35,7 +35,7 @@ function harness(overrides: Partial<MusicProvider> = {}) {
       ...overrides
     }) as unknown as MusicProvider
   let provider = makeProvider("account-a", overrides)
-  const store = createLibraryStore({ getProvider: () => provider, storage, delay: async () => {} })
+  const store = createLibraryStore({ getProvider: () => provider, storage, delay: async () => {}, createLocalPlaylist })
   return {
     store,
     values,
@@ -328,17 +328,19 @@ test("rating changes are applied to a playlist response already in flight", asyn
   expect(h.state().currentPlaylistItems[0].userRating).toBe(10)
 })
 
-test("a playlist creation completing on a retired server cannot enter the new account's list", async () => {
+test("local draft creation survives a Plex change without entering either server's cache", async () => {
   const pending = deferred<MusicPlaylist>()
-  const h = harness({ createPlaylist: () => pending.promise })
+  const remote = mock(async () => playlist("remote"))
+  const h = harness({ createPlaylist: remote }, mock(() => pending.promise))
   await h.activate()
   const creating = h
     .state()
     .createPlaylist("name")
     .catch((error) => error)
   await h.switchTo("account-b")
-  pending.resolve(playlist("old-created"))
-  expect(await creating).toBeInstanceOf(Error)
+  pending.resolve(playlist("mixed:local"))
+  expect((await creating).id).toBe("mixed:local")
+  expect(remote).not.toHaveBeenCalled()
   expect(h.state().playlists).toEqual([])
 })
 
@@ -642,11 +644,14 @@ test("offline activation rechecks saved playlists instead of restoring online av
 })
 
 
-test("playlist creation sends the selected occurrences in the original create request", async () => {
-  const createPlaylist = mock(async (_title: string, _ids: string[]) => playlist("new", 3))
-  const h = harness({ createPlaylist })
+test("playlist creation admits selected occurrences through the local lifecycle, leaving remote creation deferred", async () => {
+  const createPlaylist = mock(async () => playlist("remote", 3))
+  const local = mock(async (_title: string, _ids: string[]) => playlist("mixed:new", 3))
+  const h = harness({ createPlaylist }, local)
   await h.activate()
-  await h.state().createPlaylist("Selected songs", ["1", "2", "1"])
-  expect(createPlaylist.mock.calls).toEqual([["Selected songs", ["1", "2", "1"]]])
-  expect(h.state().playlists.at(-1)?.trackCount).toBe(3)
+  const created = await h.state().createPlaylist("Selected songs", ["1", "2", "1"])
+  expect(local.mock.calls).toEqual([["Selected songs", ["1", "2", "1"]]])
+  expect(createPlaylist).not.toHaveBeenCalled()
+  expect(created.trackCount).toBe(3)
+  expect(h.state().playlists).toEqual([])
 })

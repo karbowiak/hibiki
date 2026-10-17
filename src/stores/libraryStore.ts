@@ -281,12 +281,14 @@ interface LibraryDependencies {
   getProvider(): MusicProvider | null
   storage?: StateStorage
   delay?: (milliseconds: number) => Promise<void>
+  createLocalPlaylist?: (title: string, itemIds: string[]) => Promise<MusicPlaylist>
 }
 
 export function createLibraryStore({
   getProvider,
   storage,
-  delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  createLocalPlaylist: createLocal,
 }: LibraryDependencies) {
   const cache = new ScopedPersistence(storage, "hibiki-library-v3")
   let epoch = 0,
@@ -696,13 +698,10 @@ export function createLibraryStore({
         return work
       },
       createPlaylist: async (title, itemIds = []) => {
-        const session = capture()
-        if (!session) throw new Error("No provider")
-        const playlist = await session.provider.createPlaylist(title, itemIds)
-        if (!current(session)) throw new Error("Library connection changed before the playlist was returned")
-        requests.delete("playlists")
-        set((state) => ({ playlists: [...state.playlists, playlist], _playlistsFetchedAt: null }))
-        return playlist
+        if (createLocal) return createLocal(title, [...itemIds])
+        const { createLocalPlaylist } = await import("../mixedPlaylists/create")
+        const { defaultPlaylistSync } = await import("../mixedPlaylists/drafts")
+        return createLocalPlaylist({ title, description: "", artwork: null, external: defaultPlaylistSync() }, itemIds)
       },
       acceptLocalRefresh: (method,args,payload) => {
         const fields:Record<string,string>={getPlaylists:"playlists",getRecentlyAdded:"recentlyAdded",getLatestReleases:"latestReleases",getHubs:"hubs",getLikedTracks:"likedTracks",getLikedAlbums:"likedAlbums",getLikedArtists:"likedArtists"}

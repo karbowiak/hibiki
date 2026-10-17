@@ -58,12 +58,34 @@ against a user's playlists. No release tag is created by this work.
 - Chromium and WebKit check both provider filters, video inclusion and the exact
   resulting playback identities.
 
+## Local playlist creation and deferred service sync (#16, #33)
+
+- Empty playlists retain their name, description, raster artwork and external
+  sync preferences in IndexedDB. Creation and local editing work without Plex or
+  YTM and make no service calls. Double submission reuses one local identity.
+- First-song tests cover Plex and YTM independently, adding the other service,
+  offline admission, duplicate occurrences, restart reuse, account changes and
+  becoming empty again without deleting or recreating counterparts.
+- Details and Plex artwork saves retain separate receipts before mutation.
+  Uncertain outcomes require readback or explicit review; known destination IDs
+  recover the existing playlist. Unknown creations cannot retry automatically.
+- ListenBrainz tests cover verified recording subsets, delayed matches, incoming
+  additions/reordering, conflicts, restart, uncertain creates/edits and explicitly
+  reviewed absent creations. Existing recording checks and direction controls are
+  reused. Descriptions use the supported edit endpoint while preserving privacy
+  and collaborators. Artwork remains local for YTM and ListenBrainz. Last.fm's
+  deprecated playlist API is shown as unavailable.
+- Chromium and WebKit exercise creation, artwork replacement/removal, cancel,
+  local storage reload, stable sidebar links, empty view and offline editing.
+- Remote writes are fixture-tested with exact before/after snapshots. These
+  checks did not create or edit playlists in the user's live accounts.
+
 ## Recorded checks
 
-- Full frontend suite: **1,199 passed**, zero failures (before the four additional
-  mixed-playlist regression cases above).
+- Full frontend suite: **1,220 passed**, zero failures, including the draft and
+  mixed-playlist regression cases above.
 - Focused acceptance suite including those cases: **102 passed**, zero failures.
-- Full native suite: **817 passed**, 11 ignored; remote integration tests excluded.
+- Full native suite: **820 passed**, 11 ignored; remote integration tests excluded.
 - Native discovery parser rerun: **9 passed**, zero failures.
 - Application and script TypeScript projects pass `--noEmit`.
 - Chromium and WebKit issue interaction checks pass.

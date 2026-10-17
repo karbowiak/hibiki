@@ -85,6 +85,8 @@ async function setup() {
     transformCallback: () => ++callback,
     unregisterCallback: () => {},
     invoke: async (command: string, args:any={}) => {
+      if (/^(?:create_playlist|edit_playlist|ytmusic_playlist_write|save_library_artwork|playlist_sync_listenbrainz_(?:create|mutate|describe))$/.test(command))
+        (w.fixturePlaylistWrites ??= []).push(command)
       if (command === "ytmusic_status") return { enabled: youtubeArtistEnabled, phase: youtubeArtistEnabled ? "connected" : "disconnected", accountId: youtubeArtistEnabled ? "fixture-youtube-owner" : null, lastCheckedAt: null, nextRefreshAt: null, message: null }
       if (command === "ytmusic_browse" && args.browseId === "VLLM" && youtubeLikesEnabled) {
         const song = (id: string, title: string, videoType = "MUSIC_VIDEO_TYPE_ATV") => ({ id, kind: "song", title, artist: tracks[0].artistName, album: tracks[0].albumName, thumbnail: thumb, duration: "3:00", year: null, videoType })
@@ -521,6 +523,12 @@ async function setup() {
   }
   setHome(5)
   w.fixtureAppearance = {
+    drafts: {
+      disconnect: () => { useProviderStore.setState({ provider: null }); useYoutubeMusicDiscoveryStore.setState({ connected: false, accountId: null }) },
+      snapshot: () => useMixedPlaylistStore.getState().playlists.filter(item => item.local),
+      reload: async () => { useMixedPlaylistStore.setState({ playlists: [], loaded: false }); await useMixedPlaylistStore.getState().load() },
+      writes: () => w.fixturePlaylistWrites ?? [],
+    },
     likedPreview: () => {
       youtubeLikesEnabled = true
       useUIStore.setState({ isQueueOpen: false, isQueuePinned: false })

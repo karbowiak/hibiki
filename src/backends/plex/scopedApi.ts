@@ -528,7 +528,7 @@ export function createPlexApi(
   function getLibraryArtwork(
     sectionId: number,
     itemId: number,
-    kind: "artist" | "album",
+    kind: "artist" | "album" | "playlist",
     role: "poster" | "background"
   ): Promise<LibraryArtworkInventory> {
     return invoke("get_library_artwork", { sectionId, itemId, kind, role })
@@ -536,7 +536,7 @@ export function createPlexApi(
   function saveLibraryArtwork(
     sectionId: number,
     itemId: number,
-    kind: "artist" | "album",
+    kind: "artist" | "album" | "playlist",
     role: "poster" | "background",
     baseline: string,
     change: { choice: string } | { upload: number[] }

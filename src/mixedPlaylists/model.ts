@@ -27,6 +27,7 @@ export interface RemotePlaylist {
   owner: string
   id: string
   title: string
+  description?: string
   readOnly: boolean
   items: { occurrenceId: string; track: MusicTrack; added?: AddedDate }[]
 }
@@ -36,6 +37,25 @@ export interface MixedPlaylist {
   id: string
   title: string
   owners: Owners
+  /** App-owned drafts remain browseable/editable independently of connections. */
+  local?: true
+  description?: string
+  artwork?: string | null
+  external?: {
+    listenbrainz: { enabled: boolean; automatic: boolean; direction: "export" | "import" | "two-way" }
+  }
+  detailsWrite?: { service: Service; title: string; description: string; before: RemotePlaylist }
+  artworkSaved?: string
+  artworkWrite?: { baseline: string; digest: string }
+  listenbrainz?: {
+    link?: import("../playlistSync/linked").LinkedPlaylist
+    seeded?: boolean
+    creationPending?: boolean
+    proofs: Record<string, { fingerprint: string; mbid: string | null; checkedAt: number }>
+    songs?: Record<string, MusicTrack>
+    message?: string
+    detailsWrite?: { before: import("../playlistSync/types").PlaylistSnapshot; title: string; description: string }
+  }
   /** Original sidebar identity stays usable after conversion. */
   aliases: string[]
   providers: Partial<Record<Service, { id: string; readOnly: boolean }>>
@@ -50,6 +70,14 @@ export interface MixedPlaylist {
   /** Saved before an external write. An uncertain write is read back, never blindly retried. */
   write?: { id: string; service: Service; kind: "create" | "append" | "delete" | "move"; before?: RemotePlaylist; afterIds: string[]; destinationId?: string; state: "admitted" | "unknown" }
   admittedDrops: string[]
+  reviewedCreations?: { receipt: NonNullable<MixedPlaylist["write"]>; reviewedAt: number }[]
+}
+
+export const playlistServices = (playlist: MixedPlaylist): Service[] => (["plex", "ytmusic"] as const)
+  .filter(service => !!playlist.owners[service])
+export function playlistSourceLabel(playlist: MixedPlaylist) {
+  const services = playlistServices(playlist)
+  return services.length === 2 ? "Plex + YTM" : services[0] === "plex" ? "Plex" : services[0] === "ytmusic" ? "YTM" : "Hibiki"
 }
 
 export function sameOwners(a: Owners, b: Owners) {

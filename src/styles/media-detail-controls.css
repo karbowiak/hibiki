@@ -47,3 +47,9 @@
 .playlist-detail-page .media-secondary {
   flex-shrink: 0;
 }
+.playlist-editor .media-secondary {
+  color: var(--text-primary);
+}
+.playlist-editor .media-secondary:focus-visible {
+  outline-color: var(--text-primary);
+}

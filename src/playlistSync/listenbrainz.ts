@@ -104,6 +104,7 @@ export interface ListenBrainzPlaylistTransport {
     title: string,
     mbids: readonly string[]
   ): Promise<{ id: string }>
+  describe?(expected: PlaylistAccount, before: PlaylistSnapshot, title: string, description: string): Promise<unknown>
 }
 export const nativeListenBrainzPlaylists: ListenBrainzPlaylistTransport = {
   account: () => invoke("playlist_sync_listenbrainz_account"),
@@ -125,6 +126,10 @@ export const nativeListenBrainzPlaylists: ListenBrainzPlaylistTransport = {
     }),
   create: (expected, title, mbids) =>
     invoke("playlist_sync_listenbrainz_create", { expected, title, mbids }),
+  describe: (expected, before, title, description) => invoke("playlist_sync_listenbrainz_describe", {
+    expected, id: before.id, before: { title: before.title, mbids: before.items.map(row => row.track.recordingMbid) },
+    expectedDescription: before.description ?? "", title, description,
+  }),
 }
 /** An adapter stays bound to the exact preview account, including reconnects to the same username. */
 export function listenBrainzPlaylistAdapter(
