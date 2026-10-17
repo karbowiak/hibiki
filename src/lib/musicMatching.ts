@@ -1,6 +1,7 @@
 import type { MusicItem, MusicTrack } from "../types/music"
 import { artistNameSimilarity, ARTIST_NAME_THRESHOLD } from "./artistMatching"
 import { playlistCandidateScore } from "../playlistSync/matching"
+import { itemArtistCredits, itemArtistCreditsKey } from "./artistCredits"
 
 export const releaseNameKey = (title: string) => title.normalize("NFKC").toLowerCase().trim()
   .replace(/[‘’]/g, "'").replace(/\s+-\s+(single|ep)$/, "").replace(/\s+/g, " ")
@@ -8,10 +9,18 @@ export const releaseNameKey = (title: string) => title.normalize("NFKC").toLower
 /** Version/featured-credit/duration checks are shared with playlist matching. */
 export function sameRecording(left: MusicTrack, right: MusicTrack) {
   if (typeof left.explicit === "boolean" && typeof right.explicit === "boolean" && left.explicit !== right.explicit) return false
-  const source = { id: left.id, title: left.title, artist: left.artistName, album: left.albumName, durationMs: left.duration }
-  const candidate = { id: right.id, title: right.title, artist: right.artistName, album: right.albumName, durationMs: right.duration }
+  const source = { id: left.id, title: left.title, artist: itemArtistCreditsKey(left), album: left.albumName, durationMs: left.duration }
+  const candidate = { id: right.id, title: right.title, artist: itemArtistCreditsKey(right), album: right.albumName, durationMs: right.duration }
   if (playlistCandidateScore(source, candidate) > 0.95) return true
-  return artistNameSimilarity(left.artistName, right.artistName) >= ARTIST_NAME_THRESHOLD &&
+  const credits = itemArtistCredits(left), others = itemArtistCredits(right)
+  const used = new Set<number>()
+  const sameArtists = credits.length === others.length && credits.length > 0 && credits.every(credit => {
+    const index = others.findIndex((other, index) => !used.has(index) && artistNameSimilarity(credit.name, other.name) >= ARTIST_NAME_THRESHOLD)
+    if (index < 0) return false
+    used.add(index)
+    return true
+  })
+  return sameArtists &&
     playlistCandidateScore(source, { ...candidate, artist: source.artist }) > 0.95
 }
 

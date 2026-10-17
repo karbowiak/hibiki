@@ -40,12 +40,42 @@ import { useLibraryPlaylists, libraryPlaylistHref, type LibraryPlaylist } from "
 import { savePlaylistOrder } from "../stores/playlistOrder"
 import { youtubeMusicCollectionSource, useYoutubeMusicDiscoveryStore } from "../backends/ytmusic/discovery"
 import { MusicSourceBadge } from "./shared/MusicSource"
+import { IconChevronRight, IconServer } from "@tabler/icons-react"
 
 // ---------------------------------------------------------------------------
 // Custom order persistence (localStorage)
 // ---------------------------------------------------------------------------
 
 const LIBRARY_EXPANDED_KEY = "plex-sidebar-library-expanded"
+
+function ServerLibraryNavigation() {
+  const [location] = useLocation()
+  const active = location.startsWith("/server-library/")
+  const [expanded, setExpanded] = useState(() => {
+    try { return active || localStorage.getItem("hibiki-server-library-expanded") === "true" } catch { return active }
+  })
+  useEffect(() => { if (active) setExpanded(true) }, [location, active])
+  return <li>
+    <button type="button" aria-expanded={expanded} aria-controls="sidebar-server-library-links"
+      onClick={() => setExpanded(previous => {
+        try { localStorage.setItem("hibiki-server-library-expanded", String(!previous)) } catch {}
+        return !previous
+      })}
+      className={clsx("shell-nav-link sidebar-nav-link flex w-full items-center gap-3 rounded-md px-3 text-left transition-colors hover:bg-accent-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
+        active ? "shell-nav-active bg-accent-tint-strong text-accent" : "text-(--text-secondary)")}>
+      <IconServer size={20} aria-hidden="true" /><span className="min-w-0 flex-1 truncate">Server Library</span>
+      <IconChevronRight size={16} className={expanded ? "rotate-90" : ""} aria-hidden="true" />
+    </button>
+    {expanded && <ul id="sidebar-server-library-links" className="sidebar-library-links mb-2 ml-8 mt-1 space-y-0.5 text-sm font-normal">
+      {["Artists", "Albums", "Songs"].map(title => {
+        const href = `/server-library/${title.toLowerCase()}`
+        return <li key={href}><Link href={href} aria-current={location === href ? "page" : undefined}
+          className={clsx("shell-nav-link flex h-8 items-center rounded px-2 no-underline transition-colors hover:bg-accent-tint hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
+            location === href ? "shell-nav-active bg-accent-tint-strong text-accent" : "text-(--text-secondary)")}>{title}</Link></li>
+      })}
+    </ul>}
+  </li>
+}
 
 // ---------------------------------------------------------------------------
 // Sortable playlist item
@@ -505,6 +535,7 @@ export function SideBar({
               </li>
             )
           })}
+        <ServerLibraryNavigation />
       </ul>
 
       <div className="sidebar-create-wrap shrink-0 pb-1 pt-4 text-sm font-medium">

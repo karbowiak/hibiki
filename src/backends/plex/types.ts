@@ -66,6 +66,7 @@ export interface Track {
   /** Album studio / record label */
   parent_studio: string | null
   grandparent_key: string
+  grandparent_guid?: string | null
   /** Artist name */
   grandparent_title: string
   library_section_id: number

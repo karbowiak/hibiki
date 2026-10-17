@@ -1,3 +1,4 @@
+import { ArtistCredits } from "./shared/ArtistCredits"
 import { buildExternalImageUrl } from "../lib/imageUrl"
 import { PlaybackPalette } from "./PlaybackPalette"
 import { useAlbumImage } from "../hooks/useMediaImage"
@@ -487,7 +488,6 @@ export function Player() {
   const albumArtwork = useAlbumImage(currentTrack?.artistName ?? null, currentTrack?.albumName ?? null, currentTrack?.albumThumbUrl ?? currentTrack?.thumbUrl ?? null, currentTrack?.albumId)
   const thumbUrl = albumArtwork ?? currentTrack?.artistThumbUrl ?? null
 
-  const artistEntity = trackEntity(currentTrack, "artist")
   const albumEntity = trackEntity(currentTrack, "album")
   const repeatActive = repeat > 0
   const shuffleActive = shuffle
@@ -618,9 +618,7 @@ export function Player() {
                       </MusicEntityLink>
                     </h6>
                     <p className="truncate text-[0.688rem] text-white/60 mt-0.5">
-                      <MusicEntityLink entity={artistEntity} className="hover:text-white hover:underline transition-colors">
-                        {currentTrack ? currentTrack.artistName : "Choose music from your library"}
-                      </MusicEntityLink>
+                      {currentTrack ? <ArtistCredits item={currentTrack} className="hover:text-white hover:underline transition-colors" /> : "Choose music from your library"}
                       {showAlbumInSubtitle && <>
                         <span className="mx-1 text-white/30">·</span>
                         <MusicEntityLink entity={albumEntity} className="hover:text-white hover:underline transition-colors">

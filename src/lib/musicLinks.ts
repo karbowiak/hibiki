@@ -1,6 +1,8 @@
 import { useProviderStore } from "../stores/providerStore"
 import { browseYoutubeMusic, useYoutubeMusicDiscoveryStore } from "../backends/ytmusic/discovery"
 import { createMusicLinkResolver } from "./musicLinkResolver"
+import { trackEntity } from "./musicEntity"
+import { youtubeMusicSongMetadata } from "../backends/ytmusic/metadata"
 import type { MusicEntityRef } from "./musicEntity"
 import type { ContextAction } from "../stores/contextMenuStore"
 import { useNotificationCenterStore } from "../stores/notificationCenterStore"
@@ -17,6 +19,11 @@ export function resolveMusicEntity(ref: MusicEntityRef) {
     const identity = { provider, session, scope, revision: connection.revision, connected: connection.connected }
     owner = identity
     resolve = createMusicLinkResolver({
+      hydrate: async ref => {
+        if (!ref.trackId) return null
+        const track = ref.trackId.startsWith("ytmusic:") ? await youtubeMusicSongMetadata(ref.trackId) : await provider?.getTrack(ref.trackId)
+        return track ? trackEntity(track, "album") : null
+      },
       current: () => owner === identity && useProviderStore.getState().provider === provider && provider?.playbackSession === session &&
         provider?.cacheScope === scope && useYoutubeMusicDiscoveryStore.getState().revision === connection.revision &&
         useYoutubeMusicDiscoveryStore.getState().connected === connection.connected,

@@ -1,6 +1,7 @@
 import type { MusicTrack } from "../../types/music"
 import type { YoutubeMusicSong } from "./api"
 import { buildExternalImageUrl } from "../../lib/imageUrl"
+import { normalizeArtistCredits } from "../../lib/artistCredits"
 
 export function isYoutubeMusicId(id: string): boolean {
   return /^ytmusic:[A-Za-z0-9_-]{11}$/.test(id)
@@ -42,6 +43,7 @@ export function youtubeMusicTrack(song: YoutubeMusicSong): MusicTrack {
     providerKey: "ytmusic",
     title: song.title,
     artistName: song.artist,
+    artistCredits: normalizeArtistCredits(song.artist),
     albumName: song.album ?? "",
     duration,
     trackNumber: 0,

@@ -7,7 +7,7 @@ import { usePlayerStore } from "../../stores/playerStore"
 import { useProviderStore } from "../../stores/providerStore"
 import { prefetchAlbum, prefetchArtist } from "../../stores/metadataCache"
 import { buildExternalImageUrl } from "../../lib/imageUrl"
-import { youtubeMusicCollectionSource, youtubeMusicItemHref, youtubeMusicItemTrack, useYoutubeMusicDiscoveryStore } from "../../backends/ytmusic/discovery"
+import { youtubeMusicCollectionSource, youtubeMusicItemHref, youtubeMusicItemTrack, youtubeMusicItemCredits, useYoutubeMusicDiscoveryStore } from "../../backends/ytmusic/discovery"
 import { useYoutubeMusicLikesStore } from "../../backends/ytmusic/likes"
 import { useLocation } from "wouter"
 import { youtubeMusicContext } from "../../backends/ytmusic/contextActions"
@@ -36,7 +36,8 @@ export function DiscoveryCard({ entry, scrollItem, large, showYear, mix }: { ent
     if (item.kind === "song") void player.playTrack(youtubeMusicItemTrack(item), undefined, "YouTube Music")
     else void player.playPagedTracks(youtubeMusicCollectionSource({ browseId: item.id }), item.title, youtubeMusicItemHref(item))
   }
-  return <MediaCard title={item.title} desc={[item.description || item.artist, showYear ? item.year : null, mix ? null : "YTM"].filter(Boolean).join(" · ") || "Mix for You"}
+  return <MediaCard title={item.title} desc={[(item.kind === "song" || item.kind === "album") ? item.artist || item.description : item.description || item.artist, showYear ? item.year : null, mix ? null : "YTM"].filter(Boolean).join(" · ") || "Mix for You"}
+    descriptionArtists={(item.kind === "song" || item.kind === "album") && item.artist ? { name: item.artist, credits: youtubeMusicItemCredits(item) } : undefined}
     thumb={item.thumbnail ? buildExternalImageUrl(item.thumbnail) : null} scrollItem={scrollItem} large={large}
     artworkBadge={<MusicSourceBadge source="ytmusic" />}
     isArtist={item.kind === "artist"}

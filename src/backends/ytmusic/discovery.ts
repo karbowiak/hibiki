@@ -9,13 +9,15 @@ import type { PagedTrackSource } from "../../lib/pagedPlayback"
 import { discoveryPages } from "../../lib/discoveryPages"
 import { buildExternalImageUrl } from "../../lib/imageUrl"
 import { useYoutubeMusicLikesStore } from "./likes"
-import type { MusicItem } from "../../types/music"
+import type { MusicItem, MusicArtistCredit } from "../../types/music"
+import { normalizeArtistCredits } from "../../lib/artistCredits"
 
 export interface YoutubeMusicItem {
   id: string
   kind: "song" | "album" | "playlist" | "artist"
   title: string
   artist: string
+  artistCredits?: MusicArtistCredit[]
   description?: string
   thumbnail: string | null
   duration: string | null
@@ -129,12 +131,16 @@ export function browseYoutubeMusic(destination: YoutubeMusicDestination, continu
     () => { if (catalogRequests.get(key)?.promise === promise) catalogRequests.delete(key) })
   return promise
 }
+export const youtubeMusicItemCredits = (item: YoutubeMusicItem) => normalizeArtistCredits(item.artist, item.artistId ? `ytmusic:${item.artistId}` : null,
+  item.artistCredits?.map(credit => ({ ...credit, id: credit.id ? `ytmusic:${credit.id}` : null })))
 export const youtubeMusicItemTrack = (item: YoutubeMusicItem) => ({ ...youtubeMusicTrack({
   videoId: item.id, title: item.title, artist: item.artist, album: item.album,
   duration: item.duration, thumbnail: item.thumbnail,
 }), year: item.year ?? 0, trackNumber: item.trackNumber ?? 0, explicit: item.explicit ?? undefined,
   viewCount: item.viewCount ?? undefined, albumId: item.albumId ? `ytmusic:${item.albumId}` : null,
-  artistId: item.artistId ? `ytmusic:${item.artistId}` : null, _providerData: { youtubeMusic: item } })
+  artistId: item.artistId ? `ytmusic:${item.artistId}` : null,
+  artistCredits: youtubeMusicItemCredits(item),
+  _providerData: { youtubeMusic: item } })
 export const youtubeMusicItemHref = (item: YoutubeMusicItem) => `/ytmusic/${encodeURIComponent(item.id)}`
 
 export function youtubeMusicItemMusic(item: YoutubeMusicItem): MusicItem {
@@ -144,6 +150,7 @@ export function youtubeMusicItemMusic(item: YoutubeMusicItem): MusicItem {
   if (item.kind === "artist") return { ...common, type: "artist", artUrl: null, summary: item.description || null }
   if (item.kind === "album") return { ...common, type: "album", artistId: item.artistId ? `ytmusic:${item.artistId}` : null,
     artistName: item.artist, artistThumbUrl: null, year: item.year ?? 0, releaseDate: item.releaseDate,
+    artistCredits: youtubeMusicItemCredits(item),
     trackCount: item.trackCount ?? 0, studio: null, summary: item.description || null,
     genres: [], styles: [], moods: [], labels: [], format: null }
   return { ...common, type: "playlist", smart: false, trackCount: item.trackCount ?? 0, duration: null, summary: item.description || null }

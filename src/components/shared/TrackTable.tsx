@@ -1,3 +1,4 @@
+import { ArtistCredits } from "./ArtistCredits"
 import { useFavoritesStore } from "../../stores/favoritesStore"
 import { useProviderStore } from "../../stores/providerStore"
 import { DownloadBadge } from "./DownloadBadge"
@@ -309,15 +310,13 @@ function TrackRowCells({
                   · {track.albumName}
                 </MusicEntityLink>
               )}
+              {presentation === "artist" && !track.albumName && <span className="truncate text-xs text-(--text-muted)">· Release unavailable</span>}
               {presentation === "album" && !showArtist && <div className="ml-2 shrink-0">{actions}</div>}
             </div>
             {(presentation !== "album" || showArtist) && <div className="track-row-secondary-line flex min-w-0 items-center gap-2">
               {showArtist && (
                   <div className="track-row-artist min-w-0 shrink truncate">
-                    <MusicEntityLink entity={trackEntity(track, "artist")}
-                      className="text-(--text-muted) transition-colors hover:text-(--text-primary) hover:underline">
-                      {track.originalTitle || track.artistName}
-                    </MusicEntityLink>
+                    <ArtistCredits item={track} className="text-(--text-muted) transition-colors hover:text-(--text-primary) hover:underline" />
                   </div>
                 )}
               {actions}
@@ -328,9 +327,7 @@ function TrackRowCells({
 
       {visibleCols.has("artist") && (
         <td className="max-w-[180px] truncate p-2">
-          <MusicEntityLink entity={trackEntity(track, "artist")} className="transition-colors hover:text-(--text-primary) hover:underline">
-            {track.artistName}
-          </MusicEntityLink>
+          <ArtistCredits item={track} className="transition-colors hover:text-(--text-primary) hover:underline" />
         </td>
       )}
 
@@ -985,6 +982,7 @@ export function DetailTrackList({
   onPlayRadio,
   currentTrackId,
   showRadio,
+  paged,
 }: Pick<
   TrackTableProps,
   | "presentation"
@@ -994,6 +992,7 @@ export function DetailTrackList({
   | "onPlayRadio"
   | "currentTrackId"
   | "showRadio"
+  | "paged"
 >) {
   return (
     <TrackTable
@@ -1004,6 +1003,7 @@ export function DetailTrackList({
       onPlayRadio={onPlayRadio}
       currentTrackId={currentTrackId}
       showRadio={showRadio}
+      paged={paged}
       visibleCols={DETAIL_COLUMNS}
       toggleCol={NOOP}
       sortCol="default"

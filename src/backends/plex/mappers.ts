@@ -8,6 +8,7 @@
 
 import type { Track, Album, Artist, Playlist, Hub, PlexMedia } from "./types"
 import { pickBestMediaIndex } from "../../lib/dedup"
+import { plexArtistCredits } from "../../lib/artistCredits"
 import type {
   MusicTrack,
   MusicAlbum,
@@ -94,6 +95,8 @@ export function plexTrackToMusicTrack(t: Track, img: ImgResolver): MusicTrack {
     albumYear: t.parent_year ?? null,
     artistId,
     artistName: t.grandparent_title ?? "",
+    artistCredits: plexArtistCredits(t.original_title || t.grandparent_title || "", t.original_title && t.original_title !== t.grandparent_title ? null : artistId,
+      !t.original_title || t.original_title === t.grandparent_title ? t.grandparent_guid : null),
     year: t.year,
     playCount: t.view_count ?? 0,
     thumbUrl: resolveImg(img, t.thumb || t.parent_thumb, "track", trackId, t.title, t.grandparent_title),
@@ -147,6 +150,7 @@ export function plexAlbumToMusicAlbum(a: Album, img: ImgResolver): MusicAlbum {
     title: a.title,
     artistId,
     artistName: a.parent_title ?? "",
+    artistCredits: plexArtistCredits(a.parent_title ?? "", artistId, a.parent_guid),
     year: a.year,
     trackCount: a.leaf_count,
     studio: a.studio ?? null,

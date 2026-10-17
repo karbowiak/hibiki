@@ -6,11 +6,20 @@ use sha1::{Digest, Sha1};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ArtistCredit {
+    pub name: String,
+    pub id: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Item {
     pub id: String,
     pub kind: String,
     pub title: String,
     pub artist: String,
+    #[serde(default)]
+    pub artist_credits: Vec<ArtistCredit>,
     pub description: String,
     pub thumbnail: Option<String>,
     pub duration: Option<String>,
@@ -164,13 +173,17 @@ fn card(value: &Value, collection: bool, live: bool) -> Option<Item> {
         let mut album = None;
         let mut album_id = None;
         let mut artists = Vec::new();
+        let mut artist_credits = Vec::new();
         for byline in ["longBylineText", "shortBylineText"] {
             for run in panel[byline]["runs"].as_array().into_iter().flatten() {
                 let browse = run.pointer("/navigationEndpoint/browseEndpoint/browseId").and_then(Value::as_str).unwrap_or_default();
                 if browse.starts_with("UC") && valid_id(browse) {
                     if artist_id.is_none() { artist_id = Some(browse.to_owned()); }
                     let name = run["text"].as_str().unwrap_or_default().to_owned();
-                    if !name.is_empty() && !artists.contains(&name) { artists.push(name); }
+                    if !name.is_empty() && !artists.contains(&name) {
+                        artist_credits.push(ArtistCredit { name: name.clone(), id: Some(browse.into()) });
+                        artists.push(name);
+                    }
                 } else if browse.starts_with("MPRE") && valid_id(browse) {
                     album_id = Some(browse.to_owned());
                     album = run["text"].as_str().filter(|name| !name.is_empty()).map(str::to_owned);
@@ -179,7 +192,7 @@ fn card(value: &Value, collection: bool, live: bool) -> Option<Item> {
         }
         let artist = if artists.is_empty() { text(&panel["shortBylineText"]) } else { artists.join(", ") };
         return Some(Item { id: id.into(), kind: "song".into(), title,
-            description: text(&panel["longBylineText"]), artist, thumbnail: thumbnail(panel),
+            description: text(&panel["longBylineText"]), artist, artist_credits, thumbnail: thumbnail(panel),
             duration: Some(text(&panel["lengthText"])).filter(|value| !value.is_empty()), album, year: None, release_date: None, track_count: None,
             album_id, artist_id, track_number: None, explicit: None, view_count: None, liked: liked(panel) });
     }
@@ -196,6 +209,7 @@ fn card(value: &Value, collection: bool, live: bool) -> Option<Item> {
     } else { &item["subtitle"] };
     let runs = subtitle["runs"].as_array();
     let mut artists = Vec::new();
+    let mut artist_credits = Vec::new();
     let mut album = None;
     let mut album_id = None;
     let mut artist_id = None;
@@ -204,7 +218,13 @@ fn card(value: &Value, collection: bool, live: bool) -> Option<Item> {
     for run in runs.into_iter().flatten() {
         let label = run["text"].as_str().unwrap_or_default();
         let browse = run.pointer("/navigationEndpoint/browseEndpoint/browseId").and_then(Value::as_str).unwrap_or_default();
-        if browse.starts_with("UC") { artists.push(label.to_owned()); if artist_id.is_none() { artist_id = Some(browse.to_owned()); } }
+        if browse.starts_with("UC") && valid_id(browse) {
+            if !label.trim().is_empty() && !artists.iter().any(|name| name == label) {
+                artists.push(label.to_owned());
+                artist_credits.push(ArtistCredit { name: label.into(), id: Some(browse.into()) });
+            }
+            if artist_id.is_none() { artist_id = Some(browse.to_owned()); }
+        }
         else if browse.starts_with("MPRE") { album = Some(label.to_owned()); album_id = Some(browse.to_owned()); }
         else if label.contains(':') && label.chars().all(|c| c.is_ascii_digit() || c == ':') { duration = Some(label.into()); }
         else if let Ok(n) = label.parse::<i32>() { if (1900..=2200).contains(&n) { year = Some(n); } }
@@ -216,9 +236,17 @@ fn card(value: &Value, collection: bool, live: bool) -> Option<Item> {
     }
     if flat.is_some() && album.is_none() {
         let column = item.pointer("/flexColumns/2/musicResponsiveListItemFlexColumnRenderer/text");
-        album = column.map(text).filter(|label| !label.is_empty());
-        album_id = column.and_then(|column| find(column, "browseId", 0)).and_then(Value::as_str)
-            .filter(|id| id.starts_with("MPRE") && valid_id(id)).map(str::to_owned);
+        // Artist shelves use this column for popularity, not always a release.
+        // Only an album browse run establishes release identity. Do not turn
+        // "1.2M plays", a duration, or a menu destination into an album title.
+        for run in column.and_then(|column| column["runs"].as_array()).into_iter().flatten() {
+            let browse = run.pointer("/navigationEndpoint/browseEndpoint/browseId").and_then(Value::as_str).unwrap_or_default();
+            if browse.starts_with("MPRE") && valid_id(browse) {
+                album = run["text"].as_str().filter(|name| !name.trim().is_empty()).map(str::to_owned);
+                album_id = album.as_ref().map(|_| browse.to_owned());
+                break;
+            }
+        }
     }
     let endpoint = item.get("navigationEndpoint").filter(|endpoint| endpoint.get("browseEndpoint").is_some())
         .or_else(|| title_value.pointer("/runs/0/navigationEndpoint"))
@@ -271,7 +299,7 @@ fn card(value: &Value, collection: bool, live: bool) -> Option<Item> {
         .and_then(|badge| (badge["icon"]["iconType"] == "MUSIC_EXPLICIT_BADGE").then_some(true));
     let track_number = item.get("index").map(text).and_then(|text| text.parse::<u32>().ok());
     let view_count = item.get("viewCount").and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok()));
-    Some(Item { id, kind: kind.into(), title, description: text(subtitle), artist: artists.join(", "), thumbnail: thumbnail(item), duration, album, year, release_date, track_count,
+    Some(Item { id, kind: kind.into(), title, description: text(subtitle), artist: artists.join(", "), artist_credits, thumbnail: thumbnail(item), duration, album, year, release_date, track_count,
         album_id, artist_id, track_number, explicit, view_count, liked: liked(item) })
 }
 
@@ -506,7 +534,7 @@ pub async fn browse(app: &tauri::AppHandle, id: &str, params: Option<&str>, toke
         return Err("Invalid YouTube Music collection.".into());
     }
     let search = matches!(id, "hibiki_artist_search" | "hibiki_song_search" | "hibiki_search");
-    if id == "hibiki_song_like" && (params.is_none_or(|id| !api::valid_video_id(id)) || token.is_some()) {
+    if matches!(id, "hibiki_song_like" | "hibiki_song_metadata") && (params.is_none_or(|id| !api::valid_video_id(id)) || token.is_some()) {
         return Err("Choose a valid YouTube Music song.".into());
     }
     if search && (params.is_none_or(|query| query.trim().is_empty() || query.len() > 500) || token.is_some()) {
@@ -516,7 +544,7 @@ pub async fn browse(app: &tauri::AppHandle, id: &str, params: Option<&str>, toke
     let cache_id = if performances { format!("performances:{id}") } else { id.to_owned() };
     // Older search snapshots omitted the featured result. Leave other catalog
     // caches intact, but fetch search data again with the complete parser.
-    let cache_id = if search { format!("search-v2:{cache_id}") } else { cache_id };
+    let cache_id = format!("credits-v1:{}", if search { format!("search-v2:{cache_id}") } else { cache_id });
     let request = CatalogRequest {
         query: Query { browse_id: id.into(), params: params.map(str::to_owned), continuation: token.map(str::to_owned), include_performances: performances },
         generation: state.generation()?, cache_epoch: state.discovery_cache.epoch(),
@@ -572,6 +600,7 @@ async fn fetch(app: &tauri::AppHandle, request: &CatalogRequest) -> Result<Brows
     let song_search = id == "hibiki_song_search";
     let general_search = id == "hibiki_search";
     let song_like = id == "hibiki_song_like";
+    let song_metadata = id == "hibiki_song_metadata";
     let cookies = session::cookies(app).await?;
     let context = api::context(app).await.map_err(|e| if e.auth { e.report(app, generation) } else { e.message.into() })?;
     // Personalized watch mixes are queues, rather than browseable library playlists.
@@ -582,7 +611,7 @@ async fn fetch(app: &tauri::AppHandle, request: &CatalogRequest) -> Result<Brows
     if let Some(video_id) = id.strip_prefix("VLRDAMVM").filter(|id| api::valid_video_id(id)) {
         body["videoId"] = json!(video_id);
     }
-    if song_like {
+    if song_like || song_metadata {
         body = json!({ "videoId": params.unwrap_or_default(), "playlistId": format!("RDAMVM{}", params.unwrap_or_default()),
             "isAudioOnly": true, "enablePersistentPlaylistPanel": true });
     } else if general_search {
@@ -596,7 +625,7 @@ async fn fetch(app: &tauri::AppHandle, request: &CatalogRequest) -> Result<Brows
     if let Some(token) = token { body["continuation"] = json!(token); }
     let fallback_ttl = if id.starts_with("UC") || id.starts_with("MPRE") { 6 * 3600 }
         else if radio || matches!(id, "FEmusic_home" | "FEmusic_history") { 5 * 60 } else { 15 * 60 };
-    let response = api::request_with_policy(&context, &cookies, if general_search || artist_search || song_search { "search" } else if radio || song_like { "next" } else { "browse" }, body, fallback_ttl)
+    let response = api::request_with_policy(&context, &cookies, if general_search || artist_search || song_search { "search" } else if radio || song_like || song_metadata { "next" } else { "browse" }, body, fallback_ttl)
         .await.map_err(|e| if e.auth { e.report(app, generation) } else { e.message.into() })?;
     if !state.owns(generation) { return Err("YouTube Music connection changed.".into()); }
     let mut page = parse(&response.value, id == "FEmusic_home", id.starts_with("MPRE"), request.query.include_performances);
@@ -607,11 +636,11 @@ async fn fetch(app: &tauri::AppHandle, request: &CatalogRequest) -> Result<Brows
             }
         }
     }
-    if song_like {
-        page.items.retain(|item| item.kind == "song" && Some(item.id.as_str()) == params && item.liked.is_some());
+    if song_like || song_metadata {
+        page.items.retain(|item| item.kind == "song" && Some(item.id.as_str()) == params && (!song_like || item.liked.is_some()));
         page.hubs.clear();
         page.continuation = None;
-        if page.items.is_empty() { return Err("Could not read this song's YouTube Music like status. Try again.".into()); }
+        if page.items.is_empty() { return Err("Could not read this song's YouTube Music metadata. Try again.".into()); }
     }
     if id == "VLLM" { for item in &mut page.items { if item.kind == "song" { item.liked = Some(true); } } }
     if general_search {
@@ -651,6 +680,27 @@ mod tests {
     fn shelf(title: &str, contents: Vec<Value>) -> Value {
         json!({"musicCarouselShelfRenderer":{"header":{"musicCarouselShelfBasicHeaderRenderer":{"title":{"runs":[{"text":title}]}}},"contents":contents,
             "continuations":[{"nextContinuationData":{"continuation":"shelf-token"}}]}})
+    }
+    #[test]
+    fn artist_popularity_is_not_release_metadata_and_credits_keep_individual_ids() {
+        let row = |release: Value| json!({"musicResponsiveListItemRenderer":{
+            "flexColumns":[
+                {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Song","navigationEndpoint":{"watchEndpoint":{"videoId":"abcdefghijk"}}}]}}},
+                {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[
+                    {"text":"A","navigationEndpoint":{"browseEndpoint":{"browseId":"UC_first"}}},
+                    {"text":", "},{"text":"B","navigationEndpoint":{"browseEndpoint":{"browseId":"UC_second"}}}
+                ]}}},
+                {"musicResponsiveListItemFlexColumnRenderer":{"text":release}}
+            ]
+        }});
+        let popularity = card(&row(json!({"runs":[{"text":"1.2M plays"}]})), true, false).unwrap();
+        assert!(popularity.album.is_none());
+        assert!(popularity.album_id.is_none());
+        assert_eq!(popularity.artist_credits.len(), 2);
+        assert_eq!(popularity.artist_credits[1].id.as_deref(), Some("UC_second"));
+        let release = card(&row(json!({"runs":[{"text":"Release","navigationEndpoint":{"browseEndpoint":{"browseId":"MPRE_album"}}}]})), true, false).unwrap();
+        assert_eq!(release.album.as_deref(), Some("Release"));
+        assert_eq!(release.album_id.as_deref(), Some("MPRE_album"));
     }
     #[test]
     fn radio_continuation_keeps_audio_tracks_and_its_own_cursor() {

@@ -1,27 +1,35 @@
 import { musicEntityHref, type MusicEntityRef } from "./musicEntity"
 import { artistNameSimilarity, ARTIST_NAME_THRESHOLD } from "./artistMatching"
 import { releaseNameKey } from "./musicMatching"
+import { artistCreditsKey } from "./artistCredits"
 
 /** Resolve on navigation, never by scanning every visible playlist/queue row. */
-export function createMusicLinkResolver({ searchPlex, searchYoutube, current, now = Date.now }: {
+export function createMusicLinkResolver({ searchPlex, searchYoutube, hydrate, current, now = Date.now }: {
   searchPlex: (ref: MusicEntityRef) => Promise<{ id: string; name: string; artist?: string; year?: number | null }[]>
   searchYoutube: (ref: MusicEntityRef) => Promise<{ id: string; name: string; artist?: string; year?: number | null }[]>
   current: () => boolean
+  hydrate?: (ref: MusicEntityRef) => Promise<MusicEntityRef | null>
   now?: () => number
 }) {
   const cache = new Map<string, { until: number; promise: Promise<string | null> }>()
   const match = (ref: MusicEntityRef, item: { name: string; artist?: string; year?: number | null }) => ref.kind === "artist"
     ? artistNameSimilarity(ref.name, item.name) >= ARTIST_NAME_THRESHOLD
     : releaseNameKey(ref.name) === releaseNameKey(item.name) && !!ref.artist && !!item.artist &&
-      artistNameSimilarity(ref.artist, item.artist) >= ARTIST_NAME_THRESHOLD && (!ref.year || !item.year || ref.year === item.year)
+      artistNameSimilarity(artistCreditsKey(ref.artist), artistCreditsKey(item.artist)) >= ARTIST_NAME_THRESHOLD && (!ref.year || !item.year || ref.year === item.year)
   return async (ref: MusicEntityRef): Promise<string | null> => {
     if (!current()) return null
-    const known = musicEntityHref(ref.kind, ref.id)
-    if (ref.id && !ref.id.startsWith("ytmusic:")) return known
-    const key = JSON.stringify([ref.kind, ref.id, ref.name, ref.artist, ref.year])
+    if (ref.id && !ref.id.startsWith("ytmusic:")) return musicEntityHref(ref.kind, ref.id)
+    const key = JSON.stringify([ref.kind, ref.id, ref.name, ref.artist, ref.year, ref.trackId])
     const saved = cache.get(key)
     if (saved && saved.until > now()) return saved.promise
     const promise = (async () => {
+      if (ref.kind === "album" && (!ref.id || !ref.name) && ref.trackId && hydrate) {
+        try { ref = await hydrate(ref) ?? ref } catch { if (!current()) return null }
+        if (!current()) return null
+      }
+      const known = musicEntityHref(ref.kind, ref.id)
+      if (ref.id && !ref.id.startsWith("ytmusic:")) return known
+      if (!ref.name) return known
       try {
         const candidates = [...new Map((await searchPlex(ref)).filter(item => match(ref, item)).map(item => [item.id, item])).values()]
         if (!current()) return null

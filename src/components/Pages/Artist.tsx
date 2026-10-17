@@ -1,4 +1,7 @@
 import { useArtistCatalog } from "../../hooks/useArtistCatalog"
+import { useTrackReleases } from "../../hooks/useTrackReleases"
+import { ArtistCreditLinks } from "../shared/ArtistCredits"
+import { plexArtistCredits } from "../../lib/artistCredits"
 import { DownloadBadge } from "../shared/DownloadBadge"
 import { makeOnPlay } from "../../lib/mediaPlay"
 import { DownloadMenuItems } from "../shared/DownloadMenuItems"
@@ -124,10 +127,10 @@ export function ArtistPage({ artistId: routeArtistId }: { artistId: string }) {
   const { entry, isLoading, error, retry, artist } = catalog
   const fullAlbums = entry?.albums ?? []
   const singles = entry?.singles ?? []
-  const popularTracks = useMemo(() => mergeDiscoveryItems(
+  const popularTracks = useTrackReleases(useMemo(() => mergeDiscoveryItems(
     plexDiscoveryItems((entry?.popularTracks ?? []).map(track => ({ ...track, type: "track" as const }))),
     youtubeDiscoveryItems(catalog.youtube?.items.filter(item => item.kind === "song") ?? [])
-  ).map(item => item.source === "ytmusic" ? youtubeMusicItemTrack(item.item) : item.item as MusicTrack), [entry?.popularTracks, catalog.youtube])
+  ).map(item => item.source === "ytmusic" ? youtubeMusicItemTrack(item.item) : item.item as MusicTrack), [entry?.popularTracks, catalog.youtube]))
   const similarArtists = entry?.similarArtists ?? []
   const sonicallySimilar = entry?.sonicallySimilar ?? []
   const relatedHubs = entry?.relatedHubs ?? []
@@ -499,6 +502,8 @@ export function ArtistPage({ artistId: routeArtistId }: { artistId: string }) {
             <h1 className="media-detail-title select-text wrap-break-word">
               {artist.title}
             </h1>
+            {isPlex && plexArtistCredits(artist.title, artist.id, artist.guid).length > 1 &&
+              <p className="text-sm text-(--text-secondary)"><ArtistCreditLinks credits={plexArtistCredits(artist.title, artist.id, artist.guid)} className="hover:underline" /></p>}
 
             {heroTags.length > 0 && (
               <div className="flex flex-wrap gap-1.5 pt-1">

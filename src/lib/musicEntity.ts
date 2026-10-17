@@ -1,5 +1,6 @@
 import type { MusicAlbum, MusicTrack } from "../types/music"
 import type { YoutubeMusicItem } from "../backends/ytmusic/discovery"
+import { itemArtistCredits } from "./artistCredits"
 
 export type MusicEntityKind = "artist" | "album"
 export interface MusicEntityRef {
@@ -8,6 +9,7 @@ export interface MusicEntityRef {
   name: string
   artist?: string
   year?: number | null
+  trackId?: string
 }
 export function musicEntityHref(kind: MusicEntityKind, id?: string | null) {
   if (!id) return null
@@ -15,11 +17,17 @@ export function musicEntityHref(kind: MusicEntityKind, id?: string | null) {
 }
 export function trackEntity(track: MusicTrack | null | undefined, kind: MusicEntityKind): MusicEntityRef | null {
   if (!track) return null
+  if (kind === "artist") {
+    const credit = itemArtistCredits(track)[0]
+    return credit ? { kind, id: credit.id, name: credit.name } : null
+  }
   const raw = (track._providerData as { youtubeMusic?: YoutubeMusicItem } | null)?.youtubeMusic
-  const name = kind === "artist" ? track.artistName : track.albumName
-  const id = (kind === "artist" ? track.artistId : track.albumId) ??
-    ((kind === "artist" ? raw?.artistId : raw?.albumId) ? `ytmusic:${kind === "artist" ? raw!.artistId : raw!.albumId}` : null)
-  return name || id ? { kind, id, name, artist: track.artistName, year: track.albumYear || track.year } : null
+  const name = track.albumName
+  const id = track.albumId || (raw?.albumId ? `ytmusic:${raw.albumId}` : null)
+  return name || id || track.id ? { kind, id, name, artist: track.artistName, year: track.albumYear || track.year, trackId: track.id } : null
 }
-export const albumArtistEntity = (album: MusicAlbum): MusicEntityRef => ({ kind: "artist", id: album.artistId, name: album.artistName })
+export const albumArtistEntity = (album: MusicAlbum): MusicEntityRef => {
+  const credit = itemArtistCredits(album)[0]
+  return { kind: "artist", id: credit?.id, name: credit?.name || album.artistName }
+}
 

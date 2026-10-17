@@ -1,3 +1,5 @@
+import { ArtistCreditLinks } from "./shared/ArtistCredits"
+import { itemArtistCredits } from "../lib/artistCredits"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { makeOnPlay } from "../lib/mediaPlay"
 import { usePlayerStore } from "../stores/playerStore"
@@ -15,7 +17,7 @@ import { starsFromRating } from "../lib/formatters"
 import { useTrackDrag } from "../hooks/useTrackDrag"
 import { useArtistImage, useAlbumImage } from "../hooks/useMediaImage"
 import { useContextMenu } from "../hooks/useContextMenu"
-import type { MusicItem } from "../types/music"
+import type { MusicItem, MusicArtistCredit } from "../types/music"
 import type { DragPayload } from "../stores/dragStore"
 import { useNearViewport } from "../hooks/useNearViewport"
 import type { Ref, ReactNode } from "react"
@@ -25,6 +27,7 @@ import { albumArtistEntity, trackEntity, type MusicEntityRef } from "../lib/musi
 interface MediaCardProps {
   navigationEntity?: MusicEntityRef | null
   descriptionEntity?: MusicEntityRef | null
+  descriptionArtists?: { name: string; credits: MusicArtistCredit[] }
   artworkBadge?: ReactNode
   artworkRef?: Ref<HTMLDivElement>
   title: string
@@ -198,6 +201,7 @@ export function MediaCard(props: MediaCardProps) {
 function MediaCardInner({
   navigationEntity,
   descriptionEntity,
+  descriptionArtists,
   artistName,
   isArtist,
   artworkBadge,
@@ -327,7 +331,13 @@ function MediaCardInner({
         </div>
         <div className="flex items-center gap-1.5">
           <div className="media-card__meta min-w-0" title={desc}>
-            {credit ? <MusicEntityLink entity={credit} className="relative z-4 pointer-events-auto hover:underline">{desc}</MusicEntityLink> : desc}
+            {descriptionArtists && desc.startsWith(descriptionArtists.name) ? <>
+              <ArtistCreditLinks credits={descriptionArtists.credits} className="relative z-4 pointer-events-auto hover:underline" />
+              {desc.slice(descriptionArtists.name.length)}
+            </> : contextItem && (contextItem.type === "track" || contextItem.type === "album") && desc.startsWith(contextItem.artistName) ? <>
+              <ArtistCreditLinks credits={itemArtistCredits(contextItem)} className="relative z-4 pointer-events-auto hover:underline" />
+              {desc.slice(contextItem.artistName.length)}
+            </> : credit ? <MusicEntityLink entity={credit} className="relative z-4 pointer-events-auto hover:underline">{desc}</MusicEntityLink> : desc}
           </div>
           {contextItem && (
             <DownloadBadge

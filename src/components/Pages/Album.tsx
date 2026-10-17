@@ -1,3 +1,4 @@
+import { ArtistCredits } from "../shared/ArtistCredits"
 import { MusicEntityLink } from "../shared/MusicEntityLink"
 import { albumArtistEntity } from "../../lib/musicLinks"
 import { useAlbumCatalog } from "../../hooks/useAlbumCatalog"
@@ -324,12 +325,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                   className="h-6 w-6 shrink-0 rounded object-cover"
                 />
               )}
-              <MusicEntityLink
-                entity={albumArtistEntity(album)}
-                className="font-semibold hover:underline"
-              >
-                {album.artistName}
-              </MusicEntityLink>
+              <span><ArtistCredits item={album} className="font-semibold hover:underline" /></span>
               <span className="text-gray-500">·</span>
               <span className="text-gray-400">{album.year}</span>
               <span className="text-gray-500">·</span>

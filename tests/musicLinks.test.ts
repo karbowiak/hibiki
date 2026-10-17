@@ -44,6 +44,34 @@ test("metadata-only credits resolve YTM when Plex has no match", async () => {
   expect(await resolve({ kind: "artist", name: "The Winking Owl" })).toBe("/ytmusic/UC_winking_owl")
 })
 
+test("playbar album navigation recovers missing release identity from the exact playback song", async () => {
+  let hydrations = 0
+  const resolve = createMusicLinkResolver({ current: () => true,
+    hydrate: async ref => { hydrations++; return { ...ref, id: "actual-album", name: "HALO" } },
+    searchPlex: async () => { throw Error("Recovered Plex IDs should navigate directly") }, searchYoutube: async () => [],
+  })
+  const ref = trackEntity({ id: "playing-song", albumId: null, albumName: "", artistName: "Tiffany Day" } as MusicTrack, "album")!
+  expect(ref.trackId).toBe("playing-song")
+  expect(await resolve(ref)).toBe("/album/actual-album")
+  expect(hydrations).toBe(1)
+})
+
+test("retired song metadata cannot navigate and missing albums never search by the song title", async () => {
+  let current = true, finish!: (ref: MusicEntityRef) => void
+  const resolve = createMusicLinkResolver({ current: () => current,
+    hydrate: () => new Promise(done => { finish = done }),
+    searchPlex: async () => { throw Error("No album name is known") }, searchYoutube: async () => [],
+  })
+  const request = resolve({ kind: "album", name: "", trackId: "old-song" })
+  current = false
+  finish({ kind: "album", name: "Old album", id: "old-album" })
+  expect(await request).toBeNull()
+  const empty = createMusicLinkResolver({ current: () => true, hydrate: async () => null,
+    searchPlex: async () => { throw Error("No album name is known") }, searchYoutube: async () => { throw Error("No album name is known") },
+  })
+  expect(await empty({ kind: "album", name: "", trackId: "song" })).toBeNull()
+})
+
 test("missing links expire quickly and an account change rejects an in-flight lookup", async () => {
   let time = 0, calls = 0
   const resolve = createMusicLinkResolver({ current: () => true, now: () => time,

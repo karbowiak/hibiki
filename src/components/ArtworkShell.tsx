@@ -34,7 +34,7 @@ type ReadyArtwork = {
 /** A single image owner and palette for the complete desktop window. */
 export function ArtworkShell({ children }: { children: ReactNode }) {
   const [route] = useLocation()
-  const mode = /^\/(artist|album|playlist)\/[^/?#]+/.test(route) ? "detail" : "global"
+  const mode = /^\/(artist|album|playlist|ytmusic)\/[^/?#]+/.test(route) ? "detail" : "global"
   const { artwork, onFailure, next, canRotate, playlistOwners } =
     useAmbientArtwork(route)
   const provider = useProviderStore((state) => state.provider),

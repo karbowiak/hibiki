@@ -334,6 +334,10 @@ pub struct Track {
     #[serde(rename(deserialize = "grandparentKey"), default, deserialize_with = "serde_null_or_string::deserialize")]
     pub grandparent_key: String,
 
+    /// Canonical artist identity distinguishes actual names from local combined credits.
+    #[serde(rename(deserialize = "grandparentGuid"), alias = "grandparent_guid", default)]
+    pub grandparent_guid: Option<String>,
+
     /// Artist name
     #[serde(rename(deserialize = "grandparentTitle"), default, deserialize_with = "serde_null_or_string::deserialize")]
     pub grandparent_title: String,

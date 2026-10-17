@@ -48,7 +48,13 @@ export interface AlbumReview {
   link?: string | null
 }
 
+export interface MusicArtistCredit {
+  name: string
+  id?: string | null
+}
+
 export interface MusicTrack {
+  artistCredits?: MusicArtistCredit[]
   explicit?: boolean
   viewCount?: number
   id: string
@@ -101,6 +107,7 @@ export interface MusicTrack {
 }
 
 export interface MusicAlbum {
+  artistCredits?: MusicArtistCredit[]
   id: string
   title: string
   artistId: string | null

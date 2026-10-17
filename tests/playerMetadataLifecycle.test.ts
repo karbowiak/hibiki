@@ -489,6 +489,103 @@ test("changing radio stations captures ownership after stopping the previous str
   expect(useRadioStreamStore.getState().streamError).toBeNull()
 })
 
+test("queue radio preserves paused playback and original occurrences before appending recommendations", async () => {
+  const createRadioQueue = mock(async () => ({ queueId: 44, tracks: Array.from({ length: 25 }, (_, i) => source(String(i + 1))) }))
+  useProviderStore.getState().setProvider(provider("attached-radio", { createRadioQueue }))
+  const queue = [source("1"), source("2"), source("3"), source("2")]
+  await audiblyPlay(queue[1], queue)
+  state().pause()
+  const before = state(), starts = (engine.play as any).mock.calls.length
+  await state().enableQueueRadio("plex")
+  expect(createRadioQueue.mock.calls[0]?.[0]).toBe("1")
+  expect(state().currentTrack).toBe(before.currentTrack)
+  expect(state().queueIndex).toBe(before.queueIndex)
+  expect(state().positionMs).toBe(before.positionMs)
+  expect(state().isPlaying).toBe(false)
+  expect((engine.play as any).mock.calls.length).toBe(starts)
+  expect(state().queue.slice(0, queue.length)).toEqual(before.queue)
+  expect(state().queue.filter(track => track.id === "2")).toHaveLength(2)
+  expect(state().queue.length - state().queueIndex - 1).toBe(10)
+  expect(state().queue.slice(queue.length).some(track => ["1", "2", "3"].includes(track.id))).toBe(false)
+  const installed = state().queue
+  await state().enableQueueRadio("plex")
+  expect(state().queue).toBe(installed)
+  state().stopRadio()
+  expect(state().queue).toBe(installed)
+})
+
+test("attaching radio keeps long queues intact and starts fetching near their end", async () => {
+  const createRadioQueue = mock(async () => ({ queueId: 44, tracks: Array.from({ length: 35 }, (_, i) => source(String(i + 101))) }))
+  useProviderStore.getState().setProvider(provider("long-attached-radio", { createRadioQueue }))
+  const queue = Array.from({ length: 30 }, (_, i) => source(String(i + 1)))
+  await audiblyPlay(queue[8], queue)
+  const before = state().queue
+  await state().enableQueueRadio("plex")
+  expect(state().queue).toBe(before)
+  expect(state().queueIndex).toBe(8)
+  expect(createRadioQueue).not.toHaveBeenCalled()
+  await state().jumpToQueueItem(22)
+  for (let i = 0; i < 10; i++) await settle()
+  expect(state().queue.slice(0, queue.length)).toEqual(before)
+  expect(state().queue.length - state().queueIndex - 1).toBe(10)
+  expect(createRadioQueue).toHaveBeenCalled()
+})
+
+test("dedicated YTM and mixed queue radio keep original Plex and YTM songs in order", async () => {
+  const { useYoutubeMusicDiscoveryStore } = await import("../src/backends/ytmusic/discovery")
+  const previous = useYoutubeMusicDiscoveryStore.getState()
+  const remote = (i: number, title = `Remote ${i}`) => youtubeMusicTrack({ videoId: String(i).padStart(11, "0"), title,
+    artist: "Artist", album: "Album", duration: "3:00", thumbnail: null })
+  try {
+    for (const mode of ["ytmusic", "mixed"] as const) {
+      state().stop()
+      useYoutubeMusicDiscoveryStore.setState({ connected: true })
+      youtubeBrowsePage = { title: "Radio", hubs: [], continuation: null, items: Array.from({ length: 30 }, (_, i) => ({
+        id: String(i).padStart(11, "0"), kind: "song" as const, title: i === 0 ? "Seed" : `Remote ${i}`,
+        artist: "Artist", album: "Album", duration: "3:00", thumbnail: null, year: null,
+      })) }
+      useProviderStore.getState().setProvider(provider("mixed-attached-radio", {
+        search: async () => [{ ...source("1", { title: "Seed" }), type: "track" }],
+        createRadioQueue: async () => ({ queueId: 77, tracks: Array.from({ length: 30 }, (_, i) => source(String(i + 100))) }),
+      }))
+      const queue = [remote(0, "Seed"), source("2"), remote(1), source("2")]
+      usePlayerStore.setState({ queue, currentTrack: queue[1], queueIndex: 1, positionMs: 12345, isPlaying: false })
+      await state().enableQueueRadio(mode)
+      expect(state().queue.slice(0, queue.length)).toEqual(queue)
+      expect(state().positionMs).toBe(12345)
+      expect(state().queueIndex).toBe(1)
+      expect(state().isPlaying).toBe(false)
+      expect(state().radioMode).toBe(mode)
+      const upcoming = state().queue.slice(2)
+      expect(upcoming).toHaveLength(10)
+      if (mode === "mixed") expect(upcoming.filter(track => track.id.startsWith("ytmusic:"))).toHaveLength(5)
+      else expect(state().queue.slice(queue.length).every(track => track.id.startsWith("ytmusic:"))).toBe(true)
+    }
+  } finally { useYoutubeMusicDiscoveryStore.setState(previous) }
+})
+
+test("queue replacement and turning radio off retire pending attached-radio lookups", async () => {
+  for (const replace of [false, true]) {
+    const matching = deferred<import("../src/types/music").MusicItem[]>()
+    const { useYoutubeMusicDiscoveryStore } = await import("../src/backends/ytmusic/discovery")
+    useYoutubeMusicDiscoveryStore.setState({ connected: true })
+    useProviderStore.getState().setProvider(provider("pending-attached-radio", { search: () => matching.promise, createRadioQueue: async () => ({ queueId: 1, tracks: [] }) }))
+    const remote = youtubeMusicTrack({ videoId: "abcdefghijk", title: "Remote", artist: "Artist", album: null, duration: "3:00", thumbnail: null })
+    usePlayerStore.setState({ queue: [remote], queueIndex: 0, currentTrack: remote })
+    const enabling = state().enableQueueRadio("mixed")
+    await settle()
+    if (replace) await state().playTrack(source("99"))
+    else state().stopRadio()
+    const queue = state().queue
+    matching.resolve([{ ...source("1", { title: "Remote" }), type: "track" }])
+    await enabling
+    expect(state().queue).toBe(queue)
+    expect(state().isRadioMode).toBe(false)
+    expect(state().radioLoading).toBe(false)
+    useYoutubeMusicDiscoveryStore.setState({ connected: false })
+  }
+})
+
 test("enabling track radio preserves the native playback, position, lyrics, and waveform", async () => {
   const radioTracks = [
     source("1", { title: "Server copy" }),

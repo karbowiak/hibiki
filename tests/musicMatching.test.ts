@@ -24,3 +24,11 @@ test("search matches performers and recordings while retaining other versions", 
   expect(sameRecording(track("one", "HALO"), track("two", "HALO", { artistName: "Another Artist" }))).toBe(false)
   expect(sameRecording(track("one", "HALO", { explicit: true }), track("two", "HALO", { explicit: false }))).toBe(false)
 })
+
+test("individual collaboration credits match independently of separator or order", () => {
+  const local = track("plex", "Song", { artistName: "NEEDY GIRL OVERDOSE; Aiobahn +81" })
+  const remote = track("ytmusic", "Song", { artistName: "Aiobahn +81 x NEEDY GIRL OVERDOSE" })
+  expect(sameRecording(local, remote)).toBe(true)
+  expect(sameRecording(local, { ...remote, artistName: "Aiobahn +81; Another Artist" })).toBe(false)
+  expect(sameRecording(local, { ...remote, title: "Song (Live)" })).toBe(false)
+})

@@ -119,6 +119,7 @@ interface PlayerState {
    * Pass `seedName` to set a human-readable context label ("Ado Radio").
    */
   playRadio: (seedId: string, radioType: RadioType, seedName?: string, mode?: MusicRadioMode, seedTrack?: MusicTrack) => Promise<void>
+  enableQueueRadio: (mode: MusicRadioMode) => Promise<void>
   refillRadio: () => Promise<void>
   /** Insert tracks immediately after the current track (play next). */
   addNext: (tracks: MusicTrack[]) => void
@@ -238,6 +239,7 @@ function replaceQueueContext(): void {
   _musicRadio?.retire()
   _musicRadio = null
   _musicRadioRefill = null
+  _radioPreserveQueue = false
   _queueSession?.retire()
   ++_queueContextGeneration
   _djInsertRequest = null
@@ -334,6 +336,8 @@ export function isRadioGenerated(trackId: string): boolean {
 let _radioSelectionRequest: symbol | null = null
 let _musicRadio: MusicRadioSession | null = null
 let _musicRadioRefill: Promise<void> | null = null
+// Attached radio owns only additions; the user's ordered occurrences stay intact.
+let _radioPreserveQueue = false
 
 /** A refill belongs to the station, so skips do not discard in-flight results. */
 function appendRadioTracks(
@@ -348,6 +352,7 @@ function appendRadioTracks(
     set(() => ({ radioLoading: false, radioError: "The radio connection changed. Start radio again to reconnect." }))
     return Promise.resolve()
   }
+  radio.remember(get().queue.slice(Math.max(0, get().queueIndex - 199), get().queueIndex + 1))
   if (get().queue.length - get().queueIndex - 1 >= RADIO_UPCOMING) return Promise.resolve()
   if (!radio.canRefill(get().queue.slice(get().queueIndex + 1))) return Promise.resolve()
   const job = (async () => {
@@ -364,7 +369,7 @@ function appendRadioTracks(
           const added = radio.take(upcoming, state.currentTrack)
           if (!added.length) return { radioError: radio.error }
           added.forEach(track => _radioGeneratedKeys.add(track.id))
-          const ordered = orderRadioUpcoming(radio.mode, [...upcoming, ...added], state.currentTrack)
+          const ordered = _radioPreserveQueue ? [...upcoming, ...added] : orderRadioUpcoming(radio.mode, [...upcoming, ...added], state.currentTrack)
           changedNext = ordered[0] !== upcoming[0]
           return { queue: [...state.queue.slice(0, state.queueIndex + 1), ...ordered], radioError: radio.error }
         })
@@ -907,7 +912,7 @@ async function playAtIndex(index: number, get: () => PlayerState, set: any): Pro
     if (!track || isQueuePlaceholder(track)) throw Error("This queued song is unavailable. Try another song or reconnect to Plex.")
     if (get().isRadioMode && _musicRadio) {
       const state = get()
-      const upcoming = orderRadioUpcoming(_musicRadio.mode, state.queue.slice(index + 1), track)
+      const upcoming = _radioPreserveQueue ? state.queue.slice(index + 1) : orderRadioUpcoming(_musicRadio.mode, state.queue.slice(index + 1), track)
       set({ queue: [...state.queue.slice(0, index + 1), ...upcoming] })
     }
     await _startPlayback(track, index, get, set)
@@ -1150,6 +1155,7 @@ export const usePlayerStore = create<PlayerState>()(
       _radioGeneratedKeys.clear()
       replaceQueueContext()
       _musicRadio = radio
+      _radioPreserveQueue = false
       installed = true
       upcoming.forEach(item => _radioGeneratedKeys.add(item.id))
       const derivedName = seedName ?? (radioType === "artist" ? first.artistName
@@ -1175,6 +1181,56 @@ export const usePlayerStore = create<PlayerState>()(
     } finally {
       if (!installed) radio?.retire()
       if (_radioSelectionRequest === request) _radioSelectionRequest = null
+    }
+  },
+
+  enableQueueRadio: async mode => {
+    if (_radioSelectionRequest || get().isRadioMode) return
+    const before = get(), provider = getProvider()
+    if (!before.queue.length || before.isInternetRadioActive) {
+      set({ radioError: "Add a playable song to the queue first." })
+      return
+    }
+    const generation = _queueContextGeneration, selection = capturePlaybackSelectionVersion()
+    const session = provider?.playbackSession, scope = provider?.cacheScope
+    const request = Symbol("attach queue radio")
+    _radioSelectionRequest = request
+    let radio: MusicRadioSession | null = null, installed = false
+    const owns = () => _radioSelectionRequest === request && generation === _queueContextGeneration &&
+      selection === capturePlaybackSelectionVersion() && getProvider() === provider &&
+      provider?.playbackSession === session && provider?.cacheScope === scope
+    set({ radioLoading: true, radioError: null })
+    try {
+      // Resolve the start of a lazy queue, independently of the playback cursor.
+      await ensureQueueRange(0, Math.min(200, get().queue.length), { current: owns })
+      if (!owns()) return
+      const seed = get().queue.find(track => !isQueuePlaceholder(track) &&
+        (isYoutubeMusicTrack(track) || track.mediaInfo?.hasAudioStream !== false) && !!track.id && !!track.title)
+      if (!seed) throw Error("This queue has no playable song to seed radio.")
+      const created = await createMusicRadio({ mode, provider, seedId: seed.id, seedType: "track", track: seed,
+        degrees: () => get().radioDegreesOfSeparation,
+        current: () => installed ? _musicRadio === radio : owns(),
+      })
+      radio = created.radio
+      if (!owns() || !radio.current()) return
+      radio.remember(get().queue.slice(Math.max(0, get().queueIndex - 200)))
+      _musicRadio = radio
+      _radioPreserveQueue = true
+      _djInsertRequest = null
+      _radioGeneratedKeys.clear()
+      installed = true
+      _radioSelectionRequest = null
+      set({ isRadioMode: true, radioMode: radio.mode, radioSeedKey: seed.id, radioType: "track", djMode: null,
+        radioSeedArtist: seed.artistName || null, radioLoading: false, radioError: null })
+      await appendRadioTracks(get, set as never)
+    } catch (error) {
+      if (owns()) set({ radioError: error instanceof Error ? error.message : "Could not enable radio. Try again." })
+    } finally {
+      if (!installed) radio?.retire()
+      if (_radioSelectionRequest === request) {
+        _radioSelectionRequest = null
+        set({ radioLoading: false })
+      }
     }
   },
 
@@ -1208,6 +1264,7 @@ export const usePlayerStore = create<PlayerState>()(
     beginQueueSelection()
     _musicRadio?.retire()
     _musicRadio = null
+    _radioPreserveQueue = false
     _musicRadioRefill = null
     set({ isRadioMode: false, radioMode: null, radioError: null, radioLoading: false, radioSeedKey: null, radioType: null, radioSeedArtist: null })
   },
@@ -1514,7 +1571,7 @@ export const usePlayerStore = create<PlayerState>()(
     else if (index === queueIndex) newIndex = Math.min(queueIndex, next.length - 1)
     if (index === queueIndex && get().isRadioMode) get().stopRadio()
     const radio = _musicRadio
-    const ordered = radio ? [...next.slice(0, newIndex + 1),
+    const ordered = radio && !_radioPreserveQueue ? [...next.slice(0, newIndex + 1),
       ...orderRadioUpcoming(radio.mode, next.slice(newIndex + 1), get().currentTrack)] : next
     set({ queue: ordered, queueIndex: Math.max(0, newIndex) })
     // Re-preload the (potentially new) next track for analysis + gapless

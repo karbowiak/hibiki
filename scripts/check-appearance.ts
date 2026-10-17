@@ -10,6 +10,45 @@ import { artworkContrast } from "../src/lib/artworkTone"
 const root = resolve(import.meta.dir, "..")
 const output = await fixtureBuild(["tests/fixtures/libraryLayout/index.html"], "windows")
 const artifacts = resolve(root, ".tmp/appearance-checks")
+
+async function checkIssueRegressions(page: Page, name: string) {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.evaluate(() => (window as any).fixtureAppearance.route("/server-library/artists"))
+  await page.getByRole("heading", { name: "Artists", exact: true }).waitFor()
+  const nav = page.getByRole("navigation", { name: "Server Library", exact: true })
+  assert.deepEqual(await nav.getByRole("link").allTextContents(), ["Artists", "Albums", "Songs"])
+  await nav.getByRole("link", { name: "Songs", exact: true }).click()
+  await page.getByRole("heading", { name: "Songs", exact: true }).waitFor()
+  await page.locator("main [data-track-index]").first().waitFor()
+  const playingTitle = page.locator("[data-player-bar] h6 a")
+  const albumHref = await playingTitle.getAttribute("href")
+  assert.ok(albumHref?.startsWith("/album/"))
+  await playingTitle.click()
+  await page.waitForFunction(href => location.pathname === href, albumHref)
+  await page.evaluate(() => (window as any).fixtureAppearance.route("/server-library/songs"))
+  await page.getByRole("heading", { name: "Songs", exact: true }).waitFor()
+  await playingTitle.focus()
+  await page.keyboard.press("Enter")
+  await page.waitForFunction(href => location.pathname === href, albumHref)
+  for (const width of [1440, 960]) {
+    await page.setViewportSize({ width, height: 900 })
+    await page.evaluate(() => (window as any).fixtureAppearance.route("/ytmusic/UC_fixture"))
+    await page.getByRole("heading", { name: "YouTube Fixture Artist", exact: true }).waitFor()
+    const sharp = page.locator(".app-artwork-frame:not(.app-artwork-frame--retiring) .app-artwork-sharp")
+    await sharp.waitFor({ state: "visible" })
+    assert.equal(await sharp.locator("img").evaluate(image => getComputedStyle(image).filter), "none")
+    assert.equal(await page.locator(".app-artwork-shell").getAttribute("data-artwork-mode"), "detail")
+    await page.screenshot({ path: join(artifacts, `${name}-ytmusic-hero-${width}.png`) })
+  }
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.evaluate(() => (window as any).fixtureAppearance.panel("queue", true))
+  const controls = page.locator('[aria-label="Queue radio"]')
+  await controls.waitFor({ state: "visible" })
+  assert.equal(await controls.getByRole("button", { name: /Enable .* radio for this queue/ }).count(), 3)
+  assert.ok(await controls.evaluate(element => element.scrollWidth <= element.clientWidth + 1), "Queue radio controls must fit the docked panel")
+  await page.screenshot({ path: join(artifacts, `${name}-queue-radio.png`) })
+  console.log(`${name}: server library navigation, playbar album links and sharp YTM artist heroes passed`)
+}
 let artworkGate: Promise<void> | null = null
 async function checkPlaybackQuality(page: Page, name: string) {
   for (const [width, height, theme] of [[1940, 1214, "dark"], [1000, 760, "light"]] as const) {
@@ -646,6 +685,8 @@ try {
     async fetch(request) {
       const path = new URL(request.url).pathname
       if (path.includes("mode-delayed")) await artworkGate
+      if (path === "/synthetic-artwork/hero-detail.svg")
+        return new Response('<svg xmlns="http://www.w3.org/2000/svg" width="960" height="480"><rect width="960" height="480" fill="#24495b"/><path d="M0 80h960M0 160h960M0 240h960M0 320h960M0 400h960M120 0v480M240 0v480M360 0v480M480 0v480M600 0v480M720 0v480M840 0v480" stroke="#d7aa65" stroke-width="2"/><text x="500" y="175" font-size="64" fill="#fff">Sharp artwork</text><path d="m500 220 40-40 40 40 40-40 40 40 40-40 40 40 40-40" stroke="#fff" stroke-width="3" fill="none"/></svg>', { headers: { "Content-Type": "image/svg+xml" } })
       if (path === "/synthetic-artwork/portrait.svg")
         return new Response(
           '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="720"><rect width="480" height="720" fill="#202030"/><rect x="180" y="50" width="120" height="120" fill="#be7855"/><rect x="160" y="500" width="160" height="150" fill="#aaa"/></svg>',
@@ -700,6 +741,11 @@ try {
         `${origin}/tests/fixtures/libraryLayout/index.html?appearance=1&player=1&discovery=1${process.argv.includes("--album-hover-only") ? "&virtual=1" : ""}`
       )
       await page.waitForFunction(() => (window as any).visualFixtureReady)
+      if (process.argv.includes('--issue-regressions-only')) {
+        await checkIssueRegressions(page, name)
+        assert.deepEqual(errors, [], `${name}: renderer errors`)
+        continue
+      }
       if (process.argv.includes('--playback-info-only')) {
         await checkPlaybackQuality(page, name)
         await checkPlaybackDiagnostics(page, name)

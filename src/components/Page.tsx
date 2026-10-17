@@ -90,6 +90,7 @@ const Playlists = lazy(() =>
 const Search = lazy(() =>
   import("./Pages/Search").then((module) => ({ default: module.Search }))
 )
+const ServerLibrary = lazy(() => import("./Pages/ServerLibrary").then(module => ({ default: module.ServerLibrary })))
 
 // Module-level map — persists for the app lifetime.
 const verticalScrollPositions = new Map<string, number>()
@@ -216,6 +217,10 @@ export function Page() {
 
             <Route path="/library" key="library">
               <Library />
+            </Route>
+            <Route path="/server-library/:kind" key="server-library">
+              {(params: { kind?: string }) => params.kind === "artists" || params.kind === "albums" || params.kind === "songs"
+                ? <ServerLibrary kind={params.kind} /> : invalidLibraryLink}
             </Route>
             <Route path="/downloads">
               <Redirect to="/settings/cache" />

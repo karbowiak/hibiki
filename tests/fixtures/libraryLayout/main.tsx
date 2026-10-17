@@ -40,6 +40,7 @@ import { useCardSizeStore } from "../../../src/stores/cardSizeStore.ts"
 import { useCustomColorStore } from "../../../src/stores/customColorStore.ts"
 import { QueuePanel } from "../../../src/components/QueuePanel.tsx"
 import { youtubeMusicTrack } from "../../../src/backends/ytmusic/tracks.ts"
+import { useYoutubeMusicDiscoveryStore } from "../../../src/backends/ytmusic/discovery.ts"
 import { HoverInformation } from "../../../src/components/HoverInformation.tsx"
 import { useCatalogueStore } from "../../../src/offline/catalogueStore.ts"
 import { initializeQueuePersistence, flushQueuePersistence } from "../../../src/lib/queuePersistence.ts"
@@ -61,6 +62,7 @@ async function setup() {
   const youtubeMetadataCalls: string[] = []
   w.fixtureDiagnostics = { calls: () => diagnosticCalls }
   let callback = 0
+  let youtubeArtistEnabled = false
   let loadingGate = Promise.resolve()
   let releaseLoading: (() => void) | null = null
   let downloadStorage = { directory: "/Users/listener/Music/Hibiki", defaultDirectory: "/Users/listener/Music/Hibiki", moving: false, totalBytes: 2 * 1024 ** 3, tracks: 85, error: null as string | null }
@@ -79,6 +81,10 @@ async function setup() {
     transformCallback: () => ++callback,
     unregisterCallback: () => {},
     invoke: async (command: string, args:any={}) => {
+      if (command === "ytmusic_status") return { enabled: youtubeArtistEnabled, phase: youtubeArtistEnabled ? "connected" : "disconnected", lastCheckedAt: null, nextRefreshAt: null, message: null }
+      if (command === "ytmusic_browse") return { title: "YouTube Fixture Artist", items: [], hubs: [], continuation: null,
+        artist: args.browseId === "UC_fixture" ? { id: "UC_fixture", name: "YouTube Fixture Artist", thumbnail: thumb,
+          background: location.origin + "/synthetic-artwork/hero-detail.svg", description: "Fixture artist biography", monthlyListeners: null, subscribers: null, songs: null, shuffle: null } : null }
       if(command==="download_storage_info")return {...downloadStorage}
       if(command==="download_storage_open")return null
       if(command==="download_storage_choose" || command==="download_storage_retry") {
@@ -299,6 +305,9 @@ async function setup() {
       ...(discovery ? { mixTracks: true, stations: true } : {}),
     },
     getArtist: async () => { await loadingGate; return artist },
+    getAllArtists: async (offset = 0, limit = 200) => ({ items: [artist].slice(offset, offset + limit), total: 1, offset }),
+    getAllAlbums: async (offset = 0, limit = 200) => ({ items: albums.slice(offset, offset + limit), total: albums.length, offset }),
+    getAllTracks: async (offset = 0, limit = 200) => ({ items: tracks.slice(offset, offset + limit), total: tracks.length, offset }),
     getArtistAlbums: async () => albums,
     getArtistPopularTracks: async () => tracks,
     getArtistSimilar: async () => [artist],
@@ -580,6 +589,8 @@ async function setup() {
       document.documentElement.style.fontSize = `${textSize}px`
     },
     route: (path: string) => {
+      youtubeArtistEnabled = path.startsWith("/ytmusic/")
+      useYoutubeMusicDiscoveryStore.setState({ connected: youtubeArtistEnabled })
       history.pushState({}, "", path)
       dispatchEvent(new PopStateEvent("popstate"))
     },

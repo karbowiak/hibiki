@@ -1,3 +1,5 @@
+import { ArtistCredits } from "./shared/ArtistCredits"
+import { QueueRadioControls } from "./QueueRadioControls"
 import { MusicEntityLink } from "./shared/MusicEntityLink"
 import { trackEntity } from "../lib/musicLinks"
 import "../styles/shellArtwork.css"
@@ -126,7 +128,7 @@ function PlayedRow({
         </div>
         <div className="queue-track-meta">
           <span className="min-w-0 truncate">
-            <MusicEntityLink entity={trackEntity(track, "artist")} className="hover:underline">{artist}</MusicEntityLink>
+            <>{track ? <ArtistCredits item={track} className="hover:underline" /> : artist}</>
             {track?.albumName && <><span className="mx-1">·</span>
               <MusicEntityLink entity={trackEntity(track, "album")} className="hover:underline">{track.albumName}</MusicEntityLink></>}
           </span>
@@ -188,7 +190,7 @@ function NowPlayingRow({
         </div>
         <div className="queue-track-meta">
           <span className="min-w-0 truncate">
-            <MusicEntityLink entity={trackEntity(track, "artist")} className="hover:underline">{artist}</MusicEntityLink>
+            <>{track ? <ArtistCredits item={track} className="hover:underline" /> : artist}</>
             {track?.albumName && <><span className="mx-1">·</span>
               <MusicEntityLink entity={trackEntity(track, "album")} className="hover:underline">{track.albumName}</MusicEntityLink></>}
           </span>
@@ -301,7 +303,7 @@ function SortableUpcomingItem({
         </div>
         <div className="queue-track-meta">
           <span className="min-w-0 truncate">
-            <MusicEntityLink entity={trackEntity(track, "artist")} className="hover:underline">{artist}</MusicEntityLink>
+            <>{track ? <ArtistCredits item={track} className="hover:underline" /> : artist}</>
             {track?.albumName && <><span className="mx-1">·</span>
               <MusicEntityLink entity={trackEntity(track, "album")} className="hover:underline">{track.albumName}</MusicEntityLink></>}
           </span>
@@ -958,6 +960,7 @@ export function QueuePanel() {
             onMouseDown={onResizeMouseDown}
           />
           {header}
+          {queueActiveTab !== "lyrics" && <QueueRadioControls />}
           {queueActiveTab === "lyrics"
             ? isQueueOpen && <LyricsContent />
             : list}
@@ -984,6 +987,7 @@ export function QueuePanel() {
         } ${isHoveredDrop ? "ring-2 ring-inset ring-accent/60" : ""} ${dropFlash ? "ring-2 ring-inset ring-green-500/60" : ""}`}
       >
         {header}
+        <QueueRadioControls />
         {list}
       </div>
     </>

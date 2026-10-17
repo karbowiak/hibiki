@@ -1,5 +1,6 @@
+import { ArtistCredits } from "./shared/ArtistCredits"
 import { MusicEntityLink } from "./shared/MusicEntityLink"
-import { albumArtistEntity, trackEntity } from "../lib/musicLinks"
+import { trackEntity } from "../lib/musicLinks"
 import { deduplicateAlbumItems } from "../lib/dedup"
 import { useUIStore } from "../stores/uiStore"
 import "../styles/discovery.css"
@@ -467,9 +468,7 @@ export function SearchDropdown({
                           </div>
                           {row.kind !== "artist" && (
                             <div className="truncate text-xs text-(--text-secondary)">
-                              <MusicEntityLink onNavigate={onClose} entity={row.item.type === "track" ? trackEntity(row.item, "artist") : row.item.type === "album" ? albumArtistEntity(row.item) : null} className="hover:underline">
-                                {row.item.artistName}
-                              </MusicEntityLink>
+                              <ArtistCredits item={row.item} onNavigate={onClose} className="hover:underline" />
                               {row.kind === "track" && row.item.albumName && <><span> · </span>
                                 <MusicEntityLink onNavigate={onClose} entity={trackEntity(row.item, "album")} className="hover:underline">{row.item.albumName}</MusicEntityLink></>}
                             </div>

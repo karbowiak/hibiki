@@ -1,5 +1,5 @@
 import { MusicEntityLink } from "../shared/MusicEntityLink"
-import { trackEntity } from "../../lib/musicLinks"
+import { ArtistCredits } from "../shared/ArtistCredits"
 import { ArtworkImage } from "../shared/ArtworkImage"
 import { MediaBackdrop } from "../shared/MediaBackdrop"
 import { buildExternalImageUrl } from "../../lib/imageUrl"
@@ -125,7 +125,7 @@ export function YoutubeMusicCollection({ browseId }: { browseId: string }) {
           <div className="min-w-0"><h1 className="media-detail-title wrap-break-word">{title}</h1>
             <p className="mt-2 flex items-center gap-2 text-sm text-(--text-secondary)"><YoutubeMusicLogo size={16} />YouTube Music</p>
             {browseId.startsWith("MPRE") && albumArtist && <p className="mt-2 text-sm text-(--text-secondary)">
-              <MusicEntityLink entity={tracks[0] ? trackEntity(tracks[0], "artist") : { kind: "artist", name: albumArtist, id: card?.artistId ? `ytmusic:${card.artistId}` : null }} className="hover:underline">{albumArtist}</MusicEntityLink>
+              {tracks[0] ? <ArtistCredits item={tracks[0]} className="hover:underline" /> : <MusicEntityLink entity={{ kind: "artist", name: albumArtist, id: card?.artistId ? `ytmusic:${card.artistId}` : null }} className="hover:underline">{albumArtist}</MusicEntityLink>}
             </p>}
             {description && description !== albumArtist && <p className="mt-2 line-clamp-2 max-w-xl text-sm text-(--text-secondary)">{description}</p>}
           </div>
