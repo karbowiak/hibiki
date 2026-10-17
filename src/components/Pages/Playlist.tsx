@@ -1,3 +1,4 @@
+import { collectionPlaybackSource, selectCollectionTrack } from "../../lib/collectionPlayback"
 import { filterTracks, sortTracks, type TrackSortColumn } from "../../lib/trackOrder"
 import { useEntityDownloadStatus } from "../shared/DownloadBadge"
 import { PlaylistInformationDialog } from "../PlaylistInformationDialog"
@@ -343,25 +344,9 @@ export function Playlist({ playlistId }: { playlistId: string }) {
       }
     : null
 
-  const querySource = {
-    key: `playlist-query:${playlistId}`,
-    restoreQuery: { key: `playlist:${playlistId}`, filter: debouncedQuery, sort: sortCol, dir: sortDir },
-    total: queried.total,
-    loadPage: async (offset: number, limit: number) => {
-      const page = await provider!.getCollectionPage!(
-        `playlist:${playlistId}`,
-        offset,
-        limit,
-        debouncedQuery,
-        sortCol,
-        sortDir
-      )
-      return {
-        ...page,
-        items: page.items.filter((item) => item.type === "track"),
-      }
-    },
-  }
+  const querySource = provider ? collectionPlaybackSource(provider, {
+    key: `playlist:${playlistId}`, filter: debouncedQuery, sort: sortCol, dir: sortDir,
+  }, queried.total) : null
 
   return (
     <div className="media-detail-page playlist-detail-page pb-12">
@@ -730,7 +715,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
         onPlay={(track, all, index) => {
           if (playbackSource && (!useQuery || provider?.getCollectionPage))
             void playPagedTracks(
-              useQuery ? querySource : playbackSource,
+              useQuery ? selectCollectionTrack(querySource, track, index ?? all.indexOf(track)) : playbackSource,
               currentPlaylist.title,
               `/playlist/${playlistId}`,
               false,

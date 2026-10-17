@@ -1,3 +1,4 @@
+import { collectionPlaybackSource, selectCollectionTrack } from "../../lib/collectionPlayback"
 import { getSelection, subscribeSelection } from "../../lib/mixSelection"
 import { mixPlaybackSource, orderMixTracks, shuffleTracks } from "../../lib/mixOrder"
 import { filterTracks, sortTracks, type TrackSortColumn } from "../../lib/trackOrder"
@@ -154,25 +155,9 @@ export function MixPage() {
     provider?.getMixTracksPage && mixKey
       ? mixPlaybackSource(provider, mixKey, page.total)
       : null
-  const querySource = {
-    key: `mix-query:${mixKey}`,
-    restoreQuery: { key: `mix:${mixKey}`, filter: debouncedQuery, sort: sortCol, dir: sortDir },
-    total: queried.total,
-    loadPage: async (offset: number, limit: number) => {
-      const result = await provider!.getCollectionPage!(
-        `mix:${mixKey}`,
-        offset,
-        limit,
-        debouncedQuery,
-        sortCol,
-        sortDir
-      )
-      return {
-        ...result,
-        items: result.items.filter((item) => item.type === "track"),
-      }
-    },
-  }
+  const querySource = provider ? collectionPlaybackSource(provider, {
+    key: `mix:${mixKey}`, filter: debouncedQuery, sort: sortCol, dir: sortDir,
+  }, queried.total) : null
   function handlePlayInOrder() {
     if (useQuery && provider?.getCollectionPage)
       void playPagedTracks(querySource, mixItem!.title, "/mix")
@@ -343,7 +328,7 @@ export function MixPage() {
           onPlay={(track, all, index) => {
             if (useQuery && provider?.getCollectionPage)
               void playPagedTracks(
-                querySource,
+                selectCollectionTrack(querySource, track, index ?? 0),
                 mixItem.title,
                 "/mix",
                 false,

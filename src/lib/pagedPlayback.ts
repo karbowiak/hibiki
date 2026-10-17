@@ -1,5 +1,11 @@
 import type { MusicTrack, PagedResult } from "../types/music"
 
+export interface CollectionOrder {
+  filter: string
+  sort: string
+  dir: "asc" | "desc"
+}
+
 export interface PagedTrackSource {
   key: string
   total?: number
@@ -7,7 +13,7 @@ export interface PagedTrackSource {
   prepare?: () => Promise<PagedTrackSource | null>
   entries?: readonly Partial<MusicTrack>[]
   loadItems?: (positions: number[]) => Promise<MusicTrack[]>
-  restoreQuery?: { key: string; filter: string; sort: string; dir: string }
+  restoreQuery?: CollectionOrder & { key: string }
   initialPage?: { offset: number; items: MusicTrack[] }
   loadPage: (offset: number, limit: number) => Promise<PagedResult<MusicTrack>>
 }

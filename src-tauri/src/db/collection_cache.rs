@@ -21,6 +21,12 @@ pub enum Request {
         sort: String,
         dir: String,
     },
+    QueryRefs {
+        key: String,
+        filter: String,
+        sort: String,
+        dir: String,
+    },
     Pick {
         key: String,
         positions: Vec<i64>,
@@ -63,6 +69,7 @@ impl Request {
             Self::Info { .. }
                 | Self::Page { .. }
                 | Self::Query { .. }
+                | Self::QueryRefs { .. }
                 | Self::Pick { .. }
                 | Self::Refs { .. }
                 | Self::Items { .. }
@@ -73,6 +80,7 @@ impl Request {
             Self::Info { key }
             | Self::Page { key, .. }
             | Self::Query { key, .. }
+            | Self::QueryRefs { key, .. }
             | Self::Pick { key, .. }
             | Self::Refs { key }
             | Self::Items { key, .. }
@@ -133,6 +141,35 @@ fn item_at(
     })
     .transpose()
 }
+
+fn query_order(sort: &str, dir: &str) -> Result<String, String> {
+            let field = match sort {
+                "default" => None,
+                "title" => Some("title"),
+                "artist" => Some("artistName"),
+                "album" => Some("albumName"),
+                "year" => Some("year"),
+                "plays" => Some("playCount"),
+                "popularity" => Some("ratingCount"),
+                "label" => Some("parentStudio"),
+                "bitrate" => Some("bitrate"),
+                "format" => Some("codec"),
+                "added_at" => Some("addedAt"),
+                "rating" => Some("userRating"),
+                "rated_at" => Some("lastRatedAt"),
+                "duration" => Some("duration"),
+                _ => return Err("Unsupported collection order".into()),
+            };
+            let direction = if dir == "desc" {
+                "DESC"
+            } else if dir == "asc" {
+                "ASC"
+            } else {
+                return Err("Invalid collection direction".into());
+            };
+    Ok(field.map(|field|format!("json_extract(i.payload,'$.{field}') IS NULL ASC,json_extract(i.payload,'$.{field}') COLLATE NOCASE {direction},m.position ASC")).unwrap_or("m.position ASC".into()))
+}
+const QUERY_FROM: &str = "FROM collection_cache_members m JOIN collection_cache_items i ON i.scope=m.scope AND i.kind=m.kind AND i.id=m.item_id WHERE m.scope=?1 AND m.key=?2 AND m.generation=?3 AND (?4='' OR instr(i.search_text,?4)>0)";
 
 /// Mix order belongs to the complete membership, not to a page or play action.
 /// Canonical identities keep metadata edits and upstream reordering from reseeding it.
@@ -251,38 +288,14 @@ pub fn run(conn: &Connection, scope: &str, request: &Request, now: i64) -> Resul
             let Some((Some(generation), _, _, false)) = metadata(conn, scope, key)? else {
                 return Ok(Value::Null);
             };
-            let field = match sort.as_str() {
-                "default" => None,
-                "title" => Some("title"),
-                "artist" => Some("artistName"),
-                "album" => Some("albumName"),
-                "year" => Some("year"),
-                "plays" => Some("playCount"),
-                "popularity" => Some("ratingCount"),
-                "label" => Some("parentStudio"),
-                "bitrate" => Some("bitrate"),
-                "format" => Some("codec"),
-                "added_at" => Some("addedAt"),
-                "rating" => Some("userRating"),
-                "rated_at" => Some("lastRatedAt"),
-                "duration" => Some("duration"),
-                _ => return Err("Unsupported collection order".into()),
-            };
-            let direction = if dir == "desc" {
-                "DESC"
-            } else if dir == "asc" {
-                "ASC"
-            } else {
-                return Err("Invalid collection direction".into());
-            };
+            let order = query_order(sort, dir)?;
             let filter = filter.to_lowercase();
-            let from="FROM collection_cache_members m JOIN collection_cache_items i ON i.scope=m.scope AND i.kind=m.kind AND i.id=m.item_id WHERE m.scope=?1 AND m.key=?2 AND m.generation=?3 AND (?4='' OR instr(i.search_text,?4)>0)";
+            let from = QUERY_FROM;
             let total: i64 = sql(conn.query_row(
                 &format!("SELECT COUNT(*) {from}"),
                 params![scope, key, generation, filter],
                 |r| r.get(0),
             ))?;
-            let order=field.map(|field|format!("json_extract(i.payload,'$.{field}') IS NULL ASC,json_extract(i.payload,'$.{field}') COLLATE NOCASE {direction},m.position ASC")).unwrap_or("m.position ASC".into());
             let mut stmt = sql(conn.prepare(&format!(
                 "SELECT i.payload,m.occurrence {from} ORDER BY {order} LIMIT ?5 OFFSET ?6"
             )))?;
@@ -301,6 +314,22 @@ pub fn run(conn: &Connection, scope: &str, request: &Request, now: i64) -> Resul
                 items.push(item);
             }
             Ok(json!({"items":items,"total":total,"offset":offset}))
+        }
+        Request::QueryRefs { filter, sort, dir, .. } => {
+            if filter.len() > 1024 { return Err("Invalid collection query".into()); }
+            let order = query_order(sort, dir)?;
+            let Some((Some(generation), _, _, false)) = metadata(conn, scope, key)? else {
+                return Ok(Value::Null);
+            };
+            let mut statement = sql(conn.prepare(&format!(
+                "SELECT m.item_id,m.occurrence {QUERY_FROM} AND m.kind='track' ORDER BY {order} LIMIT 1000001"
+            )))?;
+            let rows = sql(statement.query_map(params![scope,key,generation,filter.to_lowercase()], |row| {
+                Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?))
+            }))?;
+            let refs = sql(rows.collect::<rusqlite::Result<Vec<_>>>())?;
+            if refs.len() > 1_000_000 { return Err("This queue exceeds its saved membership limit".into()); }
+            Ok(json!(refs))
         }
         Request::Pick { positions, .. } => {
             if positions.len() > 500 || positions.iter().any(|p| *p < 0) {
@@ -624,6 +653,39 @@ mod tests {
                 .collect::<Vec<_>>(),
             order.iter().collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn query_membership_preserves_sort_filter_occurrences_and_captured_identities() {
+        let conn = db();
+        let key = "playlist:8";
+        let mut rows: Vec<_> = (0..420).map(|index| json!({
+            "type":"track", "id":format!("{}", index / 2 + 1),
+            "playlistItemId":format!("{index}"), "title":format!("Song {:04}", index / 2),
+            "artistName": if index < 200 { "Keep" } else { "Other" }
+        })).collect();
+        let save = |rows: &[Value], stamp: &str| {
+            let generation = begin(&conn,key,stamp);
+            request(&conn,Request::Put {key:key.into(), generation, offset:0, total:rows.len() as i64,items:rows.to_vec()});
+            request(&conn,Request::Commit {key:key.into(),generation});
+        };
+        save(&rows,"initial");
+        let query = Request::QueryRefs {key:key.into(),filter:"KEEP".into(),sort:"title".into(),dir:"desc".into()};
+        let refs = request(&conn,query.clone());
+        assert_eq!(refs.as_array().unwrap().len(),200);
+        assert_eq!(refs[0],json!(["100","198"]));
+        assert_eq!(refs[1],json!(["100","199"]));
+        let page = request(&conn,Request::Query { key:key.into(),offset:190,limit:10,filter:"keep".into(),sort:"title".into(),dir:"desc".into() });
+        for (offset, item) in page["items"].as_array().unwrap().iter().enumerate() {
+            assert_eq!(item["id"],refs[190+offset][0]);
+            assert_eq!(item["playlistItemId"],refs[190+offset][1]);
+        }
+        rows.retain(|row| row["id"] != "100");
+        rows.reverse();save(&rows,"changed");
+        assert_ne!(request(&conn,query),refs);
+        let selected = request(&conn,Request::Items {key:key.into(),ids:vec![refs[0][0].as_str().unwrap().into()]});
+        assert_eq!(selected[0]["id"],"100","a removed occurrence never resolves to the new occupant of its old position");
+        assert!(run(&conn,&scope(),&Request::QueryRefs {key:key.into(),filter:"".into(),sort:"unsupported".into(),dir:"asc".into()},100).is_err());
     }
 
     #[test]

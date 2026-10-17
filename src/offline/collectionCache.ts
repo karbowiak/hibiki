@@ -7,6 +7,7 @@ import type {
 } from "../backends/plex/scopedApi"
 import { sanitizeOfflineData, forwardFreshPlaylistReads } from "./providerCache"
 import { shuffled } from "../lib/pagedPlayback"
+import type { CollectionOrder } from "../lib/pagedPlayback"
 import { projectOfflineAvailability } from "./catalogue"
 
 const TTL = 15 * 60_000
@@ -402,17 +403,17 @@ export function createCollectionCacheProvider(
           return project(page)
         }
       else if (property === "getCachedTrackSource")
-        method = async (key: string, shuffle = false) => {
+        method = async (key: string, shuffle = false, query?: CollectionOrder) => {
           key = await resolveKey(key)
-          if (mixPaths.has(key)) await ensure(key)
-          const refs = await call<[string, string | null][] | null>(
-            "refs",
-            key
-          ).catch(() => null)
+          if (query || mixPaths.has(key)) await ensure(key)
+          const refs = query
+            ? await call<[string, string | null][] | null>("queryRefs", key, { ...query })
+            : await call<[string, string | null][] | null>("refs", key).catch(() => null)
           if (!refs) return null
           const order = shuffle ? shuffled(refs) : refs
           return {
             key,
+            ...(query ? { restoreQuery: { key, ...query } } : {}),
             total: order.length,
             entries: order.map(([id, occurrence]) => ({ id, ...(occurrence ? { playlistItemId: occurrence } : {}) })),
             async loadItems(positions: number[]) {
