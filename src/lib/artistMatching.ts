@@ -41,7 +41,7 @@ export function youtubeArtistEvidence(page: YoutubeMusicBrowsePage): ArtistCatal
       return { title: item.title, duration }
     }),
     releases: page.hubs.filter(hub => ["albums", "singles"].includes(hub.category))
-      .flatMap(hub => hub.items.filter(item => item.kind === "album")),
+      .flatMap(hub => hub.items.filter(item => item.kind === "album").map(item => ({ title: item.title, year: item.year }))),
   }
 }
 

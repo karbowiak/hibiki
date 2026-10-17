@@ -23,7 +23,7 @@ export function DiscoveryCard({ entry, scrollItem, large, showYear, mix }: { ent
     if (!info) return null
     const player = usePlayerStore.getState()
     return <MediaCard contextItem={item} title={info.title} desc={info.desc} thumb={info.thumb} isArtist={info.isArtist}
-      userRating={item.userRating} artistName={"artistName" in info ? info.artistName : null} albumName={"albumName" in info ? info.albumName : null}
+      userRating={"userRating" in item ? item.userRating : undefined} artistName={"artistName" in info ? info.artistName : null} albumName={"albumName" in info ? info.albumName : null}
       href={info.href ?? undefined} scrollItem={scrollItem} large={large} dragPayload={makeDragPayload(item)}
       artworkBadge={<MusicSourceBadge source="plex" />}
       prefetch={info.itemType === "album" ? () => prefetchAlbum(info.id) : info.itemType === "artist" ? () => prefetchArtist(info.id) : undefined}

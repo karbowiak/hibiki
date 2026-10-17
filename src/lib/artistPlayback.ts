@@ -23,7 +23,7 @@ export function artistPlaybackSource(provider: MusicProvider | null, plexId: str
     const seen = new Set<string>()
     const destination = youtube.artist?.songs ?? youtube.artist?.shuffle
     const remote = destination ? youtubeMusicCollectionSource(destination) : null
-    let pending = youtube.items.filter(item => item.kind === "song").map(youtubeMusicItemTrack)
+    let pending: MusicTrack[] = youtube.items.filter(item => item.kind === "song").map(youtubeMusicItemTrack)
     let remoteOffset = 0, localOffset = 0, remoteDone = !remote
     const buffer: MusicTrack[] = []
     let serial = Promise.resolve()
