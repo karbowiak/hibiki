@@ -144,7 +144,11 @@ async function checkTrackRowLayout(page: Page, name: string) {
       const titleCell = await row.locator('td:nth-child(2)').boundingBox()
       const titleLine = await row.locator('.track-row-title-line').boundingBox()
       assert.ok(actionBounds && titleCell && actionBounds.x >= titleCell.x && actionBounds.x + actionBounds.width <= titleCell.x + titleCell.width, `${name}/${path}: actions leave the title column`)
-      assert.ok(titleLine && actionBounds && actionBounds.y > titleLine.y + titleLine.height / 2, `${name}/${path}: actions are not on the second line`)
+      if (path.startsWith('/album/') && !(await row.locator('.track-row-secondary-line').count())) {
+        assert.ok(titleLine && actionBounds && Math.abs(actionBounds.y + actionBounds.height / 2 - titleLine.y - titleLine.height / 2) < 2, `${name}/${path}: compact album actions are not aligned with the title`)
+      } else {
+        assert.ok(titleLine && actionBounds && actionBounds.y > titleLine.y + titleLine.height / 2, `${name}/${path}: actions are not on the second line`)
+      }
       const artistLine = row.locator('.track-row-artist')
       if (!path.startsWith('/album/') && await artistLine.count()) {
         const artist = await artistLine.boundingBox()
