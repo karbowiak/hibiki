@@ -15,6 +15,7 @@ import { useAudioSettingsStore } from "../stores/audioSettingsStore"
 import { useVisualizerStore } from "../stores/visualizerStore"
 import { engine } from "../audio/RustAudioEngine"
 import { formatMs } from "../lib/formatters"
+import { formatAudioQuality } from "../lib/audioQuality"
 import { IconBlockquote, IconZzz, IconActivity, IconMaximize, IconAdjustments, IconPlaylist, IconVolume, IconVolume2, IconVolumeOff, IconHeadphones, IconMusic } from "@tabler/icons-react"
 import { useCapability } from "../hooks/useCapability"
 import { useLongPress } from "../hooks/useLongPress"
@@ -508,12 +509,7 @@ export function Player() {
     (!contextName || contextName !== currentTrack.albumName)
   )
 
-  // Media info chip: codec + bitrate shown next to the repeat button.
-  const chipCodec = currentTrack?.codec?.toUpperCase() ?? null
-  const chipBitrate = currentTrack?.bitrate
-  const mediaLabel = chipCodec
-    ? chipBitrate ? `${chipCodec} ${chipBitrate}k` : chipCodec
-    : null
+  const mediaLabel = currentTrack ? formatAudioQuality(currentTrack) : null
 
   // Short DJ name (strip "DJ " prefix) for inline display
   const djShortName = djMode ? DJ_MODES.find(d => d.key === djMode)?.name.replace("DJ ", "") ?? djMode : null
@@ -662,7 +658,6 @@ export function Player() {
                           </p>
                         )}
                         <div className="flex flex-shrink-0 items-center gap-1.5">
-                          <FavoriteButton track={currentTrack} size={14} />
                           <StarRating
                             itemId={currentTrack.id}
                             userRating={currentTrack.userRating}
@@ -695,7 +690,7 @@ export function Player() {
             {/* Center: controls + progress — absolutely centered, never shifts */}
             <div className="player-center absolute inset-x-0 top-0 flex h-full items-center justify-center z-10 pointer-events-none px-4">
             <div className="player-center-content flex w-[38%] max-w-[45.125rem] flex-col items-center">
-              <div className="grid grid-cols-[1fr_auto_1fr] items-center w-full" role="group" aria-label="Playback controls">
+              <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center w-full" role="group" aria-label="Playback controls">
                 {/* Left wing: radio, shuffle */}
                 <div className="flex items-center justify-end gap-x-1.5">
 
@@ -783,7 +778,7 @@ export function Player() {
                 </div>
 
                 {/* Right wing: repeat, media info */}
-                <div className="flex items-center justify-start gap-x-1.5">
+                <div className="flex min-w-0 items-center justify-start gap-x-1.5">
                 {/* Repeat */}
                 <button
                   onClick={cycleRepeat}
@@ -802,11 +797,12 @@ export function Player() {
                 </button>
 
                 {/* Track info — plain text quality label, clickable */}
-                {currentTrack && mediaLabel && (
+                {currentTrack && (
                   <PlayerPopover
                     icon={
-                      <span className="font-mono text-[0.625rem] font-medium tracking-wide">{mediaLabel}</span>
+                      <span title={mediaLabel ?? "Audio information"} className="min-w-0 truncate whitespace-nowrap font-mono text-[0.625rem] font-medium tabular-nums">{mediaLabel ?? "Audio info"}</span>
                     }
+                    wide
                     label="Track info"
                     align="center"
                     width="auto"
@@ -814,6 +810,7 @@ export function Player() {
                     {(close) => <TrackInfoPanel onClose={close} />}
                   </PlayerPopover>
                 )}
+                {currentTrack && <FavoriteButton key={currentTrack.id} track={currentTrack} size={18} className="h-8 w-8 rounded-full" />}
 
                 </div>
               </div>

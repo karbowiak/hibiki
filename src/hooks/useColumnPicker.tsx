@@ -1,4 +1,11 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react"
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react"
 
 import {
   booleanPreference,
@@ -31,7 +38,7 @@ export const ALL_COLUMNS: { id: ColId; label: string; defaultOn: boolean }[] = [
   { id: "label", label: "Label", defaultOn: false },
   { id: "bitrate", label: "Bit Rate", defaultOn: false },
   { id: "format", label: "Format", defaultOn: false },
-  { id: "rating", label: "Rating", defaultOn: false },
+  { id: "rating", label: "Rating & like", defaultOn: true },
   { id: "rated_at", label: "Date Rated", defaultOn: false },
   { id: "downloads", label: "Download status", defaultOn: true },
 ]
@@ -46,6 +53,7 @@ const knownColumn = (id: unknown) =>
 
 const columnPreferences = new Map<string, ScalarPreference<ColId[]>>()
 const downloadPreferences = new Map<string, ScalarPreference<boolean>>()
+const ratingPreferences = new Map<string, ScalarPreference<boolean>>()
 
 export function usePlaylistColumns(storageKey: string, defaultCols?: ColId[]) {
   let preference = columnPreferences.get(storageKey)
@@ -76,6 +84,17 @@ export function usePlaylistColumns(storageKey: string, defaultCols?: ColId[]) {
     )
     downloadPreferences.set(storageKey, downloadPreference)
   }
+  // The combined rating/heart column defaults on for existing collections too.
+  let ratingPreference = ratingPreferences.get(storageKey)
+  if (!ratingPreference) {
+    ratingPreference = booleanPreference(`${storageKey}-rating-visible`, true)
+    ratingPreferences.set(storageKey, ratingPreference)
+  }
+  const ratingVisible = useSyncExternalStore(
+    ratingPreference.subscribe,
+    ratingPreference.snapshot,
+    ratingPreference.snapshot
+  )
   const columns = useSyncExternalStore(
     preference.subscribe,
     preference.snapshot,
@@ -88,6 +107,10 @@ export function usePlaylistColumns(storageKey: string, defaultCols?: ColId[]) {
   )
   function toggle(id: ColId) {
     if (!knownColumn(id)) return
+    if (id === "rating") {
+      ratingPreference!.set(!ratingPreference!.snapshot())
+      return
+    }
     if (id === "downloads") {
       downloadPreference!.set(!downloadPreference!.snapshot())
       return
@@ -98,6 +121,8 @@ export function usePlaylistColumns(storageKey: string, defaultCols?: ColId[]) {
     preference!.set([...next])
   }
   const visible = new Set(columns)
+  visible.delete("rating")
+  if (ratingVisible) visible.add("rating")
   if (downloadsVisible) visible.add("downloads")
   return { visible, toggle }
 }
@@ -131,7 +156,8 @@ export function ColumnPicker({
         e.stopPropagation()
         setOpen(false)
         trigger.current?.focus()
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") setOpen(false)
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k")
+        setOpen(false)
     }
     document.addEventListener("keydown", onKeyDown)
     document.addEventListener("pointerdown", onPointerDown)
@@ -158,7 +184,13 @@ export function ColumnPicker({
         Columns
       </button>
       {open && (
-        <div ref={panel} id={panelId} role="dialog" aria-label="Visible song columns" className="app-overlay-surface absolute right-0 top-full z-30 mt-1 w-56 max-h-96 overflow-y-auto rounded-lg bg-app-surface py-1 shadow-xl">
+        <div
+          ref={panel}
+          id={panelId}
+          role="dialog"
+          aria-label="Visible song columns"
+          className="app-overlay-surface absolute right-0 top-full z-30 mt-1 max-h-96 w-56 overflow-y-auto rounded-lg bg-app-surface py-1 shadow-xl"
+        >
           {columns.map((col) => (
             <label
               key={col.id}

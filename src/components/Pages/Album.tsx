@@ -1,6 +1,9 @@
-import { DownloadMenuItems } from "../shared/DownloadMenuItems"
-import { metadataRefreshMessage, retryMetadataRefresh } from "../../lib/metadataLoadError"
 import { DownloadBadge } from "../shared/DownloadBadge"
+import { DownloadMenuItems } from "../shared/DownloadMenuItems"
+import {
+  metadataRefreshMessage,
+  retryMetadataRefresh,
+} from "../../lib/metadataLoadError"
 import "../../styles/media-detail-controls.css"
 import { ArtworkImage, useArtworkFailures } from "../shared/ArtworkImage"
 import { useAlbumImage, useAlbumBackground } from "../../hooks/useMediaImage"
@@ -13,7 +16,6 @@ import { usePlayerStore, useUIStore, useLibraryStore } from "../../stores"
 import { useProviderStore } from "../../stores/providerStore"
 import { formatMs, formatTotalDuration } from "../../lib/formatters"
 import { ImageModal } from "../shared/ImageModal"
-import { prefetchTrackAudio } from "../../stores/playerStore"
 import { useContextMenu } from "../../hooks/useContextMenu"
 import type {
   MusicAlbum,
@@ -40,11 +42,10 @@ import { PageLoading } from "../shared/PageLoading"
 import { PageRecovery } from "../shared/PageRecovery"
 import { ArtworkSourcePicker } from "../shared/ArtworkSourcePicker"
 import { StarRating } from "../shared/StarRating"
-import { FavoriteButton } from "../shared/FavoriteButton"
+import { DetailTrackList } from "../shared/TrackTable"
 import { useDebugStore } from "../../stores/debugStore"
 import { useDebugPanelStore } from "../../stores/debugPanelStore"
 import { useCapability } from "../../hooks/useCapability"
-import { useTrackDrag } from "../../hooks/useTrackDrag"
 import { useMetadataSnapshot } from "../../hooks/useMetadataSnapshot"
 import { MetadataEditDialog } from "../shared/MetadataEditDialog"
 import { AppDialog } from "../shared/AppDialog"
@@ -80,8 +81,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
         currentTrack: s.currentTrack,
       }))
     )
-  const { handler: ctxMenu, isTarget: isCtxTarget } = useContextMenu()
-  const trackDrag = useTrackDrag()
+  const { handler: ctxMenu } = useContextMenu()
   const pageRefreshKey = useUIStore((s) => s.pageRefreshKey)
   const shouldDeduplicate = useUIStore((s) => s.deduplicateAlbums)
   const hasRadio = useCapability("radio")
@@ -181,7 +181,10 @@ export function AlbumPage({ albumId }: { albumId: string }) {
       setRelatedHubs(entry.relatedHubs)
       setIsLoading(false)
     }
-    retryMetadataRefresh(() => loadAlbumPage(albumId, { force: true, onCore: applyEntry }), current)
+    retryMetadataRefresh(
+      () => loadAlbumPage(albumId, { force: true, onCore: applyEntry }),
+      current
+    )
       .then(applyEntry)
       .catch((error) => {
         if (current()) setError(String(error))
@@ -824,189 +827,23 @@ export function AlbumPage({ albumId }: { albumId: string }) {
             onRetry={() => setLoadAttempt((n) => n + 1)}
           />
         )}
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm text-[color:var(--text-secondary)]">
-            <thead className="border-b border-[var(--border)]">
-              <tr>
-                <th className="w-8 p-2 text-center">#</th>
-                <th className="p-2 text-left">Title</th>
-                <th className="w-32 p-2 text-right">Rating</th>
-                <th className="w-36 p-2 text-right">Duration</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tracks.map((track, idx) => {
-                const unavailable =
-                  !!provider?.isOffline &&
-                  !track.mediaInfo?.offlineAvailable &&
-                  !track.mediaInfo?.localAudio
-                const isActive = currentTrack?.id === track.id
-                const isContextTarget = isCtxTarget(track.id)
-                return (
-                  <tr
-                    key={track.id}
-                    className={`media-track-row group ${unavailable ? "cursor-default opacity-40" : "cursor-pointer"} rounded focus-within:bg-hl-row ${isActive || isContextTarget ? "bg-hl-row" : "hover:bg-hl-row"}`}
-                    onClick={() =>
-                      !unavailable &&
-                      void playTrack(
-                        track,
-                        playableTracks,
-                        album.title,
-                        `/album/${albumId}`,
-                        albumId
-                      )
-                    }
-                    onMouseEnter={() => prefetchTrackAudio(track)}
-                    onContextMenu={ctxMenu("track", track)}
-                    onPointerDown={(e) =>
-                      trackDrag.onPointerDown(e, {
-                        type: "track",
-                        ids: [track.id],
-                        label: track.title,
-                        tracks: [track],
-                      })
-                    }
-                    onPointerMove={trackDrag.onPointerMove}
-                    onPointerUp={trackDrag.onPointerUp}
-                  >
-                    <td className="w-8 p-2 text-center">
-                      <button
-                        type="button"
-                        aria-label={`Play ${track.title}`}
-                        disabled={unavailable}
-                        onPointerDown={(e) => e.stopPropagation()}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          void playTrack(
-                            track,
-                            playableTracks,
-                            album.title,
-                            `/album/${albumId}`,
-                            albumId
-                          )
-                        }}
-                        className={`flex h-7 w-7 items-center justify-center rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${isActive ? "text-accent" : "text-[color:var(--text-secondary)]"}`}
-                      >
-                        <span
-                          aria-hidden="true"
-                          className="group-focus-within:hidden group-hover:hidden"
-                        >
-                          {isActive ? (
-                            <svg
-                              viewBox="0 0 16 16"
-                              width="12"
-                              height="12"
-                              fill="currentColor"
-                            >
-                              <rect x="1" y="3" width="3" height="10" rx="1" />
-                              <rect x="6" y="1" width="3" height="12" rx="1" />
-                              <rect x="11" y="5" width="3" height="8" rx="1" />
-                            </svg>
-                          ) : (
-                            track.trackNumber || idx + 1
-                          )}
-                        </span>
-                        <svg
-                          aria-hidden="true"
-                          className="hidden group-focus-within:block group-hover:block"
-                          viewBox="0 0 16 16"
-                          width="12"
-                          height="12"
-                          fill="currentColor"
-                        >
-                          <polygon points="3,2 13,8 3,14" />
-                        </svg>
-                      </button>
-                    </td>
-                    <td className="p-2">
-                      <div
-                        className={
-                          isActive
-                            ? "text-accent"
-                            : "text-[color:var(--text-primary)]"
-                        }
-                      >
-                        {track.title}
-                        <DownloadBadge
-                          kind="track"
-                          id={track.id}
-                          className="ml-2 align-middle"
-                        />
-                      </div>
-                      {track.originalTitle &&
-                        track.originalTitle !== album.artistName && (
-                          <div className="text-xs text-[color:var(--text-muted)]">
-                            {track.originalTitle}
-                          </div>
-                        )}
-                    </td>
-                    <td
-                      className="p-2 text-right"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="flex items-center justify-end gap-2">
-                        <FavoriteButton track={track} />
-                        <HeroRating
-                          itemId={track.id}
-                          userRating={track.userRating}
-                          itemType="track"
-                          musicTrack={track}
-                        />
-                      </div>
-                    </td>
-                    <td className="w-36 p-2 text-right tabular-nums">
-                      <span className="group-focus-within:hidden group-hover:hidden">
-                        {formatMs(track.duration)}
-                      </span>
-                      <div className="inline-flex items-center gap-2 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
-                        <button
-                          className="flex items-center gap-0.5 px-1 text-xs text-[color:var(--text-secondary)] transition-colors hover:text-[color:var(--text-primary)]"
-                          aria-label={`Add ${track.title} to queue`}
-                          title="Add to Queue"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            addToQueue([track])
-                          }}
-                        >
-                          <svg
-                            viewBox="0 0 16 16"
-                            width="11"
-                            height="11"
-                            fill="currentColor"
-                          >
-                            <path d="M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2z" />
-                          </svg>
-                          Queue
-                        </button>
-                        {hasRadio && (
-                          <button
-                            className="flex items-center gap-1 px-1 text-xs text-[color:var(--text-secondary)] transition-colors hover:text-[color:var(--text-primary)]"
-                            aria-label={`Start radio for ${track.title}`}
-                            title="Track Radio"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              void playRadio(track.id, "track")
-                            }}
-                          >
-                            <svg
-                              viewBox="0 0 16 16"
-                              width="12"
-                              height="12"
-                              fill="currentColor"
-                            >
-                              <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6A3 3 0 0 0 8 5zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
-                            </svg>
-                            Radio
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+        <DetailTrackList
+          presentation="album"
+          tracks={tracks}
+          currentTrackId={currentTrack?.id}
+          showRadio={hasRadio}
+          onPlay={(track) => {
+            void playTrack(
+              track,
+              playableTracks,
+              album.title,
+              `/album/${albumId}`,
+              albumId
+            )
+          }}
+          onAddToQueue={addToQueue}
+          onPlayRadio={playRadio}
+        />
       </div>
 
       {/* Review */}

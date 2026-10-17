@@ -1,7 +1,10 @@
+import { DownloadBadge } from "../shared/DownloadBadge"
 import { makeOnPlay } from "../../lib/mediaPlay"
 import { DownloadMenuItems } from "../shared/DownloadMenuItems"
-import { metadataRefreshMessage, retryMetadataRefresh } from "../../lib/metadataLoadError"
-import { DownloadBadge } from "../shared/DownloadBadge"
+import {
+  metadataRefreshMessage,
+  retryMetadataRefresh,
+} from "../../lib/metadataLoadError"
 import "../../styles/media-detail-controls.css"
 import { ArtworkImage, useArtworkFailures } from "../shared/ArtworkImage"
 import { useArtistImage, useArtistBackground } from "../../hooks/useMediaImage"
@@ -12,7 +15,6 @@ import { open } from "@tauri-apps/plugin-shell"
 import { useShallow } from "zustand/react/shallow"
 import { usePlayerStore, useUIStore, useLibraryStore } from "../../stores"
 import { useProviderStore } from "../../stores/providerStore"
-import { prefetchTrackAudio } from "../../stores/playerStore"
 import { useContextMenu } from "../../hooks/useContextMenu"
 import type {
   MusicArtist,
@@ -43,11 +45,10 @@ import { PageLoading } from "../shared/PageLoading"
 import { PageRecovery } from "../shared/PageRecovery"
 import { ArtworkSourcePicker } from "../shared/ArtworkSourcePicker"
 import { StarRating } from "../shared/StarRating"
-import { FavoriteButton } from "../shared/FavoriteButton"
+import { DetailTrackList } from "../shared/TrackTable"
 import { useDebugStore } from "../../stores/debugStore"
 import { useDebugPanelStore } from "../../stores/debugPanelStore"
 import { useCapability } from "../../hooks/useCapability"
-import { useTrackDrag } from "../../hooks/useTrackDrag"
 import { useMetadataSnapshot } from "../../hooks/useMetadataSnapshot"
 import { MetadataEditDialog } from "../shared/MetadataEditDialog"
 import { AppDialog } from "../shared/AppDialog"
@@ -122,8 +123,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
         currentTrack: s.currentTrack,
       }))
     )
-  const { handler: ctxMenu, isTarget: isCtxTarget } = useContextMenu()
-  const trackDrag = useTrackDrag()
+  const { handler: ctxMenu } = useContextMenu()
   const pageRefreshKey = useUIStore((s) => s.pageRefreshKey)
   const shouldDedup = useUIStore((s) => s.deduplicateAlbums)
   const hasRadio = useCapability("radio")
@@ -248,11 +248,15 @@ export function ArtistPage({ artistId }: { artistId: string }) {
       setStations(entry.stations)
       setIsLoading(false)
     }
-    retryMetadataRefresh(() => loadArtistPage(artistId, {
-      force: true,
-      deduplicate: shouldDedup,
-      onCore: applyEntry,
-    }), current)
+    retryMetadataRefresh(
+      () =>
+        loadArtistPage(artistId, {
+          force: true,
+          deduplicate: shouldDedup,
+          onCore: applyEntry,
+        }),
+      current
+    )
       .then(applyEntry)
       .catch((error) => {
         if (current()) setError(String(error))
@@ -943,175 +947,22 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                 </button>
               </div>
             </div>
-            <div className="flex flex-col">
-              {popularTracks.map((track, i) => {
-                const albumId = track.albumId
-                const unavailable =
-                  !!provider?.isOffline &&
-                  !track.mediaInfo?.offlineAvailable &&
-                  !track.mediaInfo?.localAudio
-                const isActive = currentTrack?.id === track.id
-                const isContextTarget = isCtxTarget(track.id)
-                return (
-                  <div
-                    key={`${track.id}-${i}`}
-                    onClick={() =>
-                      !unavailable &&
-                      playTrack(
-                        track,
-                        playablePopularTracks,
-                        artist.title,
-                        `/artist/${artistId}`
-                      )
-                    }
-                    onMouseEnter={() => prefetchTrackAudio(track)}
-                    onContextMenu={ctxMenu("track", track)}
-                    className={`media-track-row group flex ${unavailable ? "cursor-default opacity-40" : "cursor-pointer"} flex-wrap items-center gap-3 rounded-md px-3 py-1.5 focus-within:bg-hl-menu ${isActive || isContextTarget ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
-                    onPointerDown={(e) =>
-                      trackDrag.onPointerDown(e, {
-                        type: "track",
-                        ids: [track.id],
-                        label: track.title,
-                        tracks: [track],
-                      })
-                    }
-                    onPointerMove={trackDrag.onPointerMove}
-                    onPointerUp={trackDrag.onPointerUp}
-                  >
-                    <button
-                      type="button"
-                      aria-label={`Play ${track.title}`}
-                      disabled={unavailable}
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        void playTrack(
-                          track,
-                          playablePopularTracks,
-                          artist.title,
-                          `/artist/${artistId}`
-                        )
-                      }}
-                      className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${isActive ? "text-accent" : "text-[color:var(--text-secondary)]"}`}
-                    >
-                      <span
-                        aria-hidden="true"
-                        className="group-focus-within:hidden group-hover:hidden"
-                      >
-                        {isActive ? (
-                          <svg
-                            viewBox="0 0 16 16"
-                            width="12"
-                            height="12"
-                            fill="currentColor"
-                          >
-                            <rect x="1" y="3" width="3" height="10" rx="1" />
-                            <rect x="6" y="1" width="3" height="12" rx="1" />
-                            <rect x="11" y="5" width="3" height="8" rx="1" />
-                          </svg>
-                        ) : (
-                          i + 1
-                        )}
-                      </span>
-                      <svg
-                        aria-hidden="true"
-                        className="hidden group-focus-within:block group-hover:block"
-                        viewBox="0 0 16 16"
-                        width="14"
-                        height="14"
-                        fill="currentColor"
-                      >
-                        <polygon points="3,2 13,8 3,14" />
-                      </svg>
-                    </button>
-                    <div className="flex min-w-0 flex-1 flex-col">
-                      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                        <span
-                          className={`min-w-0 truncate text-sm font-medium ${isActive ? "text-accent" : "text-[color:var(--text-primary)]"}`}
-                        >
-                          {track.title}
-                        </span>
-                        <DownloadBadge kind="track" id={track.id} />
-                        {albumId && (
-                          <span className="flex min-w-0 max-w-full items-center gap-1.5">
-                            <span className="text-xs text-[color:var(--text-muted)]">
-                              ·
-                            </span>
-                            <Link
-                              href={`/album/${albumId}`}
-                              className="max-w-full truncate text-xs text-[color:var(--text-muted)] transition-colors hover:text-[color:var(--text-primary)] hover:underline"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              {track.albumName}
-                            </Link>
-                          </span>
-                        )}
-                      </div>
-                      {track.originalTitle &&
-                        track.originalTitle !== artist.title && (
-                          <span className="text-xs text-[color:var(--text-muted)]">
-                            {track.originalTitle}
-                          </span>
-                        )}
-                    </div>
-                    <span onClick={(e) => e.stopPropagation()}>
-                      <HeroRating
-                        itemId={track.id}
-                        userRating={track.userRating}
-                        itemType="track"
-                        musicTrack={track}
-                      />
-                    </span>
-                    <span className="flex w-32 flex-shrink-0 items-center justify-end gap-2">
-                      <FavoriteButton track={track} />
-                      <button
-                        className="flex items-center gap-0.5 text-xs text-[color:var(--text-secondary)] opacity-0 transition-colors group-focus-within:opacity-100 group-hover:opacity-100 hover:text-[color:var(--text-primary)] focus-visible:opacity-100"
-                        aria-label={`Add ${track.title} to queue`}
-                        title="Add to Queue"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          addToQueue([track])
-                        }}
-                      >
-                        <svg
-                          viewBox="0 0 16 16"
-                          width="11"
-                          height="11"
-                          fill="currentColor"
-                        >
-                          <path d="M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2z" />
-                        </svg>
-                        Queue
-                      </button>
-                      {hasRadio && (
-                        <button
-                          className="flex items-center gap-1 text-xs text-[color:var(--text-secondary)] opacity-0 transition-colors group-focus-within:opacity-100 group-hover:opacity-100 hover:text-[color:var(--text-primary)] focus-visible:opacity-100"
-                          aria-label={`Start radio for ${track.title}`}
-                          title="Track Radio"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            void playRadio(track.id, "track")
-                          }}
-                        >
-                          <svg
-                            viewBox="0 0 16 16"
-                            width="12"
-                            height="12"
-                            fill="currentColor"
-                          >
-                            <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6A3 3 0 0 0 8 5zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
-                          </svg>
-                          Radio
-                        </button>
-                      )}
-                      <span className="text-xs tabular-nums text-[color:var(--text-secondary)] group-focus-within:hidden group-hover:hidden">
-                        {formatMs(track.duration)}
-                      </span>
-                    </span>
-                  </div>
+            <DetailTrackList
+              presentation="artist"
+              tracks={popularTracks}
+              currentTrackId={currentTrack?.id}
+              showRadio={hasRadio}
+              onPlay={(track) => {
+                void playTrack(
+                  track,
+                  playablePopularTracks,
+                  artist.title,
+                  `/artist/${artistId}`
                 )
-              })}
-            </div>
+              }}
+              onAddToQueue={addToQueue}
+              onPlayRadio={playRadio}
+            />
           </section>
         )}
 

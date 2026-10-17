@@ -98,13 +98,17 @@ test("column preferences validate arrays, retain malformed bytes, and recover ra
     flushSync(() => root.render(React.createElement(Fixture, { storageKey: "valid" })));
     check(result.visible.has("artist") && !result.visible.has("album"), "key change reused old columns");
     await settle(); unwritable = true;
+    check(result.visible.has("rating"), "combined rating column did not default on for an old layout");
     flushSync(() => { result.toggle("year"); result.toggle("rating"); }); await settle(); await persistence.flush();
-    check(result.visible.has("year") && result.visible.has("rating"), "rapid toggles lost state");
+    check(result.visible.has("year") && !result.visible.has("rating"), "rapid toggles lost state");
     check(values.get("valid") === '["artist"]', "failed write changed disk");
     flushSync(() => root.render(null)); flushSync(() => root.render(React.createElement(Fixture, { storageKey: "valid" })));
-    check(result.visible.has("year") && result.visible.has("rating"), "remount lost pending edits");
+    check(result.visible.has("year") && !result.visible.has("rating"), "remount lost pending edits");
     unwritable = false; await persistence.retry(); await persistence.flush();
-    check(JSON.parse(values.get("valid")).join(",") === "artist,year,rating", "column retry failed");
+    check(JSON.parse(values.get("valid")).join(",") === "artist,year", "column retry failed");
+    check(values.get("valid-rating-visible") === "0", "rating visibility retry failed");
+    flushSync(() => result.toggle("rating")); await settle(); await persistence.flush();
+    check(result.visible.has("rating") && values.get("valid-rating-visible") === "1", "combined column could not be restored");
     flushSync(() => root.unmount());
   `)
 })

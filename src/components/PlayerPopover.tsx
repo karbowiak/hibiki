@@ -131,7 +131,7 @@ export default function PlayerPopover({
       )}
 
       {/* Toggle button */}
-      <div className="relative flex flex-col items-center flex-shrink-0">
+      <div className={`relative flex flex-col items-center ${wide ? "min-w-0" : "flex-shrink-0"}`}>
         <button
           ref={buttonRef}
           onClick={toggle}
@@ -144,7 +144,7 @@ export default function PlayerPopover({
           className={[
             "flex items-center justify-center transition-colors",
             wide
-              ? "h-7 rounded-full px-2.5 gap-1.5"
+              ? "h-7 max-w-full rounded-full px-2.5 gap-1.5"
               : "h-8 w-8",
             active || isOpen
               ? wide

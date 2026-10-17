@@ -15,8 +15,8 @@
     "windows": [
       {
         "title": "Hibiki",
-        "width": 1400,
-        "height": 890,
+        "width": 1600,
+        "height": 1000,
         "resizable": true,
         "decorations": true,
         "titleBarStyle": "Overlay",

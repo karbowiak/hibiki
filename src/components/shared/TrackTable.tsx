@@ -24,6 +24,9 @@ import type { ColId } from "../../hooks/useColumnPicker"
 import { ColumnPicker } from "../../hooks/useColumnPicker"
 import { SortTh } from "./SortTh"
 import { StarRating } from "./StarRating"
+import { HeroRating } from "../HeroRating"
+import "../../styles/trackRows.css"
+import { TrackRowActions } from "./TrackRowActions"
 import { FavoriteButton } from "./FavoriteButton"
 import { formatMs, formatDate, formatBitrate } from "../../lib/formatters"
 import { prefetchTrackAudio } from "../../stores/playerStore"
@@ -33,6 +36,25 @@ import { useTrackDrag } from "../../hooks/useTrackDrag"
 import { useVirtualWindow, virtualRef } from "../../hooks/useVirtualWindow"
 import type { WindowedCollection } from "../../lib/windowedPages"
 import { useScrollContainer } from "../../lib/scrollContainer"
+
+const TRACK_DATA_COLUMNS: {
+  id: ColId
+  label: string
+  width: number
+  align?: "left" | "right"
+}[] = [
+  { id: "artist", label: "Artist", width: 180 },
+  { id: "album", label: "Album", width: 220 },
+  { id: "year", label: "Year", width: 110 },
+  { id: "plays", label: "Plays", width: 110, align: "right" },
+  { id: "popularity", label: "Popularity", width: 110, align: "right" },
+  { id: "label", label: "Label", width: 160 },
+  { id: "bitrate", label: "Bit Rate", width: 110, align: "right" },
+  { id: "format", label: "Format", width: 110 },
+  { id: "added_at", label: "Date Added (Library)", width: 170 },
+  { id: "rated_at", label: "Date Rated", width: 170 },
+  { id: "liked_at", label: "Date Liked", width: 170 },
+]
 
 export interface TrackTableProps {
   tracks: MusicTrack[]
@@ -64,6 +86,8 @@ export interface TrackTableProps {
   playlistId?: string | null
   /** When set, enables drag-to-reorder within the table. Called with (fromIndex, toIndex). */
   onReorder?: (fromIndex: number, toIndex: number) => void
+  /** Detail pages share these rows without a collection toolbar. */
+  presentation?: "album" | "artist"
   /** Compact search results omit a second search toolbar and local filter handler. */
   compact?: boolean
   /** Search follows the current provider's radio capability; existing callers keep their controls. */
@@ -151,7 +175,7 @@ function TrackRowCells({
   idx,
   visibleCols,
   currentTrackId,
-  showInlineRating,
+  presentation,
   showInlineDownload,
   onPlay,
   onAddToQueue,
@@ -164,7 +188,7 @@ function TrackRowCells({
   idx: number
   visibleCols: Set<ColId>
   currentTrackId?: string | null
-  showInlineRating: boolean
+  presentation?: "album" | "artist"
   showInlineDownload: boolean
   onPlay: TrackTableProps["onPlay"]
   onAddToQueue: TrackTableProps["onAddToQueue"]
@@ -179,6 +203,15 @@ function TrackRowCells({
     !track.mediaInfo?.localAudio &&
     track.mediaInfo?.offlineAvailable !== true
   const isActive = currentTrackId === track.id
+  const actions = (
+    <TrackRowActions
+      track={track}
+      unavailable={unavailable}
+      showRadio={showRadio}
+      onAddToQueue={onAddToQueue}
+      onPlayRadio={onPlayRadio}
+    />
+  )
   return (
     <>
       <td className="w-8 p-2 text-center">
@@ -212,7 +245,7 @@ function TrackRowCells({
                   <rect x="11" y="5" width="3" height="8" rx="1" />
                 </svg>
               ) : (
-                idx + 1
+                (presentation === "album" ? track.trackNumber : null) || idx + 1
               )}
             </span>
           )}
@@ -233,17 +266,18 @@ function TrackRowCells({
 
       <td className="p-2">
         <div className="flex items-center gap-3">
-          {track.thumbUrl ? (
-            <ArtworkImage
-              className="h-10 w-10 flex-shrink-0 rounded-sm object-cover"
-              src={track.thumbUrl}
-              alt=""
-            />
-          ) : (
-            <div className="h-10 w-10 flex-shrink-0 rounded-sm bg-app-surface" />
-          )}
-          <div className={compact ? "min-w-0 flex-1" : "min-w-0"}>
-            <div className="flex min-w-0 items-center gap-2">
+          {presentation !== "album" &&
+            (track.thumbUrl ? (
+              <ArtworkImage
+                className="h-10 w-10 flex-shrink-0 rounded-sm object-cover"
+                src={track.thumbUrl}
+                alt=""
+              />
+            ) : (
+              <div className="h-10 w-10 flex-shrink-0 rounded-sm bg-app-surface" />
+            ))}
+          <div className="min-w-0 flex-1">
+            <div className="track-row-title-line flex min-w-0 items-center gap-2">
               <span
                 className={`truncate ${isActive ? "text-accent" : "text-[var(--text-primary)]"}`}
               >
@@ -252,83 +286,38 @@ function TrackRowCells({
               {showInlineDownload && (
                 <DownloadBadge kind="track" id={track.id} />
               )}
-            </div>
-            <div
-              className={`flex min-w-0 items-center gap-2 ${compact ? "flex-wrap" : ""}`}
-            >
-              {!visibleCols.has("artist") && (
-                <div className="min-w-0 shrink truncate">
-                  {track.artistId ? (
-                    <Link
-                      href={`/artist/${track.artistId}`}
-                      className="text-[var(--text-muted)] transition-colors hover:text-[var(--text-primary)] hover:underline"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {track.artistName}
-                    </Link>
-                  ) : (
-                    <span className="text-[var(--text-muted)]">
-                      {track.artistName}
-                    </span>
-                  )}
-                </div>
-              )}
-              <div
-                className={`flex shrink-0 items-center gap-1.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100`}
-              >
-                <button
-                  className="flex items-center gap-0.5 rounded px-1 py-0.5 text-xs text-[var(--text-secondary)] transition-colors hover:bg-hl-menu hover:text-[var(--text-primary)]"
-                  disabled={unavailable}
-                  title={unavailable ? "Not available offline" : "Add to Queue"}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onAddToQueue([track])
-                  }}
+              {presentation === "artist" && track.albumId && (
+                <Link
+                  href={`/album/${track.albumId}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="min-w-0 truncate text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:underline"
                 >
-                  <svg
-                    viewBox="0 0 16 16"
-                    width="10"
-                    height="10"
-                    fill="currentColor"
-                  >
-                    <path d="M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2z" />
-                  </svg>
-                  Queue
-                </button>
-                {showRadio && (
-                  <button
-                    className="flex items-center gap-0.5 rounded px-1 py-0.5 text-xs text-[var(--text-secondary)] transition-colors hover:bg-hl-menu hover:text-[var(--text-primary)]"
-                    title="Track Radio"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      void onPlayRadio(track.id, "track")
-                    }}
-                  >
-                    <svg
-                      viewBox="0 0 16 16"
-                      width="10"
-                      height="10"
-                      fill="currentColor"
-                    >
-                      <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6A3 3 0 0 0 8 5zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
-                    </svg>
-                    Radio
-                  </button>
+                  · {track.albumName}
+                </Link>
+              )}
+            </div>
+            <div className="track-row-secondary-line flex min-w-0 items-center gap-2">
+              {!visibleCols.has("artist") &&
+                (presentation !== "album" ||
+                  (track.originalTitle &&
+                    track.originalTitle !== track.artistName)) && (
+                  <div className="track-row-artist min-w-0 shrink truncate">
+                    {track.artistId ? (
+                      <Link
+                        href={`/artist/${track.artistId}`}
+                        className="text-[var(--text-muted)] transition-colors hover:text-[var(--text-primary)] hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {track.originalTitle || track.artistName}
+                      </Link>
+                    ) : (
+                      <span className="text-[var(--text-muted)]">
+                        {track.originalTitle || track.artistName}
+                      </span>
+                    )}
+                  </div>
                 )}
-                <FavoriteButton track={track} size={13} />
-                {showInlineRating && (
-                  <>
-                    <span className="mx-0.5 h-3 w-px bg-white/20" />
-                    <StarRating
-                      itemId={track.id}
-                      userRating={track.userRating}
-                      artist={track.artistName ?? ""}
-                      track={track.title}
-                      size={11}
-                    />
-                  </>
-                )}
-              </div>
+              {actions}
             </div>
           </div>
         </div>
@@ -395,16 +384,6 @@ function TrackRowCells({
       {visibleCols.has("added_at") && (
         <td className="whitespace-nowrap p-2">{formatDate(track.addedAt)}</td>
       )}
-      {visibleCols.has("rating") && (
-        <td className="p-2">
-          <StarRating
-            itemId={track.id}
-            userRating={track.userRating}
-            artist={track.artistName ?? ""}
-            track={track.title}
-          />
-        </td>
-      )}
       {visibleCols.has("rated_at") && (
         <td className="whitespace-nowrap p-2">
           {formatDate(track.lastRatedAt ?? null)}
@@ -415,7 +394,33 @@ function TrackRowCells({
           {formatDate(track.likedAt ?? null)}
         </td>
       )}
-      <td className="p-2 text-right tabular-nums">
+      {visibleCols.has("rating") && (
+        <td className="p-2 text-right" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-end gap-3">
+            <FavoriteButton
+              track={track}
+              size={15}
+              className="track-row-heart"
+            />
+            {presentation ? (
+              <HeroRating
+                itemId={track.id}
+                userRating={track.userRating}
+                itemType="track"
+                musicTrack={track}
+              />
+            ) : (
+              <StarRating
+                itemId={track.id}
+                userRating={track.userRating}
+                artist={track.artistName ?? ""}
+                track={track.title}
+              />
+            )}
+          </div>
+        </td>
+      )}
+      <td className="track-row-duration whitespace-nowrap p-2 text-right tabular-nums">
         {formatMs(track.duration)}
       </td>
       {visibleCols.has("downloads") && (
@@ -438,7 +443,7 @@ function TrackTableBody({
   onPlay,
   onAddToQueue,
   onPlayRadio,
-  showInlineRating,
+  presentation,
   showInlineDownload,
   playlistId,
   reorderEnabled,
@@ -457,7 +462,7 @@ function TrackTableBody({
   onPlay: TrackTableProps["onPlay"]
   onAddToQueue: TrackTableProps["onAddToQueue"]
   onPlayRadio: TrackTableProps["onPlayRadio"]
-  showInlineRating: boolean
+  presentation?: "album" | "artist"
   showInlineDownload: boolean
   playlistId?: string | null
   reorderEnabled: boolean
@@ -504,7 +509,7 @@ function TrackTableBody({
   const cellProps = {
     visibleCols,
     currentTrackId,
-    showInlineRating,
+    presentation,
     showInlineDownload,
     onPlay,
     onAddToQueue,
@@ -516,7 +521,7 @@ function TrackTableBody({
 
   const offline = useOfflineStatusStore((state) => state.offlineMode)
   const count = paged?.total ?? tracks.length
-  const window = useVirtualWindow(count, 56, 1, count > 100)
+  const window = useVirtualWindow(count, 60, 1, count > 100)
   useEffect(() => {
     paged?.ensureRange(window.start, window.end)
   }, [paged, window.start, window.end])
@@ -531,13 +536,9 @@ function TrackTableBody({
           <tr
             key={`loading-${idx}`}
             aria-rowindex={idx + 2}
+            className="media-track-row"
             data-loading-index={idx}
-            ref={
-              index === 0
-                ? virtualRef<HTMLTableRowElement>(window.measure)
-                : undefined
-            }
-            style={{ height: "3.75rem" }}
+            style={{ height: window.size }}
           >
             <td className="p-2 text-center text-[var(--text-muted)]">
               {idx + 1}
@@ -563,7 +564,7 @@ function TrackTableBody({
         track.mediaInfo?.offlineAvailable !== true
       const isActive = currentTrackId === track.id
       const isContextTarget = isCtxTarget(track.id)
-      const rowClass = `group ${unavailable ? "opacity-40 cursor-default" : "cursor-pointer"} rounded ${isActive || isContextTarget ? "bg-hl-row" : "hover:bg-hl-row"}`
+      const rowClass = `media-track-row group ${unavailable ? "opacity-40 cursor-default" : "cursor-pointer"} rounded ${isActive || isContextTarget ? "bg-hl-row" : "hover:bg-hl-row"}`
       const cells = <TrackRowCells track={track} idx={idx} {...cellProps} />
 
       if (reorderEnabled) {
@@ -692,6 +693,7 @@ export function TrackTable({
   playlistId,
   onReorder,
   compact = false,
+  presentation,
   showRadio = true,
   paged,
 }: TrackTableProps) {
@@ -728,37 +730,121 @@ export function TrackTable({
     [onReorder]
   )
 
-  // Whether to show inline StarRating in the title cell action buttons.
-  // If the columns array offers a "rating" column, the parent renders it as a table column instead.
-  const showInlineRating = !compact && !columns.some((c) => c.id === "rating")
+  const orderedCols = TRACK_DATA_COLUMNS.filter((col) =>
+    visibleCols.has(col.id)
+  )
   const showInlineDownload =
     !columns.some((c) => c.id === "downloads") && !visibleCols.has("downloads")
-  const fixedColumns = !compact && (
+  const fixedColumns = (
     <colgroup>
-      <col style={{ width: 48 }} />
+      <col style={{ width: compact ? 44 : 48 }} />
       <col />
-      {[...visibleCols]
-        .filter((id) => id !== "downloads")
-        .map((id) => (
-          <col
-            key={id}
-            style={{
-              width:
-                id === "album"
-                  ? 220
-                  : id === "artist"
-                    ? 180
-                    : id === "rating"
-                      ? 110
-                      : id.endsWith("_at")
-                        ? 170
-                        : 110,
-            }}
-          />
-        ))}
-      <col style={{ width: 88 }} />
+      {orderedCols.map((col) => (
+        <col key={col.id} style={{ width: compact ? "25%" : col.width }} />
+      ))}
+      {visibleCols.has("rating") && <col style={{ width: 148 }} />}
+      <col style={{ width: compact ? 76 : 88 }} />
       {visibleCols.has("downloads") && <col style={{ width: 48 }} />}
     </colgroup>
+  )
+  const table = (
+    <table
+      className="track-table w-full table-fixed text-sm text-[var(--text-secondary)]"
+      aria-rowcount={(paged?.total ?? tracks.length) + 1}
+      style={
+        compact
+          ? undefined
+          : {
+              minWidth:
+                376 +
+                orderedCols.reduce((sum, col) => sum + col.width, 0) +
+                (visibleCols.has("rating") ? 148 : 0) +
+                (visibleCols.has("downloads") ? 48 : 0),
+            }
+      }
+    >
+      {fixedColumns}
+      <thead className="border-b border-[var(--border)]">
+        <tr>
+          <th
+            className="p-2 text-center"
+            title={presentation ? undefined : defaultResetTitle}
+            onClick={presentation ? undefined : () => onSort("default")}
+          >
+            #
+          </th>
+          {presentation ? (
+            <th className="p-2 text-left">Title</th>
+          ) : (
+            <SortTh
+              col="title"
+              label="Title"
+              active={sortCol}
+              dir={sortDir}
+              onSort={onSort}
+              align="left"
+            />
+          )}
+          {orderedCols.map((col) => (
+            <SortTh
+              key={col.id}
+              col={col.id}
+              label={col.label}
+              active={sortCol}
+              dir={sortDir}
+              onSort={onSort}
+              align={col.align ?? "left"}
+            />
+          ))}
+          {visibleCols.has("rating") &&
+            (presentation ? (
+              <th className="p-2 text-right">Rating</th>
+            ) : (
+              <SortTh
+                col="rating"
+                label="Rating"
+                active={sortCol}
+                dir={sortDir}
+                onSort={onSort}
+                align="right"
+              />
+            ))}
+          {presentation ? (
+            <th className="p-2 text-right">Duration</th>
+          ) : (
+            <SortTh
+              col="duration"
+              label="Duration"
+              active={sortCol}
+              dir={sortDir}
+              onSort={onSort}
+              align="right"
+            />
+          )}
+          {visibleCols.has("downloads") && <DownloadStatusHeader />}
+        </tr>
+      </thead>
+      <TrackTableBody
+        tracks={tracks}
+        isLoading={isLoading}
+        loadedCount={loadedCount}
+        visibleCols={visibleCols}
+        currentTrackId={currentTrackId}
+        isCtxTarget={isCtxTarget}
+        ctxMenu={ctxMenu}
+        onPlay={onPlay}
+        onAddToQueue={onAddToQueue}
+        onPlayRadio={onPlayRadio}
+        presentation={presentation}
+        showInlineDownload={showInlineDownload}
+        playlistId={playlistId}
+        reorderEnabled={reorderEnabled}
+        trackDrag={trackDrag}
+        compact={compact}
+        showRadio={showRadio}
+        paged={paged}
+      />
+    </table>
   )
 
   // Escape clears this filter; app-wide search owns Cmd/Ctrl+K.
@@ -778,9 +864,9 @@ export function TrackTable({
   }, [onFilterChange, compact])
 
   return (
-    <div className={compact ? "min-w-0" : "min-w-0 px-8 pt-2"}>
+    <div className={compact || presentation ? "min-w-0" : "min-w-0 px-8 pt-2"}>
       {/* Toolbar row: search + column picker */}
-      {!compact && (
+      {!compact && !presentation && (
         <div className="flex items-center justify-between pb-1">
           <div className="relative">
             <svg
@@ -841,383 +927,10 @@ export function TrackTable({
             collisionDetection={closestCenter}
             onDragEnd={handleDragEnd}
           >
-            <table
-              className="w-full table-fixed text-sm text-[var(--text-secondary)]"
-              aria-rowcount={(paged?.total ?? tracks.length) + 1}
-              style={{ minWidth: 400 + visibleCols.size * 135 }}
-            >
-              {fixedColumns}
-              <thead className="border-b border-white/10">
-                <tr>
-                  <th
-                    className="w-8 p-2 text-center"
-                    onClick={() => onSort("default")}
-                    title={defaultResetTitle}
-                    style={{
-                      cursor: sortCol !== "default" ? "pointer" : "default",
-                    }}
-                  >
-                    #
-                  </th>
-                  <SortTh
-                    col="title"
-                    label="Title"
-                    active={sortCol}
-                    dir={sortDir}
-                    onSort={onSort}
-                    align="left"
-                  />
-                  {visibleCols.has("artist") && (
-                    <SortTh
-                      col="artist"
-                      label="Artist"
-                      active={sortCol}
-                      dir={sortDir}
-                      onSort={onSort}
-                      align="left"
-                    />
-                  )}
-                  {visibleCols.has("album") && (
-                    <SortTh
-                      col="album"
-                      label="Album"
-                      active={sortCol}
-                      dir={sortDir}
-                      onSort={onSort}
-                      align="left"
-                    />
-                  )}
-                  {visibleCols.has("year") && (
-                    <SortTh
-                      col="year"
-                      label="Year"
-                      active={sortCol}
-                      dir={sortDir}
-                      onSort={onSort}
-                      align="left"
-                    />
-                  )}
-                  {visibleCols.has("plays") && (
-                    <SortTh
-                      col="plays"
-                      label="Plays"
-                      active={sortCol}
-                      dir={sortDir}
-                      onSort={onSort}
-                      align="right"
-                    />
-                  )}
-                  {visibleCols.has("popularity") && (
-                    <SortTh
-                      col="popularity"
-                      label="Popularity"
-                      active={sortCol}
-                      dir={sortDir}
-                      onSort={onSort}
-                      align="right"
-                    />
-                  )}
-                  {visibleCols.has("label") && (
-                    <SortTh
-                      col="label"
-                      label="Label"
-                      active={sortCol}
-                      dir={sortDir}
-                      onSort={onSort}
-                      align="left"
-                    />
-                  )}
-                  {visibleCols.has("bitrate") && (
-                    <SortTh
-                      col="bitrate"
-                      label="Bit Rate"
-                      active={sortCol}
-                      dir={sortDir}
-                      onSort={onSort}
-                      align="right"
-                    />
-                  )}
-                  {visibleCols.has("format") && (
-                    <SortTh
-                      col="format"
-                      label="Format"
-                      active={sortCol}
-                      dir={sortDir}
-                      onSort={onSort}
-                      align="left"
-                    />
-                  )}
-                  {visibleCols.has("added_at") && (
-                    <SortTh
-                      col="added_at"
-                      label="Date Added (Library)"
-                      active={sortCol}
-                      dir={sortDir}
-                      onSort={onSort}
-                      align="left"
-                    />
-                  )}
-                  {visibleCols.has("rating") && (
-                    <SortTh
-                      col="rating"
-                      label="Rating"
-                      active={sortCol}
-                      dir={sortDir}
-                      onSort={onSort}
-                      align="left"
-                    />
-                  )}
-                  {visibleCols.has("rated_at") && (
-                    <SortTh
-                      col="rated_at"
-                      label="Date Rated"
-                      active={sortCol}
-                      dir={sortDir}
-                      onSort={onSort}
-                      align="left"
-                    />
-                  )}
-                  {visibleCols.has("liked_at") && (
-                    <SortTh
-                      col="liked_at"
-                      label="Date Liked"
-                      active={sortCol}
-                      dir={sortDir}
-                      onSort={onSort}
-                      align="left"
-                    />
-                  )}
-                  <SortTh
-                    col="duration"
-                    label="Duration"
-                    active={sortCol}
-                    dir={sortDir}
-                    onSort={onSort}
-                    align="right"
-                  />
-                  {visibleCols.has("downloads") && <DownloadStatusHeader />}
-                </tr>
-              </thead>
-              <TrackTableBody
-                tracks={tracks}
-                isLoading={isLoading}
-                loadedCount={loadedCount}
-                visibleCols={visibleCols}
-                currentTrackId={currentTrackId}
-                isCtxTarget={isCtxTarget}
-                ctxMenu={ctxMenu}
-                onPlay={onPlay}
-                onAddToQueue={onAddToQueue}
-                onPlayRadio={onPlayRadio}
-                showInlineRating={showInlineRating}
-                showInlineDownload={showInlineDownload}
-                playlistId={playlistId}
-                reorderEnabled={reorderEnabled}
-                trackDrag={trackDrag}
-                compact={compact}
-                showRadio={showRadio}
-                paged={paged}
-              />
-            </table>
+            {table}
           </DndContext>
         ) : (
-          <table
-            className={
-              compact
-                ? "w-full table-fixed text-sm text-[var(--text-secondary)]"
-                : "w-full table-fixed text-sm text-[var(--text-secondary)]"
-            }
-            aria-rowcount={(paged?.total ?? tracks.length) + 1}
-            style={
-              compact ? undefined : { minWidth: 400 + visibleCols.size * 135 }
-            }
-          >
-            {fixedColumns}
-            {compact && (
-              <colgroup>
-                <col style={{ width: 44 }} />
-                <col />
-                {[...visibleCols]
-                  .filter((id) => id !== "downloads")
-                  .map((id) => (
-                    <col key={id} style={{ width: "30%" }} />
-                  ))}
-                <col style={{ width: 76 }} />
-                {visibleCols.has("downloads") && <col style={{ width: 48 }} />}
-              </colgroup>
-            )}
-            <thead className="border-b border-white/10">
-              <tr>
-                <th
-                  className="w-8 p-2 text-center"
-                  onClick={() => onSort("default")}
-                  title={defaultResetTitle}
-                  style={{
-                    cursor: sortCol !== "default" ? "pointer" : "default",
-                  }}
-                >
-                  #
-                </th>
-                <SortTh
-                  col="title"
-                  label="Title"
-                  active={sortCol}
-                  dir={sortDir}
-                  onSort={onSort}
-                  align="left"
-                />
-                {visibleCols.has("artist") && (
-                  <SortTh
-                    col="artist"
-                    label="Artist"
-                    active={sortCol}
-                    dir={sortDir}
-                    onSort={onSort}
-                    align="left"
-                  />
-                )}
-                {visibleCols.has("album") && (
-                  <SortTh
-                    col="album"
-                    label="Album"
-                    active={sortCol}
-                    dir={sortDir}
-                    onSort={onSort}
-                    align="left"
-                  />
-                )}
-                {visibleCols.has("year") && (
-                  <SortTh
-                    col="year"
-                    label="Year"
-                    active={sortCol}
-                    dir={sortDir}
-                    onSort={onSort}
-                    align="left"
-                  />
-                )}
-                {visibleCols.has("plays") && (
-                  <SortTh
-                    col="plays"
-                    label="Plays"
-                    active={sortCol}
-                    dir={sortDir}
-                    onSort={onSort}
-                    align="right"
-                  />
-                )}
-                {visibleCols.has("popularity") && (
-                  <SortTh
-                    col="popularity"
-                    label="Popularity"
-                    active={sortCol}
-                    dir={sortDir}
-                    onSort={onSort}
-                    align="right"
-                  />
-                )}
-                {visibleCols.has("label") && (
-                  <SortTh
-                    col="label"
-                    label="Label"
-                    active={sortCol}
-                    dir={sortDir}
-                    onSort={onSort}
-                    align="left"
-                  />
-                )}
-                {visibleCols.has("bitrate") && (
-                  <SortTh
-                    col="bitrate"
-                    label="Bit Rate"
-                    active={sortCol}
-                    dir={sortDir}
-                    onSort={onSort}
-                    align="right"
-                  />
-                )}
-                {visibleCols.has("format") && (
-                  <SortTh
-                    col="format"
-                    label="Format"
-                    active={sortCol}
-                    dir={sortDir}
-                    onSort={onSort}
-                    align="left"
-                  />
-                )}
-                {visibleCols.has("added_at") && (
-                  <SortTh
-                    col="added_at"
-                    label="Date Added (Library)"
-                    active={sortCol}
-                    dir={sortDir}
-                    onSort={onSort}
-                    align="left"
-                  />
-                )}
-                {visibleCols.has("rating") && (
-                  <SortTh
-                    col="rating"
-                    label="Rating"
-                    active={sortCol}
-                    dir={sortDir}
-                    onSort={onSort}
-                    align="left"
-                  />
-                )}
-                {visibleCols.has("rated_at") && (
-                  <SortTh
-                    col="rated_at"
-                    label="Date Rated"
-                    active={sortCol}
-                    dir={sortDir}
-                    onSort={onSort}
-                    align="left"
-                  />
-                )}
-                {visibleCols.has("liked_at") && (
-                  <SortTh
-                    col="liked_at"
-                    label="Date Liked"
-                    active={sortCol}
-                    dir={sortDir}
-                    onSort={onSort}
-                    align="left"
-                  />
-                )}
-                <SortTh
-                  col="duration"
-                  label="Duration"
-                  active={sortCol}
-                  dir={sortDir}
-                  onSort={onSort}
-                  align="right"
-                />
-                {visibleCols.has("downloads") && <DownloadStatusHeader />}
-              </tr>
-            </thead>
-            <TrackTableBody
-              tracks={tracks}
-              isLoading={isLoading}
-              loadedCount={loadedCount}
-              visibleCols={visibleCols}
-              currentTrackId={currentTrackId}
-              isCtxTarget={isCtxTarget}
-              ctxMenu={ctxMenu}
-              onPlay={onPlay}
-              onAddToQueue={onAddToQueue}
-              onPlayRadio={onPlayRadio}
-              showInlineRating={showInlineRating}
-              showInlineDownload={showInlineDownload}
-              playlistId={playlistId}
-              reorderEnabled={false}
-              trackDrag={trackDrag}
-              compact={compact}
-              showRadio={showRadio}
-              paged={paged}
-            />
-          </table>
+          table
         )}
       </div>
 
@@ -1270,5 +983,48 @@ export function TrackTable({
         </div>
       )}
     </div>
+  )
+}
+
+const DETAIL_COLUMNS = new Set<ColId>(["rating"])
+const NOOP = () => {}
+/** The same rows, playback, context menu, dragging and virtualization as collections. */
+export function DetailTrackList({
+  presentation,
+  tracks,
+  onPlay,
+  onAddToQueue,
+  onPlayRadio,
+  currentTrackId,
+  showRadio,
+}: Pick<
+  TrackTableProps,
+  | "presentation"
+  | "tracks"
+  | "onPlay"
+  | "onAddToQueue"
+  | "onPlayRadio"
+  | "currentTrackId"
+  | "showRadio"
+>) {
+  return (
+    <TrackTable
+      presentation={presentation}
+      tracks={tracks}
+      onPlay={onPlay}
+      onAddToQueue={onAddToQueue}
+      onPlayRadio={onPlayRadio}
+      currentTrackId={currentTrackId}
+      showRadio={showRadio}
+      visibleCols={DETAIL_COLUMNS}
+      toggleCol={NOOP}
+      sortCol="default"
+      sortDir="asc"
+      onSort={NOOP}
+      columns={[{ id: "rating", label: "Rating" }]}
+      searchPlaceholder=""
+      filterQuery=""
+      onFilterChange={NOOP}
+    />
   )
 }

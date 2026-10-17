@@ -12,6 +12,7 @@ export function useVirtualWindow(
   enabled = enabled && typeof ResizeObserver !== "undefined"
   const host = useRef<HTMLElement>(null)
   const measure = useRef<HTMLElement>(null)
+  const measuredSize = useRef(estimate)
   const inherited = useScrollContainer()
   const page = scrollOverride ?? inherited
   const [view, setView] = useState({ start: 0, end: 30, size: estimate })
@@ -26,7 +27,11 @@ export function useVirtualWindow(
     let frame = 0
     const update = () => {
       frame = 0
-      const size = measure.current?.getBoundingClientRect().height || estimate
+      const actual = measure.current?.getBoundingClientRect().height
+      if (actual) measuredSize.current = actual
+      // A placeholder must not replace an already measured row size. Otherwise
+      // jumping to an unloaded chunk changes the total scrollbar geometry.
+      const size = measuredSize.current
       const bounds = element.getBoundingClientRect()
       const top = scroller?.getBoundingClientRect().top ?? 0
       const height = scroller?.clientHeight || window.innerHeight
@@ -67,6 +72,7 @@ export function useVirtualWindow(
   return {
     host,
     measure,
+    size: view.size,
     start: enabled ? view.start * columns : 0,
     end: enabled ? Math.min(count, view.end * columns) : count,
     before: enabled ? view.start * view.size : 0,

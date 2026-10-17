@@ -6,9 +6,11 @@ import type { MusicTrack } from "../../types/music"
 export function FavoriteButton({
   track,
   size = 16,
+  className = "",
 }: {
   track: MusicTrack
   size?: number
+  className?: string
 }) {
   const provider = useProviderStore((state) => state.provider)
   const liked = useFavoritesStore(
@@ -41,7 +43,7 @@ export function FavoriteButton({
         (liked ? "Remove from Liked Songs" : "Save to Liked Songs in Hibiki")
       }
       disabled={saving || !ready}
-      className={`inline-flex shrink-0 items-center justify-center rounded p-1 transition-colors hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40 ${liked ? "text-accent" : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"}`}
+      className={`inline-flex shrink-0 items-center justify-center rounded p-1 transition-colors hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40 ${liked ? "text-accent" : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"} ${className}`}
       onClick={(event) => {
         event.stopPropagation()
         if (useProviderStore.getState().provider !== provider) return

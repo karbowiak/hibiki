@@ -46,12 +46,12 @@ mod podcast;
 mod podcastindex;
 mod radiobrowser;
 mod shutdown;
+mod window_geometry;
 
 use commands::PlexState;
 use mediasession::MediaSessionState;
 use once_cell::sync::Lazy;
 use tauri::Manager;
-use tauri_plugin_window_state::{StateFlags, WindowExt};
 
 // ---------------------------------------------------------------------------
 // Image cache — persistent disk cache for all images.
@@ -256,7 +256,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_window_state::Builder::new().build())
+        .plugin(tauri_plugin_window_state::Builder::new().skip_initial_state("main").build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .manage(PlexState::new())
@@ -328,7 +328,9 @@ pub fn run() {
             // The window starts hidden (visible: false in tauri.conf.json) so there
             // is no position-flash when the plugin moves it to the saved bounds.
             if let Some(win) = app.get_webview_window("main") {
-                let _ = win.restore_state(StateFlags::all());
+                if let Err(error) = window_geometry::restore(&win) {
+                    tracing::warn!("Could not restore main window geometry: {error}");
+                }
                 let _ = win.show();
             }
 

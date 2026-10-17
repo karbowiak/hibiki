@@ -12,6 +12,63 @@ const root = resolve(import.meta.dir, "..")
 const output = await mkdtemp(join(tmpdir(), "hibiki-appearance-"))
 const artifacts = resolve(root, ".tmp/appearance-checks")
 let artworkGate: Promise<void> | null = null
+async function checkTrackRowLayout(page: Page, name: string) {
+  for (const [width, theme] of [[1440, "dark"], [1000, "light"]] as const) {
+    await page.setViewportSize({ width, height: 900 })
+    await page.evaluate(({ theme }) => {
+      ;(window as any).fixtureAppearance.apply({ theme })
+      ;(window as any).fixtureAppearance.panel(null)
+    }, { theme })
+    for (const path of ['/album/fixture-album', '/artist/fixture-artist', ...(process.argv.includes('--album-hover-only') ? ['/playlist/stress-0', '/collection/tracks'] : ['/playlist/fixture-playlist-0'])]) {
+      await page.evaluate(path => (window as any).fixtureAppearance.route(path), path)
+      const row = page.locator('.track-table tbody tr[data-track-index]').first()
+      await row.waitFor({ timeout: 10000 }).catch(async error => { throw new Error(`${name}/${path}: ${await page.locator("main").innerText()} ${error}`) })
+      // Long text must not change the fixed duration or any other column.
+      await row.locator('td:nth-child(2) span.truncate').first().evaluate(e => {
+        e.textContent = 'A very long song title '.repeat(20)
+      })
+      await page.mouse.move(1, 1)
+      const heart = row.locator('.track-row-heart')
+      if (await heart.count()) {
+        await page.evaluate(() => (window as any).fixtureAppearance.liked('100000', true))
+        await page.waitForFunction(() => getComputedStyle(document.querySelector('.track-table tbody .track-row-heart')!).opacity === '1')
+        assert.equal(await heart.getAttribute('aria-pressed'), 'true')
+        await page.evaluate(() => (window as any).fixtureAppearance.liked('100000', false))
+        await page.waitForFunction(() => getComputedStyle(document.querySelector('.track-table tbody .track-row-heart')!).opacity === '0')
+      }
+      const bounds = () => row.evaluate(e => [...e.querySelectorAll('td')].map(cell => {
+        const r = cell.getBoundingClientRect()
+        return [r.x, r.y, r.width, r.height]
+      }))
+      const before = await bounds()
+      const duration = row.locator('.track-row-duration')
+      const time = await duration.textContent()
+      await row.hover()
+      assert.deepEqual(await bounds(), before, `${name}/${width}/${path}: hover moved columns`)
+      assert.equal(await duration.textContent(), time)
+      assert.equal(await duration.evaluate(e => getComputedStyle(e).visibility), 'visible')
+      const actions = row.locator('.track-row-actions')
+      await actions.getByRole('button', { name: /^Add .* to queue$/ }).focus()
+      assert.deepEqual(await bounds(), before, `${name}/${path}: keyboard focus moved columns`)
+      assert.equal(await actions.evaluate(e => getComputedStyle(e).position), 'static')
+      const actionBounds = await actions.boundingBox()
+      const titleCell = await row.locator('td:nth-child(2)').boundingBox()
+      const titleLine = await row.locator('.track-row-title-line').boundingBox()
+      assert.ok(actionBounds && titleCell && actionBounds.x >= titleCell.x && actionBounds.x + actionBounds.width <= titleCell.x + titleCell.width, `${name}/${path}: actions leave the title column`)
+      assert.ok(titleLine && actionBounds && actionBounds.y > titleLine.y + titleLine.height / 2, `${name}/${path}: actions are not on the second line`)
+      const artistLine = row.locator('.track-row-artist')
+      if (!path.startsWith('/album/') && await artistLine.count()) {
+        const artist = await artistLine.boundingBox()
+        assert.ok(artist && actionBounds && actionBounds.x >= artist.x + artist.width - 1, `${name}/${path}: actions obscure the artist name`)
+      }
+      const index = await duration.evaluate(e => [...e.parentElement!.children].indexOf(e))
+      const right = await duration.boundingBox()
+      const header = await page.locator('.track-table th').nth(index).boundingBox()
+      assert.ok(right && header && Math.abs(right.x - header.x) < 1 && Math.abs(right.width - header.width) < 1)
+      await page.screenshot({ path: join(artifacts, `${name}-${width}-${path.split('/')[1]}-track-row.png`) })
+    }
+  }
+}
 async function checkFinishingPolish(page: Page, name: string) {
   for (const [width, height, theme, textSize, docked] of [[1440, 900, "dark", 16, false], [1100, 850, "light", 20, true], [800, 760, "dark", 20, false]] as const) {
     await page.setViewportSize({ width, height })
@@ -558,9 +615,15 @@ try {
       const errors: string[] = []
       page.on("pageerror", (error) => errors.push(error.message))
       await page.goto(
-        `${origin}/tests/fixtures/libraryLayout/index.html?appearance=1&player=1&discovery=1`
+        `${origin}/tests/fixtures/libraryLayout/index.html?appearance=1&player=1&discovery=1${process.argv.includes("--album-hover-only") ? "&virtual=1" : ""}`
       )
       await page.waitForFunction(() => (window as any).visualFixtureReady)
+      if (process.argv.includes('--album-hover-only')) {
+        await checkTrackRowLayout(page, name)
+        assert.deepEqual(errors, [], `${name}: renderer errors`)
+        console.log(`${name}: shared album, artist, playlist and liked-song rows retain duration and fixed geometry`)
+        continue
+      }
       if (process.argv.includes('--finishing-polish-only')) {
         await checkFinishingPolish(page, name)
         await checkFullscreenVisualizer(page, name)
@@ -600,6 +663,7 @@ try {
         continue
       }
       await checkFullscreenVisualizer(page, name)
+      await checkTrackRowLayout(page, name)
       await checkFinishingPolish(page, name)
       await checkOverlayMaterial(page, name)
       await checkBackgroundSeparation(page, name)

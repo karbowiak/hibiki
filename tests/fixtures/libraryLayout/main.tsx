@@ -482,6 +482,11 @@ async function setup() {
   }
   setHome(5)
   w.fixtureAppearance = {
+    liked: (id: string, liked: boolean) => {
+      const ids = new Set(useFavoritesStore.getState().likedTrackIds)
+      if (liked) ids.add(id); else ids.delete(id)
+      useFavoritesStore.setState({ provider: provider as any, session: (provider as any).playbackSession, loaded: true, likedTrackIds: ids })
+    },
     radioPreview: () => usePlayerStore.setState({ isRadioMode: true, radioType: "artist", radioSeedArtist: "The Midnight Ensemble", contextName: "A long synthetic radio station name Radio" }),
     visualizer: (fullscreenMode: FullscreenVisualizerMode) =>
       useVisualizerStore.setState({ fullscreenMode, autoCycleEnabled: false }),
