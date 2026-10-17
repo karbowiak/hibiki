@@ -47,6 +47,7 @@ mod podcastindex;
 mod radiobrowser;
 mod shutdown;
 mod window_geometry;
+mod default_playlists;
 
 use commands::PlexState;
 use mediasession::MediaSessionState;
@@ -293,6 +294,7 @@ pub fn run() {
             app.manage(download_library::DownloadLibrary::default());
             app.manage(catalogue_commands::CatalogueSync::new());
             app.manage(library_picker::LibraryPicker::default());
+            app.manage(default_playlists::Bootstrap::default());
             listening_history::start_worker(app.handle().clone());
 
             // Start the system Now Playing / media-key integration.

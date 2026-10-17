@@ -1,5 +1,6 @@
 import { useEffect } from "react"
 import { isTauri } from "@tauri-apps/api/core"
+import { listen } from "@tauri-apps/api/event"
 import { useLocation } from "wouter"
 import { SideBar } from "./components/SideBar"
 import { Page } from "./components/Page"
@@ -70,6 +71,15 @@ function DesktopApp() {
     const update = (event: Event) => { if ((event as CustomEvent).detail === "playlists") void fetchPlaylists({ force: true }) }
     window.addEventListener("collection-cache-updated", update)
     return () => window.removeEventListener("collection-cache-updated", update)
+  }, [fetchPlaylists])
+  useEffect(() => {
+    if (!isTauri()) return
+    let disposed = false
+    let cleanup: (() => void) | undefined
+    void listen<{ cacheScope: string }>("plex-default-playlists-updated", event => {
+      if (useProviderStore.getState().provider?.cacheScope === event.payload.cacheScope) void fetchPlaylists({ force: true })
+    }).then(unlisten => { if (disposed) unlisten(); else cleanup = unlisten }).catch(() => {})
+    return () => { disposed = true; cleanup?.() }
   }, [fetchPlaylists])
   const initGenius = useGeniusStore(s => s.initialize)
   const initListenBrainz = useListenBrainzStore(s => s.initialize)

@@ -1468,7 +1468,11 @@ pub async fn save_settings(
                 }
             },
         )
-        .await
+        .await?;
+    if let (Some(section), Some(context)) = (section_id, state.current_request_context().await) {
+        crate::default_playlists::start(app, context, section);
+    }
+    Ok(())
 }
 
 /// Quickly probe a Plex server URL to check reachability and measure latency.
