@@ -32,7 +32,7 @@ const comparators = {
   label: (a, b) => (a.parentStudio ?? "").localeCompare(b.parentStudio ?? ""),
   bitrate: (a, b) => (a.bitrate ?? 0) - (b.bitrate ?? 0),
   format: (a, b) => (a.codec ?? "").localeCompare(b.codec ?? ""),
-  added_at: (a, b) => date(a.addedAt) - date(b.addedAt),
+  added_at: (a, b) => date(a.addedAt ?? a.libraryObservedAt) - date(b.addedAt ?? b.libraryObservedAt),
   rated_at: (a, b) => date(a.lastRatedAt) - date(b.lastRatedAt),
   duration: (a, b) => a.duration - b.duration,
 } satisfies Record<

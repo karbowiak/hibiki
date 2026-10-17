@@ -147,7 +147,7 @@ Recently Played combines Plex history, YTM history and up to 200 locally saved
 YTM plays. Local history is recorded after the native engine accepts a track
 start, including queue transitions. It stores only stable IDs, timestamps and
 public display metadata; Disconnect clears it. This does not report playback
-back to Google. Combined client search remains future work.
+back to Google.
 
 The connected account's saved playlists join Plex playlists in the sidebar,
 Playlists view and Your Library. All three use the same saved user order;
@@ -162,29 +162,48 @@ YTM collection pages use the Plex playlist layout, track table and saved column
 preferences, with no outer page inset. Available artist/album links, duration,
 year, track position, explicit markers and view counts are retained. Missing
 metadata stays empty, and YouTube views are separate from personal play counts.
-YTM songs have a shared heart control in search, track tables, the player and
-queue, plus a like/unlike context-menu action. These write to the connected YTM
-account through native `like/like` and `like/removelike` requests, following the
+YTM songs use the shared star control in search, track tables, the player,
+queue and context menus. Exact stars persist separately from imported binary
+likes, scoped to the durable Google account identity. Two or more stars produce
+a YTM like; three or more produce Last.fm/ListenBrainz loves through enabled
+integrations. One star and clearing a rating undo those service states. YTM
+writes use native `like/like` and `like/removelike` requests, following the
 [ytmusicapi library implementation](https://github.com/sigma67/ytmusicapi/blob/main/ytmusicapi/mixins/library.py).
-They do not change Plex stars or Hibiki's local Plex favorites. Liked Songs updates
-optimistically and rolls back on failure; duplicate writes for a song are blocked
-across views. Unknown status is checked on hover/focus or before toggling, with
-eager checks only for the current song. Status reads use the same persistent SWR
-cache as discovery. Menus use YTM's current status when supplied, including the
-inverse action described by its watch-queue menu.
+Deliberate ratings also attempt conservative recording matching and save the
+same exact stars to a verified Plex song. Imported likes never create deliberate
+Plex rating writes. Failed writes retain local intent and retry in bounded jobs;
+later edits supersede older work. ListenBrainz requires a verified recording MBID.
 
 Successful writes invalidate saved Liked Songs cursor pages and patch that song's
 like state in other cached pages. Pre-mutation responses cannot overwrite these
 disk updates. The visible collection updates immediately; the next library read
 or page refresh reconciles the invalidated pages without a full-library scan on
-each heart click. In-session optimistic overrides protect it from old responses.
+each rating click. In-session optimistic overrides protect it from old responses.
 Disconnecting retires pending
 checks, writes and UI state. Offline controls are disabled; errors remain available
 in the button tooltip and explicit save failures appear in the notification center.
 
-Other YTM library data remains read only: its menus offer playback and queue actions without
-Plex rating, playlist editing, download or sync actions. Parsed library data uses
-the same native connection-scoped catalog cache and refresh behavior as mixes.
+Owned regular Plex/YTM playlists can be linked into durable mixed playlists.
+The original sidebar identity/order stays usable. Queue copy handles add ordered
+occurrences without changing playback. Matching runs in bounded batches for all
+entries, retaining unavailable and ambiguous recordings locally. Private remote
+counterparts are created only through recorded creation receipts. Every provider
+edit uses a fresh complete snapshot and verifies the result; uncertain writes
+and simultaneous edits pause for recovery rather than blindly repeating writes.
+Generated, smart and read-only playlists cannot be edit destinations. Unsupported
+Plex repeated copies remain in Hibiki/YTM with an explicit limitation message.
+Provider library-added dates and account-scoped first observations persist
+independently of playlist occurrence-added dates, including removal/re-addition.
+Both original accounts must be connected for mixed playlist operations.
+
+YTM playback requests lyrics by the exact video ID, following the watch queue's
+lyrics browse destination. Timed and plain responses use the shared lyrics UI;
+failed/missing YTM lyrics fall back to a conservatively verified Plex recording,
+then configured Genius. Sources remain labelled, explicit selection is retained,
+and account/track changes retire stale responses. YTM and Genius do not require
+a Plex connection. Catalog/lyrics reads reuse the native connection-scoped SWR
+cache. Authenticated playlist edits and live YTM lyrics still require app-level
+verification; browser fixtures and unit tests exercise fake accounts/transports.
 
 YTM artist links open the shared artist page rather than a playlist view. It
 retains the artist's artwork, biography, top songs, albums, singles/EPs, live
@@ -258,8 +277,7 @@ React or logs. Disconnect revokes in-flight session admission and clears the
 website's browsing data; it does not revoke other Google sessions.
 
 The native `ytmusic_test_stream` diagnostic remains available: it downloads at
-most 2 MiB and silently decodes about one second. Combined client search remains
-future work.
+most 2 MiB and silently decodes about one second.
 
 Validation:
 

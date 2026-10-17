@@ -39,12 +39,15 @@ mock.module("idb-keyval", () => ({
 const core = await import("@tauri-apps/api/core")
 const lyricRequests = new Map<string, ReturnType<typeof deferred<any[]>>>()
 let youtubeBrowsePage: import("../src/backends/ytmusic/discovery").YoutubeMusicBrowsePage | undefined
+let youtubeLyricsPage: Promise<any> | undefined
+let geniusHits: any[] = []
 mock.module("@tauri-apps/api/core", () => ({
   ...core,
   invoke: async (command: string, args: any) =>
     command === "genius_get_lyrics"
       ? lyricRequests.get(args.songUrl)?.promise
-      : command === "ytmusic_browse" ? youtubeBrowsePage : undefined,
+      : command === "ytmusic_browse" ? args.browseId === "hibiki_song_lyrics" && youtubeLyricsPage ? youtubeLyricsPage : youtubeBrowsePage
+      : command === "genius_search" ? geniusHits : undefined,
 }))
 const events = await import("@tauri-apps/api/event")
 mock.module("@tauri-apps/api/event", () => ({
@@ -130,6 +133,8 @@ function provider(name: string, extra: Partial<MusicProvider> = {}) {
 afterEach(() => {
   lyricRequests.clear()
   youtubeBrowsePage = undefined
+  youtubeLyricsPage = undefined
+  geniusHits = []
   state().stop()
   radioElements.length = 0
   useProviderStore.getState().clearProvider()
@@ -1607,4 +1612,78 @@ test("YouTube artwork survives saving a mixed queue and repeated restores, inclu
       state().stop()
     }
   } finally { cleanup() }
+})
+
+const lyricSong = () => youtubeMusicTrack({ videoId: "QWERTYuiopa", title: "Lyrics track", artist: "Artist", album: "Album", duration: "3:00", thumbnail: null })
+async function prepareYoutubeLyrics() {
+  const { useYoutubeMusicDiscoveryStore } = await import("../src/backends/ytmusic/discovery")
+  const before = useYoutubeMusicDiscoveryStore.getState()
+  useYoutubeMusicDiscoveryStore.setState({ connected: true, accountId: "lyrics-owner", revision: before.revision + 1 })
+  usePlayerStore.setState({ currentTrack: lyricSong(), lyricsLines: null })
+  return { connection: useYoutubeMusicDiscoveryStore, before }
+}
+test("YTM lyrics are preferred and work without a Plex provider", async () => {
+  const { connection, before } = await prepareYoutubeLyrics()
+  try {
+    youtubeLyricsPage = Promise.resolve({ lyrics: { missing: false, attribution: "LyricFind", lines: [{ text: "YouTube line", startMs: 1000, endMs: 2000 }] }, items: [], hubs: [] })
+    useLyricsStore.getState().fetchForTrack(lyricSong().id, "Artist", "Lyrics track")
+    for (let i = 0; i < 10; i++) await settle()
+    expect(useLyricsStore.getState().activeSourceId).toBe("ytmusic")
+    expect(state().lyricsLines?.[0].text).toBe("YouTube line")
+    expect(useLyricsStore.getState().sources[0].isSynced).toBe(true)
+    expect(useLyricsStore.getState().isFetchingLyrics).toBe(false)
+  } finally { state().stop(); connection.setState(before) }
+})
+test("missing YTM lyrics use a verified Plex recording, never the video ID", async () => {
+  const { connection, before } = await prepareYoutubeLyrics()
+  const local = { ...source("735", { title: "Lyrics track", artistName: "Artist", albumName: "Album", duration: 180000 }), artistCredits: [{ name: "Artist" }] }
+  const getLyrics = mock(async () => [{ text: "Plex fallback", startMs: 0, endMs: 0 }])
+  useProviderStore.getState().setProvider(provider("lyrics-fallback", { findPlaylistCandidates: async () => ({ tracks: [local], truncated: false, unavailable: false }), getTrack: async () => local, getLyrics }))
+  try {
+    const verified = await (await import("../src/mixedPlaylists/counterparts")).resolveCounterpart(lyricSong(), "plex")
+    expect(verified.status).toBe("matched")
+    youtubeLyricsPage = Promise.resolve({ lyrics: { missing: true, lines: [] }, items: [], hubs: [] })
+    useLyricsStore.getState().fetchForTrack(lyricSong().id, "Artist", "Lyrics track")
+    for (let i = 0; i < 20; i++) await settle()
+    expect(getLyrics).toHaveBeenCalledWith("735")
+    expect(getLyrics).not.toHaveBeenCalledWith(lyricSong().id)
+    expect(useLyricsStore.getState().activeSourceId).toBe("plex")
+  } finally { state().stop(); connection.setState(before) }
+})
+test("a failed YTM request falls back to Genius without Plex and settles loading", async () => {
+  const { connection, before } = await prepareYoutubeLyrics()
+  const { useGeniusStore } = await import("../src/metadata/genius/authStore")
+  const { useUIStore } = await import("../src/stores/uiStore")
+  const geniusBefore = useGeniusStore.getState(), uiBefore = useUIStore.getState()
+  useGeniusStore.setState({ hasCredentials: true, isEnabled: true, alwaysFetch: false })
+  useUIStore.setState({ isLyricsOpen: true })
+  const pending = deferred<any[]>()
+  lyricRequests.set("https://genius.example.test/fallback", pending)
+  geniusHits = [{ id: 55, url: "https://genius.example.test/fallback", title: "Song", relevance: 1 }]
+  try {
+    const response = deferred<any>()
+    youtubeLyricsPage = response.promise
+    useLyricsStore.getState().fetchForTrack(lyricSong().id, "Artist", "Lyrics track")
+    await settle(); response.reject(Error("Unavailable"))
+    pending.resolve([{ text: "Genius fallback" }])
+    for (let i = 0; i < 20; i++) await settle()
+    expect(state().lyricsLines?.[0].text).toBe("Genius fallback")
+    expect(useLyricsStore.getState().sources[0].label).toBe("Genius")
+    expect(useLyricsStore.getState().isFetchingLyrics).toBe(false)
+  } finally { state().stop(); connection.setState(before); useGeniusStore.setState(geniusBefore); useUIStore.setState(uiBefore) }
+})
+test("an account change retires pending YTM lyrics without publishing its old source", async () => {
+  const { connection, before } = await prepareYoutubeLyrics()
+  const response = deferred<any>()
+  youtubeLyricsPage = response.promise
+  try {
+    useLyricsStore.getState().fetchForTrack(lyricSong().id, "Artist", "Lyrics track")
+    await settle()
+    connection.setState({ connected: false, accountId: null, revision: connection.getState().revision + 1 })
+    response.resolve({ lyrics: { missing: false, lines: [{ text: "Old account", startMs: 0, endMs: 0 }] }, items: [], hubs: [] })
+    for (let i = 0; i < 10; i++) await settle()
+    expect(useLyricsStore.getState().sources).toEqual([])
+    expect(state().lyricsLines).toEqual([])
+    expect(useLyricsStore.getState().isFetchingLyrics).toBe(false)
+  } finally { state().stop(); connection.setState(before) }
 })

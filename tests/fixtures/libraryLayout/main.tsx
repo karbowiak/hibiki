@@ -41,6 +41,9 @@ import { useCustomColorStore } from "../../../src/stores/customColorStore.ts"
 import { QueuePanel } from "../../../src/components/QueuePanel.tsx"
 import { youtubeMusicTrack } from "../../../src/backends/ytmusic/tracks.ts"
 import { useYoutubeMusicDiscoveryStore } from "../../../src/backends/ytmusic/discovery.ts"
+import { useYoutubeMusicRatingsStore } from "../../../src/backends/ytmusic/ratings.ts"
+import { useMixedPlaylistStore } from "../../../src/stores/mixedPlaylistStore.ts"
+import { hydratePlaylist, newOccurrence } from "../../../src/mixedPlaylists/model.ts"
 import { HoverInformation } from "../../../src/components/HoverInformation.tsx"
 import { useCatalogueStore } from "../../../src/offline/catalogueStore.ts"
 import { initializeQueuePersistence, flushQueuePersistence } from "../../../src/lib/queuePersistence.ts"
@@ -81,7 +84,7 @@ async function setup() {
     transformCallback: () => ++callback,
     unregisterCallback: () => {},
     invoke: async (command: string, args:any={}) => {
-      if (command === "ytmusic_status") return { enabled: youtubeArtistEnabled, phase: youtubeArtistEnabled ? "connected" : "disconnected", lastCheckedAt: null, nextRefreshAt: null, message: null }
+      if (command === "ytmusic_status") return { enabled: youtubeArtistEnabled, phase: youtubeArtistEnabled ? "connected" : "disconnected", accountId: youtubeArtistEnabled ? "fixture-youtube-owner" : null, lastCheckedAt: null, nextRefreshAt: null, message: null }
       if (command === "ytmusic_browse") return { title: "YouTube Fixture Artist", items: [], hubs: [], continuation: null,
         artist: args.browseId === "UC_fixture" ? { id: "UC_fixture", name: "YouTube Fixture Artist", thumbnail: thumb,
           background: location.origin + "/synthetic-artwork/hero-detail.svg", description: "Fixture artist biography", monthlyListeners: null, subscribers: null, songs: null, shuffle: null } : null }
@@ -510,6 +513,20 @@ async function setup() {
   }
   setHome(5)
   w.fixtureAppearance = {
+    mixedPreview: () => {
+      const youtube = { ...youtubeMusicTrack({ videoId: "abcdefghijk", title: "YouTube playlist song", artist: "Fixture Artist", album: "Fixture Album", duration: "3:14", thumbnail: null }), thumbUrl: thumb }
+      const initial = hydratePlaylist({ service: "plex", owner: provider.cacheScope, id: playlists[0].id, title: "Plex + YTM playlist",
+        readOnly: false, items: tracks.slice(0, 2).map((track, index) => ({ track, occurrenceId: `fixture-${index}` })) })
+      const pending = { ...newOccurrence(youtube), match: { status: "missing" as const, message: "No verified Plex recording found. The original song is retained." } }
+      const playlist = { ...initial, id: "mixed:fixture", owners: { plex: provider.cacheScope, ytmusic: "fixture-youtube-owner" },
+        automatic: false, items: [initial.items[0], pending, initial.items[1]], message: "1 unmatched song retained in Hibiki." }
+      useYoutubeMusicDiscoveryStore.setState({ connected: true, accountId: "fixture-youtube-owner" })
+      useMixedPlaylistStore.setState({ loaded: true, playlists: [playlist], load: async () => {} })
+      useYoutubeMusicRatingsStore.setState({ owner: "fixture-youtube-owner", loaded: true, entries: {
+        [youtube.id]: { id: "fixture-rating", owner: "fixture-youtube-owner", track: youtube, value: 4, changedAt: 1, saved: { ytmusic: "fixture-youtube-owner" } },
+      } })
+      usePlayerStore.setState({ currentTrack: tracks[0], queue: [tracks[0], youtube, tracks[1]], queueIndex: 0 })
+    },
     youtubePreview: (mode: "playing" | "saved" | "cache" | "plex" = "playing") => {
       const song = (videoId: string, title: string) => ({ ...youtubeMusicTrack({
         videoId, title, artist: "Fixture Artist", album: "Fixture Album", duration: "3:14", thumbnail: null,
@@ -589,8 +606,8 @@ async function setup() {
       document.documentElement.style.fontSize = `${textSize}px`
     },
     route: (path: string) => {
-      youtubeArtistEnabled = path.startsWith("/ytmusic/")
-      useYoutubeMusicDiscoveryStore.setState({ connected: youtubeArtistEnabled })
+      youtubeArtistEnabled = path.startsWith("/ytmusic/") || path.startsWith("/mixed-playlist/")
+      useYoutubeMusicDiscoveryStore.setState({ connected: youtubeArtistEnabled, accountId: youtubeArtistEnabled ? "fixture-youtube-owner" : null })
       history.pushState({}, "", path)
       dispatchEvent(new PopStateEvent("popstate"))
     },

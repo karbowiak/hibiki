@@ -1,7 +1,7 @@
 import type { MusicTrack } from "../types/music"
 import { itemArtistCredits } from "../lib/artistCredits"
 import { playlistCandidateScore } from "../playlistSync/matching"
-import type { MixedPlaylist, Service } from "./model"
+import { songReference, type MixedPlaylist, type Service } from "./model"
 
 const label = (text: string) => text.normalize("NFKC").trim().toLowerCase().replace(/\s+/g, " ")
 const credits = (track: MusicTrack) => itemArtistCredits(track).map(credit => label(credit.name)).sort()
@@ -53,7 +53,7 @@ export async function matchPlaylistBatch(playlist: MixedPlaylist, target: Servic
     }
     if (!options.current()) break
     saved = await options.save({ ...saved, items: saved.items.map(item => item.id !== row.id ? item : {
-      ...item, songs: result.status === "matched" ? { ...item.songs, [target]: { track: result.track } } : item.songs,
+      ...item, songs: result.status === "matched" ? { ...item.songs, [target]: songReference(result.track, item.songs[target]) } : item.songs,
       match: { status: result.status, checkedAt: result.checkedAt, message: result.status === "matched" ? undefined : result.message },
     }) })
     completed++

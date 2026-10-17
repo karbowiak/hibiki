@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { useItemRating } from "../../hooks/useItemRating"
 import type { MusicTrack } from "../../types/music"
+import { isYoutubeMusicId } from "../../backends/ytmusic/tracks"
 
 interface StarRatingProps {
   itemId: string
@@ -41,6 +42,9 @@ export function StarRating({
   const [hovered, setHovered] = useState<number | null>(null)
   useEffect(() => setHovered(null), [itemId, itemType])
   const filled = Math.round((rating.display ?? 0) / 2)
+  const youtube = isYoutubeMusicId(itemId)
+  const likeThreshold = youtube ? 2 : 3
+  const likeLabel = youtube ? "liked on YouTube Music" : "liked"
   const visual = hovered ?? filled
   const inMenu = !!onRated
   if (!rating.available) return null
@@ -61,7 +65,7 @@ export function StarRating({
     <div
       className={`group/rating flex shrink-0 items-center gap-0.5 ${inMenu ? "flex-wrap px-3 py-2" : ""}`}
       role="group"
-      aria-label={`Rating for ${track || itemType}: ${filled} of 5 stars${itemType === "track" && filled >= 3 ? ", liked" : ""}`}
+      aria-label={`Rating for ${track || itemType}: ${filled} of 5 stars${itemType === "track" && filled >= likeThreshold ? `, ${likeLabel}` : ""}`}
       aria-description={rating.error ?? rating.hint}
       aria-busy={rating.saving}
       title={rating.error ?? rating.hint}
@@ -106,7 +110,7 @@ export function StarRating({
           title={
             filled === star
               ? "Clear rating"
-              : `Rate ${star} star${star > 1 ? "s" : ""}${itemType === "track" ? (star >= 3 ? " · liked" : " · not liked") : ""}`
+              : `Rate ${star} star${star > 1 ? "s" : ""}${itemType === "track" ? (star >= likeThreshold ? ` · ${likeLabel}` : ` · not ${likeLabel}`) : ""}`
           }
           className={`rounded-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-wait ${visual >= star ? selectedClass : emptyClass}`}
           onMouseEnter={() => setHovered(star)}

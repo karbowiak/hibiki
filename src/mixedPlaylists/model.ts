@@ -11,6 +11,8 @@ export interface SongReference {
   track: MusicTrack
   /** Library membership date, never substituted for the playlist-added date. */
   libraryAdded?: AddedDate
+  /** Retained even after an authoritative provider date becomes available. */
+  libraryObservedAt?: number
 }
 export interface MixedOccurrence {
   id: string
@@ -59,11 +61,17 @@ export function trackService(track: MusicTrack): Service {
 export function playlistAlias(service: Service, id: string) {
   return service === "ytmusic" ? `ytmusic:${id}` : id
 }
+export function songReference(track: MusicTrack, previous?: SongReference, at = Date.now()): SongReference {
+  const native = track.addedAt ? Date.parse(track.addedAt) : NaN
+  const observed = track.libraryObservedAt ? Date.parse(track.libraryObservedAt) : NaN
+  const observedAt = previous?.libraryObservedAt ?? (previous?.libraryAdded?.provenance === "observed" ? previous.libraryAdded.at : Number.isFinite(observed) ? observed : at)
+  return { track, libraryObservedAt: observedAt, libraryAdded: Number.isFinite(native) ? { at: native, provenance: "provider" } :
+    previous?.libraryAdded ?? { at: observedAt, provenance: "observed" } }
+}
 export function newOccurrence(track: MusicTrack, at = Date.now()): MixedOccurrence {
   const original = trackService(track)
-  return { id: crypto.randomUUID(), original, songs: { [original]: {
-    track, ...(track.addedAt && Number.isFinite(Date.parse(track.addedAt)) ? { libraryAdded: { at: Date.parse(track.addedAt), provenance: "provider" } as AddedDate } : {}),
-  } }, added: { at, provenance: "hibiki" }, remote: {}, match: { status: "pending" } }
+  return { id: crypto.randomUUID(), original, songs: { [original]: songReference(track, undefined, at) },
+    added: { at, provenance: "hibiki" }, remote: {}, match: { status: "pending" } }
 }
 /** Hydration uses transport occurrence handles, not song IDs: repeats stay distinct. */
 export function hydratePlaylist(snapshot: RemotePlaylist, previous?: MixedPlaylist, now = Date.now()): MixedPlaylist {
@@ -76,8 +84,7 @@ export function hydratePlaylist(snapshot: RemotePlaylist, previous?: MixedPlayli
     if (retained && retained.songs[snapshot.service]?.track.id !== item.track.id) throw Error("Playlist occurrence identity changed.")
     const row = retained ?? newOccurrence(item.track, now)
     const before = row.songs[snapshot.service]
-    return { ...row, songs: { ...row.songs, [snapshot.service]: { track: item.track,
-      libraryAdded: before?.libraryAdded ?? (item.track.addedAt && Number.isFinite(Date.parse(item.track.addedAt)) ? { at: Date.parse(item.track.addedAt), provenance: "provider" as const } : undefined) } },
+    return { ...row, songs: { ...row.songs, [snapshot.service]: songReference(item.track, before, now) },
       added: retained?.added ?? item.added ?? { at: now, provenance: "observed" as const },
       remote: { ...row.remote, [snapshot.service]: { occurrenceId: item.occurrenceId, added: item.added ?? row.remote[snapshot.service]?.added } } }
   })

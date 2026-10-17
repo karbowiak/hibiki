@@ -368,7 +368,7 @@ function TrackRowCells({
         <td className="p-2 text-xs uppercase">{track.codec ?? ""}</td>
       )}
       {visibleCols.has("added_at") && (
-        <td className="whitespace-nowrap p-2">{formatDate(track.addedAt)}</td>
+        <td className="whitespace-nowrap p-2">{formatDate(track.addedAt ?? track.libraryObservedAt ?? null)}</td>
       )}
       {visibleCols.has("rated_at") && (
         <td className="whitespace-nowrap p-2">

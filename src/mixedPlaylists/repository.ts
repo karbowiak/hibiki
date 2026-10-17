@@ -1,8 +1,21 @@
 import { get, update } from "idb-keyval"
 import { playlistJournalDatabase } from "../playlistSync/journal"
 import { sameOwners, type MixedPlaylist } from "./model"
+import { retainLibraryDates, type LibraryDates } from "./libraryDates"
 
 const KEY = "mixed-playlists-v1"
+interface Saved { version: 1; playlists: MixedPlaylist[]; libraryDates: LibraryDates }
+function savedData(value?: Saved | MixedPlaylist[]): Saved {
+  if (!Array.isArray(value)) return value ?? { version: 1, playlists: [], libraryDates: {} }
+  // Older local records held dates on each occurrence. Retain those observations.
+  let libraryDates: LibraryDates = {}
+  const playlists = value.map(playlist => {
+    const retained = retainLibraryDates(playlist, libraryDates)
+    libraryDates = retained.dates
+    return retained.playlist
+  })
+  return { version: 1, playlists, libraryDates }
+}
 export function retainMixedPlaylist(previous: MixedPlaylist[], playlist: MixedPlaylist, expected: number) {
   const old = previous.find(item => item.id === playlist.id)
   if ((old?.revision ?? 0) !== expected) throw Error("Playlist changed. Read its current contents and try again.")
@@ -18,13 +31,15 @@ export function retainMixedPlaylist(previous: MixedPlaylist[], playlist: MixedPl
   return [...previous.filter(item => item.id !== playlist.id), saved]
 }
 export const mixedPlaylistRepository = {
-  load: async (): Promise<MixedPlaylist[]> => (await get(KEY, playlistJournalDatabase())) ?? [],
+  load: async (): Promise<MixedPlaylist[]> => savedData(await get(KEY, playlistJournalDatabase())).playlists,
   async save(playlist: MixedPlaylist, expected = playlist.revision): Promise<MixedPlaylist> {
     let saved: MixedPlaylist | undefined
-    await update<MixedPlaylist[]>(KEY, previous => {
-      const next = retainMixedPlaylist(previous ?? [], playlist, expected)
-      saved = next.find(item => item.id === playlist.id)
-      return next
+    await update<Saved | MixedPlaylist[]>(KEY, previous => {
+      const data = savedData(previous)
+      const next = retainMixedPlaylist(data.playlists, playlist, expected)
+      const retained = retainLibraryDates(next.find(item => item.id === playlist.id)!, data.libraryDates)
+      saved = retained.playlist
+      return { version: 1, playlists: next.map(item => item.id === playlist.id ? retained.playlist : item), libraryDates: retained.dates }
     }, playlistJournalDatabase())
     if (!saved) throw Error("Unable to retain this playlist.")
     return saved

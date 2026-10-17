@@ -77,6 +77,8 @@ export interface MusicTrack {
   summary: string | null
   userRating: number | null // 0–10 scale
   addedAt: string | null // ISO 8601
+  /** Hibiki's first observation when the service supplies no library date. */
+  libraryObservedAt?: string
   lastPlayedAt: string | null
   guid: string | null
   codec: string | null

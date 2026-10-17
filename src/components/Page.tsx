@@ -233,7 +233,10 @@ export function Page() {
                 return id ? <Playlist playlistId={id} /> : null
               }}
             </Route>
-            <Route path="/mixed-playlist/:id" key="mixed-playlist">{(params: { id?: string }) => <MixedPlaylist id={params.id ?? ""} />}</Route>
+            <Route path="/mixed-playlist/:id" key="mixed-playlist">{() => {
+              const id = libraryRouteSegment(rawLocation, `${routeBase}/mixed-playlist/`)
+              return id ? <MixedPlaylist id={id} /> : invalidLibraryLink
+            }}</Route>
 
             <Route path="/mix" key="mix">
               <MixPage />

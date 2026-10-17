@@ -6,6 +6,7 @@ import { retainMixedPlaylist } from "../src/mixedPlaylists/repository"
 import { adoptRemote, bindSnapshot, operationIds, projection, reconcileRemoteChanges } from "../src/mixedPlaylists/reconcile"
 import { syncMixedPlaylist } from "../src/mixedPlaylists/sync"
 import type { MixedAdapter } from "../src/mixedPlaylists/adapters"
+import { retainLibraryDates } from "../src/mixedPlaylists/libraryDates"
 
 const song = (id: string, title = "Song") => ({ ...youtubeMusicTrack({ videoId: "a1234567890", title, artist: "Artist", album: "Release", duration: "3:00", thumbnail: null }), id })
 const snapshot = (service: Service, ids: string[]): RemotePlaylist => ({ service, owner: `${service}-owner`, id: service === "plex" ? "10" : "VLPLtest", title: "Playlist", readOnly: false,
@@ -34,6 +35,26 @@ test("durable saves reject stale revisions and account reassignment", () => {
   expect(saved.revision).toBe(1)
   expect(() => retainMixedPlaylist([saved], saved, 0)).toThrow("changed")
   expect(() => retainMixedPlaylist([saved], { ...saved, owners: { ...saved.owners, plex: "other" } }, 1)).toThrow("accounts")
+})
+test("library observations survive removal, repeat additions and authoritative date discovery", () => {
+  const original = hydratePlaylist(snapshot("ytmusic", ["ytmusic:a1234567890"]), undefined, 100)
+  const first = retainLibraryDates(original, {})
+  expect(first.playlist.items[0].songs.ytmusic?.libraryAdded).toEqual({ at: 100, provenance: "observed" })
+  const empty = retainLibraryDates({ ...original, items: [] }, structuredClone(first.dates))
+  const readded = hydratePlaylist(snapshot("ytmusic", ["ytmusic:a1234567890", "ytmusic:a1234567890"]), undefined, 900)
+  const again = retainLibraryDates(readded, empty.dates)
+  expect(again.playlist.items.map(row => row.songs.ytmusic?.libraryAdded?.at)).toEqual([100, 100])
+  expect(again.playlist.items.map(row => row.added.at)).toEqual([900, 900])
+  const enriched = structuredClone(again.playlist)
+  enriched.items[0].songs.ytmusic!.track.addedAt = "2020-01-01T00:00:00Z"
+  const native = retainLibraryDates(enriched, again.dates)
+  expect(native.playlist.items[1].songs.ytmusic?.libraryAdded).toEqual({ at: Date.parse("2020-01-01T00:00:00Z"), provenance: "provider" })
+  expect(native.playlist.items[0].songs.ytmusic?.libraryObservedAt).toBe(100)
+  const other = retainLibraryDates({ ...readded, owners: { ytmusic: "another-account" } }, native.dates)
+  expect(other.playlist.items[0].songs.ytmusic?.libraryAdded).toEqual({ at: 900, provenance: "observed" })
+  const copied = newOccurrence({ ...song("ytmusic:a1234567890"), libraryObservedAt: new Date(100).toISOString() }, 999)
+  expect(copied.songs.ytmusic?.libraryAdded).toEqual({ at: 100, provenance: "observed" })
+  expect(copied.added).toEqual({ at: 999, provenance: "hibiki" })
 })
 test("recording matches require credits, version and duration evidence", () => {
   const source = song("1"), exact = song("ytmusic:a1234567890")

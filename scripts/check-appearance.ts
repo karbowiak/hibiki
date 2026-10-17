@@ -47,7 +47,21 @@ async function checkIssueRegressions(page: Page, name: string) {
   assert.equal(await controls.getByRole("button", { name: /Enable .* radio for this queue/ }).count(), 3)
   assert.ok(await controls.evaluate(element => element.scrollWidth <= element.clientWidth + 1), "Queue radio controls must fit the docked panel")
   await page.screenshot({ path: join(artifacts, `${name}-queue-radio.png`) })
-  console.log(`${name}: server library navigation, playbar album links and sharp YTM artist heroes passed`)
+  await page.evaluate(() => {
+    ;(window as any).fixtureAppearance.mixedPreview()
+    ;(window as any).fixtureAppearance.route("/mixed-playlist/mixed%3Afixture")
+  })
+  await page.getByRole("heading", { name: "Plex + YTM playlist", exact: true }).waitFor()
+  await page.getByRole("button", { name: "Match and sync", exact: true }).waitFor()
+  assert.equal(await page.locator("main [data-track-index]").count(), 3)
+  const ytmStars = page.locator("main").getByRole("group", { name: "Rating for YouTube playlist song: 2 of 5 stars, liked on YouTube Music", exact: true })
+  assert.equal(await ytmStars.getByRole("button", { name: /^\d stars?$/ }).count(), 5)
+  assert.equal(await ytmStars.getByRole("button", { name: "2 stars", exact: true }).getAttribute("aria-pressed"), "true")
+  const copyHandle = page.getByRole("button", { name: "Drag YouTube playlist song to a playlist", exact: true })
+  await copyHandle.focus()
+  assert.equal(await copyHandle.evaluate(element => getComputedStyle(element).opacity), "1")
+  await page.screenshot({ path: join(artifacts, `${name}-mixed-playlist.png`) })
+  console.log(`${name}: server library, album links, YTM heroes, mixed playlist, exact stars and queue copy handles passed`)
 }
 let artworkGate: Promise<void> | null = null
 async function checkPlaybackQuality(page: Page, name: string) {

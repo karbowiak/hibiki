@@ -116,7 +116,7 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
         }
       } finally {
         if (!isStale()) {
-          set({ isFetchingLyrics: false, isSearching: false })
+          set({ isSearching: false, ...(ownsChoice() ? { isFetchingLyrics: false } : {}) })
           if (!get().sources.length && ownsChoice()) pushLyricsToPlayer([])
         }
       }
@@ -185,9 +185,11 @@ function pushLyricsToPlayer(lines: LyricLineData[]) {
 
 // An account replacement retires visible lyrics as well as in-flight requests.
 useYoutubeMusicDiscoveryStore.subscribe((state, previous) => {
-  if ((state.revision !== previous.revision || state.accountId !== previous.accountId) &&
-    isYoutubeMusicId(usePlayerStore.getState().currentTrack?.id ?? "")) {
+  const track = usePlayerStore.getState().currentTrack
+  if ((state.revision !== previous.revision || state.accountId !== previous.accountId || state.connected !== previous.connected) &&
+    track && isYoutubeMusicId(track.id)) {
     useLyricsStore.getState().clear()
     usePlayerStore.setState({ lyricsLines: [] })
+    if (state.connected) useLyricsStore.getState().fetchForTrack(track.id, track.originalTitle || track.artistName, track.title)
   }
 })

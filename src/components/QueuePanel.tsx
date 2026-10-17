@@ -97,7 +97,7 @@ function PlayedRow({
 }: TrackRowProps & { onJump: () => void }) {
   return (
     <div
-      className="queue-track-row queue-track-row--played flex cursor-pointer items-center gap-2 rounded-md hover:bg-hl-queue"
+      className="queue-track-row queue-track-row--played group flex cursor-pointer items-center gap-2 rounded-md hover:bg-hl-queue"
       onContextMenu={onContextMenu}
       onClick={onJump}
     >
@@ -134,13 +134,13 @@ function PlayedRow({
               <MusicEntityLink entity={trackEntity(track, "album")} className="hover:underline">{track.albumName}</MusicEntityLink></>}
           </span>
           <TrackBadges isGuestDj={isGuestDj} isRadio={isRadio} source={source} />
+          {track && <YoutubeMusicLikeButton track={track} />}
         </div>
       </div>
       <span className="shrink-0 text-xs tabular-nums text-(--text-muted)">
         {formatMs(durationMs)}
       </span>
       {track && <QueuePlaylistDrag track={track} />}
-      {track && <YoutubeMusicLikeButton track={track} />}
       <span className="queue-remove-spacer" aria-hidden="true" />
     </div>
   )
@@ -161,7 +161,7 @@ function NowPlayingRow({
 }: TrackRowProps) {
   return (
     <div
-      className="queue-track-row queue-track-row--current flex items-center gap-2 rounded-md"
+      className="queue-track-row queue-track-row--current group flex items-center gap-2 rounded-md"
       onContextMenu={onContextMenu}
     >
       <span className="w-5 shrink-0 text-center">
@@ -197,13 +197,13 @@ function NowPlayingRow({
               <MusicEntityLink entity={trackEntity(track, "album")} className="hover:underline">{track.albumName}</MusicEntityLink></>}
           </span>
           <TrackBadges isGuestDj={isGuestDj} isRadio={isRadio} source={source} />
+          {track && <YoutubeMusicLikeButton track={track} eager />}
         </div>
       </div>
       <span className="shrink-0 text-xs tabular-nums text-(--text-muted)">
         {formatMs(durationMs)}
       </span>
       {track && <QueuePlaylistDrag track={track} />}
-      {track && <YoutubeMusicLikeButton track={track} eager />}
       <span className="queue-remove-spacer" aria-hidden="true" />
     </div>
   )
@@ -311,6 +311,7 @@ function SortableUpcomingItem({
               <MusicEntityLink entity={trackEntity(track, "album")} className="hover:underline">{track.albumName}</MusicEntityLink></>}
           </span>
           <TrackBadges isGuestDj={isGuestDj} isRadio={isRadio} source={source} />
+          {track && <YoutubeMusicLikeButton track={track} />}
         </div>
       </div>
 
@@ -319,7 +320,6 @@ function SortableUpcomingItem({
       </span>
 
       {track && <QueuePlaylistDrag track={track} />}
-      {track && <YoutubeMusicLikeButton track={track} />}
       <button
         className="queue-remove-button shrink-0 text-(--text-muted) opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 hover:text-(--text-primary) focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
         onClick={(e) => {

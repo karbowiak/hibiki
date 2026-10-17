@@ -1,4 +1,4 @@
-import { newOccurrence, sameSequence, snapshotIds, type MixedOccurrence, type MixedPlaylist, type RemotePlaylist, type Service } from "./model"
+import { newOccurrence, songReference, sameSequence, snapshotIds, type MixedOccurrence, type MixedPlaylist, type RemotePlaylist, type Service } from "./model"
 import type { SequenceOperation } from "../playlistSync/linked"
 
 export function projection(playlist: MixedPlaylist, service: Service) {
@@ -27,7 +27,8 @@ export function bindSnapshot(playlist: MixedPlaylist, snapshot: RemotePlaylist):
       const remote = { ...row.remote }; delete remote[snapshot.service]
       return { ...row, remote }
     }
-    return { ...row, remote: { ...row.remote, [snapshot.service]: { occurrenceId: item.occurrenceId,
+    return { ...row, songs: { ...row.songs, [snapshot.service]: songReference(item.track, row.songs[snapshot.service]) },
+      remote: { ...row.remote, [snapshot.service]: { occurrenceId: item.occurrenceId,
       added: row.remote[snapshot.service]?.added ?? item.added ?? row.added } } }
   }), baseline: { ...playlist.baseline, [snapshot.service]: snapshot } }
 }
@@ -50,7 +51,7 @@ export function adoptRemote(playlist: MixedPlaylist, snapshot: RemotePlaylist): 
     const before = known.get(item.occurrenceId)
     if (before && before.songs[service]?.track.id !== item.track.id) throw Error("A playlist occurrence changed recording identity.")
     const row = before ?? newOccurrence(item.track)
-    return { ...row, songs: { ...row.songs, [service]: { ...row.songs[service], track: item.track } },
+    return { ...row, songs: { ...row.songs, [service]: songReference(item.track, row.songs[service]) },
       added: before?.added ?? item.added ?? { at: Date.now(), provenance: "observed" },
       remote: { ...row.remote, [service]: { occurrenceId: item.occurrenceId, added: item.added ?? before?.remote[service]?.added } } }
   })
