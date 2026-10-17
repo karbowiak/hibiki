@@ -172,6 +172,8 @@ async fn resolve_image(
     };
     let scope = context.cache_scope();
     let cache_key = request.cache_key(context);
+    // Clear can retire this request while it waits for an image worker.
+    cache.bind_key(&ticket, &cache_key).ok()?;
     if let Some(bytes) =
         image_protocol::cached_artwork(request, context, cache.clone(), ticket.clone()).await
     {

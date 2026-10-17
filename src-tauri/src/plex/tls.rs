@@ -166,7 +166,8 @@ mod tests {
                         request.extend_from_slice(&chunk[..read]);
                     }
                     let _ = sent.send(String::from_utf8_lossy(&request).into_owned());
-                    let (mime, body) = if request.starts_with(b"GET /library/metadata/1/thumb") {
+                    let (mime, body) = if request.starts_with(b"GET /library/metadata/1/thumb")
+                        || request.starts_with(b"GET /photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1%2Fthumb") {
                         ("image/png", crate::image_content::test_png())
                     } else {
                         ("application/json", br#"{"MediaContainer":{"machineIdentifier":"test-server","claimed":true}}"#.to_vec())

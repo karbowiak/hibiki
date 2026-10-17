@@ -644,6 +644,7 @@ impl PlexClient {
         if !super::artwork::public_url(&target) || !super::artwork::allowed(&base, &target) {
             return None;
         }
+        let target = super::artwork::bounded_source(&base, &target)?;
         Some(self.artwork_client.get(target).header("X-Plex-Token", token_header(&self.token)))
     }
 

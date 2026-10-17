@@ -199,9 +199,54 @@ pub fn redirect_policy(base: Url) -> reqwest::redirect::Policy {
     })
 }
 
+/// Ask PMS for display-sized pixels instead of downloading an unbounded original.
+/// Keep existing transcodes (including their crop) and preserve clear-logo alpha.
+pub fn bounded_source(base: &Url, target: &Url) -> Option<Url> {
+    if !public_url(target) || !allowed(base, target) { return None; }
+    let path = server_path(base, target)?;
+    if !image_path(path) { return Some(target.clone()); }
+    let source = match target.query() {
+        Some(query) => format!("{path}?{query}"),
+        None => path.to_owned(),
+    };
+    let format = if path.split('/').any(|part| part == "clearLogo") { "png" } else { "jpeg" };
+    let mut resized = base.clone();
+    resized.set_path(&format!("{}/photo/:/transcode", base.path().trim_end_matches('/')));
+    resized.set_query(None);
+    resized.query_pairs_mut()
+        .append_pair("url", &source)
+        .append_pair("width", "2048")
+        .append_pair("height", "2048")
+        .append_pair("minSize", "0")
+        .append_pair("upscale", "0")
+        .append_pair("format", format);
+    Some(resized)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn original_artwork_is_bounded_without_changing_crops_or_logos() {
+        let base = Url::parse("https://plex.test/plex").unwrap();
+        let raw = Url::parse("https://plex.test/plex/library/metadata/42/thumb/123?signature=a%20b%2Bc").unwrap();
+        let resized = bounded_source(&base, &raw).unwrap();
+        let query: std::collections::HashMap<_, _> = resized.query_pairs().collect();
+        assert_eq!(resized.path(), "/plex/photo/:/transcode");
+        assert_eq!(query["url"], "/library/metadata/42/thumb/123?signature=a%20b%2Bc");
+        assert_eq!(query["width"], "2048");
+        assert_eq!(query["height"], "2048");
+        assert_eq!(query["upscale"], "0");
+        assert_eq!(query["format"], "jpeg");
+        assert!(allowed(&base, &resized));
+        let logo = Url::parse("https://plex.test/plex/library/metadata/42/clearLogo/123").unwrap();
+        assert!(bounded_source(&base, &logo).unwrap().query_pairs().any(|(k, v)| k == "format" && v == "png"));
+        let crop = Url::parse("https://plex.test/plex/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F42%2Fthumb&width=600&crop=1").unwrap();
+        assert_eq!(bounded_source(&base, &crop).unwrap(), crop);
+        assert!(bounded_source(&base, &Url::parse("https://plex.test/plex/:/scrobble?key=42").unwrap()).is_none());
+        assert!(bounded_source(&base, &Url::parse("https://other.test/library/metadata/42/thumb").unwrap()).is_none());
+    }
 
     #[test]
     fn artwork_paths_cover_metadata_composites_resources_and_mounted_servers() {

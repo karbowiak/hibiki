@@ -293,6 +293,7 @@ pub async fn catalogue_health(
     state.checked_cache_client(&context, &guard)?;
     if let Some(client) = guard.as_mut() {
         client.offline_only = !healthy;
+        state.publish_image_context(guard.clone());
     }
     Ok(healthy)
 }

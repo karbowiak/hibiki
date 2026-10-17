@@ -223,7 +223,8 @@ mod tests {
             .unwrap()
             .build()
             .unwrap();
-        assert_eq!(request.url().query(), Some("width=600"));
+        assert_eq!(request.url().path(), "/plex/photo/:/transcode");
+        assert!(request.url().query_pairs().any(|(key, value)| key == "url" && value == "/library/metadata/42/thumb?width=600"));
         assert!(request.headers()["X-Plex-Token"].is_sensitive());
         assert_eq!(request.headers()["X-Plex-Token"], "dummy-private-token");
         let public = scoped_request(Some(&client), "", "https://cdn.test/cover.jpg")

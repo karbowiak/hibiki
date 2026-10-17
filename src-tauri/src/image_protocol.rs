@@ -167,6 +167,7 @@ impl ImageContext {
                 client.client_id.as_str(),
                 client.machine_identifier.as_str(),
                 client.library_scope.as_str(),
+                if client.offline_only { "offline" } else { "online" },
             ]
         });
         hex::encode(Sha256::digest(serde_json::to_vec(&binding).expect("image context strings")))
@@ -230,7 +231,7 @@ impl Default for WorkQueue {
 }
 
 impl WorkQueue {
-    fn new(requests: usize, workers: usize) -> Self {
+    pub(crate) fn new(requests: usize, workers: usize) -> Self {
         Self {
             pool: Arc::new(Pool {
                 requests: Arc::new(Semaphore::new(requests)),
