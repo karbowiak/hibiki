@@ -468,7 +468,7 @@ export function ContextMenu() {
               {index > 0 && action.section && action.section !== actionData.actions[index - 1].section && <Divider />}
               {action.section === "share" && actionData.actions[index - 1]?.section !== "share" && <SectionLabel label="Share" />}
               <Item icon={action.icon ? ACTION_ICONS[action.icon] : undefined}
-                label={pendingLabel === action.label ? `${action.label}…` : action.label}
+                label={action.label}
                 disabled={action.disabled || !!pendingLabel}
                 onClick={() => void invokeAction(action)} />
             </Fragment>

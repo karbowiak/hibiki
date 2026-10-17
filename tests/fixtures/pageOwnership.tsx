@@ -27,6 +27,9 @@ const ui = create(() => ({
 const player = create(() => ({ playFromUri() {} }))
 const { useSearchStore } = await import("../../src/stores/searchStore")
 const library = create(() => ({
+  hubs: [],
+  recentlyAdded: [],
+  latestReleases: [],
   wsConnected: true,
   refreshAll: async () => {},
   invalidateCache() {},
@@ -132,10 +135,7 @@ try {
     )
     assert.equal(pending.length, 1)
     assert.ok(document.querySelector('[role="status"]'))
-    const emptyMessage =
-      kind === "hubs"
-        ? "This collection is unavailable"
-        : "Nothing recently added"
+    const emptyMessage = "No music in this collection"
     assert.ok(!document.body.textContent?.includes(emptyMessage))
     if (scenario.endsWith("provider")) {
       const second = provider()

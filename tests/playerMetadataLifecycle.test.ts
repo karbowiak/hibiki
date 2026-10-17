@@ -617,11 +617,13 @@ test("a late radio response cannot replace a newer playlist selection", async ()
 
 test("provider replacement retires a pending radio response and error", async () => {
   const pending = deferred<{ queueId: number; tracks: MusicTrack[] }>()
+  const started = deferred<void>()
   useProviderStore
     .getState()
-    .setProvider(provider("old", { createRadioQueue: () => pending.promise }))
+    .setProvider(provider("old", { createRadioQueue: () => { started.resolve(); return pending.promise } }))
   await audiblyPlay(source("1"))
   const radio = state().playRadio("1", "track")
+  await started.promise
   state().stop()
   useProviderStore.getState().setProvider(provider("new"))
   await state().playTrack(source("1", { title: "New account" }))
