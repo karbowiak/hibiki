@@ -26,6 +26,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (13, include_str!("migrations/V13__collection_cache.sql")),
     (14, include_str!("migrations/V14__collection_search.sql")),
     (15, include_str!("migrations/V15__playback_queue.sql")),
+    (16, include_str!("migrations/V16__collection_query_revision.sql")),
 ];
 
 /// Run all pending migrations against the given connection.
@@ -152,14 +153,14 @@ mod tests {
         let v1: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v1, 15);
+        assert_eq!(v1, 16);
 
         // Run again — should be a no-op
         run_migrations(&conn).expect("second run");
         let v2: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v2, 15);
+        assert_eq!(v2, 16);
     }
 
     #[test]

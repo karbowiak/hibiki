@@ -1,6 +1,7 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+mod query;
 
 #[derive(Clone, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase")]
@@ -130,7 +131,7 @@ fn item_at(
     generation: i64,
     position: i64,
 ) -> Result<Option<Value>, String> {
-    let row:Option<(String,Option<String>)>=sql(conn.query_row("SELECT i.payload,m.occurrence FROM collection_cache_members m JOIN collection_cache_items i ON i.scope=m.scope AND i.kind=m.kind AND i.id=m.item_id WHERE m.scope=?1 AND m.key=?2 AND m.generation=?3 AND m.position=?4",params![scope,key,generation,position],|r|Ok((r.get(0)?,r.get(1)?))).optional())?;
+    let row:Option<(String,Option<String>)>=sql(sql(conn.prepare_cached("SELECT i.payload,m.occurrence FROM collection_cache_members m JOIN collection_cache_items i ON i.scope=m.scope AND i.kind=m.kind AND i.id=m.item_id WHERE m.scope=?1 AND m.key=?2 AND m.generation=?3 AND m.position=?4"))?.query_row(params![scope,key,generation,position],|r|Ok((r.get(0)?,r.get(1)?))).optional())?;
     row.map(|(payload, occurrence)| {
         let mut item: Value =
             serde_json::from_str(&payload).map_err(|_| "Saved collection item is invalid")?;
@@ -143,31 +144,29 @@ fn item_at(
 }
 
 fn query_order(sort: &str, dir: &str) -> Result<String, String> {
-            let field = match sort {
-                "default" => None,
-                "title" => Some("title"),
-                "artist" => Some("artistName"),
-                "album" => Some("albumName"),
-                "year" => Some("year"),
-                "plays" => Some("playCount"),
-                "popularity" => Some("ratingCount"),
-                "label" => Some("parentStudio"),
-                "bitrate" => Some("bitrate"),
-                "format" => Some("codec"),
-                "added_at" => Some("addedAt"),
-                "rating" => Some("userRating"),
-                "rated_at" => Some("lastRatedAt"),
-                "duration" => Some("duration"),
-                _ => return Err("Unsupported collection order".into()),
-            };
-            let direction = if dir == "desc" {
-                "DESC"
-            } else if dir == "asc" {
-                "ASC"
-            } else {
-                return Err("Invalid collection direction".into());
-            };
-    Ok(field.map(|field|format!("json_extract(i.payload,'$.{field}') IS NULL ASC,json_extract(i.payload,'$.{field}') COLLATE NOCASE {direction},m.position ASC")).unwrap_or("m.position ASC".into()))
+    let field = match sort {
+        "default" => None,
+        "title" => Some("title"),
+        "artist" => Some("artistName"),
+        "album" => Some("albumName"),
+        "year" => Some("year"),
+        "plays" => Some("playCount"),
+        "popularity" => Some("ratingCount"),
+        "label" => Some("parentStudio"),
+        "bitrate" => Some("bitrate"),
+        "format" => Some("codec"),
+        "added_at" => Some("addedAt"),
+        "rating" => Some("userRating"),
+        "rated_at" => Some("lastRatedAt"),
+        "duration" => Some("duration"),
+        _ => return Err("Unsupported collection order".into()),
+    };
+    let direction = match dir {
+        "desc" => "DESC",
+        "asc" => "ASC",
+        _ => return Err("Invalid collection direction".into()),
+    };
+    Ok(field.map(|field| format!("json_extract(i.payload,'$.{field}') IS NULL ASC,json_extract(i.payload,'$.{field}') COLLATE NOCASE {direction},m.position ASC")).unwrap_or("m.position ASC".into()))
 }
 const QUERY_FROM: &str = "FROM collection_cache_members m JOIN collection_cache_items i ON i.scope=m.scope AND i.kind=m.kind AND i.id=m.item_id WHERE m.scope=?1 AND m.key=?2 AND m.generation=?3 AND (?4='' OR instr(i.search_text,?4)>0)";
 
@@ -285,51 +284,64 @@ pub fn run(conn: &Connection, scope: &str, request: &Request, now: i64) -> Resul
             if *offset < 0 || !(1..=500).contains(limit) || filter.len() > 1024 {
                 return Err("Invalid collection query".into());
             }
-            let Some((Some(generation), _, _, false)) = metadata(conn, scope, key)? else {
+            let Some((Some(generation), total, _, false)) = metadata(conn, scope, key)? else {
                 return Ok(Value::Null);
             };
-            let order = query_order(sort, dir)?;
-            let filter = filter.to_lowercase();
-            let from = QUERY_FROM;
-            let total: i64 = sql(conn.query_row(
-                &format!("SELECT COUNT(*) {from}"),
-                params![scope, key, generation, filter],
-                |r| r.get(0),
-            ))?;
-            let mut stmt = sql(conn.prepare(&format!(
-                "SELECT i.payload,m.occurrence {from} ORDER BY {order} LIMIT ?5 OFFSET ?6"
-            )))?;
-            let rows = sql(stmt.query_map(
-                params![scope, key, generation, filter, limit, offset],
-                |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+            query_order(sort, dir)?;
+            // The primary key seeks directly to deep default-order pages.
+            if filter.is_empty() && sort == "default" {
+                return run(
+                    conn,
+                    scope,
+                    &Request::Page {
+                        key: key.into(),
+                        offset: *offset,
+                        limit: *limit,
+                    },
+                    now,
+                );
+            }
+            let refs = query::membership(conn, scope, key, generation, filter, sort, dir)?;
+            let mut statement = sql(conn.prepare_cached(
+                "SELECT payload FROM collection_cache_items WHERE scope=?1 AND kind=?2 AND id=?3",
             ))?;
             let mut items = Vec::new();
-            for row in rows {
-                let (payload, occurrence) = sql(row)?;
+            for member in refs
+                .iter()
+                .skip((*offset).min(refs.len() as i64) as usize)
+                .take(*limit as usize)
+            {
+                let payload: String =
+                    sql(statement.query_row(params![scope, member.kind, member.id], |r| r.get(0)))?;
                 let mut item: Value = serde_json::from_str(&payload)
                     .map_err(|_| "Saved collection item is invalid")?;
-                if let Some(id) = occurrence {
-                    item["playlistItemId"] = json!(id)
-                };
+                if let Some(id) = &member.occurrence {
+                    item["playlistItemId"] = json!(id);
+                }
                 items.push(item);
             }
+            let total = if filter.is_empty() {
+                total
+            } else {
+                refs.len() as i64
+            };
             Ok(json!({"items":items,"total":total,"offset":offset}))
         }
-        Request::QueryRefs { filter, sort, dir, .. } => {
-            if filter.len() > 1024 { return Err("Invalid collection query".into()); }
-            let order = query_order(sort, dir)?;
+        Request::QueryRefs {
+            filter, sort, dir, ..
+        } => {
+            if filter.len() > 1024 {
+                return Err("Invalid collection query".into());
+            }
             let Some((Some(generation), _, _, false)) = metadata(conn, scope, key)? else {
                 return Ok(Value::Null);
             };
-            let mut statement = sql(conn.prepare(&format!(
-                "SELECT m.item_id,m.occurrence {QUERY_FROM} AND m.kind='track' ORDER BY {order} LIMIT 1000001"
-            )))?;
-            let rows = sql(statement.query_map(params![scope,key,generation,filter.to_lowercase()], |row| {
-                Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?))
-            }))?;
-            let refs = sql(rows.collect::<rusqlite::Result<Vec<_>>>())?;
-            if refs.len() > 1_000_000 { return Err("This queue exceeds its saved membership limit".into()); }
-            Ok(json!(refs))
+            let refs = query::membership(conn, scope, key, generation, filter, sort, dir)?;
+            Ok(json!(refs
+                .iter()
+                .filter(|member| member.kind == "track")
+                .map(|member| (&member.id, &member.occurrence))
+                .collect::<Vec<_>>()))
         }
         Request::Pick { positions, .. } => {
             if positions.len() > 500 || positions.iter().any(|p| *p < 0) {
@@ -659,33 +671,190 @@ mod tests {
     fn query_membership_preserves_sort_filter_occurrences_and_captured_identities() {
         let conn = db();
         let key = "playlist:8";
-        let mut rows: Vec<_> = (0..420).map(|index| json!({
-            "type":"track", "id":format!("{}", index / 2 + 1),
-            "playlistItemId":format!("{index}"), "title":format!("Song {:04}", index / 2),
-            "artistName": if index < 200 { "Keep" } else { "Other" }
-        })).collect();
+        let mut rows: Vec<_> = (0..420)
+            .map(|index| {
+                json!({
+                    "type":"track", "id":format!("{}", index / 2 + 1),
+                    "playlistItemId":format!("{index}"), "title":format!("Song {:04}", index / 2),
+                    "artistName": if index < 200 { "Keep" } else { "Other" }
+                })
+            })
+            .collect();
         let save = |rows: &[Value], stamp: &str| {
-            let generation = begin(&conn,key,stamp);
-            request(&conn,Request::Put {key:key.into(), generation, offset:0, total:rows.len() as i64,items:rows.to_vec()});
-            request(&conn,Request::Commit {key:key.into(),generation});
+            let generation = begin(&conn, key, stamp);
+            request(
+                &conn,
+                Request::Put {
+                    key: key.into(),
+                    generation,
+                    offset: 0,
+                    total: rows.len() as i64,
+                    items: rows.to_vec(),
+                },
+            );
+            request(
+                &conn,
+                Request::Commit {
+                    key: key.into(),
+                    generation,
+                },
+            );
         };
-        save(&rows,"initial");
-        let query = Request::QueryRefs {key:key.into(),filter:"KEEP".into(),sort:"title".into(),dir:"desc".into()};
-        let refs = request(&conn,query.clone());
-        assert_eq!(refs.as_array().unwrap().len(),200);
-        assert_eq!(refs[0],json!(["100","198"]));
-        assert_eq!(refs[1],json!(["100","199"]));
-        let page = request(&conn,Request::Query { key:key.into(),offset:190,limit:10,filter:"keep".into(),sort:"title".into(),dir:"desc".into() });
+        save(&rows, "initial");
+        let query = Request::QueryRefs {
+            key: key.into(),
+            filter: "KEEP".into(),
+            sort: "title".into(),
+            dir: "desc".into(),
+        };
+        let refs = request(&conn, query.clone());
+        assert_eq!(refs.as_array().unwrap().len(), 200);
+        assert_eq!(refs[0], json!(["100", "198"]));
+        assert_eq!(refs[1], json!(["100", "199"]));
+        let page = request(
+            &conn,
+            Request::Query {
+                key: key.into(),
+                offset: 190,
+                limit: 10,
+                filter: "keep".into(),
+                sort: "title".into(),
+                dir: "desc".into(),
+            },
+        );
         for (offset, item) in page["items"].as_array().unwrap().iter().enumerate() {
-            assert_eq!(item["id"],refs[190+offset][0]);
-            assert_eq!(item["playlistItemId"],refs[190+offset][1]);
+            assert_eq!(item["id"], refs[190 + offset][0]);
+            assert_eq!(item["playlistItemId"], refs[190 + offset][1]);
         }
         rows.retain(|row| row["id"] != "100");
-        rows.reverse();save(&rows,"changed");
-        assert_ne!(request(&conn,query),refs);
-        let selected = request(&conn,Request::Items {key:key.into(),ids:vec![refs[0][0].as_str().unwrap().into()]});
-        assert_eq!(selected[0]["id"],"100","a removed occurrence never resolves to the new occupant of its old position");
-        assert!(run(&conn,&scope(),&Request::QueryRefs {key:key.into(),filter:"".into(),sort:"unsupported".into(),dir:"asc".into()},100).is_err());
+        rows.reverse();
+        save(&rows, "changed");
+        assert_ne!(request(&conn, query), refs);
+        let selected = request(
+            &conn,
+            Request::Items {
+                key: key.into(),
+                ids: vec![refs[0][0].as_str().unwrap().into()],
+            },
+        );
+        assert_eq!(
+            selected[0]["id"], "100",
+            "a removed occurrence never resolves to the new occupant of its old position"
+        );
+        assert!(run(
+            &conn,
+            &scope(),
+            &Request::QueryRefs {
+                key: key.into(),
+                filter: "".into(),
+                sort: "unsupported".into(),
+                dir: "asc".into()
+            },
+            100
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn sorted_membership_reuses_reads_and_retires_on_shared_item_edits() {
+        let conn = db();
+        let key = "playlist:7";
+        let generation = begin(&conn, key, "initial");
+        request(
+            &conn,
+            Request::Put {
+                key: key.into(),
+                generation,
+                offset: 0,
+                total: 3,
+                items: vec![item("2", "20"), item("1", "10"), item("1", "11")],
+            },
+        );
+        request(
+            &conn,
+            Request::Commit {
+                key: key.into(),
+                generation,
+            },
+        );
+        let read =
+            || query::membership(&conn, &scope(), key, generation, "", "title", "asc").unwrap();
+        let first = read();
+        assert!(std::sync::Arc::ptr_eq(&first, &read()));
+        assert_eq!(first[0].occurrence.as_deref(), Some("10"));
+        conn.execute("UPDATE collection_cache_items SET payload=json_set(payload,'$.title','AAAA'),search_text='aaaa' WHERE id='2'",[]).unwrap();
+        let edited = read();
+        assert!(!std::sync::Arc::ptr_eq(&first, &edited));
+        assert_eq!(edited[0].id, "2");
+        assert_eq!(first[0].id, "1", "captured snapshots remain immutable");
+        assert_eq!(
+            query::membership(&conn, &scope(), key, generation, "aaaa", "title", "asc")
+                .unwrap()
+                .len(),
+            1
+        );
+        let other = db();
+        let empty =
+            query::membership(&other, &scope(), key, generation, "", "title", "asc").unwrap();
+        assert!(
+            empty.is_empty(),
+            "independent databases cannot share query identities"
+        );
+    }
+
+    #[test]
+    #[ignore = "isolated 100k-member performance probe"]
+    fn query_performance_probe() {
+        use std::time::Instant;
+        let conn = db();
+        conn.execute("INSERT INTO collection_cache(scope,key,active_generation,total) VALUES(?1,'playlist:1',1,100000)",[scope()]).unwrap();
+        conn.execute("WITH RECURSIVE n(x) AS (VALUES(0) UNION ALL SELECT x+1 FROM n WHERE x<99999) INSERT INTO collection_cache_items(scope,kind,id,payload,search_text) SELECT ?1,'track',CAST(x AS TEXT),json_object('id',CAST(x AS TEXT),'type','track','title',printf('Song %06d',99999-x)),printf('song %06d',99999-x) FROM n",[scope()]).unwrap();
+        conn.execute("INSERT INTO collection_cache_members(scope,key,generation,position,kind,item_id) SELECT scope,'playlist:1',1,CAST(id AS INTEGER),kind,id FROM collection_cache_items",[]).unwrap();
+        let start = Instant::now();
+        let total: i64 = conn
+            .query_row(
+                &format!("SELECT COUNT(*) {QUERY_FROM}"),
+                params![scope(), "playlist:1", 1, ""],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(total, 100000);
+        let mut statement = conn
+            .prepare(&format!(
+                "SELECT i.payload,m.occurrence {QUERY_FROM} ORDER BY {} LIMIT 200 OFFSET 98000",
+                query_order("title", "asc").unwrap()
+            ))
+            .unwrap();
+        let rows = statement
+            .query_map(params![scope(), "playlist:1", 1, ""], |r| {
+                r.get::<_, String>(0)
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(rows.len(), 200);
+        eprintln!(
+            "previous count + sort: {:.2} ms",
+            start.elapsed().as_secs_f64() * 1000.0
+        );
+        let op = |offset, sort: &str| Request::Query {
+            key: "playlist:1".into(),
+            offset,
+            limit: 200,
+            filter: "".into(),
+            sort: sort.into(),
+            dir: "asc".into(),
+        };
+        for (name, request) in [
+            ("first sorted", op(0, "title")),
+            ("deep sorted", op(98000, "title")),
+            ("deep default", op(98000, "default")),
+        ] {
+            let start = Instant::now();
+            let result = run(&conn, &scope(), &request, 100).unwrap();
+            assert_eq!(result["items"].as_array().unwrap().len(), 200);
+            eprintln!("{name}: {:.2} ms", start.elapsed().as_secs_f64() * 1000.0);
+        }
     }
 
     #[test]
