@@ -11,6 +11,18 @@ dom.window.HTMLElement.prototype.scrollIntoView = () => {}
 ;(document as any).elementsFromPoint = () => []
 dom.window.HTMLElement.prototype.setPointerCapture = () => {}
 dom.window.HTMLElement.prototype.releasePointerCapture = () => {}
+let artworkFetchEnabled = false
+const observedCards = new Set<Element>()
+let intersect: (entries: any[]) => void
+Object.assign(globalThis, { IntersectionObserver: class {
+  constructor(receive: (entries:any[]) => void) { intersect = receive }
+  observe(element:Element) { observedCards.add(element) }
+  unobserve(element:Element) { observedCards.delete(element) }
+} })
+const dragListeners = new Set<unknown>()
+const addListener = window.addEventListener.bind(window), removeListener = window.removeEventListener.bind(window)
+window.addEventListener = ((type:any, listener:any, options:any) => { if (type === "dragstart") dragListeners.add(listener); addListener(type,listener,options) }) as any
+window.removeEventListener = ((type:any, listener:any, options:any) => { if (type === "dragstart") dragListeners.delete(listener); removeListener(type,listener,options) }) as any
 const noop = () => {}
 let plays = 0, removes = 0, jumps = 0, navigationIntents = 0, seeks = 0
 const track: any = { id: "one", title: "First track", artistName: "Artist", duration: 1000, thumbUrl: null }
@@ -23,7 +35,7 @@ mock.module("../../src/stores/uiStore", () => ({ useUIStore: ui }))
 mock.module("../../src/hooks/useResizable", () => ({ useResizable: () => ({ width: 320, onMouseDown: noop, isDragging: false }) }))
 mock.module("../../src/hooks/useCapability", () => ({ useCapability: () => true }))
 mock.module("../../src/hooks/useContextMenu", () => ({ useContextMenu: () => ({ handler: () => noop, actionsHandler: () => noop, isTarget: () => false }) }))
-mock.module("../../src/hooks/useMediaImage", () => ({ useArtistImage: () => null, useAlbumImage: () => null }))
+mock.module("../../src/hooks/useMediaImage", () => ({ useArtistImage: (...args:any[]) => { artworkFetchEnabled = args[4]; return null }, useAlbumImage: () => null }))
 mock.module("../../src/components/shared/ArtworkImage", () => ({ ArtworkImage: () => null, useArtworkFailures: () => ({ failures: [], onFailure: noop }) }))
 mock.module("../../src/components/shared/StarRating", () => ({ StarRating: () => null }))
 mock.module("../../src/components/shared/DownloadBadge", () => ({ DownloadBadge: ({ id }: any) => <span role="img" aria-label={`Downloaded ${id}`} /> }))
@@ -67,12 +79,23 @@ assert.equal(document.querySelector("a button"), null)
 await click(named("Play Mix")); assert.equal(plays, 1); assert.equal(navigationIntents, 0)
 await click(named("Mix")); assert.equal(navigationIntents, 1); assert.equal(plays, 1)
 await render(<MediaCard title="Quick mix" desc="Station" thumb={null} onClick={() => { plays++ }} onPlay={() => { plays++ }} dragPayload={{ type: "album", ids: ["one"], label: "One" }} />)
+assert.equal(dragListeners.size,0,"idle cards install no global drag listeners")
 assert.equal(named("Quick mix").tagName, "BUTTON"); assert.equal(named("Quick mix").tabIndex, 0)
 await click(named("Play Quick mix")); assert.equal(plays, 2)
 await click(named("Quick mix")); assert.equal(plays, 3)
 function pointer(type: string, x: number) { const e = new dom.window.MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: 0 }); Object.defineProperty(e, "pointerId", { value: 1 }); return e }
-await act(async () => { const primary = named("Quick mix"); primary.dispatchEvent(pointer("pointerdown", 0)); primary.dispatchEvent(pointer("pointermove", 20)); primary.dispatchEvent(pointer("pointerup", 20)); primary.click() })
+await act(async () => { const primary = named("Quick mix"); primary.dispatchEvent(pointer("pointerdown", 0)); assert.equal(dragListeners.size,1); primary.dispatchEvent(pointer("pointermove", 20)); primary.dispatchEvent(pointer("pointerup", 20)); primary.click() })
 assert.equal(plays, 3, "drag release must not play")
+assert.equal(dragListeners.size,0,"pointer release removes global drag listeners")
+await render(<MediaCard title="Distant artist" artistName="Distant artist" isArtist desc="Artist" thumb={null} href="/artist/distant" />)
+assert.equal(artworkFetchEnabled,false,"offscreen artwork does not start external requests")
+assert.equal(observedCards.size,1)
+const artistLink = named("Distant artist")
+artistLink.focus()
+await act(() => intersect([{target:document.querySelector(".media-card"),isIntersecting:true}]))
+assert.equal(artworkFetchEnabled,true)
+assert.equal(document.activeElement,artistLink,"artwork activation preserves keyboard focus")
+assert.equal(observedCards.size,0,"visible cards are released from the shared observer")
 mock.module("../../src/lib/mixSelection", () => ({ selectMix: noop, shuffleTracks: (tracks: any[]) => tracks }))
 const { RecentMixCard } = await import("../../src/components/Pages/Stations")
 await render(<RecentMixCard mix={{ seeds: [{ id: "seed", title: "Seed", thumb: null }], tabType: "artist", createdAt: Date.now() } as any} sectionUuid="fixture" sectionId={1} playFromUri={async () => { plays++ }} />)

@@ -17,8 +17,11 @@ import { useArtistImage, useAlbumImage } from "../hooks/useMediaImage"
 import { useContextMenu } from "../hooks/useContextMenu"
 import type { MusicItem } from "../types/music"
 import type { DragPayload } from "../stores/dragStore"
+import { useNearViewport } from "../hooks/useNearViewport"
+import type { Ref } from "react"
 
 interface MediaCardProps {
+  artworkRef?: Ref<HTMLDivElement>
   title: string
   desc: string
   thumb: string | null
@@ -61,12 +64,18 @@ function ArtistImageCard({
   thumb,
   ...rest
 }: MediaCardProps & { artistName: string }) {
+  const { near, ref } = useNearViewport()
   const { failures, onFailure } = useArtworkFailures(
     JSON.stringify([artistName, thumb])
   )
-  const resolved = useArtistImage(artistName, thumb, undefined, failures)
+  const resolved = useArtistImage(artistName, thumb, undefined, failures, near)
   return (
-    <MediaCardInner {...rest} thumb={resolved} onImageFailure={onFailure} />
+    <MediaCardInner
+      {...rest}
+      artworkRef={ref}
+      thumb={resolved}
+      onImageFailure={onFailure}
+    />
   )
 }
 
@@ -80,6 +89,7 @@ function AlbumImageCard({
   thumb,
   ...rest
 }: MediaCardProps & { artistName: string; albumName: string }) {
+  const { near, ref } = useNearViewport()
   const { failures, onFailure } = useArtworkFailures(
     JSON.stringify([artistName, albumName, thumb])
   )
@@ -88,10 +98,16 @@ function AlbumImageCard({
     albumName,
     thumb,
     undefined,
-    failures
+    failures,
+    near
   )
   return (
-    <MediaCardInner {...rest} thumb={resolved} onImageFailure={onFailure} />
+    <MediaCardInner
+      {...rest}
+      artworkRef={ref}
+      thumb={resolved}
+      onImageFailure={onFailure}
+    />
   )
 }
 
@@ -116,6 +132,7 @@ export function MediaCard(props: MediaCardProps) {
 }
 
 function MediaCardInner({
+  artworkRef,
   title,
   desc,
   thumb,
@@ -248,9 +265,21 @@ function MediaCardInner({
           )}
         </div>
         {!!userRating && starsFromRating(userRating) > 0 && (
-          <span className="media-card__rating" role="img" aria-label={`Rated ${starsFromRating(userRating)} of 5 stars`}>
-            {Array.from({ length: 5 }, (_, index) => <IconStar key={index} size={11} aria-hidden="true"
-              fill={index < starsFromRating(userRating) ? "currentColor" : "none"} />)}
+          <span
+            className="media-card__rating"
+            role="img"
+            aria-label={`Rated ${starsFromRating(userRating)} of 5 stars`}
+          >
+            {Array.from({ length: 5 }, (_, index) => (
+              <IconStar
+                key={index}
+                size={11}
+                aria-hidden="true"
+                fill={
+                  index < starsFromRating(userRating) ? "currentColor" : "none"
+                }
+              />
+            ))}
           </span>
         )}
       </div>
@@ -299,6 +328,7 @@ function MediaCardInner({
   const primaryClass = "media-card__primary"
   return (
     <div
+      ref={artworkRef}
       style={scrollStyle}
       onMouseEnter={prefetch}
       onFocus={prefetch}

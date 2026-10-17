@@ -4,6 +4,8 @@ import { useDragStore, type DragPayload } from "../stores/dragStore"
 import { useProviderStore } from "../stores/providerStore"
 import type { MusicProvider } from "../providers/types"
 
+let cancelActivePointer: (() => void) | null = null
+
 const DRAG_THRESHOLD = 6 // px of movement before drag starts
 
 /**
@@ -25,6 +27,8 @@ export function useTrackDrag() {
     scope?: string
   } | null>(null)
 
+  const release = useRef<(() => void) | null>(null)
+
   const onPointerDown = useCallback(
     (e: React.PointerEvent, payload: DragPayload) => {
       // Only primary button
@@ -40,6 +44,7 @@ export function useTrackDrag() {
         node = node.parentElement
       }
 
+      cancelActivePointer?.()
       pointerState.current = {
         startX: e.clientX,
         startY: e.clientY,
@@ -50,7 +55,48 @@ export function useTrackDrag() {
         scope: useProviderStore.getState().provider?.cacheScope,
       }
 
-      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+      const cancel = () => {
+        const state = pointerState.current
+        release.current?.()
+        if (state?.started && useDragStore.getState().payload === state.payload)
+          useDragStore.getState().endDrag()
+      }
+      const onCancel = (event: PointerEvent) => {
+        if (pointerState.current?.pointerId === event.pointerId) cancel()
+      }
+      const onNativeDrag = (event: DragEvent) => {
+        if (pointerState.current) event.preventDefault()
+      }
+      window.addEventListener("dragstart", onNativeDrag, true)
+      window.addEventListener("lostpointercapture", onCancel)
+      window.addEventListener("pointercancel", onCancel)
+      window.addEventListener("blur", cancel)
+      const unsubscribe = useProviderStore.subscribe(() => {
+        const state = pointerState.current
+        const provider = useProviderStore.getState().provider
+        if (
+          state &&
+          (provider !== state.provider || provider?.cacheScope !== state.scope)
+        )
+          cancel()
+      })
+      release.current = () => {
+        pointerState.current = null
+        unsubscribe()
+        window.removeEventListener("dragstart", onNativeDrag, true)
+        window.removeEventListener("lostpointercapture", onCancel)
+        window.removeEventListener("pointercancel", onCancel)
+        window.removeEventListener("blur", cancel)
+        if (cancelActivePointer === cancel) cancelActivePointer = null
+        release.current = null
+      }
+      cancelActivePointer = cancel
+
+      try {
+        ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+      } catch {
+        cancel()
+      }
     },
     []
   )
@@ -74,7 +120,7 @@ export function useTrackDrag() {
   const onPointerUp = useCallback((e: React.PointerEvent) => {
     const s = pointerState.current
     if (!s || e.pointerId !== s.pointerId) return
-    pointerState.current = null
+    release.current?.()
 
     try {
       ;(e.currentTarget as HTMLElement).releasePointerCapture(s.pointerId)
@@ -125,41 +171,13 @@ export function useTrackDrag() {
     }
   }, [])
 
-  useEffect(() => {
-    const cancel = () => {
-      const state = pointerState.current
-      pointerState.current = null
-      if (state?.started && useDragStore.getState().payload === state.payload)
-        useDragStore.getState().endDrag()
-    }
-    const onCancel = (event: PointerEvent) => {
-      if (pointerState.current?.pointerId === event.pointerId) cancel()
-    }
-    const onNativeDrag = (event: DragEvent) => {
-      if (pointerState.current) event.preventDefault()
-    }
-    window.addEventListener("dragstart", onNativeDrag, true)
-    window.addEventListener("lostpointercapture", onCancel)
-    window.addEventListener("pointercancel", onCancel)
-    window.addEventListener("blur", cancel)
-    const unsubscribe = useProviderStore.subscribe(() => {
-      const state = pointerState.current
-      const provider = useProviderStore.getState().provider
-      if (
-        state &&
-        (provider !== state.provider || provider?.cacheScope !== state.scope)
-      )
-        cancel()
-    })
-    return () => {
-      cancel()
-      unsubscribe()
-      window.removeEventListener("dragstart", onNativeDrag, true)
-      window.removeEventListener("lostpointercapture", onCancel)
-      window.removeEventListener("pointercancel", onCancel)
-      window.removeEventListener("blur", cancel)
-    }
-  }, [])
+  useEffect(
+    () => () => {
+      if (pointerState.current?.started) useDragStore.getState().endDrag()
+      release.current?.()
+    },
+    []
+  )
 
   return { onPointerDown, onPointerMove, onPointerUp }
 }
