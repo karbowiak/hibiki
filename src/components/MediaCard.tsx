@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { makeOnPlay } from "../lib/mediaPlay"
 import { usePlayerStore } from "../stores/playerStore"
 import { DownloadBadge } from "./shared/DownloadBadge"
@@ -55,34 +55,87 @@ interface MediaCardProps {
   onViewVersions?: () => void
 }
 
-/**
- * Resolves the best image for an artist card via the priority metadata system.
- * Separate component to satisfy React's rules of hooks.
- */
+interface CardArtwork {
+  identity: string
+  url: string | null
+}
+function useCardArtwork(identity: string, fallback: string | null) {
+  const [resolved, setResolved] = useState<CardArtwork | null>(null)
+  const publish = useCallback(
+    (value: CardArtwork) =>
+      setResolved((previous) =>
+        previous?.identity === value.identity && previous.url === value.url
+          ? previous
+          : value
+      ),
+    []
+  )
+  return {
+    url: resolved?.identity === identity ? resolved.url : fallback,
+    publish,
+  }
+}
+interface ArtworkResolverProps {
+  identity: string
+  artist: string
+  thumb: string | null
+  failures: readonly string[]
+  publish: (value: CardArtwork) => void
+}
+function ArtistArtworkResolver({
+  identity,
+  artist,
+  thumb,
+  failures,
+  publish,
+}: ArtworkResolverProps) {
+  const url = useArtistImage(artist, thumb, undefined, failures, true)
+  useEffect(() => publish({ identity, url }), [identity, url, publish])
+  return null
+}
+function AlbumArtworkResolver({
+  identity,
+  artist,
+  album,
+  thumb,
+  failures,
+  publish,
+}: ArtworkResolverProps & { album: string }) {
+  const url = useAlbumImage(artist, album, thumb, undefined, failures, true)
+  useEffect(() => publish({ identity, url }), [identity, url, publish])
+  return null
+}
+
+/** Offscreen cards keep their own focus/DOM while expensive artwork hooks wait. */
 function ArtistImageCard({
   artistName,
   thumb,
   ...rest
 }: MediaCardProps & { artistName: string }) {
   const { near, ref } = useNearViewport()
-  const { failures, onFailure } = useArtworkFailures(
-    JSON.stringify([artistName, thumb])
-  )
-  const resolved = useArtistImage(artistName, thumb, undefined, failures, near)
+  const identity = JSON.stringify([artistName, thumb])
+  const { failures, onFailure } = useArtworkFailures(identity)
+  const { url, publish } = useCardArtwork(identity, thumb)
   return (
-    <MediaCardInner
-      {...rest}
-      artworkRef={ref}
-      thumb={resolved}
-      onImageFailure={onFailure}
-    />
+    <>
+      <MediaCardInner
+        {...rest}
+        artworkRef={ref}
+        thumb={url}
+        onImageFailure={onFailure}
+      />
+      {near && (
+        <ArtistArtworkResolver
+          identity={identity}
+          artist={artistName}
+          thumb={thumb}
+          failures={failures}
+          publish={publish}
+        />
+      )}
+    </>
   )
 }
-
-/**
- * Resolves the best image for an album card via the priority metadata system.
- * Separate component to satisfy React's rules of hooks.
- */
 function AlbumImageCard({
   artistName,
   albumName,
@@ -90,24 +143,28 @@ function AlbumImageCard({
   ...rest
 }: MediaCardProps & { artistName: string; albumName: string }) {
   const { near, ref } = useNearViewport()
-  const { failures, onFailure } = useArtworkFailures(
-    JSON.stringify([artistName, albumName, thumb])
-  )
-  const resolved = useAlbumImage(
-    artistName,
-    albumName,
-    thumb,
-    undefined,
-    failures,
-    near
-  )
+  const identity = JSON.stringify([artistName, albumName, thumb])
+  const { failures, onFailure } = useArtworkFailures(identity)
+  const { url, publish } = useCardArtwork(identity, thumb)
   return (
-    <MediaCardInner
-      {...rest}
-      artworkRef={ref}
-      thumb={resolved}
-      onImageFailure={onFailure}
-    />
+    <>
+      <MediaCardInner
+        {...rest}
+        artworkRef={ref}
+        thumb={url}
+        onImageFailure={onFailure}
+      />
+      {near && (
+        <AlbumArtworkResolver
+          identity={identity}
+          artist={artistName}
+          album={albumName}
+          thumb={thumb}
+          failures={failures}
+          publish={publish}
+        />
+      )}
+    </>
   )
 }
 

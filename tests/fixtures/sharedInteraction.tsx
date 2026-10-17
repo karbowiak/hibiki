@@ -11,7 +11,7 @@ dom.window.HTMLElement.prototype.scrollIntoView = () => {}
 ;(document as any).elementsFromPoint = () => []
 dom.window.HTMLElement.prototype.setPointerCapture = () => {}
 dom.window.HTMLElement.prototype.releasePointerCapture = () => {}
-let artworkFetchEnabled = false
+let artworkFetchEnabled = false, artworkHookCalls = 0
 const observedCards = new Set<Element>()
 let intersect: (entries: any[]) => void
 Object.assign(globalThis, { IntersectionObserver: class {
@@ -35,7 +35,7 @@ mock.module("../../src/stores/uiStore", () => ({ useUIStore: ui }))
 mock.module("../../src/hooks/useResizable", () => ({ useResizable: () => ({ width: 320, onMouseDown: noop, isDragging: false }) }))
 mock.module("../../src/hooks/useCapability", () => ({ useCapability: () => true }))
 mock.module("../../src/hooks/useContextMenu", () => ({ useContextMenu: () => ({ handler: () => noop, actionsHandler: () => noop, isTarget: () => false }) }))
-mock.module("../../src/hooks/useMediaImage", () => ({ useArtistImage: (...args:any[]) => { artworkFetchEnabled = args[4]; return null }, useAlbumImage: () => null }))
+mock.module("../../src/hooks/useMediaImage", () => ({ useArtistImage: (...args:any[]) => { artworkHookCalls++; artworkFetchEnabled = args[4]; return null }, useAlbumImage: () => null }))
 mock.module("../../src/components/shared/ArtworkImage", () => ({ ArtworkImage: () => null, useArtworkFailures: () => ({ failures: [], onFailure: noop }) }))
 mock.module("../../src/components/shared/StarRating", () => ({ StarRating: () => null }))
 mock.module("../../src/components/shared/DownloadBadge", () => ({ DownloadBadge: ({ id }: any) => <span role="img" aria-label={`Downloaded ${id}`} /> }))
@@ -89,6 +89,7 @@ assert.equal(plays, 3, "drag release must not play")
 assert.equal(dragListeners.size,0,"pointer release removes global drag listeners")
 await render(<MediaCard title="Distant artist" artistName="Distant artist" isArtist desc="Artist" thumb={null} href="/artist/distant" />)
 assert.equal(artworkFetchEnabled,false,"offscreen artwork does not start external requests")
+assert.equal(artworkHookCalls,0,"offscreen cards do not initialize external artwork hooks")
 assert.equal(observedCards.size,1)
 const artistLink = named("Distant artist")
 artistLink.focus()
