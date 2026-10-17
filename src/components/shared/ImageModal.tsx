@@ -1,5 +1,6 @@
+import { useModalLifecycle } from "../../hooks/useModalLifecycle"
 import { ArtworkImage } from "./ArtworkImage"
-import { useLayoutEffect, useRef } from "react"
+import { useRef } from "react"
 import { createPortal } from "react-dom"
 import { IconX } from "@tabler/icons-react"
 
@@ -18,56 +19,7 @@ export function ImageModal({
 }: ImageModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
-  const nativeModal = useRef(false)
-  useLayoutEffect(() => {
-    const dialog = dialogRef.current!
-    const previousFocus = document.activeElement as HTMLElement | null
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = "hidden"
-    nativeModal.current = typeof dialog.showModal === "function"
-    const hidden: {
-      element: Element
-      aria: string | null
-      inert: string | null
-    }[] = []
-    const containFocus = (event: FocusEvent) => {
-      if (!dialog.contains(event.target as Node)) closeRef.current?.focus()
-    }
-    if (nativeModal.current) {
-      // The browser's top layer escapes every player/hero stacking context.
-      dialog.showModal()
-    } else {
-      // Older system WebKit does not implement showModal. Preserve modal focus
-      // and screen-reader isolation without raising the app's browser target.
-      dialog.setAttribute("open", "")
-      for (const element of [...document.body.children]) {
-        if (element === dialog) continue
-        hidden.push({
-          element,
-          aria: element.getAttribute("aria-hidden"),
-          inert: element.getAttribute("inert"),
-        })
-        element.setAttribute("aria-hidden", "true")
-        element.setAttribute("inert", "")
-      }
-      document.addEventListener("focusin", containFocus, true)
-      closeRef.current?.focus()
-    }
-    return () => {
-      if (nativeModal.current && dialog.open) dialog.close()
-      else dialog.removeAttribute("open")
-      document.removeEventListener("focusin", containFocus, true)
-      for (const { element, aria, inert } of hidden) {
-        if (aria === null) element.removeAttribute("aria-hidden")
-        else element.setAttribute("aria-hidden", aria)
-        if (inert === null) element.removeAttribute("inert")
-        else element.setAttribute("inert", inert)
-      }
-      document.body.style.overflow = previousOverflow
-      if (previousFocus?.isConnected)
-        previousFocus.focus({ preventScroll: true })
-    }
-  }, [])
+  useModalLifecycle(dialogRef, { onClose, initialFocus: closeRef })
   const isDark = overlay === "dark"
   return createPortal(
     <dialog
@@ -86,14 +38,6 @@ export function ImageModal({
         // This viewer has one keyboard control. Keep Tab in the viewer and let
         // its controls own their keys instead of triggering playback hotkeys.
         e.stopPropagation()
-        if (e.key === "Tab") {
-          e.preventDefault()
-          closeRef.current?.focus()
-        }
-        if (e.key === "Escape" && !nativeModal.current) {
-          e.preventDefault()
-          onClose()
-        }
       }}
     >
       <button

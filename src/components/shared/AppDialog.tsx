@@ -1,6 +1,6 @@
+import { useModalLifecycle } from "../../hooks/useModalLifecycle"
 import {
   useId,
-  useLayoutEffect,
   useRef,
   type ReactNode,
   type CSSProperties,
@@ -40,98 +40,7 @@ export function AppDialog({
   const id = useId(),
     dialog = useRef<HTMLDialogElement>(null)
   const close = useRef<HTMLButtonElement>(null)
-  const current = useRef({ onClose, canClose })
-  current.current = { onClose, canClose }
-  useLayoutEffect(() => {
-    const element = dialog.current!
-    const previous = document.activeElement as HTMLElement | null
-    const overflow = document.body.style.overflow
-    document.body.style.overflow = "hidden"
-    const native = typeof element.showModal === "function"
-    const hidden: {
-      node: Element
-      aria: string | null
-      inert: string | null
-    }[] = []
-    if (native) element.showModal()
-    else {
-      element.setAttribute("open", "")
-      for (const node of [...document.body.children])
-        if (node !== element) {
-          hidden.push({
-            node,
-            aria: node.getAttribute("aria-hidden"),
-            inert: node.getAttribute("inert"),
-          })
-          node.setAttribute("aria-hidden", "true")
-          node.setAttribute("inert", "")
-        }
-    }
-    // For a write in progress, focus the dialog instead of its disabled close button.
-    if (current.current.canClose) close.current?.focus()
-    else element.focus()
-    const keydown = (event: KeyboardEvent) => {
-      if ((event.target as Element)?.closest?.("dialog") !== element) return
-      if (!native && event.key === "Escape") {
-        event.preventDefault()
-        event.stopPropagation()
-        if (current.current.canClose) current.current.onClose()
-      }
-      if (event.key !== "Tab") return
-      const focusable = [
-        ...element.querySelectorAll<HTMLElement>(
-          "button, a[href], input, textarea, select, [tabindex]"
-        ),
-      ].filter(
-        (node) =>
-          !node.hasAttribute("disabled") &&
-          node.tabIndex >= 0 &&
-          !node.closest("[hidden], [inert]")
-      )
-      const first = focusable[0],
-        last = focusable.at(-1)
-      if (!first) {
-        event.preventDefault()
-        element.focus()
-      } else if (
-        event.shiftKey &&
-        (document.activeElement === first || document.activeElement === element)
-      ) {
-        event.preventDefault()
-        last?.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-    const shortcuts = (event: KeyboardEvent) => {
-      if ((event.target as Element)?.closest?.("dialog") !== element) return
-      if (
-        (event.metaKey || event.ctrlKey) &&
-        !event.altKey &&
-        ["k", "f", "r"].includes(event.key.toLowerCase())
-      ) {
-        event.preventDefault()
-        event.stopImmediatePropagation()
-      }
-    }
-    element.addEventListener("keydown", keydown)
-    window.addEventListener("keydown", shortcuts, true)
-    return () => {
-      element.removeEventListener("keydown", keydown)
-      window.removeEventListener("keydown", shortcuts, true)
-      if (native && element.open) element.close()
-      for (const { node, aria, inert } of hidden) {
-        if (aria === null) node.removeAttribute("aria-hidden")
-        else node.setAttribute("aria-hidden", aria)
-        if (inert === null) node.removeAttribute("inert")
-        else node.setAttribute("inert", inert)
-      }
-      document.body.style.overflow = overflow
-      if (previous?.isConnected && !previous.closest("[inert]"))
-        previous.focus({ preventScroll: true })
-    }
-  }, [])
+  useModalLifecycle(dialog, { onClose, canClose, initialFocus: close })
   return createPortal(
     <dialog
       ref={dialog}
@@ -142,7 +51,7 @@ export function AppDialog({
       aria-describedby={description ? `${id}-description` : undefined}
       onCancel={(event) => {
         event.preventDefault()
-        if (current.current.canClose) current.current.onClose()
+        if (canClose) onClose()
       }}
       onKeyDown={(event) => {
         // Let child controls handle arrows before containing app playback keys.
@@ -152,8 +61,7 @@ export function AppDialog({
           event.stopPropagation()
       }}
       onClick={(event) => {
-        if (event.target === event.currentTarget && current.current.canClose)
-          current.current.onClose()
+        if (event.target === event.currentTarget && canClose) onClose()
       }}
       className={`app-overlay-surface fixed inset-0 m-auto max-h-[min(90dvh,900px)] w-[calc(100%-2rem)] overflow-hidden rounded-2xl border border-(--border) bg-app-card p-0 text-(--text-primary) shadow-2xl backdrop:bg-black/65 ${className}`}
     >

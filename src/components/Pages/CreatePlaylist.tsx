@@ -1,3 +1,4 @@
+import { useModalLifecycle } from "../../hooks/useModalLifecycle"
 import { createPortal } from "react-dom"
 import { useProviderStore } from "../../stores/providerStore"
 import { useId, useLayoutEffect, useRef, useState } from "react"
@@ -20,7 +21,6 @@ export function CreatePlaylist({
   const inputRef = useRef<HTMLInputElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const nativeModal = useRef(false)
   const sessionRef = useRef({ active: false, pending: false, completed: false })
   const [playlistName, setPlaylistName] = useState("")
   const [created, setCreated] = useState(false)
@@ -44,52 +44,7 @@ export function CreatePlaylist({
     if (provider !== openedProvider.current) onClose()
   }, [provider])
 
-  useLayoutEffect(() => {
-    const dialog = dialogRef.current!
-    const previousFocus = document.activeElement as HTMLElement | null
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = "hidden"
-    nativeModal.current = typeof dialog.showModal === "function"
-    const hidden: {
-      element: Element
-      aria: string | null
-      inert: string | null
-    }[] = []
-    const containFocus = (event: FocusEvent) => {
-      if (!dialog.contains(event.target as Node))
-        (inputRef.current ?? closeRef.current)?.focus()
-    }
-    if (nativeModal.current) dialog.showModal()
-    else {
-      dialog.setAttribute("open", "")
-      for (const element of [...document.body.children]) {
-        if (element === dialog) continue
-        hidden.push({
-          element,
-          aria: element.getAttribute("aria-hidden"),
-          inert: element.getAttribute("inert"),
-        })
-        element.setAttribute("aria-hidden", "true")
-        element.setAttribute("inert", "")
-      }
-      document.addEventListener("focusin", containFocus, true)
-    }
-    inputRef.current?.focus()
-    return () => {
-      if (nativeModal.current && dialog.open) dialog.close()
-      else dialog.removeAttribute("open")
-      document.removeEventListener("focusin", containFocus, true)
-      for (const { element, aria, inert } of hidden) {
-        if (aria === null) element.removeAttribute("aria-hidden")
-        else element.setAttribute("aria-hidden", aria)
-        if (inert === null) element.removeAttribute("inert")
-        else element.setAttribute("inert", inert)
-      }
-      document.body.style.overflow = previousOverflow
-      if (previousFocus?.isConnected)
-        previousFocus.focus({ preventScroll: true })
-    }
-  }, [])
+  useModalLifecycle(dialogRef, { onClose, initialFocus: inputRef, ownTabOrder: true })
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -147,29 +102,6 @@ export function CreatePlaylist({
       }}
       onKeyDown={(event) => {
         event.stopPropagation()
-        if (event.key === "Escape" && !nativeModal.current) {
-          event.preventDefault()
-          onClose()
-        }
-        if (event.key === "Tab") {
-          const controls = [
-            ...event.currentTarget.querySelectorAll<HTMLElement>(
-              "button:not(:disabled), input:not(:disabled)"
-            ),
-          ]
-          // macOS native keyboard settings may skip buttons entirely. Own the
-          // complete tab order so every control stays reachable in either host.
-          event.preventDefault()
-          const index = controls.indexOf(document.activeElement as HTMLElement)
-          const next =
-            index < 0
-              ? event.shiftKey
-                ? controls.length - 1
-                : 0
-              : (index + (event.shiftKey ? -1 : 1) + controls.length) %
-                controls.length
-          controls[next]?.focus()
-        }
       }}
     >
       <div
