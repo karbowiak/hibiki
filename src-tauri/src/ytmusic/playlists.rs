@@ -78,13 +78,11 @@ async fn read(app: &tauri::AppHandle, generation: u64, context: &api::Context, c
     }
     Err("YouTube Music playlist was incomplete. Try again.".into())
 }
-#[tauri::command]
-pub async fn ytmusic_playlist_read(app: tauri::AppHandle, playlist_id: String, expected_account: String) -> Result<Snapshot, String> {
+pub(super) async fn ytmusic_playlist_read(app: tauri::AppHandle, playlist_id: String, expected_account: String) -> Result<Snapshot, String> {
     let (generation, context, cookies) = connection(&app, &expected_account).await?;
     read(&app, generation, &context, &cookies, &playlist_id).await
 }
-#[tauri::command]
-pub async fn ytmusic_playlist_write(app: tauri::AppHandle, playlist_id: Option<String>, expected_account: String,
+pub(super) async fn ytmusic_playlist_write(app: tauri::AppHandle, playlist_id: Option<String>, expected_account: String,
     expected: Vec<Handle>, operation: Operation) -> Result<String, String> {
     let state = app.state::<Arc<YoutubeMusic>>();
     let lock = state.discovery_cache.request("playlist-mutation");

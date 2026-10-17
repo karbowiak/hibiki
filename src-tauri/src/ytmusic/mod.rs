@@ -13,7 +13,6 @@ mod tools;
 pub(crate) use main_window_plugin::app_only as app_only_plugin;
 pub(crate) use playback::source as playback_source;
 pub(crate) use playback::valid_track_id;
-pub use playlists::{ytmusic_playlist_read, ytmusic_playlist_write};
 
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
@@ -179,6 +178,26 @@ pub fn ytmusic_status(state: tauri::State<'_, Arc<YoutubeMusic>>) -> Result<Stat
         .map_err(|_| "YouTube Music session unavailable")?
         .status
         .clone())
+}
+
+#[tauri::command]
+pub async fn ytmusic_playlist_read(
+    app: tauri::AppHandle,
+    playlist_id: String,
+    expected_account: String,
+) -> Result<playlists::Snapshot, String> {
+    playlists::ytmusic_playlist_read(app, playlist_id, expected_account).await
+}
+
+#[tauri::command]
+pub async fn ytmusic_playlist_write(
+    app: tauri::AppHandle,
+    playlist_id: Option<String>,
+    expected_account: String,
+    expected: Vec<playlists::Handle>,
+    operation: playlists::Operation,
+) -> Result<String, String> {
+    playlists::ytmusic_playlist_write(app, playlist_id, expected_account, expected, operation).await
 }
 
 #[tauri::command]
