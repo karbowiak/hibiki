@@ -70,6 +70,7 @@ cpal = "0.18.2"
 
 # Audio decoding — AAC uses FDK and a streaming ADTS reader registered by Hibiki.
 symphonia = { version = "0.6.1", default-features = false, features = [
+    "all-meta", # ID3/APE readers are separate opt-in features in Symphonia 0.6.
     "adpcm", "alac", "flac", "mp1", "mp2", "mp3", "pcm", "vorbis",
     "caf", "isomp4", "mkv", "ogg", "aiff", "wav",                    # formats
 ] }
@@ -113,6 +114,7 @@ custom-protocol = ["tauri/custom-protocol"]
 # Upstream Windows updater still pins ZIP 4, which has fixed advisories in ZIP 9.
 tauri-plugin-updater = { path = "vendor/tauri-plugin-updater" }
 symphonia-bundle-mp3 = { path = "vendor/symphonia-bundle-mp3" }
+symphonia-bundle-flac = { path = "vendor/symphonia-bundle-flac" }
 symphonia-format-ogg = { path = "vendor/symphonia-format-ogg" }
 symphonia-format-isomp4 = { path = "vendor/symphonia-format-isomp4" }
 block = { path = "vendor/block" }

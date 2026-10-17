@@ -149,8 +149,14 @@ pub struct IsoMp4Reader<'s> {
 
 impl<'s> IsoMp4Reader<'s> {
     pub fn try_new(mut mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
-        // To get to beginning of the atom.
-        mss.seek_buffered_rel(-4);
+        // Probing leaves the reader on `ftyp`, after the box-size field. A
+        // trailing metadata probe may have retired those four buffered bytes.
+        // Fall back to a physical seek rather than parsing from the marker.
+        let atom_start = mss.pos().checked_sub(4)
+            .ok_or(Error::DecodeError("isomp4: missing box size"))?;
+        if mss.seek_buffered(atom_start) != atom_start {
+            mss.seek(SeekFrom::Start(atom_start))?;
+        }
 
         let is_seekable = mss.is_seekable();
 

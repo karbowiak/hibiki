@@ -15,7 +15,7 @@ use symphonia::core::codecs::audio::{
 use symphonia::core::codecs::registry::CodecRegistry;
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::formats::probe::{Hint, Probe};
-use symphonia::core::io::MediaSourceStream;
+use symphonia::core::io::{MediaSourceStream, ReadBytes, SeekBuffered};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::units::{Duration, Timestamp};
 use tracing::{debug, warn};
@@ -128,9 +128,25 @@ pub fn probe_stream(reader: StreamingReader, ext: Option<&str>) -> Result<Decode
 /// Probe and set up a decoder. Pass a file extension hint (e.g. "opus", "ogg",
 /// "flac") for reliable format detection — some containers like OGG/Opus need it.
 pub fn probe_from_source(
-    mss: MediaSourceStream<'static>,
+    mut mss: MediaSourceStream<'static>,
     ext: Option<&str>,
 ) -> Result<DecoderSetup> {
+    // An MP4 file starts with a four-byte box size followed by `ftyp`.
+    // Begin marker probing at that valid marker, so the size field isn't
+    // misreported as junk. The MP4 reader rewinds to the box start itself.
+    let start = mss.pos();
+    let mut box_header = [0; 8];
+    let is_mp4 = match mss.read_buf_exact(&mut box_header) {
+        Ok(()) => {
+            &box_header[4..] == b"ftyp"
+                && (u32::from_be_bytes(box_header[..4].try_into().unwrap()) >= 16
+                    || box_header[..4] == 1_u32.to_be_bytes())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => false,
+        Err(error) => return Err(error).context("failed to read audio header"),
+    };
+    mss.seek_buffered(start + if is_mp4 { 4 } else { 0 });
+
     let mut hint = Hint::new();
     if let Some(ext) = ext {
         hint.with_extension(ext);
@@ -477,6 +493,99 @@ fn codec_type_name(ct: codecs::AudioCodecId) -> &'static str {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn flac_metadata_tags_preserve_the_short_final_block() {
+        let raw = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/audio/flac-stereo.flac"
+        ));
+        let mut reference = probe_audio(raw.to_vec()).unwrap();
+        let expected = decode_all(&mut reference).unwrap();
+        let mut id3 = b"ID3\x04\0\0\0\0\x24\x22".to_vec(); // 4642 padding bytes, 4652 including header.
+        id3.resize(4652, 0);
+        id3.extend_from_slice(raw);
+        let mut tail = [0; 128];
+        tail[..3].copy_from_slice(b"TAG");
+        id3.extend_from_slice(&tail);
+        let mut tagged = probe_audio(id3).unwrap();
+        let actual = decode_all(&mut tagged).unwrap();
+        assert!(!tagged.aborted && !tagged.had_decode_errors);
+        assert_eq!(actual.len(), expected.len());
+        assert!(actual.iter().zip(&expected).all(|(a, b)| a == b));
+    }
+
+    #[test]
+    fn tagged_flac_starts_from_a_prefix_and_preserves_every_frame() {
+        use super::super::streaming::{SharedBuffer, StreamingReader};
+        let raw = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/audio/flac-stereo.flac"
+        ));
+        let mut reference = probe_audio(raw.to_vec()).unwrap();
+        let expected = decode_all(&mut reference).unwrap();
+        let mut tagged = b"ID3\x04\0\0\0\0\x24\x22".to_vec();
+        tagged.resize(4652, 0);
+        tagged.extend_from_slice(raw);
+        let mut tail = [0; 128];
+        tail[..3].copy_from_slice(b"TAG");
+        tagged.extend_from_slice(&tail);
+        for content_length in [Some(tagged.len() as u64), None] {
+            let buffer = SharedBuffer::new(content_length).unwrap();
+            let split = tagged.len() * 3 / 4;
+            buffer.push(&tagged[..split]).unwrap();
+            let source = buffer.clone();
+            let (send, receive) = std::sync::mpsc::channel();
+            let worker = std::thread::spawn(move || {
+                let mut setup = probe_stream(StreamingReader::new(source), Some("flac")).unwrap();
+                let first = decode_batch(&mut setup, 4096).unwrap();
+                send.send((setup, first)).unwrap();
+            });
+            let result = receive.recv_timeout(std::time::Duration::from_secs(2));
+            if result.is_err() {
+                buffer.abort();
+            }
+            worker.join().unwrap();
+            let (mut setup, mut actual) =
+                result.expect("tag handling waited for the full download");
+            assert!(!actual.is_empty());
+            buffer.push(&tagged[split..]).unwrap();
+            buffer.finish();
+            actual.extend(decode_all(&mut setup).unwrap());
+            assert!(
+                !setup.aborted && !setup.had_decode_errors,
+                "tagged FLAC reported incomplete"
+            );
+            assert_eq!(actual.len(), expected.len());
+            assert!(actual.iter().zip(&expected).all(|(a, b)| a == b));
+        }
+    }
+
+    #[test]
+    fn tagged_flac_cannot_hide_truncated_or_corrupt_audio() {
+        let raw = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/audio/flac-stereo.flac"
+        ));
+        for truncated in [false, true] {
+            let mut data = raw.to_vec();
+            if truncated {
+                data.truncate(data.len() - 100);
+            } else {
+                let end = data.len() - 1;
+                data[end] ^= 1;
+            } // Damage the final CRC.
+            let mut tail = [0; 128];
+            tail[..3].copy_from_slice(b"TAG");
+            data.extend_from_slice(&tail);
+            let mut setup = probe_audio(data).unwrap();
+            decode_all(&mut setup).unwrap();
+            assert!(
+                setup.aborted || setup.had_decode_errors,
+                "an ID3 tag disguised invalid audio"
+            );
+        }
+    }
 
     #[test]
     fn source_format_retains_encoded_precision_instead_of_the_float_decode_buffer() {
