@@ -167,3 +167,53 @@ test("provider baseline binding retains the canonical occurrence IDs", () => {
   expect(bound.items.map(row => row.id)).toEqual(playlist.items.map(row => row.id))
   expect(bound.items.map(row => row.remote.ytmusic?.occurrenceId)).toEqual(remote.items.map(row => row.occurrenceId))
 })
+
+test("YTM-origin conversion retains its identity, dates and unmatched occurrences", async () => {
+  const remote = snapshot("ytmusic", ["ytmusic:a1234567890", "ytmusic:b1234567890", "ytmusic:c1234567890"])
+  let playlist = hydratePlaylist(remote, undefined, 123)
+  playlist = { ...playlist, owners: { plex: "plex-owner", ytmusic: "ytmusic-owner" },
+    items: playlist.items.map((row, index) => index === 1 ? row : { ...row,
+      songs: { ...row.songs, plex: { track: song(String(index + 1)) } }, match: { status: "matched" } }),
+    baselineOrder: playlist.items.map(row => row.id), baselineTitle: playlist.title }
+  const h = harness(playlist)
+  delete h.remote.plex
+  h.remote.ytmusic = structuredClone(remote)
+  const complete = await syncMixedPlaylist(playlist, h.options)
+  expect(complete.id).toBe(playlist.id)
+  expect(complete.items.map(row => [row.id, row.added])).toEqual(playlist.items.map(row => [row.id, row.added]))
+  expect(snapshotIds(h.remote.plex!)).toEqual(["1", "3"])
+  expect(snapshotIds(h.remote.ytmusic!)).toEqual(snapshotIds(remote))
+  expect(complete.message).toContain("1 unmatched")
+  const restarted = await syncMixedPlaylist(structuredClone(complete), h.options)
+  expect(restarted.id).toBe(playlist.id)
+  expect(h.creates()).toBe(1)
+})
+
+for (const origin of ["plex", "ytmusic"] as const) test(`external ${origin} edits propagate once without an echo loop`, async () => {
+  const h = harness(linked(["1", "2", "3"]))
+  let playlist = await syncMixedPlaylist(h.saved(), h.options)
+  const initial = h.remote[origin]!
+  h.remote[origin] = { ...initial, items: [initial.items[2], initial.items[0]] }
+  const ordered = [playlist.items[2].id, playlist.items[0].id]
+  playlist = await syncMixedPlaylist(playlist, h.options)
+  expect(playlist.status).toBe("ready")
+  expect(playlist.items.map(row => row.id)).toEqual(ordered)
+  for (const side of ["plex", "ytmusic"] as const)
+    expect(snapshotIds(h.remote[side]!)).toEqual(playlist.items.map(row => row.songs[side]!.track.id))
+  const writes = h.writes()
+  await syncMixedPlaylist(structuredClone(playlist), h.options)
+  expect(h.writes()).toBe(writes)
+})
+
+test("ownership changes after remote creation retain the creation receipt for the original account", async () => {
+  const playlist = linked(), h = harness(playlist)
+  let current = true
+  const create = h.options.adapters.ytmusic!.create
+  h.options.adapters.ytmusic!.create = async title => { const id = await create(title); current = false; return id }
+  await expect(syncMixedPlaylist(playlist, { ...h.options, current: () => current })).rejects.toThrow("accounts changed")
+  expect(h.creates()).toBe(1)
+  expect(h.saved().write).toMatchObject({ service: "ytmusic", kind: "create", state: "admitted" })
+  expect(h.saved().providers.ytmusic).toBeUndefined()
+  await expect(syncMixedPlaylist(h.saved(), h.options)).rejects.toThrow("unknown outcome")
+  expect(h.creates()).toBe(1)
+})
