@@ -154,14 +154,14 @@ mod tests {
         let v1: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v1, 16);
+        assert_eq!(v1, MIGRATIONS.last().unwrap().0);
 
         // Run again — should be a no-op
         run_migrations(&conn).expect("second run");
         let v2: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v2, 16);
+        assert_eq!(v2, v1);
     }
 
     #[test]

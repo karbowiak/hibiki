@@ -81,7 +81,7 @@ function useRatedCollectionIndex<T>(enabled: boolean, kind: "track" | "album") {
     if (!cache) caches.set(provider, (cache = new Map()))
     const cached = cache.get(kind)
     if (
-      cached?.scope === scope &&
+      cached && cached.scope === scope &&
       cached.session === session &&
       cached.refresh === refresh
     )

@@ -17,7 +17,7 @@ test("filtered queues capture all identities and occurrences before later metada
     const request = args.request
     requests.push(request)
     return (request.op === "info" ? { complete: true, dirty: false }
-      : request.op === "queryRefs" ? rows.map(track => [track.id, track.playlistItemId])
+      : request.op === "capture" ? rows.map(track => [track.id, track.playlistItemId])
       : request.op === "items" ? request.ids.map(id => details.get(id)) : null) as any
   })
   try {
@@ -25,7 +25,7 @@ test("filtered queues capture all identities and occurrences before later metada
     const source = collectionPlaybackSource(provider, query, 650)
     const frozen = await selectCollectionTrack(source, rows[600], 600).prepare!()
     expect(frozen!.restoreQuery).toEqual(query)
-    expect(requests.find(request => request.op === "queryRefs")).toEqual({ op: "queryRefs", ...query })
+    expect(requests.find(request => request.op === "capture")).toEqual({ op: "capture", key: query.key, query: { filter: query.filter, sort: query.sort, dir: query.dir }, pin: expect.any(String) })
     expect(requests.filter(request => request.op === "items")).toHaveLength(0)
     const queue = new QueueSession(frozen!)
     const expected = rows.map(track => [track.id, track.playlistItemId])
@@ -34,7 +34,7 @@ test("filtered queues capture all identities and occurrences before later metada
     const hydrated = queue.project(queue.entries, 600)
     expect(hydrated.slice(600, 603).map(track => [track.id, track.playlistItemId])).toEqual(expected.slice(600, 603))
     expect(queue.snapshot(hydrated).map(track => [track.id, track.playlistItemId])).toEqual(expected)
-    expect(requests.filter(request => request.op === "queryRefs")).toHaveLength(1)
+    expect(requests.filter(request => request.op === "capture")).toHaveLength(1)
     await expect(selectCollectionTrack(source, hydrated[600], 600).prepare!()).rejects.toThrow("collection changed")
   } finally { provider.stopCollectionWarmup!() }
 })

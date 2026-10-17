@@ -62,7 +62,7 @@ export function useFavoriteIndex(enabled: boolean) {
     }
     const cached = provider && enabled ? caches.get(provider) : undefined
     if (
-      cached?.entries === entries &&
+      cached && cached.entries === entries &&
       cached.scope === scope &&
       cached.session === session
     )

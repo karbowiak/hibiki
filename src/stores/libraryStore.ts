@@ -96,7 +96,6 @@ export interface LibraryState {
   /** True once all pages for a playlist have been fetched. */
   playlistIsFullyLoaded: Record<string, boolean>
   playlistPageErrors: Record<string, string>
-  /** Per-mix track cache. Key = mix item key (the API path). */
   /** Shown in TopBar during startup pre-fetch. Null when idle. */
   prefetchStatus: { done: number; total: number } | null
 
@@ -859,7 +858,7 @@ export function createLibraryStore({
           playlistItemsCache: {},
           playlistIsFullyLoaded: {},
           playlistPageErrors: {},
-                  prefetchStatus: null,
+          prefetchStatus: null,
           isLoading: false,
           isFetchingMore: false
         })

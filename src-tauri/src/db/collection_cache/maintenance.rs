@@ -43,7 +43,7 @@ pub fn clean(conn: &Connection, scope: &str, pins: Option<&[String]>, playlists:
             AND NOT (kind='track' AND id IN (SELECT json_extract(value,'$.id') FROM playback_queue q,json_each(q.entries) WHERE q.scope=?1 AND json_extract(value,'$.id') IS NOT NULL))
             AND NOT (kind='track' AND id IN (SELECT j.value FROM favorites_entries f,json_each(f.payload,'$.localTrackIds') j WHERE f.scope=?1 AND typeof(j.value)='text'))
             AND NOT (kind='track' AND id IN (SELECT CAST(track_id AS TEXT) FROM audio_download_claims WHERE scope=?1))
-            AND NOT EXISTS(SELECT 1 FROM audio_download_entities d WHERE d.scope=i.scope AND d.kind=i.kind AND CAST(d.entity_id AS TEXT)=i.id)", [scope]))?;
+            AND (kind||':'||id) NOT IN (SELECT kind||':'||CAST(entity_id AS TEXT) FROM audio_download_entities WHERE scope=?1)", [scope]))?;
         Ok(())
     })
 }

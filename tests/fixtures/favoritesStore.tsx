@@ -543,6 +543,10 @@ if (
         lastRatedAt: "2019-01-01T00:00:00.000Z",
       }
       provider.getLikedTracks = async () => [low]
+      provider.getCollectionItems = async (_key: string, ids: string[]) => ids.map(id => {
+        assert.equal(id, low.id)
+        return low
+      })
       provider.favorites.cachedTracks = async (ids: string[]) =>
         ids.map((id) => ({
           ...track,
