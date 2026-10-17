@@ -14,6 +14,7 @@ mod offline_audio;
 mod catalogue_commands;
 mod library_picker;
 mod download_entities;
+mod download_library;
 mod artwork_commands;
 mod deezer;
 mod genius;
@@ -254,6 +255,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
@@ -281,9 +283,14 @@ pub fn run() {
             }
             let db_state = db::DbState::open(&db_path)
                 .map_err(|e| Box::<dyn std::error::Error>::from(e))?;
+            let download_root = download_library::initial_directory(
+                app.handle(),
+                &*db_state.0.lock().map_err(|_| "Download settings unavailable")?,
+            )?;
             app.manage(db_state);
             performance::initialize(&app.path().app_data_dir()?);
-            app.manage(offline_audio::AudioDownloads::new(app.path().app_data_dir()?.join("downloads")));
+            app.manage(offline_audio::AudioDownloads::new(download_root));
+            app.manage(download_library::DownloadLibrary::default());
             app.manage(catalogue_commands::CatalogueSync::new());
             app.manage(library_picker::LibraryPicker::default());
             listening_history::start_worker(app.handle().clone());
@@ -311,6 +318,8 @@ pub fn run() {
                     ));
                 }
             }
+
+            download_library::start(app.handle().clone());
 
             // Remove the native OS menu bar (redundant on Windows with our custom titlebar).
             app.remove_menu().ok();
@@ -395,6 +404,10 @@ pub fn run() {
             download_entities::download_entity_status,
             download_entities::download_entity_issues,
             download_entities::remove_entity_download,
+            download_library::download_storage_info,
+            download_library::download_storage_choose,
+            download_library::download_storage_retry,
+            download_library::download_storage_open,
             library_picker::library_picker_servers,
             library_picker::library_picker_sections,
             library_picker::library_picker_resolve,

@@ -20,8 +20,9 @@ const LOCAL_PREFIX: &str = "hibiki-local://track/";
 const MAX_TRACK_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 pub struct AudioDownloads {
-    pub cache: Arc<AudioCache>,
-    worker: Arc<tokio::sync::Mutex<()>>,
+    cache: std::sync::RwLock<Arc<AudioCache>>,
+    pub(crate) relocating: AtomicBool,
+    pub(crate) worker: Arc<tokio::sync::Mutex<()>>,
     active: Mutex<Option<(String, i64, Arc<AtomicBool>)>>,
     scheduled: Mutex<HashSet<(u64, String)>>,
     pub(crate) collection_refreshes: Mutex<HashSet<(u64, String)>>,
@@ -32,6 +33,21 @@ pub struct AudioDownloads {
     loudness_slots: tokio::sync::Semaphore,
 }
 impl AudioDownloads {
+    pub(crate) fn cache(&self) -> Arc<AudioCache> {
+        self.cache.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+    pub(crate) fn replace_cache(&self, cache: Arc<AudioCache>) {
+        *self.cache.write().unwrap_or_else(|e| e.into_inner()) = cache;
+    }
+    pub(crate) fn interrupt_for_move(&self) {
+        self.relocating.store(true, Ordering::Release);
+        if let Ok(active) = self.active.lock() {
+            if let Some((_, _, cancel)) = active.as_ref() {
+                cancel.store(true, Ordering::Release);
+            }
+        }
+    }
+
     pub(crate) fn cancel_download(&self, scope: &str, track_id: i64) -> Result<(), String> {
         let active = self
             .active
@@ -46,7 +62,8 @@ impl AudioDownloads {
     }
     pub fn new(root: std::path::PathBuf) -> Self {
         Self {
-            cache: Arc::new(AudioCache::downloads(root)),
+            cache: std::sync::RwLock::new(Arc::new(AudioCache::downloads(root))),
+            relocating: AtomicBool::new(false),
             worker: Arc::new(tokio::sync::Mutex::new(())),
             active: Mutex::new(None),
             scheduled: Mutex::new(HashSet::new()),
@@ -234,7 +251,7 @@ pub(crate) async fn dispatch(
         let bindings = db
             .read_urgent(move |conn| audio::bindings(conn, &scope, track_id))
             .await?;
-        let (binding, cache) = available(bindings, &downloads.cache, automatic)
+        let (binding, cache) = available(bindings, &downloads.cache(), automatic)
             .ok_or("This track is not available offline. Reconnect to Plex to download it.")?;
         let guard = plex.0.lock().await;
         let client = plex.checked_cache_client(context, &guard)?;
@@ -246,8 +263,8 @@ pub(crate) async fn dispatch(
         ))
     } else {
         plex.dispatch_audio(context, url, |mut source| {
-            if source.plex_scope.is_some() && downloads.cache.lookup(&source.cache_key).is_some() {
-                source.local_cache = Some(downloads.cache.clone());
+            if source.plex_scope.is_some() && downloads.cache().lookup(&source.cache_key).is_some() {
+                source.local_cache = Some(downloads.cache());
             }
             send(source)
         })
@@ -438,7 +455,7 @@ pub async fn audio_prepare_plex_track(
                     || engine.0.normalization_enabled(),
                     |key| {
                         engine.0.cache().get_computed_gain(key).is_some()
-                            || downloads.cache.get_computed_gain(key).is_some()
+                            || downloads.cache().get_computed_gain(key).is_some()
                     },
                 )
                 .await?;
@@ -486,7 +503,7 @@ pub async fn audio_prepare_plex_track(
         .await?;
     let guard = plex.0.lock().await;
     plex.checked_cache_client(&context, &guard)?;
-    let (binding, _) = available(values, &downloads.cache, engine.0.cache())
+    let (binding, _) = available(values, &downloads.cache(), engine.0.cache())
         .ok_or("This track is not available offline. Reconnect to Plex to download it.")?;
     Ok(info(&binding, context, format!("{LOCAL_PREFIX}{track_id}")))
 }
@@ -675,7 +692,7 @@ pub async fn audio_track_levels(
     };
     let scope = client.library_scope.clone();
     let offline = client.offline_only;
-    let downloaded = downloads.cache.clone();
+    let downloaded = downloads.cache();
     let automatic = engine.0.cache().clone();
     let saved = db
         .read_urgent(move |conn| {
@@ -781,7 +798,7 @@ pub async fn audio_download_list(
         for id in ids {
             let bindings = audio::bindings(&conn, scope, id)?;
             let latest = bindings.first().map(|b| b.metadata.clone());
-            let found = available(bindings, &downloads.cache, engine.0.cache());
+            let found = available(bindings, &downloads.cache(), engine.0.cache());
             items.push(DownloadItem {
                 track_id: id,
                 track: found.as_ref().map(|(b, _)| b.metadata.clone()).or(latest),
@@ -816,7 +833,7 @@ pub async fn audio_download_list(
                 && job
                     .cache_key
                     .as_ref()
-                    .is_some_and(|key| downloads.cache.lookup(key).is_some());
+                    .is_some_and(|key| downloads.cache().lookup(key).is_some());
             items.push(DownloadItem {
                 track_id: job.track_id,
                 track,
@@ -835,7 +852,7 @@ pub async fn audio_download_list(
     Ok(DownloadPage {
         items,
         total: total.max(0) as u64,
-        downloaded_bytes: downloads.cache.stats().total_bytes,
+        downloaded_bytes: downloads.cache().stats().total_bytes,
     })
 }
 
@@ -855,7 +872,7 @@ pub async fn audio_local_track(
         &client.library_scope,
         track_id,
     )?;
-    Ok(available(values, &downloads.cache, engine.0.cache()).map(|(binding, _)| binding.metadata))
+    Ok(available(values, &downloads.cache(), engine.0.cache()).map(|(binding, _)| binding.metadata))
 }
 
 #[tauri::command]
@@ -907,7 +924,7 @@ pub(crate) async fn enqueue_download_batch(
                 && job
                     .cache_key
                     .as_ref()
-                    .is_none_or(|key| app.state::<AudioDownloads>().cache.lookup(key).is_none())
+                    .is_none_or(|key| app.state::<AudioDownloads>().cache().lookup(key).is_none())
             {
                 job.status = "error".into();
                 audio::update(&conn, &client.library_scope, &job)?;
@@ -949,7 +966,7 @@ pub async fn audio_download_resume(
     drop(guard);
     let owner = context.clone();
     let application = app.clone();
-    let downloaded = downloads.cache.clone();
+    let downloaded = downloads.cache();
     let automatic = app
         .state::<crate::audio_engine::bridge::AudioEngineState>()
         .0
@@ -980,6 +997,7 @@ pub async fn audio_download_remove(
     plex: State<'_, PlexState>,
     db: State<'_, DbState>,
     downloads: State<'_, AudioDownloads>,
+    app: tauri::AppHandle,
 ) -> Result<(), String> {
     let guard = plex.0.lock().await;
     let client = plex.checked_cache_client(&context, &guard)?;
@@ -996,9 +1014,11 @@ pub async fn audio_download_remove(
     let conn = db.0.lock().map_err(|_| "Download storage unavailable")?;
     // Only files bound to this owner and track can be removed; no renderer paths/keys.
     for binding in audio::bindings(&conn, &client.library_scope, track_id)? {
-        downloads.cache.remove(&binding.cache_key)?;
+        downloads.cache().remove(&binding.cache_key)?;
     }
-    audio::remove(&conn, &client.library_scope, track_id)
+    audio::remove(&conn, &client.library_scope, track_id)?;
+    crate::download_library::schedule(app);
+    Ok(())
 }
 
 /// Backfill existing downloads/cache entries without transferring encoded audio
@@ -1059,7 +1079,7 @@ async fn backfill_analysis(
                 let conn = db.0.lock().map_err(|_| "Analysis storage unavailable")?;
                 let saved = available(
                     audio::bindings(&conn, &client.library_scope, track_id)?,
-                    &downloads.cache,
+                    &downloads.cache(),
                     engine.0.cache(),
                 )
                 .map(|(binding, _)| binding);
@@ -1143,8 +1163,11 @@ async fn backfill_analysis(
     }
 }
 
-fn start_worker(app: tauri::AppHandle, context: PlexRequestContext) {
+pub(crate) fn start_worker(app: tauri::AppHandle, context: PlexRequestContext) {
     let downloads = app.state::<AudioDownloads>();
+    if downloads.relocating.load(Ordering::Acquire) {
+        return;
+    }
     let key = (context.connection_revision, context.cache_scope.clone());
     let Ok(mut scheduled) = downloads.scheduled.lock() else {
         return;
@@ -1207,6 +1230,9 @@ async fn worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<
         )?;
     }
     loop {
+        if downloads.relocating.load(Ordering::Acquire) {
+            return Ok(());
+        }
         let plex = app.state::<PlexState>();
         let db = app.state::<DbState>();
         let (client, mut job, cancel) = {
@@ -1265,14 +1291,14 @@ async fn worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<
             }
             // Optional analysis cannot prevent a valid audio file being saved.
             let _ = ensure_levels(app, context, &binding, false).await;
-            if let Some(file) = downloads.cache.open(&binding.cache_key) {
+            if let Some(file) = downloads.cache().open(&binding.cache_key) {
                 if let Ok(metadata) = file.metadata() {
                     received.store(metadata.len(), Ordering::Release);
                     total.store(metadata.len(), Ordering::Release);
                     return Ok(binding);
                 }
             }
-            let cache = downloads.cache.clone();
+            let cache = downloads.cache();
             let automatic = app
                 .state::<crate::audio_engine::bridge::AudioEngineState>()
                 .0
@@ -1325,7 +1351,7 @@ async fn worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<
                 job.cache_key = Some(binding.cache_key);
                 job.error = None;
             }
-            Some(Err(error)) if connected => {
+            Some(Err(error)) if connected && !cancel.load(Ordering::Acquire) => {
                 job.status = "error".into();
                 tracing::debug!(track_id=job.track_id,%error,"Plex download could not be validated");
                 job.error = Some(if error.starts_with("Downloaded audio failed validation") {
@@ -1347,6 +1373,7 @@ async fn worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<
             .active
             .lock()
             .map_err(|_| "Download worker unavailable")? = None;
+        crate::download_library::schedule(app.clone());
         if !connected {
             return Ok(());
         }
@@ -1938,11 +1965,11 @@ mod tests {
         let scope = client.library_scope.clone();
         audio::remember(&db.0.lock().unwrap(), &scope, &saved, 1).unwrap();
         let mut writer = downloads
-            .cache
+            .cache()
             .begin_write(&saved.cache_key, "wav")
             .unwrap();
         writer.write_chunk(&wav()).unwrap();
-        writer.finish(&downloads.cache).unwrap();
+        writer.finish(&downloads.cache()).unwrap();
         let plex = PlexState::new();
         *plex.0.lock().await = Some(client);
         let context = PlexRequestContext {
@@ -1961,7 +1988,7 @@ mod tests {
                 assert!(source.request.is_none());
                 assert!(Arc::ptr_eq(
                     source.local_cache.as_ref().unwrap(),
-                    &downloads.cache
+                    &downloads.cache()
                 ));
                 Ok(7)
             },
@@ -1996,8 +2023,8 @@ mod tests {
         .await
         .is_err());
         automatic.clear().unwrap();
-        assert!(downloads.cache.lookup(&saved.cache_key).is_some());
-        downloads.cache.remove(&saved.cache_key).unwrap();
+        assert!(downloads.cache().lookup(&saved.cache_key).is_some());
+        downloads.cache().remove(&saved.cache_key).unwrap();
         assert!(dispatch(
             &plex,
             &db,
@@ -2186,7 +2213,7 @@ pub async fn audio_availability(
     for id in track_ids {
         if available(
             audio::bindings(&conn, &client.library_scope, id)?,
-            &downloads.cache,
+            &downloads.cache(),
             engine.0.cache(),
         )
         .is_some()

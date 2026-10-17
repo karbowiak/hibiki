@@ -14,7 +14,7 @@ A desktop music player for [Plex](https://www.plex.tv/), built with Tauri, React
 
 - Gapless playback, crossfade, loudness normalization and a 10-band equalizer.
 - Artists, albums, playlists and liked music, with search, large-list browsing and a queue that remembers where you left off.
-- Offline downloads for songs, albums, artists and playlists, with automatic checks for new playlist songs.
+- Offline downloads for songs, albums, artists and playlists, organized in your Music folder with M3U playlists and automatic checks for new songs.
 - Plex stations, track and artist radio, DJ modes, internet radio and podcasts.
 - Synced lyrics, waveform seeking and fullscreen visualizers, including MilkDrop.
 - Local liked songs, optional Last.fm and ListenBrainz scrobbling and likes sync, and playlist sync with ListenBrainz.

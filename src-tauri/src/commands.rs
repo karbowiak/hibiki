@@ -33,6 +33,13 @@ pub struct PlexRequestContext {
 }
 
 impl PlexState {
+    pub(crate) async fn current_request_context(&self) -> Option<PlexRequestContext> {
+        let guard = self.0.lock().await;
+        guard.as_ref().map(|client| PlexRequestContext {
+            connection_revision: self.1.load(Ordering::SeqCst),
+            cache_scope: client.library_scope.clone(),
+        })
+    }
     pub fn new() -> Self {
         PlexState(Arc::new(Mutex::new(None)), Arc::new(AtomicU64::new(0)))
     }

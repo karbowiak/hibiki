@@ -97,10 +97,64 @@ fn remember_revision(
     for track in ids {
         tx.execute("INSERT OR IGNORE INTO audio_download_claims(scope,kind,entity_id,track_id) VALUES(?1,?2,?3,?4)",params![scope,kind,id,track]).map_err(|_|"Cannot save download membership")?;
         tx.execute("INSERT OR IGNORE INTO audio_download_members(scope,kind,entity_id,track_id) VALUES(?1,?2,?3,?4)",params![scope,kind,id,track]).map_err(|_|"Cannot save download membership")?;
+        if kind != "track" {
+            release_legacy_track(&tx, scope, *track)?;
+        }
     }
     tx.commit()
         .map_err(|_| "Cannot commit download intention")?;
     Ok(revision)
+}
+
+// V7 had no source provenance for old jobs and used an empty-title track
+// intention. Once a verified collection owns that song, adopt the old claim.
+// Named individual requests remain independent of collection removal.
+fn release_legacy_track(conn: &Connection, scope: &str, track: i64) -> Result<(), String> {
+    let legacy: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM audio_download_entities WHERE scope=?1 AND kind='track' AND entity_id=?2 AND title='')",params![scope,track],|r|r.get(0)).map_err(|_|"Cannot verify legacy download ownership")?;
+    if legacy {
+        for table in [
+            "audio_download_claims",
+            "audio_download_members",
+            "audio_download_entities",
+        ] {
+            conn.execute(
+                &format!("DELETE FROM {table} WHERE scope=?1 AND kind='track' AND entity_id=?2"),
+                params![scope, track],
+            )
+            .map_err(|_| "Cannot adopt legacy download ownership")?;
+        }
+    }
+    Ok(())
+}
+
+/// Caller owns the transaction. Only a published download-specific snapshot
+/// proves that an absent playlist intention was removed. Ordinary browsing
+/// snapshots and unrelated legacy downloads must never authorize deletion.
+pub fn reconcile_legacy(conn: &Connection) -> Result<Vec<(String, i64)>, String> {
+    let mut stmt=conn.prepare("SELECT e.scope,e.entity_id,EXISTS(SELECT 1 FROM audio_download_claims c WHERE c.scope=e.scope AND c.track_id=e.entity_id AND c.kind!='track') FROM audio_download_entities e WHERE e.kind='track' AND e.title='' AND (EXISTS(SELECT 1 FROM audio_download_claims c WHERE c.scope=e.scope AND c.track_id=e.entity_id AND c.kind!='track') OR EXISTS(SELECT 1 FROM plex_catalogue_playlist_versions v JOIN plex_catalogue_playlist_members m ON m.scope=v.scope AND m.playlist_id=v.playlist_id AND m.generation=v.generation WHERE v.scope=e.scope AND v.generation LIKE 'download:%' AND CAST(json_extract(m.document,'$.ratingKey') AS INTEGER)=e.entity_id AND NOT EXISTS(SELECT 1 FROM audio_download_entities p WHERE p.scope=v.scope AND p.kind='playlist' AND p.entity_id=v.playlist_id))) LIMIT 100001").map_err(|_|"Cannot review legacy downloads")?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, bool>(2)?,
+            ))
+        })
+        .map_err(|_| "Cannot review legacy downloads")?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| "Cannot review legacy downloads")?;
+    if rows.len() > 100000 {
+        return Err("Too many legacy downloads to reconcile".into());
+    }
+    let mut removed = vec![];
+    for (scope, id, shared) in rows {
+        check(&scope, "track", id)?;
+        release_legacy_track(conn, &scope, id)?;
+        if !shared {
+            removed.push((scope, id));
+        }
+    }
+    Ok(removed)
 }
 /// Called under the native connection and DB locks during each queue admission.
 /// A removal/re-add retires old batches; individual removal excludes only that song.
@@ -316,7 +370,10 @@ mod tests {
             before
         );
         remember(&conn, &first, "album", 9, "Album", &[1, 2], 2).unwrap();
-        assert!(detach(&conn, &first, "album", 9).unwrap().is_empty());
+        let mut removed = detach(&conn, &first, "album", 9).unwrap();
+        removed.sort();
+        assert_eq!(removed, vec![1, 2]);
+        assert_eq!(members(&conn, &second, "track", 1).unwrap(), vec![1]);
     }
     #[test]
     fn removal_and_readdition_fence_pending_batches_without_resurrecting_removed_songs() {
@@ -340,7 +397,7 @@ mod tests {
         );
     }
     #[test]
-    fn group_removal_preserves_shared_and_legacy_individual_intentions() {
+    fn group_removal_preserves_shared_and_explicit_individual_intentions() {
         let conn = Connection::open_in_memory().unwrap();
         crate::db::schema::run_migrations(&conn).unwrap();
         let scope = format!("plex-{}", "a".repeat(64));
@@ -351,6 +408,56 @@ mod tests {
         assert_eq!(detach(&conn, &scope, "playlist", 3).unwrap(), vec![2, 3]);
         assert_eq!(members(&conn, &scope, "track", 1).unwrap(), vec![1]);
         assert_eq!(detach(&conn, &scope, "track", 1).unwrap(), vec![1]);
+    }
+    #[test]
+    fn legacy_cleanup_requires_a_removed_download_snapshot_and_preserves_other_owners() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::schema::run_migrations(&conn).unwrap();
+        let scope = format!("plex-{}", "a".repeat(64));
+        let other = format!("plex-{}", "b".repeat(64));
+        for id in 1..=5 {
+            remember(
+                &conn,
+                &scope,
+                "track",
+                id,
+                if id == 3 { "Explicit song" } else { "" },
+                &[id],
+                1,
+            )
+            .unwrap();
+        }
+        remember(&conn, &other, "track", 1, "", &[1], 1).unwrap();
+        remember(&conn, &scope, "album", 9, "Keep album", &[2], 1).unwrap();
+        conn.execute("INSERT INTO plex_catalogue_playlist_versions(scope,playlist_id,generation,total,saved_at) VALUES(?1,8,'download:verified',3,1),(?1,7,'browse:verified',1,1)",[&scope]).unwrap();
+        for id in 1..=4 {
+            let (playlist, generation) = if id == 4 {
+                (7, "browse:verified")
+            } else {
+                (8, "download:verified")
+            };
+            conn.execute("INSERT INTO plex_catalogue_playlist_members(scope,playlist_id,generation,position,document) VALUES(?1,?2,?3,?4,?5)",params![scope,playlist,generation,id,serde_json::json!({"ratingKey":id.to_string()}).to_string()]).unwrap();
+        }
+        assert_eq!(reconcile_legacy(&conn).unwrap(), vec![(scope.clone(), 1)]);
+        assert!(members(&conn, &scope, "track", 1).unwrap().is_empty());
+        assert_eq!(members(&conn, &scope, "album", 9).unwrap(), vec![2]);
+        for id in [3, 4, 5] {
+            assert_eq!(members(&conn, &scope, "track", id).unwrap(), vec![id]);
+        }
+        assert_eq!(members(&conn, &other, "track", 1).unwrap(), vec![1]);
+        assert!(reconcile_legacy(&conn).unwrap().is_empty());
+    }
+    #[test]
+    fn startup_adopts_preexisting_collection_claims_without_releasing_shared_audio() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::schema::run_migrations(&conn).unwrap();
+        let scope = format!("plex-{}", "a".repeat(64));
+        remember(&conn, &scope, "album", 9, "Album", &[1], 1).unwrap();
+        remember(&conn, &scope, "track", 1, "", &[1], 1).unwrap();
+        assert!(reconcile_legacy(&conn).unwrap().is_empty());
+        assert!(members(&conn, &scope, "track", 1).unwrap().is_empty());
+        assert_eq!(members(&conn, &scope, "album", 9).unwrap(), vec![1]);
+        assert_eq!(detach(&conn, &scope, "album", 9).unwrap(), vec![1]);
     }
     #[test]
     fn removing_a_song_keeps_expected_membership_and_releases_old_playlist_editions() {

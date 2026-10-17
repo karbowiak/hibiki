@@ -66,6 +66,7 @@ pub struct AudioCache {
 
 struct CacheOwner {
     generation: AtomicU64,
+    retired: AtomicBool,
     directory: PathBuf,
     directory_id: OnceLock<(u64, u64)>,
     // Writers retain ownership even if the cache manager is dropped.
@@ -74,6 +75,9 @@ struct CacheOwner {
 
 impl CacheOwner {
     fn directory_is_current(&self) -> bool {
+        if self.retired.load(Ordering::Acquire) {
+            return false;
+        }
         let Some(lock) = self._lock.get() else {
             return false;
         };
@@ -155,10 +159,13 @@ impl From<&CacheEntry> for CacheStamp {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 struct CacheIndex {
     entries: HashMap<String, CacheEntry>,
     total_bytes: u64,
+    /// Reserved layout targets allow an interrupted copy to resume safely.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    relocations: HashMap<String, String>,
     #[serde(skip)]
     partials: HashMap<uuid::Uuid, u64>,
     #[serde(skip)]
@@ -253,7 +260,12 @@ impl AudioCache {
         Self::with_policy(cache_dir, max_bytes, entry_limit, true)
     }
 
-    fn with_policy(cache_dir: PathBuf, max_bytes: Option<u64>, entry_limit: usize, evictable: bool) -> Self {
+    fn with_policy(
+        cache_dir: PathBuf,
+        max_bytes: Option<u64>,
+        entry_limit: usize,
+        evictable: bool,
+    ) -> Self {
         let mut directory = fs::DirBuilder::new();
         directory.recursive(true);
         #[cfg(unix)]
@@ -306,6 +318,7 @@ impl AudioCache {
 
         let owner = Arc::new(CacheOwner {
             generation: AtomicU64::new(0),
+            retired: AtomicBool::new(false),
             directory: cache_dir.clone(),
             directory_id: OnceLock::new(),
             _lock: OnceLock::new(),
@@ -352,6 +365,7 @@ impl AudioCache {
             .entries
             .values()
             .map(|entry| entry.filename.as_str())
+            .chain(idx.relocations.values().map(String::as_str))
             .collect();
         let Ok(entries) = fs::read_dir(&self.cache_dir) else {
             return;
@@ -364,13 +378,14 @@ impl AudioCache {
             let owned_index_temp = name.strip_prefix(".audio-index.").is_some_and(|suffix| {
                 suffix.len() == 6 && suffix.bytes().all(|b| b.is_ascii_alphanumeric())
             });
-            let orphan_media = name.rsplit_once('.').is_some_and(|(key, _)| {
-                let digest = key.strip_prefix("s1-").unwrap_or(key);
-                matches!(digest.len(), 32 | 64)
-                    && digest.bytes().all(|b| b.is_ascii_hexdigit())
-                    && valid_filename(key, name)
-                    && !retained.contains(name)
-            });
+            let orphan_media = self.evictable
+                && name.rsplit_once('.').is_some_and(|(key, _)| {
+                    let digest = key.strip_prefix("s1-").unwrap_or(key);
+                    matches!(digest.len(), 32 | 64)
+                        && digest.bytes().all(|b| b.is_ascii_hexdigit())
+                        && valid_filename(key, name)
+                        && !retained.contains(name)
+                });
             if (owned_partial_filename(name) || owned_index_temp || orphan_media)
                 && fs::symlink_metadata(entry.path()).is_ok_and(|metadata| regular_file(&metadata))
             {
@@ -389,13 +404,20 @@ impl AudioCache {
 
     pub(crate) fn remove(&self, key: &str) -> Result<(), String> {
         self.check_directory()?;
-        let mut idx = self.index.lock().map_err(|_| "Audio storage is unavailable")?;
+        let mut idx = self
+            .index
+            .lock()
+            .map_err(|_| "Audio storage is unavailable")?;
         if let Some(entry) = idx.entries.get(key) {
-            if valid_filename(key, &entry.filename) {
-                match fs::remove_file(self.cache_dir.join(&entry.filename)) {
-                    Ok(()) => {},
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
-                    Err(_) => return Err("Cannot remove downloaded audio. Check storage permissions.".into()),
+            if let Some(path) = checked_path(&self.cache_dir, key, &entry.filename) {
+                match fs::remove_file(path) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(_) => {
+                        return Err(
+                            "Cannot remove downloaded audio. Check storage permissions.".into()
+                        )
+                    }
                 }
             }
             let entry = idx.entries.remove(key).unwrap();
@@ -430,8 +452,8 @@ impl AudioCache {
         }
         let entry = idx.entries.remove(key).unwrap();
         idx.total_bytes = idx.total_bytes.saturating_sub(entry.size_bytes);
-        if valid_filename(key, &entry.filename) {
-            let _ = fs::remove_file(self.cache_dir.join(entry.filename));
+        if let Some(path) = checked_path(&self.cache_dir, key, &entry.filename) {
+            let _ = fs::remove_file(path);
         }
         idx.save(&self.index_path());
         true
@@ -443,7 +465,7 @@ impl AudioCache {
         }
         let mut idx = self.index.lock().ok()?;
         let entry = idx.entries.get_mut(key)?;
-        let path = self.cache_dir.join(&entry.filename);
+        let path = checked_path(&self.cache_dir, key, &entry.filename)?;
         let file = valid_filename(key, &entry.filename)
             .then(|| open_regular_file(&path).ok())
             .flatten()
@@ -544,8 +566,13 @@ impl AudioCache {
         // Serialize writer admission with Clear. Unindexed or invalid bytes are
         // replaced only after a complete fresh download, never reused as audio.
         let mut idx = self.index.lock().map_err(|_| "cache index poisoned")?;
-        if !self.evictable && idx.entries.len() >= self.entry_limit && !idx.entries.contains_key(key) {
-            return Err("Download storage is full. Remove some downloads before adding more.".into());
+        if !self.evictable
+            && idx.entries.len() >= self.entry_limit
+            && !idx.entries.contains_key(key)
+        {
+            return Err(
+                "Download storage is full. Remove some downloads before adding more.".into(),
+            );
         }
         if idx
             .entries
@@ -612,7 +639,15 @@ impl AudioCache {
                 return Err(error);
             }
         }
-        let result = make_room(&self.cache_dir, &mut idx, max, 0, 0, self.entry_limit, self.evictable);
+        let result = make_room(
+            &self.cache_dir,
+            &mut idx,
+            max,
+            0,
+            0,
+            self.entry_limit,
+            self.evictable,
+        );
         let saved = idx.persist(&self.index_path());
         if let Err(error) = result.and(saved) {
             self.max_bytes.store(previous, Ordering::Release);
@@ -755,14 +790,29 @@ impl AudioCache {
         self.owner.generation.fetch_add(1, Ordering::AcqRel);
         let mut failure = self.remove_partials(&mut idx).err();
         idx.entries.retain(|key, entry| {
-            if !valid_filename(key, &entry.filename) {
+            let Some(path) = checked_path(&self.cache_dir, key, &entry.filename) else {
                 return false;
-            }
-            match fs::remove_file(self.cache_dir.join(&entry.filename)) {
+            };
+            match fs::remove_file(path) {
                 Ok(()) => false,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
                 Err(error) => {
                     failure = Some(format!("Could not remove cached audio: {error}"));
+                    true
+                }
+            }
+        });
+        idx.relocations.retain(|key, filename| {
+            let Some(path) = checked_path(&self.cache_dir, key, filename) else {
+                return false;
+            };
+            match fs::remove_file(path) {
+                Ok(()) => false,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                Err(error) => {
+                    failure = Some(format!(
+                        "Could not remove pending downloaded audio: {error}"
+                    ));
                     true
                 }
             }
@@ -810,12 +860,219 @@ impl AudioCache {
 
     fn evict_with_index(&self, idx: &mut CacheIndex) {
         let max = self.max_bytes.load(Ordering::Relaxed);
-        let _ = make_room(&self.cache_dir, idx, max, 0, 0, self.entry_limit, self.evictable);
+        let _ = make_room(
+            &self.cache_dir,
+            idx,
+            max,
+            0,
+            0,
+            self.entry_limit,
+            self.evictable,
+        );
     }
 
     fn index_path(&self) -> PathBuf {
         self.cache_dir.join("index.json")
     }
+
+    pub(crate) fn directory(&self) -> &Path {
+        &self.cache_dir
+    }
+
+    pub(crate) fn retire(&self) {
+        self.owner.retired.store(true, Ordering::Release);
+        self.owner.generation.fetch_add(1, Ordering::AcqRel);
+        if let Some(lock) = self.owner._lock.get() {
+            let _ = lock.unlock();
+        }
+    }
+
+    /// Snapshot paths without changing LRU state or rewriting the index per song.
+    pub(crate) fn download_paths(&self) -> Result<HashMap<String, PathBuf>, String> {
+        self.check_directory()?;
+        let idx = self
+            .index
+            .lock()
+            .map_err(|_| "Download index unavailable")?;
+        Ok(idx
+            .entries
+            .iter()
+            .filter_map(|(key, entry)| {
+                valid_entry(&self.cache_dir, key, entry)
+                    .then(|| (key.clone(), self.cache_dir.join(&entry.filename)))
+            })
+            .collect())
+    }
+
+    /// Copy before switching the configured root. The source remains complete
+    /// on every failure; reservations let an interrupted move reuse its bytes.
+    pub(crate) fn copy_downloads_to(&self, target: &AudioCache) -> Result<(), String> {
+        self.check_directory()?;
+        target.check_directory()?;
+        if self.evictable || target.evictable {
+            return Err("Only explicit downloads can be moved".into());
+        }
+        if self.cache_dir == target.cache_dir {
+            return Ok(());
+        }
+        let source = self
+            .index
+            .lock()
+            .map_err(|_| "Download index unavailable")?;
+        let mut dest = target
+            .index
+            .lock()
+            .map_err(|_| "Download index unavailable")?;
+        if !source.partials.is_empty() {
+            return Err("A download is still being saved. Try again.".into());
+        }
+        if source
+            .entries
+            .keys()
+            .filter(|key| !dest.entries.contains_key(*key))
+            .count()
+            + dest.entries.len()
+            > target.entry_limit
+        {
+            return Err("The destination has too many downloads".into());
+        }
+        for (key, entry) in &source.entries {
+            if !dest.entries.contains_key(key)
+                && !dest.relocations.contains_key(key)
+                && fs::symlink_metadata(target.cache_dir.join(&entry.filename)).is_ok()
+            {
+                return Err("A different file already exists in the download destination".into());
+            }
+            if !dest.entries.contains_key(key) {
+                dest.relocations
+                    .entry(key.clone())
+                    .or_insert(entry.filename.clone());
+            }
+        }
+        dest.persist(&target.index_path())?;
+        for (key, entry) in &source.entries {
+            let from = checked_path(&self.cache_dir, key, &entry.filename)
+                .ok_or("Download path is unavailable")?;
+            let filename = dest
+                .entries
+                .get(key)
+                .map(|e| e.filename.clone())
+                .unwrap_or_else(|| entry.filename.clone());
+            let to = prepare_download_path(&target.cache_dir, key, &filename)?;
+            copy_owned_file(
+                &from,
+                &to,
+                dest.relocations.get(key) == Some(&filename) || dest.entries.contains_key(key),
+            )?;
+            let mut copied = entry.clone();
+            copied.filename = filename;
+            dest.entries.insert(key.clone(), copied);
+        }
+        for key in source.entries.keys() {
+            dest.relocations.remove(key);
+        }
+        dest.total_bytes = dest.entries.values().map(|e| e.size_bytes).sum();
+        dest.persist(&target.index_path())
+    }
+
+    /// A reserved, no-clobber copy publishes the new index before removing the
+    /// old file. Gains, validation revisions and cache keys remain unchanged.
+    pub(crate) fn organize_download(&self, key: &str, filename: &str) -> Result<(), String> {
+        self.check_directory()?;
+        if self.evictable {
+            return Err("Only explicit downloads can be organized".into());
+        }
+        let mut idx = self
+            .index
+            .lock()
+            .map_err(|_| "Download index unavailable")?;
+        let Some(previous) = idx.entries.get(key).cloned() else {
+            return Ok(());
+        };
+        if previous.filename == filename {
+            return Ok(());
+        }
+        let from = checked_path(&self.cache_dir, key, &previous.filename)
+            .ok_or("Download path is unavailable")?;
+        let to = prepare_download_path(&self.cache_dir, key, filename)?;
+        let reserved = idx.relocations.get(key).is_some_and(|p| p == filename);
+        if to.exists() && !reserved {
+            return Err("A file already exists at this download path".into());
+        }
+        idx.relocations.insert(key.to_owned(), filename.to_owned());
+        idx.persist(&self.index_path())?;
+        copy_owned_file(&from, &to, reserved)?;
+        let mut next = previous.clone();
+        next.filename = filename.to_owned();
+        idx.entries.insert(key.to_owned(), next);
+        idx.relocations.remove(key);
+        if let Err(error) = idx.persist(&self.index_path()) {
+            idx.entries.insert(key.to_owned(), previous);
+            idx.relocations.insert(key.to_owned(), filename.to_owned());
+            return Err(error);
+        }
+        let _ = fs::remove_file(from);
+        Ok(())
+    }
+}
+
+fn prepare_download_path(root: &Path, key: &str, filename: &str) -> Result<PathBuf, String> {
+    if !valid_filename(key, filename) {
+        return Err("Invalid download filename".into());
+    }
+    let mut path = root.to_owned();
+    let parts = filename.split('/').collect::<Vec<_>>();
+    for part in &parts[..parts.len() - 1] {
+        path.push(part);
+        if !path.exists() {
+            fs::create_dir(&path).map_err(|_| "Cannot create download folder")?;
+        }
+        if directory_id(&path).is_none() {
+            return Err("Download folders cannot be linked or redirected".into());
+        }
+    }
+    Ok(path.join(parts.last().ok_or("Invalid download path")?))
+}
+
+fn copy_owned_file(from: &Path, to: &Path, owned: bool) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    let digest = |path: &Path| -> Result<Vec<u8>, String> {
+        let mut file = open_regular_file(path).map_err(|_| "Cannot read downloaded audio")?;
+        let mut hash = Sha256::new();
+        let mut buf = [0u8; 65536];
+        loop {
+            let n = file
+                .read(&mut buf)
+                .map_err(|_| "Cannot verify downloaded audio")?;
+            if n == 0 {
+                break;
+            }
+            hash.update(&buf[..n]);
+        }
+        Ok(hash.finalize().to_vec())
+    };
+    if fs::symlink_metadata(to).is_ok() {
+        if owned && digest(from)? == digest(to)? {
+            return Ok(());
+        }
+        return Err("A different file already exists in the download destination".into());
+    }
+    let mut input = open_regular_file(from).map_err(|_| "Cannot read downloaded audio")?;
+    let mut temp = tempfile::Builder::new()
+        .prefix(".hibiki-moving-")
+        .tempfile_in(to.parent().ok_or("Invalid download destination")?)
+        .map_err(|_| "Cannot write to download destination")?;
+    std::io::copy(&mut input, &mut temp)
+        .map_err(|_| "Could not copy downloads. Check free space and permissions.")?;
+    temp.as_file()
+        .sync_all()
+        .map_err(|_| "Cannot save downloaded audio")?;
+    if digest(from)? != digest(temp.path())? {
+        return Err("Download copy verification failed".into());
+    }
+    temp.persist_noclobber(to)
+        .map_err(|_| "A file appeared in the download destination")?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -825,14 +1082,25 @@ impl AudioCache {
 impl CacheWriter {
     /// Flush and inspect the complete temporary body before publishing a download.
     pub(crate) fn validation_file(&mut self) -> Result<fs::File, String> {
-        if self.failed || !self.owner.directory_is_current()
-            || self.generation != self.owner.generation.load(Ordering::Acquire) {
+        if self.failed
+            || !self.owner.directory_is_current()
+            || self.generation != self.owner.generation.load(Ordering::Acquire)
+        {
             return Err("Download storage changed".into());
         }
-        self.writer.as_mut().ok_or("Download writer is closed")?.flush()
+        self.writer
+            .as_mut()
+            .ok_or("Download writer is closed")?
+            .flush()
             .map_err(|_| "Cannot flush downloaded audio")?;
-        let file = open_regular_file(&self.temp_path).map_err(|_| "Cannot validate downloaded audio")?;
-        if file.metadata().map_err(|_| "Cannot validate downloaded audio")?.len() != self.bytes_written {
+        let file =
+            open_regular_file(&self.temp_path).map_err(|_| "Cannot validate downloaded audio")?;
+        if file
+            .metadata()
+            .map_err(|_| "Cannot validate downloaded audio")?
+            .len()
+            != self.bytes_written
+        {
             return Err("Downloaded audio is incomplete".into());
         }
         Ok(file)
@@ -931,7 +1199,11 @@ impl CacheWriter {
             .flush()
             .map_err(|e| format!("cache flush: {e}"))?;
         if !self.evictable {
-            self.writer.as_ref().ok_or("Download writer is closed")?.get_ref().sync_all()
+            self.writer
+                .as_ref()
+                .ok_or("Download writer is closed")?
+                .get_ref()
+                .sync_all()
                 .map_err(|_| "Cannot persist downloaded audio")?;
         }
         // Close before rename (also works on Windows). Serialize publication
@@ -1058,8 +1330,8 @@ fn make_room(
             break;
         }
         let entry = &idx.entries[&key];
-        if valid_filename(&key, &entry.filename) {
-            if let Err(error) = fs::remove_file(directory.join(&entry.filename)) {
+        if let Some(path) = checked_path(directory, &key, &entry.filename) {
+            if let Err(error) = fs::remove_file(path) {
                 if error.kind() != std::io::ErrorKind::NotFound {
                     return Err(format!("cannot evict cached audio: {error}"));
                 }
@@ -1101,10 +1373,54 @@ fn valid_extension(extension: &str) -> bool {
 }
 
 fn valid_filename(key: &str, filename: &str) -> bool {
-    valid_key(key)
-        && filename
-            .rsplit_once('.')
-            .is_some_and(|(prefix, extension)| prefix == key && valid_extension(extension))
+    if !valid_key(key) {
+        return false;
+    }
+    if filename
+        .rsplit_once('.')
+        .is_some_and(|(prefix, extension)| prefix == key && valid_extension(extension))
+    {
+        return true;
+    }
+    let parts = filename.split('/').collect::<Vec<_>>();
+    parts.len() == 3
+        && parts.iter().all(|p| safe_component(p))
+        && parts[2].rsplit_once('.').is_some_and(|(stem, ext)| {
+            valid_extension(ext)
+                && stem.ends_with(&format!(" [{}]", &key[key.len().saturating_sub(12)..]))
+        })
+}
+
+fn safe_component(value: &str) -> bool {
+    let reserved = value
+        .split('.')
+        .next()
+        .unwrap_or(value)
+        .to_ascii_uppercase();
+    !value.is_empty()
+        && value != "."
+        && value != ".."
+        && value.len() <= 180
+        && !value.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|'])
+        && !value.chars().any(char::is_control)
+        && !value.ends_with(['.', ' '])
+        && !matches!(reserved.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        && !(reserved.len() == 4
+            && (reserved.starts_with("COM") || reserved.starts_with("LPT"))
+            && matches!(reserved.as_bytes()[3], b'1'..=b'9'))
+}
+
+fn checked_path(directory: &Path, key: &str, filename: &str) -> Option<PathBuf> {
+    if !valid_filename(key, filename) {
+        return None;
+    }
+    let mut path = directory.to_owned();
+    let parts = filename.split('/').collect::<Vec<_>>();
+    for part in &parts[..parts.len() - 1] {
+        path.push(part);
+        crate::cache_files::directory_id(&path)?;
+    }
+    Some(path.join(parts.last()?))
 }
 
 #[derive(Debug)]
@@ -1184,10 +1500,12 @@ fn valid_entry(directory: &Path, key: &str, entry: &CacheEntry) -> bool {
     valid_filename(key, &entry.filename)
         && (entry.revision.is_empty() || uuid::Uuid::parse_str(&entry.revision).is_ok())
         && entry.size_bytes > 0
-        && open_regular_file(&directory.join(&entry.filename)).is_ok_and(|file| {
-            file.metadata()
-                .is_ok_and(|metadata| metadata.len() == entry.size_bytes)
-        })
+        && checked_path(directory, key, &entry.filename)
+            .and_then(|path| open_regular_file(&path).ok())
+            .is_some_and(|file| {
+                file.metadata()
+                    .is_ok_and(|metadata| metadata.len() == entry.size_bytes)
+            })
 }
 
 /// Legacy URL keys retained only for cache format regression fixtures.
@@ -1221,26 +1539,40 @@ pub fn extract_extension(url: &str) -> String {
 mod tests {
     #[test]
     fn explicit_downloads_reject_capacity_changes_instead_of_evicting_completed_files() {
-        let dir=tempfile::tempdir().unwrap();
-        let cache=AudioCache::with_policy(dir.path().into(),Some(0),2,false);
-        for key in ["one","two"] {let mut writer=cache.begin_write(key,"wav").unwrap();writer.write_chunk(b"complete audio").unwrap();writer.finish(&cache).unwrap();}
-        assert!(cache.begin_write("three","wav").is_err());
-        assert!(cache.set_max_bytes(1).is_err());assert_eq!(cache.stats().max_bytes,0);
-        assert!(cache.lookup("one").is_some());assert!(cache.lookup("two").is_some());
+        let dir = tempfile::tempdir().unwrap();
+        let cache = AudioCache::with_policy(dir.path().into(), Some(0), 2, false);
+        for key in ["one", "two"] {
+            let mut writer = cache.begin_write(key, "wav").unwrap();
+            writer.write_chunk(b"complete audio").unwrap();
+            writer.finish(&cache).unwrap();
+        }
+        assert!(cache.begin_write("three", "wav").is_err());
+        assert!(cache.set_max_bytes(1).is_err());
+        assert_eq!(cache.stats().max_bytes, 0);
+        assert!(cache.lookup("one").is_some());
+        assert!(cache.lookup("two").is_some());
         drop(cache);
-        let cache=AudioCache::with_policy(dir.path().into(),Some(0),2,false);
-        assert_eq!(cache.stats().file_count,2);cache.remove("one").unwrap();
-        let mut writer=cache.begin_write("three","wav").unwrap();writer.write_chunk(b"new complete audio").unwrap();writer.finish(&cache).unwrap();
-        assert!(cache.lookup("two").is_some());assert!(cache.lookup("three").is_some());
+        let cache = AudioCache::with_policy(dir.path().into(), Some(0), 2, false);
+        assert_eq!(cache.stats().file_count, 2);
+        cache.remove("one").unwrap();
+        let mut writer = cache.begin_write("three", "wav").unwrap();
+        writer.write_chunk(b"new complete audio").unwrap();
+        writer.finish(&cache).unwrap();
+        assert!(cache.lookup("two").is_some());
+        assert!(cache.lookup("three").is_some());
     }
 
     #[test]
     fn download_index_persistence_failure_cannot_report_a_completed_download() {
-        let dir=tempfile::tempdir().unwrap();let cache=AudioCache::downloads(dir.path().into());
-        let mut writer=cache.begin_write("one","wav").unwrap();writer.write_chunk(b"complete audio").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let cache = AudioCache::downloads(dir.path().into());
+        let mut writer = cache.begin_write("one", "wav").unwrap();
+        writer.write_chunk(b"complete audio").unwrap();
         std::fs::remove_file(dir.path().join("index.json")).unwrap();
         std::fs::create_dir(dir.path().join("index.json")).unwrap();
-        assert!(writer.finish(&cache).is_err());assert!(cache.lookup("one").is_none());assert_eq!(cache.stats().total_bytes,0);
+        assert!(writer.finish(&cache).is_err());
+        assert!(cache.lookup("one").is_none());
+        assert_eq!(cache.stats().total_bytes, 0);
     }
 
     fn cache_child(directory: &Path, mode: &str) {
@@ -2290,5 +2622,157 @@ mod tests {
         let reopened = AudioCache::new(dir.path().into(), None);
         assert!(reopened.lookup("42").is_none());
         assert_eq!(reopened.stats().total_bytes, 0);
+    }
+}
+
+#[cfg(test)]
+mod portable_download_tests {
+    use super::*;
+    fn write(cache: &AudioCache, key: &str, bytes: &[u8]) {
+        let mut writer = cache.begin_write(key, "flac").unwrap();
+        writer.write_chunk(bytes).unwrap();
+        writer.finish(cache).unwrap();
+    }
+    #[test]
+    fn moving_downloads_preserves_encoded_bytes_gains_and_existing_index_revisions() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = format!("s1-{}", "a".repeat(64));
+        let source = AudioCache::downloads(dir.path().join("old"));
+        write(&source, &key, b"original encoded audio");
+        source.set_computed_gain(&key, -7.5);
+        let revision = source.index.lock().unwrap().entries[&key].revision.clone();
+        let target = AudioCache::downloads(dir.path().join("new"));
+        source.copy_downloads_to(&target).unwrap();
+        assert_eq!(
+            fs::read(target.lookup(&key).unwrap()).unwrap(),
+            b"original encoded audio"
+        );
+        assert_eq!(target.get_computed_gain(&key), Some(-7.5));
+        assert_eq!(
+            target.index.lock().unwrap().entries[&key].revision,
+            revision
+        );
+        source.clear().unwrap();
+        source.retire();
+        assert!(source.lookup(&key).is_none());
+        drop(target);
+        let target = AudioCache::downloads(dir.path().join("new"));
+        assert_eq!(target.get_computed_gain(&key), Some(-7.5));
+        assert!(target.lookup(&key).is_some());
+    }
+    #[test]
+    fn organized_unicode_paths_survive_restart_and_clear_only_owned_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = format!("s1-{}", "b".repeat(64));
+        let cache = AudioCache::downloads(dir.path().to_owned());
+        write(&cache, &key, b"music");
+        let relative = format!(
+            "あの/BONE BORN BOMB/01 - ちゅ、多様性。 [{}].flac",
+            &key[key.len() - 12..]
+        );
+        cache.organize_download(&key, &relative).unwrap();
+        assert!(!dir.path().join(format!("{key}.flac")).exists());
+        assert_eq!(
+            cache.lookup(&key).unwrap(),
+            cache.directory().join(&relative)
+        );
+        fs::write(dir.path().join("notes.txt"), "keep").unwrap();
+        drop(cache);
+        let cache = AudioCache::downloads(dir.path().to_owned());
+        assert_eq!(cache.stats().file_count, 1);
+        cache.clear().unwrap();
+        assert!(!dir.path().join(relative).exists());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("notes.txt")).unwrap(),
+            "keep"
+        );
+    }
+    #[test]
+    fn layout_and_migration_never_replace_preexisting_unowned_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = format!("s1-{}", "c".repeat(64));
+        let source = AudioCache::downloads(dir.path().join("old"));
+        write(&source, &key, b"original");
+        let relative = format!("Artist/Album/Song [{}].flac", &key[key.len() - 12..]);
+        fs::create_dir_all(source.directory().join("Artist/Album")).unwrap();
+        fs::write(source.directory().join(&relative), "user file").unwrap();
+        assert!(source.organize_download(&key, &relative).is_err());
+        assert_eq!(fs::read(source.lookup(&key).unwrap()).unwrap(), b"original");
+        assert_eq!(
+            fs::read(source.directory().join(relative)).unwrap(),
+            b"user file"
+        );
+        let target = AudioCache::downloads(dir.path().join("new"));
+        let collision = target.directory().join(format!("{key}.flac"));
+        fs::write(&collision, "unowned").unwrap();
+        assert!(source.copy_downloads_to(&target).is_err());
+        assert_eq!(fs::read(collision).unwrap(), b"unowned");
+        assert!(source.lookup(&key).is_some());
+    }
+    #[test]
+    fn interrupted_migration_reuses_only_reserved_identical_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = format!("s1-{}", "d".repeat(64));
+        let source = AudioCache::downloads(dir.path().join("old"));
+        write(&source, &key, b"original");
+        let target = AudioCache::downloads(dir.path().join("new"));
+        let filename = format!("{key}.flac");
+        {
+            let mut idx = target.index.lock().unwrap();
+            idx.relocations.insert(key.clone(), filename.clone());
+            idx.persist(&target.index_path()).unwrap();
+        }
+        fs::copy(
+            source.lookup(&key).unwrap(),
+            target.directory().join(&filename),
+        )
+        .unwrap();
+        drop(target);
+        let target = AudioCache::downloads(dir.path().join("new"));
+        source.copy_downloads_to(&target).unwrap();
+        assert_eq!(target.stats().file_count, 1);
+        assert_eq!(fs::read(target.lookup(&key).unwrap()).unwrap(), b"original");
+    }
+    #[test]
+    fn clearing_downloads_also_removes_owned_interrupted_layout_copies() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = AudioCache::downloads(dir.path().to_owned());
+        let key = format!("s1-{}", "f".repeat(64));
+        write(&cache, &key, b"original");
+        let relative = format!("Artist/Album/Song [{}].flac", &key[key.len() - 12..]);
+        let pending = prepare_download_path(cache.directory(), &key, &relative).unwrap();
+        fs::write(&pending, b"original").unwrap();
+        cache
+            .index
+            .lock()
+            .unwrap()
+            .relocations
+            .insert(key.clone(), relative);
+        fs::write(cache.directory().join("manual.flac"), b"keep").unwrap();
+        cache.clear().unwrap();
+        assert!(!pending.exists());
+        assert!(!cache.directory().join(format!("{key}.flac")).exists());
+        assert!(cache.index.lock().unwrap().relocations.is_empty());
+        assert_eq!(
+            fs::read(cache.directory().join("manual.flac")).unwrap(),
+            b"keep"
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn nested_paths_cannot_traverse_or_follow_linked_artist_folders() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let cache = AudioCache::downloads(dir.path().join("downloads"));
+        let key = format!("s1-{}", "e".repeat(64));
+        write(&cache, &key, b"original");
+        let outside = dir.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        symlink(&outside, cache.directory().join("Artist")).unwrap();
+        let relative = format!("Artist/Album/Song [{}].flac", &key[key.len() - 12..]);
+        assert!(cache.organize_download(&key, &relative).is_err());
+        assert!(cache.organize_download(&key, "../../escape.flac").is_err());
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+        assert!(cache.lookup(&key).is_some());
     }
 }

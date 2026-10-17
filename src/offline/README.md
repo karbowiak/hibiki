@@ -53,8 +53,23 @@ must match both the selected library and track; media quality uses the same
 lossless/bit-depth/sample-rate/bitrate order as the renderer.
 
 Automatic playback caching remains bounded and evictable. Explicit downloads
-use an independent private `downloads` directory in app data, with no automatic
-LRU eviction. Clearing or shrinking the automatic cache preserves downloads.
+use an independent `Hibiki` folder in the operating system's Music directory,
+with no automatic LRU eviction. Settings → Cache → Downloads shows the current
+location and can move it elsewhere. The OS resolves redirected Music folders
+on Windows and XDG music-directory preferences on Linux; the fallback is
+`~/Music/Hibiki`. Clearing or shrinking the automatic cache preserves downloads.
+Existing app-data downloads move through verified no-clobber copies before the
+configured root changes. Keys, validation revisions, gain and private metadata
+remain intact; failed moves retain the original files and can be retried.
+SQLite settings, favorites, waveforms and queue state stay in app data.
+
+Audio uses readable `Artist/Album/01 - Title [source suffix].ext` paths.
+Downloaded playlists get UTF-8 `.m3u` files in `Hibiki/Playlists`, preserving
+verified order and repeated occurrences with relative paths. Only complete
+available songs are exported; the file updates as downloads finish or playlist
+membership changes. Removing a playlist download removes its managed M3U and
+unshared music. Manual files are preserved. The original encoded audio and its
+embedded tags are retained without transcoding or rewriting tags.
 Download storage rejects new admissions at its 32,768-file index limit rather
 than deleting saved music. Files are capped at 2 GiB each; unsupported multipart
 tracks are rejected rather than saving only the first part.
@@ -146,7 +161,11 @@ used by other collections or explicit individual-song downloads. Song removal
 releases that song everywhere, leaving collections honestly partial. New weekly
 playlist membership never silently deletes a previously saved edition. Existing
 V4 download jobs migrate as individual intentions because their original source
-was not recorded. Preparation verifies the native library identity, paged
+was not recorded. Verified collection requests adopt their matching untitled
+legacy claims. Startup also releases legacy claims backed by a download-specific
+playlist snapshot whose request was removed, preserving shared collection and
+named individual requests. Ordinary browse snapshots cannot authorize cleanup.
+Preparation verifies the native library identity, paged
 membership and playlist revision before queueing encoded audio.
 
 Entity preparation also archives the entity's full native document and complete

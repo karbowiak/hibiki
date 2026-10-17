@@ -180,7 +180,7 @@ pub async fn catalogue_query(
     timing.phase("owner_wait");
     // Derived browse indexes can also finish from local data while offline.
     let scope = context.cache_scope.clone();
-    let downloaded = downloads.cache.clone();
+    let downloaded = downloads.cache();
     let automatic = engine.0.cache().clone();
     let urgent = matches!(
         method.as_str(),
@@ -362,7 +362,7 @@ pub async fn catalogue_availability(
         state.checked_cache_client(&context, &guard)?;
     }
     let scope = context.cache_scope.clone();
-    let downloaded = downloads.cache.clone();
+    let downloaded = downloads.cache();
     let automatic = engine.0.cache().clone();
     let result = db
         .read(move |conn| {

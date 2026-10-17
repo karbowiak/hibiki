@@ -301,6 +301,7 @@ async fn prepare_download(
         )
         .await?;
     }
+    crate::download_library::schedule(app);
     Ok(ids.len())
 }
 
@@ -422,7 +423,7 @@ pub async fn download_entity_status(
         state.checked_cache_client(&context, &guard)?;
     }
     let scope = context.cache_scope.clone();
-    let cache = downloads.cache.clone();
+    let cache = downloads.cache();
     let result = db
         .read(move |conn| {
             let mut jobs = HashMap::new();
@@ -575,6 +576,7 @@ pub async fn remove_entity_download(
     state: State<'_, PlexState>,
     db: State<'_, DbState>,
     downloads: State<'_, AudioDownloads>,
+    app: tauri::AppHandle,
 ) -> Result<(), String> {
     intents::check(&context.cache_scope, &kind, id)?;
     let guard = state.0.lock().await;
@@ -587,12 +589,13 @@ pub async fn remove_entity_download(
     for track in unclaimed {
         downloads.cancel_download(&client.library_scope, track)?;
         for binding in audio::bindings(&tx, &client.library_scope, track)? {
-            downloads.cache.remove(&binding.cache_key)?;
+            downloads.cache().remove(&binding.cache_key)?;
         }
         audio::remove(&tx, &client.library_scope, track)?;
     }
-    tx.commit()
-        .map_err(|_| "Cannot remove download intention".into())
+    tx.commit().map_err(|_| "Cannot remove download intention")?;
+    crate::download_library::schedule(app);
+    Ok(())
 }
 
 #[cfg(test)]

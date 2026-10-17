@@ -58,6 +58,13 @@ async function setup() {
   let callback = 0
   let loadingGate = Promise.resolve()
   let releaseLoading: (() => void) | null = null
+  let downloadStorage = { directory: "/Users/listener/Music/Hibiki", defaultDirectory: "/Users/listener/Music/Hibiki", moving: false, totalBytes: 2 * 1024 ** 3, tracks: 85, error: null as string | null }
+  let storageGate=Promise.resolve(), releaseStorage:(()=>void)|null=null, storageFailure=false
+  w.fixtureDownloadStorage={
+    hold:()=>{storageGate=new Promise<void>(resolve=>{releaseStorage=resolve})},
+    release:()=>{releaseStorage?.();releaseStorage=null;storageGate=Promise.resolve()},
+    failNext:()=>{storageFailure=true},
+  }
   w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} }
   w.__TAURI_INTERNALS__ = {
     metadata: {
@@ -67,6 +74,13 @@ async function setup() {
     transformCallback: () => ++callback,
     unregisterCallback: () => {},
     invoke: async (command: string, args:any={}) => {
+      if(command==="download_storage_info")return {...downloadStorage}
+      if(command==="download_storage_open")return null
+      if(command==="download_storage_choose" || command==="download_storage_retry") {
+        await storageGate
+        if(storageFailure){storageFailure=false;throw "Could not copy downloads. Check free space and permissions."}
+        downloadStorage={...downloadStorage,directory:"/Volumes/Music collection/Hibiki"};return {...downloadStorage}
+      }
       if (command.startsWith("radiobrowser_") || command.startsWith("podcast_")) await loadingGate
       if (
         command === "radiobrowser_top_stations" ||

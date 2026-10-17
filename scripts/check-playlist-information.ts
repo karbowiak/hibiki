@@ -110,7 +110,10 @@ try {
         const color = await dialog
           .getByRole("button", { name: "Retry downloads", exact: true })
           .evaluate((element) => getComputedStyle(element).color)
-        const rgb = color.match(/[\d.]+/g)!.slice(0, 3).map(Number)
+        const rgb = color
+          .match(/[\d.]+/g)!
+          .slice(0, 3)
+          .map(Number)
         assert.ok(
           theme === "light" ? Math.max(...rgb) < 100 : Math.min(...rgb) > 160,
           `${name}: ${theme} dialog button is not using readable overlay text`
@@ -129,9 +132,78 @@ try {
         0,
         `${name}: an error paragraph leaked into the action menu`
       )
+      await page.keyboard.press("Escape")
+      await page.evaluate(() =>
+        (window as any).fixtureAppearance.route("/settings/cache")
+      )
+      await page
+        .getByText("/Users/listener/Music/Hibiki", { exact: true })
+        .waitFor()
+      assert.equal(
+        await page
+          .getByRole("heading", { name: "Downloads", exact: true })
+          .count(),
+        1
+      )
+      const change = page.getByRole("button", {
+        name: "Change folder…",
+        exact: true,
+      })
+      const open = page.getByRole("button", {
+        name: "Open folder",
+        exact: true,
+      })
+      for (const [width, theme] of [
+        [1440, "dark"],
+        [800, "light"],
+      ] as const) {
+        await page.setViewportSize({ width, height: 900 })
+        await page.evaluate(
+          (theme) => (window as any).fixtureAppearance.apply({ theme }),
+          theme
+        )
+        await page.waitForTimeout(600)
+        assert.equal(
+          await page
+            .locator(".settings-main")
+            .evaluate(
+              (element) => element.scrollWidth <= element.clientWidth + 1
+            ),
+          true
+        )
+        await page.screenshot({
+          path: join(artifacts, `${name}-${width}-downloads.png`),
+        })
+      }
+      await page.evaluate(() => (window as any).fixtureDownloadStorage.hold())
+      await change.click()
+      await page
+        .getByRole("button", { name: "Moving downloads…", exact: true })
+        .waitFor()
+      assert.equal(await open.isDisabled(), true)
+      await page.evaluate(() =>
+        (window as any).fixtureDownloadStorage.release()
+      )
+      await page
+        .getByText("/Volumes/Music collection/Hibiki", { exact: true })
+        .waitFor()
+      await page.evaluate(() =>
+        (window as any).fixtureDownloadStorage.failNext()
+      )
+      await change.click()
+      await page
+        .getByRole("alert")
+        .filter({ hasText: "Check free space" })
+        .waitFor()
+      assert.equal(await change.isEnabled(), true)
+      await page.getByRole("button", { name: "Try again", exact: true }).click()
+      await page
+        .getByRole("alert")
+        .filter({ hasText: "Check free space" })
+        .waitFor({ state: "hidden" })
       assert.deepEqual(errors, [], `${name}: renderer errors`)
       console.log(
-        `${name}: fast hover, separate Info action, named issues, themes and modal keyboard behavior passed`
+        `${name}: Info, named issues, quick hovers, download folder controls, moving/error/retry and both themes passed`
       )
     } finally {
       await browser.close()

@@ -22,6 +22,8 @@ let hold = false,
 mock.module("@tauri-apps/api/core", () => ({
   invoke: async (command: string, args: any) => {
     calls.push({ command, args })
+    if (command === "download_storage_info")
+      return {directory:"/Users/listener/Music/Hibiki",defaultDirectory:"/Users/listener/Music/Hibiki",moving:false,totalBytes:2*1024**3,tracks:85,error:null}
     if (command === "download_entity_status")
       return hold
         ? late.promise
@@ -115,7 +117,7 @@ assert.equal(
   1,
   "shared cached tracks must not put download badges on an unrequested playlist"
 )
-assert.match(document.body.textContent!, /2.0 GB/)
+assert.match(document.body.textContent!, /85 songs · 2.00 GiB/)
 assert(
   !document.body.textContent!.includes("90"),
   "storage does not call queued intentions downloaded tracks"
@@ -158,7 +160,7 @@ assert.equal(
   calls.find((c) => c.command === "download_entity").args.kind,
   "artist"
 )
-// A retired account never restores an old badge or old storage count.
+// A retired account never restores old badges. Physical folder usage is global.
 hold = true
 await act(async () => {
   refreshDownloadStatuses()
@@ -187,6 +189,6 @@ await act(async () => {
   await settle()
 })
 assert.deepEqual(useDownloadStatusStore.getState().statuses, {})
-assert(!document.body.textContent!.includes("2.0 GB"))
+assert.match(document.body.textContent!, /85 songs · 2.00 GiB/)
 await act(async () => root.unmount())
 dom.window.close()
