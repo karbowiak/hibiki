@@ -18,6 +18,30 @@ let epoch = 0,
   dirty = false
 let timer: ReturnType<typeof setInterval> | null = null
 const visible = new Map<string, { entity: DownloadEntity; refs: Set<symbol> }>()
+let pruning = false
+function pruneStatuses() {
+  if (pruning) return
+  pruning = true
+  queueMicrotask(() => {
+    pruning = false
+    useDownloadStatusStore.setState(state => {
+      const entries = Object.entries(state.statuses).filter(([id]) => visible.has(id))
+      return entries.length === Object.keys(state.statuses).length ? state : { statuses: Object.fromEntries(entries) }
+    })
+  })
+}
+function publishStatuses(statuses: EntityDownloadStatus[]) {
+  useDownloadStatusStore.setState(state => {
+    const updates = statuses.filter(status => {
+      const id = `${status.kind}:${status.id}`
+      if (!visible.has(id)) return false
+      const old = state.statuses[id]
+      return !old || Object.keys(status).some(field => old[field] !== status[field]) ||
+        Object.keys(old).some(field => old[field] !== status[field])
+    })
+    return updates.length ? { statuses: { ...state.statuses, ...Object.fromEntries(updates.map(status => [`${status.kind}:${status.id}`, status])) } } : state
+  })
+}
 export function captureDownloadOwner(): DownloadOwner | null {
   const provider = useProviderStore.getState().provider,
     context = useCatalogueStore.getState().context
@@ -55,6 +79,7 @@ export function registerDownloadStatus(
   captured: DownloadOwner,
   entity: DownloadEntity
 ): () => void {
+  if (!ownsDownloads(captured)) return () => {}
   activate(captured)
   const token = Symbol(),
     id = key(entity),
@@ -66,7 +91,10 @@ export function registerDownloadStatus(
   return () => {
     const entry = visible.get(id)
     entry?.refs.delete(token)
-    if (entry && !entry.refs.size) visible.delete(id)
+    if (entry && !entry.refs.size) {
+      visible.delete(id)
+      pruneStatuses()
+    }
     if (!visible.size && timer) {
       clearInterval(timer)
       timer = null
@@ -93,14 +121,7 @@ async function flush() {
     for (let start = 0; start < entities.length; start += 200) {
       const statuses = await api.status(entities.slice(start, start + 200))
       if (generation !== epoch || !ownsDownloads(captured)) return
-      useDownloadStatusStore.setState((state) => ({
-        statuses: {
-          ...state.statuses,
-          ...Object.fromEntries(
-            statuses.map((status) => [`${status.kind}:${status.id}`, status])
-          ),
-        },
-      }))
+      publishStatuses(statuses)
     }
   } catch {
     /* Old native builds or storage failures do not invent download status. */

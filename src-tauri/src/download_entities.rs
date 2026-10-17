@@ -404,6 +404,71 @@ fn entity_members(
     }
     Ok((claimed, requested, requested))
 }
+fn read_statuses(
+    conn: &rusqlite::Connection,
+    scope: &str,
+    entities: Vec<Entity>,
+    mut present: impl FnMut(&str) -> bool,
+) -> Result<Vec<Status>, String> {
+    let mut members = Vec::with_capacity(entities.len());
+    let mut wanted = HashSet::new();
+    for entity in entities {
+        let (ids, known, requested) = entity_members(conn, scope, &entity.kind, entity.id)?;
+        wanted.extend(ids.iter().copied());
+        members.push((entity, ids, known, requested));
+    }
+    let ids: Vec<_> = wanted.into_iter().collect();
+    let mut jobs = HashMap::new();
+    let mut statement = conn.prepare_cached(
+        "SELECT track_id,status,cache_key,error FROM audio_download_jobs WHERE scope=?1 AND track_id IN (SELECT value FROM json_each(?2))"
+    ).map_err(|_| "Cannot read downloads")?;
+    for batch in ids.chunks(500) {
+        let selected = serde_json::to_string(batch).map_err(|_| "Cannot select download statuses")?;
+        let rows = statement.query_map(rusqlite::params![scope, selected], |row| Ok((
+            row.get::<_,i64>(0)?, row.get::<_,String>(1)?,
+            row.get::<_,Option<String>>(2)?, row.get::<_,Option<String>>(3)?
+        ))).map_err(|_| "Cannot read downloads")?;
+        for row in rows {
+            let (id, status, key, error) = row.map_err(|_| "Cannot read downloads")?;
+            let ready = key.as_ref().is_some_and(|key| present(key));
+            jobs.insert(id, (status, ready, error));
+        }
+    }
+    let mut statuses = vec![];
+    for (entity, ids, known, requested) in members {
+        let mut downloaded = 0;
+        let mut pending = 0;
+        let mut failed = 0;
+        let mut error = None;
+        for id in &ids {
+            if let Some((status, ready, reason)) = jobs.get(id) {
+                if *ready {
+                    downloaded += 1
+                } else if matches!(status.as_str(), "queued" | "downloading" | "paused") {
+                    pending += 1
+                } else {
+                    failed += 1;
+                    if error.is_none() {
+                        error = reason.clone();
+                    }
+                }
+            }
+        }
+        statuses.push(Status {
+            kind: entity.kind,
+            id: entity.id,
+            known,
+            total: ids.len(),
+            downloaded,
+            pending,
+            failed,
+            requested,
+            error,
+        });
+    }
+    Ok(statuses)
+}
+
 #[tauri::command]
 pub async fn download_entity_status(
     context: PlexRequestContext,
@@ -425,67 +490,7 @@ pub async fn download_entity_status(
     let scope = context.cache_scope.clone();
     let cache = downloads.cache();
     let result = db
-        .read(move |conn| {
-            let mut jobs = HashMap::new();
-            let mut stmt = conn
-        .prepare(
-            "SELECT track_id,status,cache_key,error FROM audio_download_jobs WHERE scope=?1 LIMIT 100001",
-        )
-        .map_err(|_| "Cannot read downloads")?;
-            let rows = stmt
-                .query_map([&scope], |r| {
-                    Ok((
-                        r.get::<_, i64>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, Option<String>>(2)?,
-                        r.get::<_, Option<String>>(3)?,
-                    ))
-                })
-                .map_err(|_| "Cannot read downloads")?;
-            for row in rows {
-                let (id, status, key, error) = row.map_err(|_| "Cannot read downloads")?;
-                let ready = key.as_ref().is_some_and(|key| cache.lookup(key).is_some());
-                jobs.insert(id, (status, ready, error));
-                if jobs.len() > 100000 {
-                    return Err("Download inventory needs maintenance before showing status".into());
-                }
-            }
-            let mut statuses = vec![];
-            for entity in entities {
-                let (ids, known, requested) =
-                    entity_members(conn, &scope, &entity.kind, entity.id)?;
-                let mut downloaded = 0;
-                let mut pending = 0;
-                let mut failed = 0;
-                let mut error = None;
-                for id in &ids {
-                    if let Some((status, ready, reason)) = jobs.get(id) {
-                        if *ready {
-                            downloaded += 1
-                        } else if matches!(status.as_str(), "queued" | "downloading" | "paused") {
-                            pending += 1
-                        } else {
-                            failed += 1;
-                            if error.is_none() {
-                                error = reason.clone();
-                            }
-                        }
-                    }
-                }
-                statuses.push(Status {
-                    kind: entity.kind,
-                    id: entity.id,
-                    known,
-                    total: ids.len(),
-                    downloaded,
-                    pending,
-                    failed,
-                    requested,
-                    error,
-                });
-            }
-            Ok(statuses)
-        })
+        .read(move |conn| read_statuses(conn, &scope, entities, |key| cache.lookup(key).is_some()))
         .await?;
     let guard = state.0.lock().await;
     state.checked_cache_client(&context, &guard)?;
@@ -660,6 +665,23 @@ mod tests {
         .unwrap();
         assert_eq!(refreshed.total, 2);
         assert_eq!(refreshed.items.len(), 2);
+    }
+
+    #[test]
+    fn status_reads_only_relevant_jobs_and_checks_shared_files_once() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::schema::run_migrations(&conn).unwrap();
+        let scope = format!("plex-{}", "a".repeat(64));
+        conn.execute("WITH RECURSIVE ids(id) AS (VALUES(1) UNION ALL SELECT id+1 FROM ids WHERE id<10000) INSERT INTO audio_download_jobs(scope,track_id,revision,status,created_at,cache_key) SELECT ?1,id,'test','downloaded',1,'cache-'||id FROM ids",[&scope]).unwrap();
+        conn.execute("UPDATE audio_download_jobs SET status='queued' WHERE track_id=3",[]).unwrap();
+        intents::remember(&conn,&scope,"playlist",8,"Selected",&[1,2,3],3).unwrap();
+        let mut checked = Vec::new();
+        let statuses = read_statuses(&conn,&scope,vec![
+            Entity {kind:"track".into(),id:1},Entity {kind:"playlist".into(),id:8},Entity {kind:"track".into(),id:99999}
+        ],|key| {checked.push(key.to_owned());key == "cache-1"}).unwrap();
+        checked.sort();assert_eq!(checked,vec!["cache-1","cache-2","cache-3"]);
+        assert_eq!((statuses[1].total,statuses[1].downloaded,statuses[1].pending,statuses[1].failed),(3,1,1,1));
+        assert_eq!((statuses[2].total,statuses[2].downloaded,statuses[2].failed),(1,0,0));
     }
 
     #[test]
