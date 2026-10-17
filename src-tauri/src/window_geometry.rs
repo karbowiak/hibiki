@@ -42,8 +42,9 @@ fn placement(work: Rect, scale: f64, frame: (u32, u32), saved: Option<Rect>) -> 
     let max_height = available_height.saturating_sub(frame.1).max(1);
     let minimum_width = pixels(800.0).min(max_width);
     let minimum_height = pixels(600.0).min(max_height);
-    let preferred_width = pixels((f64::from(work.width) / scale * 0.86).clamp(1440.0, 1920.0));
-    let preferred_height = pixels((f64::from(work.height) / scale * 0.86).clamp(960.0, 1200.0));
+    // The user's approved desktop window, measured in logical desktop points.
+    let preferred_width = pixels(1940.0);
+    let preferred_height = pixels(1214.0);
     let width = saved
         .map_or(preferred_width, |r| r.width.saturating_sub(frame.0))
         .clamp(minimum_width, max_width);
@@ -195,7 +196,7 @@ mod tests {
     #[test]
     fn first_start_uses_a_comfortable_size_inside_the_work_area() {
         let p = placement(area(2560, 1400), 1.0, (0, 28), None);
-        assert_eq!((p.inner_width, p.inner_height), (1920, 1200));
+        assert_eq!((p.inner_width, p.inner_height), (1940, 1214));
         assert!(p.outer.y >= 40 && p.outer.y + p.outer.height as i32 <= 1408);
     }
 
@@ -217,7 +218,7 @@ mod tests {
             height: 1914,
         };
         let p = placement(work, 2.0, (0, 0), None);
-        assert_eq!((p.inner_width, p.inner_height), (2880, 1850));
+        assert_eq!((p.inner_width, p.inner_height), (2960, 1850));
         assert!(p.outer.x >= -2992 && p.outer.x + p.outer.width as i32 <= -32);
     }
 
