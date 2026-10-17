@@ -1,9 +1,9 @@
+import { useArtistPage } from "../../hooks/useMetadataPage"
 import { DownloadBadge } from "../shared/DownloadBadge"
 import { makeOnPlay } from "../../lib/mediaPlay"
 import { DownloadMenuItems } from "../shared/DownloadMenuItems"
 import {
   metadataRefreshMessage,
-  retryMetadataRefresh,
 } from "../../lib/metadataLoadError"
 import "../../styles/media-detail-controls.css"
 import { ArtworkImage, useArtworkFailures } from "../shared/ArtworkImage"
@@ -19,24 +19,14 @@ import { useContextMenu } from "../../hooks/useContextMenu"
 import type {
   MusicArtist,
   MusicAlbum,
-  MusicTrack,
-  MusicHub,
-  MusicPlaylist,
 } from "../../types/music"
 import { MediaCard } from "../MediaCard"
 import { ScrollRow } from "../ScrollRow"
 import { MediaBackdrop } from "../shared/MediaBackdrop"
 import {
-  getCachedArtist,
   prefetchAlbum,
   prefetchArtist,
-  loadArtistPage,
-  captureMetadataCache,
-  isMetadataCacheCurrent,
-  type ArtistCacheEntry,
 } from "../../stores/metadataCache"
-import { useArtistEnrichment } from "../../hooks/useMetadataEnrichment"
-import { formatMs } from "../../lib/formatters"
 import { ImageModal } from "../shared/ImageModal"
 import { deduplicateHubAlbums } from "../../lib/dedup"
 import { useMetadataSourceStore } from "../../stores/metadataSourceStore"
@@ -54,14 +44,7 @@ import { MetadataEditDialog } from "../shared/MetadataEditDialog"
 import { AppDialog } from "../shared/AppDialog"
 import { VersionReviewPanel } from "../VersionReview/VersionReviewPanel"
 
-function dedupe<T extends { id: string }>(items: T[]): T[] {
-  const seen = new Set<string>()
-  return items.filter((item) => {
-    if (seen.has(item.id)) return false
-    seen.add(item.id)
-    return true
-  })
-}
+const DETAIL_SOURCES = ["lastfm", "deezer"] as const
 
 const SKIP_HUB_IDS = new Set([
   "artist.albums",
@@ -124,40 +107,18 @@ export function ArtistPage({ artistId }: { artistId: string }) {
       }))
     )
   const { handler: ctxMenu } = useContextMenu()
-  const pageRefreshKey = useUIStore((s) => s.pageRefreshKey)
   const shouldDedup = useUIStore((s) => s.deduplicateAlbums)
   const hasRadio = useCapability("radio")
   const hasSonicSimilarity = useCapability("sonicSimilarity")
 
-  const cached = getCachedArtist(artistId, shouldDedup)
-  const [artist, setArtist] = useState<MusicArtist | null>(
-    cached?.artist ?? null
-  )
-  const [fullAlbums, setFullAlbums] = useState<MusicAlbum[]>(
-    cached?.albums ?? []
-  )
-  const [singles, setSingles] = useState<MusicAlbum[]>(cached?.singles ?? [])
-  const [popularTracks, setPopularTracks] = useState<MusicTrack[]>(
-    cached?.popularTracks ?? []
-  )
-  const [similarArtists, setSimilarArtists] = useState<MusicArtist[]>(
-    cached?.similarArtists ?? []
-  )
-  const [sonicallySimilar, setSonicallySimilar] = useState<MusicArtist[]>(
-    cached?.sonicallySimilar ?? []
-  )
-  const [relatedHubs, setRelatedHubs] = useState<MusicHub[]>(
-    cached?.relatedHubs ?? []
-  )
-  const [stations, setStations] = useState<MusicPlaylist[]>(
-    cached?.stations ?? []
-  )
-  const [isLoading, setIsLoading] = useState(!cached)
-  const [error, setError] = useState<string | null>(null)
-  const [loadAttempt, setLoadAttempt] = useState(0)
-  const pageOwner = useRef<{ provider: typeof provider; id: string } | null>(
-    null
-  )
+  const { entry, isLoading, error, retry } = useArtistPage(artistId)
+  const artist = entry?.artist ?? null
+  const fullAlbums = entry?.albums ?? []
+  const singles = entry?.singles ?? []
+  const popularTracks = entry?.popularTracks ?? []
+  const similarArtists = entry?.similarArtists ?? []
+  const sonicallySimilar = entry?.sonicallySimilar ?? []
+  const relatedHubs = entry?.relatedHubs ?? []
 
   // UI state
   const [bioExpanded, setBioExpanded] = useState(false)
@@ -181,93 +142,14 @@ export function ArtistPage({ artistId }: { artistId: string }) {
     }))
   )
 
-  // Enrichment metadata from all backends
-  const {
-    lastfm: lastfmData,
-    deezer: deezerData,
-    itunes: itunesData,
-  } = useArtistEnrichment(artist?.title ?? null)
 
   useLayoutEffect(() => {
-    let active = true
-    const session = captureMetadataCache(provider)
-    const current = () => active && isMetadataCacheCurrent(session)
-    setError(null)
-    const changedPage =
-      pageOwner.current?.provider !== provider ||
-      pageOwner.current?.id !== artistId
-    pageOwner.current = { provider, id: artistId }
-    if (changedPage) {
-      setBioExpanded(false)
-      setShowImageModal(false)
-      setEditOpen(false)
-      setVersionAlbum(null)
-      setShowHeroModal(false)
-    }
-
-    // Seed ALL state from persistent cache — avoids loading flash AND layout shift.
-    // useState(initialValue) only runs on mount, so navigating between artists
-    // needs this explicit re-seed at the start of every effect run.
-    const freshCache = getCachedArtist(artistId, shouldDedup)
-    if (freshCache) {
-      setArtist(freshCache.artist)
-      setFullAlbums(freshCache.albums)
-      setSingles(freshCache.singles)
-      setPopularTracks(freshCache.popularTracks)
-      setSimilarArtists(freshCache.similarArtists)
-      setSonicallySimilar(freshCache.sonicallySimilar)
-      setRelatedHubs(freshCache.relatedHubs)
-      setStations(freshCache.stations)
-      setIsLoading(false)
-    } else if (changedPage) {
-      // No cache — clear stale data from previous artist, show loading spinner.
-      setArtist(null)
-      setFullAlbums([])
-      setSingles([])
-      setPopularTracks([])
-      setSimilarArtists([])
-      setSonicallySimilar([])
-      setRelatedHubs([])
-      setStations([])
-      setIsLoading(true)
-    }
-
-    if (!provider || !session) {
-      setIsLoading(false)
-      return
-    }
-    const applyEntry = (entry: ArtistCacheEntry) => {
-      if (!current()) return
-      setArtist(entry.artist)
-      setFullAlbums(entry.albums)
-      setSingles(entry.singles)
-      setPopularTracks(entry.popularTracks)
-      setSimilarArtists(entry.similarArtists)
-      setSonicallySimilar(entry.sonicallySimilar)
-      setRelatedHubs(entry.relatedHubs)
-      setStations(entry.stations)
-      setIsLoading(false)
-    }
-    retryMetadataRefresh(
-      () =>
-        loadArtistPage(artistId, {
-          force: true,
-          deduplicate: shouldDedup,
-          onCore: applyEntry,
-        }),
-      current
-    )
-      .then(applyEntry)
-      .catch((error) => {
-        if (current()) setError(String(error))
-      })
-      .finally(() => {
-        if (current()) setIsLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [artistId, provider, pageRefreshKey, shouldDedup, loadAttempt])
+    setBioExpanded(false)
+    setShowImageModal(false)
+    setEditOpen(false)
+    setVersionAlbum(null)
+    setShowHeroModal(false)
+  }, [provider, artistId])
 
   const { failures, onFailure } = useArtworkFailures(
     JSON.stringify([artistId, artist?.title, artist?.thumbUrl, artist?.artUrl])
@@ -350,8 +232,13 @@ export function ArtistPage({ artistId }: { artistId: string }) {
           scope: provider.cacheScope,
         }
       : null,
-    artist ? { ...artist, genres } : null
+    artist ? { ...artist, genres } : null,
+    undefined,
+    undefined,
+    DETAIL_SOURCES
   )
+  const deezerData = sharedMetadata.sourceFields("deezer")
+  const lastfmData = sharedMetadata.sourceFields("lastfm")
 
   // Count how many duplicate albums were merged (for the hero badge)
   const dedupStats = useMemo(() => {
@@ -400,7 +287,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
               : "Check your connection and try again, or choose another artist from your library."
           }
           kind={!provider || !error ? "empty" : "error"}
-          onRetry={provider ? () => setLoadAttempt((n) => n + 1) : undefined}
+          onRetry={provider ? retry : undefined}
           onOpenSettings={() => navigate("/settings")}
           onReturnLibrary={() => navigate("/collection/artists")}
         />
@@ -464,7 +351,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
           artworkUrl={thumbUrl}
           backgroundUrl={artUrl ?? thumbUrl}
           onClose={() => setEditOpen(false)}
-          onSaved={() => setLoadAttempt((value) => value + 1)}
+          onSaved={retry}
         />
       )}
       <MediaBackdrop
@@ -597,13 +484,13 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                 {lastfmData && lastfmData.listeners > 0 && (
                   <span>{lastfmData.listeners.toLocaleString()} listeners</span>
                 )}
-                {lastfmData && lastfmData.play_count > 0 && (
+                {lastfmData && lastfmData.playCount > 0 && (
                   <span>
-                    {lastfmData.play_count.toLocaleString()} scrobbles
+                    {lastfmData.playCount.toLocaleString()} scrobbles
                   </span>
                 )}
                 {lastfmData &&
-                  (lastfmData.listeners > 0 || lastfmData.play_count > 0) && (
+                  (lastfmData.listeners > 0 || lastfmData.playCount > 0) && (
                     <span className="text-white/80">· Last.fm</span>
                   )}
                 {deezerData && deezerData.fans > 0 && (
@@ -816,10 +703,10 @@ export function ArtistPage({ artistId }: { artistId: string }) {
                           </svg>
                           Last.fm
                         </button>
-                        {deezerData?.deezer_url && (
+                        {deezerData?.externalUrl && (
                           <button
                             onClick={() => {
-                              void open(deezerData.deezer_url)
+                              void open(deezerData.externalUrl)
                               setMenuOpen(false)
                             }}
                             className="flex w-full items-center gap-2 px-3 py-2 text-sm text-(--text-primary) hover:bg-(--bg-surface-hover)"
@@ -893,7 +780,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
           <PageRecovery
             title="Couldn't refresh this artist"
             description={metadataRefreshMessage(error, "artist")!}
-            onRetry={() => setLoadAttempt((n) => n + 1)}
+            onRetry={retry}
           />
         )}
         {/* ── Popular Tracks ── */}
@@ -1152,7 +1039,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
         )}
 
         {/* ── Last.fm Similar Artists ── */}
-        {lastfmData && lastfmData.similar.length > 0 && (
+        {lastfmData?.similarArtists?.length > 0 && (
           <section>
             <h2 className="media-section-heading mb-4">
               {priority[0] === "lastfm" ? "Similar Artists" : "Fans Also Like"}
@@ -1161,7 +1048,7 @@ export function ArtistPage({ artistId }: { artistId: string }) {
               </span>
             </h2>
             <div className="flex flex-wrap gap-4">
-              {lastfmData.similar.map((a) => {
+              {lastfmData.similarArtists.map((a) => {
                 const libraryArtist = plexArtistMap.get(a.name.toLowerCase())
                 const plexId = libraryArtist?.id
                 const avatar = (

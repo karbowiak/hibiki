@@ -38,11 +38,13 @@ import type { MusicAlbum, MusicArtist, MusicTrack } from "../types/music"
  * Library fields use the already-owned model; artwork rendering continues to use
  * existing image hooks for strict matching, failure fallback and revisions. */
 const NO_ADDITIONAL_PROVIDERS: readonly MetadataAdapter[] = []
+const NO_REQUIRED_SOURCES: readonly MetadataProviderSource[] = []
 export function useMetadataSnapshot(
   identity: MetadataIdentity | null,
   libraryItem: MusicArtist | MusicAlbum | MusicTrack | null,
   suppliedSelection?: MetadataSelection,
-  additionalProviders: readonly MetadataAdapter[] = NO_ADDITIONAL_PROVIDERS
+  additionalProviders: readonly MetadataAdapter[] = NO_ADDITIONAL_PROVIDERS,
+  requiredSources: readonly MetadataProviderSource[] = NO_REQUIRED_SOURCES
 ) {
   useMetadataIdentityStore((state) => state.choices)
   useMetadataIdentityStore((state) => state.versions)
@@ -131,6 +133,7 @@ export function useMetadataSnapshot(
   const requestScope = identity?.scope
   const sourceOrder = JSON.stringify(priority)
   const selectionKey = JSON.stringify(selection ?? null)
+  const requiredKey = JSON.stringify(requiredSources)
   const requestedSources = useMemo(() => {
     const applicable =
       selection &&
@@ -141,11 +144,12 @@ export function useMetadataSnapshot(
     return [
       ...new Set([
         ...priority,
+        ...requiredSources,
         ...(applicable?.source ? [applicable.source] : []),
         ...Object.values(applicable?.fields ?? {}),
       ]),
     ].filter((source) => source !== "plex") as MetadataProviderSource[]
-  }, [sourceOrder, selectionKey, key, requestScope])
+  }, [sourceOrder, selectionKey, requiredKey, key, requestScope])
   const [loaded, setLoaded] = useState<{
     key: string | null
     scope?: string
@@ -246,6 +250,10 @@ export function useMetadataSnapshot(
     snapshots,
     requestedSources,
     results,
+    sourceFields: (source: MetadataProviderSource) => {
+      const result = results[source]
+      return result?.status === "ready" ? result.snapshot.fields : null
+    },
     resolveField,
     refresh,
     isLoading:

@@ -123,9 +123,10 @@ export function applyStatePatches(
             : value
         )
       }
+      const ordered = new Set(patch.order)
       const order = [
         ...patch.order.filter((id) => values.has(id)),
-        ...[...values.keys()].filter((id) => !patch.order.includes(id)),
+        ...[...values.keys()].filter((id) => !ordered.has(id)),
       ]
       assign(
         target,

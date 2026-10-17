@@ -111,6 +111,23 @@ test("a force refresh supersedes the old hover result and its finally cannot era
   expect(h.cache.getArtist("same")?.artist.title).toBe("Fresh")
 })
 
+test("pages joining a prefetch receive core content before slow recommendations, including late joiners", async () => {
+  const recommendations = deferred<any[]>()
+  const h = harness({ getArtist: mock(async id => artist(id)), getRelatedHubs: () => recommendations.promise })
+  await h.activate()
+  h.cache.prefetchArtist("shared")
+  const early = mock(() => {})
+  const loaded = h.cache.loadArtist("shared", { onCore: early })
+  await settle()
+  expect(early).toHaveBeenCalledTimes(1)
+  const late = mock(() => {})
+  const joined = h.cache.loadArtist("shared", { onCore: late })
+  expect(late).toHaveBeenCalledTimes(1)
+  expect(h.provider.getArtist).toHaveBeenCalledTimes(1)
+  recommendations.resolve([])
+  expect(await joined).toBe(await loaded)
+})
+
 test("old artist and album results cannot enter a new account with the same numeric IDs", async () => {
   const oldArtist = deferred<MusicArtist>(),
     oldAlbum = deferred<MusicAlbum>()

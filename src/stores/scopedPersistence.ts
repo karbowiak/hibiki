@@ -6,7 +6,10 @@ export class ScopedPersistence {
   private epoch = 0
   private ready = false
   private previous: Record<string, unknown> | null = null
-  private pending = new Map<string, string>()
+  private pending = new Map<
+    string,
+    { scope: string; state: Record<string, unknown> }
+  >()
   private writing: Promise<void> | null = null
 
   constructor(
@@ -50,27 +53,28 @@ export class ScopedPersistence {
       Object.keys(state).every((key) => state[key] === this.previous![key])
     )
       return
-    try {
-      const serialized = JSON.stringify({ version: 2, scope: this.scope, state })
-      this.previous = state
-      // Keep only the newest pending snapshot per scope, and order disk writes.
-      this.pending.set(`${this.namespace}:${this.scope}`, serialized)
-      this.drain()
-    } catch {
-      /* An optional cache must not break a store mutation. */
-    }
+    this.previous = state
+    // Coalesce immutable snapshots before paying the serialization cost.
+    this.pending.set(`${this.namespace}:${this.scope}`, {
+      scope: this.scope,
+      state,
+    })
+    this.drain()
   }
 
   private drain() {
     if (this.writing || !this.storage) return
     this.writing = (async () => {
       while (this.pending.size) {
-        const [key, value] = this.pending.entries().next().value!
+        const [key, snapshot] = this.pending.entries().next().value!
         this.pending.delete(key)
         try {
+          const value = JSON.stringify({ version: 2, ...snapshot })
           await this.storage!.setItem(key, value)
         } catch {
-          /* Retry on the next data change. */
+          // Permit another save of the same snapshot after an optional write fails.
+          if (this.scope === snapshot.scope && this.previous === snapshot.state)
+            this.previous = null
         }
       }
     })().finally(() => {

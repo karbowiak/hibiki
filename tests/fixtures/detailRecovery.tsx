@@ -21,6 +21,7 @@ mock.module("wouter", () => ({
   ),
 }))
 const ui = create(() => ({ pageRefreshKey: 0, deduplicateAlbums: false }))
+mock.module("../../src/stores/uiStore", () => ({ useUIStore: ui }))
 const player = create(() => ({
   currentTrack: null,
   playTrack: (...args: any[]) => {

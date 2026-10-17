@@ -89,6 +89,33 @@ test("disconnect suspends persistence without deleting stored account data", asy
   expect(await cache.activate("account")).toEqual({ mixes: ["keep"] })
 })
 
+test("superseded pending snapshots are never serialized and failed writes can retry the same state", async () => {
+  const blocked = deferred<void>(), storage = memory()
+  let serializations = 0, fail = false
+  const cache = new ScopedPersistence({ ...storage, setItem: async (key, value) => {
+    if (JSON.parse(value).state.revision === 1) await blocked.promise
+    if (fail) throw Error("Unavailable")
+    await storage.setItem(key, value)
+  } }, "cache")
+  await cache.activate("owner")
+  const state = (revision: number) => ({ revision, entry: { toJSON() { serializations++; return "data" } } })
+  cache.save(state(1))
+  cache.save(state(2))
+  cache.save(state(3))
+  expect(serializations).toBe(1)
+  blocked.resolve()
+  await cache.flush()
+  expect(serializations).toBe(2)
+  const next = state(4)
+  fail = true
+  cache.save(next)
+  await cache.flush()
+  fail = false
+  cache.save(next)
+  await cache.flush()
+  expect(JSON.parse(storage.values.get("cache:owner")!).state.revision).toBe(4)
+})
+
 test("malformed or wrong-scope caches and storage failures do not block playback", async () => {
   const storage = memory()
   storage.values.set("library:account", "broken-json")

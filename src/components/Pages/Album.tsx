@@ -1,42 +1,28 @@
+import { useAlbumPage } from "../../hooks/useMetadataPage"
 import { DownloadBadge } from "../shared/DownloadBadge"
 import { DownloadMenuItems } from "../shared/DownloadMenuItems"
 import {
   metadataRefreshMessage,
-  retryMetadataRefresh,
 } from "../../lib/metadataLoadError"
 import "../../styles/media-detail-controls.css"
 import { ArtworkImage, useArtworkFailures } from "../shared/ArtworkImage"
 import { useAlbumImage, useAlbumBackground } from "../../hooks/useMediaImage"
-import { useLayoutEffect, useEffect, useMemo, useRef, useState } from "react"
+import { useLayoutEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { Link, useLocation } from "wouter"
 import { openUrl as open } from "@tauri-apps/plugin-opener"
 import { useShallow } from "zustand/react/shallow"
-import { usePlayerStore, useUIStore, useLibraryStore } from "../../stores"
+import { usePlayerStore, useLibraryStore } from "../../stores"
 import { useProviderStore } from "../../stores/providerStore"
-import { formatMs, formatTotalDuration } from "../../lib/formatters"
+import { formatTotalDuration } from "../../lib/formatters"
 import { ImageModal } from "../shared/ImageModal"
-import { useContextMenu } from "../../hooks/useContextMenu"
-import type {
-  MusicAlbum,
-  MusicTrack,
-  MusicHub,
-  MusicItem,
-} from "../../types/music"
 import { MediaCard } from "../MediaCard"
 import { ScrollRow } from "../ScrollRow"
 import { MediaBackdrop } from "../shared/MediaBackdrop"
 import {
-  getCachedAlbum,
   prefetchAlbum,
   prefetchArtist,
-  loadAlbumPage,
-  captureMetadataCache,
-  isMetadataCacheCurrent,
-  type AlbumCacheEntry,
 } from "../../stores/metadataCache"
-import { useAlbumEnrichment } from "../../hooks/useMetadataEnrichment"
-import { useMetadataSourceStore } from "../../stores/metadataSourceStore"
 import { HeroRating } from "../HeroRating"
 import { PageLoading } from "../shared/PageLoading"
 import { PageRecovery } from "../shared/PageRecovery"
@@ -50,6 +36,8 @@ import { useMetadataSnapshot } from "../../hooks/useMetadataSnapshot"
 import { MetadataEditDialog } from "../shared/MetadataEditDialog"
 import { AppDialog } from "../shared/AppDialog"
 import { VersionReviewPanel } from "../VersionReview/VersionReviewPanel"
+
+const DETAIL_SOURCES = ["deezer"] as const
 
 function TagChip({
   tag,
@@ -81,24 +69,12 @@ export function AlbumPage({ albumId }: { albumId: string }) {
         currentTrack: s.currentTrack,
       }))
     )
-  const { handler: ctxMenu } = useContextMenu()
-  const pageRefreshKey = useUIStore((s) => s.pageRefreshKey)
-  const shouldDeduplicate = useUIStore((s) => s.deduplicateAlbums)
   const hasRadio = useCapability("radio")
 
-  // Seed from eager-load cache for an instant first render.
-  const cached = getCachedAlbum(albumId)
-  const [album, setAlbum] = useState<MusicAlbum | null>(cached?.album ?? null)
-  const [tracks, setTracks] = useState<MusicTrack[]>(cached?.tracks ?? [])
-  const [relatedHubs, setRelatedHubs] = useState<MusicHub[]>(
-    cached?.relatedHubs ?? []
-  )
-  const [isLoading, setIsLoading] = useState(!cached)
-  const [error, setError] = useState<string | null>(null)
-  const [loadAttempt, setLoadAttempt] = useState(0)
-  const pageOwner = useRef<{ provider: typeof provider; id: string } | null>(
-    null
-  )
+  const { entry, isLoading, error, retry } = useAlbumPage(albumId)
+  const album = entry?.album ?? null
+  const tracks = entry?.tracks ?? []
+  const relatedHubs = entry?.relatedHubs ?? []
 
   // UI state
   const [descExpanded, setDescExpanded] = useState(false)
@@ -111,8 +87,6 @@ export function AlbumPage({ albumId }: { albumId: string }) {
   const debugEnabled = useDebugStore((s) => s.debugEnabled)
   const showDebugPanel = useDebugPanelStore((s) => s.show)
 
-  // Metadata source priority
-  const priority = useMetadataSourceStore((s) => s.priority)
   const { tagsGenre, tagsMood, tagsStyle } = useLibraryStore(
     useShallow((s) => ({
       tagsGenre: s.tagsGenre,
@@ -121,12 +95,6 @@ export function AlbumPage({ albumId }: { albumId: string }) {
     }))
   )
 
-  // Enrichment metadata from all backends
-  const {
-    lastfm: lastfmData,
-    deezer: deezerData,
-    itunes: itunesData,
-  } = useAlbumEnrichment(album?.artistName ?? null, album?.title ?? null)
   const sharedMetadata = useMetadataSnapshot(
     album && provider?.cacheScope
       ? {
@@ -137,65 +105,19 @@ export function AlbumPage({ albumId }: { albumId: string }) {
           scope: provider.cacheScope,
         }
       : null,
-    album
+    album,
+    undefined,
+    undefined,
+    DETAIL_SOURCES
   )
+  const deezerData = sharedMetadata.sourceFields("deezer")
 
   useLayoutEffect(() => {
-    let active = true
-    const session = captureMetadataCache(provider)
-    const current = () => active && isMetadataCacheCurrent(session)
-    setError(null)
-    const changedPage =
-      pageOwner.current?.provider !== provider ||
-      pageOwner.current?.id !== albumId
-    pageOwner.current = { provider, id: albumId }
-    if (changedPage) {
-      setDescExpanded(false)
-      setShowImageModal(false)
-      setEditOpen(false)
-      setVersionsOpen(false)
-    }
-
-    // Seed ALL state from persistent cache — avoids loading flash.
-    const freshCache = getCachedAlbum(albumId)
-    if (freshCache) {
-      setAlbum(freshCache.album)
-      setTracks(freshCache.tracks)
-      setRelatedHubs(freshCache.relatedHubs)
-      setIsLoading(false)
-    } else if (changedPage) {
-      setAlbum(null)
-      setTracks([])
-      setRelatedHubs([])
-      setIsLoading(true)
-    }
-
-    if (!provider || !session) {
-      setIsLoading(false)
-      return
-    }
-    const applyEntry = (entry: AlbumCacheEntry) => {
-      if (!current()) return
-      setAlbum(entry.album)
-      setTracks(entry.tracks)
-      setRelatedHubs(entry.relatedHubs)
-      setIsLoading(false)
-    }
-    retryMetadataRefresh(
-      () => loadAlbumPage(albumId, { force: true, onCore: applyEntry }),
-      current
-    )
-      .then(applyEntry)
-      .catch((error) => {
-        if (current()) setError(String(error))
-      })
-      .finally(() => {
-        if (current()) setIsLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [albumId, provider, pageRefreshKey, loadAttempt, shouldDeduplicate])
+    setDescExpanded(false)
+    setShowImageModal(false)
+    setEditOpen(false)
+    setVersionsOpen(false)
+  }, [provider, albumId])
 
   // Build set of all Plex-known tags so external tags can be filtered to only
   // those that link to something in the library (genre/mood/style stations).
@@ -262,7 +184,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
               : "Check your connection and try again, or choose another album from your library."
           }
           kind={!provider || !error ? "empty" : "error"}
-          onRetry={provider ? () => setLoadAttempt((n) => n + 1) : undefined}
+          onRetry={provider ? retry : undefined}
           onOpenSettings={() => navigate("/settings")}
           onReturnLibrary={() => navigate("/collection/albums")}
         />
@@ -330,7 +252,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
           artworkUrl={thumbUrl}
           backgroundUrl={backgroundUrl ?? thumbUrl ?? parentThumbUrl}
           onClose={() => setEditOpen(false)}
-          onSaved={() => setLoadAttempt((value) => value + 1)}
+          onSaved={retry}
         />
       )}
       <MediaBackdrop
@@ -718,10 +640,10 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                           </svg>
                           Last.fm album
                         </button>
-                        {deezerData?.deezer_url && (
+                        {deezerData?.externalUrl && (
                           <button
                             onClick={() => {
-                              void open(deezerData.deezer_url)
+                              void open(deezerData.externalUrl)
                               setMenuOpen(false)
                             }}
                             className="flex w-full items-center gap-2 px-3 py-2 text-sm text-(--text-primary) hover:bg-(--bg-surface-hover)"
@@ -824,7 +746,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
           <PageRecovery
             title="Couldn't refresh this album"
             description={metadataRefreshMessage(error, "album")!}
-            onRetry={() => setLoadAttempt((n) => n + 1)}
+            onRetry={retry}
           />
         )}
         <DetailTrackList

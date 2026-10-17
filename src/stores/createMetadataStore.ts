@@ -31,6 +31,8 @@ interface CreateMetadataStoreOpts<ArtistT, AlbumT> {
   albumTtl?: number
   negativeTtl?: number
   evictionTtl?: number
+  maxArtists?: number
+  maxAlbums?: number
   guard?: () => boolean
   validateArtist?: (data: ArtistT, artist: string) => boolean
   validateAlbum?: (data: AlbumT, artist: string, album: string) => boolean
@@ -47,6 +49,8 @@ export function createMetadataStore<ArtistT, AlbumT>(
     artistTtl = DEFAULT_TTL_MS,
     albumTtl = DEFAULT_TTL_MS,
     negativeTtl = DEFAULT_TTL_MS,
+    maxArtists = 500,
+    maxAlbums = 1000,
     guard,
     validateArtist,
     validateAlbum,
@@ -117,10 +121,15 @@ export function createMetadataStore<ArtistT, AlbumT>(
               )
                 return null
               set((s) => ({
-                artists: {
-                  ...s.artists,
-                  [key]: { data, cachedAt: Date.now() },
-                },
+                artists: evictStaleEntries(
+                  {
+                    ...s.artists,
+                    [key]: { data, cachedAt: Date.now() },
+                  },
+                  evictionTtl,
+                  maxArtists,
+                  key
+                ),
               }))
               return data
             } catch {
@@ -192,7 +201,12 @@ export function createMetadataStore<ArtistT, AlbumT>(
                 return null
               const data = fetched
               set((s) => ({
-                albums: { ...s.albums, [key]: { data, cachedAt: Date.now() } },
+                albums: evictStaleEntries(
+                  { ...s.albums, [key]: { data, cachedAt: Date.now() } },
+                  evictionTtl,
+                  maxAlbums,
+                  key
+                ),
               }))
               return data
             } catch {
@@ -263,8 +277,16 @@ export function createMetadataStore<ArtistT, AlbumT>(
         partialize: (s) => ({ artists: s.artists, albums: s.albums }),
         onRehydrateStorage: () => (state) => {
           if (state) {
-            state.artists = evictStaleEntries(state.artists, evictionTtl)
-            state.albums = evictStaleEntries(state.albums, evictionTtl)
+            state.artists = evictStaleEntries(
+              state.artists,
+              evictionTtl,
+              maxArtists
+            )
+            state.albums = evictStaleEntries(
+              state.albums,
+              evictionTtl,
+              maxAlbums
+            )
             if (validateCachedAlbum)
               state.albums = Object.fromEntries(
                 Object.entries(state.albums).filter(

@@ -17,6 +17,7 @@ Object.assign(globalThis, {
   IS_REACT_ACT_ENVIRONMENT: true,
 })
 const ui = create(() => ({ pageRefreshKey: 0, deduplicateAlbums: true }))
+mock.module("../../src/stores/uiStore", () => ({ useUIStore: ui }))
 const player = create(() => ({ currentTrack: null }))
 const library = create(() => ({ tagsGenre: [], tagsMood: [], tagsStyle: [] }))
 mock.module("../../src/stores/index.ts", () => ({
@@ -49,6 +50,7 @@ mock.module("../../src/hooks/useMetadataEnrichment", () => ({
 }))
 mock.module("../../src/hooks/useMetadataSnapshot", () => ({
   useMetadataSnapshot: () => ({
+    sourceFields: () => null,
     resolveField: (field: string) =>
       ["summary", "biography"].includes(field)
         ? {
@@ -130,7 +132,9 @@ const entry = (id: string, title = `Saved ${kind}`): any =>
       }
 let cached: any = entry("8")
 const reads: ReturnType<typeof deferred<any>>[] = []
-function load() {
+const forced: boolean[] = []
+function load(_id: string, options: { force: boolean }) {
+  forced.push(options.force)
   const reply = deferred<any>()
   reads.push(reply)
   return reply.promise
@@ -162,6 +166,7 @@ try {
     await settle()
   })
   assert.equal(reads.length, 1)
+  assert.equal(forced[0], false, "navigation must share fresh cache and prefetch reads")
   const more = [...document.querySelectorAll<HTMLElement>("[title]")].find(
     (el) => el.title === "Expand"
   )!
@@ -185,6 +190,7 @@ try {
     await settle()
   })
   assert.equal(reads.length, 2)
+  assert.equal(forced[1], true, "an explicit refresh must request fresh server data")
   assert(
     document.body.textContent!.includes(`Saved ${kind}`),
     "visible data survives an evicted-cache refresh"
