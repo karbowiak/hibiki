@@ -223,7 +223,7 @@ try {
       "existing callers must retain their toolbar"
     )
     assert.ok(
-      document.querySelector('button[title="Track Radio"]'),
+      document.querySelector('button[aria-label="Start radio for Track 0"]'),
       "existing callers' radio default must remain unchanged"
     )
     assert.equal(
@@ -239,7 +239,7 @@ try {
     )
     if (scenario === "reachability") {
       assert.ok(
-        document.body.textContent!.includes("114 results in your library")
+        document.body.textContent!.includes("114 results")
       )
       const cards = () =>
         document.querySelectorAll(
@@ -260,7 +260,9 @@ try {
       await click(button("Albums"))
       assert.equal(document.querySelectorAll("section").length, 1)
       assert.equal(button("Albums").getAttribute("aria-pressed"), "true")
-      await update({ results: [artist(99)] }) // a replacement provider can reuse query text
+      await update({ results: [artist(99)] })
+      assert.equal(button("Albums").getAttribute("aria-pressed"), "true", "revalidation retains the selected filter")
+      await act(async () => providers.setState({ provider: { capabilities: {}, cacheScope: "replacement" } }))
       assert.equal(button("All").getAttribute("aria-pressed"), "true")
       assert.ok(document.querySelector('a[href="/artist/artist-99"]'))
       assert.equal(button("Albums").disabled, true)
@@ -295,12 +297,12 @@ try {
         1,
         "queue action must not bubble into playback"
       )
-      assert.equal(document.querySelector('button[title="Track Radio"]'), null)
+      assert.equal(document.querySelector('button[aria-label="Start radio for Track 0"]'), null)
       hasRadio = true
       await update({ results: [...tracks] })
       await click(
         document.querySelector<HTMLButtonElement>(
-          'button[title="Track Radio"]'
+          'button[aria-label="Start radio for Track 0"]'
         )!
       )
       assert.deepEqual(radios, [["track-0", "track"]])

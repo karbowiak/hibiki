@@ -5,6 +5,7 @@ import { act } from "react"
 const dom = new JSDOM("<div id='root'></div>", { url: "https://hibiki.test" })
 globalThis.window = dom.window as any
 globalThis.document = dom.window.document
+Object.assign(globalThis, { location: dom.window.location, history: dom.window.history })
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 let fail: () => void
 mock.module("../../src/components/shared/ArtworkImage", () => ({

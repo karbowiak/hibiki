@@ -820,6 +820,7 @@ try {
       useContextMenu: () => ({ handler: () => () => {} }),
     }))
     mock.module("../../src/lib/mediaCardInfo", () => ({
+      getMediaInfo: () => null,
       makeDragPayload: () => undefined,
     }))
     const { Search } = await import("../../src/components/Pages/Search")

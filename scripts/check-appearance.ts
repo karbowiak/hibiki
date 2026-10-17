@@ -186,7 +186,7 @@ async function checkFinishingPolish(page: Page, name: string) {
     await page.screenshot({ path: join(artifacts, `${name}-${width}-create-playlist-polish.png`), animations: 'disabled' })
     await create.getByRole('button', { name: 'Close create playlist', exact: true }).click()
     await create.waitFor({ state: 'detached' })
-    for (const label of ['Sleep Timer', 'Guest DJ', 'Equalizer', 'Radio settings']) {
+    for (const label of ['Sleep Timer', 'Radio and Guest DJ', 'Equalizer', 'Radio settings']) {
       if (label === 'Radio settings') await page.evaluate(() => (window as any).fixtureAppearance.radioPreview())
       await page.getByRole('button', { name: label, exact: true }).click()
       const popup = page.getByRole('dialog', { name: label, exact: true })
