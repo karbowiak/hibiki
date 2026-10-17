@@ -97,7 +97,6 @@ export interface LibraryState {
   playlistIsFullyLoaded: Record<string, boolean>
   playlistPageErrors: Record<string, string>
   /** Per-mix track cache. Key = mix item key (the API path). */
-  mixTracksCache: Record<string, MusicTrack[]>
   /** Shown in TopBar during startup pre-fetch. Null when idle. */
   prefetchStatus: { done: number; total: number } | null
 
@@ -144,7 +143,6 @@ export interface LibraryState {
   fetchPlaylistItems: (playlistId: string) => Promise<void>
   fetchMorePlaylistItems: (playlistId: string, opts?: FetchOpts) => Promise<void>
   prefetchAllPlaylists: () => Promise<void>
-  prefetchMixTracks: () => Promise<void>
   createPlaylist: (title: string, itemIds?: string[]) => Promise<MusicPlaylist>
   refreshAll: () => Promise<void>
   /** Evict a single playlist's item cache and refetch if it's currently viewed. */
@@ -184,7 +182,6 @@ const emptyLibrary = () => ({
   playlistItemsCache: {},
   playlistIsFullyLoaded: {},
   playlistPageErrors: {},
-  mixTracksCache: {},
   tagsGenre: [],
   tagsMood: [],
   tagsStyle: [],
@@ -301,8 +298,7 @@ export function createLibraryStore({
   const versions = new Map<string, number>()
   const moreRequests = new Map<string, symbol>()
   const ratings = new Map<string, number | null>()
-  let playlistPrefetch: Promise<void> | null = null,
-    mixPrefetch: Promise<void> | null = null
+  let playlistPrefetch: Promise<void> | null = null
   const version = (id: string) => versions.get(id) ?? 0
   const rated = (tracks: MusicTrack[]) =>
     tracks.map((track) => (ratings.has(track.id) ? { ...track, userRating: ratings.get(track.id)! } : track))
@@ -321,7 +317,6 @@ export function createLibraryStore({
     moreRequests.clear()
     ratings.clear()
     playlistPrefetch = null
-    mixPrefetch = null
   }
 
   const store = create<LibraryState>((set, get) => {
@@ -701,42 +696,6 @@ export function createLibraryStore({
         playlistPrefetch = work
         return work
       },
-      prefetchMixTracks: async () => {
-        const session = capture()
-        if (!session?.provider.getMixTracks) return
-        if (mixPrefetch) return mixPrefetch
-        const keys = [
-          ...new Set(
-            get()
-              .hubs.filter((hub) => hub.identifier?.startsWith("music.mixes"))
-              .flatMap((hub) => hub.items)
-              .filter((item) => item.type === "playlist")
-              .map((item) => item.providerKey)
-              .filter((key): key is string => !!key)
-          )
-        ]
-        const work = (async () => {
-          for (let i = 0; i < keys.length; i++) {
-            if (!current(session)) return
-            const key = keys[i]
-            if (!get().mixTracksCache[key]) {
-              try {
-                const tracks = await session.provider.getMixTracks!(key)
-                if (!current(session)) return
-                set((state) => ({ mixTracksCache: { ...state.mixTracksCache, [key]: rated(tracks) } }))
-              } catch {
-                /* Continue other mixes. */
-              }
-            }
-            if (!current(session)) return
-            if (i < keys.length - 1) await delay(PREFETCH_DELAY_MS)
-          }
-        })().finally(() => {
-          if (mixPrefetch === work) mixPrefetch = null
-        })
-        mixPrefetch = work
-        return work
-      },
       createPlaylist: async (title, itemIds = []) => {
         const session = capture()
         if (!session) throw new Error("No provider")
@@ -900,8 +859,7 @@ export function createLibraryStore({
           playlistItemsCache: {},
           playlistIsFullyLoaded: {},
           playlistPageErrors: {},
-          mixTracksCache: {},
-          prefetchStatus: null,
+                  prefetchStatus: null,
           isLoading: false,
           isFetchingMore: false
         })

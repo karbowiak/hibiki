@@ -42,6 +42,7 @@ export function createCollectionCacheProvider(
   const methods = new Map<PropertyKey, unknown>()
   const failures = new Set<string>()
   const preparing = new Map<string, Promise<void>>()
+  const foreground = new Set<string>()
   const mixPaths = new Map<string, string>()
   async function resolveKey(key: string) {
     if (!key.startsWith("mix:/")) return key
@@ -99,7 +100,9 @@ export function createCollectionCacheProvider(
     running = true
     try {
       while (jobs.size && online()) {
-        const job = jobs.values().next().value!
+        const job =
+          [...jobs.values()].find((job) => foreground.has(job.key)) ??
+          jobs.values().next().value!
         jobs.delete(job.key)
         activeJob = job
         try {
@@ -176,10 +179,21 @@ export function createCollectionCacheProvider(
       running = false
     }
   }
-  async function schedule() {
+  let rosterRequest: ReturnType<MusicProvider["getPlaylists"]> | undefined
+  function roster() {
+    if (!rosterRequest) {
+      const request = raw.getPlaylists().finally(() => {
+        if (rosterRequest === request) rosterRequest = undefined
+      })
+      rosterRequest = request
+    }
+    return rosterRequest
+  }
+  async function schedule(keys?: readonly string[]) {
     if (!online()) return
     for (const kind of ["track", "album", "artist"] as const) {
-      if (!raw.getRatedItemsPage) continue
+      if (!raw.getRatedItemsPage || (keys && !keys.includes(`rated:${kind}`)))
+        continue
       enqueue({
         key: `rated:${kind}`,
         stamp: `rated:${kind}`,
@@ -187,24 +201,40 @@ export function createCollectionCacheProvider(
         load: (offset, limit) => raw.getRatedItemsPage!(kind, offset, limit),
       })
     }
+    if (
+      keys &&
+      !keys.some((key) => key === "playlists" || key.startsWith("playlist:"))
+    )
+      return
     try {
-      const playlists = await raw.getPlaylists()
+      const playlists = await roster()
       if (!online()) return
-      enqueue({
-        key: "playlists",
-        stamp: String(Date.now()),
-        force: false,
-        load: async (offset, limit) => ({
-          items: playlists
-            .slice(offset, offset + limit)
-            .map((item) => ({ ...item, type: "playlist" as const })),
-          total: playlists.length,
-          offset,
-        }),
-      })
+      if (!keys || keys.includes("playlists")) {
+        const digest = await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(
+            JSON.stringify(sanitizeOfflineData(playlists))
+          )
+        )
+        enqueue({
+          key: "playlists",
+          stamp: [...new Uint8Array(digest)]
+            .map((byte) => byte.toString(16).padStart(2, "0"))
+            .join(""),
+          force: false,
+          load: async (offset, limit) => ({
+            items: playlists
+              .slice(offset, offset + limit)
+              .map((item) => ({ ...item, type: "playlist" as const })),
+            total: playlists.length,
+            offset,
+          }),
+        })
+      }
       for (const playlist of [...playlists].sort(
         (a, b) => a.trackCount - b.trackCount
       )) {
+        if (keys && !keys.includes(`playlist:${playlist.id}`)) continue
         enqueue({
           key: `playlist:${playlist.id}`,
           stamp: JSON.stringify([
@@ -250,14 +280,19 @@ export function createCollectionCacheProvider(
   function ensure(key: string): Promise<void> {
     const existing = preparing.get(key)
     if (existing) return existing
-    const pending = prepare(key).finally(() => preparing.delete(key))
+    foreground.add(key)
+    const pending = prepare(key).finally(() => {
+      preparing.delete(key)
+      foreground.delete(key)
+    })
     preparing.set(key, pending)
     return pending
   }
   async function prepare(key: string) {
     const info = await call<Info | null>("info", key)
     const current = (info: Info | null) =>
-      info?.complete && !info.dirty &&
+      info?.complete &&
+      !info.dirty &&
       (!mixPaths.has(key) || info.stamp === MIX_STAMP)
     if (current(info)) return
     if (!online())
@@ -317,7 +352,9 @@ export function createCollectionCacheProvider(
       }
     } else throw Error("This collection cannot be searched.")
     if (activeJob?.key !== key) {
-      const waiting = [...jobs.entries()].filter(([existing]) => existing !== key)
+      const waiting = [...jobs.entries()].filter(
+        ([existing]) => existing !== key
+      )
       jobs.clear()
       enqueue(job)
       waiting.forEach(([key, value]) => jobs.set(key, value))
@@ -336,16 +373,27 @@ export function createCollectionCacheProvider(
       await call("invalidate", key)
       notify(key)
     }
-    void schedule()
+    void schedule(keys)
   }
   const proxy = new Proxy(provider, {
     get(target, property) {
-      if (property === "savedQueue") return {
-        load: () => transport("saved_queue", { context, request: { op: "load" } }),
-        save: (snapshot: unknown) => transport("saved_queue", { context, request: { op: "save", ...snapshot as object } }),
-        position: (state: unknown) => transport("saved_queue", { context, request: { op: "position", state } }),
-        clear: () => transport("saved_queue", { context, request: { op: "clear" } }),
-      }
+      if (property === "savedQueue")
+        return {
+          load: () =>
+            transport("saved_queue", { context, request: { op: "load" } }),
+          save: (snapshot: unknown) =>
+            transport("saved_queue", {
+              context,
+              request: { op: "save", ...(snapshot as object) },
+            }),
+          position: (state: unknown) =>
+            transport("saved_queue", {
+              context,
+              request: { op: "position", state },
+            }),
+          clear: () =>
+            transport("saved_queue", { context, request: { op: "clear" } }),
+        }
       if (property === "warmCollections") return warm
       if (property === "stopCollectionWarmup") return stop
       if (methods.has(property)) return methods.get(property)
@@ -403,24 +451,46 @@ export function createCollectionCacheProvider(
           return project(page)
         }
       else if (property === "getCachedTrackSource")
-        method = async (key: string, shuffle = false, query?: CollectionOrder) => {
+        method = async (
+          key: string,
+          shuffle = false,
+          query?: CollectionOrder
+        ) => {
           key = await resolveKey(key)
           if (query || mixPaths.has(key)) await ensure(key)
           const refs = query
-            ? await call<[string, string | null][] | null>("queryRefs", key, { ...query })
-            : await call<[string, string | null][] | null>("refs", key).catch(() => null)
+            ? await call<[string, string | null][] | null>("queryRefs", key, {
+                ...query,
+              })
+            : await call<[string, string | null][] | null>("refs", key).catch(
+                () => null
+              )
           if (!refs) return null
           const order = shuffle ? shuffled(refs) : refs
           return {
             key,
             ...(query ? { restoreQuery: { key, ...query } } : {}),
             total: order.length,
-            entries: order.map(([id, occurrence]) => ({ id, ...(occurrence ? { playlistItemId: occurrence } : {}) })),
+            entries: order.map(([id, occurrence]) => ({
+              id,
+              ...(occurrence ? { playlistItemId: occurrence } : {}),
+            })),
             async loadItems(positions: number[]) {
-              const selected = positions.map(position => order[position])
-              const rows = await call<(MusicTrack | null)[]>("items", key, { ids: selected.map(ref => ref[0]) })
-              if (rows.some(row => !row)) throw Error("Some cached songs are unavailable. Refresh the collection and try again.")
-              return project(rows.map((row, i) => selected[i][1] ? { ...row!, playlistItemId: selected[i][1] } : row!))
+              const selected = positions.map((position) => order[position])
+              const rows = await call<(MusicTrack | null)[]>("items", key, {
+                ids: selected.map((ref) => ref[0]),
+              })
+              if (rows.some((row) => !row))
+                throw Error(
+                  "Some cached songs are unavailable. Refresh the collection and try again."
+                )
+              return project(
+                rows.map((row, i) =>
+                  selected[i][1]
+                    ? { ...row!, playlistItemId: selected[i][1] }
+                    : row!
+                )
+              )
             },
             async loadPage(offset: number, limit: number) {
               const selected = order.slice(offset, offset + limit)

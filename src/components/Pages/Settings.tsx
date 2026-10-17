@@ -730,7 +730,6 @@ function CacheSection() {
   const hubCount = libStore.hubs.length
   const recentlyAddedCount = libStore.recentlyAdded.length
   const playlistCacheCount = Object.keys(libStore.playlistItemsCache).length
-  const mixCacheCount = Object.keys(libStore.mixTracksCache).length
 
   const metaStats = getMetadataCacheStats()
 
@@ -768,7 +767,7 @@ function CacheSection() {
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-white">Library Data</p>
             <p className="text-xs text-(--text-secondary) mt-0.5">
-              {playlistCount} playlists · {hubCount} hubs · {recentlyAddedCount} recently added · {playlistCacheCount} playlist caches · {mixCacheCount} mix caches
+              {playlistCount} playlists · {hubCount} hubs · {recentlyAddedCount} recently added · {playlistCacheCount} playlist caches
             </p>
           </div>
           <button

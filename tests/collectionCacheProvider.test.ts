@@ -340,3 +340,152 @@ test("launch warmup resumes a partial playlist and skips fresh complete contents
     provider.stopCollectionWarmup!()
   }
 })
+
+test("rating a song does not inspect unrelated playlist caches", async () => {
+  let playlistRosterReads = 0
+  const infos: string[] = [],
+    upstreamPages: string[] = [],
+    dirty = new Set<string>()
+  const playlists = Array.from({ length: 50 }, (_, i) => ({
+    id: String(i + 1),
+    trackCount: 10,
+    duration: 10000,
+  }))
+  const raw: any = {
+    cacheScope: "owner",
+    playbackSession: {},
+    isConnected: () => true,
+    rate: async () => {},
+    getPlaylists: async () => {
+      playlistRosterReads++
+      return playlists
+    },
+    getRatedItemsPage: async (kind: string) => {
+      upstreamPages.push(kind)
+      return { items: [], total: 0, offset: 0 }
+    },
+  }
+  const transport = async <T>(
+    _command: string,
+    { request: r }: any
+  ): Promise<T> => {
+    if (r.op === "invalidate") dirty.add(r.key)
+    if (r.op === "info") {
+      infos.push(r.key)
+      return {
+        complete: true,
+        dirty: dirty.has(r.key),
+        refreshing: false,
+        cachedAt: Date.now(),
+        stamp: r.key.startsWith("playlist:")
+          ? JSON.stringify([10, 10000, undefined])
+          : r.key,
+      } as T
+    }
+    if (r.op === "begin") return { generation: 1, offset: 0 } as T
+    if (r.op === "commit") {
+      dirty.delete(r.key)
+      return { changed: false } as T
+    }
+    return null as T
+  }
+  const provider = createCollectionCacheProvider(
+    raw,
+    raw,
+    { cacheScope: "owner", connectionRevision: 1 },
+    transport
+  )
+  await provider.rate("1", 8)
+  for (let i = 0; i < 30 && upstreamPages.length < 3; i++) await Bun.sleep(50)
+  provider.stopCollectionWarmup!()
+  const playlistChecks = infos.filter((k) => k.startsWith("playlist:")).length
+  expect(playlistRosterReads).toBe(0)
+  expect(playlistChecks).toBe(0)
+  expect(upstreamPages).toEqual(["track", "album", "artist"])
+})
+
+test("foreground preparation stays ahead of background playlists across chunk yields", async () => {
+  const log: string[] = [],
+    state = new Map<string, any>()
+  const playlists = [
+    ...Array.from({ length: 8 }, (_, i) => ({
+      id: String(i + 1),
+      trackCount: 1,
+      duration: 1,
+    })),
+    { id: "99", trackCount: 2500, duration: 2500 },
+  ]
+  const raw: any = {
+    cacheScope: "owner",
+    playbackSession: {},
+    isConnected: () => true,
+    getPlaylists: async () => playlists,
+    getPlaylistItems: async (id: string, offset: number, limit: number) => {
+      log.push(`${id}:${offset}`)
+      const total = id === "99" ? 2500 : 1
+      return {
+        offset,
+        total,
+        items: Array.from(
+          { length: Math.min(limit, total - offset) },
+          (_, i) => ({
+            id: String(offset + i + 1),
+            type: "track",
+            title: "Song",
+          })
+        ),
+      }
+    },
+  }
+  const transport = async <T>(
+    _command: string,
+    { request: r }: any
+  ): Promise<T> => {
+    let s = state.get(r.key)
+    if (r.op === "info") return (s?.complete ? s : null) as T
+    if (r.op === "query")
+      return (
+        s?.complete ? { items: [], total: s.total, offset: r.offset } : null
+      ) as T
+    if (r.op === "begin") {
+      if (!s) {
+        s = { offset: 0 }
+        state.set(r.key, s)
+      }
+      return { generation: 1, offset: s.offset } as T
+    }
+    if (r.op === "put") {
+      s.offset = r.offset + r.items.length
+      s.total = r.total
+    }
+    if (r.op === "commit") {
+      s.complete = true
+      s.dirty = false
+      return { changed: false } as T
+    }
+    return null as T
+  }
+  const provider = createCollectionCacheProvider(
+    raw,
+    raw,
+    { cacheScope: "owner", connectionRevision: 1 },
+    transport
+  )
+  provider.warmCollections!()
+  const page = provider.getCollectionPage!(
+    "playlist:99",
+    0,
+    20,
+    "",
+    "title",
+    "asc"
+  )
+  await page
+  provider.stopCollectionWarmup!()
+  const first = log.indexOf("99:0"),
+    last = log.indexOf("99:2000")
+  const unrelated = log
+    .slice(first, last)
+    .filter((row) => !row.startsWith("99:"))
+  expect(unrelated).toEqual([])
+})

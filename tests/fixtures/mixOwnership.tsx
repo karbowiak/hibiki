@@ -30,7 +30,6 @@ const library = create(() => ({
   hubs: [] as any[],
   recentlyAdded: [] as any[],
   latestReleases: [] as any[],
-  mixTracksCache: {},
   tagsGenre: [],
   tagsMood: [],
   tagsStyle: [],

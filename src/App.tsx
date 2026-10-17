@@ -67,8 +67,8 @@ function DesktopApp() {
   const { isConnected, isOffline, musicSectionId, isLoading, loadAndConnect } = useConnectionStore(
     useShallow(s => ({ isConnected: s.isConnected, isOffline: s.isOffline, musicSectionId: s.musicSectionId, isLoading: s.isLoading, loadAndConnect: s.loadAndConnect }))
   )
-  const { fetchPlaylists, fetchRecentlyAdded, fetchLatestReleases, fetchHubs, fetchTags, prefetchAllPlaylists, prefetchMixTracks } = useLibraryStore(
-    useShallow(s => ({ fetchPlaylists: s.fetchPlaylists, fetchRecentlyAdded: s.fetchRecentlyAdded, fetchLatestReleases: s.fetchLatestReleases, fetchHubs: s.fetchHubs, fetchTags: s.fetchTags, prefetchAllPlaylists: s.prefetchAllPlaylists, prefetchMixTracks: s.prefetchMixTracks }))
+  const { fetchPlaylists, fetchRecentlyAdded, fetchLatestReleases, fetchHubs, fetchTags, prefetchAllPlaylists } = useLibraryStore(
+    useShallow(s => ({ fetchPlaylists: s.fetchPlaylists, fetchRecentlyAdded: s.fetchRecentlyAdded, fetchLatestReleases: s.fetchLatestReleases, fetchHubs: s.fetchHubs, fetchTags: s.fetchTags, prefetchAllPlaylists: s.prefetchAllPlaylists }))
   )
   const { showCreatePlaylist, setShowCreatePlaylist, pendingPlaylistItemIds, setPendingPlaylistItemIds } = useUIStore(
     useShallow(s => ({ showCreatePlaylist: s.showCreatePlaylist, setShowCreatePlaylist: s.setShowCreatePlaylist, pendingPlaylistItemIds: s.pendingPlaylistItemIds, setPendingPlaylistItemIds: s.setPendingPlaylistItemIds }))
@@ -125,7 +125,6 @@ function DesktopApp() {
         if (!active || isOffline || useProviderStore.getState().provider !== activeProvider) return
         if (activeProvider.warmCollections) activeProvider.warmCollections()
         else void prefetchAllPlaylists()
-        void prefetchMixTracks()
       })
     }
     return () => { active = false }
