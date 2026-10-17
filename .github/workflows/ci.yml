@@ -1,12 +1,18 @@
 name: CI
 
 on:
+  workflow_call:
+    inputs:
+      source_commit:
+        description: Immutable source commit to validate for a release
+        required: true
+        type: string
   pull_request:
   push:
     branches: [main]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ inputs.source_commit || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -14,6 +20,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_commit || github.sha }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
@@ -75,6 +83,8 @@ jobs:
           - runner: windows-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_commit || github.sha }}
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'

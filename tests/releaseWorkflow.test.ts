@@ -22,7 +22,7 @@ const run = new (Object.getPrototypeOf(async function () {}).constructor)(
   script
 )
 
-function mock(releases: { id: number; tag_name: string; draft: boolean }[]) {
+function mock(releases: { id: number; tag_name: string; draft: boolean; body?: string }[]) {
   const calls: unknown[] = []
   const listReleases = () => {
     throw new Error("Pagination should use the endpoint reference")
@@ -80,7 +80,7 @@ test("publication retries retain signature and relocated-AppImage checks and res
   expect(publish.if).toContain("!cancelled()")
   expect(publish.if).toContain("needs.create-release.result == 'success'")
   expect(publish.if).toContain("needs.build-tauri.result == 'success' || (inputs.publish_only && needs.build-tauri.result == 'skipped')")
-  const signed=publish.steps.findIndex((s:any)=>s.name==="Verify tag, current CI and signed updater artifacts")
+  const signed=publish.steps.findIndex((s:any)=>s.name==="Verify tag and signed updater artifacts")
   const bytes=publish.steps.findIndex((s:any)=>s.name==="Require published-byte AppStream and AppImageUpdate integrity")
   const final=publish.steps.findIndex((s:any)=>s.name==="Publish release")
   expect(signed).toBeGreaterThan(-1)
@@ -150,7 +150,7 @@ test("release listing failures stop before creating a release", async () => {
   expect(calls).toEqual([])
 })
 
-test("versioned release notes populate new drafts and refresh matching drafts only", async () => {
+test("versioned release notes populate new drafts and fill empty matching drafts only", async () => {
   const body = readFileSync(new URL("../releases/0.6.0.md", import.meta.url), "utf8")
   const fresh = mock([])
   expect(await execute(fresh.github, "0.6.0")).toBe(99)
@@ -161,4 +161,55 @@ test("versioned release notes populate new drafts and refresh matching drafts on
   const published = mock([{ id: 42, tag_name: "v0.6.0", draft: false }])
   await expect(execute(published.github, "0.6.0")).rejects.toThrow("already published")
   expect(published.calls).toEqual([])
+})
+
+
+test("reviewed release notes survive retries without being overwritten by the tagged source", async () => {
+  const saved = mock([{ id: 42, tag_name: "v0.6.1", draft: true, body: "Reviewed 0.6.1 notes, including the latest audio fixes." }])
+  expect(await execute(saved.github, "0.6.1")).toBe(42)
+  expect(saved.calls).toEqual([])
+})
+
+test("tag movement stops creation, artifact verification and final publication", async () => {
+  const jobs = (Bun.YAML.parse(workflow) as any).jobs
+  const guards = [
+    jobs["create-release"].steps.find((step: any) => step.name === "Verify immutable release tag"),
+    jobs["publish-release"].steps.find((step: any) => step.name === "Verify tag and signed updater artifacts"),
+    jobs["publish-release"].steps.find((step: any) => step.name === "Publish release"),
+  ]
+  for (const guard of guards) {
+    const executeGuard = new (Object.getPrototypeOf(async function () {}).constructor)(
+      "github", "context", "process", "require", "core", guard.with.script
+    )
+    for (const moved of [false, true]) {
+      let published = 0, checkedArtifacts = 0
+      const commit = "a".repeat(40)
+      const github = { rest: { repos: {
+        getCommit: async (args: any) => {
+          expect(args).toEqual({ owner: "owner", repo: "repo", ref: "refs/tags/v0.6.1" })
+          return { data: { sha: moved ? "b".repeat(40) : commit } }
+        },
+        updateRelease: async (args: any) => {
+          expect(args.tag_name).toBe("v0.6.1")
+          expect(args.draft).toBe(false)
+          published++
+        },
+      } } }
+      const run = executeGuard(github, { repo: { owner: "owner", repo: "repo" } },
+        { env: { RELEASE_TAG: "v0.6.1", RELEASE_COMMIT: commit, RELEASE_ID: "42" } },
+        (path: string) => path.endsWith("check-release.cjs")
+          ? { assertArtifacts: async () => { checkedArtifacts++; return 7 } }
+          : { plugins: { updater: { pubkey: "fixture" } } },
+        { info: () => {} })
+      if (moved) {
+        await expect(run).rejects.toThrow("Release tag changed")
+        expect(published).toBe(0)
+        expect(checkedArtifacts).toBe(0)
+      } else {
+        await run
+        expect(published).toBe(guard.name === "Publish release" ? 1 : 0)
+        expect(checkedArtifacts).toBe(guard.name === "Verify tag and signed updater artifacts" ? 1 : 0)
+      }
+    }
+  }
 })

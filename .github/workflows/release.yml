@@ -51,15 +51,19 @@ jobs:
           echo "tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
           echo "commit=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Require passing CI for the exact tagged commit
+      - name: Verify immutable release tag
         uses: actions/github-script@v9
         env:
           RELEASE_TAG: ${{ steps.get-version.outputs.tag }}
           RELEASE_COMMIT: ${{ steps.get-version.outputs.commit }}
         with:
           script: |
-            const { assertCI } = require('./scripts/check-release.cjs')
-            await assertCI(github, context.repo, process.env.RELEASE_TAG, process.env.RELEASE_COMMIT)
+            const tagged = await github.rest.repos.getCommit({
+              ...context.repo, ref: `refs/tags/${process.env.RELEASE_TAG}`
+            })
+            if (tagged.data.sha !== process.env.RELEASE_COMMIT) {
+              throw new Error('Release tag changed after checkout; refusing to publish another commit.')
+            }
 
       - name: Create or reuse draft release
         id: create-release
@@ -91,7 +95,8 @@ jobs:
             }
             const existing = matching.find(release => release.draft)
             if (existing) {
-              if (hasNotes) await github.rest.repos.updateRelease({ ...context.repo, release_id: existing.id, tag_name: tag, draft: true, body })
+              // Preserve notes already reviewed or edited in the draft.
+              if (hasNotes && !existing.body?.trim()) await github.rest.repos.updateRelease({ ...context.repo, release_id: existing.id, tag_name: tag, draft: true, body })
               return existing.id
             }
             if (process.env.PUBLISH_ONLY === 'true') {
@@ -108,8 +113,18 @@ jobs:
             })
             return data.id
 
-  build-tauri:
+  check-source:
     needs: create-release
+    uses: ./.github/workflows/ci.yml
+    with:
+      source_commit: ${{ needs.create-release.outputs.commit }}
+    permissions:
+      contents: read
+      actions: read
+    secrets: inherit
+
+  build-tauri:
+    needs: [create-release, check-source]
     if: ${{ !inputs.publish_only }}
     runs-on: ${{ matrix.platform }}
     permissions:
@@ -261,8 +276,8 @@ jobs:
 
   publish-release:
     runs-on: ubuntu-latest
-    needs: [create-release, build-tauri]
-    if: ${{ always() && !cancelled() && needs.create-release.result == 'success' && (needs.build-tauri.result == 'success' || (inputs.publish_only && needs.build-tauri.result == 'skipped')) }}
+    needs: [create-release, check-source, build-tauri]
+    if: ${{ always() && !cancelled() && needs.create-release.result == 'success' && needs.check-source.result == 'success' && (needs.build-tauri.result == 'success' || (inputs.publish_only && needs.build-tauri.result == 'skipped')) }}
     permissions:
       contents: write
       actions: read
@@ -271,7 +286,7 @@ jobs:
         with:
           ref: ${{ needs.create-release.outputs.commit }}
 
-      - name: Verify tag, current CI and signed updater artifacts
+      - name: Verify tag and signed updater artifacts
         uses: actions/github-script@v9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -280,9 +295,14 @@ jobs:
           RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
         with:
           script: |
-            const { assertCI, assertArtifacts } = require('./scripts/check-release.cjs')
+            const { assertArtifacts } = require('./scripts/check-release.cjs')
             const config = require('./src-tauri/tauri.conf.json')
-            await assertCI(github, context.repo, process.env.RELEASE_TAG, process.env.RELEASE_COMMIT)
+            const tagged = await github.rest.repos.getCommit({
+              ...context.repo, ref: `refs/tags/${process.env.RELEASE_TAG}`
+            })
+            if (tagged.data.sha !== process.env.RELEASE_COMMIT) {
+              throw new Error('Release tag changed after checkout; refusing to publish another commit.')
+            }
             const count = await assertArtifacts(github, context.repo, process.env.RELEASE_TAG,
               Number(process.env.RELEASE_ID), config.plugins.updater.pubkey)
             core.info(`Verified all updater platforms and ${count} signed installer artifacts.`)
@@ -317,8 +337,12 @@ jobs:
           RELEASE_COMMIT: ${{ needs.create-release.outputs.commit }}
         with:
           script: |
-            const { assertCI } = require('./scripts/check-release.cjs')
-            await assertCI(github, context.repo, process.env.RELEASE_TAG, process.env.RELEASE_COMMIT)
+            const tagged = await github.rest.repos.getCommit({
+              ...context.repo, ref: `refs/tags/${process.env.RELEASE_TAG}`
+            })
+            if (tagged.data.sha !== process.env.RELEASE_COMMIT) {
+              throw new Error('Release tag changed after checkout; refusing to publish another commit.')
+            }
             await github.rest.repos.updateRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,

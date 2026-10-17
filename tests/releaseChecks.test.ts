@@ -184,10 +184,10 @@ test("workflow pins packaging to checked commit and gates publishing after matri
     "${{ needs.create-release.outputs.commit }}"
   )
   const publish = workflow.jobs["publish-release"]
-  expect(publish.needs).toEqual(["create-release", "build-tauri"])
+  expect(publish.needs).toEqual(["create-release", "check-source", "build-tauri"])
   const checks = publish.steps.findIndex(
     (step: any) =>
-      step.name === "Verify tag, current CI and signed updater artifacts"
+      step.name === "Verify tag and signed updater artifacts"
   )
   const write = publish.steps.findIndex(
     (step: any) => step.name === "Publish release"
@@ -195,7 +195,19 @@ test("workflow pins packaging to checked commit and gates publishing after matri
   expect(checks).toBeGreaterThan(0)
   expect(write).toBeGreaterThan(checks)
   expect(publish.steps[checks].with.script).toContain("assertArtifacts")
-  expect(publish.steps[write].with.script).toContain("assertCI")
+  expect(publish.steps[write].with.script).toContain("getCommit")
+  expect(workflow.jobs["build-tauri"].needs).toEqual(["create-release", "check-source"])
+  expect(workflow.jobs["check-source"].uses).toBe("./.github/workflows/ci.yml")
+  expect(workflow.jobs["check-source"].with.source_commit).toBe(
+    "${{ needs.create-release.outputs.commit }}"
+  )
+  expect(publish.if).toContain("needs.check-source.result == 'success'")
+  const ciWorkflow = Bun.YAML.parse(readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8")) as any
+  expect(ciWorkflow.on.workflow_call.inputs.source_commit.required).toBe(true)
+  for (const job of Object.values(ciWorkflow.jobs) as any[]) {
+    expect(job.steps.find((step: any) => step.uses === "actions/checkout@v7").with.ref)
+      .toBe("${{ inputs.source_commit || github.sha }}")
+  }
 })
 
 test("complete signed manifests can be checked repeatedly; aliases download each artifact once", async () => {
