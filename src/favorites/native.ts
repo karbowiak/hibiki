@@ -35,6 +35,7 @@ export function createFavoritesNative(
     page: (offset, limit) => call("favorites_page", { offset, limit }),
     save: (expected, metadata, rows) =>
       call("favorites_save", { expected, metadata, rows }),
+    reset: (expected) => call("favorites_reset", { expected }),
     plexRead: (id) =>
       call("favorites_plex_read", { sectionId, playlistId: Number(id) }),
     plexMutate: (id, beforeHash, operation) =>

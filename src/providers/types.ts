@@ -132,6 +132,12 @@ export interface MusicProvider {
   readonly capabilities: ProviderCapabilities
   /** Opaque account/server/library digest. Null disables persistent provider caches. */
   readonly cacheScope?: string | null
+  /** Explicit collection caches, warmed independently of the full Plex catalogue. */
+  warmCollections?(): void
+  stopCollectionWarmup?(): void
+  getCachedTrackSource?(key: string, shuffle?: boolean): Promise<import("../lib/pagedPlayback").PagedTrackSource | null>
+  readonly savedQueue?: import("../lib/queueSession").SavedQueueStorage
+  getCollectionPage?(key: string, offset: number, limit: number, filter: string, sort: string, dir: "asc" | "desc"): Promise<PagedResult<MusicItem>>
 
   // --- Connection ---
   connect(config: Record<string, unknown>): Promise<void>
@@ -250,6 +256,7 @@ export interface MusicProvider {
   ): Promise<void>
 
   // --- Liked ---
+  getRatedItemsPage?(kind: "track" | "album" | "artist", offset: number, limit: number): Promise<PagedResult<MusicItem>>
   getLikedTracks(limit?: number): Promise<MusicTrack[]>
   getLikedAlbums(limit?: number): Promise<MusicAlbum[]>
   getLikedArtists(limit?: number): Promise<MusicArtist[]>
@@ -284,6 +291,7 @@ export interface MusicProvider {
     offset?: number
   ): Promise<PagedResult<MusicItem>>
   getMixTracks?(mixKey: string): Promise<MusicTrack[]>
+  getMixTracksPage?(mixKey: string, offset: number, limit: number): Promise<PagedResult<MusicTrack>>
   getSectionStations?(): Promise<MusicHub[]>
   getArtistStations?(artistId: string): Promise<MusicPlaylist[]>
 

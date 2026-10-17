@@ -34,6 +34,8 @@ import { IS_WINDOWS } from "./lib/platform"
 import { WindowTitleBar } from "./components/WindowTitleBar"
 import { useGlobalHotkeys } from "./hooks/useGlobalHotkeys"
 import { initializeShutdown } from "./lib/shutdown"
+import { initializeQueuePersistence } from "./lib/queuePersistence"
+import { HoverInformation } from "./components/HoverInformation"
 import { ListeningSyncStatus } from "./components/ListeningSyncStatus"
 import { ShutdownNotice } from "./components/ShutdownNotice"
 import { StorageStatus } from "./components/PersistenceNotice"
@@ -47,6 +49,7 @@ import LiveAnnouncer from "./components/LiveAnnouncer"
 import "./i18n" // Initialize i18n on app load
 
 function DesktopApp() {
+  useEffect(initializeQueuePersistence, [])
   useLinkedPlaylistSync()
   useFavorites()
   const activeProvider = useProviderStore(s => s.provider)
@@ -63,6 +66,11 @@ function DesktopApp() {
     useShallow(s => ({ showCreatePlaylist: s.showCreatePlaylist, setShowCreatePlaylist: s.setShowCreatePlaylist, pendingPlaylistItemIds: s.pendingPlaylistItemIds, setPendingPlaylistItemIds: s.setPendingPlaylistItemIds }))
   )
   const initLastfm = useLastfmStore(s => s.initialize)
+  useEffect(() => {
+    const update = (event: Event) => { if ((event as CustomEvent).detail === "playlists") void fetchPlaylists({ force: true }) }
+    window.addEventListener("collection-cache-updated", update)
+    return () => window.removeEventListener("collection-cache-updated", update)
+  }, [fetchPlaylists])
   const initGenius = useGeniusStore(s => s.initialize)
   const initListenBrainz = useListenBrainzStore(s => s.initialize)
   const [location, navigate] = useLocation()
@@ -98,7 +106,8 @@ function DesktopApp() {
         fetchTags(),    // 24h TTL — rarely hits network after first load
       ]).then(() => {
         if (!active || isOffline || useProviderStore.getState().provider !== activeProvider) return
-        void prefetchAllPlaylists()
+        if (activeProvider.warmCollections) activeProvider.warmCollections()
+        else void prefetchAllPlaylists()
         void prefetchMixTracks()
       })
     }
@@ -168,6 +177,7 @@ function DesktopApp() {
       <ShutdownNotice />
       <UpdateDialog />
       <ContextMenu />
+      <HoverInformation />
       {hotkeyHelpOpen && <HotkeyHelpModal context={fullscreenOpen ? "visualizer" : "player"} onClose={() => setHotkeyHelpOpen(false)} />}
       {debugPanelOpen && <DebugPanel />}
       <LiveAnnouncer />

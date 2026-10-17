@@ -5,6 +5,8 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+import struct
+from urllib.parse import urlparse
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("validator", Path(__file__).with_name("check-appimage.py"))
@@ -42,6 +44,25 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(run.call_args.args[0][:3], ["appstreamcli", "validate", "--no-net"])
             with self.assertRaises(ValueError):
                 validator.check_metainfo(self.metadata, "hibiki.desktop", "0.5.5")
+
+    def test_screenshots_match_repository_images_and_dimensions(self):
+        component = validator.ET.fromstring(self.xml)
+        screenshots = component.findall("screenshots/screenshot")
+        expected = {"main.png", "artist.png", "album.png", "playlist.png", "internetradio.png", "podcasts.png", "search.png"}
+        found = set()
+        for screenshot in screenshots:
+            image = screenshot.find("image[@type='source']")
+            self.assertIsNotNone(image)
+            filename = Path(urlparse(image.text).path).name
+            self.assertNotIn(filename, found)
+            found.add(filename)
+            data = (Path(__file__).parent.parent / "screenshots" / filename).read_bytes()
+            self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
+            width, height = struct.unpack(">II", data[16:24])
+            self.assertEqual((int(image.get("width")), int(image.get("height"))), (width, height))
+            self.assertTrue(screenshot.findtext("caption"))
+        self.assertEqual(found, expected)
+        self.assertEqual(Path(urlparse(screenshots[0].findtext("image")).path).name, "main.png")
 
     def test_metadata_wrong_version_license_screenshot_and_entities(self):
         for xml in [self.xml.replace('version="0.5.5"', 'version="0.5.4"'), self.xml.replace("<project_license>MIT", "<project_license>GPL"), self.xml.replace("raw.githubusercontent.com", "example.com"), "<!DOCTYPE component>" + self.xml]:

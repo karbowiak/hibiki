@@ -24,6 +24,7 @@ pub struct AudioDownloads {
     worker: Arc<tokio::sync::Mutex<()>>,
     active: Mutex<Option<(String, i64, Arc<AtomicBool>)>>,
     scheduled: Mutex<HashSet<(u64, String)>>,
+    pub(crate) collection_refreshes: Mutex<HashSet<(u64, String)>>,
     analysis: tokio::sync::Mutex<()>,
     analysis_scheduled: Mutex<HashSet<(u64, String)>>,
     loudness_jobs:
@@ -49,6 +50,7 @@ impl AudioDownloads {
             worker: Arc::new(tokio::sync::Mutex::new(())),
             active: Mutex::new(None),
             scheduled: Mutex::new(HashSet::new()),
+            collection_refreshes: Mutex::new(HashSet::new()),
             analysis: tokio::sync::Mutex::new(()),
             analysis_scheduled: Mutex::new(HashSet::new()),
             loudness_jobs: Mutex::new(HashMap::new()),
@@ -319,9 +321,13 @@ async fn prepare_server_loudness(
         if jobs.len() >= 512 {
             return Ok(document);
         }
-        jobs.entry((context.cache_scope.clone(), before.track_id, before.cache_key.clone()))
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(None)))
-            .clone()
+        jobs.entry((
+            context.cache_scope.clone(),
+            before.track_id,
+            before.cache_key.clone(),
+        ))
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(None)))
+        .clone()
     };
     let mut last = job.lock().await;
     {
@@ -944,13 +950,26 @@ pub async fn audio_download_resume(
     let owner = context.clone();
     let application = app.clone();
     let downloaded = downloads.cache.clone();
-    let automatic = app.state::<crate::audio_engine::bridge::AudioEngineState>().0.cache().clone();
+    let automatic = app
+        .state::<crate::audio_engine::bridge::AudioEngineState>()
+        .0
+        .cache()
+        .clone();
     tauri::async_runtime::spawn(async move {
-        let _ = crate::offline_commands::owned_write(&application, &owner, false, move |conn, scope| {
-            crate::db::focused_library::maintain(conn, scope, |key| downloaded.lookup(key).is_some() || automatic.lookup(key).is_some())
-        }).await;
+        let _ = crate::offline_commands::owned_write(
+            &application,
+            &owner,
+            false,
+            move |conn, scope| {
+                crate::db::focused_library::maintain(conn, scope, |key| {
+                    downloaded.lookup(key).is_some() || automatic.lookup(key).is_some()
+                })
+            },
+        )
+        .await;
     });
     start_analysis_backfill(app.clone(), context.clone());
+    crate::download_entities::start_requested_refresh(app.clone(), context.clone());
     start_worker(app, context);
     Ok(())
 }
@@ -1534,7 +1553,9 @@ mod tests {
                 }
                 // A cancelled client can close a pooled connection before
                 // sending headers; it is not an unexpected API request.
-                if request.is_empty() { continue; }
+                if request.is_empty() {
+                    continue;
+                }
                 let request = String::from_utf8(request).unwrap();
                 let (code, body) = if request.starts_with("PUT ") {
                     assert!(request

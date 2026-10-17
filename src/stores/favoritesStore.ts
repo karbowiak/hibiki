@@ -2,7 +2,6 @@ import { create } from "zustand"
 import { useProviderStore } from "./providerStore"
 import { useLastfmStore } from "../metadata/lastfm/authStore"
 import { useListenBrainzStore } from "../metadata/listenbrainz/authStore"
-import { useNotificationCenterStore } from "./notificationCenterStore"
 import {
   emptyFavorites,
   setFavorite,
@@ -32,6 +31,7 @@ interface State {
   loaded: boolean
   loading: boolean
   running: boolean
+  resetting: boolean
   error: string | null
   issues: Partial<Record<FavoriteService, string>>
   load(provider?: MusicProvider | null): Promise<void>
@@ -54,6 +54,7 @@ interface State {
     playlistId?: string
   ): Promise<void>
   sync(options?: { retryUnknown?: boolean }): Promise<void>
+  resetSync(): Promise<void>
   recoverPlex(id: string): Promise<void>
   matchMissing(force?: boolean): Promise<void>
   linkTrack(entryId: string, track: MusicTrack): Promise<void>
@@ -64,6 +65,7 @@ let queue: Promise<unknown> = Promise.resolve(),
   loadOwner: MusicProvider | null = null,
   loadingSession: unknown
 let syncOwner: { provider: MusicProvider; session: unknown } | undefined
+let matchEpoch = 0
 function owns(provider: MusicProvider | null, session: unknown) {
   return (
     !!provider &&
@@ -86,6 +88,7 @@ export const useFavoritesStore = create<State>((set, get) => ({
   loaded: false,
   loading: false,
   running: false,
+  resetting: false,
   error: null,
   issues: {},
   async load(provider = useProviderStore.getState().provider) {
@@ -98,6 +101,7 @@ export const useFavoritesStore = create<State>((set, get) => ({
         loaded: false,
         loading: false,
         running: false,
+        resetting: false,
         issues: {},
         error: null,
       })
@@ -120,6 +124,10 @@ export const useFavoritesStore = create<State>((set, get) => ({
       loaded: false,
       loading: true,
       running: false,
+      resetting:
+        get().provider === provider &&
+        get().session === session &&
+        get().resetting,
       error: null,
       collection: emptyFavorites(),
       likedTrackIds: new Set(),
@@ -369,11 +377,42 @@ export const useFavoritesStore = create<State>((set, get) => ({
       }
     })
   },
+  async resetSync() {
+    const provider = useProviderStore.getState().provider,
+      session = provider?.playbackSession
+    if (!provider?.favorites || !owns(provider, session))
+      throw Error("Connect a library before resetting liked sync")
+    if (
+      get().resetting ||
+      get().running ||
+      (syncOwner?.provider === provider && syncOwner.session === session)
+    )
+      throw Error("Wait for the current liked sync to finish, then reset")
+    matchEpoch++
+    set({ resetting: true })
+    const job = queue
+      .catch(() => {})
+      .then(async () => {
+        await get().load(provider)
+        if (!owns(provider, session)) throw Error("Favorite library changed")
+        await provider.favorites!.reset(get().collection.revision)
+        if (!owns(provider, session)) return
+        set({ loaded: false, issues: {}, error: null })
+        await get().load(provider)
+      })
+    queue = job
+    try {
+      await job
+    } finally {
+      if (owns(provider, session)) set({ resetting: false })
+    }
+  },
   async sync(options = {}) {
     const provider = useProviderStore.getState().provider,
       session = provider?.playbackSession
     if (
       !provider?.favorites ||
+      get().resetting ||
       provider.isOffline ||
       (syncOwner?.provider === provider && syncOwner.session === session) ||
       !owns(provider, session)
@@ -389,6 +428,7 @@ export const useFavoritesStore = create<State>((set, get) => ({
     }
     if (
       !owns(provider, session) ||
+      get().resetting ||
       !Object.values(get().collection.settings).some((value) => value === true)
     ) {
       if (syncOwner === run) syncOwner = undefined
@@ -438,7 +478,8 @@ export const useFavoritesStore = create<State>((set, get) => ({
         plexRead: native.plexRead,
         plexMutate: native.plexMutate,
       }
-    set({ running: true, issues: {} })
+    const runIssues: Partial<Record<FavoriteService, string>> = {}
+    set({ running: true })
     try {
       await syncFavorites(
         {
@@ -454,22 +495,17 @@ export const useFavoritesStore = create<State>((set, get) => ({
           ...options,
           onIssue: (service, message) => {
             if (!current()) return
+            runIssues[service] = message
             set((state) => ({
               issues: { ...state.issues, [service]: message },
             }))
-            useNotificationCenterStore.getState().notify({
-              id: `favorites.${service}`,
-              eventKey: JSON.stringify([provider.cacheScope, service, message]),
-              title: "Liked Songs sync needs attention",
-              message:
-                "Your likes are saved in Hibiki. Open Liked Songs → Sync to review this connection.",
-              severity: "warning",
-              persistent: false,
-            })
           },
         }
       )
-      if (current()) await get().matchMissing()
+      if (current()) {
+        set({ issues: runIssues })
+        await get().matchMissing()
+      }
     } finally {
       active = false
       retireProvider()
@@ -512,7 +548,11 @@ export const useFavoritesStore = create<State>((set, get) => ({
   async matchMissing(force = false) {
     const provider = useProviderStore.getState().provider,
       session = provider?.playbackSession
-    if (!provider || provider.isOffline || !get().loaded) return
+    if (!provider || provider.isOffline || !get().loaded || get().resetting)
+      return
+    const epoch = matchEpoch
+    const current = () =>
+      owns(provider, session) && epoch === matchEpoch && !get().resetting
     const candidates = Object.values(get().collection.entries)
       .filter(
         (item) =>
@@ -528,7 +568,7 @@ export const useFavoritesStore = create<State>((set, get) => ({
       .sort((a, b) => (a.matchCheckedAt ?? 0) - (b.matchCheckedAt ?? 0))
       .slice(0, 20)
     for (const item of candidates) {
-      if (!owns(provider, session)) return
+      if (!current()) return
       let localId = item.localTrackIds[0],
         mbid = item.recordingMbid
       try {
@@ -541,8 +581,10 @@ export const useFavoritesStore = create<State>((set, get) => ({
             durationMs: item.durationMs,
             recordingMbid: item.recordingMbid,
           }
-          const found = await retrievePlaylistCandidates(provider, track, () =>
-            owns(provider, session)
+          const found = await retrievePlaylistCandidates(
+            provider,
+            track,
+            current
           )
           const match = matchTrack(track, found)
           if (match.status === "matched") localId = match.track.id
@@ -558,7 +600,7 @@ export const useFavoritesStore = create<State>((set, get) => ({
           const result = await provider.resolvePlaylistRecording({
             id: track.id,
             title: track.title,
-            artist: track.artistName,
+            artist: favoriteReference(track).artist,
             album: track.albumName,
             durationMs: track.duration,
           })
@@ -567,10 +609,10 @@ export const useFavoritesStore = create<State>((set, get) => ({
       } catch {
         /* Unresolved records remain retained and can be searched again. */
       }
-      if (!owns(provider, session)) return
+      if (!current()) return
       await get().update((state) => {
         const latest = state.entries[item.id]
-        if (!latest) return state
+        if (!latest || !current()) return state
         const sameMatch =
           JSON.stringify(latest.localTrackIds) ===
           JSON.stringify(item.localTrackIds)

@@ -1,4 +1,5 @@
 import { MetadataPriorityList } from "../Settings/MetadataPriorityList"
+import { LikedSyncControls } from "../Settings/LikedSyncControls"
 import { useArtworkAppearanceStore } from "../../stores/artworkAppearanceStore"
 import React, { useState, useEffect, useRef, useMemo } from "react"
 import { useLocation } from "wouter"
@@ -840,6 +841,10 @@ function GeneralSection() {
           ))}
         </div>
         <p className="mt-2 text-xs text-[var(--text-secondary)]">More languages coming soon. Contribute translations on GitHub.</p>
+      </SettingCard>
+
+      <SettingCard title="Liked Songs sync">
+        <LikedSyncControls />
       </SettingCard>
 
       <SettingCard title="Preferences">

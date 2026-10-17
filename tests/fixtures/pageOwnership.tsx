@@ -197,28 +197,21 @@ try {
     assert.ok(owners.slice(3).every((owner) => owner === second))
   } else if (scenario.startsWith("liked-")) {
     const kind = scenario.split("-")[1]!
-    const suffix =
-      kind === "tracks" ? "Tracks" : kind === "albums" ? "Albums" : "Artists"
-    const field = `liked${suffix}`
-    const timestamp = `_${field}FetchedAt`
-    const pending: {
-      owner: any
-      reply: ReturnType<typeof deferred<void>>
-      force: boolean
-    }[] = []
-    library.setState({
-      [field]: [],
-      [timestamp]: null,
-      [`fetchLiked${suffix}`]: (_limit: any, opts: any) => {
-        const reply = deferred<void>()
-        pending.push({
-          owner: useProviderStore.getState().provider,
-          reply,
-          force: opts?.force,
-        })
+    const pending: { owner: any; reply: ReturnType<typeof deferred<any>>; offset: number; limit: number }[] = []
+    const ratedProvider = () => {
+      const owner = provider()
+      owner.getRatedItemsPage = (_kind: string, offset: number, limit: number) => {
+        const reply = deferred<any>()
+        pending.push({ owner, reply, offset, limit })
         return reply.promise
-      },
-    } as any)
+      }
+      return owner
+    }
+    const first = ratedProvider()
+    useProviderStore.getState().setProvider(first)
+    const { useFavoritesStore } = await import("../../src/stores/favoritesStore")
+    useFavoritesStore.setState({ loaded: true, loading: false, collection: { ...useFavoritesStore.getState().collection, ratingsImported: true } })
+    mock.module("../../src/stores/uiStore", () => ({ useUIStore: ui }))
     mock.module("../../src/hooks/useContextMenu", () => ({
       useContextMenu: () => ({ handler: () => {} }),
     }))
@@ -232,11 +225,9 @@ try {
       usePlaylistColumns: () => ({ visible: [], toggle() {} }),
     }))
     mock.module("../../src/components/shared/TrackTable", () => ({
-      TrackTable: ({ tracks, emptyMessage }: any) => (
+      TrackTable: ({ paged, emptyMessage, isLoading }: any) => (
         <div>
-          {tracks.length
-            ? tracks.map((track: any) => track.title).join(",")
-            : emptyMessage}
+          {isLoading ? <p role="status">Loading rated songs…</p> : paged.error ? <p role="alert">{paged.error}<button onClick={paged.retry}>Try again</button></p> : paged.total ? Array.from({ length: paged.total }, (_, i) => paged.getItem(i)?.title).join(",") : emptyMessage}
         </div>
       ),
     }))
@@ -259,9 +250,8 @@ try {
     assert.ok(document.querySelector('[role="status"]'))
     assert.ok(!document.body.textContent?.includes("No rated"))
     if (scenario.endsWith("provider")) {
-      const second = provider()
+      const second = ratedProvider()
       await act(async () => {
-        library.setState({ [field]: [], [timestamp]: null } as any)
         useProviderStore.getState().setProvider(second)
       })
       assert.equal(pending.length, 2)
@@ -271,14 +261,10 @@ try {
       )
       assert.ok(document.querySelector('[role="status"]'))
       assert.ok(!document.querySelector('[role="alert"]'))
-      await act(async () => {
-        library.setState({ [timestamp]: 1 } as any)
-        pending[1]!.reply.resolve()
-      })
+      await act(async () => pending[1]!.reply.resolve({ items: [], total: 0, offset: 0 }))
       assert.ok(document.body.textContent?.includes("No rated"))
     } else {
-      // Production store absorbs transport failures but leaves its timestamp null.
-      await act(async () => pending[0]!.reply.resolve())
+      await act(async () => pending[0]!.reply.reject(new Error("Could not load rated items")))
       assert.ok(document.querySelector('[role="alert"]'))
       assert.ok(!document.body.textContent?.includes("No rated"))
       const retry = Array.from(document.querySelectorAll("button")).find(
@@ -286,11 +272,9 @@ try {
       )!
       await act(async () => retry.click())
       assert.equal(pending.length, 2)
-      assert.equal(pending[1]!.force, true)
-      await act(async () => {
-        library.setState({ [timestamp]: 1 } as any)
-        pending[1]!.reply.resolve()
-      })
+      assert.equal(pending[1]!.offset, 0)
+      assert.equal(pending[1]!.limit, 200)
+      await act(async () => pending[1]!.reply.resolve({ items: [], total: 0, offset: 0 }))
       assert.ok(!document.querySelector('[role="alert"]'))
       assert.ok(document.body.textContent?.includes("No rated"))
     }

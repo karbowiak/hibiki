@@ -90,6 +90,7 @@ export interface FavoritesNative {
     metadata: FavoriteMetadata,
     rows: { id: string; payload: FavoriteEntry }[]
   ): Promise<number>
+  reset(expected: number): Promise<number>
   plexRead(id: string): Promise<FavoritePlexSnapshot>
   plexMutate(
     id: string,
@@ -108,7 +109,7 @@ export function favoriteReference(track: MusicTrack): FavoriteRecording {
     key: `local:${track.id}`,
     localTrackId: track.id,
     title: track.title,
-    artist: track.artistName,
+    artist: track.originalTitle?.trim() || track.artistName,
     album: track.albumName,
     durationMs: track.duration,
   }

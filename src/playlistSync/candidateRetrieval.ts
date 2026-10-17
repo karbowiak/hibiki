@@ -1,6 +1,6 @@
 import type { MusicProvider } from "../providers/types"
 import type { MusicTrack } from "../types/music"
-import { matchTrack, recordingMbid } from "./matching"
+import { matchTrack, playlistSearchTitle, recordingMbid } from "./matching"
 import { playlistTrackFromMusic } from "./provider"
 import type { PlaylistTrack } from "./types"
 
@@ -57,7 +57,8 @@ export async function retrievePlaylistCandidates(
       onFailure?.()
     }
   }
-  const query = `${source.artist} ${source.title}`.trim()
+  const title = playlistSearchTitle(source)
+  const query = `${source.artist} ${title}`.trim()
   if (!source.title.trim() || !source.artist.trim() || query.length > 1000)
     throw Error("Source labels need manual search")
   const broad = async (query: string) =>
@@ -66,8 +67,7 @@ export async function retrievePlaylistCandidates(
     )
   await collect(() => broad(query), 50)
   if (matchTrack(source, [...merged.values()]).status !== "matched") {
-    if (source.title.trim() !== query)
-      await collect(() => broad(source.title.trim()), 50)
+    if (title !== query) await collect(() => broad(title), 50)
     if (
       provider.findPlaylistCandidates &&
       matchTrack(source, [...merged.values()]).status !== "matched"
@@ -77,7 +77,7 @@ export async function retrievePlaylistCandidates(
         async () => {
           const result = await provider.findPlaylistCandidates!({
             id: source.id,
-            title: source.title,
+            title,
             artist: source.artist,
             album: source.album,
             durationMs: source.durationMs,

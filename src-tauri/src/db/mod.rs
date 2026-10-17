@@ -17,6 +17,8 @@ pub mod kv;
 pub mod favorites;
 pub mod focused_library;
 pub mod offline;
+pub mod collection_cache;
+pub mod playback_queue;
 pub mod playlists;
 pub mod schema;
 pub mod tracks;

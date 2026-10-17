@@ -314,6 +314,111 @@ test("selecting internet radio revokes a pending Plex playlist selection", async
   expect((engine.play as any).mock.calls.length).toBe(0)
 })
 
+test("a later play selection owns a deferred cached membership lookup", async () => {
+  const cached = deferred<any>()
+  useProviderStore.getState().setProvider(provider("a"))
+  const old = state().playPagedTracks({ key: "old-cache", total: 1, prepare: () => cached.promise, loadPage: async () => ({ items: [source("old")], total: 1 }) }, "Old", "/old", true)
+  await state().playPagedTracks({ key: "new", total: 1, loadPage: async () => ({ items: [source("new")], total: 1 }) }, "New", "/new")
+  cached.resolve({ key: "resolved-old", total: 1, loadPage: async () => ({ items: [source("old")], total: 1 }) })
+  await old
+  expect(state().currentTrack?.id).toBe("new")
+  expect(state().contextName).toBe("New")
+})
+
+test("paged playback exposes the whole queue and jumps to its final song without draining earlier pages", async () => {
+  const calls: number[] = []
+  useProviderStore.getState().setProvider(provider("a"))
+  await state().playPagedTracks({ key: "large", total: 1831, loadPage: async (offset, limit) => {
+    calls.push(offset)
+    return { items: Array.from({ length: Math.min(limit, 1831 - offset) }, (_, i) => source(String(offset + i))), total: 1831, offset }
+  } }, "Large", "/large")
+  expect(state().queue).toHaveLength(1831)
+  expect(state().playlistTotalCount).toBe(1831)
+  state().jumpToQueueItem(1830)
+  for (let i = 0; i < 20 && state().currentTrack?.id !== "1830"; i++) await settle()
+  expect(state().currentTrack?.id).toBe("1830")
+  expect(state().queueIndex).toBe(1830)
+  expect(calls.every(offset => offset < 5 || offset >= 1800)).toBe(true)
+})
+
+test("a saved complete queue restores its exact cursor paused and resumes from that position", async () => {
+  const { initializeQueuePersistence, flushQueuePersistence } = await import("../src/lib/queuePersistence")
+  const writes: any[]=[]
+  const entries=Array.from({length:1831},(_,i)=>({id:String(i+1),title:`Song ${i+1}`}))
+  const saved={ entries, state:{index:1400,positionMs:43210,contextName:"Liked Songs",contextHref:"/collection/tracks",albumPlaybackId:null,shuffle:true,repeat:0 as const,sourceKey:"liked:loved"} }
+  const p=provider("saved",{favorites:{cachedTracks:async(ids:string[])=>ids.map(id=>source(id))} as any,savedQueue:{load:async()=>saved,save:async value=>{writes.push(value)},position:async value=>{writes.push(value)},clear:async()=>{writes.push("clear")}}})
+  useProviderStore.getState().setProvider(p)
+  const cleanup=initializeQueuePersistence()
+  try {
+    for(let i=0;i<20&&!state().queue.length;i++) await settle()
+    expect(state().queue).toHaveLength(1831)
+    expect(state().queueIndex).toBe(1400)
+    expect(state().currentTrack?.id).toBe("1401")
+    expect(state().positionMs).toBe(43210)
+    expect(state().isPlaying).toBe(false)
+    expect((engine.play as any).mock.calls).toHaveLength(0)
+    state().resume()
+    for(let i=0;i<20&&!(engine.seekTo as any).mock.calls.length;i++) await settle()
+    expect((engine.seekTo as any).mock.calls).toEqual([[43210]])
+    state().reorderQueue(1830,1402)
+    await flushQueuePersistence()
+    const snapshot=writes.findLast(value=>value.entries)
+    expect(snapshot.entries).toHaveLength(1831)
+    expect(snapshot.entries[1402].id).toBe("1831")
+    expect(snapshot.state.shuffle).toBe(true)
+  } finally {cleanup()}
+})
+
+test("a departed library cannot restore its saved queue into a newly selected library", async () => {
+  const { initializeQueuePersistence } = await import("../src/lib/queuePersistence")
+  const pending=deferred<any>()
+  const p=provider("old",{savedQueue:{load:()=>pending.promise,save:async()=>{},position:async()=>{},clear:async()=>{}}})
+  useProviderStore.getState().setProvider(p)
+  const cleanup=initializeQueuePersistence()
+  try {
+    useProviderStore.getState().setProvider(provider("new"))
+    pending.resolve({entries:[{id:"1"}],state:{index:0,positionMs:1000}})
+    for(let i=0;i<10;i++)await settle()
+    expect(state().queue).toEqual([])
+    expect(state().currentTrack).toBeNull()
+  } finally {cleanup()}
+})
+
+test("an older native process reports that saved queues need a full app restart", async () => {
+  const { initializeQueuePersistence, flushQueuePersistence } = await import("../src/lib/queuePersistence")
+  const { useNotificationCenterStore } = await import("../src/stores/notificationCenterStore")
+  const p=provider("old-binary",{savedQueue:{load:async()=>{throw Error("Command saved_queue not found")},save:async()=>{throw Error("must not write")},position:async()=>{},clear:async()=>{}}})
+  useProviderStore.getState().setProvider(p)
+  const cleanup=initializeQueuePersistence()
+  try {
+    await settle()
+    const notice=useNotificationCenterStore.getState().notifications.find(item=>item.id==="queue.persistence")
+    expect(notice?.title).toBe("Restart Hibiki to enable saved queues")
+    expect(notice?.message).toContain("Fully quit")
+    await flushQueuePersistence()
+    expect(state().queue).toEqual([])
+  } finally {cleanup()}
+})
+
+test("a failed queue save stays visible and retry saves the full queue", async () => {
+  const { initializeQueuePersistence, flushQueuePersistence } = await import("../src/lib/queuePersistence")
+  const { useNotificationCenterStore } = await import("../src/stores/notificationCenterStore")
+  let fail=true, saved:any
+  const p=provider("save-retry",{savedQueue:{load:async()=>null,save:async value=>{if(fail)throw Error("disk unavailable");saved=value},position:async()=>{},clear:async()=>{}}})
+  useProviderStore.getState().setProvider(p)
+  const cleanup=initializeQueuePersistence()
+  try {
+    await settle()
+    await state().playTrack(source("1"),[source("1"),source("2")])
+    await expect(flushQueuePersistence()).rejects.toThrow()
+    expect(useNotificationCenterStore.getState().notifications.find(item=>item.id==="queue.persistence")?.active).toBe(true)
+    fail=false
+    await useNotificationCenterStore.getState().runAction("queue.persistence")
+    expect(saved.entries.map((entry:any)=>entry.id)).toEqual(["1","2"])
+    expect(useNotificationCenterStore.getState().notifications.find(item=>item.id==="queue.persistence")?.active).toBe(false)
+  } finally {cleanup()}
+})
+
 test("returning to Plex clears the old station and ignores late radio callbacks", async () => {
   useProviderStore.getState().setProvider(provider("a"))
   useRadioStreamStore.getState().playStation(station())
@@ -622,7 +727,7 @@ test("a late playlist page cannot append tracks to a radio queue", async () => {
     duration_ms: 180000,
   })
   await settle()
-  expect(state().isLoadingMoreTracks).toBe(true)
+  expect(state().queue).toHaveLength(4)
   await state().playRadio("1", "track")
   page.resolve({ items: [source("9")], total: 4, offset: 2 })
   await settle()

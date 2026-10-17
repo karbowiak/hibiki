@@ -46,16 +46,6 @@ export function DownloadMenuItems({
       else await api.download(kind, id)
       if (!owns()) return
       refreshDownloadStatuses()
-      useNotificationCenterStore.getState().notify({
-        id: `audio.download.${kind}.${id}`,
-        severity: "info",
-        title: remove ? "Download removed" : "Download queued",
-        message: remove
-          ? kind === "track"
-            ? `${title} is no longer downloaded.`
-            : `${title} removed. Songs used by other downloads stay saved.`
-          : `${title} is downloading. Its download icon shows progress and offline availability.`,
-      })
     } catch (reason) {
       if (!owns() || String(reason).includes("Download request was superseded")) return
       refreshDownloadStatuses()

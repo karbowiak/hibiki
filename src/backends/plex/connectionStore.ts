@@ -9,6 +9,7 @@ import type { PlexRequestContext } from "./scopedApi"
 import { PlexProvider } from "./provider"
 import { useOfflineStatusStore } from "../../offline/statusStore"
 import { createOfflineProvider } from "../../offline/providerCache"
+import { createCollectionCacheProvider } from "../../offline/collectionCache"
 import { createSavedLibraryProvider } from "../../offline/offlineProvider"
 import { createPlexApi } from "./scopedApi"
 import { localAudioTrack } from "../../offline/audio"
@@ -190,7 +191,7 @@ export const useConnectionStore = createPlexConnectionStore({
       owns,
       Number(section.key)
     )
-    return createOfflineProvider(
+    const cachedProvider = createOfflineProvider(
       provider,
       createNativeOfflineCache(requestContext),
       {
@@ -207,6 +208,7 @@ export const useConnectionStore = createPlexConnectionStore({
           useOfflineStatusStore.getState().online(provider.cacheScope!, key),
       }
     )
+    return createCollectionCacheProvider(cachedProvider, provider, requestContext)
   },
   restoreOfflineContext,
   activateOfflineProvider: async (context, ownsRequest) => {
@@ -215,12 +217,13 @@ export const useConnectionStore = createPlexConnectionStore({
       cacheScope: context.cacheScope,
     }
     useCatalogueStore.getState().activate(captured)
-    const provider = savedProvider(
+    const saved = savedProvider(
       captured,
       context.baseUrl,
       ownsRequest,
       context.sectionId
     )
+    const provider = createCollectionCacheProvider(saved, saved, captured)
     await Promise.all([
       useLibraryStore.getState().activateProvider(provider),
       activateMetadataCache(provider),

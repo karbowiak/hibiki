@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event"
 import { preferencePersistence } from "../stores/idbStorage"
 import { localPreferencePersistence } from "../stores/localPreferenceStorage"
 import { preparePlaybackShutdown } from "../stores/playerStore"
+import { flushQueuePersistence } from "./queuePersistence"
 import { GracefulShutdown } from "./gracefulShutdown"
 
 export type ShutdownStatus = { phase: "idle" | "preparing" | "failed"; message: string }
@@ -13,7 +14,7 @@ const publish = (value: ShutdownStatus) => { status = value; subscribers.forEach
 export const shutdownSnapshot = () => status
 export const subscribeShutdown = (callback: () => void) => { subscribers.add(callback); return () => { subscribers.delete(callback) } }
 const shutdown = new GracefulShutdown({
-  stopAndRetain: preparePlaybackShutdown,
+  async stopAndRetain() { await flushQueuePersistence(); await preparePlaybackShutdown(); await flushQueuePersistence() },
   async flushPreferences() {
     await Promise.all([preferencePersistence.flushForShutdown(), localPreferencePersistence.flushForShutdown()])
     if ([...preferencePersistence.snapshot(), ...localPreferencePersistence.snapshot()].some(issue => issue.hasPendingChanges || issue.operation !== "read"))

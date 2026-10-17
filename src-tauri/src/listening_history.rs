@@ -319,6 +319,8 @@ struct Report {
     #[serde(default)]
     attempts: u32,
     #[serde(default)]
+    first_failed_at: u64,
+    #[serde(default)]
     retry_at: u64,
 }
 impl Report {
@@ -347,6 +349,7 @@ fn reports(record: &Completed, labels: &TrackLabels) -> Vec<Report> {
             labels: labels.clone(),
             ended_at: unix_time(),
             attempts: 0,
+            first_failed_at: 0,
             retry_at: 0,
         })
     };
@@ -638,6 +641,9 @@ pub async fn drain(app: &tauri::AppHandle) -> Result<OutboxStatus, String> {
             Err(_) => {
                 let mut retry = report;
                 retry.attempts = retry.attempts.saturating_add(1);
+                if retry.first_failed_at == 0 {
+                    retry.first_failed_at = unix_time();
+                }
                 retry.retry_at = unix_time()
                     .saturating_add((30_u64.saturating_mul(1 << retry.attempts.min(7))).min(3600));
                 let db = app.state::<crate::db::DbState>();
@@ -690,8 +696,10 @@ pub struct ListeningStatus {
     pub waiting_for_account: usize,
     pub retrying: usize,
     pub delayed: usize,
+    pub delayed_since: Option<u64>,
 }
-fn classify_reports(reports: &[(String, Report)], current: &Binding) -> ListeningStatus {
+const SCROBBLE_NOTICE_DELAY: u64 = 24 * 60 * 60;
+fn classify_reports(reports: &[(String, Report)], current: &Binding, now: u64) -> ListeningStatus {
     let mut status = ListeningStatus {
         pending: reports.len(),
         ..Default::default()
@@ -701,10 +709,21 @@ fn classify_reports(reports: &[(String, Report)], current: &Binding) -> Listenin
             status.waiting_for_account += 1;
         } else if report.attempts > 0 {
             status.retrying += 1;
-            // One failed request is ordinary transient delivery; repeated failures
-            // warrant a notice while the durable queue continues automatic retries.
-            if report.attempts >= 2 {
+            // Only a prolonged failure of an active scrobbling service warrants
+            // interruption. Plex history and archived library bindings stay quiet.
+            if matches!(report.service, Service::Lastfm | Service::Listenbrainz)
+                && report.attempts >= 2
+                && report.first_failed_at > 0
+                && now.saturating_sub(report.first_failed_at) >= SCROBBLE_NOTICE_DELAY
+            {
                 status.delayed += 1;
+                status.delayed_since = Some(
+                    status
+                        .delayed_since
+                        .map_or(report.first_failed_at, |previous| {
+                            previous.min(report.first_failed_at)
+                        }),
+                );
             }
         }
     }
@@ -734,7 +753,7 @@ pub async fn listening_history_status(
         client.as_ref().map(|client| client.library_scope.clone()),
     );
     let conn = db.0.lock().map_err(|_| "Listening database unavailable")?;
-    let mut status = classify_reports(&read_reports(&conn)?, &current);
+    let mut status = classify_reports(&read_reports(&conn)?, &current, unix_time());
     // Keep the existing total count even if the bounded classification query
     // cannot inspect every retained entry in an oversized legacy queue.
     status.pending = count_reports(&conn)?;
@@ -1100,7 +1119,8 @@ mod tests {
             .enumerate()
             .map(|(i, report)| (i.to_string(), report))
             .collect();
-        let initial = classify_reports(&queued, &current);
+        let now = unix_time();
+        let initial = classify_reports(&queued, &current, now);
         assert_eq!(initial.pending, 4);
         assert_eq!(initial.waiting_for_account, 0);
         assert_eq!(initial.retrying, 0);
@@ -1108,31 +1128,43 @@ mod tests {
         queued[0].1.attempts = 1;
         queued[1].1.attempts = 2;
         queued[2].1.attempts = 3;
+        queued[1].1.first_failed_at = now - SCROBBLE_NOTICE_DELAY;
+        queued[2].1.first_failed_at = now - SCROBBLE_NOTICE_DELAY;
+        assert_eq!(
+            classify_reports(&queued, &current, now).delayed,
+            1,
+            "Plex delivery does not masquerade as scrobbling failure"
+        );
+        assert_eq!(
+            classify_reports(&queued, &current, now - 1).delayed,
+            0,
+            "even repeated failures stay quiet for a full day"
+        );
         let mut changed = settings();
         changed.lastfm_username = "replacement".into();
         changed.listenbrainz_enabled = false;
         let inactive = Binding::capture(&changed, Some("original-library".into()));
-        let status = classify_reports(&queued, &inactive);
+        let status = classify_reports(&queued, &inactive, now);
         assert_eq!(status.pending, 4);
         assert_eq!(status.waiting_for_account, 2);
         assert_eq!(status.retrying, 2);
         assert_eq!(
-            status.delayed, 1,
-            "one transient failure is ordinary retry work"
+            status.delayed, 0,
+            "only a long-running failure for the active service warrants attention"
         );
-        let disconnected = classify_reports(&queued, &Binding::default());
+        let disconnected = classify_reports(&queued, &Binding::default(), now);
         assert_eq!(disconnected.waiting_for_account, 4);
         assert_eq!(
             disconnected.delayed, 0,
             "inactive bindings do not masquerade as network failures"
         );
         let serialized = serde_json::to_value(&status).unwrap();
-        assert_eq!(serialized.as_object().unwrap().len(), 6);
+        assert_eq!(serialized.as_object().unwrap().len(), 7);
         assert!(serialized
             .as_object()
             .unwrap()
             .values()
-            .all(|value| value.is_number() || value.is_boolean()));
+            .all(|value| value.is_number() || value.is_boolean() || value.is_null()));
     }
 
     #[tokio::test]

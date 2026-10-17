@@ -142,3 +142,26 @@ test("distinct recording references never share a discovery query key", () => {
     })
   )
 })
+test("artist-prefixed titles and feature credits produce usable bounded discovery queries", async () => {
+  const calls: string[] = []
+  const p = provider({
+    search: async (query: string) => {
+      calls.push(query)
+      return query === "Mirror"
+        ? [row("10", "Lil Wayne feat. Bruno Mars", "Mirror")]
+        : []
+    },
+  })
+  const recording = {
+    ...source,
+    title: "Lil Wayne - Mirror (feat. Bruno Mars)",
+    artist: "Lil Wayne",
+    durationMs: null,
+  }
+  const candidates = await retrievePlaylistCandidates(p, recording, () => true)
+  expect(calls).toEqual(["Lil Wayne Mirror", "Mirror"])
+  expect(matchTrack(recording, candidates)).toMatchObject({
+    status: "matched",
+    track: { id: "10" },
+  })
+})

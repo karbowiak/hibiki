@@ -30,6 +30,9 @@ import { prefetchTrackAudio } from "../../stores/playerStore"
 import { useContextMenu } from "../../hooks/useContextMenu"
 
 import { useTrackDrag } from "../../hooks/useTrackDrag"
+import { useVirtualWindow, virtualRef } from "../../hooks/useVirtualWindow"
+import type { WindowedCollection } from "../../lib/windowedPages"
+import { useScrollContainer } from "../../lib/scrollContainer"
 
 export interface TrackTableProps {
   tracks: MusicTrack[]
@@ -38,7 +41,8 @@ export interface TrackTableProps {
   sortCol: string
   sortDir: "asc" | "desc"
   onSort: (col: string) => void
-  onPlay: (track: MusicTrack, allTracks: MusicTrack[]) => void
+  onPlay: (track: MusicTrack, allTracks: MusicTrack[], index?: number) => void
+  paged?: WindowedCollection<MusicTrack>
   onAddToQueue: (tracks: MusicTrack[]) => void
   onPlayRadio: (
     id: string,
@@ -73,6 +77,8 @@ function SortableTrackRow({
   onClick,
   onMouseEnter,
   onContextMenu,
+  rowRef,
+  index,
 }: {
   id: string
   children: React.ReactNode
@@ -80,6 +86,8 @@ function SortableTrackRow({
   onClick?: (e: React.MouseEvent<HTMLTableRowElement>) => void
   onMouseEnter?: (e: React.MouseEvent<HTMLTableRowElement>) => void
   onContextMenu?: (e: React.MouseEvent) => void
+  rowRef?: React.RefObject<HTMLTableRowElement | null>
+  index?: number
 }) {
   const {
     attributes,
@@ -99,8 +107,14 @@ function SortableTrackRow({
 
   return (
     <tr
-      ref={setNodeRef}
+      aria-rowindex={index === undefined ? undefined : index + 2}
+      data-track-index={index}
+      ref={(node) => {
+        setNodeRef(node)
+        if (rowRef) rowRef.current = node
+      }}
       style={{
+        height: "3.75rem",
         transform: CSS.Transform.toString(transform),
         transition,
         opacity: isDragging ? 0.5 : 1,
@@ -177,7 +191,7 @@ function TrackRowCells({
           aria-current={isActive ? "true" : undefined}
           onClick={(e) => {
             e.stopPropagation()
-            onPlay(track, tracks)
+            onPlay(track, tracks, idx)
           }}
           className={`group/play flex h-7 w-7 items-center justify-center rounded-full hover:bg-hl-menu focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${isActive ? "text-accent" : "text-[var(--text-secondary)]"}`}
         >
@@ -431,6 +445,7 @@ function TrackTableBody({
   trackDrag,
   compact,
   showRadio,
+  paged,
 }: {
   tracks: MusicTrack[]
   isLoading: boolean
@@ -449,6 +464,7 @@ function TrackTableBody({
   trackDrag: ReturnType<typeof useTrackDrag>
   compact: boolean
   showRadio: boolean
+  paged?: WindowedCollection<MusicTrack>
 }) {
   const skeletons =
     isLoading &&
@@ -499,67 +515,155 @@ function TrackTableBody({
   }
 
   const offline = useOfflineStatusStore((state) => state.offlineMode)
-  const trackRows = tracks.map((track, idx) => {
-    const unavailable =
-      offline &&
-      !track.mediaInfo?.localAudio &&
-      track.mediaInfo?.offlineAvailable !== true
-    const isActive = currentTrackId === track.id
-    const isContextTarget = isCtxTarget(track.id)
-    const rowClass = `group ${unavailable ? "opacity-40 cursor-default" : "cursor-pointer"} rounded ${isActive || isContextTarget ? "bg-hl-row" : "hover:bg-hl-row"}`
-    const cells = <TrackRowCells track={track} idx={idx} {...cellProps} />
+  const count = paged?.total ?? tracks.length
+  const window = useVirtualWindow(count, 56, 1, count > 100)
+  useEffect(() => {
+    paged?.ensureRange(window.start, window.end)
+  }, [paged, window.start, window.end])
+  const rowOccurrences = new Map<string, number>()
+  const trackRows = Array.from(
+    { length: Math.max(0, window.end - window.start) },
+    (_, index) => {
+      const idx = window.start + index
+      const track = paged ? paged.getItem(idx) : tracks[idx]
+      if (!track)
+        return (
+          <tr
+            key={`loading-${idx}`}
+            aria-rowindex={idx + 2}
+            data-loading-index={idx}
+            ref={
+              index === 0
+                ? virtualRef<HTMLTableRowElement>(window.measure)
+                : undefined
+            }
+            style={{ height: "3.75rem" }}
+          >
+            <td className="p-2 text-center text-[var(--text-muted)]">
+              {idx + 1}
+            </td>
+            <td colSpan={visibleCols.size + 2} className="p-2">
+              <div className="flex items-center gap-3">
+                <Skeleton className="h-10 w-10 shrink-0 rounded-sm" />
+                <Skeleton className="h-3 w-48" />
+              </div>
+              <span className="sr-only">Loading song {idx + 1}</span>
+            </td>
+          </tr>
+        )
+      const identity = track.playlistItemId
+        ? `${track.id}:${track.playlistItemId}`
+        : track.id
+      const occurrence = rowOccurrences.get(identity) ?? 0
+      rowOccurrences.set(identity, occurrence + 1)
+      const rowKey = `${identity}:${occurrence}`
+      const unavailable =
+        offline &&
+        !track.mediaInfo?.localAudio &&
+        track.mediaInfo?.offlineAvailable !== true
+      const isActive = currentTrackId === track.id
+      const isContextTarget = isCtxTarget(track.id)
+      const rowClass = `group ${unavailable ? "opacity-40 cursor-default" : "cursor-pointer"} rounded ${isActive || isContextTarget ? "bg-hl-row" : "hover:bg-hl-row"}`
+      const cells = <TrackRowCells track={track} idx={idx} {...cellProps} />
 
-    if (reorderEnabled) {
+      if (reorderEnabled) {
+        return (
+          <SortableTrackRow
+            key={rowKey}
+            id={String(idx)}
+            index={idx}
+            rowRef={
+              index === 0
+                ? virtualRef<HTMLTableRowElement>(window.measure)
+                : undefined
+            }
+            className={rowClass}
+            onClick={() => {
+              if (!unavailable) onPlay(track, tracks, idx)
+            }}
+            onMouseEnter={() => {
+              if (!unavailable) prefetchTrackAudio(track)
+            }}
+            onContextMenu={ctxMenu("track", track, playlistId)}
+          >
+            {cells}
+          </SortableTrackRow>
+        )
+      }
+
       return (
-        <SortableTrackRow
-          key={`${track.id}-${idx}`}
-          id={String(idx)}
+        <tr
+          ref={
+            index === 0
+              ? virtualRef<HTMLTableRowElement>(window.measure)
+              : undefined
+          }
+          style={{ height: "3.75rem" }}
+          aria-rowindex={idx + 2}
+          data-track-index={idx}
+          key={rowKey}
           className={rowClass}
           onClick={() => {
-            if (!unavailable) onPlay(track, tracks)
+            if (!unavailable) onPlay(track, tracks, idx)
           }}
           onMouseEnter={() => {
             if (!unavailable) prefetchTrackAudio(track)
           }}
           onContextMenu={ctxMenu("track", track, playlistId)}
+          onPointerDown={(e) =>
+            trackDrag.onPointerDown(e, {
+              type: "track",
+              ids: [track.id],
+              label: track.title,
+              tracks: [track],
+            })
+          }
+          onPointerMove={trackDrag.onPointerMove}
+          onPointerUp={trackDrag.onPointerUp}
         >
           {cells}
-        </SortableTrackRow>
+        </tr>
       )
     }
+  )
 
-    return (
-      <tr
-        key={`${track.id}-${idx}`}
-        className={rowClass}
-        onClick={() => {
-          if (!unavailable) onPlay(track, tracks)
-        }}
-        onMouseEnter={() => {
-          if (!unavailable) prefetchTrackAudio(track)
-        }}
-        onContextMenu={ctxMenu("track", track, playlistId)}
-        onPointerDown={(e) =>
-          trackDrag.onPointerDown(e, {
-            type: "track",
-            ids: [track.id],
-            label: track.title,
-            tracks: [track],
-          })
-        }
-        onPointerMove={trackDrag.onPointerMove}
-        onPointerUp={trackDrag.onPointerUp}
-      >
-        {cells}
-      </tr>
-    )
-  })
-
-  return (
-    <tbody>
+  const body = (
+    <tbody
+      ref={virtualRef<HTMLTableSectionElement>(window.host)}
+      style={{ overflowAnchor: "none" }}
+    >
       {skeletons}
+      {window.before > 0 && (
+        <tr aria-hidden="true">
+          <td
+            colSpan={visibleCols.size + 3}
+            style={{ height: window.before, padding: 0, border: 0 }}
+          />
+        </tr>
+      )}
       {trackRows}
+      {window.after > 0 && (
+        <tr aria-hidden="true">
+          <td
+            colSpan={visibleCols.size + 3}
+            style={{ height: window.after, padding: 0, border: 0 }}
+          />
+        </tr>
+      )}
     </tbody>
+  )
+  return reorderEnabled ? (
+    <SortableContext
+      items={Array.from(
+        { length: Math.max(0, window.end - window.start) },
+        (_, i) => String(window.start + i)
+      )}
+      strategy={verticalListSortingStrategy}
+    >
+      {body}
+    </SortableContext>
+  ) : (
+    body
   )
 }
 
@@ -589,10 +693,22 @@ export function TrackTable({
   onReorder,
   compact = false,
   showRadio = true,
+  paged,
 }: TrackTableProps) {
   const { handler: ctxMenu, isTarget: isCtxTarget } = useContextMenu()
   const trackDrag = useTrackDrag()
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const pageScroll = useScrollContainer()
+  const previousQuery = useRef([filterQuery, sortCol, sortDir])
+  useEffect(() => {
+    const next = [filterQuery, sortCol, sortDir]
+    if (
+      next.some((value, index) => value !== previousQuery.current[index]) &&
+      pageScroll?.current
+    )
+      pageScroll.current.scrollTop = 0
+    previousQuery.current = next
+  }, [filterQuery, sortCol, sortDir, pageScroll])
 
   // dnd-kit for playlist reorder
   const reorderEnabled = !!onReorder
@@ -617,6 +733,33 @@ export function TrackTable({
   const showInlineRating = !compact && !columns.some((c) => c.id === "rating")
   const showInlineDownload =
     !columns.some((c) => c.id === "downloads") && !visibleCols.has("downloads")
+  const fixedColumns = !compact && (
+    <colgroup>
+      <col style={{ width: 48 }} />
+      <col />
+      {[...visibleCols]
+        .filter((id) => id !== "downloads")
+        .map((id) => (
+          <col
+            key={id}
+            style={{
+              width:
+                id === "album"
+                  ? 220
+                  : id === "artist"
+                    ? 180
+                    : id === "rating"
+                      ? 110
+                      : id.endsWith("_at")
+                        ? 170
+                        : 110,
+            }}
+          />
+        ))}
+      <col style={{ width: 88 }} />
+      {visibleCols.has("downloads") && <col style={{ width: 48 }} />}
+    </colgroup>
+  )
 
   // Escape clears this filter; app-wide search owns Cmd/Ctrl+K.
   useEffect(() => {
@@ -669,7 +812,9 @@ export function TrackTable({
 
       <div
         className={
-          compact ? "min-w-0" : "track-table-scroll relative max-w-full overflow-x-auto"
+          compact
+            ? "min-w-0"
+            : "track-table-scroll relative max-w-full overflow-x-auto"
         }
         data-keyboard-scroll={compact ? undefined : "true"}
         role={compact ? undefined : "region"}
@@ -696,192 +841,198 @@ export function TrackTable({
             collisionDetection={closestCenter}
             onDragEnd={handleDragEnd}
           >
-            <SortableContext
-              items={tracks.map((_, i) => String(i))}
-              strategy={verticalListSortingStrategy}
+            <table
+              className="w-full table-fixed text-sm text-[var(--text-secondary)]"
+              aria-rowcount={(paged?.total ?? tracks.length) + 1}
+              style={{ minWidth: 400 + visibleCols.size * 135 }}
             >
-              <table className="w-full text-sm text-[var(--text-secondary)]">
-                <thead className="border-b border-white/10">
-                  <tr>
-                    <th
-                      className="w-8 p-2 text-center"
-                      onClick={() => onSort("default")}
-                      title={defaultResetTitle}
-                      style={{
-                        cursor: sortCol !== "default" ? "pointer" : "default",
-                      }}
-                    >
-                      #
-                    </th>
+              {fixedColumns}
+              <thead className="border-b border-white/10">
+                <tr>
+                  <th
+                    className="w-8 p-2 text-center"
+                    onClick={() => onSort("default")}
+                    title={defaultResetTitle}
+                    style={{
+                      cursor: sortCol !== "default" ? "pointer" : "default",
+                    }}
+                  >
+                    #
+                  </th>
+                  <SortTh
+                    col="title"
+                    label="Title"
+                    active={sortCol}
+                    dir={sortDir}
+                    onSort={onSort}
+                    align="left"
+                  />
+                  {visibleCols.has("artist") && (
                     <SortTh
-                      col="title"
-                      label="Title"
+                      col="artist"
+                      label="Artist"
                       active={sortCol}
                       dir={sortDir}
                       onSort={onSort}
                       align="left"
                     />
-                    {visibleCols.has("artist") && (
-                      <SortTh
-                        col="artist"
-                        label="Artist"
-                        active={sortCol}
-                        dir={sortDir}
-                        onSort={onSort}
-                        align="left"
-                      />
-                    )}
-                    {visibleCols.has("album") && (
-                      <SortTh
-                        col="album"
-                        label="Album"
-                        active={sortCol}
-                        dir={sortDir}
-                        onSort={onSort}
-                        align="left"
-                      />
-                    )}
-                    {visibleCols.has("year") && (
-                      <SortTh
-                        col="year"
-                        label="Year"
-                        active={sortCol}
-                        dir={sortDir}
-                        onSort={onSort}
-                        align="left"
-                      />
-                    )}
-                    {visibleCols.has("plays") && (
-                      <SortTh
-                        col="plays"
-                        label="Plays"
-                        active={sortCol}
-                        dir={sortDir}
-                        onSort={onSort}
-                        align="right"
-                      />
-                    )}
-                    {visibleCols.has("popularity") && (
-                      <SortTh
-                        col="popularity"
-                        label="Popularity"
-                        active={sortCol}
-                        dir={sortDir}
-                        onSort={onSort}
-                        align="right"
-                      />
-                    )}
-                    {visibleCols.has("label") && (
-                      <SortTh
-                        col="label"
-                        label="Label"
-                        active={sortCol}
-                        dir={sortDir}
-                        onSort={onSort}
-                        align="left"
-                      />
-                    )}
-                    {visibleCols.has("bitrate") && (
-                      <SortTh
-                        col="bitrate"
-                        label="Bit Rate"
-                        active={sortCol}
-                        dir={sortDir}
-                        onSort={onSort}
-                        align="right"
-                      />
-                    )}
-                    {visibleCols.has("format") && (
-                      <SortTh
-                        col="format"
-                        label="Format"
-                        active={sortCol}
-                        dir={sortDir}
-                        onSort={onSort}
-                        align="left"
-                      />
-                    )}
-                    {visibleCols.has("added_at") && (
-                      <SortTh
-                        col="added_at"
-                        label="Date Added (Library)"
-                        active={sortCol}
-                        dir={sortDir}
-                        onSort={onSort}
-                        align="left"
-                      />
-                    )}
-                    {visibleCols.has("rating") && (
-                      <SortTh
-                        col="rating"
-                        label="Rating"
-                        active={sortCol}
-                        dir={sortDir}
-                        onSort={onSort}
-                        align="left"
-                      />
-                    )}
-                    {visibleCols.has("rated_at") && (
-                      <SortTh
-                        col="rated_at"
-                        label="Date Rated"
-                        active={sortCol}
-                        dir={sortDir}
-                        onSort={onSort}
-                        align="left"
-                      />
-                    )}
-                    {visibleCols.has("liked_at") && (
-                      <SortTh
-                        col="liked_at"
-                        label="Date Liked"
-                        active={sortCol}
-                        dir={sortDir}
-                        onSort={onSort}
-                        align="left"
-                      />
-                    )}
+                  )}
+                  {visibleCols.has("album") && (
                     <SortTh
-                      col="duration"
-                      label="Duration"
+                      col="album"
+                      label="Album"
+                      active={sortCol}
+                      dir={sortDir}
+                      onSort={onSort}
+                      align="left"
+                    />
+                  )}
+                  {visibleCols.has("year") && (
+                    <SortTh
+                      col="year"
+                      label="Year"
+                      active={sortCol}
+                      dir={sortDir}
+                      onSort={onSort}
+                      align="left"
+                    />
+                  )}
+                  {visibleCols.has("plays") && (
+                    <SortTh
+                      col="plays"
+                      label="Plays"
                       active={sortCol}
                       dir={sortDir}
                       onSort={onSort}
                       align="right"
                     />
-                    {visibleCols.has("downloads") && <DownloadStatusHeader />}
-                  </tr>
-                </thead>
-                <TrackTableBody
-                  tracks={tracks}
-                  isLoading={isLoading}
-                  loadedCount={loadedCount}
-                  visibleCols={visibleCols}
-                  currentTrackId={currentTrackId}
-                  isCtxTarget={isCtxTarget}
-                  ctxMenu={ctxMenu}
-                  onPlay={onPlay}
-                  onAddToQueue={onAddToQueue}
-                  onPlayRadio={onPlayRadio}
-                  showInlineRating={showInlineRating}
-                  showInlineDownload={showInlineDownload}
-                  playlistId={playlistId}
-                  reorderEnabled={reorderEnabled}
-                  trackDrag={trackDrag}
-                  compact={compact}
-                  showRadio={showRadio}
-                />
-              </table>
-            </SortableContext>
+                  )}
+                  {visibleCols.has("popularity") && (
+                    <SortTh
+                      col="popularity"
+                      label="Popularity"
+                      active={sortCol}
+                      dir={sortDir}
+                      onSort={onSort}
+                      align="right"
+                    />
+                  )}
+                  {visibleCols.has("label") && (
+                    <SortTh
+                      col="label"
+                      label="Label"
+                      active={sortCol}
+                      dir={sortDir}
+                      onSort={onSort}
+                      align="left"
+                    />
+                  )}
+                  {visibleCols.has("bitrate") && (
+                    <SortTh
+                      col="bitrate"
+                      label="Bit Rate"
+                      active={sortCol}
+                      dir={sortDir}
+                      onSort={onSort}
+                      align="right"
+                    />
+                  )}
+                  {visibleCols.has("format") && (
+                    <SortTh
+                      col="format"
+                      label="Format"
+                      active={sortCol}
+                      dir={sortDir}
+                      onSort={onSort}
+                      align="left"
+                    />
+                  )}
+                  {visibleCols.has("added_at") && (
+                    <SortTh
+                      col="added_at"
+                      label="Date Added (Library)"
+                      active={sortCol}
+                      dir={sortDir}
+                      onSort={onSort}
+                      align="left"
+                    />
+                  )}
+                  {visibleCols.has("rating") && (
+                    <SortTh
+                      col="rating"
+                      label="Rating"
+                      active={sortCol}
+                      dir={sortDir}
+                      onSort={onSort}
+                      align="left"
+                    />
+                  )}
+                  {visibleCols.has("rated_at") && (
+                    <SortTh
+                      col="rated_at"
+                      label="Date Rated"
+                      active={sortCol}
+                      dir={sortDir}
+                      onSort={onSort}
+                      align="left"
+                    />
+                  )}
+                  {visibleCols.has("liked_at") && (
+                    <SortTh
+                      col="liked_at"
+                      label="Date Liked"
+                      active={sortCol}
+                      dir={sortDir}
+                      onSort={onSort}
+                      align="left"
+                    />
+                  )}
+                  <SortTh
+                    col="duration"
+                    label="Duration"
+                    active={sortCol}
+                    dir={sortDir}
+                    onSort={onSort}
+                    align="right"
+                  />
+                  {visibleCols.has("downloads") && <DownloadStatusHeader />}
+                </tr>
+              </thead>
+              <TrackTableBody
+                tracks={tracks}
+                isLoading={isLoading}
+                loadedCount={loadedCount}
+                visibleCols={visibleCols}
+                currentTrackId={currentTrackId}
+                isCtxTarget={isCtxTarget}
+                ctxMenu={ctxMenu}
+                onPlay={onPlay}
+                onAddToQueue={onAddToQueue}
+                onPlayRadio={onPlayRadio}
+                showInlineRating={showInlineRating}
+                showInlineDownload={showInlineDownload}
+                playlistId={playlistId}
+                reorderEnabled={reorderEnabled}
+                trackDrag={trackDrag}
+                compact={compact}
+                showRadio={showRadio}
+                paged={paged}
+              />
+            </table>
           </DndContext>
         ) : (
           <table
             className={
               compact
                 ? "w-full table-fixed text-sm text-[var(--text-secondary)]"
-                : "w-full text-sm text-[var(--text-secondary)]"
+                : "w-full table-fixed text-sm text-[var(--text-secondary)]"
+            }
+            aria-rowcount={(paged?.total ?? tracks.length) + 1}
+            style={
+              compact ? undefined : { minWidth: 400 + visibleCols.size * 135 }
             }
           >
+            {fixedColumns}
             {compact && (
               <colgroup>
                 <col style={{ width: 44 }} />
@@ -1064,6 +1215,7 @@ export function TrackTable({
               trackDrag={trackDrag}
               compact={compact}
               showRadio={showRadio}
+              paged={paged}
             />
           </table>
         )}
@@ -1101,9 +1253,20 @@ export function TrackTable({
       )}
 
       {/* Empty state */}
-      {tracks.length === 0 && !isLoading && (
-        <div className="py-12 text-center text-sm text-[var(--text-muted)]">
-          {emptyMessage}
+      {(paged?.total ?? tracks.length) === 0 &&
+        !isLoading &&
+        !paged?.error &&
+        !paged?.loading && (
+          <div className="py-12 text-center text-sm text-[var(--text-muted)]">
+            {emptyMessage}
+          </div>
+        )}
+      {paged?.error && (
+        <div role="alert" className="py-4 text-sm text-[var(--text-secondary)]">
+          {paged.error}{" "}
+          <button className="media-secondary ml-3" onClick={paged.retry}>
+            Try again
+          </button>
         </div>
       )}
     </div>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { invoke } from "@tauri-apps/api/core"
-import { useLocation } from "wouter"
 import { useNotificationCenterStore } from "../stores/notificationCenterStore"
+import { claimScrobbleNotice } from "../lib/scrobbleNotice"
 
 interface ListeningStatus {
   pending: number
@@ -10,18 +10,18 @@ interface ListeningStatus {
   waiting_for_account: number
   retrying: number
   delayed: number
+  delayed_since?: number | null
 }
 
 /** Publishes confirmed listening problems; ordinary delivery never raises a notice. */
 export function ListeningSyncStatus() {
   const [status, setStatus] = useState<ListeningStatus | null>(null)
-  const [failed, setFailed] = useState(false)
+  const announced = useRef(new Set<number>())
   const mounted = useRef(false)
   const retryInFlight = useRef(false)
   const revision = useRef(0)
   const notify = useNotificationCenterStore((s) => s.notify)
   const resolve = useNotificationCenterStore((s) => s.resolve)
-  const [, navigate] = useLocation()
 
   const readStatus = useCallback(async () => {
     if (!mounted.current) return
@@ -30,11 +30,9 @@ export function ListeningSyncStatus() {
       const result = await invoke<ListeningStatus>("listening_history_status")
       if (mounted.current && request === revision.current) {
         setStatus(result)
-        setFailed(false)
       }
     } catch {
       if (mounted.current && request === revision.current) {
-        setFailed(true)
         throw new Error(
           "Listening history status is unavailable. Please try again."
         )
@@ -81,7 +79,6 @@ export function ListeningSyncStatus() {
       }
     } catch {
       if (mounted.current && request === revision.current) {
-        setFailed(true)
         throw new Error(
           retried
             ? "Listening history status is unavailable. Please check again."
@@ -94,24 +91,10 @@ export function ListeningSyncStatus() {
   }, [readStatus])
 
   useEffect(() => {
-    if (failed) {
-      notify({
-        id: "listening.status",
-        title: "Listening status unavailable",
-        message:
-          "Unable to check listening history. This does not mean saved history was lost.",
-        severity: "warning",
-        persistent: true,
-        action: {
-          label: "Check status",
-          run: async () => {
-            if (!retryInFlight.current) await readStatus()
-          },
-        },
-      })
-    } else {
-      resolve("listening.status")
-    }
+    // Archived library/account reports and routine status polling are not
+    // evidence that an active scrobbling account disconnected.
+    resolve("listening.status")
+    resolve("listening.accounts")
     // Keep known problems until a successful read verifies their recovery.
     if (!status) return
     if (status.save_failed && status.unretained > 0) {
@@ -127,38 +110,28 @@ export function ListeningSyncStatus() {
     } else {
       resolve("listening.storage")
     }
-    if (status.delayed > 0) {
+    const since = status.delayed_since
+    if (
+      status.delayed > 0 &&
+      since &&
+      !announced.current.has(since) &&
+      claimScrobbleNotice(since)
+    ) {
+      announced.current.add(since)
       notify({
         id: "listening.sync",
-        title: "Scrobbling delayed",
+        title: "Scrobbling has been delayed for over a day",
         message:
-          "Listening history is saved locally. Sync is delayed and will retry automatically.",
+          "Some listens have not reached an active scrobbling service after 24 hours of retries. They are saved locally; automatic retries will continue.",
         severity: "warning",
-        persistent: true,
+        persistent: false,
+        eventKey: String(since),
         action: { label: "Retry now", run: retry },
       })
-    } else {
+    } else if (!status.delayed || !since) {
       resolve("listening.sync")
     }
-    if (status.waiting_for_account > 0) {
-      notify({
-        id: "listening.accounts",
-        title: "Scrobbling account disconnected",
-        message:
-          "Some listening history is saved for an account, library, or integration that isn’t active.",
-        severity: "info",
-        persistent: true,
-        action: {
-          label: "Settings",
-          run: async () => {
-            if (mounted.current) navigate("/settings")
-          },
-        },
-      })
-    } else {
-      resolve("listening.accounts")
-    }
-  }, [status, failed, notify, resolve, readStatus, retry, navigate])
+  }, [status, notify, resolve, retry])
 
   return null
 }

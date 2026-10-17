@@ -33,6 +33,7 @@ mock.module("@tauri-apps/api/core", () => ({
             pending: 0,
             failed: ready ? 0 : 1,
             requested: item.id !== 102,
+            error: ready ? null : "The audio file contains damaged frames.",
           }))
     if (command === "download_entity" || command === "remove_entity_download")
       return 2
@@ -141,9 +142,10 @@ await act(async () => {
 })
 assert(
   document.querySelector(
-    '[aria-label="1 of 2 tracks downloaded · 1 need attention"]'
+    '[aria-label="1 of 2 tracks downloaded · 1 need attention: The audio file contains damaged frames."]'
   )
 )
+assert(!document.body.textContent!.includes("The audio file contains damaged frames."), "The action menu must not contain anonymous error paragraphs")
 button = [...document.querySelectorAll("button")].find(
   (b) => b.textContent === "Download missing tracks"
 )!

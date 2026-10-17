@@ -1,0 +1,557 @@
+import { invoke } from "@tauri-apps/api/core"
+import type { MusicProvider } from "../providers/types"
+import type { MusicItem, MusicTrack, PagedResult } from "../types/music"
+import type {
+  PlexRequestContext,
+  PlexTransport,
+} from "../backends/plex/scopedApi"
+import { sanitizeOfflineData, forwardFreshPlaylistReads } from "./providerCache"
+import { shuffled } from "../lib/pagedPlayback"
+import { projectOfflineAvailability } from "./catalogue"
+
+const TTL = 15 * 60_000
+interface Info {
+  total: number
+  cachedAt: number
+  complete: boolean
+  dirty: boolean
+  stamp: string
+  refreshing: boolean
+}
+interface Job {
+  key: string
+  stamp: string
+  load: (offset: number, limit: number) => Promise<PagedResult<MusicItem>>
+  force: boolean
+}
+
+/** One background worker, atomic generations, indexed SQLite reads, bounded renderer pages. */
+export function createCollectionCacheProvider(
+  provider: MusicProvider,
+  raw: MusicProvider,
+  context: PlexRequestContext,
+  transport: PlexTransport = invoke
+): MusicProvider {
+  let stopped = false,
+    running = false
+  let timer: ReturnType<typeof setInterval> | undefined
+  const jobs = new Map<string, Job>()
+  const methods = new Map<PropertyKey, unknown>()
+  const failures = new Set<string>()
+  const mixPaths = new Map<string, string>()
+  async function resolveKey(key: string) {
+    if (!key.startsWith("mix:/")) return key
+    const path = key.slice(4)
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(path)
+    )
+    const resolved =
+      "mix:" +
+      [...new Uint8Array(digest)]
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("")
+    mixPaths.set(resolved, path)
+    return resolved
+  }
+  const session = provider.playbackSession
+  const owns = () =>
+    !stopped &&
+    provider.playbackSession === session &&
+    provider.cacheScope === context.cacheScope
+  const online = () => owns() && !provider.isOffline && raw.isConnected()
+  const project = async <T>(value: T): Promise<T> =>
+    provider.isOffline
+      ? ((await projectOfflineAvailability(context, value)) as T)
+      : value
+  const call = async <T>(
+    op: string,
+    key: string,
+    args: Record<string, unknown> = {}
+  ): Promise<T> => {
+    if (!owns()) throw Error("Collection request was superseded")
+    const value = await transport<T>("collection_cache", {
+      context,
+      request: { op, key, ...args },
+    })
+    if (!owns()) throw Error("Collection request was superseded")
+    return value
+  }
+  const notify = (key: string) => {
+    if (typeof window !== "undefined")
+      window.dispatchEvent(
+        new CustomEvent("collection-cache-updated", { detail: key })
+      )
+  }
+  const enqueue = (job: Job) => {
+    failures.delete(job.key)
+    jobs.set(job.key, job)
+    void pump()
+  }
+  async function pump() {
+    if (running || !online()) return
+    running = true
+    try {
+      while (jobs.size && online()) {
+        const job = jobs.values().next().value!
+        jobs.delete(job.key)
+        try {
+          const info = await call<Info | null>("info", job.key)
+          if (
+            !job.force &&
+            info?.complete &&
+            !info.dirty &&
+            !info.refreshing &&
+            info.stamp === job.stamp &&
+            Date.now() - info.cachedAt < TTL
+          )
+            continue
+          const token = await call<{ generation: number; offset: number }>(
+            "begin",
+            job.key,
+            { stamp: job.stamp }
+          )
+          let offset = token.offset,
+            done = false
+          // Yield large collections to the remaining queue after four bounded pages.
+          for (let page = 0; page < 4 && online(); page++) {
+            const result = await job.load(offset, 500)
+            if (!online()) return
+            if (result.offset !== undefined && result.offset !== offset)
+              throw Error("Collection paging did not advance")
+            const total = result.total || offset + result.items.length
+            if (
+              result.items.length > 500 ||
+              (!result.items.length && offset < total)
+            )
+              throw Error("Collection changed while caching")
+            await call("put", job.key, {
+              generation: token.generation,
+              offset,
+              total,
+              items: sanitizeOfflineData(result.items),
+            })
+            offset += result.items.length
+            if (offset >= total) {
+              const result = await call<{ changed: boolean }>(
+                "commit",
+                job.key,
+                { generation: token.generation }
+              )
+              if (result.changed) {
+                notify(job.key)
+                if (mixPaths.has(job.key))
+                  notify(`mix:${mixPaths.get(job.key)}`)
+              }
+              done = true
+              break
+            }
+            await new Promise((resolve) => setTimeout(resolve, 100))
+          }
+          if (!done && online() && !jobs.has(job.key))
+            jobs.set(job.key, { ...job, force: true })
+        } catch (error) {
+          failures.add(job.key)
+          if (
+            /Collection changed|membership page|did not advance/i.test(
+              String(error)
+            )
+          )
+            await call("invalidate", job.key).catch(() => {})
+          // Keep the previous complete snapshot. No tight retry loop or persistent warning.
+          // The next scheduled pass resumes valid checkpoints or replaces invalidated ones.
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+    } finally {
+      running = false
+    }
+  }
+  async function schedule() {
+    if (!online()) return
+    for (const kind of ["track", "album", "artist"] as const) {
+      if (!raw.getRatedItemsPage) continue
+      enqueue({
+        key: `rated:${kind}`,
+        stamp: `rated:${kind}`,
+        force: false,
+        load: (offset, limit) => raw.getRatedItemsPage!(kind, offset, limit),
+      })
+    }
+    try {
+      const playlists = await raw.getPlaylists()
+      if (!online()) return
+      enqueue({
+        key: "playlists",
+        stamp: String(Date.now()),
+        force: false,
+        load: async (offset, limit) => ({
+          items: playlists
+            .slice(offset, offset + limit)
+            .map((item) => ({ ...item, type: "playlist" as const })),
+          total: playlists.length,
+          offset,
+        }),
+      })
+      for (const playlist of [...playlists].sort(
+        (a, b) => a.trackCount - b.trackCount
+      )) {
+        enqueue({
+          key: `playlist:${playlist.id}`,
+          stamp: JSON.stringify([
+            playlist.trackCount,
+            playlist.duration,
+            (playlist._providerData as { updated_at?: number } | undefined)
+              ?.updated_at,
+          ]),
+          force: false,
+          load: async (offset, limit) => {
+            const page = await raw.getPlaylistItems(playlist.id, offset, limit)
+            return {
+              ...page,
+              items: page.items.map((item) => ({
+                ...item,
+                type: "track" as const,
+              })),
+            }
+          },
+        })
+      }
+    } catch {
+      /* A disconnected server is retried by the next pass. */
+    }
+  }
+  const warm = () => {
+    if (stopped) return
+    void schedule()
+    if (!timer)
+      timer = setInterval(() => {
+        if (!owns()) {
+          clearInterval(timer)
+          timer = undefined
+        } else void schedule()
+      }, TTL)
+  }
+  const stop = () => {
+    stopped = true
+    jobs.clear()
+    clearInterval(timer)
+    timer = undefined
+  }
+  async function ensure(key: string) {
+    const info = await call<Info | null>("info", key)
+    if (info?.complete && !info.dirty) return
+    if (!online())
+      throw Error("Reconnect to Plex to prepare this collection for searching.")
+    let job: Job
+    if (key.startsWith("rated:") && raw.getRatedItemsPage) {
+      const kind = key.slice(6) as "track" | "album" | "artist"
+      job = {
+        key,
+        stamp: key,
+        force: true,
+        load: (offset, limit) => raw.getRatedItemsPage!(kind, offset, limit),
+      }
+    } else if (key.startsWith("playlist:")) {
+      const id = key.slice(9)
+      const playlist = (await raw.getPlaylists()).find((item) => item.id === id)
+      if (!playlist) throw Error("This playlist is no longer available.")
+      job = {
+        key,
+        stamp: JSON.stringify([
+          playlist.trackCount,
+          playlist.duration,
+          (playlist._providerData as { updated_at?: string } | undefined)
+            ?.updated_at,
+        ]),
+        force: true,
+        load: async (offset, limit) => {
+          const page = await raw.getPlaylistItems(id, offset, limit)
+          return {
+            ...page,
+            items: page.items.map((item) => ({
+              ...item,
+              type: "track" as const,
+            })),
+          }
+        },
+      }
+    } else if (mixPaths.has(key) && raw.getMixTracksPage) {
+      job = {
+        key,
+        stamp: key,
+        force: true,
+        load: async (offset, limit) => {
+          const page = await raw.getMixTracksPage!(
+            mixPaths.get(key)!,
+            offset,
+            limit
+          )
+          return {
+            ...page,
+            items: page.items.map((item) => ({
+              ...item,
+              type: "track" as const,
+            })),
+          }
+        },
+      }
+    } else throw Error("This collection cannot be searched.")
+    const waiting = [...jobs.entries()].filter(([existing]) => existing !== key)
+    jobs.clear()
+    enqueue(job)
+    waiting.forEach(([key, value]) => jobs.set(key, value))
+    const start = Date.now()
+    while (online() && Date.now() - start < 120_000) {
+      const ready = await call<Info | null>("info", key)
+      if (ready?.complete && !ready.dirty) return
+      if (failures.has(key)) break
+      await new Promise((resolve) => setTimeout(resolve, 150))
+    }
+    throw Error("This collection is still being prepared. Try again shortly.")
+  }
+  async function invalidate(keys: string[]) {
+    for (const key of keys) {
+      await call("invalidate", key)
+      notify(key)
+    }
+    void schedule()
+  }
+  const proxy = new Proxy(provider, {
+    get(target, property) {
+      if (property === "savedQueue") return {
+        load: () => transport("saved_queue", { context, request: { op: "load" } }),
+        save: (snapshot: unknown) => transport("saved_queue", { context, request: { op: "save", ...snapshot as object } }),
+        position: (state: unknown) => transport("saved_queue", { context, request: { op: "position", state } }),
+        clear: () => transport("saved_queue", { context, request: { op: "clear" } }),
+      }
+      if (property === "warmCollections") return warm
+      if (property === "stopCollectionWarmup") return stop
+      if (methods.has(property)) return methods.get(property)
+      const value = Reflect.get(target, property, target)
+      if (property === "favorites" && value) {
+        if (methods.has(property)) return methods.get(property)
+        const native = value as NonNullable<MusicProvider["favorites"]>
+        const favorites = {
+          ...native,
+          cachedTracks: async (ids: string[]) => {
+            const rows = await call<(MusicTrack | null)[]>(
+              "items",
+              "rated:track",
+              { ids }
+            ).catch(() => ids.map(() => null))
+            const missing = ids.filter((_id, index) => !rows[index])
+            const fallback = missing.length
+              ? ((await native.cachedTracks?.(missing)) ?? [])
+              : []
+            return project([
+              ...rows.filter((row): row is MusicTrack => !!row),
+              ...fallback,
+            ])
+          },
+        }
+        methods.set(property, favorites)
+        return favorites
+      }
+      let method: unknown
+      if (property === "getCollectionPage")
+        method = async (
+          key: string,
+          offset: number,
+          limit: number,
+          filter: string,
+          sort: string,
+          dir: string
+        ) => {
+          key = await resolveKey(key)
+          const read = () =>
+            call<PagedResult<MusicItem> | null>("query", key, {
+              offset,
+              limit,
+              filter,
+              sort,
+              dir,
+            })
+          let page = await read()
+          if (!page) {
+            await ensure(key)
+            page = await read()
+          }
+          if (!page) throw Error("Could not read this collection. Try again.")
+          return project(page)
+        }
+      else if (property === "getCachedTrackSource")
+        method = async (key: string, shuffle = false) => {
+          key = await resolveKey(key)
+          const refs = await call<[string, string | null][] | null>(
+            "refs",
+            key
+          ).catch(() => null)
+          if (!refs) return null
+          const order = shuffle ? shuffled(refs) : refs
+          return {
+            key,
+            total: order.length,
+            entries: order.map(([id, occurrence]) => ({ id, ...(occurrence ? { playlistItemId: occurrence } : {}) })),
+            async loadItems(positions: number[]) {
+              const selected = positions.map(position => order[position])
+              const rows = await call<(MusicTrack | null)[]>("items", key, { ids: selected.map(ref => ref[0]) })
+              if (rows.some(row => !row)) throw Error("Some cached songs are unavailable. Refresh the collection and try again.")
+              return project(rows.map((row, i) => selected[i][1] ? { ...row!, playlistItemId: selected[i][1] } : row!))
+            },
+            async loadPage(offset: number, limit: number) {
+              const selected = order.slice(offset, offset + limit)
+              const rows = await call<(MusicTrack | null)[]>("items", key, {
+                ids: selected.map((ref) => ref[0]),
+              })
+              if (rows.some((row) => !row))
+                throw Error(
+                  "Some cached songs are unavailable. Refresh the collection and try again."
+                )
+              return project({
+                items: rows.map((row, i) =>
+                  selected[i][1]
+                    ? { ...row!, playlistItemId: selected[i][1] }
+                    : row!
+                ),
+                total: order.length,
+                offset,
+              })
+            },
+          }
+        }
+      else if (property === "getPlaylistItems")
+        method = async (id: string, offset = 0, limit = 100) => {
+          const page = await call<PagedResult<MusicTrack> | null>(
+            "page",
+            `playlist:${id}`,
+            { offset, limit: Math.min(500, limit) }
+          ).catch(() => null)
+          return page
+            ? project(page)
+            : target.getPlaylistItems(id, offset, limit)
+        }
+      else if (property === "getPlaylists")
+        method = async () => {
+          const info = await call<Info | null>("info", "playlists").catch(
+            () => null
+          )
+          if (!info?.complete || info.dirty) return target.getPlaylists()
+          const items: MusicItem[] = []
+          for (let offset = 0; offset < info.total; offset += 500) {
+            const page = await call<PagedResult<MusicItem> | null>(
+              "page",
+              "playlists",
+              { offset, limit: 500 }
+            )
+            if (!page) return target.getPlaylists()
+            items.push(...page.items)
+          }
+          return items.filter((item) => item.type === "playlist")
+        }
+      else if (property === "getRatedItemsPage")
+        method = async (
+          kind: "track" | "album" | "artist",
+          offset: number,
+          limit: number
+        ) => {
+          const page = await call<PagedResult<MusicItem> | null>(
+            "page",
+            `rated:${kind}`,
+            { offset, limit }
+          ).catch(() => null)
+          return page
+            ? project(page)
+            : target.getRatedItemsPage!(kind, offset, limit)
+        }
+      else if (property === "getMixTracksPage" && raw.getMixTracksPage)
+        method = async (path: string, offset: number, limit: number) => {
+          const key = await resolveKey(`mix:${path}`)
+          const cached = await call<PagedResult<MusicTrack> | null>(
+            "page",
+            key,
+            { offset, limit }
+          ).catch(() => null)
+          if (online())
+            enqueue({
+              key,
+              stamp: key,
+              force: false,
+              load: async (start, size) => {
+                const page = await raw.getMixTracksPage!(path, start, size)
+                return {
+                  ...page,
+                  items: page.items.map((item) => ({
+                    ...item,
+                    type: "track" as const,
+                  })),
+                }
+              },
+            })
+          return cached
+            ? project(cached)
+            : target.getMixTracksPage!(path, offset, limit)
+        }
+      else if (property === "disconnect")
+        method = async () => {
+          stop()
+          await target.disconnect()
+        }
+      else if (
+        typeof value === "function" &&
+        [
+          "addToPlaylist",
+          "removeFromPlaylist",
+          "movePlaylistItem",
+          "editPlaylist",
+          "deletePlaylist",
+          "createPlaylist",
+          "mutatePlaylistOccurrence",
+          "describePlaylist",
+          "rate",
+          "editMetadata",
+          "editAdvancedMetadata",
+          "saveArtwork",
+        ].includes(String(property))
+      )
+        method = async (...args: unknown[]) => {
+          const keys =
+            property === "rate" ||
+            ["editMetadata", "editAdvancedMetadata", "saveArtwork"].includes(
+              String(property)
+            )
+              ? ["rated:track", "rated:album", "rated:artist"]
+              : [
+                  "playlists",
+                  ...(typeof args[0] === "string" &&
+                  property !== "createPlaylist"
+                    ? [`playlist:${args[0]}`]
+                    : []),
+                ]
+          try {
+            const result = await value.apply(target, args)
+            if (
+              property === "rate" &&
+              typeof args[0] === "string" &&
+              online()
+            ) {
+              await call("rate", "rated:track", {
+                id: args[0],
+                rating: args[1],
+              }).catch(() => {})
+              notify(`item:${args[0]}`)
+            }
+            return result
+          } finally {
+            if (online()) await invalidate(keys).catch(() => {})
+          }
+        }
+      else if (typeof value === "function") method = value.bind(target)
+      else return value
+      methods.set(property, method)
+      return method
+    },
+  })
+  forwardFreshPlaylistReads(proxy, provider)
+  return proxy
+}

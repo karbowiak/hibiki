@@ -46,6 +46,8 @@ export function createSavedLibraryProvider(
     "getTags",
     "getItemsByTag",
     "getMixTracks",
+    "getMixTracksPage",
+    "getRatedItemsPage",
     "getSectionStations",
     "getArtistStations",
     "getAllArtists",

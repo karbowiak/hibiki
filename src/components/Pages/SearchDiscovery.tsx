@@ -83,6 +83,10 @@ export function SearchDiscovery() {
     setPlayError(false)
     void (async () => {
       try {
+        if (provider.getMixTracksPage) {
+          await usePlayerStore.getState().playPagedTracks({ key: `mix:${item.providerKey}`, loadPage: (offset, limit) => provider.getMixTracksPage!(item.providerKey!, offset, limit) }, item.title, "/mix", true)
+          return
+        }
         const tracks = shuffleTracks(
           await provider.getMixTracks!(item.providerKey!),
           item.title

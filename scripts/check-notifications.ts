@@ -82,7 +82,7 @@ try {
       await bell.waitFor({ timeout: 10000 })
       assert.equal(
         await bell.getAttribute("aria-label"),
-        "Notifications, 3 unread",
+        "Notifications, 2 unread",
         `${name}: unread badge missing`
       )
       const snapshot = () =>
@@ -303,7 +303,7 @@ try {
         .first()
         .waitFor()
       const toasts = page.getByRole("status").filter({ hasText: "Fixture" })
-      assert.equal(await toasts.count(), 3)
+      assert.equal(await toasts.count(), 2)
       await page.screenshot({
         path: join(artifactDir, `${name}-narrow-light-toasts.png`),
       })

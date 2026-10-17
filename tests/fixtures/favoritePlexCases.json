@@ -1,0 +1,297 @@
+[
+  {
+    "source": {
+      "id": "source",
+      "artist": "Lil Wayne feat. Drake",
+      "title": "She Will"
+    },
+    "tracks": [
+      {
+        "id": "741814",
+        "title": "She Will",
+        "artist": "Lil Wayne",
+        "album": "I Am Music",
+        "durationMs": 305840
+      }
+    ],
+    "expectedId": "741814"
+  },
+  {
+    "source": {
+      "id": "source",
+      "artist": "Major Lazer Feat. Amber Of Dirty Projectors",
+      "title": "Get Free"
+    },
+    "tracks": [
+      {
+        "id": "330775",
+        "title": "Get Free (Speed version)",
+        "artist": "Major Lazer",
+        "album": "Major Lazer Sped Up, Vol. 2",
+        "durationMs": 245016
+      },
+      {
+        "id": "922768",
+        "title": "Get Free",
+        "artist": "Major Lazer",
+        "album": "Free the Universe",
+        "durationMs": 289973
+      },
+      {
+        "id": "330522",
+        "title": "Get Free (What So Not remix)",
+        "artist": "Major Lazer",
+        "album": "Free the Universe",
+        "durationMs": 298413
+      },
+      {
+        "id": "896629",
+        "title": "Get Free (What So Not Remix)",
+        "artist": "Major Lazer",
+        "album": "Free the Universe (Extended Version)",
+        "durationMs": 298413
+      },
+      {
+        "id": "896630",
+        "title": "Get Free (Chrome Sparks Remix)",
+        "artist": "Major Lazer",
+        "album": "Free the Universe (Extended Version)",
+        "durationMs": 260017
+      },
+      {
+        "id": "922748",
+        "title": "Get Free",
+        "artist": "Major Lazer",
+        "album": "Free The Universe (extended Version)",
+        "durationMs": 289973
+      },
+      {
+        "id": "859810",
+        "title": "Get Free (feat. Amber Coffman)",
+        "artist": "Major Lazer",
+        "album": "Free The Universe (extended Version)",
+        "durationMs": 289750
+      },
+      {
+        "id": "922762",
+        "title": "Get Free (What So Not Remix)",
+        "artist": "Major Lazer",
+        "album": "Free The Universe (extended Version)",
+        "durationMs": 298413
+      },
+      {
+        "id": "330842",
+        "title": "Get Free (Chrome Sparks Remix)",
+        "artist": "Major Lazer",
+        "album": "Free The Universe (extended Version)",
+        "durationMs": 260001
+      },
+      {
+        "id": "899836",
+        "title": "Get Free",
+        "artist": "Major Lazer",
+        "album": "Get Free",
+        "durationMs": 289973
+      },
+      {
+        "id": "680707",
+        "title": "Get Free (Bonde do Rol\u00ea remix)",
+        "artist": "Major Lazer",
+        "album": "Get Free",
+        "durationMs": 223300
+      },
+      {
+        "id": "680708",
+        "title": "Get Free (Andy C remix)",
+        "artist": "Major Lazer",
+        "album": "Get Free",
+        "durationMs": 331364
+      },
+      {
+        "id": "330552",
+        "title": "Get Free",
+        "artist": "Major Lazer",
+        "album": "Major Lazer Essentials",
+        "durationMs": 289973
+      },
+      {
+        "id": "922724",
+        "title": "Get Free",
+        "artist": "Major Lazer",
+        "album": "Major Lazer Essentials",
+        "durationMs": 289973
+      }
+    ],
+    "expectedId": "330552"
+  },
+  {
+    "source": {
+      "id": "source",
+      "artist": "Little Sis Nora",
+      "title": "Little Sis Nora - COOL LIKE THAT"
+    },
+    "tracks": [
+      {
+        "id": "862866",
+        "title": "COOL LIKE THAT",
+        "artist": "Little Sis Nora",
+        "album": "COOL LIKE THAT",
+        "durationMs": 161052
+      }
+    ],
+    "expectedId": "862866"
+  },
+  {
+    "source": {
+      "id": "source",
+      "artist": "Diplo",
+      "title": "Revolution (feat. Imanos & Faustix & Kai)"
+    },
+    "tracks": [
+      {
+        "id": "213033",
+        "title": "Revolution (Panic City remix)",
+        "artist": "Diplo",
+        "album": "Revolution (remixes)",
+        "durationMs": 307023
+      },
+      {
+        "id": "213034",
+        "title": "Revolution (RUN DMT remix)",
+        "artist": "Diplo",
+        "album": "Revolution (remixes)",
+        "durationMs": 212021
+      },
+      {
+        "id": "213035",
+        "title": "Revolution (Paper Diamond remix)",
+        "artist": "Diplo",
+        "album": "Revolution (remixes)",
+        "durationMs": 294023
+      },
+      {
+        "id": "213036",
+        "title": "Revolution (Sluggers remix)",
+        "artist": "Diplo",
+        "album": "Revolution (remixes)",
+        "durationMs": 281023
+      },
+      {
+        "id": "213022",
+        "title": "Revolution (Absence remix)",
+        "artist": "Diplo",
+        "album": "Revolution (remixes), Part 2",
+        "durationMs": 238023
+      },
+      {
+        "id": "213023",
+        "title": "Revolution (Unlike Pluto remix)",
+        "artist": "Diplo",
+        "album": "Revolution (remixes), Part 2",
+        "durationMs": 198019
+      },
+      {
+        "id": "213024",
+        "title": "Revolution (Party Favor remix)",
+        "artist": "Diplo",
+        "album": "Revolution (remixes), Part 2",
+        "durationMs": 206023
+      },
+      {
+        "id": "213060",
+        "title": "Revolution",
+        "artist": "Diplo feat. Faustix & Imanos and Kai",
+        "album": "Random White Dude Be Everywhere",
+        "durationMs": 263706
+      },
+      {
+        "id": "213067",
+        "title": "Revolution (Danny Diggz remix)",
+        "artist": "Diplo feat. Faustix & Imanos and Kai",
+        "album": "Random White Dude Be Everywhere",
+        "durationMs": 193000
+      },
+      {
+        "id": "874143",
+        "title": "Revolution (feat. Faustix, Imanos & Kai)",
+        "artist": "Diplo",
+        "album": "Revolution",
+        "durationMs": 263716
+      },
+      {
+        "id": "213109",
+        "title": "Revolution (Boaz van de Beatz remix)",
+        "artist": "Diplo feat. Faustix & Imanos and Kai",
+        "album": "Revolution",
+        "durationMs": 268480
+      },
+      {
+        "id": "874144",
+        "title": "Revolution (feat. Faustix, Imanos & Kai) - Boaz van de Beatz Remix",
+        "artist": "Diplo",
+        "album": "Revolution",
+        "durationMs": 266482
+      },
+      {
+        "id": "888727",
+        "title": "Revolution (Absence Remix) [feat. Faustix & Imanos and Kai]",
+        "artist": "Diplo",
+        "album": "Revolution (Remixes Pt. 2)",
+        "durationMs": 238248
+      },
+      {
+        "id": "888728",
+        "title": "Revolution (Unlike Pluto Remix) [feat. Faustix & Imanos and Kai]",
+        "artist": "Diplo",
+        "album": "Revolution (Remixes Pt. 2)",
+        "durationMs": 198120
+      },
+      {
+        "id": "875178",
+        "title": "Revolution (feat. Faustix & Imanos and Kai) - Party Favor Remix",
+        "artist": "Diplo",
+        "album": "Revolution (Remixes Pt. 2)",
+        "durationMs": 213478
+      },
+      {
+        "id": "348306",
+        "title": "Revolution (Boaz Van de Beatz remix)",
+        "artist": "Diplo",
+        "album": "The Future Sound of EDM",
+        "durationMs": 266527
+      }
+    ],
+    "expectedId": null
+  },
+  {
+    "source": {
+      "id": "source",
+      "artist": "Anderson .Paak, Fred again.., CHIKA",
+      "title": "places to be"
+    },
+    "tracks": [
+      {
+        "id": "395166",
+        "title": "places to be (CLIPZ remix)",
+        "artist": "Fred AgAin..",
+        "album": "Places To Be (remixes)",
+        "durationMs": 184018
+      },
+      {
+        "id": "395013",
+        "title": "places to be",
+        "artist": "Fred again.., Anderson .Paak & CHIKA",
+        "album": "ten days",
+        "durationMs": 226677
+      },
+      {
+        "id": "863707",
+        "title": "places to be (MESSIE remix)",
+        "artist": "Fred AgAin..",
+        "album": "USB",
+        "durationMs": 219310
+      }
+    ],
+    "expectedId": "395013"
+  }
+]

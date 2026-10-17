@@ -17,7 +17,7 @@ const track: any = { id: "one", title: "First track", artistName: "Artist", dura
 const next = { ...track, id: "two", title: "Next track" }
 const player = create<any>(() => ({ currentTrack: track, queue: [track, next], queueIndex: 0, lyricsLines: [], positionMs: 0, repeat: 0, shuffle: false, reorderQueue: noop, removeFromQueue() { removes++ }, jumpToQueueItem() { jumps++ }, clearUpcoming: noop, addToQueue: noop, seekTo() { seeks++ } }))
 mock.module("../../src/stores/index.ts", () => ({ usePlayerStore: player, useLibraryStore: create(() => ({})), useConnectionStore: create(() => ({})) }))
-mock.module("../../src/stores/playerStore", () => ({ usePlayerStore: player, prefetchTrackAudio: noop, capturePlaybackSelectionVersion: () => 0, isDjGenerated: () => false, isRadioGenerated: () => false }))
+mock.module("../../src/stores/playerStore", () => ({ usePlayerStore: player, ensureQueueRange: async () => {}, prefetchTrackAudio: noop, capturePlaybackSelectionVersion: () => 0, isDjGenerated: () => false, isRadioGenerated: () => false }))
 const ui = create<any>(set => ({ isQueueOpen: true, isQueuePinned: false, isLyricsOpen: true, isLyricsPinned: false, queueActiveTab: "queue", setQueueOpen: (open: boolean) => set({ isQueueOpen: open }), setLyricsOpen: (open: boolean) => set({ isLyricsOpen: open }), setQueuePinned: noop, setLyricsPinned: noop, setQueueActiveTab: (tab: string) => set({ queueActiveTab: tab }) }))
 mock.module("../../src/stores/uiStore", () => ({ useUIStore: ui }))
 mock.module("../../src/hooks/useResizable", () => ({ useResizable: () => ({ width: 320, onMouseDown: noop, isDragging: false }) }))

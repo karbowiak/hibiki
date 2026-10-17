@@ -33,7 +33,7 @@ export function playlistTrackFromMusic(
   return {
     id: track.id,
     title: track.title,
-    artist: track.artistName,
+    artist: track.originalTitle?.trim() || track.artistName,
     album: track.albumName,
     durationMs: track.duration,
     recordingMbid: recordingMbid(verifiedMbid),

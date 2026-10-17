@@ -13,7 +13,8 @@
 //! 3. `get_session(api_key, api_secret, token)` — exchanges token for permanent session key
 //! 4. Store session key in `PlexSettings.lastfm_session_key`
 
-use crate::http_response::{BoundedResponseExt, MAX_JSON_BYTES};
+#[path = "lastfm_transport.rs"]
+pub(crate) mod transport;
 use anyhow::{bail, Context, Result};
 use md5::{Digest, Md5};
 use once_cell::sync::Lazy;
@@ -231,7 +232,8 @@ pub struct LastfmArtistInfo {
     /// Plain-text biography (HTML tags stripped).
     pub bio: String,
     pub tags: Vec<String>,
-    pub similar: Vec<LastfmSimilarArtist>,}
+    pub similar: Vec<LastfmSimilarArtist>,
+}
 
 /// Track metadata returned by `track.getInfo`.
 #[derive(Debug, Serialize, Clone)]
@@ -326,11 +328,11 @@ fn best_image(images: &[ImageItem]) -> Option<String> {
 /// Check whether a JSON response body is a Last.fm application-level error.
 /// Last.fm returns HTTP 200 even for errors like "Artist not found" (error code 6).
 fn check_lastfm_error(bytes: &[u8]) -> Result<()> {
-    let response: serde_json::Value = serde_json::from_slice(bytes)
-        .context("Invalid Last.fm JSON response")?;
+    let response: serde_json::Value =
+        serde_json::from_slice(bytes).context("Invalid Last.fm JSON response")?;
     if response.get("error").is_some() {
-        let err: LastfmError = serde_json::from_value(response)
-            .context("Invalid Last.fm error response")?;
+        let err: LastfmError =
+            serde_json::from_value(response).context("Invalid Last.fm error response")?;
         if err.error != 0 {
             bail!("Last.fm error {}: {}", err.error, err.message);
         }
@@ -341,24 +343,42 @@ fn check_lastfm_error(bytes: &[u8]) -> Result<()> {
 fn check_scrobble_response(bytes: &[u8]) -> Result<()> {
     check_lastfm_error(bytes)?;
     let response: serde_json::Value = serde_json::from_slice(bytes)?;
-    let batch = response.get("scrobbles").context("Missing Last.fm scrobble acknowledgement")?;
+    let batch = response
+        .get("scrobbles")
+        .context("Missing Last.fm scrobble acknowledgement")?;
     let number = |value: Option<&serde_json::Value>| {
-        value.and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse::<u64>().ok()))
+        value.and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_str()?.parse::<u64>().ok())
+        })
     };
     let attributes = batch.get("@attr");
     let accepted = number(attributes.and_then(|value| value.get("accepted")));
     let ignored = number(attributes.and_then(|value| value.get("ignored")));
     let item = batch.get("scrobble").and_then(|value| {
         if let Some(items) = value.as_array() {
-            if items.len() == 1 { items.first() } else { None }
-        } else { Some(value) }
+            if items.len() == 1 {
+                items.first()
+            } else {
+                None
+            }
+        } else {
+            Some(value)
+        }
     });
-    let code_value = item.and_then(|value| value.get("ignoredMessage")).and_then(|value| value.get("code"));
+    let code_value = item
+        .and_then(|value| value.get("ignoredMessage"))
+        .and_then(|value| value.get("code"));
     let code = number(code_value);
     // HTTP 200 can still mean an ignored scrobble. Only an explicit accepted
     // single submission permits the durable listening queue to delete its job.
     if accepted != Some(1) || ignored != Some(0) || (code_value.is_some() && code != Some(0)) {
-        bail!("Last.fm did not accept this scrobble (ignored code {})", code.map(|code| code.to_string()).unwrap_or_else(|| "unknown".into()));
+        bail!(
+            "Last.fm did not accept this scrobble (ignored code {})",
+            code.map(|code| code.to_string())
+                .unwrap_or_else(|| "unknown".into())
+        );
     }
     Ok(())
 }
@@ -371,21 +391,12 @@ fn check_scrobble_response(bytes: &[u8]) -> Result<()> {
 ///
 /// Returns the token and the URL the user must visit to approve access.
 pub async fn get_token(api_key: &str) -> Result<LastfmAuthToken> {
-    let resp = LASTFM_CLIENT
-        .get(LASTFM_BASE)
-        .query(&[
-            ("method", "auth.getToken"),
-            ("api_key", api_key),
-            ("format", "json"),
-        ])
-        .send()
-        .await.map_err(|error| error.without_url())
-        .context("Failed to reach Last.fm")?
-        .error_for_status().map_err(|error| error.without_url())
-        .context("Last.fm auth.getToken returned error status")?
-        .bounded_bytes(MAX_JSON_BYTES)
-        .await
-        .context("Failed to read Last.fm token response")?;
+    let resp = transport::send(LASTFM_CLIENT.get(LASTFM_BASE).query(&[
+        ("method", "auth.getToken"),
+        ("api_key", api_key),
+        ("format", "json"),
+    ]))
+    .await?;
 
     check_lastfm_error(&resp)?;
 
@@ -397,7 +408,10 @@ pub async fn get_token(api_key: &str) -> Result<LastfmAuthToken> {
         api_key, parsed.token
     );
 
-    Ok(LastfmAuthToken { token: parsed.token, auth_url })
+    Ok(LastfmAuthToken {
+        token: parsed.token,
+        auth_url,
+    })
 }
 
 /// Step 3 of the Last.fm auth flow: exchange an authorized token for a session key.
@@ -411,23 +425,14 @@ pub async fn get_session(api_key: &str, api_secret: &str, token: &str) -> Result
 
     let sig = sign(&params, api_secret);
 
-    let resp = LASTFM_CLIENT
-        .post(LASTFM_BASE)
-        .form(&[
-            ("method", "auth.getSession"),
-            ("api_key", api_key),
-            ("token", token),
-            ("api_sig", &sig),
-            ("format", "json"),
-        ])
-        .send()
-        .await.map_err(|error| error.without_url())
-        .context("Failed to reach Last.fm")?
-        .error_for_status().map_err(|error| error.without_url())
-        .context("Last.fm auth.getSession returned error status")?
-        .bounded_bytes(MAX_JSON_BYTES)
-        .await
-        .context("Failed to read Last.fm session response")?;
+    let resp = transport::send(LASTFM_CLIENT.post(LASTFM_BASE).form(&[
+        ("method", "auth.getSession"),
+        ("api_key", api_key),
+        ("token", token),
+        ("api_sig", &sig),
+        ("format", "json"),
+    ]))
+    .await?;
 
     check_lastfm_error(&resp)?;
 
@@ -443,22 +448,13 @@ pub async fn get_session(api_key: &str, api_secret: &str, token: &str) -> Result
 /// Fetch basic user info for the authenticated account.
 /// Used to display the connected username in Settings.
 pub async fn get_user_info(api_key: &str, username: &str) -> Result<LastfmUserInfo> {
-    let resp = LASTFM_CLIENT
-        .get(LASTFM_BASE)
-        .query(&[
-            ("method", "user.getInfo"),
-            ("user", username),
-            ("api_key", api_key),
-            ("format", "json"),
-        ])
-        .send()
-        .await.map_err(|error| error.without_url())
-        .context("Failed to reach Last.fm user.getInfo")?
-        .error_for_status().map_err(|error| error.without_url())
-        .context("Last.fm user.getInfo returned error status")?
-        .bounded_bytes(MAX_JSON_BYTES)
-        .await
-        .context("Failed to read Last.fm user info")?;
+    let resp = transport::send(LASTFM_CLIENT.get(LASTFM_BASE).query(&[
+        ("method", "user.getInfo"),
+        ("user", username),
+        ("api_key", api_key),
+        ("format", "json"),
+    ]))
+    .await?;
 
     check_lastfm_error(&resp)?;
 
@@ -478,23 +474,14 @@ pub async fn get_user_info(api_key: &str, username: &str) -> Result<LastfmUserIn
 
 /// Fetch artist metadata: biography, listeners, tags, and similar artists.
 pub async fn get_artist_info(api_key: &str, artist: &str) -> Result<LastfmArtistInfo> {
-    let resp = LASTFM_CLIENT
-        .get(LASTFM_BASE)
-        .query(&[
-            ("method", "artist.getInfo"),
-            ("artist", artist),
-            ("api_key", api_key),
-            ("autocorrect", "1"),
-            ("format", "json"),
-        ])
-        .send()
-        .await.map_err(|error| error.without_url())
-        .context("Failed to reach Last.fm artist.getInfo")?
-        .error_for_status().map_err(|error| error.without_url())
-        .context("Last.fm artist.getInfo returned error status")?
-        .bounded_bytes(MAX_JSON_BYTES)
-        .await
-        .context("Failed to read Last.fm artist info")?;
+    let resp = transport::send(LASTFM_CLIENT.get(LASTFM_BASE).query(&[
+        ("method", "artist.getInfo"),
+        ("artist", artist),
+        ("api_key", api_key),
+        ("autocorrect", "1"),
+        ("format", "json"),
+    ]))
+    .await?;
 
     check_lastfm_error(&resp)?;
 
@@ -534,24 +521,15 @@ pub async fn get_artist_info(api_key: &str, artist: &str) -> Result<LastfmArtist
 
 /// Fetch track metadata: listeners, play count, tags, and wiki summary.
 pub async fn get_track_info(api_key: &str, artist: &str, track: &str) -> Result<LastfmTrackInfo> {
-    let resp = LASTFM_CLIENT
-        .get(LASTFM_BASE)
-        .query(&[
-            ("method", "track.getInfo"),
-            ("artist", artist),
-            ("track", track),
-            ("api_key", api_key),
-            ("autocorrect", "1"),
-            ("format", "json"),
-        ])
-        .send()
-        .await.map_err(|error| error.without_url())
-        .context("Failed to reach Last.fm track.getInfo")?
-        .error_for_status().map_err(|error| error.without_url())
-        .context("Last.fm track.getInfo returned error status")?
-        .bounded_bytes(MAX_JSON_BYTES)
-        .await
-        .context("Failed to read Last.fm track info")?;
+    let resp = transport::send(LASTFM_CLIENT.get(LASTFM_BASE).query(&[
+        ("method", "track.getInfo"),
+        ("artist", artist),
+        ("track", track),
+        ("api_key", api_key),
+        ("autocorrect", "1"),
+        ("format", "json"),
+    ]))
+    .await?;
 
     check_lastfm_error(&resp)?;
 
@@ -568,30 +546,24 @@ pub async fn get_track_info(api_key: &str, artist: &str, track: &str) -> Result<
             .top_tags
             .map(|tl| tl.tags.into_iter().map(|tag| tag.name).collect())
             .unwrap_or_default(),
-        wiki: t.wiki.map(|w| strip_html(&w.summary)).filter(|s| !s.is_empty()),
+        wiki: t
+            .wiki
+            .map(|w| strip_html(&w.summary))
+            .filter(|s| !s.is_empty()),
     })
 }
 
 /// Fetch album metadata: tags and wiki summary.
 pub async fn get_album_info(api_key: &str, artist: &str, album: &str) -> Result<LastfmAlbumInfo> {
-    let resp = LASTFM_CLIENT
-        .get(LASTFM_BASE)
-        .query(&[
-            ("method", "album.getInfo"),
-            ("artist", artist),
-            ("album", album),
-            ("api_key", api_key),
-            ("autocorrect", "1"),
-            ("format", "json"),
-        ])
-        .send()
-        .await.map_err(|error| error.without_url())
-        .context("Failed to reach Last.fm album.getInfo")?
-        .error_for_status().map_err(|error| error.without_url())
-        .context("Last.fm album.getInfo returned error status")?
-        .bounded_bytes(MAX_JSON_BYTES)
-        .await
-        .context("Failed to read Last.fm album info")?;
+    let resp = transport::send(LASTFM_CLIENT.get(LASTFM_BASE).query(&[
+        ("method", "album.getInfo"),
+        ("artist", artist),
+        ("album", album),
+        ("api_key", api_key),
+        ("autocorrect", "1"),
+        ("format", "json"),
+    ]))
+    .await?;
 
     check_lastfm_error(&resp)?;
 
@@ -606,7 +578,10 @@ pub async fn get_album_info(api_key: &str, artist: &str, album: &str) -> Result<
             .tags
             .map(|t| t.tags.into_iter().map(|tag| tag.name).collect())
             .unwrap_or_default(),
-        wiki: al.wiki.map(|w| strip_html(&w.summary)).filter(|s| !s.is_empty()),
+        wiki: al
+            .wiki
+            .map(|w| strip_html(&w.summary))
+            .filter(|s| !s.is_empty()),
     })
 }
 
@@ -639,28 +614,19 @@ pub async fn update_now_playing(
 
     let sig = sign(&params, api_secret);
 
-    let resp = LASTFM_CLIENT
-        .post(LASTFM_BASE)
-        .form(&[
-            ("method", "track.updateNowPlaying"),
-            ("artist", artist),
-            ("track", track),
-            ("album", album),
-            ("albumArtist", album_artist),
-            ("duration", &duration_str),
-            ("api_key", api_key),
-            ("api_sig", &sig),
-            ("sk", session_key),
-            ("format", "json"),
-        ])
-        .send()
-        .await.map_err(|error| error.without_url())
-        .context("Failed to reach Last.fm track.updateNowPlaying")?
-        .error_for_status().map_err(|error| error.without_url())
-        .context("Last.fm track.updateNowPlaying returned error status")?
-        .bounded_bytes(MAX_JSON_BYTES)
-        .await
-        .context("Failed to read Last.fm now-playing response")?;
+    let resp = transport::send(LASTFM_CLIENT.post(LASTFM_BASE).form(&[
+        ("method", "track.updateNowPlaying"),
+        ("artist", artist),
+        ("track", track),
+        ("album", album),
+        ("albumArtist", album_artist),
+        ("duration", &duration_str),
+        ("api_key", api_key),
+        ("api_sig", &sig),
+        ("sk", session_key),
+        ("format", "json"),
+    ]))
+    .await?;
 
     check_lastfm_error(&resp)
 }
@@ -711,29 +677,20 @@ pub async fn scrobble(
 
     let sig = sign(&params, api_secret);
 
-    let resp = LASTFM_CLIENT
-        .post(LASTFM_BASE)
-        .form(&[
-            ("method", "track.scrobble"),
-            ("artist", artist),
-            ("track", track),
-            ("album", album),
-            ("albumArtist", album_artist),
-            ("duration", &duration_str),
-            ("timestamp", &timestamp_str),
-            ("api_key", api_key),
-            ("api_sig", &sig),
-            ("sk", session_key),
-            ("format", "json"),
-        ])
-        .send()
-        .await.map_err(|error| error.without_url())
-        .context("Failed to reach Last.fm track.scrobble")?
-        .error_for_status().map_err(|error| error.without_url())
-        .context("Last.fm track.scrobble returned error status")?
-        .bounded_bytes(MAX_JSON_BYTES)
-        .await
-        .context("Failed to read Last.fm scrobble response")?;
+    let resp = transport::send(LASTFM_CLIENT.post(LASTFM_BASE).form(&[
+        ("method", "track.scrobble"),
+        ("artist", artist),
+        ("track", track),
+        ("album", album),
+        ("albumArtist", album_artist),
+        ("duration", &duration_str),
+        ("timestamp", &timestamp_str),
+        ("api_key", api_key),
+        ("api_sig", &sig),
+        ("sk", session_key),
+        ("format", "json"),
+    ]))
+    .await?;
 
     check_scrobble_response(&resp)
 }
@@ -761,25 +718,16 @@ pub async fn love_track(
 
     let sig = sign(&params, api_secret);
 
-    let resp = LASTFM_CLIENT
-        .post(LASTFM_BASE)
-        .form(&[
-            ("method", method),
-            ("artist", artist),
-            ("track", track),
-            ("api_key", api_key),
-            ("api_sig", &sig),
-            ("sk", session_key),
-            ("format", "json"),
-        ])
-        .send()
-        .await.map_err(|error| error.without_url())
-        .with_context(|| format!("Failed to reach Last.fm {method}"))?
-        .error_for_status().map_err(|error| error.without_url())
-        .with_context(|| format!("Last.fm {method} returned error status"))?
-        .bounded_bytes(MAX_JSON_BYTES)
-        .await
-        .with_context(|| format!("Failed to read Last.fm {method} response"))?;
+    let resp = transport::send(LASTFM_CLIENT.post(LASTFM_BASE).form(&[
+        ("method", method),
+        ("artist", artist),
+        ("track", track),
+        ("api_key", api_key),
+        ("api_sig", &sig),
+        ("sk", session_key),
+        ("format", "json"),
+    ]))
+    .await?;
 
     check_lastfm_error(&resp)
 }
@@ -788,7 +736,10 @@ pub async fn love_track(
 mod credential_tests {
     #[test]
     fn auth_result_does_not_expose_the_session_key() {
-        let session = super::LastfmSession { username: "listener".into(), session_key: "private-session".into() };
+        let session = super::LastfmSession {
+            username: "listener".into(),
+            session_key: "private-session".into(),
+        };
         let json = serde_json::to_value(&session).unwrap();
         assert_eq!(json["username"], "listener");
         assert!(json.get("session_key").is_none());

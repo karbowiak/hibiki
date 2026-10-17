@@ -72,6 +72,39 @@ Mutation account checks run after waiting for a slot, and mutations require a
 fresh preflight after a long cooldown. Mutation/create/listen POSTs are sent once.
 Feedback imports request bounded pages of up to 1,000 records to reduce traffic.
 
+Last.fm traffic also shares a conservative one-request-per-second budget across
+favorite imports/exports, metadata, authentication, now-playing and scrobbles.
+HTTP 429 and Last.fm error 29 (including HTTP 200 responses) pause that shared
+budget, honoring Retry-After or waiting 60 seconds when no delay is supplied.
+Account checks run after waiting, and long cooldowns require a new mutation
+preflight. Requests are not replayed by this transport.
+
+Library matching requires compatible artist credits independently of title
+similarity. Featured artists may move between the title and artist fields;
+matching credits may use different join punctuation or order. An omitted
+collaborator needs an explicit feature credit, matching album or duration
+evidence. Different named guests remain distinct. Compilation tracks use Plex's
+track artist when supplied. Artist-prefixed titles and neutral original-mix
+labels are tolerated; numbers, live releases, remixes, language versions and
+other named editions remain protected. Conflicting recording IDs and genuinely
+different local editions still require review. Existing mappings are retained.
+
+Settings → General → Liked Songs sync offers Manage sync and Reset liked sync.
+Reset clears imported likes, automatic library matches and per-service sync
+observations for the current library. Explicit local hearts and unlike
+tombstones, service settings, account bindings, Plex playlist destinations and
+Plex ratings are retained. Enabled services are imported again with the current
+matcher, and rated favorites may be seeded again. The native reset is atomic,
+bumps the storage revision to fence stale saves and refuses pending mutations or
+uncertain playlist creation. Reset waits for an active sync to finish; outstanding
+matching results are retired so they cannot repopulate the cleared state.
+
+Service issues, unconfirmed changes, missing library matches and unresolved
+ListenBrainz identities are reviewed from the Liked Songs Sync button, marked
+with a yellow triangle. Background sync does not create global notifications
+for these states, and a retry retains the existing indicator until its result
+confirms recovery.
+
 Contracts: [ListenBrainz feedback API](https://listenbrainz.readthedocs.io/en/latest/users/api/recordings.html),
 [feedback JSON](https://listenbrainz.readthedocs.io/en/latest/users/feedback-json.html),
 [Last.fm loved tracks](https://www.last.fm/api/show/user.getLovedTracks),

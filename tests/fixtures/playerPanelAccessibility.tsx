@@ -47,6 +47,7 @@ const hook = Object.assign((selector: any) => selector(player), {
 mock.module("../../src/stores/index.ts", () => ({ usePlayerStore: hook }))
 mock.module("../../src/stores/playerStore", () => ({
   usePlayerStore: hook,
+  ensureQueueRange: async () => {},
   DJ_MODES: [],
   capturePlaybackSelectionVersion: () => 0,
   isDjGenerated: () => false,

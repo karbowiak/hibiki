@@ -30,6 +30,10 @@ __pycache__/
 #
 .tmp/
 .vscode/
-TODO.md
+# Local product and planning notes
+/FUTURE.md
+/PRODUCT.md
+/TODO.md
+/UI_WORKLIST.md
 .claude/
 test-library/

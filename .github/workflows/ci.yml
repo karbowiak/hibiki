@@ -36,6 +36,14 @@ jobs:
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: xvfb-run bun run test:notifications
+      - name: Check virtual collections and persistent queue
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run bun scripts/check-virtual-collections.ts
+      - name: Check playlist information and quick hover panels
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run bun scripts/check-playlist-information.ts
       - name: Check appearance settings and detail interactions
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
@@ -50,6 +58,8 @@ jobs:
             .tmp/notification-checks/*.png
             .tmp/search-discovery-checks/*.png
             .tmp/appearance-checks/*.png
+            .tmp/virtual-checks/*.png
+            .tmp/information-checks/*.png
           include-hidden-files: true
           retention-days: 7
           if-no-files-found: ignore

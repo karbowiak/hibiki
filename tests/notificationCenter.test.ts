@@ -30,7 +30,7 @@ test("one-time result events update actions quietly, survive history clearing, a
   const event = notice({
     persistent: false,
     eventKey: "edition-one",
-    severity: "info",
+    severity: "warning",
   })
   h.state().notify(event)
   expect(h.entry().active).toBe(false)
@@ -115,7 +115,7 @@ test("severity escalation makes an ongoing issue visible again; lower severity s
   })
 })
 
-test("resolution preserves history, removes stale retries, and recurrence starts a new toast", () => {
+test("resolution keeps history and an identical issue stays quiet until a new error event", () => {
   const h = fixture()
   h.state().notify(notice({ action: { label: "Retry", run: () => {} } }))
   const original = h.entry()
@@ -130,31 +130,33 @@ test("resolution preserves history, removes stale retries, and recurrence starts
   h.state().notify(notice())
   expect(h.entry()).toMatchObject({
     active: true,
-    unread: true,
-    toastVisible: true,
-    occurrences: 2,
-    toastRevision: 2,
+    unread: false,
+    toastVisible: false,
+    occurrences: 1,
+    toastRevision: 1,
     createdAt: original.createdAt,
   })
+  h.state().resolve(original.id)
+  h.state().notify(notice({ eventKey:"new-failure" }))
   h.state().dismissToast(original.id, original.toastRevision)
   expect(h.entry().toastVisible).toBe(true)
   h.state().dismissToast(original.id, 2)
   expect(h.entry().toastVisible).toBe(false)
 })
 
-test("transient events repeat while dismissal preserves their unread history", () => {
+test("success and information are quiet history, while new failures can draw attention", () => {
   const h = fixture()
   h.state().notify(notice({ persistent: false, severity: "success" }))
   h.state().dismissToast("listening-sync")
   expect(h.entry()).toMatchObject({
     active: false,
-    unread: true,
+    unread: false,
     toastVisible: false,
   })
   h.state().notify(notice({ persistent: false, message: "Completed again" }))
   expect(h.entry()).toMatchObject({
     occurrences: 2,
-    toastRevision: 2,
+    toastRevision: 1,
     unread: true,
     toastVisible: true,
   })
@@ -247,10 +249,10 @@ test("an old retry finishing cannot clear a newer recurrence's pending action", 
 
 test("a toast timer from cleared history cannot hide a later event reusing the same ID", () => {
   const h = fixture()
-  h.state().notify(notice({ persistent: false }))
+  h.state().notify(notice({ persistent: false, eventKey:"first" }))
   const oldRevision = h.entry().toastRevision
   h.state().clearHistory()
-  h.state().notify(notice({ persistent: false }))
+  h.state().notify(notice({ persistent: false, eventKey:"second" }))
   h.state().dismissToast("listening-sync", oldRevision)
   expect(h.entry().toastVisible).toBe(true)
   expect(h.entry().toastRevision).toBeGreaterThan(oldRevision)

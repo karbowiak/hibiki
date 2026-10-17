@@ -1,0 +1,20 @@
+.hover-information {
+  position: fixed;
+  inset: auto;
+  z-index: 2147483646;
+  width: max-content;
+  max-width: min(22rem, calc(100vw - 16px));
+  max-height: min(20rem, calc(100dvh - 16px));
+  overflow: auto;
+  margin: 0;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  pointer-events: auto;
+}

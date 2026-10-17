@@ -27,8 +27,50 @@ pub struct Tag {
     pub count: Option<i64>,
 }
 
+#[derive(Deserialize)]
+struct RatedPageContainer {
+    #[serde(flatten)] container: MediaContainer<PlexMedia>,
+    #[serde(default, deserialize_with = "super::models::serde_string_or_i64_opt::deserialize")]
+    offset: Option<i64>,
+}
+#[derive(Deserialize)]
+struct MixPageContainer {
+    #[serde(flatten)] container: MediaContainer<Track>,
+    #[serde(default, deserialize_with = "super::models::serde_string_or_i64_opt::deserialize")]
+    offset: Option<i64>,
+}
+
 /// Library operations implementation
 impl PlexClient {
+    /// One bounded, rated collection page. UI browsing must never drain the endpoint.
+    pub async fn rated_items_page(&self, section_id: i64, kind: &str, offset: i32, limit: i32) -> Result<(Vec<PlexMedia>, i64)> {
+        let media_type = match kind { "artist" => "8", "album" => "9", "track" => "10", _ => anyhow::bail!("Unsupported rated collection") };
+        anyhow::ensure!(offset >= 0 && (1..=500).contains(&limit), "Invalid rated collection page");
+        let params = vec![
+            ("type".into(), media_type.into()), ("userRating>>".into(), "0".into()),
+            ("sort".into(), "lastRatedAt:desc".into()),
+            ("X-Plex-Container-Start".into(), offset.to_string()), ("X-Plex-Container-Size".into(), limit.to_string()),
+        ];
+        let url = build_url_from_params(&self.build_url(&format!("/library/sections/{section_id}/all")), &params);
+        let page: RatedPageContainer = self.get_url(&url).await?;
+        anyhow::ensure!(page.offset.is_none_or(|start|start == i64::from(offset)), "Plex repeated a rated collection page");
+        let container = page.container;
+        anyhow::ensure!(container.metadata.len() <= limit as usize, "Plex ignored rated collection pagination");
+        Ok((container.metadata, container.total_size.unwrap_or(0)))
+    }
+
+    pub async fn mix_tracks_page(&self, key: &str, offset: i32, limit: i32) -> Result<super::playlist::PlaylistItemsPage> {
+        anyhow::ensure!(key.starts_with('/') && !key.starts_with("//") && offset >= 0 && (1..=500).contains(&limit), "Invalid mix page");
+        let parsed = url::Url::parse(&format!("http://plex.invalid{key}"))?;
+        let mut params: Vec<(String, String)> = parsed.query_pairs().filter(|(name, _)| !matches!(name.as_ref(), "X-Plex-Container-Start" | "X-Plex-Container-Size" | "type")).map(|(k,v)| (k.into_owned(),v.into_owned())).collect();
+        params.extend([("type".into(), "10".into()), ("X-Plex-Container-Start".into(), offset.to_string()), ("X-Plex-Container-Size".into(), limit.to_string())]);
+        let url = build_url_from_params(&self.build_url(parsed.path()), &params);
+        let page: MixPageContainer = self.get_url(&url).await?;
+        anyhow::ensure!(page.offset.is_none_or(|start|start == i64::from(offset)), "Plex repeated a mix page");
+        let container = page.container;
+        anyhow::ensure!(container.metadata.len() <= limit as usize, "Plex ignored mix pagination");
+        Ok(super::playlist::PlaylistItemsPage { items: container.metadata, total: container.total_size.unwrap_or(0), offset: Some(i64::from(offset)) })
+    }
     /// Get all library sections
     ///
     /// # Returns
@@ -279,7 +321,11 @@ impl PlexClient {
 
     /// Get artists with a user rating set (liked/rated artists)
     #[instrument(skip(self))]
-    pub async fn liked_artists(&self, section_id: i64, _limit: Option<i32>) -> Result<Vec<super::models::Artist>> {
+    pub async fn liked_artists(&self, section_id: i64, limit: Option<i32>) -> Result<Vec<super::models::Artist>> {
+        if let Some(limit) = limit {
+            let (items, _) = self.rated_items_page(section_id, "artist", 0, limit.clamp(1, 500)).await?;
+            return Ok(items.into_iter().filter_map(|item| match item { PlexMedia::Artist(item) => Some(item), _ => None }).collect());
+        }
         let params = vec![
             ("type".to_string(), "8".to_string()),
             ("sort".to_string(), "lastRatedAt:desc".to_string()),
@@ -294,7 +340,11 @@ impl PlexClient {
 
     /// Get albums with a user rating set (liked/rated albums)
     #[instrument(skip(self))]
-    pub async fn liked_albums(&self, section_id: i64, _limit: Option<i32>) -> Result<Vec<super::models::Album>> {
+    pub async fn liked_albums(&self, section_id: i64, limit: Option<i32>) -> Result<Vec<super::models::Album>> {
+        if let Some(limit) = limit {
+            let (items, _) = self.rated_items_page(section_id, "album", 0, limit.clamp(1, 500)).await?;
+            return Ok(items.into_iter().filter_map(|item| match item { PlexMedia::Album(item) => Some(item), _ => None }).collect());
+        }
         let params = vec![
             ("type".to_string(), "9".to_string()),
             ("sort".to_string(), "lastRatedAt:desc".to_string()),
@@ -309,7 +359,11 @@ impl PlexClient {
 
     /// Get tracks with a user rating set (liked/rated tracks)
     #[instrument(skip(self))]
-    pub async fn liked_tracks(&self, section_id: i64, _limit: Option<i32>) -> Result<Vec<Track>> {
+    pub async fn liked_tracks(&self, section_id: i64, limit: Option<i32>) -> Result<Vec<Track>> {
+        if let Some(limit) = limit {
+            let (items, _) = self.rated_items_page(section_id, "track", 0, limit.clamp(1, 500)).await?;
+            return Ok(items.into_iter().filter_map(|item| match item { PlexMedia::Track(item) => Some(item), _ => None }).collect());
+        }
         let params = vec![
             ("type".to_string(), "10".to_string()),
             ("sort".to_string(), "lastRatedAt:desc".to_string()),

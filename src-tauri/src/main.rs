@@ -7,6 +7,8 @@ mod cache_files;
 mod commands;
 mod db;
 mod offline_commands;
+mod collection_cache_commands;
+mod queue_commands;
 mod performance;
 mod offline_audio;
 mod catalogue_commands;
@@ -382,6 +384,8 @@ pub fn run() {
             commands::disconnect_plex,
             offline_commands::restore_offline_context,
             offline_commands::offline_cache_get,
+            collection_cache_commands::collection_cache,
+            queue_commands::saved_queue,
             offline_commands::offline_cache_put,
             offline_commands::offline_cache_info,
             offline_commands::offline_cache_clear,
@@ -389,6 +393,7 @@ pub fn run() {
             offline_audio::audio_prepare_plex_track,
             download_entities::download_entity,
             download_entities::download_entity_status,
+            download_entities::download_entity_issues,
             download_entities::remove_entity_download,
             library_picker::library_picker_servers,
             library_picker::library_picker_sections,
@@ -432,6 +437,8 @@ pub fn run() {
             commands::get_related_hubs,
             // Mixes
             commands::get_mix_tracks,
+            commands::get_mix_tracks_page,
+            commands::get_rated_items_page,
             // Playlists
             commands::get_playlists,
             commands::get_playlist_items,
@@ -587,6 +594,7 @@ pub fn run() {
             favorites_commands::favorites_tracks,
             favorites_commands::favorites_page,
             favorites_commands::favorites_save,
+            favorites_commands::favorites_reset,
             favorites_commands::favorites_plex_read,
             favorites_commands::favorites_plex_mutate,
             favorites_remote::favorites_remote_account,

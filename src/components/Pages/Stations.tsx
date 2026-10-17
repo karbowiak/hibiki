@@ -635,6 +635,10 @@ export function StationsPage() {
     setPlayError(false)
     void (async () => {
       try {
+        if (provider.getMixTracksPage) {
+          await usePlayerStore.getState().playPagedTracks({ key: `mix:${item.providerKey}`, loadPage: (offset, limit) => provider.getMixTracksPage!(item.providerKey!, offset, limit) }, item.title, "/mix", true)
+          return
+        }
         const items = await provider.getMixTracks!(item.providerKey!)
         if (!current() || !items.length) return
         const tracks = shuffleTracks(items, item.title)

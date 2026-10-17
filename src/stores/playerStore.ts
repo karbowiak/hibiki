@@ -22,6 +22,8 @@ import { useRadioStreamStore } from "./radioStreamStore"
 import { radioSetVolume } from "../lib/radioAudio"
 import { usePodcastStore } from "../backends/podcast/store"
 import { useLyricsStore } from "./lyricsStore"
+import { TrackQueuePager, shuffled, type PagedTrackSource } from "../lib/pagedPlayback"
+import { QueueSession, isQueuePlaceholder, queueSourcePosition, type SavedQueue } from "../lib/queueSession"
 
 type RadioType = 'track' | 'artist' | 'album' | 'playlist'
 
@@ -100,6 +102,7 @@ interface PlayerState {
   playFromUri: (uri: string, forceShuffle?: boolean, contextName?: string | null, contextHref?: string | null, albumPlaybackId?: string | null) => Promise<void>
   /** Start playing a playlist with progressive queue loading (100 tracks at a time). */
   playPlaylist: (playlistId: string, _estimatedTotalCount: number, title: string, href: string) => Promise<void>
+  playPagedTracks: (source: PagedTrackSource, title: string, href: string, shuffle?: boolean, startIndex?: number) => Promise<void>
   /**
    * Start a radio station seeded from the given item.
    * Uses `createRadioQueue` normally, or `createSmartShuffleQueue` when Guest DJ is enabled.
@@ -214,6 +217,7 @@ let _queueContextGeneration = 0
 export function capturePlaybackSelectionVersion(): number { return _queueGeneration }
 
 function beginQueueSelection(): number {
+  _shutdownResumePosition = null
   _radioRefillRequest = null
   return ++_queueGeneration
 }
@@ -224,6 +228,10 @@ function replaceQueueContext(): void {
   ++_queueContextGeneration
   _djInsertRequest = null
   _playlistLoadRequest = null
+  _playlistRefill = null
+  _pagedQueue = null
+  _queueSession = null
+  _queueOwner = getProvider()
 }
 // Keep play/pause intent through buffering and asynchronous URL resolution.
 let _playbackDesired = false
@@ -641,8 +649,14 @@ async function preloadNextTrack(queue: MusicTrack[], queueIndex: number, repeat:
     else return // No next track
   }
 
-  const nextTrack = queue[nextIndex]
+  let nextTrack = queue[nextIndex]
+  if (nextTrack && isQueuePlaceholder(nextTrack)) {
+    await ensureQueueRange(nextIndex, nextIndex + 4).catch(() => {})
+    if (context !== _queueContextGeneration || generation !== _playGeneration) return
+    nextTrack = usePlayerStore.getState().queue[nextIndex]
+  }
   if (!nextTrack) return
+  if (isQueuePlaceholder(nextTrack)) return
 
   // Direct URL tracks (podcasts) — preload without provider
   if (nextTrack.streamUrl?.startsWith("http")) {
@@ -679,9 +693,50 @@ async function preloadNextTrack(queue: MusicTrack[], queueIndex: number, repeat:
 
 const PLAYLIST_PAGE_SIZE = 100
 let _playlistLoadRequest: symbol | null = null
+let _pagedQueue: TrackQueuePager | null = null
+let _queueSession: QueueSession | null = null
+let _queueOwner: MusicProvider | null = null
+let _queueOrderVersion = 0
+export const currentQueueOwner = () => _queueOwner
+export const currentQueueOrderVersion = () => `${_queueContextGeneration}:${_queueOrderVersion}`
+export function snapshotQueueEntries() {
+  const queue = usePlayerStore.getState().queue
+  return _queueSession ? _queueSession.snapshot(queue) : queue.map(track => ({ id: track.id, title: track.title, artistName: track.artistName, albumName: track.albumName, duration: track.duration, playlistItemId: track.playlistItemId ?? undefined }))
+}
+export const queueSource = () => _queueSession?.source
+export async function ensureQueueRange(start: number, end: number) {
+  const session = _queueSession, context = _queueContextGeneration
+  if (!session) return
+  await session.ensure(usePlayerStore.getState().queue, start, end)
+  if (session !== _queueSession || context !== _queueContextGeneration) return
+  usePlayerStore.setState(state => ({ queue: session.project(state.queue, state.queueIndex) }))
+}
+export async function restorePlaybackQueue(provider: MusicProvider, saved: SavedQueue, source: PagedTrackSource) {
+  const generation = capturePlaybackSelectionVersion()
+  const session = new QueueSession({ ...source, entries: saved.entries })
+  await session.ensure(session.entries, saved.state.index, saved.state.index + 1).catch(() => {})
+  if (generation !== capturePlaybackSelectionVersion() || getProvider() !== provider || usePlayerStore.getState().queue.length) return
+  replaceQueueContext()
+  _queueSession = session
+  _shutdownResumePosition = saved.state.positionMs
+  const queue = session.project(session.entries, saved.state.index)
+  usePlayerStore.setState({ queue, queueIndex: saved.state.index, currentTrack: queue[saved.state.index], positionMs: saved.state.positionMs,
+    isPlaying: false, isBuffering: false, shuffle: saved.state.shuffle, repeat: saved.state.repeat,
+    contextName: saved.state.contextName, contextHref: saved.state.contextHref, albumPlaybackId: saved.state.albumPlaybackId,
+    queueId: null, playlistKey: null, playlistTotalCount: queue.length, playlistLoadedCount: queue.length,
+    isRadioMode: false, radioSeedKey: null, radioType: null, transitionInfo: null, waveformLevels: null, lyricsLines: null })
+}
+let _playlistRefill: Promise<void> | null = null
+
+function loadMorePlaylistTracks(get: () => PlayerState, set: (fn: (s: PlayerState) => Partial<PlayerState>) => void): Promise<void> {
+  if (_playlistRefill) return _playlistRefill
+  const job = fetchMorePlaylistTracks(get, set).finally(() => { if (_playlistRefill === job) _playlistRefill = null })
+  _playlistRefill = job
+  return job
+}
 
 /** Load the next page of playlist tracks into the queue in the background. */
-async function loadMorePlaylistTracks(get: () => PlayerState, set: (fn: (s: PlayerState) => Partial<PlayerState>) => void) {
+async function fetchMorePlaylistTracks(get: () => PlayerState, set: (fn: (s: PlayerState) => Partial<PlayerState>) => void) {
   const { playlistKey, playlistLoadedCount, playlistTotalCount, isLoadingMoreTracks } = get()
   if (!playlistKey || (playlistTotalCount > 0 && playlistLoadedCount >= playlistTotalCount) || isLoadingMoreTracks) return
   const provider = getProvider()
@@ -693,13 +748,18 @@ async function loadMorePlaylistTracks(get: () => PlayerState, set: (fn: (s: Play
     && get().playlistKey === playlistKey && _playlistLoadRequest === request
   set(() => ({ isLoadingMoreTracks: true }))
   try {
-    const result = await provider.getPlaylistItems(playlistKey, playlistLoadedCount, PLAYLIST_PAGE_SIZE)
+    const pager = _pagedQueue
+    const result = pager
+      ? { items: await pager.next(), total: pager.totalCount }
+      : await provider.getPlaylistItems(playlistKey, playlistLoadedCount, PLAYLIST_PAGE_SIZE)
     if (!isCurrent()) return
     if (result.items.length > 0) {
       set(s => ({
-        queue: [...s.queue, ...(provider.isOffline?result.items.filter(track=>track.mediaInfo?.localAudio || track.mediaInfo?.offlineAvailable===true):result.items)],
+        queue: pager?.shuffle && s.shuffle
+          ? [...s.queue.slice(0, s.queueIndex + 2), ...shuffled([...s.queue.slice(s.queueIndex + 2), ...result.items])]
+          : [...s.queue, ...(provider.isOffline?result.items.filter(track=>track.mediaInfo?.localAudio || track.mediaInfo?.offlineAvailable===true):result.items)],
         playlistLoadedCount: s.playlistLoadedCount + result.items.length,
-        playlistTotalCount: result.total > 0 ? result.total : 0,
+        playlistTotalCount: pager && !pager.hasMore ? playlistLoadedCount + result.items.length : result.total > 0 ? result.total : 0,
         isLoadingMoreTracks: false,
       }))
     } else {
@@ -825,6 +885,13 @@ function prefetchAhead(queue: MusicTrack[], fromIndex: number, count: number): v
   const provider = getProvider()
   const generation = _playGeneration
   const active = _activeTrackGeneration
+  if (queue.slice(fromIndex + 1, fromIndex + count + 1).some(isQueuePlaceholder)) {
+    fireAndForget(ensureQueueRange(fromIndex + 1, fromIndex + count + 1).then(() => {
+      if (generation === _playGeneration && active === _activeTrackGeneration && getProvider() === provider)
+        prefetchAhead(usePlayerStore.getState().queue, fromIndex, count)
+    }))
+    return
+  }
   for (let i = 1; i <= count; i++) {
     const t = queue[fromIndex + i]
     if (!t) continue
@@ -891,12 +958,19 @@ async function _startPlayback(track: MusicTrack, index: number, get: () => Playe
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function playAtIndex(index: number, get: () => PlayerState, set: any): Promise<void> {
-  const track = get().queue[index]
-  if (!track) return
-  beginQueueSelection()
+  if (!get().queue[index]) return
+  const selectedPosition = queueSourcePosition(get().queue[index])
+  const generation = beginQueueSelection()
+  const provider = getProvider()
   try {
+    await ensureQueueRange(index, index + 1)
+    if (!ownsQueueSelection(generation, provider)) return
+    if (selectedPosition !== undefined) index = get().queue.findIndex(track => queueSourcePosition(track) === selectedPosition)
+    const track = get().queue[index]
+    if (!track || isQueuePlaceholder(track)) throw Error("This queued song is unavailable. Try another song or reconnect to Plex.")
     await _startPlayback(track, index, get, set)
   } catch (err) {
+    if (ownsQueueSelection(generation, provider)) set({ playerError: err instanceof Error ? err.message : "Could not load this queued song." })
     console.error("playAtIndex failed:", err)
   }
 }
@@ -1003,14 +1077,64 @@ export const usePlayerStore = create<PlayerState>()(
     }
   },
 
+  playPagedTracks: async (source, title, href, shuffle = false, startIndex = 0) => {
+    const provider = getProvider()
+    if (!provider) return
+    const generation = beginQueueSelection()
+    try {
+      const resolved = await source.prepare?.() ?? source
+      if (!ownsQueueSelection(generation, provider)) return
+      if (resolved.entries?.length || resolved.total) {
+        const session = new QueueSession(resolved, shuffle)
+        const index = shuffle ? 0 : Math.min(Math.max(0, startIndex), session.entries.length - 1)
+        await session.ensure(session.entries, index, index + 1)
+        if (!ownsQueueSelection(generation, provider)) return
+        const queue = session.project(session.entries, index)
+        if (!queue[index] || isQueuePlaceholder(queue[index])) throw Error("No playable songs were found in this collection.")
+        _djGeneratedKeys.clear(); _radioGeneratedKeys.clear()
+        replaceQueueContext(); _queueSession = session
+        set({ queue, queueIndex: index, queueId: null, shuffle, playerError: null, playlistKey: null,
+          playlistTotalCount: queue.length, playlistLoadedCount: queue.length, isLoadingMoreTracks: false,
+          isRadioMode: false, radioSeedKey: null, radioType: null, radioSeedArtist: null,
+          contextName: title, contextHref: href, albumPlaybackId: null })
+        await _startPlayback(queue[index], index, get, set)
+        return
+      }
+      const pager = new TrackQueuePager(resolved, shuffle, Math.random, startIndex)
+      const page = await pager.next()
+      if (!ownsQueueSelection(generation, provider)) return
+      const tracks = provider.isOffline ? page.filter(track => track.mediaInfo?.localAudio || track.mediaInfo?.offlineAvailable === true) : page
+      if (!tracks.length) { set({ playerError: "No playable songs were found on this page." }); return }
+      _djGeneratedKeys.clear()
+      _radioGeneratedKeys.clear()
+      replaceQueueContext()
+      _pagedQueue = pager
+      set({ queue: tracks, queueId: null, queueIndex: 0, shuffle, playerError: null,
+        playlistKey: `paged:${source.key}`, playlistTotalCount: pager.hasMore ? pager.totalCount : page.length,
+        playlistLoadedCount: page.length, isLoadingMoreTracks: false,
+        isRadioMode: false, radioSeedKey: null, radioType: null, radioSeedArtist: null,
+        contextName: title, contextHref: href, albumPlaybackId: null })
+      await _startPlayback(tracks[0], 0, get, set)
+    } catch (error) {
+      if (ownsQueueSelection(generation, provider)) set({ playerError: error instanceof Error ? error.message : "Could not start this collection. Try again." })
+    }
+  },
+
   playPlaylist: async (playlistId: string, _estimatedTotalCount: number, title: string, href: string) => {
     const provider = getProvider()
     if (!provider) return
     const generation = beginQueueSelection()
     const isCurrent = () => ownsQueueSelection(generation, provider)
     try {
+      const cached = await provider.getCachedTrackSource?.(`playlist:${playlistId}`)
+      if (!isCurrent()) return
+      if (cached) { await get().playPagedTracks(cached, title, href); return }
       const result = await provider.getPlaylistItems(playlistId, 0, PLAYLIST_PAGE_SIZE)
       if (!isCurrent()) return
+      if (result.total > 0) {
+        await get().playPagedTracks({ key: `playlist:${playlistId}`, total: result.total, initialPage: { offset: 0, items: result.items }, loadPage: (offset, limit) => provider.getPlaylistItems(playlistId, offset, limit) }, title, href)
+        return
+      }
       const tracks = provider.isOffline ? result.items.filter(track=>track.mediaInfo?.localAudio || track.mediaInfo?.offlineAvailable===true) : result.items
       if (tracks.length === 0) {set({playerError:"No tracks on this page are available offline. Open the playlist and choose a downloaded track."});return}
 
@@ -1262,8 +1386,10 @@ export const usePlayerStore = create<PlayerState>()(
       const position = _shutdownResumePosition
       _shutdownResumePosition = null
       const generation = _playGeneration + 1
-      fireAndForget(playAtIndex(state.queueIndex, get, set).then(() => {
-        if (generation === _playGeneration && position > 0 && !_isPodcastTrack(state.currentTrack!)) engine.seekTo(position)
+      const playing = playAtIndex(state.queueIndex, get, set)
+      const selection = capturePlaybackSelectionVersion()
+      fireAndForget(playing.then(() => {
+        if (selection === capturePlaybackSelectionVersion() && generation === _playGeneration && position > 0 && !_isPodcastTrack(state.currentTrack!)) engine.seekTo(position)
       }))
       return
     }
@@ -1299,6 +1425,15 @@ export const usePlayerStore = create<PlayerState>()(
 
     let nextIndex = queueIndex + 1
     if (nextIndex >= queue.length) {
+      if (playlistKey && (playlistTotalCount === 0 || playlistLoadedCount < playlistTotalCount)) {
+        const context = _queueContextGeneration
+        fireAndForget(loadMorePlaylistTracks(get, set as never).then(() => {
+          if (context !== _queueContextGeneration || get().queueIndex !== queueIndex) return
+          if (get().queue.length > queue.length) get().next()
+          else set({ playerError: "Couldn't load the next songs. Press Next to retry." })
+        }))
+        return
+      }
       if (repeat === 2) {
         nextIndex = 0
       } else if (isRadioMode && radioSeedKey !== null && radioType !== null) {
@@ -1387,6 +1522,7 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   toggleShuffle: () => {
+    _queueOrderVersion++
     const { shuffle, queue, queueIndex } = get()
     if (!shuffle && queue.length > 1) {
       // Keep current track at index 0, Fisher-Yates shuffle the rest
@@ -1413,6 +1549,7 @@ export const usePlayerStore = create<PlayerState>()(
   updatePosition: (ms: number) => set({ positionMs: ms }),
 
   reorderQueue: (from: number, to: number) => {
+    _queueOrderVersion++
     const { queue, queueIndex } = get()
     if (from === to || from < 0 || to < 0 || from >= queue.length || to >= queue.length) return
     const next = [...queue]

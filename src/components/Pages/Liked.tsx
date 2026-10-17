@@ -1,276 +1,304 @@
-import { useLikedCollection } from "../../hooks/useLikedCollection"
 import { useEffect, useMemo, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
-import { useLibraryStore, usePlayerStore } from "../../stores"
-import { formatTotalMs } from "../../lib/formatters"
+import { usePlayerStore } from "../../stores"
+import { useProviderStore } from "../../stores/providerStore"
+import { useFavoritesStore } from "../../stores/favoritesStore"
 import { useTableSort } from "../../hooks/useTableSort"
+import { useRatedItems } from "../../hooks/useRatedItems"
+import { useFavoriteIndex } from "../../hooks/useFavoriteIndex"
+import { useRatedIndex } from "../../hooks/useRatedIndex"
+import { useWindowedPages } from "../../hooks/useWindowedPages"
 import {
   ALL_COLUMNS,
   LIKED_DATE_COLUMN,
   usePlaylistColumns,
 } from "../../hooks/useColumnPicker"
 import { sortLikedTracks } from "../../favorites/collection"
+import { favoritePlaybackSource, favoriteStub } from "../../favorites/playback"
+import { favoriteLikedAt } from "../../favorites/model"
+import type { FavoriteEntry } from "../../favorites/types"
+import type { MusicTrack } from "../../types/music"
+import { type PagedTrackSource } from "../../lib/pagedPlayback"
+import { IconPlayerPlay, IconArrowsShuffle } from "@tabler/icons-react"
 import { TrackTable } from "../shared/TrackTable"
-import { useFavoritesStore } from "../../stores/favoritesStore"
-import { useFavoriteTracks } from "../../hooks/useFavoriteTracks"
 import { FavoritesSyncDialog } from "../FavoritesSyncDialog"
-import { useProviderStore } from "../../stores/providerStore"
+import { favoritesNeedReview } from "../../lib/syncAttention"
+import { SyncReviewIndicator } from "../shared/SyncReviewIndicator"
 
 const LIKED_COLUMNS = [...ALL_COLUMNS, LIKED_DATE_COLUMN]
-const LIKED_DEFAULT_COLS = [
-  "album" as const,
-  "rating" as const,
-  "rated_at" as const,
-  "liked_at" as const,
-]
+const LIKED_DEFAULT_COLS = ["album", "rating", "rated_at", "liked_at"] as const
 
 export function Liked() {
-  const { likedTracks } = useLibraryStore(
-    useShallow((s) => ({
-      likedTracks: s.likedTracks,
-    }))
-  )
-  const { playTrack, playRadio, addToQueue, currentTrack } = usePlayerStore(
-    useShallow((s) => ({
-      playTrack: s.playTrack,
-      playRadio: s.playRadio,
-      addToQueue: s.addToQueue,
-      currentTrack: s.currentTrack,
-    }))
-  )
-  const { status, retry } = useLikedCollection("tracks")
   const provider = useProviderStore((state) => state.provider)
-  const { collection, loaded, loading, error, likedTrackIds } =
-    useFavoritesStore()
-  const local = useFavoriteTracks(likedTracks)
-  const [syncOpen, setSyncOpen] = useState(false)
+  const favorites = useFavoritesStore(
+    useShallow((state) => ({
+      collection: state.collection,
+      loaded: state.loaded,
+      loading: state.loading,
+      error: state.error,
+      issues: state.issues,
+    }))
+  )
+  const { collection } = favorites
+  const syncNeedsReview = favoritesNeedReview(collection, favorites.issues)
+  const rated = useRatedItems("track")
   const [kind, setKind] = useState<"loved" | "rated" | "all">("loved")
-  useEffect(() => {
-    if (status === "ready" && loaded && !collection.ratingsImported)
-      void useFavoritesStore
-        .getState()
-        .seedRatings(likedTracks)
-        .catch(() => {})
-  }, [status, loaded, collection.ratingsImported, likedTracks])
-
+  const [syncOpen, setSyncOpen] = useState(false)
+  const [filterQuery, setFilterQuery] = useState("")
+  const [query, setQuery] = useState("")
+  const { sortCol, sortDir, handleSort } = useTableSort<string>({
+    descByDefault: ["rating", "liked_at", "rated_at"],
+    resetKey: provider,
+  })
+  const needsRatedIndex =
+    kind === "all" ||
+    (kind === "rated" && (!!query || sortCol !== "default")) ||
+    !collection.ratingsImported
+  const ratedIndex = useRatedIndex(needsRatedIndex)
   const { visible: visibleCols, toggle: toggleCol } = usePlaylistColumns(
     "plex-liked-columns",
-    LIKED_DEFAULT_COLS
+    [...LIKED_DEFAULT_COLS]
   )
-
-  // In-playlist search
-  const [filterQuery, setFilterQuery] = useState("")
-  const [debouncedQuery, setDebouncedQuery] = useState("")
-
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedQuery(filterQuery), 150)
-    return () => clearTimeout(t)
-  }, [filterQuery])
-
-  const dedupedTracks = useMemo(() => {
-    if (kind === "loved") return local.tracks
-    const byId = new Map<string, (typeof likedTracks)[number]>()
-    if (kind === "all")
-      local.tracks.forEach((track) => byId.set(track.id, track))
-    likedTracks
-      .filter((track) => (track.userRating ?? 0) > 0)
-      .forEach((track) => {
-        if (kind === "rated" || !likedTrackIds.has(track.id))
-          byId.set(track.id, track)
-      })
-    const tracks = [...byId.values()]
-    return kind === "all" ? sortLikedTracks(tracks) : tracks
-  }, [kind, local.tracks, likedTracks, likedTrackIds])
-  const visibleIds = new Set(local.tracks.map((track) => track.id))
-  const unavailable = Object.values(collection.entries).filter(
-    (item) => item.liked && !item.localTrackIds.some((id) => visibleIds.has(id))
-  ).length
-
-  const filteredTracks = useMemo(() => {
-    if (!debouncedQuery) return dedupedTracks
-    const q = debouncedQuery.toLowerCase()
-    return dedupedTracks.filter(
-      (t) =>
-        t.title.toLowerCase().includes(q) ||
-        t.artistName.toLowerCase().includes(q) ||
-        t.albumName.toLowerCase().includes(q)
+  const { playPagedTracks, playRadio, addToQueue, currentTrack } =
+    usePlayerStore(
+      useShallow((state) => ({
+        playPagedTracks: state.playPagedTracks,
+        playRadio: state.playRadio,
+        addToQueue: state.addToQueue,
+        currentTrack: state.currentTrack,
+      }))
     )
-  }, [dedupedTracks, debouncedQuery])
+  useEffect(() => {
+    const timer = setTimeout(
+      () => setQuery(filterQuery.trim().toLowerCase()),
+      150
+    )
+    return () => clearTimeout(timer)
+  }, [filterQuery])
+  useEffect(() => {
+    if (ratedIndex.ready && favorites.loaded && !collection.ratingsImported)
+      void useFavoritesStore
+        .getState()
+        .seedRatings(ratedIndex.tracks)
+        .catch(() => {})
+  }, [
+    ratedIndex.ready,
+    ratedIndex.tracks,
+    favorites.loaded,
+    collection.ratingsImported,
+  ])
 
-  type SortCol =
-    | "default"
-    | "title"
-    | "artist"
-    | "album"
-    | "year"
-    | "plays"
-    | "popularity"
-    | "label"
-    | "bitrate"
-    | "format"
-    | "added_at"
-    | "rating"
-    | "rated_at"
-    | "liked_at"
-    | "duration"
-  const { sortCol, sortDir, handleSort } = useTableSort<SortCol>({
-    descByDefault: ["rating", "liked_at", "rated_at"],
-  })
-
-  const tracks = useMemo(() => {
-    if (sortCol === "default") return filteredTracks
-    const items = [...filteredTracks]
-    items.sort((a, b) => {
-      let cmp = 0
-      switch (sortCol) {
-        case "title":
-          cmp = a.title.localeCompare(b.title)
-          break
-        case "artist":
-          cmp = a.artistName.localeCompare(b.artistName)
-          break
-        case "album":
-          cmp = a.albumName.localeCompare(b.albumName)
-          break
-        case "year":
-          cmp = (a.albumYear ?? a.year) - (b.albumYear ?? b.year)
-          break
-        case "plays":
-          cmp = a.playCount - b.playCount
-          break
-        case "popularity":
-          cmp = (a.ratingCount ?? 0) - (b.ratingCount ?? 0)
-          break
-        case "label":
-          cmp = (a.parentStudio ?? "").localeCompare(b.parentStudio ?? "")
-          break
-        case "bitrate":
-          cmp = (a.bitrate ?? 0) - (b.bitrate ?? 0)
-          break
-        case "format":
-          cmp = (a.codec ?? "").localeCompare(b.codec ?? "")
-          break
-        case "added_at":
-          cmp =
-            (a.addedAt ? +new Date(a.addedAt) : 0) -
-            (b.addedAt ? +new Date(b.addedAt) : 0)
-          break
-        case "rating":
-          cmp = (a.userRating ?? 0) - (b.userRating ?? 0)
-          break
-        case "rated_at": {
-          cmp =
-            (a.lastRatedAt ? +new Date(a.lastRatedAt) : 0) -
-            (b.lastRatedAt ? +new Date(b.lastRatedAt) : 0)
-          break
-        }
-        case "liked_at": {
-          const at = Date.parse(a.likedAt ?? ""),
-            bt = Date.parse(b.likedAt ?? "")
-          if (!Number.isFinite(at) || !Number.isFinite(bt))
-            return Number.isFinite(at) ? -1 : Number.isFinite(bt) ? 1 : 0
-          cmp = at - bt
-          break
-        }
-        case "duration":
-          cmp = a.duration - b.duration
-          break
-      }
-      return sortDir === "asc" ? cmp : -cmp
+  const entries = useMemo(() => {
+    const seen = new Set<string>()
+    return Object.values(collection.entries)
+      .filter((item) => item.liked && item.localTrackIds.length)
+      .sort(
+        (a, b) =>
+          (favoriteLikedAt(b) ?? 0) - (favoriteLikedAt(a) ?? 0) ||
+          a.id.localeCompare(b.id)
+      )
+      .filter((item) => {
+        if (item.localTrackIds.some((id) => seen.has(id))) return false
+        item.localTrackIds.forEach((id) => seen.add(id))
+        return true
+      })
+  }, [collection.entries])
+  const unavailable = useMemo(
+    () =>
+      Object.values(collection.entries).filter(
+        (item) => item.liked && !item.localTrackIds.length
+      ).length,
+    [collection.entries]
+  )
+  const needsFavoriteMetadata =
+    kind !== "rated" &&
+    !["default", "title", "artist", "album", "liked_at"].includes(sortCol)
+  const favoriteIndex = useFavoriteIndex(needsFavoriteMetadata)
+  const seeds = useMemo(
+    () => [
+      ...(ratedIndex.ready ? ratedIndex.tracks : rated.items),
+      ...favoriteIndex.tracks,
+    ],
+    [ratedIndex.ready, ratedIndex.tracks, rated.items, favoriteIndex.tracks]
+  )
+  const indexed = useMemo(() => {
+    const entryById = new Map<string, FavoriteEntry>()
+    const available = new Map(seeds.map((track) => [track.id, track]))
+    const loved = entries.map((entry) => {
+      const stub = favoriteStub(entry)
+      const detail = entry.localTrackIds
+        .map((id) => available.get(id))
+        .find(Boolean)
+      const track = detail ? { ...detail, likedAt: stub.likedAt } : stub
+      entryById.set(track.id, entry)
+      return track
     })
-    return items
-  }, [filteredTracks, sortCol, sortDir])
-
-  const totalMs = tracks.reduce((sum, t) => sum + t.duration, 0)
-  const count = tracks.length
+    const used = new Set(entries.flatMap((entry) => entry.localTrackIds))
+    let items =
+      kind === "loved"
+        ? loved
+        : kind === "rated"
+          ? seeds
+          : sortLikedTracks([
+              ...loved,
+              ...seeds.filter((track) => !used.has(track.id)),
+            ])
+    if (query)
+      items = items.filter((track) =>
+        `${track.title}\n${track.artistName}\n${track.albumName}`
+          .toLowerCase()
+          .includes(query)
+      )
+    return { items: orderedTracks(items, sortCol, sortDir), entryById }
+  }, [entries, seeds, kind, query, sortCol, sortDir])
+  const plainRated = kind === "rated" && !query && sortCol === "default"
+  const source = useMemo<PagedTrackSource>(() => {
+    const loadItems = async (positions: number[]) => {
+      const selected = positions.map((position) => indexed.items[position])
+      const selectedEntries = selected.flatMap((track) =>
+        indexed.entryById.has(track.id)
+          ? [indexed.entryById.get(track.id)!]
+          : []
+      )
+      const details =
+        provider && selectedEntries.length
+          ? await favoritePlaybackSource(
+              collection,
+              seeds,
+              provider,
+              selectedEntries
+            ).loadPage(0, selectedEntries.length)
+          : { items: [] }
+      const byEntry = new Map(
+        selectedEntries.map((entry, i) => [entry.id, details.items[i]])
+      )
+      return selected.map(
+        (track) =>
+          byEntry.get(indexed.entryById.get(track.id)?.id ?? "") ?? track
+      )
+    }
+    return {
+      key: `liked:${kind}`,
+      total: plainRated ? rated.total : indexed.items.length,
+      entries: plainRated ? undefined : indexed.items,
+      loadItems: plainRated ? undefined : loadItems,
+      loadPage: async (offset, limit) => {
+        if (plainRated) {
+          if (provider?.getRatedItemsPage) {
+            const page = await provider.getRatedItemsPage(
+              "track",
+              offset,
+              limit
+            )
+            return {
+              ...page,
+              items: page.items.filter((item) => item.type === "track"),
+            }
+          }
+          const items = (await provider?.getLikedTracks()) ?? []
+          return {
+            items: items.slice(offset, offset + limit),
+            total: items.length,
+            offset,
+          }
+        }
+        const positions = Array.from(
+          {
+            length: Math.max(0, Math.min(limit, indexed.items.length - offset)),
+          },
+          (_, i) => offset + i
+        )
+        return {
+          items: await loadItems(positions),
+          total: indexed.items.length,
+          offset,
+        }
+      },
+    }
+  }, [provider, kind, plainRated, rated.total, indexed, collection, seeds])
+  const queryKey = JSON.stringify(["liked", kind, sortCol, sortDir, query])
+  const preparing =
+    ((kind === "all" || (kind === "rated" && !plainRated)) &&
+      !ratedIndex.ready) ||
+    (needsFavoriteMetadata && !favoriteIndex.ready)
+  const selectedPages = useWindowedPages(
+    preparing || plainRated ? null : queryKey,
+    source.loadPage,
+    source.total,
+    source
+  )
+  const pages = plainRated ? rated.pages : selectedPages
+  const count =
+    preparing || (favorites.loading && kind !== "rated") ? null : pages.total
+  const play = async (shuffle = false, index = 0) => {
+    if (preparing || !provider) return
+    if (plainRated && provider.getCachedTrackSource) {
+      await playPagedTracks(
+        {
+          ...source,
+          prepare: () => provider.getCachedTrackSource!("rated:track", shuffle),
+        },
+        "Liked Songs",
+        "/collection/tracks",
+        shuffle,
+        index
+      )
+      return
+    }
+    await playPagedTracks(
+      source,
+      "Liked Songs",
+      "/collection/tracks",
+      shuffle,
+      index
+    )
+  }
 
   return (
     <div className="pb-12">
-      {/* Header */}
       <div className="collection-header">
-        {/* Info column */}
         <div className="flex min-w-0 flex-[1_1_14rem] flex-col gap-3">
-          <div>
-            <h1 className="discovery-title">
-              Liked Songs
-            </h1>
-            <p className="mt-2 max-w-xl select-text text-sm text-gray-400">
-              Your favorites, saved in Hibiki. Browse star ratings separately or
-              keep your likes in sync.
-            </p>
-          </div>
-
-          {/* Bottom row: stats + buttons */}
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <p className="text-sm text-gray-400">
-              {count.toLocaleString()} {count === 1 ? "song" : "songs"}
-              {totalMs > 0 && <> · {formatTotalMs(totalMs)}</>}
-            </p>
-            <div className="flex items-center gap-3">
-              <button
-                className="media-secondary"
-                disabled={!loaded || !provider?.favorites}
-                onClick={() => setSyncOpen(true)}
-              >
-                Sync
-              </button>
-              {/* Play */}
-              <button
-                onClick={() =>
-                  count > 0 &&
-                  void playTrack(
-                    tracks[0],
-                    tracks,
-                    "Liked Songs",
-                    "/collection/tracks"
-                  )
-                }
-                disabled={count === 0}
-                title="Play"
-                aria-label="Play liked songs"
-                className="media-primary"
-              >
-                <svg
-                  viewBox="0 0 16 16"
-                  width="16"
-                  height="16"
-                  fill="currentColor"
-                  aria-hidden="true"
-                >
-                  <polygon points="3,2 13,8 3,14" />
-                </svg>
-                Play
-              </button>
-              {/* Shuffle */}
-              <button
-                onClick={() => {
-                  if (count === 0) return
-                  const s = [...tracks].sort(() => Math.random() - 0.5)
-                  void playTrack(s[0], s, "Liked Songs", "/collection/tracks")
-                }}
-                disabled={count === 0}
-                title="Shuffle"
-                aria-label="Shuffle liked songs"
-                className="media-secondary"
-              >
-                <svg
-                  viewBox="0 0 16 16"
-                  width="16"
-                  height="16"
-                  fill="currentColor"
-                  aria-hidden="true"
-                >
-                  <path d="M13.151.922a.75.75 0 1 0-1.06 1.06L13.109 3H11.16a3.75 3.75 0 0 0-2.873 1.34l-6.173 7.356A2.25 2.25 0 0 1 .39 12.5H0V14h.391a3.75 3.75 0 0 0 2.873-1.34l6.173-7.356a2.25 2.25 0 0 1 1.724-.804h1.947l-1.017 1.018a.75.75 0 0 0 1.06 1.06L15.98 3.75 13.15.922zM.391 3.5H0V2h.391c1.109 0 2.16.49 2.873 1.34L4.89 5.277l-.979 1.167-1.796-2.14A2.25 2.25 0 0 0 .39 3.5z" />
-                  <path d="m7.5 10.723.98-1.167.957 1.14a2.25 2.25 0 0 0 1.724.804h1.947l-1.017-1.018a.75.75 0 1 1 1.06-1.06l2.829 2.828-2.829 2.828a.75.75 0 1 1-1.06-1.06L13.109 13H11.16a3.75 3.75 0 0 1-2.873-1.34l-.787-.938z" />
-                </svg>
-                Shuffle
-              </button>
-            </div>
-          </div>
+          <h1 className="discovery-title">Liked Songs</h1>
+          <p className="max-w-xl text-sm text-[var(--text-secondary)]">
+            Your saved favorites and songs you've rated.
+          </p>
+          <p className="text-sm text-[var(--text-secondary)]">
+            {count === null
+              ? "Preparing all saved songs…"
+              : `${count.toLocaleString()} ${count === 1 ? "song" : "songs"}`}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            className="media-secondary"
+            title={syncNeedsReview ? "Some likes or sync changes need review" : "Manage liked songs sync"}
+            aria-label={syncNeedsReview ? "Sync liked songs — review needed" : "Sync liked songs"}
+            disabled={!favorites.loaded || !provider?.favorites}
+            onClick={() => setSyncOpen(true)}
+          >
+            Sync
+            {syncNeedsReview && <SyncReviewIndicator />}
+          </button>
+          <button
+            className="media-primary"
+            aria-label="Play liked songs"
+            disabled={!count}
+            onClick={() => void play()}
+          >
+            <IconPlayerPlay size={16} aria-hidden="true" />
+            Play
+          </button>
+          <button
+            className="media-secondary"
+            aria-label="Shuffle liked songs"
+            disabled={!count}
+            onClick={() => void play(true)}
+          >
+            <IconArrowsShuffle size={16} aria-hidden="true" />
+            Shuffle
+          </button>
         </div>
       </div>
-
-      {/* Track list */}
       <div
         className="flex flex-wrap gap-2 px-8 pb-4"
         role="group"
@@ -288,28 +316,14 @@ export function Liked() {
         ))}
       </div>
       {unavailable > 0 && kind !== "rated" && (
-        <div className="mx-8 mb-4 rounded-lg border border-white/10 p-3 text-sm text-[var(--text-secondary)]">
-          {unavailable.toLocaleString()} favorites are saved but not available
-          in this library yet.{" "}
-          <button className="underline" onClick={() => setSyncOpen(true)}>
-            Review matches
-          </button>
-          {" · "}
-          <button
-            className="underline"
-            disabled={local.loading}
-            onClick={local.retry}
-          >
-            Load missing library details
-          </button>
-        </div>
+        <p className="mx-8 mb-4 text-sm text-[var(--text-secondary)]">
+          {unavailable.toLocaleString()} saved favorites still need a library
+          match. Review them in Sync.
+        </p>
       )}
-      {error && (
-        <div
-          role="alert"
-          className="mx-8 mb-4 rounded-lg border border-red-400/30 p-3 text-sm text-red-400"
-        >
-          {error}{" "}
+      {favorites.error && (
+        <p role="alert" className="mx-8 mb-4 text-sm text-red-400">
+          {favorites.error}{" "}
           <button
             className="underline"
             onClick={() =>
@@ -321,59 +335,110 @@ export function Liked() {
           >
             Retry local favorites
           </button>
-        </div>
-      )}
-      {(loading ||
-        local.loading ||
-        (status === "loading" &&
-          (kind !== "loved" || !collection.ratingsImported))) &&
-      !tracks.length ? (
-        <p
-          role="status"
-          className="px-8 py-12 text-center text-sm text-gray-400"
-        >
-          Loading saved songs…
         </p>
-      ) : status === "error" && kind === "rated" ? (
-        <div
-          role="alert"
-          className="mx-8 my-4 rounded-lg border border-red-400/30 p-4 text-sm text-red-400"
+      )}
+      {preparing ? (
+        <p
+          role={ratedIndex.error ? "alert" : "status"}
+          className="px-8 py-12 text-sm text-[var(--text-secondary)]"
         >
-          <p>Could not load rated tracks.</p>
-          <button
-            onClick={retry}
-            className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white"
-          >
-            Try again
-          </button>
-        </div>
+          {ratedIndex.error || "Preparing your complete collection…"}
+        </p>
       ) : (
         <TrackTable
-          tracks={tracks}
+          tracks={[]}
+          paged={pages}
           visibleCols={visibleCols}
           toggleCol={toggleCol}
           sortCol={sortCol}
           sortDir={sortDir}
           onSort={handleSort}
-          onPlay={(track, all) =>
-            void playTrack(track, all, "Liked Songs", "/collection/tracks")
-          }
+          onPlay={(_track, _all, index) => play(false, index ?? 0)}
           onAddToQueue={addToQueue}
           onPlayRadio={playRadio}
           columns={LIKED_COLUMNS}
           searchPlaceholder="Search in liked songs…"
           filterQuery={filterQuery}
           onFilterChange={setFilterQuery}
-          defaultResetTitle="Restore default order"
-          emptyMessage={
-            kind === "loved"
-              ? "Tap a song’s heart to save it here, or connect your favorites in Sync."
-              : "No rated tracks yet. Rate a song to see it here."
-          }
+          isLoading={favorites.loading || (pages.loading && !pages.total)}
           currentTrackId={currentTrack?.id ?? null}
+          emptyMessage={
+            query
+              ? "No songs match this filter."
+              : kind === "rated"
+                ? "No rated songs yet. Rate a song in Plex to see it here."
+                : "Tap a song’s heart to save it here, or connect your favorites in Sync."
+          }
         />
       )}
       {syncOpen && <FavoritesSyncDialog onClose={() => setSyncOpen(false)} />}
     </div>
   )
+}
+function orderedTracks(
+  filteredTracks: MusicTrack[],
+  sortCol: string,
+  sortDir: "asc" | "desc"
+) {
+  if (sortCol === "default") return filteredTracks
+  const items = [...filteredTracks]
+  items.sort((a, b) => {
+    let cmp = 0
+    switch (sortCol) {
+      case "title":
+        cmp = a.title.localeCompare(b.title)
+        break
+      case "artist":
+        cmp = a.artistName.localeCompare(b.artistName)
+        break
+      case "album":
+        cmp = a.albumName.localeCompare(b.albumName)
+        break
+      case "year":
+        cmp = (a.albumYear ?? a.year) - (b.albumYear ?? b.year)
+        break
+      case "plays":
+        cmp = a.playCount - b.playCount
+        break
+      case "popularity":
+        cmp = (a.ratingCount ?? 0) - (b.ratingCount ?? 0)
+        break
+      case "label":
+        cmp = (a.parentStudio ?? "").localeCompare(b.parentStudio ?? "")
+        break
+      case "bitrate":
+        cmp = (a.bitrate ?? 0) - (b.bitrate ?? 0)
+        break
+      case "format":
+        cmp = (a.codec ?? "").localeCompare(b.codec ?? "")
+        break
+      case "added_at":
+        cmp =
+          (a.addedAt ? +new Date(a.addedAt) : 0) -
+          (b.addedAt ? +new Date(b.addedAt) : 0)
+        break
+      case "rating":
+        cmp = (a.userRating ?? 0) - (b.userRating ?? 0)
+        break
+      case "rated_at": {
+        cmp =
+          (a.lastRatedAt ? +new Date(a.lastRatedAt) : 0) -
+          (b.lastRatedAt ? +new Date(b.lastRatedAt) : 0)
+        break
+      }
+      case "liked_at": {
+        const at = Date.parse(a.likedAt ?? ""),
+          bt = Date.parse(b.likedAt ?? "")
+        if (!Number.isFinite(at) || !Number.isFinite(bt))
+          return Number.isFinite(at) ? -1 : Number.isFinite(bt) ? 1 : 0
+        cmp = at - bt
+        break
+      }
+      case "duration":
+        cmp = a.duration - b.duration
+        break
+    }
+    return sortDir === "asc" ? cmp : -cmp
+  })
+  return items
 }

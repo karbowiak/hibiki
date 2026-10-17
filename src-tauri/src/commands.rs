@@ -3630,3 +3630,21 @@ pub async fn playlist_sync_resolve_recording(
     let guard=state.0.lock().await;state.checked_client(&context,&guard)?;
     Ok(result)
 }
+#[tauri::command]
+pub async fn get_rated_items_page(
+    context: PlexRequestContext, section_id: i64, kind: String,
+    offset: i32, limit: i32, state: State<'_, PlexState>,
+) -> Result<PagedMediaItems, String> {
+    let c = client!(state, context);
+    let (items, total) = c.rated_items_page(section_id, &kind, offset, limit).await.map_err(|e| format!("{e:#}"))?;
+    Ok(PagedMediaItems { items, total })
+}
+
+#[tauri::command]
+pub async fn get_mix_tracks_page(
+    context: PlexRequestContext, key: String, offset: i32, limit: i32,
+    state: State<'_, PlexState>,
+) -> Result<crate::plex::playlist::PlaylistItemsPage, String> {
+    let c = client!(state, context);
+    c.mix_tracks_page(&key, offset, limit).await.map_err(|e| format!("{e:#}"))
+}

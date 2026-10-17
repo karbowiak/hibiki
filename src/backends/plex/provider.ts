@@ -568,6 +568,16 @@ export class PlexProvider implements MusicProvider {
   // Liked
   // ---------------------------------------------------------------------------
 
+  async getRatedItemsPage(kind: "track" | "album" | "artist", offset: number, limit: number): Promise<PagedResult<MusicItem>> {
+    const page = await this.api.getRatedItemsPage(this.requireSection(), kind, offset, limit)
+    return { ...page, offset, items: page.items.map(item => plexMediaToMusicItem(item, this.img)).filter((item): item is MusicItem => !!item) }
+  }
+
+  async getMixTracksPage(key: string, offset: number, limit: number): Promise<PagedResult<MusicTrack>> {
+    const page = await this.api.getMixTracksPage(key, offset, limit)
+    return { ...page, items: this.mapTracks(page.items) }
+  }
+
   async getLikedTracks(limit?: number): Promise<MusicTrack[]> {
     const sid = this.requireSection()
     const tracks = await this.api.getLikedTracks(sid, limit)
@@ -756,8 +766,7 @@ export class PlexProvider implements MusicProvider {
   // ---------------------------------------------------------------------------
 
   async getMixTracks(mixKey: string): Promise<MusicTrack[]> {
-    const tracks = await this.api.getMixTracks(mixKey)
-    return this.mapTracks(tracks)
+    return (await this.getMixTracksPage(mixKey, 0, 200)).items
   }
 
   // ---------------------------------------------------------------------------

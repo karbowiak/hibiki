@@ -16,11 +16,18 @@ export interface EntityDownloadStatus {
   pending: number
   failed: number
   requested: boolean
+  error?: string | null
 }
 export interface DownloadOwner {
   provider: MusicProvider
   context: PlexRequestContext
   session: unknown
+}
+export interface DownloadIssue {
+  trackId: number
+  title: string
+  artist: string
+  error: string
 }
 export function isDownloadEntity(
   kind: string,
@@ -43,7 +50,7 @@ export function downloadLabel(
   if (status.pending)
     return `${offline ? "Download paused" : "Downloading"} · ${status.downloaded} of ${status.total} tracks available offline`
   if (status.downloaded || status.requested)
-    return `${status.downloaded} of ${status.total} tracks downloaded${status.failed ? ` · ${status.failed} need attention` : ""}`
+    return `${status.downloaded} of ${status.total} tracks downloaded${status.failed ? ` · ${status.failed} need attention${status.error ? `: ${status.error}` : ""}` : ""}`
   return null
 }
 export function createEntityDownloads(
@@ -82,6 +89,11 @@ export function createEntityDownloads(
         )
       return call<number>("download_entity", entity(kind, id))
     },
+    issues: (kind: DownloadKind, id: string, offset = 0) =>
+      call<{ items: DownloadIssue[]; total: number }>(
+        "download_entity_issues",
+        { ...entity(kind, id), offset }
+      ),
     remove: (kind: DownloadKind, id: string) =>
       call<void>("remove_entity_download", entity(kind, id)),
   }

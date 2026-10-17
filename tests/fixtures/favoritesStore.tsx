@@ -25,6 +25,8 @@ mock.module("../../src/metadata/listenbrainz/authStore", () => ({
   useListenBrainzStore: auth,
 }))
 let calls = 0,
+  resets = 0,
+  resetFailure: unknown,
   saves: any[] = [],
   profile = { revision: 0, metadata: emptyFavorites() as any },
   rows: Record<string, any> = {},
@@ -68,6 +70,26 @@ const native = {
     profile = { revision: expected + 1, metadata: structuredClone(metadata) }
     return profile.revision
   },
+  reset: async (expected: number) => {
+    resets++
+    if (resetFailure) throw resetFailure
+    assert.equal(expected, profile.revision)
+    rows = Object.fromEntries(
+      Object.entries(rows)
+        .filter(([, row]) => row.explicit)
+        .map(([id, row]) => {
+          const kept = { ...row, sources: {} }
+          delete kept.matchCheckedAt
+          return [id, kept]
+        })
+    )
+    const metadata = structuredClone(profile.metadata)
+    metadata.ratingsImported = false
+    for (const binding of Object.values(metadata.bindings) as any[])
+      binding.initialized = false
+    profile = { revision: expected + 1, metadata }
+    return profile.revision
+  },
   plexRead: async () => {
     throw Error("must not access Plex")
   },
@@ -106,7 +128,183 @@ const track: any = {
   year: 2026,
   playCount: 0,
 }
-if (scenario === "corrupt") {
+if (
+  scenario === "reset" ||
+  scenario === "reset_matching" ||
+  scenario === "reset_controls"
+) {
+  const { setFavorite } = await import("../../src/favorites/model")
+  await useFavoritesStore.getState().load()
+  await useFavoritesStore.getState().update((state) => {
+    state = setFavorite(
+      state,
+      {
+        key: "local:42",
+        localTrackId: "42",
+        title: "Local song",
+        artist: "Artist",
+      },
+      false
+    )
+    state = setFavorite(
+      state,
+      { key: "imported", title: "Dear God", artist: "Sefa" },
+      true,
+      false
+    )
+    return { ...state, ratingsImported: true }
+  })
+  if (scenario === "reset_matching") {
+    const found = deferred<any[]>()
+    provider.search = () => found.promise
+    const matching = useFavoritesStore.getState().matchMissing(true)
+    await useFavoritesStore.getState().resetSync()
+    found.resolve([
+      {
+        ...track,
+        type: "track",
+        id: "165297",
+        artistName: "Sefa",
+        title: "Dear God",
+      },
+    ])
+    await matching
+    assert.deepEqual(Object.keys(rows), ["local:42"])
+  } else if (scenario === "reset_controls") {
+    const { createRoot } = await import("react-dom/client")
+    const { LikedSyncControls } =
+      await import("../../src/components/Settings/LikedSyncControls")
+    const root = createRoot(document.getElementById("root")!)
+    const button = (label: string) =>
+      [...document.querySelectorAll<HTMLButtonElement>("button")].find(
+        (button) => button.textContent === label
+      )!
+    await act(async () => root.render(<LikedSyncControls />))
+    assert(button("Manage sync"))
+    await act(async () => button("Reset liked sync…").click())
+    assert.equal(document.activeElement, button("Cancel"))
+    assert.equal(resets, 0)
+    await act(async () => button("Cancel").click())
+    assert.equal(document.activeElement, button("Reset liked sync…"))
+    assert.equal(resets, 0)
+    await act(async () => useFavoritesStore.setState({ running: true }))
+    assert(button("Reset liked sync…").disabled)
+    await act(async () => useFavoritesStore.setState({ running: false }))
+    resetFailure = "Database is busy. Try again."
+    await act(async () => button("Reset liked sync…").click())
+    await act(async () => button("Reset and reimport").click())
+    assert.equal(
+      document.querySelector('[role="alert"]')?.textContent,
+      resetFailure
+    )
+    assert.equal(Object.keys(rows).length, 2)
+    resetFailure = undefined
+    await act(async () => button("Reset and reimport").click())
+    assert(
+      document
+        .querySelector('[role="status"]')
+        ?.textContent?.includes("Liked sync reset")
+    )
+    await act(async () => root.unmount())
+  } else {
+    const account = { service: "lastfm", user: "listener", revision: "lease" }
+    await useFavoritesStore
+      .getState()
+      .update((state) => ({
+        ...state,
+        settings: { ...state.settings, lastfm: true },
+        bindings: { lastfm: { account, initialized: true } },
+      }))
+    useFavoritesStore.setState({ running: true })
+    await assert.rejects(useFavoritesStore.getState().resetSync(), /finish/)
+    assert.equal(resets, 0)
+    useFavoritesStore.setState({ running: false })
+    await useFavoritesStore.getState().resetSync()
+    assert.deepEqual(useFavoritesStore.getState().collection.bindings.lastfm, {
+      account,
+      initialized: false,
+    })
+    assert(useFavoritesStore.getState().collection.settings.lastfm)
+  }
+  assert.equal(
+    useFavoritesStore.getState().collection.entries["local:42"].liked,
+    false
+  )
+  assert.deepEqual(
+    useFavoritesStore.getState().collection.entries["local:42"].sources,
+    {}
+  )
+  assert.deepEqual(
+    Object.keys(useFavoritesStore.getState().collection.entries),
+    ["local:42"]
+  )
+  assert.equal(useFavoritesStore.getState().collection.ratingsImported, false)
+  assert.equal(useFavoritesStore.getState().resetting, false)
+  assert.equal(calls, 0)
+} else if (scenario === "matching") {
+  const { setFavorite } = await import("../../src/favorites/model")
+  const remote = (key: string, artist: string, title = "Dear God") => ({
+    key,
+    artist,
+    title,
+  })
+  await useFavoritesStore.getState().load()
+  await useFavoritesStore.getState().update((state) => {
+    for (const row of [
+      remote("sefa", "Sefa"),
+      remote("guest", "Lil Wayne", "Mirror (feat. Bruno Mars)"),
+      remote("absent", "Absent Artist"),
+      remote("live", "Sefa", "Dear God (Live)"),
+    ])
+      state = setFavorite(state, row, true, false)
+    return state
+  })
+  const sefa = {
+    ...track,
+    type: "track",
+    id: "165297",
+    title: "Dear God",
+    artistName: "Sefa",
+    duration: 293777,
+  }
+  const ruben = {
+    ...track,
+    type: "track",
+    id: "275497",
+    title: "Dear God",
+    artistName: "Ruben",
+    duration: 179023,
+  }
+  const mirror = {
+    ...track,
+    type: "track",
+    id: "339357",
+    title: "Mirror",
+    artistName: "Various Artists",
+    originalTitle: "Lil Wayne feat. Bruno Mars",
+  }
+  provider.search = async (query: string) =>
+    query.includes("Mirror") ? [mirror] : [ruben]
+  let discoveries = 0
+  provider.findPlaylistCandidates = async () => {
+    discoveries++
+    return { tracks: [sefa], truncated: false, unavailable: false }
+  }
+  await useFavoritesStore.getState().matchMissing(true)
+  const entries = useFavoritesStore.getState().collection.entries
+  assert.deepEqual(entries.sefa.localTrackIds, ["165297"])
+  assert.deepEqual(entries.guest.localTrackIds, ["339357"])
+  assert.deepEqual(entries.absent.localTrackIds, [])
+  assert.deepEqual(entries.live.localTrackIds, [])
+  assert.equal(discoveries, 3)
+  assert.equal(calls, 0)
+  useFavoritesStore.setState({ loaded: false })
+  await useFavoritesStore.getState().load()
+  assert.deepEqual(
+    useFavoritesStore.getState().collection.entries.sefa.localTrackIds,
+    ["165297"]
+  )
+} else if (scenario === "corrupt") {
   rows = { bad: { id: "bad", liked: true, localTrackIds: { bad: "42" } } }
   await assert.rejects(useFavoritesStore.getState().load(), /invalid/)
   assert.equal(useFavoritesStore.getState().loaded, false)
@@ -319,52 +517,27 @@ if (scenario === "corrupt") {
       assert.equal(calls, 0)
     } else {
       await useFavoritesStore.getState().toggle(track, true)
-      const library = create(() => ({
-        likedTracks: [
-          {
-            ...track,
-            id: "44",
-            title: "Low rated song",
-            userRating: 2,
-            lastRatedAt: "2019-01-01T00:00:00.000Z",
-          },
-        ],
-      }))
+      const low = { ...track, id: "44", type: "track", title: "Low rated song", userRating: 2, lastRatedAt: "2019-01-01T00:00:00.000Z" }
+      provider.getLikedTracks = async () => [low]
+      provider.favorites.cachedTracks = async (ids: string[]) => ids.map(id => ({ ...track, id, title: id === "42" ? "Local song" : id === "46" ? "Older love" : "Unknown love" }))
+      const state = useFavoritesStore.getState().collection
+      const base = state.entries["local:42"]
+      useFavoritesStore.setState({ collection: { ...state, ratingsImported: true, entries: {
+        ...state.entries,
+        "local:42": { ...base, likedAt: Date.parse("2017-01-01"), changedAt: Date.parse("2017-01-01") },
+        "local:46": { ...base, id: "local:46", key: "local:46", title: "Older love", localTrackIds: ["46"], likedAt: Date.parse("2015-01-01"), changedAt: Date.parse("2015-01-01") },
+        "local:45": { ...base, id: "local:45", key: "local:45", title: "Unknown love", localTrackIds: ["45"], likedAt: undefined, explicit: false },
+      } } })
       mock.module("../../src/stores", () => ({
-        useLibraryStore: library,
-        usePlayerStore: create(() => ({
-          playTrack: () => {},
-          playRadio: () => {},
-          addToQueue: () => {},
-          currentTrack: null,
-        })),
-      }))
-      mock.module("../../src/hooks/useLikedCollection", () => ({
-        useLikedCollection: () => ({ status: "ready", retry: () => {} }),
-      }))
-      mock.module("../../src/hooks/useFavoriteTracks", () => ({
-        useFavoriteTracks: () => ({
-          tracks: [
-            { ...track, likedAt: "2017-01-01T00:00:00.000Z" },
-            {
-              ...track,
-              id: "46",
-              title: "Older love",
-              likedAt: "2015-01-01T00:00:00.000Z",
-            },
-            { ...track, id: "45", title: "Unknown love", likedAt: null },
-          ],
-          loading: false,
-          retry: () => {},
-        }),
+        usePlayerStore: create(() => ({ playPagedTracks: () => {}, playRadio: () => {}, addToQueue: () => {}, currentTrack: null })),
       }))
       mock.module("../../src/components/shared/TrackTable", () => ({
-        TrackTable: ({ tracks, onSort, columns }: any) => (
+        TrackTable: ({ paged, onSort, columns }: any) => (
           <div data-testid="tracks">
             {columns.some((column: any) => column.id === "liked_at") && (
               <button onClick={() => onSort("liked_at")}>Date Liked</button>
             )}
-            {tracks.map((track: any) => (
+            {Array.from({ length: paged.total }, (_, index) => paged.getItem(index)).filter(Boolean).map((track: any) => (
               <span key={track.id}>{track.title}</span>
             ))}
           </div>

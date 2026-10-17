@@ -20,7 +20,7 @@ const player = create<any>(set => ({
   addToQueue(tracks: any[]) { added.push(tracks.map(track => track.id)); set((state: any) => ({ queue: [...state.queue, ...tracks] })) },
 }))
 mock.module("../../src/stores/index.ts", () => ({ usePlayerStore: player }))
-mock.module("../../src/stores/playerStore", () => ({ usePlayerStore: player, capturePlaybackSelectionVersion: () => version, isDjGenerated: () => false, isRadioGenerated: () => false }))
+mock.module("../../src/stores/playerStore", () => ({ usePlayerStore: player, ensureQueueRange: async () => {}, capturePlaybackSelectionVersion: () => version, isDjGenerated: () => false, isRadioGenerated: () => false }))
 const ui = create(() => ({ isQueueOpen: true, isQueuePinned: false, queueActiveTab: "queue", setQueueOpen() {}, setQueuePinned() {}, setQueueActiveTab() {} }))
 mock.module("../../src/stores/uiStore", () => ({ useUIStore: ui }))
 mock.module("../../src/stores/dragStore", () => ({ useDragStore: create(() => ({ isDragging: false, hoveredQueue: false })) }))

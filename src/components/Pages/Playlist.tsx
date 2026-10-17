@@ -1,4 +1,6 @@
-import { DownloadBadge } from "../shared/DownloadBadge"
+import { useEntityDownloadStatus } from "../shared/DownloadBadge"
+import { PlaylistInformationDialog } from "../PlaylistInformationDialog"
+import { IconInfoCircle } from "@tabler/icons-react"
 import { MetadataEditDialog } from "../shared/MetadataEditDialog"
 import { LinkedPlaylistManager } from "../PlaylistSync/LinkedPlaylistManager"
 import {
@@ -32,22 +34,20 @@ import { useScrollContainer } from "../Page"
 import { ALL_COLUMNS, usePlaylistColumns } from "../../hooks/useColumnPicker"
 import { TrackTable } from "../shared/TrackTable"
 import { PageLoading } from "../shared/PageLoading"
-import { usePlaylistPagination } from "../../hooks/usePlaylistPagination"
+import { useWindowedPages } from "../../hooks/useWindowedPages"
+import { playlistNeedsReview } from "../../lib/syncAttention"
+import { SyncReviewIndicator } from "../shared/SyncReviewIndicator"
 
 const PLAYLIST_COLUMNS = ALL_COLUMNS
 
-/**
- * Actual pixel height of a single track row.
- * The tallest cell content is the thumbnail at h-10 (40px). Table rows do not
- * stack <td> padding on top of content height the way block elements do.
- */
-const ROW_HEIGHT_PX = 40
 const EMPTY_ITEMS: MusicTrack[] = []
 
 export function Playlist({ playlistId }: { playlistId: string }) {
   const [showLinked, setShowLinked] = useState(false)
   const [syncReview, setSyncReview] = useState(false)
   const [syncError, setSyncError] = useState<string | null>(null)
+  const [showInformation, setShowInformation] = useState(false)
+  const downloadStatus=useEntityDownloadStatus("playlist",playlistId)
   const linkedState = useLinkedPlaylistStore()
   const syncAuthenticated = useListenBrainzStore((s) => s.isAuthenticated)
   const [showEdit, setShowEdit] = useState(false)
@@ -92,7 +92,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
 
   const {
     playTrack,
-    playFromUri,
+    playPagedTracks,
     playPlaylist,
     playRadio,
     addToQueue,
@@ -100,7 +100,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
   } = usePlayerStore(
     useShallow((s) => ({
       playTrack: s.playTrack,
-      playFromUri: s.playFromUri,
+      playPagedTracks: s.playPagedTracks,
       playPlaylist: s.playPlaylist,
       playRadio: s.playRadio,
       addToQueue: s.addToQueue,
@@ -109,10 +109,18 @@ export function Playlist({ playlistId }: { playlistId: string }) {
   )
   const provider = useProviderStore((s) => s.provider)
   const syncLink = linksForPlaylist(provider, playlistId)[0]
+  const syncNeedsReview = !!syncError || playlistNeedsReview(syncLink, !!linkedState.error || !!linkedState.checkedErrors?.[syncLink?.id ?? ""], !!linkedState.holds[syncLink?.id ?? ""])
+  const windowed = useWindowedPages(
+    `playlist:${playlistId}`,
+    async (offset, limit) =>
+      provider
+        ? provider.getPlaylistItems(playlistId, offset, limit)
+        : { items: [], total: 0 },
+    currentPlaylist?.trackCount ?? 0
+  )
   const pageRefreshKey = useUIStore((s) => s.pageRefreshKey)
   const scrollContainerRef = useScrollContainer()
   const heroRef = useRef<HTMLDivElement>(null)
-  const sentinelRef = useRef<HTMLDivElement>(null)
 
   const { visible: visibleCols, toggle: toggleCol } = usePlaylistColumns(
     "plex-playlist-columns"
@@ -212,9 +220,40 @@ export function Playlist({ playlistId }: { playlistId: string }) {
     return items
   }, [filteredItems, sortCol, sortDir])
 
+  const useQuery = !!debouncedQuery || sortCol !== "default"
+  const queried = useWindowedPages(
+    useQuery && provider?.getCollectionPage
+      ? JSON.stringify([
+          "playlist-query",
+          playlistId,
+          debouncedQuery,
+          sortCol,
+          sortDir,
+        ])
+      : null,
+    async (offset, limit) => {
+      const page = await provider!.getCollectionPage!(
+        `playlist:${playlistId}`,
+        offset,
+        limit,
+        debouncedQuery,
+        sortCol,
+        sortDir
+      )
+      return {
+        ...page,
+        items: page.items.filter((item) => item.type === "track"),
+      }
+    },
+    currentPlaylist?.trackCount ?? 0
+  )
+  const visiblePage =
+    useQuery && provider?.getCollectionPage ? queried : windowed
+
   useLayoutEffect(() => {
     setFilterQuery("")
     setDebouncedQuery("")
+    setShowInformation(false)
   }, [playlistId, provider])
 
   useLayoutEffect(() => {
@@ -239,21 +278,6 @@ export function Playlist({ playlistId }: { playlistId: string }) {
   const pageError = useLibraryStore(
     (s) => s.playlistPageErrors?.[playlistId] ?? null
   )
-  const loadNextPage = useCallback(() => {
-    void fetchMorePlaylistItems(playlistId)
-  }, [playlistId, fetchMorePlaylistItems])
-  usePlaylistPagination({
-    playlistId,
-    scrollContainer: scrollContainerRef,
-    sentinel: sentinelRef,
-    isLoading,
-    isFetchingMore,
-    isFullyLoaded,
-    filterQuery,
-    blocked: !!pageError,
-    onLoadMore: loadNextPage,
-  })
-
   // Reorder is only available for non-smart playlists in default sort order with no filter
   const canReorder =
     !isReordering &&
@@ -266,12 +290,15 @@ export function Playlist({ playlistId }: { playlistId: string }) {
     (fromIndex: number, toIndex: number) => {
       const view = viewRef.current
       if (!provider || !canReorder || !view?.active || view.pending) return
-      const items = currentPlaylistItems
-      const movedTrack = items[fromIndex]
+      const movedTrack =
+        windowed.getItem(fromIndex) ?? currentPlaylistItems[fromIndex]
       if (!movedTrack?.playlistItemId) return
 
       const afterIndex = toIndex > fromIndex ? toIndex : toIndex - 1
-      const afterTrack = afterIndex >= 0 ? items[afterIndex] : null
+      const afterTrack =
+        afterIndex >= 0
+          ? (windowed.getItem(afterIndex) ?? currentPlaylistItems[afterIndex])
+          : null
       const afterItemId = afterTrack?.playlistItemId ?? "0"
 
       const current = () =>
@@ -281,10 +308,35 @@ export function Playlist({ playlistId }: { playlistId: string }) {
       view.pending = true
       setIsReordering(true)
       setReorderError(null)
-      reorderPlaylistItems(playlistId, fromIndex, toIndex)
+      if (
+        fromIndex < currentPlaylistItems.length &&
+        toIndex < currentPlaylistItems.length
+      )
+        reorderPlaylistItems(playlistId, fromIndex, toIndex)
 
-      void provider
-        .movePlaylistItem(playlistId, movedTrack.playlistItemId, afterItemId)
+      void (async () => {
+        let after = afterItemId
+        if (afterIndex >= 0 && !afterTrack) {
+          const page = await provider.getPlaylistItems(
+            playlistId,
+            afterIndex,
+            1
+          )
+          if (!current()) return
+          if (!page.items[0]?.playlistItemId)
+            throw Error("Playlist position is unavailable")
+          after = page.items[0].playlistItemId
+        }
+        if (current())
+          await provider.movePlaylistItem(
+            playlistId,
+            movedTrack.playlistItemId!,
+            after
+          )
+      })()
+        .then(() => {
+          if (current()) windowed.invalidate()
+        })
         .catch(() => {
           if (!current()) return
           setReorderError(
@@ -303,6 +355,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
       provider,
       canReorder,
       currentPlaylistItems,
+      windowed,
       playlistId,
       reorderPlaylistItems,
       invalidatePlaylistItems,
@@ -345,24 +398,42 @@ export function Playlist({ playlistId }: { playlistId: string }) {
   const thumbUrl = currentPlaylist.thumbUrl
 
   const loadedCount = currentPlaylistItems.length
-  const totalCount = currentPlaylist.trackCount
-  const displayCount = isFullyLoaded
-    ? loadedCount
-    : Math.max(totalCount, loadedCount)
-  const totalMs = currentPlaylistItems.reduce((sum, t) => sum + t.duration, 0)
+  const totalCount = windowed.initialized
+    ? windowed.total
+    : currentPlaylist.trackCount
+  const displayCount = totalCount
+  const totalMs =
+    currentPlaylist.duration ??
+    currentPlaylistItems.reduce((sum, t) => sum + t.duration, 0)
 
-  // URI for server-side play queue — enables full-playlist shuffle regardless of loaded count.
-  const playlistUri =
-    currentPlaylist?.providerKey && provider?.buildPlaylistUri
-      ? provider.buildPlaylistUri(currentPlaylist.providerKey)
-      : null
+  const playbackSource = provider
+    ? {
+        key: `playlist:${playlistId}`,
+        total: totalCount,
+        loadPage: (offset: number, limit: number) =>
+          provider.getPlaylistItems(playlistId, offset, limit),
+      }
+    : null
 
-  // Height of the virtual spacer for unloaded tracks.
-  // Zero when fully loaded — avoids leftover space when Plex's leaf_count
-  // doesn't exactly match the actual number of tracks returned.
-  const spacerHeight = isFullyLoaded
-    ? 0
-    : Math.max(0, (totalCount - loadedCount) * ROW_HEIGHT_PX)
+  const querySource = {
+    key: `playlist-query:${playlistId}`,
+    restoreQuery: { key: `playlist:${playlistId}`, filter: debouncedQuery, sort: sortCol, dir: sortDir },
+    total: queried.total,
+    loadPage: async (offset: number, limit: number) => {
+      const page = await provider!.getCollectionPage!(
+        `playlist:${playlistId}`,
+        offset,
+        limit,
+        debouncedQuery,
+        sortCol,
+        sortDir
+      )
+      return {
+        ...page,
+        items: page.items.filter((item) => item.type === "track"),
+      }
+    },
+  }
 
   return (
     <div className="media-detail-page playlist-detail-page pb-12">
@@ -388,10 +459,6 @@ export function Playlist({ playlistId }: { playlistId: string }) {
           {/* Info column */}
           <div className="flex min-h-44 min-w-0 flex-[1_1_16rem] flex-col justify-between gap-4">
             <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <div className="media-detail-eyebrow mb-2">Playlist</div>
-                <DownloadBadge kind="playlist" id={playlistId} />
-              </div>
               <h1 className="media-detail-title break-words">
                 {currentPlaylist.title}
               </h1>
@@ -410,12 +477,18 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                 <button
                   onClick={() =>
                     totalCount > 0 &&
-                    void playPlaylist(
-                      playlistId,
-                      totalCount,
-                      currentPlaylist.title,
-                      `/playlist/${playlistId}`
-                    )
+                    void (useQuery && provider?.getCollectionPage
+                      ? playPagedTracks(
+                          querySource,
+                          currentPlaylist.title,
+                          `/playlist/${playlistId}`
+                        )
+                      : playPlaylist(
+                          playlistId,
+                          totalCount,
+                          currentPlaylist.title,
+                          `/playlist/${playlistId}`
+                        ))
                   }
                   disabled={
                     totalCount === 0 ||
@@ -440,18 +513,25 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                 {/* Shuffle */}
                 <button
                   onClick={() =>
-                    playlistUri &&
-                    void playFromUri(
-                      playlistUri,
-                      true,
+                    playbackSource &&
+                    void playPagedTracks(
+                      useQuery && provider?.getCollectionPage
+                        ? querySource
+                        : {
+                            ...playbackSource,
+                            prepare: () =>
+                              provider?.getCachedTrackSource?.(
+                                `playlist:${playlistId}`,
+                                true
+                              ) ?? Promise.resolve(null),
+                          },
                       currentPlaylist.title,
-                      `/playlist/${playlistId}`
+                      `/playlist/${playlistId}`,
+                      true
                     )
                   }
                   disabled={
-                    !playlistUri ||
-                    totalCount === 0 ||
-                    !!provider?.isOffline
+                    !playbackSource || totalCount === 0 || !!provider?.isOffline
                   }
                   title="Shuffle play"
                   className="media-secondary"
@@ -478,10 +558,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                       currentPlaylist.title
                     )
                   }
-                  disabled={
-                    totalCount === 0 ||
-                    !provider?.capabilities.radio
-                  }
+                  disabled={totalCount === 0 || !provider?.capabilities.radio}
                   title="Playlist Radio — continuous sonically-similar music"
                   className="media-secondary"
                 >
@@ -503,18 +580,18 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                   disabled={
                     !syncLink ||
                     !!linkedState.running[syncLink.id] ||
-                    !syncAuthenticated ||
-                    !!provider?.isOffline
+                    (!syncNeedsReview && (!syncAuthenticated || !!provider?.isOffline))
                   }
                   title={
-                    syncLink
+                    syncNeedsReview ? "Review this playlist's sync" : syncLink
                       ? "Run this playlist's configured sync"
                       : "Configure sync from the playlist menu first"
                   }
+                  aria-label={syncNeedsReview ? "Sync playlist — review needed" : "Sync playlist"}
                   onClick={() => {
                     if (!syncLink) return
                     if (
-                      !syncLink.enabled ||
+                      syncNeedsReview || !syncLink.enabled ||
                       syncLink.paused ||
                       syncLink.state === "conflict" ||
                       !!syncLink.incomplete ||
@@ -556,10 +633,8 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                 >
                   {syncLink && linkedState.running[syncLink.id]
                     ? "Syncing…"
-                    : syncLink?.incomplete?.matchingDone &&
-                        syncLink.incomplete.missingOccurrenceIds.length > 0
-                      ? `Review ${syncLink.incomplete.missingOccurrenceIds.length} songs`
-                      : "Sync"}
+                    : "Sync"}
+                  {syncNeedsReview && <SyncReviewIndicator />}
                 </button>
                 {syncError && (
                   <p
@@ -638,6 +713,20 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                   </svg>
                   More
                 </button>
+                <button
+                  className="media-secondary"
+                  aria-haspopup="dialog"
+                  aria-label="Playlist information"
+                  title="Playlist information and download issues"
+                  onClick={(event) => {
+                    event.currentTarget.focus({ preventScroll: true })
+                    setShowInformation(true)
+                  }}
+                >
+                  <IconInfoCircle size={16} aria-hidden="true" />
+                  Info
+                  {downloadStatus?.failed ? <SyncReviewIndicator /> : null}
+                </button>
               </div>
             </div>
           </div>
@@ -653,6 +742,21 @@ export function Playlist({ playlistId }: { playlistId: string }) {
           onSaved={() => {
             invalidatePlaylistItems(playlistId)
             void fetchPlaylistItems(playlistId)
+          }}
+        />
+      )}
+      {showInformation && (
+        <PlaylistInformationDialog
+          key={`information:${playlistId}:${provider?.cacheScope ?? ""}`}
+          playlist={{ ...currentPlaylist, trackCount: totalCount }}
+          downloads={downloadStatus}
+          link={syncLink}
+          syncError={syncError || linkedState.checkedErrors?.[syncLink?.id ?? ""]}
+          onClose={() => setShowInformation(false)}
+          onReviewSync={() => {
+            setShowInformation(false)
+            setSyncReview(true)
+            setShowLinked(true)
           }}
         />
       )}
@@ -675,14 +779,10 @@ export function Playlist({ playlistId }: { playlistId: string }) {
         </div>
         {totalMs > 0 && (
           <div>
-            <dt>Runtime{!isFullyLoaded && " so far"}</dt>
+            <dt>
+              Runtime{!currentPlaylist.duration && !isFullyLoaded && " so far"}
+            </dt>
             <dd>{formatTotalMs(totalMs)}</dd>
-          </div>
-        )}
-        {!isFullyLoaded && loadedCount > 0 && (
-          <div>
-            <dt>Songs loaded</dt>
-            <dd>{loadedCount.toLocaleString()}</dd>
           </div>
         )}
       </dl>
@@ -691,19 +791,31 @@ export function Playlist({ playlistId }: { playlistId: string }) {
       {/* Track list */}
       <TrackTable
         tracks={sortedItems}
+        paged={
+          !useQuery || provider?.getCollectionPage ? visiblePage : undefined
+        }
         visibleCols={visibleCols}
         toggleCol={toggleCol}
         sortCol={sortCol}
         sortDir={sortDir}
         onSort={handleSort}
-        onPlay={(track, all) =>
-          void playTrack(
-            track,
-            all,
-            currentPlaylist?.title,
-            `/playlist/${playlistId}`
-          )
-        }
+        onPlay={(track, all, index) => {
+          if (playbackSource && (!useQuery || provider?.getCollectionPage))
+            void playPagedTracks(
+              useQuery ? querySource : playbackSource,
+              currentPlaylist.title,
+              `/playlist/${playlistId}`,
+              false,
+              index ?? all.indexOf(track)
+            )
+          else
+            void playTrack(
+              track,
+              all,
+              currentPlaylist.title,
+              `/playlist/${playlistId}`
+            )
+        }}
         onAddToQueue={addToQueue}
         onPlayRadio={playRadio}
         columns={PLAYLIST_COLUMNS}
@@ -720,50 +832,51 @@ export function Playlist({ playlistId }: { playlistId: string }) {
               : "No matches in loaded songs. Load more songs or clear the filter."
             : "This playlist is empty."
         }
-        sentinel={sentinelRef}
-        spacerHeight={spacerHeight}
         isFetchingMore={isFetchingMore}
         currentTrackId={currentTrack?.id ?? null}
         playlistId={currentPlaylist.smart ? undefined : playlistId}
         onReorder={canReorder ? handleReorder : undefined}
       />
-      {!isFullyLoaded && loadedCount > 0 && (
-        <div className="mx-8 mt-4 flex flex-wrap items-center gap-3">
-          {pageError && (
-            <p role="alert" className="w-full text-sm text-red-400">
-              {pageError}
-            </p>
-          )}
-          <button
-            type="button"
-            disabled={isFetchingMore || isLoading}
-            onClick={() =>
-              void fetchMorePlaylistItems(playlistId, { force: true })
-            }
-            className="rounded-full bg-app-surface px-4 py-2 text-sm text-[var(--text-primary)] hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
-          >
-            {isFetchingMore
-              ? "Loading more…"
-              : pageError
-                ? "Retry loading more"
-                : "Load more songs"}
-          </button>
-          {pageError && (
+      {!provider?.getCollectionPage &&
+        (!!debouncedQuery || sortCol !== "default") &&
+        !isFullyLoaded &&
+        loadedCount > 0 && (
+          <div className="mx-8 mt-4 flex flex-wrap items-center gap-3">
+            {pageError && (
+              <p role="alert" className="w-full text-sm text-red-400">
+                {pageError}
+              </p>
+            )}
             <button
               type="button"
-              onClick={() => invalidatePlaylistItems(playlistId)}
-              className="rounded-full border border-white/20 px-4 py-2 text-sm text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              disabled={isFetchingMore || isLoading}
+              onClick={() =>
+                void fetchMorePlaylistItems(playlistId, { force: true })
+              }
+              className="rounded-full bg-app-surface px-4 py-2 text-sm text-[var(--text-primary)] hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
             >
-              Reload playlist
+              {isFetchingMore
+                ? "Loading more…"
+                : pageError
+                  ? "Retry loading more"
+                  : "Load more songs"}
             </button>
-          )}
-          {filterQuery && (
-            <span className="text-xs text-[var(--text-secondary)]">
-              Filter applies to loaded songs; loading more is optional.
-            </span>
-          )}
-        </div>
-      )}
+            {pageError && (
+              <button
+                type="button"
+                onClick={() => invalidatePlaylistItems(playlistId)}
+                className="rounded-full border border-white/20 px-4 py-2 text-sm text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              >
+                Reload playlist
+              </button>
+            )}
+            {filterQuery && (
+              <span className="text-xs text-[var(--text-secondary)]">
+                Filter applies to loaded songs; loading more is optional.
+              </span>
+            )}
+          </div>
+        )}
     </div>
   )
 }

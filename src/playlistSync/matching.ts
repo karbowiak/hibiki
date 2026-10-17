@@ -26,7 +26,7 @@ function comparable(value: string) {
 function titleLabel(value: string) {
   return comparable(
     value.replace(
-      /[([]\s*(?:original(?: mix| version)?|album version)\s*[)\]]/giu,
+      /(?:[([]\s*(?:original(?: mix| version)?|album version)\s*[)\]]|\s+[-–—]\s*(?:original(?: mix| version)?|album version)\s*$)/giu,
       ""
     )
   )
@@ -34,7 +34,7 @@ function titleLabel(value: string) {
 function versionWords(value: string) {
   return new Set(
     comparable(value).match(
-      /\b(?:live|remix|mix|edit|acoustic|instrumental|karaoke|demo|extended|radio|sped|slowed|nightcore|mono|stereo)\b/gu
+      /\b(?:live|remix|mix|edit|acoustic|instrumental|karaoke|demo|extended|radio|sped|slowed|nightcore|mono|stereo|remaster(?:ed)?|bootleg|rework|vip|dub|cover|clean|explicit|version|unplugged)\b/gu
     ) ?? []
   )
 }
@@ -44,7 +44,7 @@ function artistCredits(value: string): string[] {
   let depth = 0,
     start = 0,
     scanned = 0
-  const joins = /\s+(?:&|feat\.?|featuring|ft\.?|with|and)\s+|,\s+/giu
+  const joins = /\s+(?:&|feat\.?|featuring|ft\.?|with|and|x|×)\s+|,\s*/giu
   for (const match of value.matchAll(joins)) {
     for (let i = scanned; i < match.index; i++) {
       if (value[i] === "(") depth++
@@ -52,29 +52,74 @@ function artistCredits(value: string): string[] {
     }
     scanned = match.index + match[0].length
     if (!depth) {
-      credits.push(
-        comparable(
-          value.slice(start, match.index).replace(/\s*\([^()]*\)\s*$/u, "")
-        )
-      )
+      credits.push(comparable(creditName(value.slice(start, match.index))))
       start = match.index + match[0].length
     }
   }
-  credits.push(comparable(value.slice(start).replace(/\s*\([^()]*\)\s*$/u, "")))
+  credits.push(comparable(creditName(value.slice(start))))
   return credits.filter(Boolean)
 }
-function recordingVersions(track: PlaylistTrack) {
-  const words = versionWords(titleLabel(track.title))
+function creditName(value: string) {
+  // Expanded performer credits may follow a group name. Country/disambiguation
+  // labels remain significant (e.g. Artist (US) versus Artist (UK)).
+  return value.replace(/\s*\([^()]*(?:,|\s&\s)[^()]*\)\s*$/u, "")
+}
+function labels(track: PlaylistTrack) {
+  let title = track.title
+  const credits = artistCredits(track.artist)
+  const prefix = title.match(/^(.+?)\s+[-–—]\s+(.+)$/u)
+  if (
+    prefix &&
+    [comparable(track.artist), credits[0]].includes(comparable(prefix[1]))
+  )
+    title = prefix[2]
+  // Feature credits move between the artist and title fields across services.
+  // Retain the names so two different guests cannot collapse into one recording.
+  const guests: string[] = []
+  title = title.replace(
+    /[([]\s*(?:feat\.?|featuring|ft\.?)\s+([^()[\]]+)[)\]]/giu,
+    (_, names: string) => {
+      guests.push(...artistCredits(names))
+      return ""
+    }
+  )
+  title = title.replace(
+    /\s+(?:feat\.?|featuring|ft\.?)\s+(.+)$/iu,
+    (_, names: string) => {
+      guests.push(...artistCredits(names))
+      return ""
+    }
+  )
+  return { title: title.trim(), credits: [...new Set([...credits, ...guests])] }
+}
+/** A bounded search hint; identity is still decided against the original labels. */
+export function playlistSearchTitle(track: PlaylistTrack): string {
+  return labels(track).title
+}
+function recordingTitle(track: PlaylistTrack, title = labels(track).title) {
+  const normalized = titleLabel(title)
   // A single named after the song may carry its version only in the release label.
-  // General compilation/album names do not describe each individual recording.
+  // Keep the full qualifier, including the remixer or venue, when moving it.
+  const release = track.album?.match(/^(.*?)\s*([([][^)\]]*[)\]])\s*$/u)
+  if (
+    release &&
+    titleLabel(release[1]) === normalized &&
+    versionWords(release[2]).size
+  )
+    return titleLabel(`${title} ${release[2]}`)
+  return normalized
+}
+function recordingVersions(track: PlaylistTrack) {
+  const words = versionWords(recordingTitle(track))
   if (
     track.album &&
-    /[([][^)\]]*[)\]]\s*$/u.test(track.album) &&
-    titleLabel(track.album.replace(/\s*[([][^)\]]*[)\]]\s*$/u, "")) ===
-      titleLabel(track.title)
-  ) {
-    for (const word of versionWords(track.album)) words.add(word)
-  }
+    /(?:[([]live\b|\blive (?:at|in|from)\b|\blive edition\b|\bunplugged\b)/iu.test(
+      track.album
+    )
+  )
+    words.add("live")
+  if (track.album && /[([]\s*(?:the\s+)?remixes\s*[)\]]/iu.test(track.album))
+    words.add("remix")
   return words
 }
 function similarity(a: string, b: string) {
@@ -105,8 +150,10 @@ export function playlistCandidateScore(
   const sourceMbid = recordingMbid(source.recordingMbid),
     candidateMbid = recordingMbid(candidate.recordingMbid)
   if (sourceMbid && candidateMbid) return sourceMbid === candidateMbid ? 1 : 0
-  const title = titleLabel(source.title),
-    candidateTitle = titleLabel(candidate.title),
+  const sourceLabels = labels(source),
+    otherLabels = labels(candidate)
+  const title = recordingTitle(source, sourceLabels.title),
+    candidateTitle = recordingTitle(candidate, otherLabels.title),
     artist = comparable(source.artist),
     candidateArtist = comparable(candidate.artist)
   if (!title || !candidateTitle || !artist || !candidateArtist) return 0
@@ -119,18 +166,38 @@ export function playlistCandidateScore(
     return 0
   // Version descriptions identify recordings: punctuation may vary, venue/remixer words cannot.
   if (versions.size && title !== candidateTitle) return 0
-  const credits = artistCredits(source.artist),
-    otherCredits = artistCredits(candidate.artist)
-  const credited = credits.some((credit) => otherCredits.includes(credit))
-  const artistScore =
-    credited &&
+  const credits = sourceLabels.credits,
+    otherCredits = otherLabels.credits
+  const sameCredits =
+    credits.length === otherCredits.length &&
+    credits.every((credit) => otherCredits.includes(credit))
+  if (credits.length > 1 && otherCredits.length > 1 && !sameCredits) return 0
+  const onePrimary =
+    credits[0] === otherCredits[0] &&
+    (credits.length === 1 || otherCredits.length === 1)
+  const durationKnown = !!source.durationMs && !!candidate.durationMs
+  const featured = /\b(?:feat\.?|featuring|ft\.?)\s/iu.test(
+    `${source.artist} ${source.title} ${candidate.artist} ${candidate.title}`
+  )
+  const sameAlbum =
+    !!source.album &&
+    !!candidate.album &&
+    comparable(source.album) === comparable(candidate.album)
+  const credited =
     title === candidateTitle &&
-    !!source.durationMs &&
-    !!candidate.durationMs &&
-    (credits.length > 1 || otherCredits.length > 1)
-      ? 1
-      : similarity(artist, candidateArtist)
-  let score = 0.72 * similarity(title, candidateTitle) + 0.28 * artistScore
+    (sameCredits || (onePrimary && (featured || durationKnown || sameAlbum)))
+  const artistScore = artist === candidateArtist || credited ? 1 : 0
+  // Title similarity cannot compensate for a different performer. Names are
+  // identities, so spelling changes require a manual choice or a verified MBID.
+  if (!artistScore) return 0
+  const titleScore = similarity(title, candidateTitle)
+  if (
+    titleScore < 0.93 ||
+    JSON.stringify(title.match(/\d+/gu)) !==
+      JSON.stringify(candidateTitle.match(/\d+/gu))
+  )
+    return 0
+  let score = 0.72 * titleScore + 0.28 * artistScore
   if (source.durationMs && candidate.durationMs) {
     const difference = Math.abs(source.durationMs - candidate.durationMs),
       shortest = Math.min(source.durationMs, candidate.durationMs)

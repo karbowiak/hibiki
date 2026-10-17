@@ -4,6 +4,7 @@ for (const scenario of [
   "normal",
   "saving",
   "transient",
+  "recent-failures",
   "unsafe",
   "account",
   "status-error",

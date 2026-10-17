@@ -26,6 +26,7 @@ pub struct Status {
     pub pending: usize,
     pub failed: usize,
     pub requested: bool,
+    pub error: Option<String>,
 }
 
 async fn capture(
@@ -202,6 +203,9 @@ fn save_source(
         .map_err(|_| "Cannot archive download source")?;
     crate::db::catalogue::save(&tx, scope, kind, id, source, true)?;
     let generation = format!("download:{revision}");
+    if kind == "playlist" {
+        tx.execute("DELETE FROM plex_catalogue_playlist_members WHERE scope=?1 AND playlist_id=?2 AND generation=?3",rusqlite::params![scope,id,generation]).map_err(|_| "Cannot refresh downloaded playlist")?;
+    }
     for (position, item) in items.iter().enumerate() {
         let track = number(&item["ratingKey"]).ok_or("Invalid download source member")?;
         crate::db::catalogue::save(&tx, scope, "track", track, item, false)?;
@@ -228,6 +232,17 @@ pub async fn download_entity(
     state: State<'_, PlexState>,
     db: State<'_, DbState>,
 ) -> Result<usize, String> {
+    prepare_download(context, kind, id, app, state, db, None).await
+}
+async fn prepare_download(
+    context: PlexRequestContext,
+    kind: String,
+    id: i64,
+    app: tauri::AppHandle,
+    state: State<'_, PlexState>,
+    db: State<'_, DbState>,
+    refresh_revision: Option<&str>,
+) -> Result<usize, String> {
     intents::check(&context.cache_scope, &kind, id)?;
     let (client, section) = crate::catalogue_commands::fresh_library(&app, &context).await?;
     let (title, ids, entries, source, documents) = capture(&client, section, &kind, id).await?;
@@ -239,15 +254,28 @@ pub async fn download_entity(
         let guard = state.0.lock().await;
         state.checked_client(&context, &guard)?;
         let conn = db.0.lock().map_err(|_| "Download storage unavailable")?;
-        let revision = intents::remember(
-            &conn,
-            &context.cache_scope,
-            &kind,
-            id,
-            &title,
-            &ids,
-            entries,
-        )?;
+        let revision = if let Some(expected) = refresh_revision {
+            intents::refresh(
+                &conn,
+                &context.cache_scope,
+                &kind,
+                id,
+                &title,
+                &ids,
+                entries,
+                expected,
+            )?
+        } else {
+            intents::remember(
+                &conn,
+                &context.cache_scope,
+                &kind,
+                id,
+                &title,
+                &ids,
+                entries,
+            )?
+        };
         save_source(
             &conn,
             &context.cache_scope,
@@ -260,6 +288,8 @@ pub async fn download_entity(
         revision
     };
     // Admit bounded batches through the existing durable/validated audio pipeline.
+    // Completed and in-flight jobs are unchanged by enqueue. Failed jobs get
+    // one new attempt on this hourly pass, without a notification or tight loop.
     for batch in ids.chunks(256) {
         crate::offline_audio::enqueue_download_batch(
             context.clone(),
@@ -272,6 +302,64 @@ pub async fn download_entity(
         .await?;
     }
     Ok(ids.len())
+}
+
+/// Follow only explicitly requested collections; never scan the entire library.
+pub(crate) fn start_requested_refresh(app: tauri::AppHandle, context: PlexRequestContext) {
+    let key = (context.connection_revision, context.cache_scope.clone());
+    let downloads = app.state::<AudioDownloads>();
+    let Ok(mut scheduled) = downloads.collection_refreshes.lock() else {
+        return;
+    };
+    if !scheduled.insert(key.clone()) {
+        return;
+    }
+    drop(scheduled);
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        let mut last = None::<std::time::Instant>;
+        loop {
+            interval.tick().await;
+            let state = app.state::<PlexState>();
+            {
+                let guard = state.0.lock().await;
+                if state.checked_client(&context, &guard).is_err() {
+                    break;
+                }
+            }
+            if last.is_some_and(|checked| checked.elapsed() < std::time::Duration::from_secs(3600))
+            {
+                continue;
+            }
+            last = Some(std::time::Instant::now());
+            let scope = context.cache_scope.clone();
+            let db = app.state::<DbState>();
+            let Ok(requests) = db
+                .read(move |conn| intents::requested_collections(conn, &scope))
+                .await
+            else {
+                continue;
+            };
+            for (kind, id, revision) in requests {
+                if let Err(error) = prepare_download(
+                    context.clone(),
+                    kind,
+                    id,
+                    app.clone(),
+                    state.clone(),
+                    db.clone(),
+                    Some(&revision),
+                )
+                .await
+                {
+                    tracing::debug!(%error,"Requested download refresh deferred");
+                }
+            }
+        }
+        if let Ok(mut scheduled) = app.state::<AudioDownloads>().collection_refreshes.lock() {
+            scheduled.remove(&key);
+        }
+    });
 }
 
 fn entity_members(
@@ -340,7 +428,7 @@ pub async fn download_entity_status(
             let mut jobs = HashMap::new();
             let mut stmt = conn
         .prepare(
-            "SELECT track_id,status,cache_key FROM audio_download_jobs WHERE scope=?1 LIMIT 100001",
+            "SELECT track_id,status,cache_key,error FROM audio_download_jobs WHERE scope=?1 LIMIT 100001",
         )
         .map_err(|_| "Cannot read downloads")?;
             let rows = stmt
@@ -349,13 +437,14 @@ pub async fn download_entity_status(
                         r.get::<_, i64>(0)?,
                         r.get::<_, String>(1)?,
                         r.get::<_, Option<String>>(2)?,
+                        r.get::<_, Option<String>>(3)?,
                     ))
                 })
                 .map_err(|_| "Cannot read downloads")?;
             for row in rows {
-                let (id, status, key) = row.map_err(|_| "Cannot read downloads")?;
+                let (id, status, key, error) = row.map_err(|_| "Cannot read downloads")?;
                 let ready = key.as_ref().is_some_and(|key| cache.lookup(key).is_some());
-                jobs.insert(id, (status, ready));
+                jobs.insert(id, (status, ready, error));
                 if jobs.len() > 100000 {
                     return Err("Download inventory needs maintenance before showing status".into());
                 }
@@ -367,14 +456,18 @@ pub async fn download_entity_status(
                 let mut downloaded = 0;
                 let mut pending = 0;
                 let mut failed = 0;
+                let mut error = None;
                 for id in &ids {
-                    if let Some((status, ready)) = jobs.get(id) {
+                    if let Some((status, ready, reason)) = jobs.get(id) {
                         if *ready {
                             downloaded += 1
                         } else if matches!(status.as_str(), "queued" | "downloading" | "paused") {
                             pending += 1
                         } else {
-                            failed += 1
+                            failed += 1;
+                            if error.is_none() {
+                                error = reason.clone();
+                            }
                         }
                     }
                 }
@@ -387,6 +480,7 @@ pub async fn download_entity_status(
                     pending,
                     failed,
                     requested,
+                    error,
                 });
             }
             Ok(statuses)
@@ -396,6 +490,83 @@ pub async fn download_entity_status(
     state.checked_cache_client(&context, &guard)?;
     Ok(result)
 }
+#[tauri::command]
+pub async fn download_entity_issues(
+    context: PlexRequestContext,
+    kind: String,
+    id: i64,
+    offset: u32,
+    state: State<'_, PlexState>,
+    db: State<'_, DbState>,
+) -> Result<serde_json::Value, String> {
+    intents::check(&context.cache_scope, &kind, id)?;
+    {
+        let guard = state.0.lock().await;
+        state.checked_cache_client(&context, &guard)?;
+    }
+    let scope = context.cache_scope.clone();
+    let result = db
+        .read(move |conn| read_issues(conn, &scope, &kind, id, offset))
+        .await?;
+    let guard = state.0.lock().await;
+    state.checked_cache_client(&context, &guard)?;
+    Ok(result)
+}
+
+fn read_issues(
+    conn: &rusqlite::Connection,
+    scope: &str,
+    kind: &str,
+    id: i64,
+    offset: u32,
+) -> Result<serde_json::Value, String> {
+    intents::check(scope, kind, id)?;
+    let ids = entity_members(conn, scope, kind, id)?
+        .0
+        .into_iter()
+        .collect::<HashSet<_>>();
+    // Captured Plex documents also identify failures that happened before an
+    // audio binding could be saved. Only return display fields, never payloads.
+    let mut query = conn.prepare(
+        "SELECT j.track_id,j.error,
+            COALESCE(NULLIF(json_extract(a.metadata,'$.title'),''),json_extract(m.document,'$.title'),''),
+            COALESCE(NULLIF(json_extract(a.metadata,'$.artistName'),''),json_extract(m.document,'$.grandparentTitle'),'')
+         FROM audio_download_jobs j
+         LEFT JOIN local_audio a ON a.scope=j.scope AND a.track_id=j.track_id
+            AND a.cache_key=(SELECT cache_key FROM local_audio WHERE scope=j.scope AND track_id=j.track_id ORDER BY saved_at DESC,cache_key LIMIT 1)
+         LEFT JOIN audio_download_members m ON m.scope=j.scope AND m.kind=?2 AND m.entity_id=?3 AND m.track_id=j.track_id
+         WHERE j.scope=?1 AND j.status='error' ORDER BY j.track_id"
+    ).map_err(|_| "Cannot read download issues")?;
+    let rows = query
+        .query_map(rusqlite::params![scope, kind, id], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|_| "Cannot read download issues")?;
+    let mut total = 0usize;
+    let mut items = vec![];
+    for row in rows {
+        let (track, error, title, artist) = row.map_err(|_| "Cannot read download issues")?;
+        if !ids.contains(&track) {
+            continue;
+        }
+        if total >= offset as usize && items.len() < 100 {
+            items.push(serde_json::json!({
+                "trackId":track,
+                "title":if title.is_empty() {format!("Track {track}")} else {title},
+                "artist":artist,
+                "error":error.unwrap_or_else(||"Could not download this track. Retry when Plex is available.".into())
+            }));
+        }
+        total += 1;
+    }
+    Ok(serde_json::json!({"total":total,"items":items}))
+}
+
 #[tauri::command]
 pub async fn remove_entity_download(
     context: PlexRequestContext,
@@ -472,6 +643,84 @@ mod tests {
         assert_eq!(
             entity_members(&conn, &scope, "playlist", 8).unwrap(),
             (vec![1, 2], true, true)
+        );
+        // Hourly refresh keeps the intention token, but replaces its published
+        // occurrences atomically instead of colliding with the old positions.
+        save_source(&conn, &scope, "playlist", 8, &revision, &source, &rows[1..]).unwrap();
+        let refreshed = crate::db::catalogue_query::query(
+            &conn,
+            &scope,
+            "getPlaylistItems",
+            &[json!("8"), json!(0), json!(100)],
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(refreshed.total, 2);
+        assert_eq!(refreshed.items.len(), 2);
+    }
+
+    #[test]
+    fn download_issues_name_only_this_collections_failed_tracks_and_page_results() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::schema::run_migrations(&conn).unwrap();
+        let scope = format!("plex-{}", "a".repeat(64));
+        let other_scope = format!("plex-{}", "b".repeat(64));
+        let ids = (1..=103).collect::<Vec<_>>();
+        intents::remember(&conn, &scope, "playlist", 8, "Playlist", &ids, 103).unwrap();
+        audio::enqueue(&conn, &scope, &ids, 1).unwrap();
+        audio::enqueue(&conn, &scope, &[999], 1).unwrap();
+        audio::enqueue(&conn, &other_scope, &[1], 1).unwrap();
+        conn.execute(
+            "UPDATE audio_download_jobs SET status='error',error='Damaged audio'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE audio_download_jobs SET status='downloaded' WHERE scope=?1 AND track_id=103",
+            [&scope],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE audio_download_members SET document=?2 WHERE scope=?1 AND track_id=1",
+            rusqlite::params![
+                scope,
+                json!({"title":"Too Original","grandparentTitle":"Major Lazer"}).to_string()
+            ],
+        )
+        .unwrap();
+        audio::remember(
+            &conn,
+            &scope,
+            &audio::Binding {
+                track_id: 2,
+                cache_key: format!("s1-{}", "c".repeat(64)),
+                extension: "flac".into(),
+                metadata: json!({"title":"Surface Tension","artistName":"CRAZY BLUES"}),
+            },
+            1,
+        )
+        .unwrap();
+        let page = read_issues(&conn, &scope, "playlist", 8, 0).unwrap();
+        assert_eq!(page["total"], 102);
+        assert_eq!(page["items"].as_array().unwrap().len(), 100);
+        assert_eq!(
+            page["items"][0],
+            json!({"trackId":1,"title":"Too Original","artist":"Major Lazer","error":"Damaged audio"})
+        );
+        assert_eq!(page["items"][1]["title"], "Surface Tension");
+        assert_eq!(page["items"][1]["artist"], "CRAZY BLUES");
+        assert_eq!(page["items"][2]["title"], "Track 3");
+        let next = read_issues(&conn, &scope, "playlist", 8, 100).unwrap();
+        assert_eq!(next["total"], 102);
+        assert_eq!(next["items"].as_array().unwrap().len(), 2);
+        assert_eq!(next["items"][0]["trackId"], 101);
+        assert_eq!(
+            read_issues(&conn, &scope, "playlist", 9, 0).unwrap()["total"],
+            0
+        );
+        assert_eq!(
+            read_issues(&conn, &other_scope, "playlist", 8, 0).unwrap()["total"],
+            0
         );
     }
 }

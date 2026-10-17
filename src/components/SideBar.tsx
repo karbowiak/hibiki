@@ -7,6 +7,7 @@ import { useArtworkAppearanceStore } from "../stores/artworkAppearanceStore"
 import { ArtworkImage } from "./shared/ArtworkImage"
 import { Link, useLocation } from "wouter"
 import { useMemo, useRef, useState, useCallback, useEffect } from "react"
+import { useVirtualWindow, virtualRef } from "../hooks/useVirtualWindow"
 import clsx from "clsx"
 import { useShallow } from "zustand/react/shallow"
 import {
@@ -60,6 +61,7 @@ function setCustomOrder(ids: string[]) {
 // ---------------------------------------------------------------------------
 
 interface SortablePlaylistItemProps {
+  rowRef?: React.RefObject<HTMLLIElement | null>
   playlist: MusicPlaylist
   location: string
   playPlaylist: (
@@ -81,6 +83,7 @@ function SortablePlaylistItem({
   playPlaylist,
   ctxMenu,
   justDragged,
+  rowRef,
 }: SortablePlaylistItemProps) {
   const {
     attributes,
@@ -130,7 +133,10 @@ function SortablePlaylistItem({
 
   return (
     <li
-      ref={setNodeRef}
+      ref={(node) => {
+        setNodeRef(node)
+        if (rowRef) rowRef.current = node
+      }}
       style={style}
       {...attributes}
       {...listeners}
@@ -186,10 +192,18 @@ function SortablePlaylistItem({
             </svg>
           </button>
         </div>
-        <span title={playlist.title} className="sidebar-playlist-title min-w-0 flex-1 truncate text-sm font-normal">
+        <span
+          title={playlist.title}
+          className="sidebar-playlist-title min-w-0 flex-1 truncate text-sm font-normal"
+        >
           {playlist.title}
         </span>
-        <DownloadBadge intentOnly kind="playlist" id={playlist.id} className="mr-1" />
+        <DownloadBadge
+          intentOnly
+          kind="playlist"
+          id={playlist.id}
+          className="mr-1"
+        />
       </Link>
     </li>
   )
@@ -252,17 +266,20 @@ export function SideBar({
         // A server album URI only resolves one physical copy. Expand the same
         // logical album used by its page; append track IDs in order.
         let itemIds: string[] = payload.ids
-        if(payload.type === "album") {
-          const tracks:string[]=[]
-          for(const albumId of itemIds) {
-            if(!currentRequest()) return
-            const items=await loadAlbumTracks(provider,albumId)
-            if(!currentRequest()) return
-            tracks.push(...items.map(track=>track.id))
+        if (payload.type === "album") {
+          const tracks: string[] = []
+          for (const albumId of itemIds) {
+            if (!currentRequest()) return
+            const items = await loadAlbumTracks(provider, albumId)
+            if (!currentRequest()) return
+            tracks.push(...items.map((track) => track.id))
           }
-          itemIds=[...new Set(tracks)]
+          itemIds = [...new Set(tracks)]
         }
-        if ((payload.type === "track" || payload.type === "album") && itemIds.length > 1) {
+        if (
+          (payload.type === "track" || payload.type === "album") &&
+          itemIds.length > 1
+        ) {
           for (const id of itemIds) {
             if (!currentRequest()) return
             await provider.addToPlaylist(targetPlaylistId, [id])
@@ -336,6 +353,19 @@ export function SideBar({
     return [...inOrder, ...notInOrder]
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playlists, orderVersion])
+
+  const playlistScroll = useRef<HTMLDivElement>(null)
+  const playlistWindow = useVirtualWindow(
+    sortedPlaylists.length,
+    50,
+    1,
+    sortedPlaylists.length > 100,
+    playlistScroll
+  )
+  const visiblePlaylists = sortedPlaylists.slice(
+    playlistWindow.start,
+    playlistWindow.end
+  )
 
   function handleDragStart() {
     justDragged.current = true
@@ -494,7 +524,9 @@ export function SideBar({
         <button
           onClick={onCreatePlaylist}
           disabled={!canEditPlaylists}
-          style={{ "--playlist-create-accent": savedAccent } as React.CSSProperties}
+          style={
+            { "--playlist-create-accent": savedAccent } as React.CSSProperties
+          }
           className="sidebar-create group flex w-full items-center gap-3 rounded-md px-3 text-[var(--text-primary)] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
         >
           <span className="sidebar-create-icon flex h-5 w-5 items-center justify-center">
@@ -514,9 +546,14 @@ export function SideBar({
 
       <div className="sidebar-playlists-heading">
         <span>Playlists</span>
-        <span aria-label={`${sortedPlaylists.length} playlists`}>{sortedPlaylists.length}</span>
+        <span aria-label={`${sortedPlaylists.length} playlists`}>
+          {sortedPlaylists.length}
+        </span>
       </div>
-      <div className="sidebar-playlists scrollbar-track-[var(--bg-base)] scrollbar-thumb-[var(--bg-surface)] hover:scrollbar-thumb-[var(--bg-surface-hover)] mt-2 min-h-0 flex-1 overflow-y-scroll scrollbar scrollbar-w-1">
+      <div
+        ref={playlistScroll}
+        className="sidebar-playlists scrollbar-track-[var(--bg-base)] scrollbar-thumb-[var(--bg-surface)] hover:scrollbar-thumb-[var(--bg-surface-hover)] mt-2 min-h-0 flex-1 overflow-y-scroll scrollbar scrollbar-w-1"
+      >
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
@@ -529,13 +566,27 @@ export function SideBar({
           }
         >
           <SortableContext
-            items={sortedPlaylists.map((p) => p.id)}
+            items={visiblePlaylists.map((p) => p.id)}
             strategy={verticalListSortingStrategy}
           >
-            <ul className="pt-1">
-              {sortedPlaylists.map((playlist) => (
+            <ul
+              className="pt-1"
+              ref={virtualRef<HTMLUListElement>(playlistWindow.host)}
+            >
+              {playlistWindow.before > 0 && (
+                <li
+                  aria-hidden="true"
+                  style={{ height: playlistWindow.before }}
+                />
+              )}
+              {visiblePlaylists.map((playlist, index) => (
                 <SortablePlaylistItem
                   key={playlist.id}
+                  rowRef={
+                    index === 0
+                      ? virtualRef<HTMLLIElement>(playlistWindow.measure)
+                      : undefined
+                  }
                   playlist={playlist}
                   location={location}
                   playPlaylist={playPlaylist}
@@ -543,6 +594,12 @@ export function SideBar({
                   justDragged={justDragged}
                 />
               ))}
+              {playlistWindow.after > 0 && (
+                <li
+                  aria-hidden="true"
+                  style={{ height: playlistWindow.after }}
+                />
+              )}
             </ul>
           </SortableContext>
         </DndContext>

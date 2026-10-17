@@ -65,6 +65,18 @@ pub async fn favorites_save(
     })
     .await
 }
+#[tauri::command]
+pub async fn favorites_reset(
+    context: PlexRequestContext,
+    expected: i64,
+    state: State<'_, PlexState>,
+    app: tauri::AppHandle,
+) -> Result<i64, String> {
+    client(&state, &context, false).await?;
+    crate::offline_commands::owned_write(&app, &context, false, move |conn, scope| {
+        favorites::reset(conn, scope, expected)
+    }).await
+}
 /// Favorites have their own small metadata working set. Resolve only missing
 /// IDs from Plex; a whole-library catalogue is never required to open this page.
 #[tauri::command]
@@ -225,7 +237,9 @@ async fn snapshot(
                 rows.push(FavoriteRecording {
                     key: format!("local:{id}"),
                     title: track.title,
-                    artist: track.grandparent_title,
+                    artist: track.original_title
+                        .filter(|artist| !artist.trim().is_empty())
+                        .unwrap_or(track.grandparent_title),
                     album: track.parent_title,
                     duration_ms: Some(track.duration),
                     liked_at: None,

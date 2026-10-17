@@ -334,6 +334,14 @@ export function createPlexApi(
     return invoke("get_liked_tracks", { sectionId, limit: limit ?? null })
   }
 
+  function getRatedItemsPage(sectionId: number, kind: string, offset: number, limit: number): Promise<PagedMediaItems> {
+    return invoke("get_rated_items_page", { sectionId, kind, offset, limit })
+  }
+
+  function getMixTracksPage(key: string, offset: number, limit: number): Promise<{ items: Track[]; total: number; offset: number }> {
+    return invoke("get_mix_tracks_page", { key, offset, limit })
+  }
+
   /** Get artists that the user has rated (liked), sorted by most recently rated. */
   function getLikedArtists(
     sectionId: number,
@@ -902,6 +910,8 @@ export function createPlexApi(
     getRelatedHubs,
     getPlaylists,
     getLikedTracks,
+    getRatedItemsPage,
+    getMixTracksPage,
     getLikedArtists,
     getLikedAlbums,
     getMixTracks,

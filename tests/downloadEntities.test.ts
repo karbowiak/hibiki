@@ -85,6 +85,7 @@ test("download status distinguishes full verified membership, partial, failed an
   expect(downloadLabel({ ...status, downloaded: 3, failed: 2 })).toBe(
     "3 of 10 tracks downloaded · 2 need attention"
   )
+  expect(downloadLabel({...status, kind:"track",total:1,downloaded:0,failed:1,error:"This audio file could not be decoded."})).toContain("This audio file could not be decoded.")
   expect(
     downloadLabel({ ...status, downloaded: 0, requested: false })
   ).toBeNull()

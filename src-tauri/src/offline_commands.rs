@@ -153,7 +153,10 @@ pub async fn offline_cache_clear(
     state.checked_cache_client(&context, &guard)?;
     drop(guard);
     owned_write(&app, &context, false, |conn, scope| {
-        offline::clear(conn, scope)
+        crate::db::atomic_upsert(conn, |conn| {
+            offline::clear(conn, scope)?;
+            crate::db::collection_cache::clear(conn, scope)
+        })
     })
     .await
 }

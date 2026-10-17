@@ -112,9 +112,15 @@ test("credited collaborators match Plex's primary artist when title and duration
     )
   ).toMatchObject({ status: "matched" })
   expect(
-    matchTrack({ ...base, artist: "Yoshiko & Tatsunoshin", durationMs: null }, [
-      candidate(),
-    ]).status
+    matchTrack(
+      {
+        ...base,
+        artist: "Yoshiko & Tatsunoshin",
+        album: null,
+        durationMs: null,
+      },
+      [candidate()]
+    ).status
   ).toBe("missing")
   expect(
     matchTrack({ ...base, artist: "Yoshiko & Tatsunoshin" }, [
@@ -173,5 +179,5 @@ test("Japanese voicing marks remain distinct and long near-matching inputs have 
       { ...base, title: "a".repeat(1000) },
       candidate({ title: "a".repeat(999) + "b" })
     )
-  ).toBe(0.28)
+  ).toBe(0)
 })

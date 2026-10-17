@@ -7,6 +7,29 @@ pub fn check(scope: &str, kind: &str, id: i64) -> Result<(), String> {
     }
     Ok(())
 }
+pub fn requested_collections(
+    conn: &Connection,
+    scope: &str,
+) -> Result<Vec<(String, i64, String)>, String> {
+    super::offline::check_identity(scope, "downloads")?;
+    let mut query = conn.prepare("SELECT kind,entity_id,revision FROM audio_download_entities WHERE scope=?1 AND kind!='track' ORDER BY captured_at,entity_id").map_err(|_| "Cannot read requested downloads")?;
+    let result = query
+        .query_map([scope], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .map_err(|_| "Cannot read requested downloads")?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| "Cannot read requested downloads".into());
+    result
+}
+pub fn is_current(
+    conn: &Connection,
+    scope: &str,
+    kind: &str,
+    id: i64,
+    revision: &str,
+) -> Result<bool, String> {
+    check(scope, kind, id)?;
+    conn.query_row("SELECT EXISTS(SELECT 1 FROM audio_download_entities WHERE scope=?1 AND kind=?2 AND entity_id=?3 AND revision=?4)",params![scope,kind,id,revision],|row|row.get(0)).map_err(|_| "Cannot verify requested download".into())
+}
 pub fn remember(
     conn: &Connection,
     scope: &str,
@@ -15,6 +38,30 @@ pub fn remember(
     title: &str,
     ids: &[i64],
     entries: i64,
+) -> Result<String, String> {
+    remember_revision(conn, scope, kind, id, title, ids, entries, None)
+}
+pub fn refresh(
+    conn: &Connection,
+    scope: &str,
+    kind: &str,
+    id: i64,
+    title: &str,
+    ids: &[i64],
+    entries: i64,
+    expected: &str,
+) -> Result<String, String> {
+    remember_revision(conn, scope, kind, id, title, ids, entries, Some(expected))
+}
+fn remember_revision(
+    conn: &Connection,
+    scope: &str,
+    kind: &str,
+    id: i64,
+    title: &str,
+    ids: &[i64],
+    entries: i64,
+    expected: Option<&str>,
 ) -> Result<String, String> {
     check(scope, kind, id)?;
     if ids.is_empty()
@@ -25,10 +72,19 @@ pub fn remember(
     {
         return Err("Invalid download membership".into());
     }
-    let revision = uuid::Uuid::new_v4().to_string();
+    // Background refreshes keep the intention token, so they cannot retire
+    // another batch still being admitted for that same explicit request.
+    let revision = expected
+        .map(str::to_owned)
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let tx = conn
         .unchecked_transaction()
         .map_err(|_| "Cannot save download intention")?;
+    if let Some(revision) = expected {
+        if !is_current(&tx, scope, kind, id, revision)? {
+            return Err("Download request was superseded".into());
+        }
+    }
     tx.execute("INSERT INTO audio_download_entities(scope,kind,entity_id,title,revision,captured_at,entry_count) VALUES(?1,?2,?3,?4,?5,?6,?7)
   ON CONFLICT(scope,kind,entity_id) DO UPDATE SET title=excluded.title,revision=excluded.revision,captured_at=excluded.captured_at,entry_count=excluded.entry_count",params![scope,kind,id,title,revision,super::catalogue::now(),entries]).map_err(|_|"Cannot save download intention")?;
     // Additions are safe; old tracks remain explicit until the user removes this
@@ -150,6 +206,80 @@ pub fn detach(conn: &Connection, scope: &str, kind: &str, id: i64) -> Result<Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn refreshed_membership_adds_new_jobs_without_replacing_completed_audio_and_cannot_resurrect_removals(
+    ) {
+        let conn = Connection::open_in_memory().unwrap();
+        super::super::schema::run_migrations(&conn).unwrap();
+        let scope = format!("plex-{}", "a".repeat(64));
+        let original = remember(&conn, &scope, "playlist", 8, "Likes", &[1], 1).unwrap();
+        super::super::audio::enqueue(&conn, &scope, &[1], 10).unwrap();
+        let mut completed = super::super::audio::jobs_for_id(&conn, &scope, 1)
+            .unwrap()
+            .unwrap();
+        completed.status = "downloaded".into();
+        super::super::audio::update(&conn, &scope, &completed).unwrap();
+        let request = requested_collections(&conn, &scope).unwrap();
+        assert_eq!(request, vec![("playlist".into(), 8, original.clone())]);
+        let next = refresh(
+            &conn,
+            &scope,
+            "playlist",
+            8,
+            "Likes",
+            &[1, 2, 3, 4],
+            4,
+            &original,
+        )
+        .unwrap();
+        assert_eq!(next, original);
+        let admitted = admit(&conn, &scope, "playlist", 8, &next, &[1, 2, 3, 4]).unwrap();
+        super::super::audio::enqueue(&conn, &scope, &admitted, 20).unwrap();
+        assert_eq!(
+            members(&conn, &scope, "playlist", 8).unwrap(),
+            vec![1, 2, 3, 4]
+        );
+        assert_eq!(
+            super::super::audio::jobs_for_id(&conn, &scope, 1)
+                .unwrap()
+                .unwrap()
+                .revision,
+            completed.revision
+        );
+        assert_eq!(
+            super::super::audio::next(&conn, &scope)
+                .unwrap()
+                .unwrap()
+                .track_id,
+            2
+        );
+        let replacement =
+            remember(&conn, &scope, "playlist", 8, "Replaced", &[1, 2, 3, 4], 4).unwrap();
+        assert!(refresh(
+            &conn,
+            &scope,
+            "playlist",
+            8,
+            "Old result",
+            &[1],
+            1,
+            &original
+        )
+        .is_err());
+        detach(&conn, &scope, "playlist", 8).unwrap();
+        assert!(refresh(
+            &conn,
+            &scope,
+            "playlist",
+            8,
+            "Late result",
+            &[1, 2],
+            2,
+            &replacement
+        )
+        .is_err());
+        assert!(requested_collections(&conn, &scope).unwrap().is_empty());
+    }
     #[test]
     fn existing_download_jobs_migrate_as_scoped_individual_intentions_without_changing_jobs() {
         let conn = Connection::open_in_memory().unwrap();

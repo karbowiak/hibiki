@@ -2,21 +2,38 @@ import { MediaCard } from "../MediaCard"
 import { useMemo } from "react"
 import { useUIStore } from "../../stores/uiStore"
 import { deduplicateAlbums } from "../../lib/dedup"
-import { useLikedCollection } from "../../hooks/useLikedCollection"
-import { useShallow } from "zustand/react/shallow"
-import { useLibraryStore } from "../../stores"
+import { useRatedAlbumIndex } from "../../hooks/useRatedIndex"
+import { useWindowedPages } from "../../hooks/useWindowedPages"
+import { useRatedItems } from "../../hooks/useRatedItems"
 import { prefetchAlbum } from "../../stores/metadataCache"
 import { MediaGrid } from "../shared/MediaGrid"
 
 export function LikedAlbums() {
-  const { likedAlbums } = useLibraryStore(
-    useShallow((s) => ({ likedAlbums: s.likedAlbums }))
-  )
-  const { status, retry } = useLikedCollection("albums")
+  const page = useRatedItems("album")
+  const retry = page.retry
+  const status =
+    page.loading && !page.items.length
+      ? "loading"
+      : page.error && !page.items.length
+        ? "error"
+        : "ready"
 
-  const shouldDeduplicate=useUIStore(s=>s.deduplicateAlbums)
-  const albums=useMemo(()=>shouldDeduplicate ? deduplicateAlbums(likedAlbums) : likedAlbums,[likedAlbums,shouldDeduplicate])
-  const count = albums.length
+  const shouldDeduplicate = useUIStore((s) => s.deduplicateAlbums)
+  const index = useRatedAlbumIndex(shouldDeduplicate)
+  const albums = useMemo(() => deduplicateAlbums(index.tracks), [index.tracks])
+  const grouped = useWindowedPages(
+    shouldDeduplicate && index.ready
+      ? `rated:albums:grouped:${index.at}`
+      : null,
+    async (offset, limit) => ({
+      items: albums.slice(offset, offset + limit),
+      total: albums.length,
+      offset,
+    }),
+    albums.length
+  )
+  const active = shouldDeduplicate && index.ready ? grouped : page.pages
+  const count = active.total
 
   return (
     <div className="pb-12">
@@ -24,9 +41,7 @@ export function LikedAlbums() {
       <div className="collection-header">
         <div className="flex min-w-0 flex-[1_1_14rem] flex-col gap-3">
           <div>
-            <h1 className="discovery-title">
-              Liked Albums
-            </h1>
+            <h1 className="discovery-title">Liked Albums</h1>
             <p className="mt-2 max-w-xl select-text text-sm text-gray-400">
               Albums you've rated in Plex, all in one place.
             </p>
@@ -39,7 +54,7 @@ export function LikedAlbums() {
 
       {/* Album grid */}
       <div className="px-8 pt-2">
-        {status === "loading" ? (
+        {status === "loading" && !count ? (
           <p
             role="status"
             className="px-8 py-12 text-center text-sm text-gray-400"
@@ -64,13 +79,36 @@ export function LikedAlbums() {
             No rated albums yet. Rate an album in Plex to see it here.
           </div>
         ) : (
-          <MediaGrid>
-            {albums.map(album => <MediaCard key={album.id}
-              title={album.title} desc={`${album.artistName}${album.year ? ` · ${album.year}` : ""}`}
-              href={`/album/${album.id}`} thumb={album.thumbUrl} artistName={album.artistName} albumName={album.title}
-              contextItem={{ ...album, type: "album" }} userRating={album.userRating} prefetch={() => prefetchAlbum(album.id)}
-              dragPayload={{ type: "album", ids: [album.id], label: album.title }} />)}
-          </MediaGrid>
+          <MediaGrid
+            paged={active}
+            renderItem={(album) => (
+              <MediaCard
+                key={album.id}
+                title={album.title}
+                desc={`${album.artistName}${album.year ? ` · ${album.year}` : ""}`}
+                href={`/album/${album.id}`}
+                thumb={album.thumbUrl}
+                artistName={album.artistName}
+                albumName={album.title}
+                contextItem={{ ...album, type: "album" }}
+                userRating={album.userRating}
+                prefetch={() => prefetchAlbum(album.id)}
+                dragPayload={{
+                  type: "album",
+                  ids: [album.id],
+                  label: album.title,
+                }}
+              />
+            )}
+          />
+        )}
+        {page.error && count > 0 && (
+          <p role="alert" className="py-4 text-sm">
+            {page.error}{" "}
+            <button className="underline" onClick={page.retry}>
+              Try again
+            </button>
+          </p>
         )}
       </div>
     </div>

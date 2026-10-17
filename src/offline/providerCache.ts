@@ -36,6 +36,8 @@ const reads = new Set([
   "getTags",
   "getItemsByTag",
   "getMixTracks",
+  "getMixTracksPage",
+  "getRatedItemsPage",
   "getSectionStations",
   "getArtistStations",
   "getAllArtists",
@@ -67,6 +69,7 @@ export function offlinePrefix(method: string, itemId?: string): string {
 }
 export function mutationPrefixes(method: string, args: unknown[]): string[] {
   const prefixes = [offlinePrefix("getHubs")]
+  if (method === "rate") prefixes.push(offlinePrefix("getRatedItemsPage"))
   const id = typeof args[0] === "string" ? args[0] : undefined
   if (method.includes("Playlist")) {
     prefixes.push(offlinePrefix("getPlaylists"))
@@ -231,6 +234,10 @@ export function isUnconfirmedWrite(error: unknown): boolean {
 }
 
 type PlaylistReads = Pick<MusicProvider, "getPlaylists" | "getPlaylistItems">
+export function forwardFreshPlaylistReads(target: MusicProvider, source: MusicProvider) {
+  const reads = freshReads.get(source)
+  if (reads) freshReads.set(target, reads)
+}
 const freshReads = new WeakMap<MusicProvider, PlaylistReads>()
 
 /** Sync must never treat saved browsing data as a fresh server snapshot. */

@@ -10,9 +10,10 @@ const dom = new JSDOM("<div id='root'></div>", {
 })
 globalThis.window = dom.window as any
 globalThis.document = dom.window.document
+globalThis.localStorage = dom.window.localStorage
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 const { createRoot } = await import("react-dom/client")
-const root = createRoot(document.getElementById("root")!)
+let root = createRoot(document.getElementById("root")!)
 let poll: () => void
 const originalInterval = globalThis.setInterval,
   originalClear = globalThis.clearInterval
@@ -49,10 +50,12 @@ const quiet = {
   waiting_for_account: 0,
   retrying: 0,
   delayed: 0,
+  delayed_since: null,
 }
 const active = () =>
   notices.getState().notifications.filter((entry) => entry.active)
-const entry = (id: string) => active().find((item) => item.id === id)!
+const entry = (id: string) =>
+  notices.getState().notifications.find((item) => item.id === id)!
 async function answer(index: number, value: any) {
   await act(async () => {
     requests[index]!.reply.resolve(value)
@@ -82,12 +85,15 @@ try {
     await settle()
   })
   assert.equal(requests[0]!.command, "listening_history_status")
-  if (["normal", "saving", "transient"].includes(scenario)) {
+  if (["normal", "saving", "transient", "recent-failures"].includes(scenario)) {
     await answer(0, {
       ...quiet,
       pending: 4,
       unretained: scenario === "saving" ? 1 : 0,
       retrying: scenario === "transient" ? 1 : 0,
+      ...(scenario === "recent-failures"
+        ? { delayed: 1, delayed_since: Math.floor(Date.now() / 1000) - 60 }
+        : {}),
     })
     assert.equal(active().length, 0, "ordinary delivery must stay quiet")
   } else if (scenario === "unsafe") {
@@ -101,48 +107,34 @@ try {
     assert.equal(entry("listening.storage").action!.label, "Retry")
   } else if (scenario === "account") {
     await answer(0, { ...quiet, pending: 3, waiting_for_account: 3 })
-    assert.match(entry("listening.accounts").message, /saved.*isn’t active/)
-    assert.equal(entry("listening.accounts").severity, "info")
-    assert.equal(entry("listening.accounts").action!.label, "Settings")
-    await act(async () => entry("listening.accounts").action!.run())
-    assert.deepEqual(navigated, ["/settings"])
     assert.equal(
-      requests.length,
-      1,
-      "account action must not submit history to another account"
+      active().length,
+      0,
+      "Archived account/library reports are not a disconnected account alert"
     )
-    assert.equal(entry("listening.storage"), undefined)
   } else if (scenario === "status-error" || scenario === "status-recovery") {
     await act(async () => {
-      requests[0]!.reply.reject(new Error("synthetic unavailable query"))
+      requests[0]!.reply.reject(new Error("unavailable query"))
       await settle()
     })
     assert.equal(
-      entry("listening.status").title,
-      "Listening status unavailable"
-    )
-    assert.equal(
-      entry("listening.storage"),
-      undefined,
-      "failed query is not proof of lost persistence"
+      active().length,
+      0,
+      "A failed status poll does not interrupt listening"
     )
     if (scenario === "status-recovery") {
-      let checking: void | Promise<void>
-      await act(async () => {
-        checking = entry("listening.status").action!.run()
-        await settle()
-      })
-      assert.equal(
-        requests[1]!.command,
-        "listening_history_status",
-        "status check must not resubmit listens"
-      )
+      await tick()
       await answer(1, quiet)
-      await checking!
       assert.equal(active().length, 0)
     }
   } else if (scenario === "retry-error") {
-    await answer(0, { ...quiet, pending: 1, delayed: 1, retrying: 1 })
+    await answer(0, {
+      ...quiet,
+      pending: 1,
+      delayed: 1,
+      retrying: 1,
+      delayed_since: Math.floor(Date.now() / 1000) - 90000,
+    })
     await retry()
     const caught = (action as Promise<void>).then(
       () => {
@@ -160,12 +152,9 @@ try {
         "private upstream body"
       )
     )
+    assert.equal(entry("listening.status"), undefined)
     assert.equal(
-      entry("listening.status").title,
-      "Listening status unavailable"
-    )
-    assert.equal(
-      entry("listening.sync").active,
+      !!entry("listening.sync"),
       true,
       "failed retry must retain the known delivery problem"
     )
@@ -176,11 +165,18 @@ try {
     await answer(0, quiet)
     await tick()
     assert.equal(requests.length, 2)
-    const delayed = { ...quiet, pending: 1, delayed: 1, retrying: 1 }
+    const delayed = {
+      ...quiet,
+      pending: 1,
+      delayed: 1,
+      retrying: 1,
+      delayed_since: Math.floor(Date.now() / 1000) - 90000,
+    }
     await answer(1, delayed)
+    assert.equal(entry("listening.sync").persistent, false)
     assert.match(
       entry("listening.sync").message,
-      /saved locally.*retry automatically/
+      /saved locally.*retries will continue/
     )
     const revision = entry("listening.sync").toastRevision
     notices.getState().dismissToast("listening.sync")
@@ -200,8 +196,31 @@ try {
       1,
       "recovery keeps history"
     )
+    await act(async () => root.unmount())
+    root = createRoot(document.getElementById("root")!)
+    notices.getState().clearHistory()
+    await act(async () => {
+      root.render(
+        <Router hook={location}>
+          <ListeningSyncStatus />
+        </Router>
+      )
+      await settle()
+    })
+    await answer(4, delayed)
+    assert.equal(
+      notices.getState().notifications.length,
+      0,
+      "App restart does not replay the prolonged outage"
+    )
   } else {
-    await answer(0, { ...quiet, pending: 1, delayed: 1, retrying: 1 })
+    await answer(0, {
+      ...quiet,
+      pending: 1,
+      delayed: 1,
+      retrying: 1,
+      delayed_since: Math.floor(Date.now() / 1000) - 90000,
+    })
     if (scenario === "retry-race") await tick()
     const retryIndex = requests.length
     await retry()

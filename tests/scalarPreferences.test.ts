@@ -40,6 +40,23 @@ test("scalar startup survives unavailable storage and recovery preserves later l
   `)
 })
 
+test("a saved pinned queue opens docked with its saved tab after startup", async () => {
+  await isolated(`
+    values.set("plex-queue-pinned", "1"); values.set("plex-queue-tab", "lyrics");
+    const { useUIStore: ui } = await import("./src/stores/uiStore");
+    const { localPreferencePersistence: persistence } = await import("./src/stores/localPreferenceStorage");
+    await settle();
+    check(ui.getState().isQueuePinned && ui.getState().isQueueOpen, "pinned panel was hidden at startup");
+    check(ui.getState().queueActiveTab === "lyrics", "saved tab was lost");
+    ui.getState().setQueueOpen(false);
+    check(ui.getState().isQueuePinned && !ui.getState().isQueueOpen, "close discarded docking preference");
+    ui.getState().setQueueOpen(true); ui.getState().setQueueActiveTab("queue");
+    await persistence.flushForShutdown();
+    check(ui.getState().isQueuePinned && ui.getState().isQueueOpen, "reopened panel lost docking");
+    check(values.get("plex-queue-tab") === "queue", "tab choice was not saved");
+  `)
+})
+
 test("malformed scalar values stay on disk and failed writes remain pending until retry", async () => {
   await isolated(`
     values.set("plex-accent-color", "garbage"); values.set("plex-debug-enabled", "future");

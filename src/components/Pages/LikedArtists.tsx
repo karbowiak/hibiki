@@ -1,17 +1,19 @@
 import { MediaCard } from "../MediaCard"
-import { useLikedCollection } from "../../hooks/useLikedCollection"
-import { useShallow } from "zustand/react/shallow"
-import { useLibraryStore } from "../../stores"
+import { useRatedItems } from "../../hooks/useRatedItems"
 import { prefetchArtist } from "../../stores/metadataCache"
 import { MediaGrid } from "../shared/MediaGrid"
 
 export function LikedArtists() {
-  const { likedArtists } = useLibraryStore(
-    useShallow((s) => ({ likedArtists: s.likedArtists }))
-  )
-  const { status, retry } = useLikedCollection("artists")
+  const page = useRatedItems("artist")
+  const retry = page.retry
+  const status =
+    page.loading && !page.items.length
+      ? "loading"
+      : page.error && !page.items.length
+        ? "error"
+        : "ready"
 
-  const count = likedArtists.length
+  const count = page.total
 
   return (
     <div className="pb-12">
@@ -19,22 +21,21 @@ export function LikedArtists() {
       <div className="collection-header">
         <div className="flex min-w-0 flex-[1_1_14rem] flex-col gap-3">
           <div>
-            <h1 className="discovery-title">
-              Liked Artists
-            </h1>
+            <h1 className="discovery-title">Liked Artists</h1>
             <p className="mt-2 max-w-xl select-text text-sm text-gray-400">
               Artists you've rated in Plex, all in one place.
             </p>
           </div>
           <p className="text-sm text-gray-400">
-            {count.toLocaleString()} {count === 1 ? "artist" : "artists"}
+            {(page.total || count).toLocaleString()}{" "}
+            {(page.total || count) === 1 ? "artist" : "artists"}
           </p>
         </div>
       </div>
 
       {/* Artist grid */}
       <div className="px-8 pt-2">
-        {status === "loading" ? (
+        {status === "loading" && !count ? (
           <p
             role="status"
             className="px-8 py-12 text-center text-sm text-gray-400"
@@ -59,13 +60,36 @@ export function LikedArtists() {
             No rated artists yet. Rate an artist in Plex to see them here.
           </div>
         ) : (
-          <MediaGrid>
-            {likedArtists.map(artist => <MediaCard key={artist.id}
-              title={artist.title} desc="" href={`/artist/${artist.id}`} thumb={artist.thumbUrl}
-              isArtist artistName={artist.title} contextItem={{ ...artist, type: "artist" }} userRating={artist.userRating}
-              prefetch={() => prefetchArtist(artist.id)}
-              dragPayload={{ type: "artist", ids: [artist.id], label: artist.title }} />)}
-          </MediaGrid>
+          <MediaGrid
+            paged={page.pages}
+            renderItem={(artist) => (
+              <MediaCard
+                key={artist.id}
+                title={artist.title}
+                desc=""
+                href={`/artist/${artist.id}`}
+                thumb={artist.thumbUrl}
+                isArtist
+                artistName={artist.title}
+                contextItem={{ ...artist, type: "artist" }}
+                userRating={artist.userRating}
+                prefetch={() => prefetchArtist(artist.id)}
+                dragPayload={{
+                  type: "artist",
+                  ids: [artist.id],
+                  label: artist.title,
+                }}
+              />
+            )}
+          />
+        )}
+        {page.error && count > 0 && (
+          <p role="alert" className="py-4 text-sm">
+            {page.error}{" "}
+            <button className="underline" onClick={page.retry}>
+              Try again
+            </button>
+          </p>
         )}
       </div>
     </div>

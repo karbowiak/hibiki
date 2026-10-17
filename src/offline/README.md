@@ -123,6 +123,23 @@ Partial and failed downloads remain retryable from the entity menu, including
 artist discographies. Cache settings show explicit download storage separately
 from the evictable playback cache. The old /downloads route redirects there.
 
+Explicitly requested collections are rechecked on startup/reconnect and hourly
+while their Plex library is connected. Fresh, verified membership queues new or
+missing songs and retries failed jobs; completed/in-flight files are retained.
+Every refresh is fenced by its original intention revision, so removing or
+replacing a request while Plex is responding cannot resurrect it. Historical
+collection claims continue to protect earlier downloaded editions. Individual
+track intentions do not cause a library-wide discovery pass.
+
+Download badges expose native failure reasons, including damaged audio and
+duration mismatches. Playlist Info sits beside More and opens a shared dialog
+with named failed songs, retry, saved counts and playlist-sync review. Action
+menus contain actions rather than anonymous error paragraphs. Issue reads stay
+scoped to the current library and collection, with bounded pages of 100.
+Successful queue/removal actions use the
+download icon rather than a popup. Background refresh/retry does not publish
+notifications. File validation still rejects truncated or damaged media.
+
 V7 retains expected download membership separately from file ownership. A
 collection removal releases only that collection's claims and preserves files
 used by other collections or explicit individual-song downloads. Song removal

@@ -11,11 +11,12 @@ import {
 } from "react"
 import { Link, useLocation } from "wouter"
 import { useShallow } from "zustand/react/shallow"
-import { useLibraryStore, usePlayerStore } from "../../stores"
+import { usePlayerStore } from "../../stores"
 import { useProviderStore } from "../../stores/providerStore"
 import { useCapability } from "../../hooks/useCapability"
 import { formatTotalMs } from "../../lib/formatters"
 import { UltraBlur } from "../UltraBlur"
+import { useWindowedPages } from "../../hooks/useWindowedPages"
 import { useTableSort } from "../../hooks/useTableSort"
 import { ALL_COLUMNS, usePlaylistColumns } from "../../hooks/useColumnPicker"
 import { TrackTable } from "../shared/TrackTable"
@@ -47,8 +48,8 @@ export function shuffleTracks(arr: MusicTrack[], title: string): MusicTrack[] {
   const result = [...arr]
   const rng = mulberry32(hashString(title))
   for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [result[i], result[j]] = [result[j], result[i]]
+    const j = Math.floor(rng() * (i + 1))
+    ;[result[i], result[j]] = [result[j], result[i]]
   }
   return result
 }
@@ -100,14 +101,16 @@ export function MixPage() {
   const provider = useProviderStore((s) => s.provider)
   const mixItem = selection?.provider === provider ? selection.item : null
 
-  const { playTrack, playRadio, addToQueue, currentTrack } = usePlayerStore(
-    useShallow((s) => ({
-      playTrack: s.playTrack,
-      playRadio: s.playRadio,
-      addToQueue: s.addToQueue,
-      currentTrack: s.currentTrack,
-    }))
-  )
+  const { playTrack, playPagedTracks, playRadio, addToQueue, currentTrack } =
+    usePlayerStore(
+      useShallow((s) => ({
+        playTrack: s.playTrack,
+        playPagedTracks: s.playPagedTracks,
+        playRadio: s.playRadio,
+        addToQueue: s.addToQueue,
+        currentTrack: s.currentTrack,
+      }))
+    )
 
   const { visible: visibleCols, toggle: toggleCol } = usePlaylistColumns(
     "plex-mix-columns",
@@ -141,10 +144,43 @@ export function MixPage() {
 
   const mixKey = mixItem?.providerKey as string | undefined
 
-  const [tracks, setTracks] = useState<MusicTrack[]>([])
-  const [isLoading, setIsLoading] = useState(false)
-  const [loadError, setLoadError] = useState(false)
-  const [loadAttempt, setLoadAttempt] = useState(0)
+  const page = useWindowedPages<MusicTrack>(
+    provider && mixKey && hasMixTracks ? `mix:${mixKey}` : null,
+    async (offset, limit) => {
+      if (provider?.getMixTracksPage)
+        return provider.getMixTracksPage(mixKey!, offset, limit)
+      const items = (await provider?.getMixTracks?.(mixKey!)) ?? []
+      return {
+        items: items.slice(offset, offset + limit),
+        total: items.length,
+        offset,
+      }
+    }
+  )
+  const tracks = useMemo(() => page.loadedItems, [page, page.snapshot()])
+  const isLoading = page.loading && !tracks.length
+  const loadError = !!page.error && !tracks.length
+  const useQuery = !!debouncedQuery || sortCol !== "default"
+  const queried = useWindowedPages(
+    useQuery && provider?.getCollectionPage && mixKey
+      ? JSON.stringify(["mix-query", mixKey, debouncedQuery, sortCol, sortDir])
+      : null,
+    async (offset, limit) => {
+      const result = await provider!.getCollectionPage!(
+        `mix:${mixKey}`,
+        offset,
+        limit,
+        debouncedQuery,
+        sortCol,
+        sortDir
+      )
+      return {
+        ...result,
+        items: result.items.filter((item) => item.type === "track"),
+      }
+    },
+    page.total
+  )
   const thumbnailItems = useMemo(
     () => (mixItem ? [{ ...mixItem, type: "playlist" as const }] : []),
     [mixItem]
@@ -175,40 +211,6 @@ export function MixPage() {
     return result
   }, [tracks])
 
-  useLayoutEffect(() => {
-    let active = true
-    const current = () =>
-      active && useProviderStore.getState().provider === provider
-    setTracks([])
-    setLoadError(false)
-    setIsLoading(false)
-    if (!mixKey || !provider || !hasMixTracks)
-      return () => {
-        active = false
-      }
-    const cached = useLibraryStore.getState().mixTracksCache[mixKey]
-    if (loadAttempt === 0 && cached?.length) {
-      setTracks(shuffleTracks(cached, mixItem?.title ?? mixKey))
-      return () => {
-        active = false
-      }
-    }
-    setIsLoading(true)
-    void (async () => {
-      try {
-        const items = (await provider.getMixTracks?.(mixKey)) ?? []
-        if (current()) setTracks(shuffleTracks(items, mixItem?.title ?? mixKey))
-      } catch {
-        if (current()) setLoadError(true)
-      } finally {
-        if (current()) setIsLoading(false)
-      }
-    })()
-    return () => {
-      active = false
-    }
-  }, [mixKey, mixItem, provider, hasMixTracks, loadAttempt])
-
   const filteredTracks = useMemo(() => {
     if (!debouncedQuery) return tracks
     const q = debouncedQuery.toLowerCase()
@@ -226,22 +228,50 @@ export function MixPage() {
     items.sort((a, b) => {
       let cmp = 0
       switch (sortCol) {
-        case "title":      cmp = a.title.localeCompare(b.title); break
-        case "artist":     cmp = a.artistName.localeCompare(b.artistName); break
-        case "album":      cmp = a.albumName.localeCompare(b.albumName); break
-        case "year":       cmp = (a.albumYear ?? a.year) - (b.albumYear ?? b.year); break
-        case "plays":      cmp = a.playCount - b.playCount; break
-        case "popularity": cmp = (a.ratingCount ?? 0) - (b.ratingCount ?? 0); break
-        case "label":      cmp = (a.parentStudio ?? "").localeCompare(b.parentStudio ?? ""); break
-        case "bitrate":    cmp = (a.bitrate ?? 0) - (b.bitrate ?? 0); break
-        case "format":     cmp = (a.codec ?? "").localeCompare(b.codec ?? ""); break
-        case "added_at":   cmp = (a.addedAt ? +new Date(a.addedAt) : 0) - (b.addedAt ? +new Date(b.addedAt) : 0); break
-        case "rating":     cmp = (a.userRating ?? 0) - (b.userRating ?? 0); break
+        case "title":
+          cmp = a.title.localeCompare(b.title)
+          break
+        case "artist":
+          cmp = a.artistName.localeCompare(b.artistName)
+          break
+        case "album":
+          cmp = a.albumName.localeCompare(b.albumName)
+          break
+        case "year":
+          cmp = (a.albumYear ?? a.year) - (b.albumYear ?? b.year)
+          break
+        case "plays":
+          cmp = a.playCount - b.playCount
+          break
+        case "popularity":
+          cmp = (a.ratingCount ?? 0) - (b.ratingCount ?? 0)
+          break
+        case "label":
+          cmp = (a.parentStudio ?? "").localeCompare(b.parentStudio ?? "")
+          break
+        case "bitrate":
+          cmp = (a.bitrate ?? 0) - (b.bitrate ?? 0)
+          break
+        case "format":
+          cmp = (a.codec ?? "").localeCompare(b.codec ?? "")
+          break
+        case "added_at":
+          cmp =
+            (a.addedAt ? +new Date(a.addedAt) : 0) -
+            (b.addedAt ? +new Date(b.addedAt) : 0)
+          break
+        case "rating":
+          cmp = (a.userRating ?? 0) - (b.userRating ?? 0)
+          break
         case "rated_at": {
-          cmp = (a.lastRatedAt ? +new Date(a.lastRatedAt) : 0) - (b.lastRatedAt ? +new Date(b.lastRatedAt) : 0)
+          cmp =
+            (a.lastRatedAt ? +new Date(a.lastRatedAt) : 0) -
+            (b.lastRatedAt ? +new Date(b.lastRatedAt) : 0)
           break
         }
-        case "duration":   cmp = a.duration - b.duration; break
+        case "duration":
+          cmp = a.duration - b.duration
+          break
       }
       return sortDir === "asc" ? cmp : -cmp
     })
@@ -262,31 +292,87 @@ export function MixPage() {
   }
 
   const displayThumb = mixThumbs[mixThumbnailKey(mixItem)] ?? mixItem.thumbUrl
-  const totalMs = tracks.reduce((sum, t) => sum + t.duration, 0)
 
-  function handlePlayInOrder() {
-    if (tracks.length === 0) return
-    void playTrack(tracks[0], tracks, mixItem!.title, "/mix")
+  const playbackSource =
+    provider?.getMixTracksPage && mixKey
+      ? {
+          key: `mix:${mixKey}`,
+          total: page.total,
+          loadPage: (offset: number, limit: number) =>
+            provider.getMixTracksPage!(mixKey, offset, limit),
+        }
+      : null
+  const querySource = {
+    key: `mix-query:${mixKey}`,
+    restoreQuery: { key: `mix:${mixKey}`, filter: debouncedQuery, sort: sortCol, dir: sortDir },
+    total: queried.total,
+    loadPage: async (offset: number, limit: number) => {
+      const result = await provider!.getCollectionPage!(
+        `mix:${mixKey}`,
+        offset,
+        limit,
+        debouncedQuery,
+        sortCol,
+        sortDir
+      )
+      return {
+        ...result,
+        items: result.items.filter((item) => item.type === "track"),
+      }
+    },
   }
-
+  function handlePlayInOrder() {
+    if (useQuery && provider?.getCollectionPage)
+      void playPagedTracks(querySource, mixItem!.title, "/mix")
+    else if (playbackSource && !filterQuery)
+      void playPagedTracks(playbackSource, mixItem!.title, "/mix")
+    else if (tracks.length)
+      void playTrack(tracks[0], sortedTracks, mixItem!.title, "/mix")
+  }
   function handlePlayShuffled() {
-    if (tracks.length === 0) return
-    const shuffled = [...tracks].sort(() => Math.random() - 0.5)
-    void playTrack(shuffled[0], shuffled, mixItem!.title, "/mix")
+    if (useQuery && provider?.getCollectionPage)
+      void playPagedTracks(querySource, mixItem!.title, "/mix", true)
+    else if (playbackSource && !filterQuery)
+      void playPagedTracks(
+        {
+          ...playbackSource,
+          prepare: () =>
+            provider?.getCachedTrackSource?.(`mix:${mixKey}`, true) ??
+            Promise.resolve(null),
+        },
+        mixItem!.title,
+        "/mix",
+        true
+      )
+    else if (tracks.length) {
+      const queue = shuffleTracks(sortedTracks, String(Math.random()))
+      void playTrack(queue[0], queue, mixItem!.title, "/mix")
+    }
   }
 
   return (
     <div className="pb-12">
       {/* Header */}
-      <div className="relative flex flex-row items-end p-8 overflow-hidden rounded-t-lg hero-overlay">
+      <div className="hero-overlay relative flex flex-row items-end overflow-hidden rounded-t-lg p-8">
         <UltraBlur src={displayThumb} />
         <div className="relative z-10 flex w-full flex-wrap items-end gap-6">
           {/* Cover art */}
           {displayThumb ? (
-            <ArtworkImage loading="eager" src={displayThumb} alt="" className="w-44 h-44 rounded-md shadow-2xl object-cover flex-shrink-0" />
+            <ArtworkImage
+              loading="eager"
+              src={displayThumb}
+              alt=""
+              className="h-44 w-44 flex-shrink-0 rounded-md object-cover shadow-2xl"
+            />
           ) : (
-            <div className="w-44 h-44 rounded-md bg-app-surface shadow-2xl flex-shrink-0 flex items-center justify-center">
-              <svg height="64" width="64" viewBox="0 0 24 24" fill="currentColor" className="text-white/20">
+            <div className="flex h-44 w-44 flex-shrink-0 items-center justify-center rounded-md bg-app-surface shadow-2xl">
+              <svg
+                height="64"
+                width="64"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                className="text-white/20"
+              >
                 <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6zm-2 16a2 2 0 1 1 0-4 2 2 0 0 1 0 4z" />
               </svg>
             </div>
@@ -295,7 +381,9 @@ export function MixPage() {
           {/* Info */}
           <div className="flex min-h-44 min-w-0 flex-[1_1_280px] flex-col justify-between gap-4">
             <div className="min-w-0">
-              <p className="text-xs font-semibold uppercase tracking-widest text-white/50 mb-1">Mix for You</p>
+              <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-white/50">
+                Mix for You
+              </p>
               <h1 className="break-words text-[clamp(1.75rem,3.2vw,3rem)] font-bold leading-tight tracking-tight drop-shadow">
                 {mixItem.title}
               </h1>
@@ -310,12 +398,14 @@ export function MixPage() {
                       {a.id ? (
                         <Link
                           href={`/artist/${a.id}`}
-                          className="hover:text-white hover:underline transition-colors"
-                          onClick={e => e.stopPropagation()}
+                          className="transition-colors hover:text-white hover:underline"
+                          onClick={(e) => e.stopPropagation()}
                         >
                           {a.title}
                         </Link>
-                      ) : a.title}
+                      ) : (
+                        a.title
+                      )}
                     </span>
                   ))}
                 </p>
@@ -327,8 +417,7 @@ export function MixPage() {
               <p className="text-sm text-gray-400">
                 {isLoading
                   ? "Loading…"
-                  : `${tracks.length.toLocaleString()} ${tracks.length === 1 ? "song" : "songs"}${totalMs > 0 ? ` · ${formatTotalMs(totalMs)}` : ""}`
-                }
+                  : `${page.total.toLocaleString()} ${page.total === 1 ? "song" : "songs"}`}
               </p>
 
               <div className="relative z-20 flex items-center gap-3">
@@ -337,9 +426,14 @@ export function MixPage() {
                   onClick={handlePlayInOrder}
                   disabled={tracks.length === 0}
                   title="Play in order"
-                  className="flex h-14 w-14 items-center justify-center rounded-full bg-black/30 backdrop-blur-sm border border-white/10 text-accent hover:bg-black/45 hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="flex h-14 w-14 items-center justify-center rounded-full border border-white/10 bg-black/30 text-accent backdrop-blur-sm transition-all hover:scale-105 hover:bg-black/45 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  <svg viewBox="0 0 16 16" width="22" height="22" fill="currentColor">
+                  <svg
+                    viewBox="0 0 16 16"
+                    width="22"
+                    height="22"
+                    fill="currentColor"
+                  >
                     <polygon points="3,2 13,8 3,14" />
                   </svg>
                 </button>
@@ -349,13 +443,17 @@ export function MixPage() {
                   onClick={handlePlayShuffled}
                   disabled={tracks.length === 0}
                   title="Shuffle play"
-                  className="flex h-11 w-11 items-center justify-center rounded-full bg-black/30 backdrop-blur-sm border border-white/10 text-accent hover:bg-black/45 hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/30 text-accent backdrop-blur-sm transition-all hover:scale-105 hover:bg-black/45 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+                  <svg
+                    viewBox="0 0 16 16"
+                    width="16"
+                    height="16"
+                    fill="currentColor"
+                  >
                     <path d="M13.151.922a.75.75 0 1 0-1.06 1.06L13.109 3H11.16a3.75 3.75 0 0 0-2.873 1.34l-6.173 7.356A2.25 2.25 0 0 1 .39 12.5H0V14h.391a3.75 3.75 0 0 0 2.873-1.34l6.173-7.356A2.25 2.25 0 0 1 11.16 4.5h1.949l-1.018 1.018a.75.75 0 0 0 1.06 1.06L15.98 3.75 13.15.922zM.391 3.5H0V2h.391c1.109 0 2.16.49 2.873 1.34L4.89 5.277l-.979 1.167-1.796-2.14A2.25 2.25 0 0 0 .39 3.5zm9.831 8.17l.979 1.167.28.334A3.75 3.75 0 0 0 14.36 14.5h1.64V13h-1.64a2.25 2.25 0 0 1-1.726-.83l-.28-.335-1.733-2.063-.979 1.167 1.18 1.731z" />
                   </svg>
                 </button>
-
               </div>
             </div>
           </div>
@@ -369,7 +467,7 @@ export function MixPage() {
         >
           <p>Could not load this mix.</p>
           <button
-            onClick={() => setLoadAttempt((value) => value + 1)}
+            onClick={() => page.retry()}
             className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white"
           >
             Try again
@@ -378,21 +476,44 @@ export function MixPage() {
       ) : (
         <TrackTable
           tracks={sortedTracks}
+          paged={
+            useQuery && provider?.getCollectionPage
+              ? queried
+              : !useQuery
+                ? page
+                : undefined
+          }
           visibleCols={visibleCols}
           toggleCol={toggleCol}
           sortCol={sortCol}
           sortDir={sortDir}
           onSort={handleSort}
-          onPlay={(track, all) =>
-            void playTrack(track, all, mixItem.title, "/mix")
-          }
+          onPlay={(track, all, index) => {
+            if (useQuery && provider?.getCollectionPage)
+              void playPagedTracks(
+                querySource,
+                mixItem.title,
+                "/mix",
+                false,
+                index
+              )
+            else if (playbackSource && !useQuery)
+              void playPagedTracks(
+                playbackSource,
+                mixItem.title,
+                "/mix",
+                false,
+                index
+              )
+            else void playTrack(track, all, mixItem.title, "/mix")
+          }}
           onAddToQueue={addToQueue}
           onPlayRadio={playRadio}
           columns={ALL_COLUMNS}
           searchPlaceholder="Search in mix…  ⌘K"
           filterQuery={filterQuery}
           onFilterChange={setFilterQuery}
-          defaultResetTitle="Restore shuffled order"
+          defaultResetTitle="Restore mix order"
           isLoading={isLoading}
           loadedCount={tracks.length}
           emptyMessage="No tracks found for this mix."

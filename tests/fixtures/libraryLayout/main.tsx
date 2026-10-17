@@ -22,6 +22,8 @@ import { useCompactStore } from "../../../src/stores/compactStore.ts"
 import { setTheme } from "../../../src/stores/themeStore.ts"
 import { SideBar } from "../../../src/components/SideBar.tsx"
 import { useLibraryStore } from "../../../src/stores/libraryStore.ts"
+import { useFavoritesStore } from "../../../src/stores/favoritesStore.ts"
+import { emptyFavorites } from "../../../src/favorites/model.ts"
 import { useProviderStore } from "../../../src/stores/providerStore.ts"
 import { usePlayerStore } from "../../../src/stores/playerStore.ts"
 import { useVisualizerStore, type FullscreenVisualizerMode } from "../../../src/stores/visualizerStore.ts"
@@ -37,6 +39,9 @@ import { setFont } from "../../../src/stores/fontStore.ts"
 import { useCardSizeStore } from "../../../src/stores/cardSizeStore.ts"
 import { useCustomColorStore } from "../../../src/stores/customColorStore.ts"
 import { QueuePanel } from "../../../src/components/QueuePanel.tsx"
+import { HoverInformation } from "../../../src/components/HoverInformation.tsx"
+import { useCatalogueStore } from "../../../src/offline/catalogueStore.ts"
+import { initializeQueuePersistence, flushQueuePersistence } from "../../../src/lib/queuePersistence.ts"
 import LyricsPanel from "../../../src/components/LyricsPanel.tsx"
 import "../../../src/styles.css"
 ;(window as any).visualFixtureReady = false
@@ -47,6 +52,9 @@ async function setup() {
   const notifications = params.get("notifications") === "1"
   const discovery = params.get("discovery") === "1"
   const appearance = params.get("appearance") === "1"
+  const virtual = params.get("virtual") === "1"
+  const queueProof = params.get("queue") === "1"
+  const informationProof=params.get("information")==="1"
   let callback = 0
   let loadingGate = Promise.resolve()
   let releaseLoading: (() => void) | null = null
@@ -58,7 +66,7 @@ async function setup() {
     },
     transformCallback: () => ++callback,
     unregisterCallback: () => {},
-    invoke: async (command: string) => {
+    invoke: async (command: string, args:any={}) => {
       if (command.startsWith("radiobrowser_") || command.startsWith("podcast_")) await loadingGate
       if (
         command === "radiobrowser_top_stations" ||
@@ -82,6 +90,8 @@ async function setup() {
       if (command === "get_image_cache_info")
         return { files: 0, bytes: 0, max_files: 4096, max_bytes: 536870912 }
       if (command === "get_media_ramps") return null
+      if(command==="download_entity_status")return args.entities.map((item:any)=>({...item,known:true,total:12,downloaded:11,pending:0,failed:1,requested:true,error:"The audio file contains damaged frames."}))
+      if(command==="download_entity_issues")return {total:1,items:[{trackId:42,title:"Evening Static",artist:"Fixture Artist",error:"The audio file contains damaged frames. Check the file in Plex or choose another version."}]}
       if (command === "refresh_image") return { revision: "synthetic-refresh" }
       if (command === "plugin:event|listen") return 1
       if (command === "plugin:event|unlisten") return null
@@ -285,16 +295,56 @@ async function setup() {
     buildItemUri: (key: string) => "synthetic://" + key,
     disconnect: async () => {},
   }
+  const pageRequests: { kind: string; offset: number; limit: number }[] = []
+  const syntheticTrack = (index: number) => ({ ...tracks[0], id: String(100000 + index), title: `Synthetic song ${String(index).padStart(5, "0")}`, playlistItemId: String(index + 1), type: "track" as const })
+  if (virtual) Object.assign(provider, {
+    cacheScope: "virtual-stress",
+    getRatedItemsPage: async (kind: string, offset: number, limit: number) => {
+      pageRequests.push({ kind, offset, limit }); await loadingGate
+      const total = kind === "track" ? 20000 : 6000
+      return { items: Array.from({ length: Math.max(0, Math.min(limit, total - offset)) }, (_, i) => kind === "track" ? syntheticTrack(offset + i) : kind === "album" ? { ...album, id: String(offset + i), title: `Synthetic album ${offset + i}`, type: "album" } : { ...artist, id: String(offset + i), title: `Synthetic artist ${offset + i}`, type: "artist" }), total, offset }
+    },
+    getPlaylistItems: async (_id: string, offset = 0, limit = 100) => {
+      pageRequests.push({ kind: "playlist", offset, limit }); await loadingGate
+      return { items: Array.from({ length: Math.min(limit, 20000 - offset) }, (_, i) => syntheticTrack(offset + i)), total: 20000, offset }
+    },
+    getMixTracksPage: async (_id: string, offset: number, limit: number) => {
+      pageRequests.push({ kind: "mix", offset, limit }); await loadingGate
+      return { items: Array.from({ length: Math.min(limit, 20000 - offset) }, (_, i) => syntheticTrack(offset + i)), total: 20000, offset }
+    },
+    favorites: { cachedTracks: async (ids: string[]) => { pageRequests.push({ kind: "favorites", offset: Number(ids[0]) - 100000, limit: ids.length }); await loadingGate; return ids.map(id => syntheticTrack(Number(id) - 100000)) } },
+    getTrack: async (id: string) => syntheticTrack(Number(id) - 100000),
+    getPlaybackInfo: async (track: any) => ({ url: "synthetic://music", trackKey: Number(track.id), partId: 1, parentKey: "synthetic", startRamp: null, endRamp: null }),
+    reportProgress: async () => {},
+    getLyrics: async () => [],
+  })
+  if(informationProof){provider.cacheScope=`plex-${"a".repeat(64)}`;playlists[0].id="123";playlists[0].title="The weekend collection";playlists[0].summary="A handpicked collection for the weekend.";useCatalogueStore.getState().activate({connectionRevision:1,cacheScope:provider.cacheScope})}
+  if (queueProof) provider.savedQueue = {
+    load: async () => JSON.parse(localStorage.getItem("synthetic-queue") ?? "null"),
+    save: async (snapshot: any) => { localStorage.setItem("synthetic-queue", JSON.stringify(snapshot)) },
+    position: async (state: any) => { const snapshot=JSON.parse(localStorage.getItem("synthetic-queue")??"null"); if(snapshot)localStorage.setItem("synthetic-queue",JSON.stringify({...snapshot,state})) },
+    clear: async () => { localStorage.removeItem("synthetic-queue") },
+  }
   await useLibraryStore.getState().activateProvider(provider)
   await activateMetadataCache(provider)
   useProviderStore.getState().setProvider(provider)
   useLibraryStore.setState({
-    playlists,
+    playlists: virtual ? Array.from({ length: 3000 }, (_, i) => ({ ...playlists[0], id: `stress-${i}`, title: `Synthetic playlist ${i}`, trackCount: 20000, smart: true })) : playlists,
     likedTracks: tracks,
     likedAlbums: albums,
     likedArtists: [artist],
     _playlistsFetchedAt: Date.now(),
   })
+  if (virtual) {
+    useUIStore.setState({ deduplicateAlbums: false })
+    const entries = Object.fromEntries(Array.from({ length: 20000 }, (_, i) => [`favorite-${i}`, { id: `favorite-${i}`, key: `local:${100000+i}`, title: syntheticTrack(i).title, artist: tracks[0].artistName, album: tracks[0].albumName, durationMs: 180000, localTrackIds: [String(100000+i)], liked: true, explicit: true, sources: {}, changedAt: 1800000000000-i*1000, likedAt: 1800000000000-i*1000 }]))
+    useFavoritesStore.setState({ collection: { ...emptyFavorites(), ratingsImported: true, entries }, loaded: true, loading: false, error: null, likedTrackIds: new Set(Object.keys(entries).map((_key,i) => String(100000+i))) })
+    w.fixtureVirtual = { requests: () => pageRequests, clear: () => { pageRequests.length = 0 }, syncFavorite: (index: number) => {
+      const state = useFavoritesStore.getState().collection
+      const id = `favorite-${index}`
+      useFavoritesStore.setState({ collection: { ...state, revision: state.revision + 1, entries: { ...state.entries, [id]: { ...state.entries[id], likedAt: Date.now() + 200000000000, changedAt: Date.now() } } } })
+    } }
+  }
   const noop = () => {}
   const interactions: { action: string; id?: string; position?: number }[] = []
   const playlistDrops: { id: string; ids: string[] }[] = []
@@ -310,6 +360,15 @@ async function setup() {
     release: () => { releaseLoading?.(); releaseLoading = null; loadingGate = Promise.resolve() },
   }
   engine.setVisualizerEnabled = noop
+  const realPlayer = usePlayerStore.getState()
+  if (virtual) {
+    w.fixtureVirtual.audioPlayCount = 0
+    engine.play = async () => { w.fixtureVirtual.audioPlayCount++ }
+    engine.beginSelection = noop
+    engine.preloadNext = async () => {}
+    engine.clearPreload = noop
+    engine.stop = noop
+  }
   useEqStore.setState({ syncToEngine: noop })
   useAudioSettingsStore.setState({ syncToEngine: async () => {} })
   useDeviceStore.setState({ initDeviceTracking: noop, dispose: noop })
@@ -319,15 +378,21 @@ async function setup() {
     },
     playFromUri: async () => {},
     playPlaylist: async () => {},
+    ...(virtual ? { playPagedTracks: async (source: any, _title: string, _href: string, shuffle: boolean, index = 0) => {
+      await realPlayer.playPagedTracks(source, _title, _href, shuffle, index)
+      const current=usePlayerStore.getState()
+      w.fixtureVirtual.playback = { total: current.queue.length, shuffle, index: current.queueIndex, ids: current.queue.slice(0,500).map((track: any) => track.id) }
+    } } : {}),
     playRadio: async () => {},
     addToQueue: (items) => {
       interactions.push({ action: "queue", id: items[0]?.id })
     },
     jumpToQueueItem: (index) => {
-      interactions.push({ action: "jump", id: tracks[index]?.id })
+      if (virtual) realPlayer.jumpToQueueItem(index)
+      else interactions.push({ action: "jump", id: tracks[index]?.id })
     },
-    currentTrack: actualPlayer ? tracks[0] : null,
-    queue: tracks,
+    currentTrack: actualPlayer && !virtual ? tracks[0] : null,
+    queue: virtual ? [] : tracks,
     isPlaying: false,
     isInternetRadioActive: false,
     volume: 0,
@@ -361,6 +426,12 @@ async function setup() {
     toggleShuffle: noop,
     cycleRepeat: noop,
   })
+  if (virtual) Object.assign(w.fixtureVirtual, {
+    reviewLikes: () => { const collection=useFavoritesStore.getState().collection; useFavoritesStore.setState({collection:{...collection,settings:{...collection.settings,lastfm:true}},issues:{lastfm:"A saved change needs review"}}) },
+    queue: () => { const player=usePlayerStore.getState(); return { total:player.queue.length,index:player.queueIndex,id:player.currentTrack?.id,position:player.positionMs,playing:player.isPlaying,error:player.playerError } },
+    rememberPosition: async (positionMs: number) => { usePlayerStore.setState({ positionMs,isPlaying:false }); await flushQueuePersistence() },
+  })
+  if (queueProof) initializeQueuePersistence()
   useMetadataSourceStore.setState({ priority: ["plex"] })
   for (const store of [
     useDeezerMetadataStore,
@@ -619,6 +690,7 @@ async function setup() {
     dispatchEvent(new PopStateEvent("popstate"))
   }
   if (notifications) {
+    let notificationSeed = 0, failureEvent = 0
     let retryCalls = 0
     let completeRetry: (() => void) | undefined
     const warning = (
@@ -642,6 +714,7 @@ async function setup() {
     })
     w.fixtureNotifications = {
       seed: () => {
+        notificationSeed++
         const center = useNotificationCenterStore.getState()
         center.notify({
           id: "fixture-info",
@@ -649,7 +722,7 @@ async function setup() {
           message: "Your synthetic library is up to date.",
           severity: "success",
         })
-        center.notify(warning())
+        center.notify({...warning(),eventKey:`seed-${notificationSeed}`})
         center.notify({
           id: "fixture-error",
           title: "Fixture decoder message",
@@ -657,6 +730,7 @@ async function setup() {
             "This is an intentionally long synthetic diagnostic: " +
             "LongUnbrokenDiagnostic".repeat(10),
           severity: "error",
+          eventKey: `seed-${notificationSeed}`,
         })
       },
       poll: () =>
@@ -667,7 +741,7 @@ async function setup() {
           ),
       recur: () => {
         useNotificationCenterStore.getState().resolve("fixture-warning")
-        useNotificationCenterStore.getState().notify(warning())
+        useNotificationCenterStore.getState().notify({...warning(),eventKey:`failure-${++failureEvent}`})
       },
       finishRetry: () => completeRetry?.(),
       retryCalls: () => retryCalls,
@@ -745,6 +819,7 @@ function InteractionHarness({ children }: { children: React.ReactNode }) {
     <ArtworkShell>
       {children}
       <ContextMenu />
+      <HoverInformation />
       {createOpen && <CreatePlaylist onClose={() => useUIStore.getState().setShowCreatePlaylist(false)} />}
       {hotkeyHelpOpen && <HotkeyHelpModal context="visualizer" onClose={() => setHotkeyHelpOpen(false)} />}
     </ArtworkShell>

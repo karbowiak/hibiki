@@ -11,6 +11,10 @@ for (const scenario of [
   "remote_reload",
   "recording",
   "heart",
+  "matching",
+  "reset",
+  "reset_matching",
+  "reset_controls",
 ])
   test(`favorites ${scenario} uses local storage and scoped sync`, async () => {
     const child = Bun.spawn(

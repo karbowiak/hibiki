@@ -90,11 +90,11 @@ classified as content conflicts. Weekly following can archive those unresolved
 occurrences when admitting a newer edition. Genuine conflicts, manual pauses and
 unknown mutations keep their write gates.
 
-Matching progress stays in Sync settings. Verified partial completion emits a
-dismissible result notice; a bounded local list of hashed outcome receipts avoids
-repeating that completion after restart. Session event keys also suppress polling,
-reconnect and remount repeats while refreshing current notification actions.
-Notice retention is independent of sync revisions and never blocks music matching.
+Matching progress, partial results, lookup errors and retained updates stay in
+the playlist's Sync review. A yellow triangle on its Sync button identifies
+review work without global notifications, including after restart. Retained
+creation receipts stay in the Sync browser. Only a creation receipt that could
+not be saved locally interrupts with a recovery notice.
 
 One-sided verified changes propagate; changes on both sides pause for review. The app checks eligible links every two minutes while online, with at most 20 occurrence mutations per cycle. Each append/move/delete has a durable admission record, exact preflight, one non-retrying authenticated request, and ordered post-read proof. No playlist-wide clear or unreviewed replacement is used. Providers do not expose transactional compare-and-swap: an external editor can race the final preflight. This limitation is explicit, and failed postproof stops further writes as an unknown outcome.
 

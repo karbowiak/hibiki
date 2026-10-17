@@ -1,7 +1,12 @@
 import { create } from "zustand"
-import { booleanPreference } from "./scalarPreference"
+import { booleanPreference, createScalarPreference } from "./scalarPreference"
 
 const queuePinned = booleanPreference("plex-queue-pinned", false)
+const queueTab = createScalarPreference<"queue" | "lyrics">("plex-queue-tab", "queue", raw => {
+  if (raw !== "queue" && raw !== "lyrics") throw Error("Invalid player panel tab")
+  return raw
+}, value => value)
+let queueVisibilityTouched = false
 const lyricsPinned = booleanPreference("plex-lyrics-pinned", false)
 const dedupAlbums = booleanPreference("plex-dedup-albums", true)
 const artExpanded = booleanPreference("plex-art-expanded", false)
@@ -46,11 +51,11 @@ export const useUIStore = create<UIState>((set) => ({
   pendingPlaylistItemIds: null,
   isRefreshing: false,
   pageRefreshKey: 0,
-  isQueueOpen: false,
+  isQueueOpen: queuePinned.snapshot(),
   isQueuePinned: queuePinned.snapshot(),
   isLyricsOpen: false,
   isLyricsPinned: lyricsPinned.snapshot(),
-  queueActiveTab: "queue",
+  queueActiveTab: queueTab.snapshot(),
   deduplicateAlbums: dedupAlbums.snapshot(),
   isArtExpanded: artExpanded.snapshot(),
 
@@ -58,8 +63,9 @@ export const useUIStore = create<UIState>((set) => ({
   setPendingPlaylistItemIds: (ids: string[] | null) => set({ pendingPlaylistItemIds: ids }),
   setIsRefreshing: (v: boolean) => set({ isRefreshing: v }),
   incrementPageRefreshKey: () => set(s => ({ pageRefreshKey: s.pageRefreshKey + 1 })),
-  setQueueOpen: (v: boolean) => set({ isQueueOpen: v }),
+  setQueueOpen: (v: boolean) => { queueVisibilityTouched = true; set({ isQueueOpen: v }) },
   setQueuePinned: (v: boolean) => {
+    queueVisibilityTouched = true
     queuePinned.set(v)
     set({ isQueuePinned: v, ...(v ? { isQueueOpen: true } : { isQueueOpen: false }) })
   },
@@ -68,7 +74,7 @@ export const useUIStore = create<UIState>((set) => ({
     lyricsPinned.set(v)
     set({ isLyricsPinned: v, ...(v ? { isLyricsOpen: true } : {}) })
   },
-  setQueueActiveTab: (tab: "queue" | "lyrics") => set({ queueActiveTab: tab }),
+  setQueueActiveTab: (tab: "queue" | "lyrics") => { queueTab.set(tab); set({ queueActiveTab: tab }) },
   setDeduplicateAlbums: (v: boolean) => {
     dedupAlbums.set(v)
     set({ deduplicateAlbums: v })
@@ -80,7 +86,8 @@ export const useUIStore = create<UIState>((set) => ({
   }),
 }))
 
-queuePinned.subscribe(() => useUIStore.setState({ isQueuePinned: queuePinned.snapshot() }))
+queuePinned.subscribe(() => useUIStore.setState({ isQueuePinned: queuePinned.snapshot(), ...(!queueVisibilityTouched ? { isQueueOpen: queuePinned.snapshot() } : {}) }))
+queueTab.subscribe(() => useUIStore.setState({ queueActiveTab: queueTab.snapshot() }))
 lyricsPinned.subscribe(() => useUIStore.setState({ isLyricsPinned: lyricsPinned.snapshot() }))
 dedupAlbums.subscribe(() => useUIStore.setState({ deduplicateAlbums: dedupAlbums.snapshot() }))
 artExpanded.subscribe(() => useUIStore.setState({ isArtExpanded: artExpanded.snapshot() }))

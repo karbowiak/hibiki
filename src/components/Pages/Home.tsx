@@ -288,6 +288,10 @@ export function Home() {
             const playMix = () => {
               const mixKey = item.providerKey
               if (!mixKey || !provider?.getMixTracks) return
+              if (provider.getMixTracksPage) {
+                void usePlayerStore.getState().playPagedTracks({ key: `mix:${mixKey}`, loadPage: (offset, limit) => provider.getMixTracksPage!(mixKey, offset, limit) }, item.title, "/mix", true)
+                return
+              }
               playResolved(async () => shuffleTracks(await provider.getMixTracks!(mixKey), item.title), item.title, "/mix", false)
             }
             return (

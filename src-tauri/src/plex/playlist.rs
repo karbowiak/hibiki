@@ -202,7 +202,7 @@ impl PlexClient {
         };
         let header_offset = read_header("X-Plex-Container-Start")?;
         let header_total = read_header("X-Plex-Container-Total-Size")?;
-        let wrapper = response.bounded_json::<PlexApiResponse<PlaylistPageContainer>>(MAX_PLEX_BYTES)
+        let wrapper = response.bounded_plex_json::<PlexApiResponse<PlaylistPageContainer>>(MAX_PLEX_BYTES)
             .await.context("Failed to parse playlist page")?;
         let page = wrapper.container;
         if page.offset.is_some() && header_offset.is_some() && page.offset != header_offset {
@@ -530,14 +530,18 @@ mod tests {
     }
 
     async fn playlist_response_at(body: serde_json::Value, headers: &str, prefix: &str) -> (PlexClient, tokio::task::JoinHandle<String>) {
+        playlist_bytes_response_at(body.to_string().into_bytes(), headers, prefix).await
+    }
+
+    async fn playlist_bytes_response_at(json: Vec<u8>, headers: &str, prefix: &str) -> (PlexClient, tokio::task::JoinHandle<String>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let client = PlexClient::new(super::super::PlexClientConfig {
             base_url: format!("http://{}{prefix}", listener.local_addr().unwrap()),
             token: "synthetic-test-token".into(), ..Default::default()
         }).unwrap();
-        let json = body.to_string();
-        let response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{}Connection: close\r\n\r\n{}", json.len(), headers, json);
+        let mut response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{}Connection: close\r\n\r\n", json.len(), headers).into_bytes();
+        response.extend_from_slice(&json);
         let task = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut request = Vec::new();
@@ -555,10 +559,24 @@ mod tests {
                     if request.len() >= end + 4 + length { break }
                 }
             }
-            socket.write_all(response.as_bytes()).await.unwrap();
+            socket.write_all(&response).await.unwrap();
             String::from_utf8(request).unwrap()
         });
         (client, task)
+    }
+
+    #[tokio::test]
+    async fn playlist_paging_recovers_invalid_utf8_values_without_losing_membership() {
+        let body = b"{\"MediaContainer\":{\"offset\":2000,\"totalSize\":3000,\"Metadata\":[{\"ratingKey\":\"7\",\"title\":\"Bad \xfe text\",\"playlistItemID\":11},{\"ratingKey\":\"8\",\"title\":\"Valid\",\"playlistItemID\":12}]}}";
+        let (client, request) = playlist_bytes_response_at(body.to_vec(), "", "").await;
+        let page = client.get_playlist_items_page(1, Some(2), Some(2000)).await.unwrap();
+        assert_eq!(page.items.len(), 2);
+        assert!(page.items[0].title.contains('\u{fffd}'));
+        assert_eq!(page.items[0].playlist_item_id, Some(11));
+        assert_eq!(page.items[1].title, "Valid");
+        assert_eq!(page.total, 3000);
+        assert_eq!(page.offset, Some(2000));
+        request.await.unwrap();
     }
 
     #[tokio::test]

@@ -78,31 +78,29 @@ export function createNotificationCenterStore({
         const previous = state.notifications.find(
           (entry) => entry.id === input.id
         )
-        const persistent = input.persistent ?? previous?.persistent ?? false
-        const event =
-          input.eventKey === undefined
-            ? undefined
-            : JSON.stringify([input.id, input.eventKey])
-        const announced = event !== undefined && announcedEvents.has(event)
+        const drawsAttention = input.severity === "warning" || input.severity === "error"
+        const persistent = drawsAttention && (input.persistent ?? previous?.persistent ?? false)
+        const event = JSON.stringify([input.id, input.eventKey ?? [input.title, input.message, input.severity]])
+        const announced = announcedEvents.has(event)
         // Clearing history must not resurrect a dismissed result on the next poll.
         if (announced && !previous) return state
-        if (event !== undefined) announcedEvents.add(event)
+        announcedEvents.add(event)
         const ongoing = persistent && previous?.active
         const escalate =
           previous && priority[input.severity] > priority[previous.severity]
-        const newToast = !announced && (!ongoing || !!escalate)
+        const newToast = drawsAttention && !announced && (!ongoing || !!escalate)
         const timestamp = now()
         const entry: NotificationEntry = {
           ...input,
           persistent,
           createdAt: previous?.createdAt ?? timestamp,
           updatedAt: timestamp,
-          unread: newToast ? true : previous!.unread,
+          unread: drawsAttention && (newToast || (previous?.unread ?? false)),
           active: persistent,
           occurrences:
             (previous?.occurrences ?? 0) + (ongoing || announced ? 0 : 1),
-          toastVisible: newToast ? true : previous!.toastVisible,
-          toastRevision: newToast ? ++toastSequence : previous!.toastRevision,
+          toastVisible: drawsAttention && (newToast || (previous?.toastVisible ?? false)),
+          toastRevision: newToast ? ++toastSequence : previous?.toastRevision ?? 0,
           actionPending: actionRuns.has(input.id),
         }
         return {

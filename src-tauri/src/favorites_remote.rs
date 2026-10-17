@@ -104,6 +104,22 @@ async fn response_guarded(
     request: reqwest::RequestBuilder,
     current: impl Fn() -> Result<()>,
 ) -> Result<Value> {
+    let host = request
+        .try_clone()
+        .context("Favorite request cannot be retained")?
+        .build()
+        .map_err(|error| error.without_url())?
+        .url()
+        .host_str()
+        .map(str::to_owned);
+    if host.as_deref() == Some("ws.audioscrobbler.com") {
+        let bytes = crate::lastfm::transport::send_guarded(request, current).await?;
+        let value: Value = serde_json::from_slice(&bytes).context("Invalid favorite service response")?;
+        if value.get("error").is_some() {
+            bail!("Favorite service reported an error")
+        }
+        return Ok(value);
+    }
     let response = crate::listenbrainz_transport::send_guarded(request, current).await?;
     if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
         if response.url().host_str() == Some("api.listenbrainz.org") {

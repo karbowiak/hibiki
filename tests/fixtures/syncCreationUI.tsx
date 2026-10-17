@@ -78,10 +78,6 @@ const { useNotificationCenterStore } =
 const { PlaylistCreationRecovery } =
   await import("../../src/components/PlaylistSync/PlaylistCreationRecovery")
 const { createRoot } = await import("react-dom/client")
-async function waitForNotice(check: () => boolean) {
-  for (let i = 0; i < 100 && !check(); i++)
-    await new Promise((resolve) => setTimeout(resolve, 2))
-}
 let root = createRoot(document.getElementById("root")!)
 let recovered: string[] = []
 if (scenario === "notices") {
@@ -97,6 +93,15 @@ if (scenario === "notices") {
   )
   await act(async () => {
     store.setState({ activeCreationIds: {} })
+    await settle()
+  })
+  assert.equal(
+    useNotificationCenterStore.getState().notifications.length,
+    0,
+    "Retained creation receipts are reviewed in Sync, without a startup alert"
+  )
+  await act(async () => {
+    store.setState({ unretainedCreations: { intent } } as any)
     await settle()
   })
   const center = useNotificationCenterStore.getState()
@@ -182,128 +187,38 @@ if (scenario === "notices") {
     } as any)
     await settle()
   })
-  const paused = matchingNotice()!
-  assert.equal(paused.severity, "warning")
-  assert.equal(paused.title, "Playlist sync needs attention")
-  assert.equal(paused.active, false)
-  const centerNow = useNotificationCenterStore.getState()
-  centerNow.dismissToast(paused.id)
-  centerNow.markAllRead()
-  await act(async () => {
-    store.setState({ links: [...store.getState().links] })
-    await settle()
-  })
   assert.equal(
-    matchingNotice()!.toastVisible,
-    false,
-    "A repeated blocked result stays dismissed"
-  )
-  assert.equal(matchingNotice()!.unread, false)
-  assert.equal(matchingNotice()!.occurrences, 1)
-  await act(async () => {
-    store.setState({
-      links: [
-        {
-          ...(store.getState().links[0] as any),
-          paused: false,
-          state: "ready",
-        },
-      ],
-    } as any)
-    await settle()
-  })
-  assert.equal(
-    matchingNotice()!.action,
+    matchingNotice(),
     undefined,
-    "Resumed matching retires the stale result action"
+    "Interrupted matching stays in the playlist's Sync review"
   )
-  await act(async () => {
-    const previous = store.getState().links[0] as any
-    store.setState({
-      links: [
-        {
-          ...previous,
-          message:
-            "Matching the selected playlist in bounded background batches.",
-          incomplete: {
-            ...previous.incomplete,
-            matchingCursor: 3,
-            matchingDone: true,
+  for (const state of ["error", "conflict", "ready"]) {
+    await act(async () => {
+      const previous = store.getState().links[0] as any
+      store.setState({
+        links: [
+          {
+            ...previous,
+            state,
+            paused: state !== "ready",
+            message:
+              "1 of 3 songs matched. Review unmatched songs; every original occurrence is retained.",
+            incomplete: {
+              ...previous.incomplete,
+              matchingDone: true,
+              matchingCursor: 3,
+            },
           },
-        },
-      ],
-    } as any)
-    await settle()
-  })
-  assert.equal(
-    matchingNotice()!.toastVisible,
-    false,
-    "Completing lookups must not announce songs saved before the final fill is verified"
-  )
-  assert.equal(matchingNotice()!.title, "Playlist sync needs attention")
-  await act(async () => {
-    const previous = store.getState().links[0] as any
-    store.setState({
-      links: [
-        {
-          ...previous,
-          message:
-            "1 of 3 songs matched. Review unmatched songs; every original occurrence is retained.",
-          incomplete: {
-            ...previous.incomplete,
-            matchingCursor: 3,
-            matchingDone: true,
-          },
-        },
-      ],
-    } as any)
-    await settle()
-    await waitForNotice(
-      () => matchingNotice()?.title === "Playlist matches saved"
-    )
-  })
-  const review = matchingNotice()!
-  assert.equal(review.title, "Playlist matches saved")
-  assert.equal(review.severity, "info")
-  assert.equal(review.active, false)
-  assert.equal(
-    review.toastVisible,
-    true,
-    "Completed partial result announces once"
-  )
-  useNotificationCenterStore.getState().dismissToast(review.id)
-  useNotificationCenterStore.getState().markAllRead()
-  await act(async () => {
-    store.setState({ links: [...store.getState().links] })
-    await settle()
-  })
-  assert.equal(matchingNotice()!.toastVisible, false)
-  assert.equal(matchingNotice()!.unread, false)
-  const retiredAction = matchingNotice()!.action!
-  await act(async () => {
-    useProviderStore.setState({
-      provider: { ...provider, cacheScope: "other" },
+        ],
+      } as any)
+      await settle()
     })
-    useProviderStore.setState({ provider })
-    await settle()
-  })
-  retiredAction.run()
-  assert.deepEqual(
-    navigations,
-    [],
-    "Retired matching actions cannot navigate replacement views"
-  )
-  assert.equal(
-    matchingNotice()!.toastVisible,
-    false,
-    "Reconnect does not repeat the completed result"
-  )
-  matchingNotice()!.action!.run()
-  assert.deepEqual(
-    navigations,
-    ["/playlist/local"],
-    "Current result action is refreshed after reconnect"
-  )
+    assert.equal(
+      matchingNotice(),
+      undefined,
+      "Matching gaps and sync errors never notify globally"
+    )
+  }
   await act(async () => root.unmount())
   root = createRoot(document.getElementById("root")!)
   await act(async () => {
@@ -311,53 +226,10 @@ if (scenario === "notices") {
     await settle()
   })
   assert.equal(
-    matchingNotice()!.toastVisible,
-    false,
-    "Remount does not repeat the completed result"
-  )
-  useNotificationCenterStore.getState().clearHistory()
-  await act(async () => {
-    store.setState({ links: [...store.getState().links] })
-    await settle()
-  })
-  assert.equal(
     matchingNotice(),
     undefined,
-    "Cleared matching history stays cleared during polling"
+    "Restart does not replay sync review warnings"
   )
-  await act(async () => {
-    const previous = store.getState().links[0] as any
-    store.setState({
-      links: [
-        {
-          ...previous,
-          message:
-            "2 of 3 songs matched. Review unmatched songs; every original occurrence is retained.",
-          incomplete: {
-            ...previous.incomplete,
-            matchedCount: 2,
-            missingOccurrenceIds: ["three"],
-          },
-        },
-      ],
-    } as any)
-    await settle()
-    await waitForNotice(() => !!matchingNotice()?.toastVisible)
-  })
-  assert.equal(
-    matchingNotice()!.toastVisible,
-    true,
-    "A genuinely new matching result can announce"
-  )
-  await act(async () => {
-    store.setState({ links: [] })
-    await settle()
-  })
-  const resolved = useNotificationCenterStore
-    .getState()
-    .notifications.find((n) => n.id === "playlist.matching.link")!
-  assert.equal(resolved.active, false)
-  assert.equal(resolved.action, undefined)
   await act(() => root.unmount())
   dom.window.close()
   process.exit(0)
