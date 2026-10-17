@@ -1174,7 +1174,7 @@ try {
         ]) {
           await page.evaluate(() => (window as any).fixtureAppearance.route("/search"))
           await page.locator("main h1").waitFor()
-          await page.evaluate(() => (window as any).fixtureLoading.hold())
+          await page.evaluate(() => (window as any).fixtureLoading.hold(true))
           await page.evaluate(value => (window as any).fixtureAppearance.route(value), path)
           const placeholder = page.locator("main .skeleton-shimmer").first()
           await placeholder.waitFor()

@@ -382,13 +382,13 @@ async function setup() {
   const playlistDrops: { id: string; ids: string[] }[] = []
   w.fixturePlaylistDrops = () => playlistDrops
   w.fixtureLoading = {
-    hold: async () => {
+    hold: async (refresh = false) => {
       releaseLoading?.()
       loadingGate = new Promise<void>(resolve => { releaseLoading = resolve })
       await clearMetadataCache()
       usePodcastStore.setState({ feedCache: {}, topChartCache: {} })
       useLibraryStore.setState({ playlistItemsCache: {}, playlistIsFullyLoaded: {} })
-      useUIStore.getState().incrementPageRefreshKey()
+      if (refresh) useUIStore.getState().incrementPageRefreshKey()
     },
     release: () => { releaseLoading?.(); releaseLoading = null; loadingGate = Promise.resolve() },
   }
