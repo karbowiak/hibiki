@@ -178,7 +178,7 @@ fn binding(
     let source = MediaSource::new(
         client.media_request(&client.direct_play_url(&part.key)),
         Some(&client.library_scope),
-    )?;
+    )?.with_plex_fetch_lock(client.media_fetch_lock());
     let stream = part.streams.iter().find(|s| s.stream_type == Some(2));
     let analysis_version =
         crate::plex::catalogue::analysis_revision(media, track.music_analysis_version)?;
@@ -1470,6 +1470,7 @@ async fn stage_download(
             received.store(count, Ordering::Release);
             Ok(())
         },
+        source.plex_fetch_lock.as_deref(),
     )
     .await?;
     // Plex's database size can be stale after tag/file updates. The HTTP

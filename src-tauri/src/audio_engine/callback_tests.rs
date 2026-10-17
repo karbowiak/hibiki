@@ -867,6 +867,8 @@ fn trimming_played_pcm_preserves_the_timeline_and_backward_seeks_reach_the_decod
     assert_eq!(deck.position_ms(), 10010);
     assert_eq!(deck.samples.len(), 48000 * 2 * 16);
     cb.handle_command(AudioCommand::SeekInBuffer { position: 0 });
+    assert!(seeks.is_empty(), "the decoder seek waits for the fade-out");
+    cb.process_callback(&mut [0.0; FADE_SAMPLES]);
     let seek = seeks.try_recv().unwrap();
     assert_eq!(seek.position_ms, 0);
     assert_eq!(seek.generation, 1);
@@ -1545,4 +1547,157 @@ fn cancelled_shutdown_acknowledgement_cannot_stop_a_new_playback_intent() {
     assert!(receive.recv().unwrap().is_err());
     assert_eq!(cb.atomics.get_state(), EngineState::Playing);
     assert_eq!(cb.deck_mgr.active_deck().played_frames, 48000);
+}
+
+#[test]
+fn buffered_seeks_fade_out_then_in_without_changing_master_volume() {
+    let mut cb = audible_callback();
+    cb.handle_command(AudioCommand::SetVolume(0.5));
+    cb.handle_command(AudioCommand::SeekInBuffer { position: 5000 });
+    assert_eq!(cb.deck_mgr.active_deck().position_ms(), 10);
+    let mut output = [0.0; FADE_SAMPLES];
+    cb.process_callback(&mut output);
+    assert!((output[0] - 0.15).abs() < 1e-6);
+    assert!(output.windows(2).all(|w| w[1] <= w[0]));
+    assert!(output.last().unwrap().abs() < 1e-6);
+    assert_eq!(cb.deck_mgr.active_deck().position_ms(), 5000);
+    cb.process_callback(&mut output);
+    assert_eq!(output[0], 0.0);
+    assert!(output.windows(2).all(|w| w[1] >= w[0]));
+    assert!((output.last().unwrap() - 0.15).abs() < 1e-6);
+    assert_eq!(cb.deck_mgr.active_deck().position_ms(), 5000 + FADE_MS);
+    assert_eq!(cb.dsp_chain.volume.gain(), 0.5);
+}
+
+#[test]
+fn rapid_scrubbing_coalesces_to_the_latest_target_without_restarting_the_fade() {
+    let mut cb = audible_callback();
+    cb.handle_command(AudioCommand::SeekInBuffer { position: 1000 });
+    cb.process_callback(&mut [0.0; FADE_SAMPLES / 2]);
+    cb.handle_command(AudioCommand::SeekInBuffer { position: 3000 });
+    cb.handle_command(AudioCommand::SeekInBuffer { position: 6000 });
+    let mut output = [0.0; FADE_SAMPLES / 2];
+    cb.process_callback(&mut output);
+    assert!((output[0] - 0.15).abs() < 1e-6);
+    assert_eq!(cb.deck_mgr.active_deck().position_ms(), 6000);
+    assert!(cb.seek_after_fade_ms.is_none());
+}
+
+#[test]
+fn decoder_seek_fade_in_waits_for_new_pcm_and_ignores_old_generation() {
+    let mut cb = audible_callback();
+    let (seek_tx, seeks) = crossbeam_channel::unbounded();
+    let (pcm_tx, pcm_rx) = crossbeam_channel::unbounded();
+    cb.deck_a_rx = pcm_rx;
+    let deck = cb.deck_mgr.active_deck_mut();
+    deck.samples.truncate(96000);
+    deck.fully_decoded = false;
+    deck.seek_tx = Some(seek_tx);
+    cb.handle_command(AudioCommand::SeekInBuffer { position: 5000 });
+    let mut output = [0.0; FADE_SAMPLES];
+    cb.process_callback(&mut output);
+    let seek = seeks.try_recv().unwrap();
+    assert_eq!(seek.position_ms, 5000);
+    assert_eq!(cb.state(), EngineState::Buffering);
+    for _ in 0..8 {
+        cb.process_callback(&mut output);
+        assert!(output.iter().all(|v| *v == 0.0));
+    }
+    pcm_tx
+        .send(SampleBatch {
+            rating_key: 1,
+            generation: seek.generation - 1,
+            samples: vec![0.9; FADE_SAMPLES],
+            fully_decoded: false,
+            error: None,
+        })
+        .unwrap();
+    cb.process_callback(&mut output);
+    assert!(output.iter().all(|v| *v == 0.0));
+    pcm_tx
+        .send(SampleBatch {
+            rating_key: 1,
+            generation: seek.generation,
+            samples: vec![0.3; FADE_SAMPLES * 2],
+            fully_decoded: true,
+            error: None,
+        })
+        .unwrap();
+    cb.process_callback(&mut output);
+    assert_eq!(output[0], 0.0);
+    assert!(output.windows(2).all(|w| w[1] >= w[0]));
+    assert!((output.last().unwrap() - 0.3).abs() < 1e-6);
+    assert_eq!(cb.deck_mgr.active_deck().position_ms(), 5000 + FADE_MS);
+}
+
+#[test]
+fn a_seek_finishes_even_when_the_old_pcm_runs_out_or_output_is_missing() {
+    for no_output in [false, true] {
+        let mut cb = audible_callback();
+        let (seek_tx, seeks) = crossbeam_channel::unbounded();
+        let deck = cb.deck_mgr.active_deck_mut();
+        deck.samples.truncate(deck.position + 960);
+        deck.fully_decoded = false;
+        deck.seek_tx = Some(seek_tx);
+        cb.handle_command(AudioCommand::SeekInBuffer { position: 5000 });
+        if no_output {
+            cb.poll_without_output();
+        } else {
+            cb.process_callback(&mut [0.0; FADE_SAMPLES]);
+        }
+        assert_eq!(seeks.try_recv().unwrap().position_ms, 5000);
+        assert!(cb.seek_after_fade_ms.is_none());
+        assert_eq!(cb.state(), EngineState::Buffering);
+    }
+}
+
+#[test]
+fn pause_stop_and_new_play_cannot_leave_an_old_seek_waiting_to_jump() {
+    let mut cb = audible_callback();
+    cb.handle_command(AudioCommand::SeekInBuffer { position: 5000 });
+    cb.process_callback(&mut [0.0; FADE_SAMPLES / 2]);
+    cb.handle_command(AudioCommand::Pause);
+    cb.handle_command(AudioCommand::Resume);
+    cb.process_callback(&mut [0.0; FADE_SAMPLES / 2]);
+    assert_eq!(cb.deck_mgr.active_deck().position_ms(), 5000);
+
+    cb.process_callback(&mut [0.0; FADE_SAMPLES / 2]);
+    cb.handle_command(AudioCommand::SeekInBuffer { position: 3000 });
+    assert!(cb.seek_after_fade_ms.is_some());
+    cb.atomics.request_epoch.store(1, Ordering::SeqCst);
+    cb.handle_command(AudioCommand::BeginPlay { request_id: 1 });
+    assert!(cb.seek_after_fade_ms.is_none());
+    cb.process_callback(&mut [0.0; FADE_SAMPLES]);
+    assert!(cb.deck_mgr.active_deck().position_ms() >= 5000);
+    cb.handle_command(AudioCommand::Stop);
+    assert!(cb.seek_after_fade_ms.is_none());
+    cb.process_callback(&mut [1.0; 960]);
+    assert_eq!(cb.state(), EngineState::Stopped);
+}
+
+#[test]
+fn seeking_near_the_end_does_not_advance_to_a_preloaded_track_during_the_fade() {
+    let mut cb = audible_callback();
+    cb.deck_mgr.active_deck_mut().position = 960000 - 960;
+    cb.handle_load_deck(DeckId::B, meta(2), 48000, 2, 1.0, 0);
+    cb.deck_mgr.pending_deck_mut().samples = vec![0.6; 96000];
+    cb.handle_command(AudioCommand::SeekInBuffer { position: 2000 });
+    cb.process_callback(&mut [0.0; FADE_SAMPLES]);
+    assert_eq!(cb.deck_mgr.active_deck().rating_key(), 1);
+    assert_eq!(cb.deck_mgr.active_deck().position_ms(), 2000);
+    assert!(cb.deck_mgr.pending_deck().loaded);
+}
+
+#[test]
+fn an_inaudible_seek_can_retarget_immediately_before_the_fade_in_starts() {
+    let mut cb = audible_callback();
+    cb.handle_command(AudioCommand::SeekInBuffer { position: 5000 });
+    cb.process_callback(&mut [0.0; FADE_SAMPLES]);
+    cb.handle_command(AudioCommand::SeekInBuffer { position: 2000 });
+    assert!(cb.seek_after_fade_ms.is_none());
+    assert_eq!(cb.deck_mgr.active_deck().position_ms(), 2000);
+    let mut output = [0.0; FADE_SAMPLES];
+    cb.process_callback(&mut output);
+    assert_eq!(output[0], 0.0);
+    assert!((output.last().unwrap() - 0.3).abs() < 1e-6);
 }

@@ -4,6 +4,7 @@ use sha2::{Digest, Sha256};
 
 pub(crate) struct MediaSource {
     pub(crate) request: Option<reqwest::RequestBuilder>,
+    pub(crate) plex_fetch_lock: Option<std::sync::Arc<tokio::sync::Mutex<()>>>,
     pub(crate) cache_key: String,
     pub(crate) plex_scope: Option<String>,
     pub(crate) extension: String,
@@ -49,6 +50,7 @@ impl MediaSource {
         let extension = super::cache::extract_extension(request.url().path());
         Ok(Self {
             request: Some(reqwest::RequestBuilder::from_parts(client, request)),
+            plex_fetch_lock: None,
             cache_key,
             plex_scope: plex_scope.map(str::to_owned),
             extension,
@@ -56,10 +58,15 @@ impl MediaSource {
         })
     }
 
+    pub(crate) fn with_plex_fetch_lock(mut self, lock: std::sync::Arc<tokio::sync::Mutex<()>>) -> Self {
+        self.plex_fetch_lock = Some(lock);
+        self
+    }
+
     /// Native-only admission from a verified scoped binding. No network fallback.
     pub(crate) fn cached(key: String, extension: String, scope: String,
         cache: std::sync::Arc<super::cache::AudioCache>) -> Self {
-        Self { request: None, cache_key: key, plex_scope: Some(scope), extension, local_cache: Some(cache) }
+        Self { request: None, plex_fetch_lock: None, cache_key: key, plex_scope: Some(scope), extension, local_cache: Some(cache) }
     }
 }
 

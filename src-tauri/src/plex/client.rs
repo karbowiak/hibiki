@@ -124,15 +124,10 @@ pub struct PlexClient {
     media_client: reqwest::Client,
     artwork_client: reqwest::Client,
     metadata_mutation_client: reqwest::Client,
-    /// Serializes media fetches process-wide. Plex has a bug (at least on the
-    /// versions we've tested against) where two concurrent large-body downloads
-    /// from the same client cause one in-flight transfer to be killed mid-body
-    /// with "end of file before message length reached". The standalone
-    /// integration test `probe_concurrent_two_files` can't reproduce it, but
-    /// it's 100% reproducible inside the Tauri app where the active track
-    /// fetch and preloaded next-track fetch fire back-to-back. Serializing
-    /// trades a bit of preload parallelism for reliability. The lock is
-    /// async-safe so other tokio work runs freely while a fetch holds it.
+    /// Shared by this server connection and its clones. Plex can terminate a
+    /// media response when active playback, preload, and downloads overlap.
+    /// Streaming uses bounded ranges and releases the lock between them, so
+    /// newer playback does not queue behind an entire file or retry backoff.
     fetch_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
 

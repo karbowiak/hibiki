@@ -150,6 +150,8 @@ pub struct AudioCallbackState {
     waiting_for_play: bool,
     event_request_id: u64,
     pending_seek_ms: Option<u64>,
+    /// Latest seek target; jump only after the audible output has faded out.
+    seek_after_fade_ms: Option<usize>,
     pending_play_paused: bool,
     applied_stop_revision: u64,
 
@@ -205,6 +207,7 @@ impl AudioCallbackState {
             waiting_for_play: false,
             event_request_id: 0,
             pending_seek_ms: None,
+            seek_after_fade_ms: None,
             pending_play_paused: false,
             applied_stop_revision: 0,
 
@@ -250,6 +253,7 @@ impl AudioCallbackState {
         self.drain_sample_batches();
         // Initial samples travel in LoadDeck, so loading is atomic with metadata.
         self.process_commands();
+        self.finish_seek_fade(false);
 
         self.check_decode_failure();
 
@@ -298,6 +302,8 @@ impl AudioCallbackState {
             self.check_crossfade_complete(0);
         }
 
+        self.finish_seek_fade(false);
+
         // 7. Update position atomics
         self.update_position_atomics();
 
@@ -330,6 +336,7 @@ impl AudioCallbackState {
         // A pause issued while the device is absent must not play a delayed tail.
         self.drain_sample_batches();
         self.process_commands();
+        self.finish_seek_fade(true);
         if self.paused {
             self.playback_envelope.silence();
             if self.waiting_for_play && self.is_crossfading {
@@ -360,7 +367,7 @@ impl AudioCallbackState {
                 break;
             }
             let mut frames = ((data.len() - offset) / out_ch).min(available);
-            if self.paused {
+            if self.paused || self.seek_after_fade_ms.is_some() {
                 // The envelope is applied after DSP, so account for this
                 // callback's earlier segments when locating its exact end.
                 frames = frames.min(
@@ -370,7 +377,7 @@ impl AudioCallbackState {
             }
             if self.is_crossfading {
                 frames = frames.min(self.crossfade_remaining_frames as usize);
-            } else if !self.waiting_for_play && !self.paused {
+            } else if !self.waiting_for_play && !self.paused && self.seek_after_fade_ms.is_none() {
                 let position_frames = ((active.sample_offset + active.position)
                     / active.channels.max(1) as usize) as u64;
                 if let Some(until) = self
@@ -475,6 +482,7 @@ impl AudioCallbackState {
         self.playback_envelope.silence();
         self.waiting_for_play = false;
         self.pending_seek_ms = None;
+        self.seek_after_fade_ms = None;
         self.pending_play_paused = false;
         self.set_state(EngineState::Stopped);
         let _ = self.event_tx.try_send(EngineEvent::State {
@@ -542,6 +550,7 @@ impl AudioCallbackState {
                 self.atomics.deck_b_load_id.fetch_add(1, Ordering::SeqCst);
                 self.is_crossfading = false;
                 self.waiting_for_play = false;
+                self.seek_after_fade_ms = None;
                 self.playback_envelope.silence();
                 self.atomics
                     .active_request_id
@@ -579,6 +588,9 @@ impl AudioCallbackState {
                         DeckId::A => self.atomics.deck_a_loaded_id.store(0, Ordering::SeqCst),
                         DeckId::B => self.atomics.deck_b_loaded_id.store(0, Ordering::SeqCst),
                     }
+                }
+                if self.seek_after_fade_ms.take().is_some() && !self.paused {
+                    self.playback_envelope.fade_in(self.device_sample_rate);
                 }
                 self.waiting_for_play = true;
                 self.pending_seek_ms = None;
@@ -684,7 +696,9 @@ impl AudioCallbackState {
             }
             AudioCommand::Resume => {
                 self.paused = false;
-                self.playback_envelope.fade_in(self.device_sample_rate);
+                if self.seek_after_fade_ms.is_none() {
+                    self.playback_envelope.fade_in(self.device_sample_rate);
+                }
                 if self.waiting_for_play {
                     self.pending_play_paused = false;
                 }
@@ -744,96 +758,27 @@ impl AudioCallbackState {
                 }
             }
             AudioCommand::SeekInBuffer { position } => {
-                if self.paused {
-                    self.playback_envelope.silence();
-                }
-                // `position` is encoded as milliseconds from the control thread
                 if self.waiting_for_play {
                     self.pending_seek_ms = Some(position as u64);
                     return;
                 }
-                if self.is_crossfading {
-                    self.crossfade_out_reason = TrackEndReason::Skipped;
-                    self.crossfade_remaining_frames = 0;
-                    self.check_crossfade_complete(0);
-                }
-                let duration = self
-                    .deck_mgr
-                    .active_deck()
-                    .meta
-                    .as_ref()
-                    .map_or(0, |m| m.duration_ms);
-                let position_ms = if duration > 0 {
-                    position.min(duration as usize)
+                let active = self.deck_mgr.active_deck();
+                if !self.paused && self.state() == EngineState::Playing
+                    && !self.playback_envelope.is_silent()
+                    && active.played_frames > 0 && active.position < active.samples.len()
+                {
+                    // Repeated scrubs replace the target without restarting the
+                    // fade or issuing intermediate decoder seeks.
+                    self.seek_after_fade_ms = Some(position);
+                    self.playback_envelope.fade_out(self.device_sample_rate);
                 } else {
-                    position
-                };
-                let active = self.deck_mgr.active_deck_mut();
-                if active.loaded && active.channels > 0 && active.sample_rate > 0 {
-                    let target_sample = ((position_ms as u128 * active.sample_rate as u128 / 1000)
-                        * active.channels as u128)
-                        .min(usize::MAX as u128) as usize;
-
-                    let buffer_end = active.sample_offset + active.samples.len();
-                    let in_buffer =
-                        target_sample >= active.sample_offset && target_sample <= buffer_end;
-
-                    if in_buffer {
-                        active.position = target_sample - active.sample_offset;
-                    } else if active.seek_tx.is_some() {
-                        // Beyond buffer — need bg decode to seek
-                        let out_ch = active.channels as usize;
-                        let new_offset = (position_ms as f64 / 1000.0
-                            * self.device_sample_rate as f64
-                            * out_ch as f64) as usize;
-                        let new_gen = active.generation + 1;
-                        active.samples.clear();
-                        active.sample_offset = new_offset;
-                        active.position = 0;
-                        active.fully_decoded = false;
-                        active.generation = new_gen;
-
-                        // Each decoder has its own mailbox. Reusing a physical
-                        // deck cannot let an obsolete worker consume a new seek.
-                        let seek = super::command::SeekRequest {
-                            position_ms: position_ms as u64,
-                            generation: new_gen,
-                        };
-                        if active.seek_tx.as_ref().unwrap().try_send(seek).is_err() {
-                            active.decode_error =
-                                Some("The audio decoder is unavailable for seeking".into());
-                        }
-                        match self.deck_mgr.active_id() {
-                            DeckId::A => self
-                                .atomics
-                                .deck_a_generation
-                                .store(new_gen, Ordering::SeqCst),
-                            DeckId::B => self
-                                .atomics
-                                .deck_b_generation
-                                .store(new_gen, Ordering::SeqCst),
-                        }
-
-                        self.set_state(if self.paused {
-                            EngineState::Paused
-                        } else {
-                            EngineState::Buffering
-                        });
-                        let _ = self.event_tx.try_send(EngineEvent::State {
-                            request_id: self.event_request_id,
-                            state: if self.paused { "paused" } else { "buffering" }.into(),
-                        });
-                    } else {
-                        // Fully decoded — clamp to buffer bounds
-                        let clamped = target_sample
-                            .saturating_sub(active.sample_offset)
-                            .min(active.samples.len());
-                        active.position = clamped;
+                    self.seek_after_fade_ms = None;
+                    self.playback_envelope.silence();
+                    self.apply_seek(position);
+                    if !self.paused {
+                        self.playback_envelope.fade_in(self.device_sample_rate);
                     }
                 }
-                self.dsp_chain.reset();
-                self.scheduler.reset();
-                self.compute_and_set_schedule();
             }
             AudioCommand::SetVolume(gain) => {
                 if let Some(saved) = self.duck_saved_volume.as_mut() {
@@ -1021,12 +966,120 @@ impl AudioCallbackState {
         self.compute_and_set_schedule();
     }
 
+    /// The envelope advances with rendered PCM, so a stalled decoder or missing
+    /// output device must not leave a seek waiting for a fade that cannot run.
+    fn finish_seek_fade(&mut self, no_output: bool) {
+        if self.seek_after_fade_ms.is_none() {
+            return;
+        }
+        let active = self.deck_mgr.active_deck();
+        if no_output || !self.playback_envelope.is_fading_out()
+            || active.position >= active.samples.len()
+        {
+            let position = self.seek_after_fade_ms.take().unwrap();
+            self.playback_envelope.silence();
+            self.apply_seek(position);
+            if !self.paused {
+                // This fade stays at zero during buffering and starts only
+                // when samples from the new position reach the output.
+                self.playback_envelope.fade_in(self.device_sample_rate);
+            }
+        }
+    }
+
+    /// Apply a seek at silence (or while paused), then reset source-clock DSP.
+    fn apply_seek(&mut self, position: usize) {
+        if self.is_crossfading {
+            self.crossfade_out_reason = TrackEndReason::Skipped;
+            self.crossfade_remaining_frames = 0;
+            self.check_crossfade_complete(0);
+        }
+        let duration = self
+            .deck_mgr
+            .active_deck()
+            .meta
+            .as_ref()
+            .map_or(0, |m| m.duration_ms);
+        let position_ms = if duration > 0 {
+            position.min(duration as usize)
+        } else {
+            position
+        };
+        let active = self.deck_mgr.active_deck_mut();
+        if active.loaded && active.channels > 0 && active.sample_rate > 0 {
+            let target_sample = ((position_ms as u128 * active.sample_rate as u128 / 1000)
+                * active.channels as u128)
+                .min(usize::MAX as u128) as usize;
+
+            let buffer_end = active.sample_offset + active.samples.len();
+            let in_buffer =
+                target_sample >= active.sample_offset && target_sample <= buffer_end;
+
+            if in_buffer {
+                active.position = target_sample - active.sample_offset;
+            } else if active.seek_tx.is_some() {
+                // Beyond buffer — need bg decode to seek
+                let out_ch = active.channels as usize;
+                let new_offset = (position_ms as f64 / 1000.0
+                    * self.device_sample_rate as f64
+                    * out_ch as f64) as usize;
+                let new_gen = active.generation + 1;
+                active.samples.clear();
+                active.sample_offset = new_offset;
+                active.position = 0;
+                active.fully_decoded = false;
+                active.generation = new_gen;
+
+                // Each decoder has its own mailbox. Reusing a physical
+                // deck cannot let an obsolete worker consume a new seek.
+                let seek = super::command::SeekRequest {
+                    position_ms: position_ms as u64,
+                    generation: new_gen,
+                };
+                if active.seek_tx.as_ref().unwrap().try_send(seek).is_err() {
+                    active.decode_error =
+                        Some("The audio decoder is unavailable for seeking".into());
+                }
+                match self.deck_mgr.active_id() {
+                    DeckId::A => self
+                        .atomics
+                        .deck_a_generation
+                        .store(new_gen, Ordering::SeqCst),
+                    DeckId::B => self
+                        .atomics
+                        .deck_b_generation
+                        .store(new_gen, Ordering::SeqCst),
+                }
+
+                self.set_state(if self.paused {
+                    EngineState::Paused
+                } else {
+                    EngineState::Buffering
+                });
+                let _ = self.event_tx.try_send(EngineEvent::State {
+                    request_id: self.event_request_id,
+                    state: if self.paused { "paused" } else { "buffering" }.into(),
+                });
+            } else {
+                // Fully decoded — clamp to buffer bounds
+                let clamped = target_sample
+                    .saturating_sub(active.sample_offset)
+                    .min(active.samples.len());
+                active.position = clamped;
+            }
+        }
+        self.dsp_chain.reset();
+        self.scheduler.reset();
+        self.compute_and_set_schedule();
+    }
+
     // -----------------------------------------------------------------------
     // Scheduler
     // -----------------------------------------------------------------------
 
     fn tick_scheduler(&mut self) {
-        if self.waiting_for_play || self.paused || self.state() != EngineState::Playing {
+        if self.waiting_for_play || self.seek_after_fade_ms.is_some()
+            || self.paused || self.state() != EngineState::Playing {
             return;
         }
 

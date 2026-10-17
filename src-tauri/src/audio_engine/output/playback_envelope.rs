@@ -53,6 +53,10 @@ impl PlaybackEnvelope {
         self.frames.saturating_sub(self.position)
     }
 
+    pub fn is_silent(&self) -> bool {
+        self.gain == 0.0
+    }
+
     pub fn is_fading_out(&self) -> bool {
         self.target == 0.0 && self.remaining_frames() > 0
     }

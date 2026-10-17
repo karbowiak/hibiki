@@ -1389,6 +1389,7 @@ fn fetch_and_decode_incremental(
     let declared_cache_size = cache_writer.as_ref().map(|writer| writer.declared_size());
     let cache_for_task = cache.clone();
     let request = request.clone();
+    let plex_fetch_lock = source.plex_fetch_lock.clone();
 
     let shared_buf = rt.block_on(async {
         let shared = SharedBuffer::new(None).map_err(|error| format!("Cannot create audio spool: {error}"))?;
@@ -1416,9 +1417,12 @@ fn fetch_and_decode_incremental(
                         }
                         Ok(())
                     },
+                    plex_fetch_lock.as_deref(),
                 ).await;
                 if let Err(error) = result {
-                    tracing::warn!(%error, "media transfer failed");
+                    if request.is_current() {
+                        tracing::warn!(rating_key, %error, "media transfer failed");
+                    }
                     shared_w.abort();
                     return; // Dropping the writer removes its incomplete file.
                 }

@@ -170,7 +170,7 @@ impl PlexState {
             send(crate::audio_engine::source::MediaSource::new(
                 client.media_request(url),
                 Some(&client.library_scope),
-            )?)
+            )?.with_plex_fetch_lock(client.media_fetch_lock()))
         } else {
             // Public episodes never inherit a same-host Plex token/TLS exception.
             send(crate::audio_engine::source::MediaSource::new(
@@ -2949,6 +2949,7 @@ mod connection_tests {
             state
                 .dispatch_audio(context, url, |source| {
                     assert_ne!(source.cache_key, key);
+                    assert_eq!(source.plex_fetch_lock.is_some(), context.is_some());
                     assert!(cache.lookup(&source.cache_key).is_none());
                     assert_eq!(cache.get_computed_gain(&source.cache_key), None);
                     let request = source.request.unwrap().build().unwrap();
