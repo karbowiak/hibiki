@@ -1,12 +1,11 @@
 import assert from "node:assert/strict"
-import { mkdtemp, mkdir, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { mkdir } from "node:fs/promises"
 import { resolve, join, relative } from "node:path"
-import { build } from "vite"
+import { fixtureBuild, disposeFixture, launchFixtureBrowser } from "./lib/browserFixtures"
 import { chromium, webkit } from "playwright"
 
 const root = resolve(import.meta.dir, "..")
-const output = await mkdtemp(join(tmpdir(), "hibiki-renderer-"))
+const output = await fixtureBuild(["index.html", "tests/fixtures/renderer/index.html"])
 const config = await Bun.file(resolve(root, "src-tauri/tauri.conf.json")).json()
 const policy = config.app.security.csp
 const csp =
@@ -50,22 +49,7 @@ const font = await Bun.file(
 const unexpectedRequests: string[] = []
 
 try {
-  await build({
-    root,
-    configFile: resolve(root, "vite.config.ts"),
-    logLevel: "error",
-    build: {
-      outDir: output,
-      emptyOutDir: true,
-      sourcemap: false,
-      rolldownOptions: {
-        input: [
-          resolve(root, "index.html"),
-          resolve(root, "tests/fixtures/renderer/index.html"),
-        ],
-      },
-    },
-  })
+
   const certificate = join(output, "fixture-cert.pem")
   const key = join(output, "fixture-key.pem")
   const certificateProcess = Bun.spawn(
@@ -148,17 +132,7 @@ try {
         name === "chromium" || name === "webkit",
         `Unknown renderer ${name}`
       )
-      const browser = await (name === "chromium" ? chromium : webkit).launch({
-        headless: true,
-        // CI has no physical GPU. Exercise WebGL through Chromium's software GL
-        // driver, only in these isolated fixtures; the desktop app uses its GPU.
-        ...(name === "chromium" && process.env.LIBGL_ALWAYS_SOFTWARE === "1"
-          ? { args: ["--use-gl=angle", "--use-angle=swiftshader"] }
-          : {}),
-        ...(name === "chromium" && process.env.HIBIKI_CHROME_CHANNEL
-          ? { channel: process.env.HIBIKI_CHROME_CHANNEL }
-          : {}),
-      })
+      const browser = await launchFixtureBrowser(name === "chromium" ? chromium : webkit, true)
       try {
         const context = await browser.newContext({
           viewport: { width: 1400, height: 890 },
@@ -672,5 +646,5 @@ try {
     wssServer.stop(true)
   }
 } finally {
-  await rm(output, { recursive: true, force: true })
+  await disposeFixture(output)
 }

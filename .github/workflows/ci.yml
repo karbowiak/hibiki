@@ -28,34 +28,10 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Install isolated renderer test browsers
         run: bunx --no-install playwright install --with-deps chromium webkit
-      - name: Check production renderer features and CSP enforcement
+      - name: Check renderer security, layouts and interactions
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run bun run test:renderer
-      - name: Check library layouts and keyboard focus
-        env:
-          LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run bun scripts/check-library-layout.ts
-      - name: Check personalized search discovery and keyboard navigation
-        env:
-          LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run bun run test:search-discovery
-      - name: Check notification interactions and layouts
-        env:
-          LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run bun run test:notifications
-      - name: Check virtual collections and persistent queue
-        env:
-          LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run bun scripts/check-virtual-collections.ts
-      - name: Check playlist information and quick hover panels
-        env:
-          LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run bun scripts/check-playlist-information.ts
-      - name: Check appearance settings and detail interactions
-        env:
-          LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run bun run test:appearance
+        run: xvfb-run bun run test:browsers
       - name: Upload renderer layout failure screenshots
         if: failure()
         uses: actions/upload-artifact@v7

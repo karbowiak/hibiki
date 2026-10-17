@@ -1,15 +1,14 @@
 import assert from "node:assert/strict"
-import { mkdtemp, mkdir, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { mkdir } from "node:fs/promises"
 import { join, resolve } from "node:path"
-import { build } from "vite"
+import { fixtureBuild, disposeFixture, fixtureFile, launchFixtureBrowser } from "./lib/browserFixtures"
 import { chromium, webkit, type Page } from "playwright"
 import { podcastFeedPath } from "../src/lib/podcastRoute"
 import { artworkContrast } from "../src/lib/artworkTone"
 
 // Real components and stores, disposable preferences and playback, no account I/O.
 const root = resolve(import.meta.dir, "..")
-const output = await mkdtemp(join(tmpdir(), "hibiki-appearance-"))
+const output = await fixtureBuild(["tests/fixtures/libraryLayout/index.html"], "windows")
 const artifacts = resolve(root, ".tmp/appearance-checks")
 let artworkGate: Promise<void> | null = null
 async function checkPlaybackQuality(page: Page, name: string) {
@@ -636,18 +635,7 @@ const fallbackFont = await Bun.file(
 ).bytes()
 let server: ReturnType<typeof Bun.serve> | undefined
 try {
-  await build({
-    root,
-    configFile: resolve(root, "vite.config.ts"),
-    logLevel: "error",
-    build: {
-      outDir: output,
-      emptyOutDir: true,
-      rolldownOptions: {
-        input: resolve(root, "tests/fixtures/libraryLayout/index.html"),
-      },
-    },
-  })
+
   server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -664,13 +652,7 @@ try {
           `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="480"><rect width="480" height="480" fill="${path.includes("replacement") ? "#0891b2" : path.includes("next") ? "#f97316" : "#7c3aed"}"/></svg>`,
           { headers: { "Content-Type": "image/svg+xml" } }
         )
-      const filePath = resolve(output, `.${path}`)
-      if (!filePath.startsWith(`${output}/`))
-        return new Response(null, { status: 404 })
-      const file = Bun.file(filePath)
-      return (await file.exists())
-        ? new Response(file)
-        : new Response(null, { status: 404 })
+      return fixtureFile(output,path)
     },
   })
   const origin = `http://127.0.0.1:${server.port}`
@@ -679,7 +661,7 @@ try {
     ["webkit", webkit],
   ] as const) {
     if (process.argv.includes("--webkit-only") && name !== "webkit") continue
-    const browser = await type.launch({ headless: true })
+    const browser = await launchFixtureBrowser(type)
     try {
       const context = await browser.newContext()
       await context.route("**/*", async (route) => {
@@ -1543,5 +1525,5 @@ try {
   if (previousPlatform === undefined) delete process.env.TAURI_ENV_PLATFORM
   else process.env.TAURI_ENV_PLATFORM = previousPlatform
   server?.stop(true)
-  await rm(output, { recursive: true, force: true })
+  await disposeFixture(output)
 }

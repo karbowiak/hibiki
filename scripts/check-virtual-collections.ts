@@ -1,27 +1,15 @@
 import assert from "node:assert/strict"
-import { mkdtemp, mkdir, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { mkdir } from "node:fs/promises"
 import { join, resolve } from "node:path"
-import { build } from "vite"
+import { fixtureBuild, disposeFixture, fixtureFile, launchFixtureBrowser } from "./lib/browserFixtures"
 import { chromium, webkit } from "playwright"
 const root = resolve(import.meta.dir, "..")
-const output = await mkdtemp(join(tmpdir(), "hibiki-virtual-"))
+const output = await fixtureBuild(["tests/fixtures/libraryLayout/index.html"])
 const artifacts = resolve(root, ".tmp/virtual-checks")
 await mkdir(artifacts, { recursive: true })
 let server: ReturnType<typeof Bun.serve> | undefined
 try {
-  await build({
-    root,
-    configFile: resolve(root, "vite.config.ts"),
-    logLevel: "error",
-    build: {
-      outDir: output,
-      emptyOutDir: true,
-      rolldownOptions: {
-        input: resolve(root, "tests/fixtures/libraryLayout/index.html"),
-      },
-    },
-  })
+
   server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -32,17 +20,14 @@ try {
           '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"><rect width="400" height="400" fill="#234"/></svg>',
           { headers: { "Content-Type": "image/svg+xml" } }
         )
-      const file = resolve(output, "." + path)
-      return file.startsWith(output + "/") && (await Bun.file(file).exists())
-        ? new Response(Bun.file(file))
-        : new Response("Not found", { status: 404 })
+      return fixtureFile(output,path)
     },
   })
   for (const [name, type] of [
     ["chrome", chromium],
     ["webkit", webkit],
   ] as const) {
-    const browser = await type.launch({ headless: true })
+    const browser = await launchFixtureBrowser(type)
     try {
       const page = await browser.newPage({
         viewport: { width: 1440, height: 900 },
@@ -439,5 +424,5 @@ try {
   }
 } finally {
   server?.stop(true)
-  await rm(output, { recursive: true, force: true })
+  await disposeFixture(output)
 }
