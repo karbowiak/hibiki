@@ -14,7 +14,7 @@ import type { MusicTrack } from "../types/music"
 import type { LevelData, LyricLineData } from "../providers/types"
 import { useProviderStore } from "./providerStore"
 import { useNotificationStore } from "./notificationStore"
-import { PlaybackMetadata } from "../audio/playbackMetadata"
+import { playbackMetadata } from "../audio/playbackMetadata"
 import { advancePlaybackSelection, capturePlaybackSelectionVersion } from "../lib/playbackSelection"
 import type { QueueLoadOptions } from "../lib/queueHydration"
 import { sendNotification } from "@tauri-apps/plugin-notification"
@@ -159,7 +159,6 @@ function getProvider() {
 // Audio prefetch — module-level dedup set
 // ---------------------------------------------------------------------------
 
-const playbackMetadata = new PlaybackMetadata()
 let _activeTrackGeneration = 0
 let _playbackErrorRevision = 0
 

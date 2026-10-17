@@ -9,6 +9,7 @@ import { useDebugStore } from "../stores/debugStore"
 import { transitionRows } from "../audio/transitionInfo"
 import { formatAudioQuality, playbackAudioQuality } from "../lib/audioQuality"
 import "../styles/trackInfo.css"
+import { playbackMetadata } from "../audio/playbackMetadata"
 interface Props {
   onClose: () => void
 }
@@ -38,8 +39,8 @@ export default function TrackInfoPanel({ onClose }: Props) {
     if (!currentTrack) return
     if (!provider) return
     let cancelled = false
-    provider
-      .getTrack(currentTrack.id)
+    playbackMetadata
+      .fullTrack(provider, currentTrack.id)
       .then((t) => {
         if (!cancelled) setFullTrack(t)
       })

@@ -159,6 +159,18 @@ test("transient failures remain retryable and do not become permanent unknown-ga
   expect(calls).toBe(2)
 })
 
+test("metadata edits invalidate shared full tracks and pending pre-edit responses", async () => {
+  const cache = new PlaybackMetadata(), pending = deferred<MusicTrack>()
+  const p = provider("edited", { getTrack: mock(() => pending.promise) })
+  const stale = cache.fullTrack(p, "1").catch(error => error)
+  cache.invalidate(p)
+  p.getTrack = mock(async id => track(id, -8, -10, 99))
+  expect(await cache.streamId(p, track("1"))).toBe(99)
+  pending.resolve(track("1", -3, -5, 12))
+  expect(await stale).toBeInstanceOf(Error)
+  expect(await cache.streamId(p, track("1"))).toBe(99)
+})
+
 test("hover URL resolution shares requests and retries failures rather than poisoning a permanent dedup set", async () => {
   let calls = 0
   const cache = new PlaybackMetadata(),
