@@ -2,7 +2,7 @@ import { useCallback } from "react"
 import { useLocation } from "wouter"
 import { youtubeMusicContext } from "../backends/ytmusic/contextActions"
 import { useProviderStore } from "../stores/providerStore"
-import { useContextMenuStore, type MediaContextMenuType, type ContextActionsData } from "../stores/contextMenuStore"
+import { useContextMenuStore, type MediaContextMenuType, type ContextActionsData, type ContextAction } from "../stores/contextMenuStore"
 import type { MusicTrack, MusicAlbum, MusicArtist, MusicPlaylist, MusicItem } from "../types/music"
 import { originalYoutubeMusicItem, type YoutubeMusicItem } from "../backends/ytmusic/discovery"
 
@@ -25,7 +25,7 @@ export function useContextMenu() {
   const targetId = useContextMenuStore(s => (s.data as any)?.id ?? null)
 
   const handler = useCallback(
-    (type: MediaContextMenuType, data: ContextMenuData, playlistId?: string | null) =>
+    (type: MediaContextMenuType, data: ContextMenuData, playlistId?: string | null, extraActions: readonly ContextAction[] = []) =>
       (e: React.MouseEvent) => {
         e.preventDefault()
         e.stopPropagation()
@@ -43,12 +43,13 @@ export function useContextMenu() {
             thumbnail: null, duration: null, year: "year" in data ? data.year : null,
             artistId: "artistId" in data && data.artistId?.startsWith("ytmusic:") ? data.artistId.slice(8) : null,
           }
+          const actions = youtubeMusicContext(type === "track" ? data as MusicTrack : item, navigate)
           showActions(keyboard ? bounds.left : e.clientX, keyboard ? bounds.bottom : e.clientY,
-            youtubeMusicContext(type === "track" ? data as MusicTrack : item, navigate))
+            { ...actions, actions: [...actions.actions, ...extraActions] })
           return
         }
         if (!provider) return
-        show(keyboard ? bounds.left : e.clientX, keyboard ? bounds.bottom : e.clientY, type, data, playlistId)
+        show(keyboard ? bounds.left : e.clientX, keyboard ? bounds.bottom : e.clientY, type, data, playlistId, extraActions)
       },
     [show, showActions, provider, scope, navigate],
   )

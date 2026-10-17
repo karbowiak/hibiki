@@ -471,6 +471,9 @@ export function ContextMenu() {
                 label={action.label}
                 disabled={action.disabled || !!pendingLabel}
                 onClick={() => void invokeAction(action)} />
+              {actionData.ratingTrack && action.section === "playback" && actionData.actions[index + 1]?.section !== "playback" &&
+                <StarRating itemId={actionData.ratingTrack.id} musicTrack={actionData.ratingTrack} userRating={null}
+                  artist={actionData.ratingTrack.artistName} track={actionData.ratingTrack.title} onRated={() => {}} />}
             </Fragment>
           ))}
           {actionsError && (

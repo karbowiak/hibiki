@@ -138,6 +138,22 @@ impl Cache {
         }).await;
     }
 
+    pub async fn playlist_changed(&self, directory: PathBuf, playlist_id: String) {
+        self.disk.epoch.fetch_add(1, Ordering::SeqCst);
+        let disk = self.disk.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            let Ok(_guard) = disk.io.lock() else { return; };
+            let Ok(files) = std::fs::read_dir(&directory) else { return; };
+            for file in files.filter_map(Result::ok) {
+                let path = file.path();
+                if path.extension().and_then(|ext| ext.to_str()) != Some("json") { continue; }
+                if read_entry(&path).is_some_and(|entry| entry.browse_id == playlist_id || entry.browse_id == "FEmusic_liked_playlists") {
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+        }).await;
+    }
+
     pub async fn clear(&self, directory: PathBuf) {
         self.disk.epoch.fetch_add(1, Ordering::SeqCst);
         self.retries.lock().unwrap_or_else(|error| error.into_inner()).clear();

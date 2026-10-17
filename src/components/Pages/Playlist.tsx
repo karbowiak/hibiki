@@ -2,6 +2,7 @@ import { collectionPlaybackSource, selectCollectionTrack } from "../../lib/colle
 import { filterTracks, sortTracks, type TrackSortColumn } from "../../lib/trackOrder"
 import { useEntityDownloadStatus } from "../shared/DownloadBadge"
 import { PlaylistInformationDialog } from "../PlaylistInformationDialog"
+import { MixedPlaylistControl } from "../MixedPlaylistControl"
 import { IconInfoCircle } from "@tabler/icons-react"
 import { MetadataEditDialog } from "../shared/MetadataEditDialog"
 import { LinkedPlaylistManager } from "../PlaylistSync/LinkedPlaylistManager"
@@ -449,6 +450,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                   </svg>
                   Radio
                 </button>
+                {!currentPlaylist.smart && <MixedPlaylistControl alias={playlistId} />}
 
                 <button
                   type="button"

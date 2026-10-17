@@ -35,6 +35,16 @@ pub(crate) struct Context {
     visitor: String,
     account: String,
     delegated: Option<String>,
+    data_sync_id: Option<String>,
+}
+
+impl Context {
+    /// Stable account/brand identity, never a cookie or a session index. Only an
+    /// opaque digest is exposed to the trusted client for durable local records.
+    pub(super) fn identity(&self) -> Option<String> {
+        let id = self.data_sync_id.as_deref().filter(|id| !id.trim().is_empty())?;
+        Some(hex::encode(Sha1::digest(format!("hibiki-ytmusic-account-v1:{id}:{}", self.delegated.as_deref().unwrap_or("")).as_bytes())))
+    }
 }
 
 pub(super) async fn context(app: &tauri::AppHandle) -> Result<Context, Failure> {
@@ -54,6 +64,7 @@ pub(super) async fn context(app: &tauri::AppHandle) -> Result<Context, Failure> 
         if (!c || typeof c.get !== 'function') return null;
         return { loggedIn: c.get('LOGGED_IN'), context: c.get('INNERTUBE_CONTEXT'),
           visitor: c.get('VISITOR_DATA'), account: c.get('SESSION_INDEX'),
+          dataSyncId: c.get('DATASYNC_ID'),
           delegated: c.get('DELEGATED_SESSION_ID'), userAgent: navigator.userAgent };
     })()"#,
             move |value| {
@@ -97,6 +108,7 @@ pub(super) async fn context(app: &tauri::AppHandle) -> Result<Context, Failure> 
         visitor: value["visitor"].as_str().unwrap_or_default().to_owned(),
         delegated: value["delegated"].as_str().map(str::to_owned),
         account,
+        data_sync_id: value["dataSyncId"].as_str().map(str::to_owned),
     })
 }
 
@@ -120,7 +132,7 @@ pub(super) async fn request(
     Ok(request_with_policy(context, cookies, endpoint, body, 15 * 60).await?.value)
 }
 
-pub(crate) async fn set_song_like(app: &tauri::AppHandle, video_id: &str, liked: bool) -> Result<(), String> {
+pub(crate) async fn set_song_like(app: &tauri::AppHandle, video_id: &str, liked: bool, expected_account: Option<&str>) -> Result<(), String> {
     if !valid_video_id(video_id) { return Err("Choose a valid YouTube Music song.".into()); }
     let state = app.state::<Arc<YoutubeMusic>>();
     let generation = state.generation()?;
@@ -130,6 +142,9 @@ pub(crate) async fn set_song_like(app: &tauri::AppHandle, video_id: &str, liked:
     let epoch = state.discovery_cache.epoch();
     let cookies = session::cookies(app).await?;
     let context = context(app).await.map_err(|failure| if failure.auth { failure.report(app, generation) } else { failure.message.into() })?;
+    if expected_account.is_some_and(|expected| context.identity().as_deref() != Some(expected)) {
+        return Err("YouTube Music account changed. Reconnect the original account to save this like.".into());
+    }
     let response = request(&context, &cookies, if liked { "like/like" } else { "like/removelike" },
         json!({ "target": { "videoId": video_id } })).await
         .map_err(|failure| if failure.auth { failure.report(app, generation) } else { failure.message.into() })?;

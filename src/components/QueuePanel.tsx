@@ -43,6 +43,7 @@ import { ensureQueueRange } from "../stores/playerStore"
 import { isQueuePlaceholder, queueMemberKey } from "../lib/queueSession"
 import { MusicSourceBadge, trackMusicSource, type MusicSource } from "./shared/MusicSource"
 import { YoutubeMusicLikeButton } from "./shared/YoutubeMusicLikeButton"
+import { QueuePlaylistDrag } from "./QueuePlaylistDrag"
 
 /* ------------------------------------------------------------------ */
 /*  Track row shared between Played / Now Playing / Next Up           */
@@ -138,6 +139,7 @@ function PlayedRow({
       <span className="shrink-0 text-xs tabular-nums text-(--text-muted)">
         {formatMs(durationMs)}
       </span>
+      {track && <QueuePlaylistDrag track={track} />}
       {track && <YoutubeMusicLikeButton track={track} />}
       <span className="queue-remove-spacer" aria-hidden="true" />
     </div>
@@ -200,6 +202,7 @@ function NowPlayingRow({
       <span className="shrink-0 text-xs tabular-nums text-(--text-muted)">
         {formatMs(durationMs)}
       </span>
+      {track && <QueuePlaylistDrag track={track} />}
       {track && <YoutubeMusicLikeButton track={track} eager />}
       <span className="queue-remove-spacer" aria-hidden="true" />
     </div>
@@ -315,6 +318,7 @@ function SortableUpcomingItem({
         {formatMs(durationMs)}
       </span>
 
+      {track && <QueuePlaylistDrag track={track} />}
       {track && <YoutubeMusicLikeButton track={track} />}
       <button
         className="queue-remove-button shrink-0 text-(--text-muted) opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 hover:text-(--text-primary) focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"

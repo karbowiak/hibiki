@@ -249,11 +249,34 @@ pub(crate) async fn check(app: &tauri::AppHandle, generation: u64) -> Result<(),
         return Ok(());
     }
     match api::verify(app, &cookies).await {
-        Ok(_) => {
+        Ok(context) => {
             if !state.owns(generation) {
                 return Err("YouTube Music session changed.".into());
             }
-            state.update(app, generation, |current| {
+            let identity = context.identity();
+            let marker = app.path().app_config_dir().ok().map(|directory| directory.join("youtube-music-cache-account"));
+            let saved_identity = marker.as_ref().and_then(|path| std::fs::read_to_string(path).ok());
+            let switched = state.current.lock().is_ok_and(|current|
+                current.status.account_id.is_some() && current.status.account_id != identity) ||
+                saved_identity.as_ref().is_some_and(|old| Some(old.as_str()) != identity.as_deref());
+            let verified_generation = if switched {
+                let mut current = state.current.lock().map_err(|_| "YouTube Music session unavailable.")?;
+                if current.generation != generation { return Err("YouTube Music session changed.".into()); }
+                current.generation += 1;
+                current.generation
+            } else { generation };
+            if switched {
+                playback::forget_cache_owner(app);
+                if let Ok(directory) = app.path().app_cache_dir() {
+                    state.discovery_cache.clear(directory.join("ytmusic-discovery")).await;
+                }
+            }
+            if let (Some(path), Some(identity)) = (marker, identity.as_ref()) {
+                std::fs::create_dir_all(path.parent().unwrap()).map_err(|_| "Could not retain the YouTube Music account identity.")?;
+                std::fs::write(path, identity).map_err(|_| "Could not retain the YouTube Music account identity.")?;
+            }
+            state.update(app, verified_generation, |current| {
+                current.status.account_id = identity;
                 current.status.phase = Phase::Connected;
                 current.status.message = None;
                 current.status.last_checked_at = Some(now());

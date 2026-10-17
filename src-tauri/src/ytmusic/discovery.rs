@@ -34,6 +34,8 @@ pub struct Item {
     pub view_count: Option<u64>,
     #[serde(default)]
     pub liked: Option<bool>,
+    #[serde(default)]
+    pub playlist_item_id: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -57,13 +59,15 @@ pub struct Shelf {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowsePage {
-    title: String,
+    pub(super) title: String,
     pub(super) items: Vec<Item>,
     hubs: Vec<Shelf>,
-    continuation: Option<String>,
+    pub(super) continuation: Option<String>,
     thumbnail: Option<String>,
     description: Option<String>,
     artist: Option<Artist>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lyrics: Option<super::lyrics::Lyrics>,
 }
 
 impl BrowsePage {
@@ -99,7 +103,7 @@ fn text(value: &Value) -> String {
         value["runs"].as_array().map(|runs| runs.iter().filter_map(|run| run["text"].as_str()).collect()).unwrap_or_default())
 }
 
-fn find<'a>(value: &'a Value, key: &str, depth: usize) -> Option<&'a Value> {
+pub(super) fn find<'a>(value: &'a Value, key: &str, depth: usize) -> Option<&'a Value> {
     if depth > 40 { return None; }
     match value {
         Value::Object(map) => map.get(key).or_else(|| map.values().find_map(|value| find(value, key, depth + 1))),
@@ -194,7 +198,7 @@ fn card(value: &Value, collection: bool, live: bool) -> Option<Item> {
         return Some(Item { id: id.into(), kind: "song".into(), title,
             description: text(&panel["longBylineText"]), artist, artist_credits, thumbnail: thumbnail(panel),
             duration: Some(text(&panel["lengthText"])).filter(|value| !value.is_empty()), album, year: None, release_date: None, track_count: None,
-            album_id, artist_id, track_number: None, explicit: None, view_count: None, liked: liked(panel) });
+            album_id, artist_id, track_number: None, explicit: None, view_count: None, liked: liked(panel), playlist_item_id: None });
     }
     let flat = value.get("musicResponsiveListItemRenderer");
     let item = flat.or_else(|| value.get("musicTwoRowItemRenderer"))
@@ -300,7 +304,8 @@ fn card(value: &Value, collection: bool, live: bool) -> Option<Item> {
     let track_number = item.get("index").map(text).and_then(|text| text.parse::<u32>().ok());
     let view_count = item.get("viewCount").and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok()));
     Some(Item { id, kind: kind.into(), title, description: text(subtitle), artist: artists.join(", "), artist_credits, thumbnail: thumbnail(item), duration, album, year, release_date, track_count,
-        album_id, artist_id, track_number, explicit, view_count, liked: liked(item) })
+        album_id, artist_id, track_number, explicit, view_count, liked: liked(item),
+        playlist_item_id: item.pointer("/playlistItemData/playlistSetVideoId").or_else(|| find(item, "setVideoId", 0)).and_then(Value::as_str).map(str::to_owned) })
 }
 
 fn items(value: &Value, output: &mut Vec<Item>, collection: bool, depth: usize) {
@@ -376,7 +381,7 @@ fn shelves(value: &Value, output: &mut Vec<Shelf>, depth: usize) {
     }
 }
 
-fn parse(response: &Value, home: bool, album: bool, performances: bool) -> BrowsePage {
+pub(super) fn parse(response: &Value, home: bool, album: bool, performances: bool) -> BrowsePage {
     let mut hubs = Vec::new();
     if home { shelves(response, &mut hubs, 0); }
     let mut contents = Vec::new();
@@ -411,7 +416,7 @@ fn parse(response: &Value, home: bool, album: bool, performances: bool) -> Brows
         }
     }
     let description = find(header, "description", 0).or_else(|| find(header, "descriptionText", 0)).map(text).filter(|text| !text.is_empty());
-    BrowsePage { title, items: contents, hubs, continuation: next, thumbnail: cover, description, artist: None }
+    BrowsePage { title, items: contents, hubs, continuation: next, thumbnail: cover, description, artist: None, lyrics: None }
 }
 
 fn artist_category(title: &str) -> &'static str {
@@ -534,7 +539,7 @@ pub async fn browse(app: &tauri::AppHandle, id: &str, params: Option<&str>, toke
         return Err("Invalid YouTube Music collection.".into());
     }
     let search = matches!(id, "hibiki_artist_search" | "hibiki_song_search" | "hibiki_search");
-    if matches!(id, "hibiki_song_like" | "hibiki_song_metadata") && (params.is_none_or(|id| !api::valid_video_id(id)) || token.is_some()) {
+    if matches!(id, "hibiki_song_like" | "hibiki_song_metadata" | "hibiki_song_lyrics") && (params.is_none_or(|id| !api::valid_video_id(id)) || token.is_some()) {
         return Err("Choose a valid YouTube Music song.".into());
     }
     if search && (params.is_none_or(|query| query.trim().is_empty() || query.len() > 500) || token.is_some()) {
@@ -601,6 +606,7 @@ async fn fetch(app: &tauri::AppHandle, request: &CatalogRequest) -> Result<Brows
     let general_search = id == "hibiki_search";
     let song_like = id == "hibiki_song_like";
     let song_metadata = id == "hibiki_song_metadata";
+    let song_lyrics = id == "hibiki_song_lyrics";
     let cookies = session::cookies(app).await?;
     let context = api::context(app).await.map_err(|e| if e.auth { e.report(app, generation) } else { e.message.into() })?;
     // Personalized watch mixes are queues, rather than browseable library playlists.
@@ -611,7 +617,7 @@ async fn fetch(app: &tauri::AppHandle, request: &CatalogRequest) -> Result<Brows
     if let Some(video_id) = id.strip_prefix("VLRDAMVM").filter(|id| api::valid_video_id(id)) {
         body["videoId"] = json!(video_id);
     }
-    if song_like || song_metadata {
+    if song_like || song_metadata || song_lyrics {
         body = json!({ "videoId": params.unwrap_or_default(), "playlistId": format!("RDAMVM{}", params.unwrap_or_default()),
             "isAudioOnly": true, "enablePersistentPlaylistPanel": true });
     } else if general_search {
@@ -625,10 +631,18 @@ async fn fetch(app: &tauri::AppHandle, request: &CatalogRequest) -> Result<Brows
     if let Some(token) = token { body["continuation"] = json!(token); }
     let fallback_ttl = if id.starts_with("UC") || id.starts_with("MPRE") { 6 * 3600 }
         else if radio || matches!(id, "FEmusic_home" | "FEmusic_history") { 5 * 60 } else { 15 * 60 };
-    let response = api::request_with_policy(&context, &cookies, if general_search || artist_search || song_search { "search" } else if radio || song_like || song_metadata { "next" } else { "browse" }, body, fallback_ttl)
+    let mut response = api::request_with_policy(&context, &cookies, if general_search || artist_search || song_search { "search" } else if radio || song_like || song_metadata || song_lyrics { "next" } else { "browse" }, body, fallback_ttl)
         .await.map_err(|e| if e.auth { e.report(app, generation) } else { e.message.into() })?;
     if !state.owns(generation) { return Err("YouTube Music connection changed.".into()); }
     let mut page = parse(&response.value, id == "FEmusic_home", id.starts_with("MPRE"), request.query.include_performances);
+    if song_lyrics {
+        let (lyrics, policy) = super::lyrics::load(app, generation, &context, &cookies, &response.value).await?;
+        page.lyrics = Some(lyrics);
+        if let Some(policy) = policy { response.policy = policy; }
+        page.items.clear();
+        page.hubs.clear();
+        page.continuation = None;
+    }
     if id.starts_with("MPRE") {
         for item in &mut page.items {
             if item.kind == "song" && item.album_id.is_none() && item.album.as_deref() == Some(page.title.as_str()) {

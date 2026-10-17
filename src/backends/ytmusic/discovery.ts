@@ -50,6 +50,7 @@ export interface YoutubeMusicBrowsePage {
   thumbnail?: string | null
   description?: string | null
   artist?: YoutubeMusicArtist | null
+  lyrics?: { lines: import("../../providers/types").LyricLineData[]; attribution: string | null; missing: boolean } | null
 }
 export interface YoutubeMusicArtist {
   id: string
@@ -162,6 +163,7 @@ export function originalYoutubeMusicItem(item: MusicItem): YoutubeMusicItem | nu
 
 interface DiscoveryState {
   connected: boolean
+  accountId?: string | null
   revision: number
   hubs: YoutubeMusicHub[]
   loading: boolean
@@ -265,8 +267,9 @@ export function refreshYoutubeMusicDiscovery(force = false) {
 
 function receive(status: YoutubeMusicStatus) {
   const previous = useYoutubeMusicDiscoveryStore.getState()
+  const switched = previous.accountId != null && status.accountId != null && previous.accountId !== status.accountId
   const connected = status.enabled && (status.phase === "connected" || (status.phase === "refreshing" && previous.connected))
-  if (!connected) {
+  if (!connected || switched) {
     if (status.phase === "disconnected" && previous.connected) clearYoutubeMusicHistory()
     if (previous.connected || previous.hubs.length) {
       pending = null
@@ -275,11 +278,11 @@ function receive(status: YoutubeMusicStatus) {
       home = discoveryPages<YoutubeMusicHub>(hub => hub.id)
       extraHubs.clear()
       homeContinuation = null
-      useYoutubeMusicDiscoveryStore.setState({ connected: false, hubs: [], revision: previous.revision + 1, loading: false, error: false })
+      useYoutubeMusicDiscoveryStore.setState({ connected: false, accountId: null, hubs: [], revision: previous.revision + 1, loading: false, error: false })
     }
-    return
+    if (!connected) return
   }
-  useYoutubeMusicDiscoveryStore.setState({ connected: true })
+  useYoutubeMusicDiscoveryStore.setState({ connected: true, accountId: status.accountId ?? null })
   void refreshYoutubeMusicDiscovery()
 }
 function start() {

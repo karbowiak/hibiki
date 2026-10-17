@@ -40,6 +40,8 @@ import { StorageStatus } from "./components/PersistenceNotice"
 import { NotificationSources } from "./components/NotificationSources"
 import { OfflineStatus } from "./components/OfflineStatus"
 import { useLinkedPlaylistSync } from "./hooks/useLinkedPlaylistSync"
+import { useMixedPlaylistSync } from "./hooks/useMixedPlaylistSync"
+import { useYoutubeMusicRatingsSync } from "./hooks/useYoutubeMusicRatingsSync"
 import { useFavorites } from "./hooks/useFavorites"
 import { PlaylistSyncStatus } from "./components/PlaylistSync/PlaylistSyncStatus"
 import { NotificationToasts } from "./components/NotificationCenter"
@@ -59,6 +61,8 @@ const HotkeyHelpModal = lazy(() =>
 function DesktopApp() {
   useEffect(initializeQueuePersistence, [])
   useLinkedPlaylistSync()
+  useMixedPlaylistSync()
+  useYoutubeMusicRatingsSync()
   useFavorites()
   const activeProvider = useProviderStore(s => s.provider)
   const debugPanelOpen = useDebugPanelStore(s => s.open)

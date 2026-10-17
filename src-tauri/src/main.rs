@@ -388,6 +388,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             ytmusic::ytmusic_status,
+            ytmusic::ytmusic_playlist_read,
+            ytmusic::ytmusic_playlist_write,
             ytmusic::ytmusic_connect,
             ytmusic::ytmusic_refresh,
             ytmusic::ytmusic_disconnect,

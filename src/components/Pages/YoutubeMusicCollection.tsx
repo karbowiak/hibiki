@@ -28,6 +28,7 @@ import { DiscoveryMore } from "../shared/DiscoveryMore"
 import { PageLoading } from "../shared/PageLoading"
 import { PageRecovery } from "../shared/PageRecovery"
 import { YoutubeMusicLogo } from "../shared/MusicSource"
+import { MixedPlaylistControl } from "../MixedPlaylistControl"
 
 export function YoutubeMusicCollection({ browseId }: { browseId: string }) {
   const [, navigate] = useLocation()
@@ -132,6 +133,7 @@ export function YoutubeMusicCollection({ browseId }: { browseId: string }) {
           <div className="relative z-20 flex flex-wrap items-center gap-3">
             <button type="button" onClick={() => play()} disabled={!sorted.length} className="media-primary"><IconPlayerPlay size={22} aria-hidden="true" />Play</button>
             <button type="button" onClick={() => play(true)} disabled={!sorted.length} className="media-secondary"><IconArrowsShuffle size={16} aria-hidden="true" />Shuffle</button>
+            {browseId.startsWith("VLPL") && <MixedPlaylistControl alias={`ytmusic:${browseId}`} />}
           </div>
         </div>
       </div>

@@ -2,6 +2,8 @@
 mod api;
 mod discovery;
 mod discovery_cache;
+mod lyrics;
+mod playlists;
 mod extractor;
 mod main_window_plugin;
 mod playback;
@@ -11,6 +13,7 @@ mod tools;
 pub(crate) use main_window_plugin::app_only as app_only_plugin;
 pub(crate) use playback::source as playback_source;
 pub(crate) use playback::valid_track_id;
+pub use playlists::{ytmusic_playlist_read, ytmusic_playlist_write};
 
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
@@ -39,6 +42,7 @@ pub struct Status {
     pub last_checked_at: Option<i64>,
     pub next_refresh_at: Option<i64>,
     pub message: Option<String>,
+    pub account_id: Option<String>,
 }
 
 struct Current {
@@ -66,6 +70,7 @@ impl Default for YoutubeMusic {
                     last_checked_at: None,
                     next_refresh_at: None,
                     message: None,
+                    account_id: None,
                 },
                 generation: 0,
                 interactive: false,
@@ -285,6 +290,7 @@ pub async fn ytmusic_disconnect(app: tauri::AppHandle) -> Result<(), String> {
             last_checked_at: None,
             next_refresh_at: None,
             message: None,
+            account_id: None,
         };
         current.status.clone()
     };
@@ -368,6 +374,6 @@ pub async fn ytmusic_browse(browse_id: String, params: Option<String>, continuat
 }
 
 #[tauri::command]
-pub async fn ytmusic_set_song_like(video_id: String, liked: bool, app: tauri::AppHandle) -> Result<(), String> {
-    api::set_song_like(&app, &video_id, liked).await
+pub async fn ytmusic_set_song_like(video_id: String, liked: bool, expected_account: Option<String>, app: tauri::AppHandle) -> Result<(), String> {
+    api::set_song_like(&app, &video_id, liked, expected_account.as_deref()).await
 }

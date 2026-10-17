@@ -3,6 +3,7 @@ import { useDragStore, type DragPayload } from "../stores/dragStore"
 
 import { useProviderStore } from "../stores/providerStore"
 import type { MusicProvider } from "../providers/types"
+import { useYoutubeMusicDiscoveryStore } from "../backends/ytmusic/discovery"
 
 let cancelActivePointer: (() => void) | null = null
 
@@ -25,6 +26,8 @@ export function useTrackDrag() {
     started: boolean
     provider: MusicProvider | null
     scope?: string
+    youtubeRevision: number
+    admission: string
   } | null>(null)
 
   const release = useRef<(() => void) | null>(null)
@@ -53,6 +56,8 @@ export function useTrackDrag() {
         started: false,
         provider: useProviderStore.getState().provider,
         scope: useProviderStore.getState().provider?.cacheScope,
+        youtubeRevision: useYoutubeMusicDiscoveryStore.getState().revision,
+        admission: crypto.randomUUID(),
       }
 
       const cancel = () => {
@@ -80,9 +85,13 @@ export function useTrackDrag() {
         )
           cancel()
       })
+      const unsubscribeYoutube = useYoutubeMusicDiscoveryStore.subscribe(state => {
+        if (pointerState.current && state.revision !== pointerState.current.youtubeRevision) cancel()
+      })
       release.current = () => {
         pointerState.current = null
         unsubscribe()
+        unsubscribeYoutube()
         window.removeEventListener("dragstart", onNativeDrag, true)
         window.removeEventListener("lostpointercapture", onCancel)
         window.removeEventListener("pointercancel", onCancel)
@@ -135,7 +144,7 @@ export function useTrackDrag() {
       const currentProvider = useProviderStore.getState().provider
       const owned =
         currentProvider === s.provider &&
-        currentProvider?.cacheScope === s.scope
+        currentProvider?.cacheScope === s.scope && useYoutubeMusicDiscoveryStore.getState().revision === s.youtubeRevision
       const targetPlaylistId = useDragStore.getState().hoveredPlaylistId
       const targetQueue = useDragStore.getState().hoveredQueue
       store.endDrag()
@@ -160,6 +169,7 @@ export function useTrackDrag() {
           new CustomEvent("plexify-media-drop", {
             detail: {
               payload: s.payload,
+              admission: s.admission,
               provider: s.provider,
               scope: s.scope,
               targetPlaylistId,

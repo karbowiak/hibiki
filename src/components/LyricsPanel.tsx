@@ -7,7 +7,7 @@ import { useUIStore } from "../stores/uiStore"
 import { useLyricsOffsetStore } from "../stores/lyricsOffsetStore"
 import { useLyricsStore } from "../stores/lyricsStore"
 import { useResizable } from "../hooks/useResizable"
-import { useCapability } from "../hooks/useCapability"
+import { useLyricsAvailable } from "../hooks/useLyricsAvailable"
 import { useAlbumImage } from "../hooks/useMediaImage"
 import { ArtworkImage } from "./shared/ArtworkImage"
 import { PlaybackPalette } from "./PlaybackPalette"
@@ -74,7 +74,7 @@ function LyricsSourceSelector() {
   const [expanded, setExpanded] = useState(false)
 
   const hasMultiple = sources.length > 1 || geniusHits.length > 0
-  if (!hasMultiple && !isSearching) return null
+  if (!sources.length && !hasMultiple && !isSearching && !isFetchingLyrics) return null
 
   // Genius hits that aren't already loaded as sources
   const loadedIds = new Set(sources.filter(s => s.id.startsWith("genius-")).map(s => s.id.replace("genius-", "")))
@@ -286,7 +286,7 @@ const CloseIcon = () => (
 
 export default function LyricsPanel() {
   const backgroundArtworkEnabled = useArtworkAppearanceStore(state => state.backgroundArtworkEnabled)
-  const hasLyrics = useCapability("lyrics")
+  const hasLyrics = useLyricsAvailable()
   const {
     isLyricsOpen, isLyricsPinned, isQueuePinned,
     setLyricsOpen, setLyricsPinned,

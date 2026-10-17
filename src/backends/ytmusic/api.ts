@@ -13,6 +13,7 @@ export interface YoutubeMusicStatus {
   lastCheckedAt: number | null
   nextRefreshAt: number | null
   message: string | null
+  accountId?: string | null
 }
 export interface YoutubeMusicSong {
   videoId: string

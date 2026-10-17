@@ -1,8 +1,6 @@
 import { useEffect, useState } from "react"
 import { useItemRating } from "../../hooks/useItemRating"
 import type { MusicTrack } from "../../types/music"
-import { isYoutubeMusicId } from "../../backends/ytmusic/tracks"
-import { YoutubeMusicLikeButton } from "./YoutubeMusicLikeButton"
 
 interface StarRatingProps {
   itemId: string
@@ -30,7 +28,7 @@ export function StarRating({
   musicTrack,
   variant = "row",
   onHero = false,
-  eagerLike = false,
+  eagerLike: _eagerLike = false,
 }: StarRatingProps) {
   const rating = useItemRating({
     itemId,
@@ -45,8 +43,6 @@ export function StarRating({
   const filled = Math.round((rating.display ?? 0) / 2)
   const visual = hovered ?? filled
   const inMenu = !!onRated
-  if (itemType === "track" && isYoutubeMusicId(itemId) && musicTrack)
-    return <YoutubeMusicLikeButton track={musicTrack} eager={eagerLike} size={Math.max(14, size)} onSaved={onRated} />
   if (!rating.available) return null
   const save = (value: number | null) => {
     void rating.rate(value).then((saved) => {

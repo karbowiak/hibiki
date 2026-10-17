@@ -91,6 +91,7 @@ export interface TrackTableProps {
   playlistId?: string | null
   /** When set, enables drag-to-reorder within the table. Called with (fromIndex, toIndex). */
   onReorder?: (fromIndex: number, toIndex: number) => void
+  onRemoveTrack?: (track: MusicTrack) => Promise<void>
   /** Detail pages share these rows without a collection toolbar. */
   presentation?: "album" | "artist"
   /** Compact search results omit a second search toolbar and local filter handler. */
@@ -677,12 +678,15 @@ export function TrackTable({
   currentTrackId,
   playlistId,
   onReorder,
+  onRemoveTrack,
   compact = false,
   presentation,
   showRadio = true,
   paged,
 }: TrackTableProps) {
-  const { handler: ctxMenu, isTarget: isCtxTarget } = useContextMenu()
+  const { handler, isTarget: isCtxTarget } = useContextMenu()
+  const ctxMenu: typeof handler = (type, data, playlistId, extra = []) => handler(type, data, playlistId,
+    onRemoveTrack && type === "track" ? [...extra, { label: "Remove from playlist", run: () => onRemoveTrack(data as MusicTrack) }] : extra)
   const trackDrag = useTrackDrag()
   const searchInputRef = useRef<HTMLInputElement>(null)
   const pageScroll = useScrollContainer()

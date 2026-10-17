@@ -31,9 +31,12 @@ import { mergeDiscoveryItems, type DiscoveryItem } from "../../lib/discovery"
 import { useUIStore } from "../../stores/uiStore"
 import type { MusicTrack } from "../../types/music"
 import { PlexLogo, YoutubeMusicLogo } from "../shared/MusicSource"
+import { useYoutubeMusicRatingsStore, youtubeRatingLiked } from "../../backends/ytmusic/ratings"
+import { isYoutubeMusicId } from "../../backends/ytmusic/tracks"
 
 const LIKED_COLUMNS = [...ALL_COLUMNS, LIKED_DATE_COLUMN]
 const LIKED_DEFAULT_COLS = ["album", "rating", "rated_at", "liked_at"] as const
+const EMPTY_YOUTUBE_RATINGS: ReturnType<typeof useYoutubeMusicRatingsStore.getState>["entries"] = {}
 
 export function Liked() {
   const provider = useProviderStore((state) => state.provider)
@@ -54,7 +57,9 @@ export function Liked() {
   const youtube = useYoutubeMusicLibrary("songs")
   const activeService = youtube.connected ? service : "all"
   const includesPlex = activeService !== "ytmusic"
-  const includesYoutube = activeService !== "plex" && youtube.connected && kind !== "rated"
+  const includesYoutube = activeService !== "plex" && youtube.connected
+  const youtubeAccount = useYoutubeMusicDiscoveryStore(state => state.accountId)
+  const youtubeRatings = useYoutubeMusicRatingsStore(state => state.owner === youtubeAccount ? state.entries : EMPTY_YOUTUBE_RATINGS)
   const youtubeRevision = useYoutubeMusicDiscoveryStore(state => state.revision)
   const refresh = useUIStore(state => state.pageRefreshKey)
   useEffect(() => {
@@ -190,10 +195,18 @@ export function Liked() {
             ])
     if (!includesPlex) items = []
     if (includesYoutube) {
+      const remote = new Map((kind === "rated" ? [] : youtube.items).map(item => [item.id, item]))
+      const local: MusicTrack[] = []
+      for (const rating of Object.values(youtubeRatings)) {
+        remote.delete(rating.track.id.slice(8))
+        if (kind === "loved" ? youtubeRatingLiked(rating.value) : (rating.value ?? 0) > 0)
+          local.push({ ...rating.track, userRating: rating.value, lastRatedAt: new Date(rating.changedAt).toISOString() })
+      }
       items = mergeDiscoveryItems(
         items.map(item => ({ source: "plex", item: { ...item, type: "track" } } as DiscoveryItem)),
-        youtube.items.map(item => ({ source: "ytmusic", item } as DiscoveryItem))
+        [...remote.values()].map(item => ({ source: "ytmusic", item } as DiscoveryItem))
       ).map(entry => entry.source === "ytmusic" ? youtubeMusicItemTrack(entry.item) : entry.item as MusicTrack)
+      items.push(...local)
     }
     if (query)
       items = items.filter((track) =>
@@ -202,7 +215,7 @@ export function Liked() {
           .includes(query)
       )
     return {
-      items: sortTracks(items, sortCol, sortDir, track => effectiveTrackRating(track.userRating, favorites.ratingsByTrackId.get(track.id))),
+      items: sortTracks(items, sortCol, sortDir, track => isYoutubeMusicId(track.id) ? track.userRating : effectiveTrackRating(track.userRating, favorites.ratingsByTrackId.get(track.id))),
       entryById,
     }
   }, [
@@ -218,6 +231,7 @@ export function Liked() {
     youtube.items,
     includesPlex,
     includesYoutube,
+    youtubeRatings,
   ])
   const source = useMemo<PagedTrackSource>(() => {
     const loadItems = async (positions: number[]) => {

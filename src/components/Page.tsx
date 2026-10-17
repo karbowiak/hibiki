@@ -17,6 +17,7 @@ import { PlexOfflineBanner } from "./OfflineStatus"
 const Playlist = lazy(() =>
   import("./Pages/Playlist").then((module) => ({ default: module.Playlist }))
 )
+const MixedPlaylist = lazy(() => import("./Pages/MixedPlaylist").then(module => ({ default: module.MixedPlaylist })))
 const Library = lazy(() =>
   import("./Pages/Library").then((module) => ({ default: module.Library }))
 )
@@ -232,6 +233,7 @@ export function Page() {
                 return id ? <Playlist playlistId={id} /> : null
               }}
             </Route>
+            <Route path="/mixed-playlist/:id" key="mixed-playlist">{(params: { id?: string }) => <MixedPlaylist id={params.id ?? ""} />}</Route>
 
             <Route path="/mix" key="mix">
               <MixPage />

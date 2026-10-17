@@ -8,6 +8,7 @@ import { effectiveTrackRating, trackRatingHint } from "../favorites/ratings"
 import { saveTrackRatingToPlex } from "../favorites/saveRating"
 import type { MusicTrack } from "../types/music"
 import { isYoutubeMusicId } from "../backends/ytmusic/tracks"
+import { useYoutubeMusicRating } from "./useYoutubeMusicRating"
 
 /** Shared by every star control; artist and album ratings retain their Plex behavior. */
 export function useItemRating({
@@ -31,6 +32,7 @@ export function useItemRating({
   const captureOwner = useProviderMutationOwner(provider)
   const hasRatings = useCapability("ratings")
   const independent = isYoutubeMusicId(itemId)
+  const youtube = useYoutubeMusicRating(independent ? track : undefined)
   const localTrack =
     itemType === "track" &&
     !!provider?.favorites &&
@@ -104,6 +106,7 @@ export function useItemRating({
       }
     }
   }
+  if (independent) return youtube
   return {
     display: display ?? null,
     saving,

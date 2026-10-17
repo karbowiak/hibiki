@@ -41,6 +41,10 @@ import { savePlaylistOrder } from "../stores/playlistOrder"
 import { youtubeMusicCollectionSource, useYoutubeMusicDiscoveryStore } from "../backends/ytmusic/discovery"
 import { MusicSourceBadge } from "./shared/MusicSource"
 import { IconChevronRight, IconServer } from "@tabler/icons-react"
+import { useMixedPlaylistStore } from "../stores/mixedPlaylistStore"
+import { playMixedPlaylist } from "../mixedPlaylists/playback"
+import { captureMusicOwner } from "../mixedPlaylists/counterparts"
+import { youtubeMusicSongMetadata } from "../backends/ytmusic/metadata"
 
 // ---------------------------------------------------------------------------
 // Custom order persistence (localStorage)
@@ -117,7 +121,8 @@ function SortablePlaylistItem({
     id: playlist.id,
   })
   const offline = useProviderStore((state) => state.provider?.isOffline)
-  const isDropTarget = !playlist.youtubeMusic && !playlist.smart && !offline
+  const youtubeConnected = useYoutubeMusicDiscoveryStore(state => state.connected)
+  const isDropTarget = !playlist.smart && (playlist.youtubeMusic ? youtubeConnected && playlist.youtubeMusic.id.startsWith("VLPL") : !offline)
   const { actionsHandler } = useContextMenu()
   const [, navigate] = useLocation()
   // Subscribe to hover state from pointer-based drag system
@@ -174,7 +179,10 @@ function SortablePlaylistItem({
             e.stopPropagation()
           }
         }}
-        onContextMenu={playlist.youtubeMusic ? actionsHandler(youtubeMusicContext(playlist.youtubeMusic, navigate)) : ctxMenu("playlist", playlist)}
+        onContextMenu={playlist.mixed ? actionsHandler({ title: playlist.title, owner: playlist.mixed, actions: [
+          { label: "Play", icon: "play", run: () => playMixedPlaylist(playlist.mixed!) },
+          { label: "Match and sync", run: () => useMixedPlaylistStore.getState().sync(playlist.mixed!.id, true) },
+        ] }) : playlist.youtubeMusic ? actionsHandler(youtubeMusicContext(playlist.youtubeMusic, navigate)) : ctxMenu("playlist", playlist)}
         className={clsx(
           "sidebar-playlist-link group flex cursor-default items-center gap-3 rounded-md px-1 py-[5px] no-underline transition-colors duration-200 hover:bg-accent-tint hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
           location !== href
@@ -199,6 +207,7 @@ function SortablePlaylistItem({
             onClick={(e) => {
               e.preventDefault()
               e.stopPropagation()
+              if (playlist.mixed) { void playMixedPlaylist(playlist.mixed); return }
               void playPlaylist(
                 playlist.id,
                 playlist.trackCount,
@@ -272,14 +281,35 @@ export function SideBar({
         targetPlaylistId,
         provider: sourceProvider,
         scope,
+        admission,
       } = (e as CustomEvent).detail
       const owned = captureOwner()
       const capturedScope = provider?.cacheScope
       const currentRequest = () =>
         current() && owned() && provider?.cacheScope === capturedScope
       if (!targetPlaylistId || !provider || !currentRequest()) return
-      if (payload.type === "track" && payload.ids.some((id: string) => id.startsWith("ytmusic:"))) {
-        useLibraryStore.setState({ error: "YouTube Music songs cannot be added to a Plex playlist." })
+      const target = sortedPlaylists.find(playlist => playlist.id === targetPlaylistId && !playlist.smart)
+      if (!target) return
+      if (target.mixed || target.youtubeMusic || (payload.type === "track" && payload.ids.some((id: string) => id.startsWith("ytmusic:")))) {
+        const owner = captureMusicOwner()
+        try {
+          if (sourceProvider !== undefined && (sourceProvider !== provider || scope !== capturedScope)) return
+          if (payload.type !== "track") throw Error("Open the collection and drag its songs into this mixed playlist.")
+          const tracks = []
+          for (let index = 0; index < payload.ids.length; index++) {
+            const id = payload.ids[index]
+            const cached = payload.tracks?.[index]
+            tracks.push(cached?.id === id ? cached : id.startsWith("ytmusic:") ? await youtubeMusicSongMetadata(id) : await provider.getTrack(id))
+            if (!owner.current() || !currentRequest()) return
+          }
+          await useMixedPlaylistStore.getState().append(target.mixed?.id ?? targetPlaylistId, tracks, admission ?? crypto.randomUUID())
+          if (owner.current() && currentRequest()) window.dispatchEvent(new CustomEvent("plexify-playlist-drop-result", { detail: { targetPlaylistId, success: true } }))
+        } catch (failure) {
+          if (owner.current() && currentRequest()) {
+            useLibraryStore.setState({ error: String(failure instanceof Error ? failure.message : failure) })
+            window.dispatchEvent(new CustomEvent("plexify-playlist-drop-result", { detail: { targetPlaylistId, success: false } }))
+          }
+        }
         return
       }
       if (
@@ -349,7 +379,7 @@ export function SideBar({
       active = false
       window.removeEventListener("plexify-media-drop", onDrop)
     }
-  }, [provider, captureOwner])
+  }, [provider, captureOwner, sortedPlaylists])
 
   const { width, onMouseDown } = useResizable({
     key: "plex-sidebar-width",

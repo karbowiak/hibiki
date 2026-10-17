@@ -5,7 +5,6 @@ import { usePlayerStore } from "../../stores/playerStore"
 import { capturePlaybackSelectionVersion } from "../../lib/playbackSelection"
 import { captureMusicLinkOwner, musicEntityActions, trackEntity } from "../../lib/musicLinks"
 import { youtubeMusicCollectionSource, youtubeMusicItemTrack, youtubeMusicItemHref, useYoutubeMusicDiscoveryStore, type YoutubeMusicItem } from "./discovery"
-import { youtubeMusicLikeAction } from "./likes"
 import { useOfflineStatusStore } from "../../offline/statusStore"
 
 /** Every YTM surface supplies the same ordered, grouped context menu. */
@@ -67,7 +66,6 @@ export function youtubeMusicContext(data: YoutubeMusicItem | MusicTrack, navigat
     await usePlayerStore.getState().playRadio(seed.id, "track", item.title, "ytmusic", seed)
     if (usePlayerStore.getState().playerError) throw Error(usePlayerStore.getState().playerError!)
   })
-  if (song) actions.push({ ...youtubeMusicLikeAction(song), icon: "heart", section: "rating", disabled: !available() })
   const share = (label: string, url: string) => actions.push({ label, icon: "share", section: "share",
     run: () => { if (owner()) return openUrl(url) } })
   const external = song ? `https://music.youtube.com/watch?v=${encodeURIComponent(item.id)}`
@@ -82,5 +80,5 @@ export function youtubeMusicContext(data: YoutubeMusicItem | MusicTrack, navigat
       : [{ kind: "artist" as const, name: item.artist, id: item.artistId ? `ytmusic:${item.artistId}` : null }]
     actions.push(...musicEntityActions(refs.filter(ref => ref?.name || ref?.id), navigate))
   }
-  return { title: item.title, owner: data, actions }
+  return { title: item.title, owner: data, actions, ratingTrack: song ?? undefined }
 }

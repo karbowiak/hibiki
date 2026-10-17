@@ -22,6 +22,7 @@ import { engine } from "../audio/RustAudioEngine"
 import { formatAudioQuality, playbackAudioQuality } from "../lib/audioQuality"
 import { IconBlockquote, IconZzz, IconActivity, IconMaximize, IconAdjustments, IconPlaylist, IconVolume, IconVolume2, IconVolumeOff, IconHeadphones, IconMusic } from "@tabler/icons-react"
 import { useCapability } from "../hooks/useCapability"
+import { useLyricsAvailable } from "../hooks/useLyricsAvailable"
 import { useLongPress } from "../hooks/useLongPress"
 import EqPanel from "./EqPanel"
 import SleepTimerPanel from "./SleepTimerPanel"
@@ -366,7 +367,7 @@ export function Player() {
   const hasRadio = useCapability("radio")
   const youtubeConnected = useYoutubeMusicDiscoveryStore(s => s.connected)
   const hasDjModes = useCapability("djModes")
-  const hasLyrics = useCapability("lyrics")
+  const hasLyrics = useLyricsAvailable()
 
   const [showImageModal, setShowImageModal] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(() => {

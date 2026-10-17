@@ -13,7 +13,7 @@ export interface ContextAction {
   disabled?: boolean
   run: (current?: () => boolean) => void | Promise<void>
 }
-export interface ContextActionsData { title: string; owner: object; actions: readonly ContextAction[] }
+export interface ContextActionsData { title: string; owner: object; actions: readonly ContextAction[]; ratingTrack?: MusicTrack }
 
 export type MediaContextMenuData = MusicTrack | MusicAlbum | MusicArtist | MusicPlaylist
 type ContextMenuData = MediaContextMenuData | ContextActionsData

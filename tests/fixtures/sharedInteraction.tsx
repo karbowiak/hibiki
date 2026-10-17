@@ -140,7 +140,7 @@ await render(<LyricsContent />); assert.match(document.body.textContent!, /Play 
 await act(async () => player.setState({ currentTrack: track, lyricsLines: null })); assert.match(document.body.textContent!, /Loading lyrics/)
 await act(async () => player.setState({ lyricsLines: [] })); assert.match(document.body.textContent!, /No lyrics available/)
 await act(async () => { lyrics.setState({ sources: [{ id: "plain", isSynced: false }], activeSourceId: "plain" }); player.setState({ lyricsLines: [{ text: "Plain line", startMs: 0, endMs: 0 }] }) })
-assert.equal((document.querySelector("button") as HTMLButtonElement).disabled, true)
+assert.equal((document.querySelector(".lyrics-line") as HTMLButtonElement).disabled, true)
 await act(async () => { lyrics.setState({ sources: [{ id: "sync", isSynced: true }], activeSourceId: "sync" }) })
 await click(named("Seek to Plain line")); assert.equal(seeks, 1)
 await act(async () => root.unmount()); dom.window.close()
