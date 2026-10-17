@@ -25,9 +25,9 @@ import { TrackTable } from "../shared/TrackTable"
 import { FavoritesSyncDialog } from "../FavoritesSyncDialog"
 import { favoritesNeedReview } from "../../lib/syncAttention"
 import { SyncReviewIndicator } from "../shared/SyncReviewIndicator"
-import { loadAllYoutubeMusicLibrary, useYoutubeMusicLibrary } from "../../backends/ytmusic/library"
+import { loadAllYoutubeMusicLibrary, useYoutubeMusicLibrary, youtubeMusicVideo } from "../../backends/ytmusic/library"
 import { useYoutubeMusicDiscoveryStore, youtubeMusicItemTrack } from "../../backends/ytmusic/discovery"
-import { mergeDiscoveryItems, type DiscoveryItem } from "../../lib/discovery"
+import { mergeLikedTrackSources } from "../../favorites/sourceRows"
 import { useUIStore } from "../../stores/uiStore"
 import type { MusicTrack } from "../../types/music"
 import { PlexLogo, YoutubeMusicLogo } from "../shared/MusicSource"
@@ -54,7 +54,10 @@ export function Liked() {
   const syncNeedsReview = favoritesNeedReview(collection, favorites.issues)
   const [kind, setKind] = useState<"loved" | "rated" | "all">("loved")
   const [service, setService] = useState<"all" | "plex" | "ytmusic">("all")
-  const youtube = useYoutubeMusicLibrary("songs")
+  const includeVideos = useUIStore(state => state.likedMusicVideos)
+  const setIncludeVideos = useUIStore(state => state.setLikedMusicVideos)
+  const youtubeKind = includeVideos ? "videos" : "songs"
+  const youtube = useYoutubeMusicLibrary(youtubeKind)
   const activeService = youtube.connected ? service : "all"
   const includesPlex = activeService !== "ytmusic"
   const includesYoutube = activeService !== "plex" && youtube.connected
@@ -65,9 +68,9 @@ export function Liked() {
   useEffect(() => {
     if (!includesYoutube || youtube.error) return
     let active = true
-    void loadAllYoutubeMusicLibrary("songs", () => active)
+    void loadAllYoutubeMusicLibrary(youtubeKind, () => active)
     return () => { active = false }
-  }, [includesYoutube, youtube.error, youtubeRevision, refresh, youtube.version])
+  }, [includesYoutube, youtubeKind, youtube.error, youtubeRevision, refresh, youtube.version])
   const [syncOpen, setSyncOpen] = useState(false)
   const [filterQuery, setFilterQuery] = useState("")
   const [query, setQuery] = useState("")
@@ -198,15 +201,13 @@ export function Liked() {
       const remote = new Map((kind === "rated" ? [] : youtube.items).map(item => [item.id, item]))
       const local: MusicTrack[] = []
       for (const rating of Object.values(youtubeRatings)) {
+        const original = (rating.track._providerData as { youtubeMusic?: { videoType?: string | null } } | null)?.youtubeMusic
+        if (!includeVideos && original && youtubeMusicVideo(original)) continue
         remote.delete(rating.track.id.slice(8))
         if (kind === "loved" ? youtubeRatingLiked(rating.value) : (rating.value ?? 0) > 0)
           local.push({ ...rating.track, userRating: rating.value, lastRatedAt: new Date(rating.changedAt).toISOString() })
       }
-      items = mergeDiscoveryItems(
-        items.map(item => ({ source: "plex", item: { ...item, type: "track" } } as DiscoveryItem)),
-        [...remote.values()].map(item => ({ source: "ytmusic", item } as DiscoveryItem))
-      ).map(entry => entry.source === "ytmusic" ? youtubeMusicItemTrack(entry.item) : entry.item as MusicTrack)
-      items.push(...local)
+      items = mergeLikedTrackSources(items, [...[...remote.values()].map(youtubeMusicItemTrack), ...local])
     }
     if (query)
       items = items.filter((track) =>
@@ -232,6 +233,7 @@ export function Liked() {
     includesPlex,
     includesYoutube,
     youtubeRatings,
+    includeVideos,
   ])
   const source = useMemo<PagedTrackSource>(() => {
     const loadItems = async (positions: number[]) => {
@@ -266,7 +268,7 @@ export function Liked() {
       )
     }
     return {
-      key: `liked:${kind}:${activeService}`,
+      key: `liked:${kind}:${activeService}:${youtubeKind}`,
       total: indexed.items.length,
       entries: indexed.items,
       loadItems,
@@ -284,8 +286,8 @@ export function Liked() {
         }
       },
     }
-  }, [provider, kind, activeService, indexed, collection, seeds])
-  const queryKey = JSON.stringify(["liked", kind, activeService, sortCol, sortDir, query])
+  }, [provider, kind, activeService, youtubeKind, indexed, collection, seeds])
+  const queryKey = JSON.stringify(["liked", kind, activeService, youtubeKind, sortCol, sortDir, query])
   const preparing =
     (includesPlex && kind !== "loved" && !ratedIndex.ready) ||
     (needsFavoriteMetadata && !favoriteIndex.ready) ||
@@ -322,7 +324,7 @@ export function Liked() {
           <p className="text-sm text-(--text-secondary)">
             {count === null
               ? "Preparing all saved songs…"
-              : `${count.toLocaleString()}${includesYoutube && youtube.more ? "+" : ""} ${count === 1 ? "song" : "songs"}`}
+              : `${count.toLocaleString()}${includesYoutube && youtube.more ? "+" : ""} ${includesPlex && includesYoutube ? "source entries" : count === 1 ? "song" : "songs"}${includesYoutube && youtube.error ? " · YouTube Music incomplete" : ""}`}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -402,6 +404,12 @@ export function Liked() {
               </button>
             ))}
           </div>
+        )}
+        {includesYoutube && (
+          <label className="flex items-center gap-2 text-sm text-(--text-secondary)" title="Include music videos and uploaded music returned in your YouTube Music likes. This does not load all YouTube video likes.">
+            <input type="checkbox" checked={includeVideos} onChange={event => setIncludeVideos(event.target.checked)} className="accent-(--accent)" />
+            Include music videos
+          </label>
         )}
       </div>
       {includesPlex && unavailable > 0 && kind !== "rated" && (

@@ -10,6 +10,7 @@ let queueVisibilityTouched = false
 const lyricsPinned = booleanPreference("plex-lyrics-pinned", false)
 const dedupAlbums = booleanPreference("plex-dedup-albums", true)
 const artExpanded = booleanPreference("plex-art-expanded", false)
+const likedMusicVideos = booleanPreference("hibiki-liked-music-videos", false)
 
 interface UIState {
   showCreatePlaylist: boolean
@@ -32,6 +33,8 @@ interface UIState {
   deduplicateAlbums: boolean
   /** When true, album art is expanded in the bottom-left corner above the player bar. */
   isArtExpanded: boolean
+  likedMusicVideos: boolean
+  setLikedMusicVideos: (value: boolean) => void
 
   setShowCreatePlaylist: (v: boolean) => void
   setPendingPlaylistItemIds: (ids: string[] | null) => void
@@ -58,6 +61,8 @@ export const useUIStore = create<UIState>((set) => ({
   queueActiveTab: queueTab.snapshot(),
   deduplicateAlbums: dedupAlbums.snapshot(),
   isArtExpanded: artExpanded.snapshot(),
+  likedMusicVideos: likedMusicVideos.snapshot(),
+  setLikedMusicVideos: value => { likedMusicVideos.set(value); set({ likedMusicVideos: value }) },
 
   setShowCreatePlaylist: (v: boolean) => set({ showCreatePlaylist: v }),
   setPendingPlaylistItemIds: (ids: string[] | null) => set({ pendingPlaylistItemIds: ids }),
@@ -91,3 +96,4 @@ queueTab.subscribe(() => useUIStore.setState({ queueActiveTab: queueTab.snapshot
 lyricsPinned.subscribe(() => useUIStore.setState({ isLyricsPinned: lyricsPinned.snapshot() }))
 dedupAlbums.subscribe(() => useUIStore.setState({ deduplicateAlbums: dedupAlbums.snapshot() }))
 artExpanded.subscribe(() => useUIStore.setState({ isArtExpanded: artExpanded.snapshot() }))
+likedMusicVideos.subscribe(() => useUIStore.setState({ likedMusicVideos: likedMusicVideos.snapshot() }))

@@ -32,6 +32,7 @@ export interface YoutubeMusicItem {
   explicit?: boolean | null
   viewCount?: number | null
   liked?: boolean | null
+  videoType?: string | null
 }
 export interface YoutubeMusicDestination { browseId: string; params?: string | null }
 export interface YoutubeMusicHub {

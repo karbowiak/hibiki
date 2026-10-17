@@ -13,13 +13,20 @@ test("revalidation replaces loaded pages and retires a changed continuation chai
   expect(pages.read()?.items.map(item => item.id)).toEqual(["fresh", "new-tail"])
 })
 
-test("a repeated token or a duplicate continuation page ends paging", () => {
+test("duplicate and fully filtered pages retain valid continuation tokens; cycles stop with a partial result", () => {
   const pages = discoveryPages<{ id: string }>(item => item.id)
   pages.set(null, { items: [{ id: "song" }], next: "one" })
   pages.set("one", { items: [{ id: "song" }], next: "two" })
+  expect(pages.read()?.next).toBe("two")
+  pages.set("two", { items: [], next: "three" })
+  pages.set("three", { items: [], next: "four" })
+  pages.set("four", { items: [{ id: "later" }], next: undefined })
+  expect(pages.read()?.items.map(item => item.id)).toEqual(["song", "later"])
   expect(pages.read()?.next).toBeUndefined()
+  expect(pages.read()?.invalid).toBeUndefined()
   pages.set("one", { items: [{ id: "second" }], next: "one" })
   expect(pages.read()?.next).toBeUndefined()
+  expect(pages.read()?.invalid).toBe(true)
 })
 
 test("ordered collections preserve repeated songs and continue through repeated-only pages", () => {

@@ -15,17 +15,17 @@ export function discoveryPages<T>(identify: (item: T) => string, preserveOccurre
         visited.add(cursor)
         const page = pages.get(cursor)!
         if (!title) title = page.title
-        let fresh = 0
         for (const item of page.items) {
           const id = identify(item)
-          if (preserveOccurrences || !seen.has(id)) { seen.add(id); items.push(item); fresh++ }
+          if (preserveOccurrences || !seen.has(id)) { seen.add(id); items.push(item) }
         }
-        // First-page emptiness does not rule out a valid continuation, while
-        // duplicate continuation pages must not create an endless pager.
-        cursor = !preserveOccurrences && cursor !== null && !fresh ? undefined : page.next
+        // Filtering or duplicate suppression can empty any page. Only upstream
+        // exhaustion or a repeated token ends the continuation chain.
+        cursor = page.next
       }
-      if (cursor !== undefined && visited.has(cursor)) cursor = undefined
-      return { items, next: cursor, title, pageCount: visited.size }
+      const invalid = cursor !== undefined && visited.has(cursor)
+      if (invalid) cursor = undefined
+      return { items, next: cursor, title, pageCount: visited.size, ...(invalid ? { invalid: true } : {}) }
     },
   }
 }

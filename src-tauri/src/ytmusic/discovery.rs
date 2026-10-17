@@ -36,6 +36,8 @@ pub struct Item {
     pub liked: Option<bool>,
     #[serde(default)]
     pub playlist_item_id: Option<String>,
+    #[serde(default)]
+    pub video_type: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -198,7 +200,8 @@ fn card(value: &Value, collection: bool, live: bool) -> Option<Item> {
         return Some(Item { id: id.into(), kind: "song".into(), title,
             description: text(&panel["longBylineText"]), artist, artist_credits, thumbnail: thumbnail(panel),
             duration: Some(text(&panel["lengthText"])).filter(|value| !value.is_empty()), album, year: None, release_date: None, track_count: None,
-            album_id, artist_id, track_number: None, explicit: None, view_count: None, liked: liked(panel), playlist_item_id: None });
+            album_id, artist_id, track_number: None, explicit: None, view_count: None, liked: liked(panel), playlist_item_id: None,
+            video_type: video_type.map(str::to_owned) });
     }
     let flat = value.get("musicResponsiveListItemRenderer");
     let item = flat.or_else(|| value.get("musicTwoRowItemRenderer"))
@@ -305,6 +308,7 @@ fn card(value: &Value, collection: bool, live: bool) -> Option<Item> {
     let view_count = item.get("viewCount").and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok()));
     Some(Item { id, kind: kind.into(), title, description: text(subtitle), artist: artists.join(", "), artist_credits, thumbnail: thumbnail(item), duration, album, year, release_date, track_count,
         album_id, artist_id, track_number, explicit, view_count, liked: liked(item),
+        video_type: watch.and_then(|watch| find(watch, "musicVideoType", 0)).and_then(Value::as_str).map(str::to_owned),
         playlist_item_id: item.pointer("/playlistItemData/playlistSetVideoId").or_else(|| find(item, "setVideoId", 0)).and_then(Value::as_str).map(str::to_owned) })
 }
 
@@ -732,6 +736,10 @@ mod tests {
         let page = parse(&response, false, false, false);
         assert_eq!(page.items.len(), 1);
         assert_eq!(page.items[0].id, "abcdefghijk");
+        assert_eq!(page.items[0].video_type.as_deref(), Some("MUSIC_VIDEO_TYPE_ATV"));
+        let unfiltered = parse(&response, false, false, true);
+        assert_eq!(unfiltered.items.len(), 2);
+        assert_eq!(unfiltered.items[1].video_type.as_deref(), Some("MUSIC_VIDEO_TYPE_OMV"));
         assert_eq!(page.items[0].artist, "Artist");
         assert_eq!(page.items[0].artist_id.as_deref(), Some("UC_artist"));
         assert_eq!(page.items[0].album_id.as_deref(), Some("MPRE_album"));

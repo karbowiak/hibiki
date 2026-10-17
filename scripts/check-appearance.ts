@@ -61,7 +61,27 @@ async function checkIssueRegressions(page: Page, name: string) {
   await copyHandle.focus()
   assert.equal(await copyHandle.evaluate(element => getComputedStyle(element).opacity), "1")
   await page.screenshot({ path: join(artifacts, `${name}-mixed-playlist.png`) })
-  console.log(`${name}: server library, album links, YTM heroes, mixed playlist, exact stars and queue copy handles passed`)
+  await page.evaluate(() => {
+    ;(window as any).fixtureAppearance.likedPreview()
+    ;(window as any).fixtureAppearance.route("/collection/tracks")
+  })
+  await page.locator("main").getByText("3 source entries", { exact: true }).waitFor()
+  assert.equal(await page.locator("main [data-track-index]").count(), 3)
+  const sources = page.getByRole("group", { name: "Music source", exact: true })
+  await sources.getByRole("button", { name: "YTM", exact: true }).click()
+  await page.locator("main").getByText("2 songs", { exact: true }).waitFor()
+  await page.getByRole("checkbox", { name: "Include music videos", exact: true }).check()
+  await page.locator("main").getByText("3 songs", { exact: true }).waitFor()
+  await sources.getByRole("button", { name: "Plex", exact: true }).click()
+  await page.locator("main").getByText("1 song", { exact: true }).waitFor()
+  await sources.getByRole("button", { name: "Both", exact: true }).click()
+  await page.locator("main").getByText("4 source entries", { exact: true }).waitFor()
+  await page.getByRole("button", { name: "Play liked songs", exact: true }).click()
+  await page.waitForFunction(() => (window as any).fixtureLikedPlayback?.length === 4)
+  assert.equal(await page.evaluate(() => new Set((window as any).fixtureLikedPlayback).size), 4)
+  assert.equal(await page.locator("main").getByText("Music video song", { exact: true }).count(), 1)
+  await page.screenshot({ path: join(artifacts, `${name}-liked-source-entries.png`) })
+  console.log(`${name}: issue regressions passed, including complete liked pagination, provider identities, video inclusion and matching playback counts`)
 }
 let artworkGate: Promise<void> | null = null
 async function checkPlaybackQuality(page: Page, name: string) {

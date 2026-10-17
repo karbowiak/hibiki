@@ -66,6 +66,7 @@ async function setup() {
   w.fixtureDiagnostics = { calls: () => diagnosticCalls }
   let callback = 0
   let youtubeArtistEnabled = false
+  let youtubeLikesEnabled = false
   let loadingGate = Promise.resolve()
   let releaseLoading: (() => void) | null = null
   let downloadStorage = { directory: "/Users/listener/Music/Hibiki", defaultDirectory: "/Users/listener/Music/Hibiki", moving: false, totalBytes: 2 * 1024 ** 3, tracks: 85, error: null as string | null }
@@ -85,6 +86,13 @@ async function setup() {
     unregisterCallback: () => {},
     invoke: async (command: string, args:any={}) => {
       if (command === "ytmusic_status") return { enabled: youtubeArtistEnabled, phase: youtubeArtistEnabled ? "connected" : "disconnected", accountId: youtubeArtistEnabled ? "fixture-youtube-owner" : null, lastCheckedAt: null, nextRefreshAt: null, message: null }
+      if (command === "ytmusic_browse" && args.browseId === "VLLM" && youtubeLikesEnabled) {
+        const song = (id: string, title: string, videoType = "MUSIC_VIDEO_TYPE_ATV") => ({ id, kind: "song", title, artist: tracks[0].artistName, album: tracks[0].albumName, thumbnail: thumb, duration: "3:00", year: null, videoType })
+        const first = song("abcdefghijk", tracks[0].title)
+        return { title: "Liked Music", hubs: [], items: args.continuation === "one" ? [] : args.continuation === "three"
+          ? [song("lmnopqrstuv", "Later saved song"), ...(args.includePerformances ? [song("w1234567890", "Music video song", "MUSIC_VIDEO_TYPE_OMV")] : [])] : [first],
+          continuation: !args.continuation ? "one" : args.continuation === "one" ? "two" : args.continuation === "two" ? "three" : null }
+      }
       if (command === "ytmusic_browse") return { title: "YouTube Fixture Artist", items: [], hubs: [], continuation: null,
         artist: args.browseId === "UC_fixture" ? { id: "UC_fixture", name: "YouTube Fixture Artist", thumbnail: thumb,
           background: location.origin + "/synthetic-artwork/hero-detail.svg", description: "Fixture artist biography", monthlyListeners: null, subscribers: null, songs: null, shuffle: null } : null }
@@ -513,6 +521,18 @@ async function setup() {
   }
   setHome(5)
   w.fixtureAppearance = {
+    likedPreview: () => {
+      youtubeLikesEnabled = true
+      useUIStore.setState({ isQueueOpen: false, isQueuePinned: false })
+      useFavoritesStore.setState({ collection: { ...emptyFavorites(), ratingsImported: true, entries: {
+        "fixture-like": { id: "fixture-like", key: `local:${tracks[0].id}`, title: tracks[0].title, artist: tracks[0].artistName,
+          album: tracks[0].albumName, durationMs: tracks[0].duration, localTrackIds: [tracks[0].id], liked: true, explicit: true, sources: {}, changedAt: 1, likedAt: 1 },
+      } }, loaded: true, loading: false, error: null })
+      useYoutubeMusicRatingsStore.setState({ owner: "fixture-youtube-owner", loaded: true, entries: {} })
+      usePlayerStore.setState({ playPagedTracks: async source => {
+        w.fixtureLikedPlayback = (await source.loadPage(0, source.total!)).items.map(track => track.id)
+      } })
+    },
     mixedPreview: () => {
       const youtube = { ...youtubeMusicTrack({ videoId: "abcdefghijk", title: "YouTube playlist song", artist: "Fixture Artist", album: "Fixture Album", duration: "3:14", thumbnail: null }), thumbUrl: thumb }
       const initial = hydratePlaylist({ service: "plex", owner: provider.cacheScope, id: playlists[0].id, title: "Plex + YTM playlist",
@@ -606,7 +626,7 @@ async function setup() {
       document.documentElement.style.fontSize = `${textSize}px`
     },
     route: (path: string) => {
-      youtubeArtistEnabled = path.startsWith("/ytmusic/") || path.startsWith("/mixed-playlist/")
+      youtubeArtistEnabled = youtubeLikesEnabled || path.startsWith("/ytmusic/") || path.startsWith("/mixed-playlist/")
       useYoutubeMusicDiscoveryStore.setState({ connected: youtubeArtistEnabled, accountId: youtubeArtistEnabled ? "fixture-youtube-owner" : null })
       history.pushState({}, "", path)
       dispatchEvent(new PopStateEvent("popstate"))
