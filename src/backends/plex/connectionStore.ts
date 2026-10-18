@@ -272,7 +272,11 @@ export const useConnectionStore = createPlexConnectionStore({
       const socket = new PlexWebSocketManager(
         undefined,
         undefined,
-        async (changes) => {
+        async (changes, catchup) => {
+          if (retired || !ownsRequest()) return
+          await createPlexApi(captured, undefined, ownsRequest)
+            .matchingIndexNotify(changes.filter(change => [8, 9, 10].includes(change.type)), catchup)
+            .catch(() => {}) // Visible browse refresh must survive an index storage failure.
           if (retired || !ownsRequest()) return
           for (const change of changes) {
             const kind =
@@ -289,8 +293,8 @@ export const useConnectionStore = createPlexConnectionStore({
             invalidateMetadataItem(kind, id)
             if (affectsPage) refreshPageInBackground(provider.playbackSession)
           }
-          // Plex events invalidate the small in-memory browse caches. They no
-          // longer schedule a mirror, catch-up census or waveform crawl.
+          // Compact matching refresh and visible browse refresh have separate
+          // lifecycles; neither schedules the retired raw mirror or waveform crawl.
           refreshes.offer(++revision)
         }
       )

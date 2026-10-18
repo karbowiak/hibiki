@@ -1,4 +1,6 @@
 //! Compact, scoped Plex matching evidence; independent of browse/offline DTOs.
+mod freshness;
+pub use freshness::Hint as MatchingHint;
 pub mod row;
 pub mod store;
 mod transport;
@@ -28,6 +30,18 @@ impl Default for IndexState {
             network: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
         }
     }
+}
+/// Recover an idle worker after transient storage/ownership races, including a
+/// pause/resume that happened while the previous job was finishing.
+pub fn start_watchdog(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            if let Some(context) = app.state::<PlexState>().current_request_context().await {
+                let _ = start(&app, &context).await;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        }
+    });
 }
 async fn client(
     app: &tauri::AppHandle,
@@ -66,6 +80,21 @@ async fn write<T: Send + 'static>(
             work(conn, &plex, &context)
         })
         .await
+}
+#[tauri::command]
+pub async fn matching_index_notify(
+    app: tauri::AppHandle,
+    context: PlexRequestContext,
+    changes: Vec<MatchingHint>,
+    catchup: bool,
+) -> Result<(), String> {
+    write(&app, &context, move |conn, plex, context| {
+        freshness::offer(conn, &context.cache_scope, &changes, catchup, || {
+            plex.cache_commit_guard(context)
+        })
+    })
+    .await?;
+    start(&app, &context).await
 }
 #[tauri::command]
 pub async fn matching_index_status(
@@ -116,11 +145,20 @@ async fn start(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<(
     if plex.offline_only {
         return Ok(());
     }
+    let key = (context.connection_revision, context.cache_scope.clone());
+    if app
+        .state::<IndexState>()
+        .running
+        .lock()
+        .map_err(|_| "Matching index unavailable")?
+        .contains(&key)
+    {
+        return Ok(());
+    }
     let scope = context.cache_scope.clone();
     app.state::<DbState>()
         .write(move |conn| store::ensure_scope(conn, &scope))
         .await?;
-    let key = (context.connection_revision, context.cache_scope.clone());
     if !app
         .state::<IndexState>()
         .running
@@ -144,7 +182,23 @@ async fn start(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<(
 }
 async fn worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<(), String> {
     let mut verified = None;
-    let mut modern = false;
+    let permit = app
+        .state::<IndexState>()
+        .network
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| "Matching index stopped")?;
+    let initial = client(app, context).await?;
+    if initial.offline_only {
+        return Ok(());
+    }
+    let modern = tokio::time::timeout(std::time::Duration::from_secs(10), initial.get_identity())
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .is_some_and(|identity| transport::modern(&identity.version));
+    drop(permit);
     let mut next_kind = 0;
     loop {
         let plex = client(app, context).await?;
@@ -162,6 +216,18 @@ async fn worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<
         }
         let kind = ["artist", "album", "track"][next_kind % 3];
         next_kind += 1;
+        if background_refresh(app, context, status.epoch, kind, modern).await? {
+            tokio::time::sleep(std::time::Duration::from_millis(125)).await;
+            continue;
+        }
+        let hints = if next_kind % 3 == 0 {
+            let scope = context.cache_scope.clone();
+            app.state::<DbState>()
+                .read(move |conn| freshness::hints(conn, &scope))
+                .await?
+        } else {
+            vec![]
+        };
         let task = match crate::catalogue_commands::save_checked(app, context, |conn| {
             store::begin(conn, &context.cache_scope, kind, status.epoch)
         })
@@ -173,7 +239,7 @@ async fn worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<
                 continue;
             }
         };
-        if task.phase == "complete" || task.retry_at > store::now() {
+        if hints.is_empty() && (task.phase == "complete" || task.retry_at > store::now()) {
             write(app, context, |conn, _, context| {
                 store::tidy(conn, &context.cache_scope)
             })
@@ -201,15 +267,7 @@ async fn worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<
         if verified.is_none_or(|(_, at): (i64, i64)| store::now() - at > 60_000) {
             match crate::catalogue_commands::fresh_library(app, context).await {
                 Ok((current, library)) => {
-                    if verified.is_none() {
-                        modern = transport::modern(
-                            &current
-                                .get_identity()
-                                .await
-                                .map_err(|_| "Plex API capabilities unavailable")?
-                                .version,
-                        );
-                    }
+                    let _ = current;
                     verified = Some((library, store::now()));
                 }
                 Err(_) => {
@@ -218,11 +276,69 @@ async fn worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<
                 }
             }
         }
+        if !hints.is_empty() {
+            let observed = store::now();
+            let ids: Vec<_> = hints
+                .iter()
+                .map(|hint| (hint.kind.clone(), hint.id))
+                .collect();
+            let response = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                transport::details(&plex, verified.unwrap().0, &ids, modern),
+            )
+            .await;
+            drop(network);
+            match response {
+                Ok(Ok(details)) => {
+                    let scope = context.cache_scope.clone();
+                    let retry = hints.clone();
+                    let applied = write(app, context, move |conn, plex, context| {
+                        freshness::apply_hints(
+                            conn,
+                            &scope,
+                            status.epoch,
+                            &hints,
+                            &details.rows,
+                            &details.missing,
+                            observed,
+                            || plex.cache_commit_guard(context),
+                        )
+                    })
+                    .await;
+                    if applied.is_ok() {
+                        let _ = app.emit(
+                            "matching-index-changed",
+                            serde_json::json!({"scope":context.cache_scope}),
+                        );
+                    } else {
+                        let _ = write(app, context, move |conn, _, context| {
+                            freshness::defer(conn, &context.cache_scope, &retry)
+                        })
+                        .await;
+                    }
+                }
+                _ => {
+                    write(app, context, move |conn, _, context| {
+                        freshness::defer(conn, &context.cache_scope, &hints)
+                    })
+                    .await
+                    .ok();
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(125)).await;
+            continue;
+        }
         let outcome = if task.phase == "prune" {
             drop(network);
             let job = task.clone();
             write(app, context, move |conn, plex, context| {
                 store::prune_fenced(conn, &context.cache_scope, &job, status.epoch, || {
+                    freshness::complete_census(
+                        conn,
+                        &context.cache_scope,
+                        &job.kind,
+                        &job.generation,
+                    )?;
                     plex.cache_commit_guard(context)
                 })
             })
@@ -247,7 +363,16 @@ async fn worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<
                             &page.rows,
                             page.total,
                             page.bytes,
-                            || plex.cache_commit_guard(context),
+                            || {
+                                freshness::record_census(
+                                    conn,
+                                    &context.cache_scope,
+                                    &job.kind,
+                                    &job.generation,
+                                    page.server_time,
+                                )?;
+                                plex.cache_commit_guard(context)
+                            },
                         )
                     })
                     .await
@@ -270,4 +395,177 @@ async fn worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<
         }
         tokio::time::sleep(std::time::Duration::from_millis(125)).await;
     }
+}
+async fn background_refresh(
+    app: &tauri::AppHandle,
+    context: &PlexRequestContext,
+    epoch: i64,
+    kind: &str,
+    modern: bool,
+) -> Result<bool, String> {
+    let scope = context.cache_scope.clone();
+    let selected = kind.to_owned();
+    let (check, delta) = app
+        .state::<DbState>()
+        .read(move |conn| {
+            Ok((
+                freshness::next_check(conn, &scope)?,
+                freshness::delta_due(conn, &scope, &selected)?,
+            ))
+        })
+        .await?;
+    if check.is_none() && !delta {
+        return Ok(false);
+    }
+    let permit = app
+        .state::<IndexState>()
+        .network
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| "Matching index stopped")?;
+    let plex = client(app, context).await?;
+    let current = snapshot(app, context).await?;
+    if plex.offline_only
+        || current.paused
+        || current.epoch != epoch
+        || app.state::<IndexState>().busy_until.load(Ordering::Relaxed) > store::now()
+        || app
+            .try_state::<crate::audio_engine::bridge::AudioEngineState>()
+            .is_some_and(|engine| engine.0.is_buffering())
+    {
+        return Ok(true);
+    }
+    let (_, library) = match crate::catalogue_commands::verify_library(app, context).await {
+        Ok(value) => value,
+        Err(_) => {
+            drop(permit);
+            let _ = write(app, context, |conn, _, context| {
+                freshness::defer_check(
+                    conn,
+                    &context.cache_scope,
+                    "Plex library freshness is unavailable. Retained evidence remains available.",
+                )
+            })
+            .await;
+            return Ok(true);
+        }
+    };
+    if let Some(check) = check {
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            transport::section_stamp(&plex, library),
+        )
+        .await;
+        let capabilities = if check.probe {
+            Some(
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(8),
+                    transport::capabilities(&plex, library, modern),
+                )
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .map(|meta| freshness::filters(&meta))
+                .unwrap_or_default(),
+            )
+        } else {
+            None
+        };
+        drop(permit);
+        match result {
+            Ok(Ok((stamp, scanning))) => {
+                let _ = write(app, context, move |conn, plex, context| {
+                    freshness::checked(
+                        conn,
+                        &context.cache_scope,
+                        epoch,
+                        &check,
+                        stamp.as_deref(),
+                        scanning,
+                        capabilities.as_ref(),
+                        || plex.cache_commit_guard(context),
+                    )
+                })
+                .await;
+            }
+            _ => {
+                let _ = write(app, context, |conn, _, context| {
+                    freshness::defer_check(
+                        conn,
+                        &context.cache_scope,
+                        "Plex freshness check failed. Retrying without removing retained metadata.",
+                    )
+                })
+                .await;
+            }
+        }
+        let _ = app.emit(
+            "matching-index-changed",
+            serde_json::json!({"scope":context.cache_scope}),
+        );
+        return Ok(true);
+    }
+    let kind = kind.to_owned();
+    let window = write(app, context, move |conn, _, context| {
+        freshness::delta(conn, &context.cache_scope, &kind, epoch)
+    })
+    .await?;
+    let Some(window) = window else {
+        return Ok(false);
+    };
+    let date = chrono::DateTime::from_timestamp(window.lower, 0)
+        .ok_or("Invalid matching checkpoint")?
+        .format("%Y-%m-%d")
+        .to_string();
+    let key = format!("{}{}", window.filter.field, window.filter.operator);
+    let filters = [(key.as_str(), date), ("sort", window.filter.sort.clone())];
+    let observed = store::now();
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        transport::listing(
+            &plex,
+            library,
+            &window.kind,
+            window.offset,
+            modern,
+            &filters,
+        ),
+    )
+    .await;
+    drop(permit);
+    let lease = window.clone();
+    let outcome = match result {
+        Ok(Ok(page)) => {
+            write(app, context, move |conn, plex, context| {
+                freshness::publish_delta(
+                    conn,
+                    &context.cache_scope,
+                    epoch,
+                    &lease,
+                    &page,
+                    observed,
+                    || plex.cache_commit_guard(context),
+                )
+            })
+            .await
+        }
+        Ok(Err(error)) => Err(error),
+        Err(_) => Err("Plex incremental matching request timed out".into()),
+    };
+    if let Err(error) = outcome {
+        let reset = ["changed", "repeated", "timestamp"]
+            .iter()
+            .any(|word| error.contains(word));
+        let _ = write(app, context, move |conn, _, context| {
+            freshness::defer_delta(conn, &context.cache_scope, &window, reset, &error)
+        })
+        .await;
+    } else {
+        let _ = app.emit(
+            "matching-index-changed",
+            serde_json::json!({"scope":context.cache_scope}),
+        );
+    }
+    Ok(true)
 }

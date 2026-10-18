@@ -36,6 +36,7 @@ pub struct Status {
     pub epoch: i64,
     pub revision: i64,
     pub tasks: Vec<Task>,
+    pub health: super::freshness::Health,
 }
 pub fn status(conn: &Connection, scope: &str) -> Result<Status> {
     let (paused, epoch, revision) = conn
@@ -76,6 +77,7 @@ pub fn status(conn: &Connection, scope: &str) -> Result<Status> {
         epoch,
         revision,
         tasks,
+        health: super::freshness::health(conn, scope)?,
     })
 }
 pub fn ensure_scope(conn: &Connection, scope: &str) -> Result<()> {
@@ -124,6 +126,10 @@ pub fn control(conn: &Connection, scope: &str, action: &str) -> Result<Status> {
                     .map_err(error)?;
                 tx.execute("DELETE FROM matching_changes WHERE scope=?1", [scope])
                     .map_err(error)?;
+                for table in ["matching_hints", "matching_health", "matching_refresh"] {
+                    tx.execute(&format!("DELETE FROM {table} WHERE scope=?1"), [scope])
+                        .map_err(error)?;
+                }
                 tx.execute("DELETE FROM matching_rows WHERE scope=?1", [scope])
                     .map_err(error)?;
             }
@@ -165,17 +171,23 @@ pub fn current(conn: &Connection, scope: &str, task: &Task, epoch: i64) -> Resul
     Ok(())
 }
 pub fn upsert(conn: &Connection, scope: &str, row: &Row, observed: i64) -> Result<bool> {
-    let old: Option<(String, bool)> = conn
+    let old: Option<(String, bool, i64)> = conn
         .query_row(
-            "SELECT revision,removed FROM matching_rows WHERE scope=?1 AND kind=?2 AND id=?3",
+            "SELECT revision,removed,observed FROM matching_rows WHERE scope=?1 AND kind=?2 AND id=?3",
             params![scope, row.kind, row.id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?,r.get(2)?)),
         )
         .optional()
         .map_err(error)?;
+    if old
+        .as_ref()
+        .is_some_and(|(_, _, previous)| *previous > observed)
+    {
+        return Ok(false);
+    }
     let changed = old
         .as_ref()
-        .is_none_or(|(revision, removed)| *removed || revision != &row.revision);
+        .is_none_or(|(revision, removed, _)| *removed || revision != &row.revision);
     let mut evidence = serde_json::to_value(row).map_err(|_| "Invalid matching evidence")?;
     // Indexed columns carry these values already. Retain only additional typed
     // evidence in JSON, without null padding or duplicated normalized strings.
@@ -346,7 +358,7 @@ pub fn prune_fenced<G>(
     tx.commit().map_err(error)?;
     Ok(done)
 }
-fn trim_changes(conn: &Connection, scope: &str) -> Result<()> {
+pub(super) fn trim_changes(conn: &Connection, scope: &str) -> Result<()> {
     conn.execute("DELETE FROM matching_changes WHERE rowid IN (SELECT rowid FROM matching_changes WHERE scope=?1 AND sequence<(SELECT max(0,revision-10000) FROM matching_scopes WHERE scope=?1) LIMIT 1000)",[scope]).map_err(error)?;
     Ok(())
 }

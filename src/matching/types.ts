@@ -16,5 +16,13 @@ export interface MatchingStatus {
   epoch: number
   revision: number
   tasks: MatchingTask[]
+  health?: {
+    lastCheck: number
+    pending: number
+    reconciliationPending: boolean
+    error: string | null
+    filters: Record<string, { field: string; sort: string; operator: string }>
+    refreshes: { kind: string; watermark: number | null; lastChecked: number; active: boolean; error: string | null }[]
+  }
 }
 export type MatchingAction = "pause" | "resume" | "rebuild" | "clear"

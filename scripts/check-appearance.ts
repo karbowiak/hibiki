@@ -88,7 +88,9 @@ async function checkMatchingIndex(page: Page, name: string) {
   const heading = page.getByRole("heading", { name: "Plex Matching Index", exact: true })
   await heading.waitFor()
   const section = heading.locator("..").locator("..")
-  await section.getByText(/8,306 · Complete/).waitFor()
+  await section.getByText(/8,306 · Covered/).waitFor()
+  await section.getByText(/12 changes waiting.*Library reconciliation requested/).waitFor()
+  await section.getByText(/Metadata checked/).waitFor()
   await section.getByRole("button", { name: "Pause indexing", exact: true }).click()
   await section.getByText("Paused. Existing matching evidence remains available.", { exact: true }).waitFor()
   for (const [width, theme] of [[1440,"dark"],[960,"light"]] as const) {

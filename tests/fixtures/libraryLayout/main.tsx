@@ -353,7 +353,7 @@ async function setup() {
     { kind:"artist",phase:"complete",offset:0,total:8306,started:1700000000000,completed:1700000010000,count:8306,requests:34,bytes:1000000,error:null,retryAt:0 },
     { kind:"album",phase:"verify",offset:10000,total:87130,started:1700000000000,completed:null,count:87130,requests:180,bytes:10000000,error:null,retryAt:0 },
     { kind:"track",phase:"scan",offset:20000,total:377386,started:1700000000000,completed:null,count:20000,requests:40,bytes:9000000,error:null,retryAt:0 },
-  ] }
+  ], health: {lastCheck:1700000010000,pending:12,reconciliationPending:true,error:null,filters:{},refreshes:[{kind:"artist",watermark:1700000010,lastChecked:1700000010000,active:false,error:null}]} }
   const indexActions: string[] = []
   Object.assign(provider, {
     matchingIndexStatus: async () => structuredClone(indexInfo),

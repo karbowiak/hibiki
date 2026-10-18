@@ -36,10 +36,41 @@ evidence, release date/type, disc/track positions and provider timestamps. Gener
 Plex `mbid` GUIDs remain untyped; they are not recording MBIDs. Detailed media and
 page DTOs remain on demand.
 
-Settings → Cache → Plex Matching Index shows per-kind partial/complete progress
-and completion dates, with Pause, Resume, Rebuild and Clear controls. Clear
+Settings → Cache → Plex Matching Index shows per-kind partial/covered progress
+and census dates separately from freshness checks, pending changes and refresh
+failures, with Pause, Resume, Rebuild and Clear controls. Clear
 leaves indexing paused until Resume. Offline scopes can inspect/manage their
 retained local index.
+
+## Incremental freshness
+
+Native refresh hints are scoped, durable and coalesced by identity. Up to 25
+identities are fetched together with compact metadata, then checked against the
+requested kind, identity and library. A newer hint cannot be acknowledged by an
+older response. The queue is capped at 10,000 identities; overflow requests an
+inventory reconciliation. A missing detail requests reconciliation and retains
+the previous row. It is never deletion proof.
+
+The worker checks section scan/change stamps every 15 minutes and after reconnect
+hints, with a 30 second coalescing interval. A changed stamp, overflow, or a census
+older than 24 hours schedules listing reconciliation. Unchanged completed indexes
+are reused across startup. Active server scans defer reconciliation; pending work
+survives restart. A watchdog restarts workers retired by transient local failures.
+
+Once a day, a bounded capability query discovers date fields, date operators and
+sorts. Only advertised, whitelisted `addedAt`/`updatedAt` combinations are used.
+Unsupported or timed-out capability discovery falls back to listing
+reconciliation. Supported delta windows overlap the entire previous UTC day.
+Their server-time watermark advances only when all pages complete, and each page
+checkpoint is durable. Missing/backwards timestamps, ignored filters and repeated
+identities retain existing evidence and fall back safely. A completed census
+supersedes old incremental windows. Network failures back off without advancing.
+
+New observations update row and relationship evidence and its revision; late
+census responses cannot overwrite newer verified detail responses. Row-change
+history is bounded independently of page membership. Association invalidation and
+retry consumers are part of the shared resolver work in #29–#30; freshness alone
+does not establish that those consumers are connected.
 
 ## Validation boundary
 
@@ -59,8 +90,7 @@ bodies were 116–238 kB. No per-track detail sweep is needed for the initial pa
 Large synthetic storage and foreground measurements are recorded in
 [issue-validation.md](issue-validation.md). These are repeatable native SQLite
 checks, distinct from live audible-playback or end-to-end account mutation proof.
-Freshness maintenance and shared associations/consumer integration are tracked
-separately by #28–#30.
+Shared associations and consumer integration remain tracked by #28–#30.
 
 Sources: [Plex API versioning and response customization](https://developer.plex.tv/pms/#section/API-Info),
 [Library API](https://developer.plex.tv/pms/#tag/Library).

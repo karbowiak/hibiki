@@ -78,6 +78,7 @@ export function MatchingIndexControls() {
         <ul className="divide-y divide-(--border)">
           {(["artist", "album", "track"] as const).map((kind) => {
             const task = info.tasks.find((task) => task.kind === kind)
+            const refresh = info.health?.refreshes.find((item) => item.kind === kind)
             const label =
               kind === "artist"
                 ? "Artists"
@@ -94,7 +95,7 @@ export function MatchingIndexControls() {
                   {!task
                     ? "Waiting"
                     : task.phase === "complete"
-                      ? `${task.count.toLocaleString()} · Complete`
+                      ? `${task.count.toLocaleString()} · Covered`
                       : `${task.count.toLocaleString()}${task.total !== null ? ` / ${task.total.toLocaleString()}` : ""} · ${task.phase === "scan" ? "Indexing" : task.phase === "verify" ? "Verifying" : "Reconciling"}`}
                   {task?.completed
                     ? ` · ${new Date(task.completed).toLocaleString()}`
@@ -105,10 +106,24 @@ export function MatchingIndexControls() {
                     {task.error} · Retrying automatically
                   </span>
                 )}
+                {refresh && (
+                  <span className="w-full text-xs text-(--text-secondary)">
+                    {refresh.active ? "Checking recent changes…" : refresh.lastChecked ? `Metadata checked ${new Date(refresh.lastChecked).toLocaleString()}` : "Recent changes have not been checked yet."}
+                    {refresh.error ? ` · ${refresh.error} · Retrying automatically` : ""}
+                  </span>
+                )}
               </li>
             )
           })}
         </ul>
+      )}
+      {info?.health && (
+        <p className="text-xs text-(--text-secondary)">
+          {info.health.pending ? `${info.health.pending.toLocaleString()} changes waiting. ` : ""}
+          {info.health.reconciliationPending ? "Library reconciliation requested. " : ""}
+          {info.health.error ?? (info.health.lastCheck ? `Library checked ${new Date(info.health.lastCheck).toLocaleString()}. ` : "")}
+          {!Object.keys(info.health.filters).length && "Periodic inventory checks cover changes this server cannot filter."}
+        </p>
       )}
       <div className="flex flex-wrap gap-2">
         {(

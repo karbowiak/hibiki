@@ -82,6 +82,16 @@ against a user's playlists. No release tag is created by this work.
 
 ## Recorded checks
 
+The #28 refresh foundation covers coalescing and overflow, late notification
+responses, missing details without deletion, rematches/reparenting/version edits,
+advertised-filter validation, day-boundary overlap, durable partial windows,
+changing totals/duplicate pages, absent or backwards server clocks, failed writes,
+owner retirement and unchanged restart reuse. Chromium/WebKit check separate
+coverage/freshness status and lifecycle controls. Capability discovery can fall
+back to complete listing reconciliation; a live server's undocumented filtering
+behavior is not assumed. Association invalidation/retry remains open until the
+shared resolver and consumers in #29–#30 are connected.
+
 The compact-index foundation for #27 adds native paging/ownership, storage,
 restart and cache-retention checks and a Chromium/WebKit settings check. The
 400,000-track native SQLite fixture completed a two-pass census in **121.66 s**,

@@ -300,6 +300,7 @@ pub fn run() {
             app.manage(offline_audio::AudioDownloads::new(download_root));
             app.manage(download_library::DownloadLibrary::default());
             app.manage(catalogue_commands::CatalogueSync::new());
+            matching_index::start_watchdog(app.handle().clone());
             app.manage(library_picker::LibraryPicker::default());
             app.manage(default_playlists::Bootstrap::default());
             listening_history::start_worker(app.handle().clone());
@@ -392,6 +393,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             matching_index::matching_index_status,
+            matching_index::matching_index_notify,
             matching_index::matching_index_start,
             matching_index::matching_index_control,
             matching_index::matching_index_yield,

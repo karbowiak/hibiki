@@ -116,6 +116,22 @@ test("invalid native ownership is rejected without invoking a command", () => {
   expect(calls.length).toBe(0)
 })
 
+test("matching freshness notifications retain their native owner and discard late completion", async () => {
+  let owns = true
+  const pending = deferred<void>()
+  const { calls, invoke } = transportHarness(() => pending.promise)
+  const captured = context()
+  const api = createPlexApi(captured, invoke, () => owns)
+  const work = api.matchingIndexNotify([{ id: 7, type: 10, state: 5 }], true)
+  captured.cacheScope = scope("b")
+  expect(calls[0]).toEqual({command: "matching_index_notify", args: {context: context(), changes: [{ id: 7, type: 10, state: 5 }], catchup: true}})
+  owns = false
+  pending.resolve()
+  await expect(work).rejects.toThrow("superseded")
+  await expect(api.matchingIndexNotify([], true)).rejects.toThrow("superseded")
+  expect(calls.length).toBe(1)
+})
+
 test("an actual disconnected PlexProvider cannot delete or rate items through the replacement client", async () => {
   const { calls, invoke } = transportHarness()
   const old = new PlexProvider(invoke)

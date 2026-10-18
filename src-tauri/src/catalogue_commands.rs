@@ -29,7 +29,7 @@ async fn client(
     let guard = state.0.lock().await;
     Ok(state.checked_client(context, &guard)?.clone())
 }
-async fn verify_library(
+pub(crate) async fn verify_library(
     app: &tauri::AppHandle,
     context: &PlexRequestContext,
 ) -> Result<(PlexClient, i64), String> {
