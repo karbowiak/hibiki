@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { PlexProvider } from "../src/backends/plex/provider"
 import { mergeMusicSearchResults } from "../src/lib/musicMatching"
 import { linkSearchPlaylists, searchPlaylistHref } from "../src/lib/searchPlaylists"
-import { appendSearchSuggestions } from "../src/lib/searchSuggestions"
+import { presentSearchSuggestions } from "../src/lib/searchSuggestions"
 import type { MusicItem } from "../src/types/music"
 import type { MixedPlaylist } from "../src/mixedPlaylists/model"
 
@@ -23,7 +23,7 @@ test("same-title provider playlists remain distinct unless an explicit current-o
 
 test("dropdown limits use service identities rather than opaque Plex metadata paths", () => {
   const rows = Array.from({ length: 10 }, (_, index) => row(String(index), `/playlists/${index}`))
-  expect(appendSearchSuggestions([], rows)).toHaveLength(3)
+  expect(presentSearchSuggestions(rows)).toHaveLength(3)
 })
 
 test("Plex title search includes account playlist metadata and never reads playlist contents", async () => {

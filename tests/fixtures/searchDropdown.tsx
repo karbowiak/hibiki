@@ -117,7 +117,7 @@ assert.equal(navigated.at(-1), "/search")
 assert.equal(closed, 4)
 // A late provider and a background association refresh leave existing row DOM,
 // scroll and the selected action intact. Status is outside the scrolling rows.
-const { appendSearchSuggestions } = await import("../../src/lib/searchSuggestions")
+const { presentSearchSuggestions } = await import("../../src/lib/searchSuggestions")
 state.query = "progressive"
 state.suggestions = [{ type: "track", id: "early", title: "Early track", artistName: "A" }]
 state.isSearching = true
@@ -126,15 +126,15 @@ await act(async () => select(0))
 const early = document.querySelector('[data-search-index="0"]')!
 const scroll = document.querySelector('[data-search-scroll]') as HTMLElement
 scroll.scrollTop = 25
-state.suggestions = appendSearchSuggestions(state.suggestions, [{ type: "artist", id: "late", title: "Late artist" } as any])
+state.suggestions = presentSearchSuggestions([...state.suggestions, { type: "artist", id: "late", title: "Late artist" } as any])
 state.isSearching = false
 await act(async () => root.render(<Harness />))
-assert.equal(document.querySelector('[data-search-index="0"]'), early)
+assert.equal(document.querySelector('[data-search-index="1"]'), early)
 assert.equal(early.getAttribute("aria-selected"), "true")
 assert.equal(scroll.scrollTop, 25)
 assert.equal(scroll.querySelector('[role="status"]'), null)
 await act(async () => select(2)) // footer
-state.suggestions = appendSearchSuggestions(state.suggestions, [{ type: "album", id: "later", title: "Later album", artistName: "A" } as any])
+state.suggestions = presentSearchSuggestions([...state.suggestions, { type: "album", id: "later", title: "Later album", artistName: "A" } as any])
 await act(async () => root.render(<Harness />))
 assert.equal(document.querySelector('[data-search-footer] [role="option"]')!.getAttribute("aria-selected"), "true")
 state.query = "playlists"

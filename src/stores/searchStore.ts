@@ -7,7 +7,7 @@ import { browseYoutubeMusic, subscribeYoutubeMusicCatalog, useYoutubeMusicDiscov
 import { mergeMusicSearchResults } from "../lib/musicMatching"
 import { associateMusicItems } from "../matching/associations"
 import { subscribeMatchingUpdates } from "../matching/updates"
-import { appendSearchSuggestions } from "../lib/searchSuggestions"
+import { presentSearchSuggestions } from "../lib/searchSuggestions"
 import { useUIStore } from "./uiStore"
 import { linkSearchPlaylists } from "../lib/searchPlaylists"
 import { useMixedPlaylistStore } from "./mixedPlaylistStore"
@@ -51,7 +51,7 @@ export function createSearchStore(
   let associations: Map<string, string | null> | undefined, associationRevision = 0
   let searchOwner: { provider: MusicProvider | null; session: unknown; scope: unknown; extra: string | null } | null = null
   const combined = () => supplemental ? supplemental.merge(primary, secondary, associations) : primary
-  const suggest = (previous: MusicItem[], incoming: MusicItem[]) => appendSearchSuggestions(previous, incoming, useUIStore.getState().deduplicateAlbums)
+  const suggest = (_previous: MusicItem[], incoming: MusicItem[]) => presentSearchSuggestions(incoming, useUIStore.getState().deduplicateAlbums)
   return create<SearchState>((set, get) => ({
     refreshAssociations: async () => {
       if (!supplemental?.associate || !secondary.length) return

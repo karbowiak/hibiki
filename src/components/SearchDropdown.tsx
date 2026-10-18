@@ -3,7 +3,7 @@ import { Button } from "./shared/Button"
 import { ArtistCredits } from "./shared/ArtistCredits"
 import { MusicEntityLink } from "./shared/MusicEntityLink"
 import { trackEntity } from "../lib/musicLinks"
-import { appendSearchSuggestions, searchItemKey } from "../lib/searchSuggestions"
+import { presentSearchSuggestions, searchItemKey } from "../lib/searchSuggestions"
 import { searchPlaylistHref } from "../lib/searchPlaylists"
 import "../styles/discovery.css"
 import { useArtistImage, useAlbumImage } from "../hooks/useMediaImage"
@@ -123,7 +123,7 @@ type DropdownItem =
   | { kind: "playlist"; item: MusicPlaylist & { type: "playlist" }; href: string }
 
 export function buildSearchItems(results: MusicItem[], presented = false): DropdownItem[] {
-  return (presented ? results : appendSearchSuggestions([], results)).flatMap((item): DropdownItem[] => {
+  return (presented ? results : presentSearchSuggestions(results)).flatMap((item): DropdownItem[] => {
     const href = item.providerKey === "ytmusic" ? `/ytmusic/${encodeURIComponent(item.id.slice(8))}` : `/${item.type}/${item.id}`
     if (item.type === "artist") return [{ kind: "artist", item, href }]
     if (item.type === "album") return [{ kind: "album", item, href }]
@@ -194,13 +194,15 @@ export function SearchDropdown({
   const items = buildSearchItems(suggestions ?? results, !!suggestions)
   const emptyQuery = !query.trim()
   const count = emptyQuery ? landingItems.length : items.length
-  const previous = useRef({ context, query, count })
+  const keys = emptyQuery ? landingItems.map(row => `${row.kind}:${row.href ?? row.query ?? row.title}`) : items.map(row => searchItemKey(row.item))
+  const previous = useRef({ context, query, count, keys })
   const sameContext = previous.current.context === context && previous.current.query === query
-  const selected = sameContext ? activeIndex === previous.current.count ? count : activeIndex : -1
+  const selected = !sameContext ? -1 : activeIndex === previous.current.count ? count
+    : activeIndex < 0 ? -1 : keys.indexOf(previous.current.keys[activeIndex])
   useLayoutEffect(() => {
     if (selected !== activeIndex) onActiveIndexChange(selected)
-    previous.current = { context, query, count }
-  }, [context, query, count, selected, activeIndex, onActiveIndexChange])
+    previous.current = { context, query, count, keys }
+  })
 
   const activateItem = (index: number) => {
     if (emptyQuery) {
@@ -244,6 +246,24 @@ export function SearchDropdown({
   }, [selected, items, landingItems, emptyQuery])
 
   const popupRef = useRef<HTMLDivElement>(null)
+  const scrollAnchor = useRef<{ key: string; top: number } | null>(null)
+  const captureAnchor = () => {
+    const scroll = popupRef.current?.querySelector<HTMLElement>("[data-search-scroll]")
+    if (!scroll) return
+    const top = scroll.getBoundingClientRect().top
+    const rows = [...scroll.querySelectorAll<HTMLElement>("[data-search-key]")]
+    const row = rows.find(row => row.getAttribute("aria-selected") === "true" && row.getBoundingClientRect().bottom > top)
+      ?? rows.find(row => row.getBoundingClientRect().bottom > top)
+    scrollAnchor.current = row ? { key: row.dataset.searchKey!, top: row.getBoundingClientRect().top - top } : null
+  }
+  const presentation = JSON.stringify(keys)
+  useLayoutEffect(() => {
+    const scroll = popupRef.current?.querySelector<HTMLElement>("[data-search-scroll]")
+    const anchor = sameContext ? scrollAnchor.current : null
+    const row = anchor && [...(scroll?.querySelectorAll<HTMLElement>("[data-search-key]") ?? [])].find(row => row.dataset.searchKey === anchor.key)
+    if (row && scroll && anchor) scroll.scrollTop += row.getBoundingClientRect().top - scroll.getBoundingClientRect().top - anchor.top
+    captureAnchor()
+  }, [presentation, context, query])
   const [panelHeight, setPanelHeight] = useState(360)
   const [panelWidth, setPanelWidth] = useState<number>()
   useLayoutEffect(() => {
@@ -288,14 +308,14 @@ export function SearchDropdown({
     if (row.top < bounds.top) popup.scrollTop -= bounds.top - row.top
     else if (row.bottom > visibleBottom)
       popup.scrollTop += row.bottom - visibleBottom
-  }, [selected])
+    captureAnchor()
+  }, [selected === count ? "footer" : keys[selected]])
   useLayoutEffect(() => {
     const scroll = popupRef.current?.querySelector<HTMLElement>("[data-search-scroll]")
     if (scroll) scroll.scrollTop = 0
   }, [context, query])
 
-  // Keep each existing group and row in place; late kinds form a new group at
-  // the bottom rather than being inserted above a visible/hovered result.
+  // Presentation is canonical; stable category and result keys retain row DOM.
   const groups: { kind: DropdownItem["kind"]; rows: { row: DropdownItem; index: number }[] }[] = []
   items.forEach((row, index) => {
     if (groups.at(-1)?.kind !== row.kind) groups.push({ kind: row.kind, rows: [] })
@@ -316,7 +336,7 @@ export function SearchDropdown({
         <span>{emptyQuery ? "A shortcut to your music" : "Search music"}</span>
         <span role="status" className="normal-case tracking-normal font-normal">{!emptyQuery && isSearching ? "Searching…" : ""}</span>
       </div>
-      <div data-search-scroll className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <div data-search-scroll onScroll={captureAnchor} className="min-h-0 flex-1 overflow-y-auto overscroll-contain" style={{ overflowAnchor: "none" }}>
         {emptyQuery ? (["action", "recent", "music"] as const).map(kind => {
           const rows = landingItems.map((row, index) => ({ row, index })).filter(({ row }) => row.kind === kind)
           if (!rows.length) return null
@@ -344,12 +364,12 @@ export function SearchDropdown({
           </div>
         ) : !isSearching && <p role="status" className="px-3 py-3 text-sm text-(--text-secondary)">No results for “{query}”.</p> : groups.map(({ kind, rows }) => {
           const label = kind === "artist" ? "Artists" : kind === "album" ? "Albums" : kind === "playlist" ? "Playlists" : "Tracks"
-          return <div key={searchItemKey(rows[0].row.item)} role="group" aria-label={label} className="border-b border-(--border) pb-1 last:border-b-0">
+          return <div key={kind} role="group" aria-label={label} className="border-b border-(--border) pb-1 last:border-b-0">
             <div aria-hidden="true" className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-(--text-muted)">{label}</div>
             {rows.map(({ row, index }) => <div
-              key={searchItemKey(row.item)} id={`${id}-option-${index}`} role="option" aria-selected={index === selected} data-search-index={index}
+              key={searchItemKey(row.item)} data-search-key={searchItemKey(row.item)} id={`${id}-option-${index}`} role="option" aria-selected={index === selected} data-search-index={index}
               className={`flex cursor-pointer items-center gap-3 px-3 py-2 ${index === selected ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
-              onMouseEnter={() => onActiveIndexChange(index)} onMouseDown={event => event.preventDefault()} onClick={() => activateItem(index)}
+              onMouseMove={() => { onActiveIndexChange(index); captureAnchor() }} onMouseDown={event => event.preventDefault()} onClick={() => activateItem(index)}
             >
               <SearchArtwork item={row.item} />
               <div className="min-w-0 flex-1">
