@@ -65,9 +65,15 @@ pub enum Command {
     Shutdown,
 }
 
-/// Commands from control task → audio callback (processed via lock-free try_recv).
-///
-/// These must be cheap to handle — no I/O, no blocking, no allocation in hot paths.
+/// Fixed filter storage travels on a separate two-slot lane, prepared off RT.
+pub struct PreparedEq {
+    pub scene: super::dsp::eq_scene::EqScene,
+    pub output_key: u64,
+    pub revision: u64,
+    pub rate: u32,
+}
+
+/// Small control messages; no I/O, blocking or allocation in hot paths.
 pub enum AudioCommand {
     /// Ordinary playback controls belong to the play intent that admitted them.
     PlaybackControl {

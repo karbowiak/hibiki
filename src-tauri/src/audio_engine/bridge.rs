@@ -306,6 +306,25 @@ pub async fn audio_configure_eq(
 }
 
 #[tauri::command]
+pub async fn audio_get_output_identity(state: State<'_, AudioEngineState>) -> Result<Option<crate::audio_devices::OutputIdentity>, String> {
+    Ok(state.0.output_identity())
+}
+
+#[tauri::command]
+pub async fn audio_configure_eq_scene(
+    gains_db: [f32; 10], enabled: bool, postgain_db: Option<f32>,
+    correction: Option<super::dsp::correction::Profile>, output_key: String,
+    state: State<'_, AudioEngineState>,
+) -> Result<super::dsp::eq_scene::AppliedEq, String> {
+    let engine = state.0.clone();
+    let (applied, revision, key) = tokio::task::spawn_blocking(move ||
+        engine.prepare_eq_scene(gains_db, enabled, postgain_db, correction, &output_key)
+    ).await.map_err(|_| "Equalizer preparation failed")??;
+    state.0.wait_for_eq_scene(revision, key).await?;
+    Ok(applied)
+}
+
+#[tauri::command]
 pub async fn audio_duck_and_apply(
     duck_ms: Option<u32>,
     state: State<'_, AudioEngineState>,

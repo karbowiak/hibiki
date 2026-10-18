@@ -56,6 +56,12 @@ pub struct SharedAtomics {
     pub active_rating_key: Arc<AtomicI64>,
     pub device_sample_rate: Arc<AtomicU32>,
     pub output_available: Arc<AtomicBool>,
+    pub output_key: AtomicU64,
+    pub next_output_key: AtomicU64,
+    /// Accessed by output/control threads only; never by the audio callback.
+    pub output_identity: Mutex<Option<crate::audio_devices::OutputIdentity>>,
+    pub eq_requested_revision: AtomicU64,
+    pub eq_accepted_revision: AtomicU64,
     /// Which physical deck is currently active (0 = A, 1 = B).
     /// Written by the audio callback on every swap, read by the control thread
     /// to determine which deck is pending for preloads.
@@ -101,6 +107,11 @@ impl SharedAtomics {
             active_rating_key: Arc::new(AtomicI64::new(0)),
             device_sample_rate: Arc::new(AtomicU32::new(44100)),
             output_available: Arc::new(AtomicBool::new(false)),
+            output_key: AtomicU64::new(0),
+            next_output_key: AtomicU64::new(0),
+            output_identity: Mutex::new(None),
+            eq_requested_revision: AtomicU64::new(0),
+            eq_accepted_revision: AtomicU64::new(0),
             active_deck_id: Arc::new(AtomicU8::new(0)), // A = 0
 
             deck_a_generation: Arc::new(AtomicU64::new(0)),
@@ -113,6 +124,14 @@ impl SharedAtomics {
 
     pub fn get_state(&self) -> EngineState {
         EngineState::from_u8(self.engine_state.load(Ordering::Relaxed))
+    }
+
+    pub fn identity(&self) -> Option<crate::audio_devices::OutputIdentity> {
+        let mut identity = self.output_identity.lock().ok()?.clone()?;
+        let key = self.output_key.load(Ordering::Acquire);
+        identity.available = key != 0 && identity.key == key.to_string()
+            && self.output_available.load(Ordering::Acquire);
+        Some(identity)
     }
 
     pub fn set_state(&self, state: EngineState) {
@@ -159,9 +178,11 @@ pub struct AudioCallbackState {
     seek_after_fade_ms: Option<usize>,
     pending_play_paused: bool,
     applied_stop_revision: u64,
+    eq_output_key: u64,
 
     // ---- Lock-free inputs ----
     cmd_rx: Receiver<AudioCommand>,
+    eq_rx: Option<Receiver<super::command::PreparedEq>>,
     deck_a_rx: Receiver<SampleBatch>,
     deck_b_rx: Receiver<SampleBatch>,
 
@@ -216,8 +237,10 @@ impl AudioCallbackState {
             seek_after_fade_ms: None,
             pending_play_paused: false,
             applied_stop_revision: 0,
+            eq_output_key: 0,
 
             cmd_rx,
+            eq_rx: None,
             deck_a_rx,
             deck_b_rx,
 
@@ -247,6 +270,10 @@ impl AudioCallbackState {
         sender: Sender<crate::listening_history::HistoryEvent>,
     ) {
         self.history_tx = Some(sender);
+    }
+
+    pub(crate) fn set_eq_receiver(&mut self, receiver: Receiver<super::command::PreparedEq>) {
+        self.eq_rx = Some(receiver);
     }
 
     pub fn process_callback(&mut self, data: &mut [f32]) {
@@ -453,12 +480,33 @@ impl AudioCallbackState {
     // -----------------------------------------------------------------------
 
     fn process_commands(&mut self) {
+        let output_key = self.atomics.output_key.load(Ordering::Acquire);
+        if output_key != 0 && self.eq_output_key != output_key {
+            self.dsp_chain.bypass_eq(self.device_sample_rate);
+            self.eq_output_key = output_key;
+            self.atomics.eq_accepted_revision.store(0, Ordering::Release);
+        }
         self.apply_pending_stop();
         while let Ok(cmd) = self.cmd_rx.try_recv() {
             self.apply_pending_stop();
             self.handle_command(cmd);
         }
         self.apply_pending_stop();
+        while let Some(prepared) = self.eq_rx.as_ref().and_then(|receiver| receiver.try_recv().ok()) {
+            self.apply_prepared_eq(prepared);
+        }
+    }
+
+    fn apply_prepared_eq(&mut self, prepared: super::command::PreparedEq) {
+        let super::command::PreparedEq { scene, output_key, revision, rate } = prepared;
+        if output_key != 0 && output_key == self.atomics.output_key.load(Ordering::Acquire)
+            && rate == self.device_sample_rate
+            && revision == self.atomics.eq_requested_revision.load(Ordering::Acquire) {
+            let frames = if self.state() == EngineState::Playing && !self.paused { rate / 40 } else { 0 };
+            self.dsp_chain.apply_prepared_eq(scene, frames);
+            self.eq_output_key = output_key;
+            self.atomics.eq_accepted_revision.store(revision, Ordering::Release);
+        }
     }
 
     fn apply_pending_stop(&mut self) {

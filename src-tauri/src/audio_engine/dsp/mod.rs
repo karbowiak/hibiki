@@ -118,9 +118,18 @@ impl DspChain {
     pub fn set_sample_rate(&mut self, rate: u32) {
         self.equalizer.set_sample_rate(rate);
         self.limiter.set_sample_rate(rate);
+        self.bypass_eq(rate);
+    }
+
+    /// A new output cannot inherit the preceding output's tone/correction/gain.
+    pub fn bypass_eq(&mut self, rate: u32) {
+        use traits::DspBlock;
+        self.equalizer.set_enabled(false);
+        self.equalizer.reset();
+        self.postgain = Postgain::new();
         // A configuration for another mixer rate is never reinterpreted. The
         // control side must prepare its correction again at the new rate.
-        self.correction = PreparedCorrection::bypassed(rate);
+        self.correction.bypass(rate);
         self.previous_eq = None;
         self.pending_eq = None;
         self.transition_remaining = 0;

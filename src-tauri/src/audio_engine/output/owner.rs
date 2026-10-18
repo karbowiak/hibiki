@@ -14,6 +14,8 @@ pub struct OutputParams {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeviceSpec {
+    pub id: String,
+    pub stable: bool,
     pub name: String,
     pub params: OutputParams,
     pub format: cpal::SampleFormat,
@@ -272,6 +274,7 @@ mod tests {
     }
     fn spec(name: &str, rate: u32) -> DeviceSpec {
         DeviceSpec {
+            id: format!("test:{name}"), stable: true,
             name: name.into(),
             params: OutputParams {
                 sample_rate: rate,
@@ -367,6 +370,12 @@ mod tests {
         assert_eq!(frames.load(Ordering::Acquire), before);
         let (resumed_frames, audible) = render_once();
         assert!(resumed_frames > before && audible);
+        let mut same_name = spec("New speakers", 48000);
+        same_name.id = "test:another-physical-device".into();
+        *device.lock().unwrap() = Some(same_name);
+        assert_eq!(closures.recv_timeout(Duration::from_secs(1)).unwrap(), owner);
+        assert_eq!(openings.recv_timeout(Duration::from_secs(1)).unwrap(), (owner, 48000));
+        assert!(render_once().0 > resumed_frames);
         drop(output);
         assert_eq!(
             closures.recv_timeout(Duration::from_secs(1)).unwrap(),

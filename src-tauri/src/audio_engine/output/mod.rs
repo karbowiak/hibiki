@@ -94,11 +94,9 @@ impl OutputDriver<AudioCallbackState> for CpalDriver {
             let config = device
                 .default_output_config()
                 .map_err(|error| format!("default output config: {error}"))?;
+            let identity = crate::audio_devices::identity(&device);
             let spec = DeviceSpec {
-                name: device
-                    .description()
-                    .map(|description| description.name().to_owned())
-                    .unwrap_or_else(|_| "System default".into()),
+                id: identity.id, stable: identity.stable, name: identity.name,
                 params: OutputParams {
                     sample_rate: config.sample_rate(),
                     channels: config.channels(),
@@ -136,6 +134,15 @@ impl OutputDriver<AudioCallbackState> for CpalDriver {
                 sample_rate: spec.params.sample_rate,
                 buffer_size: cpal::BufferSize::Default,
             };
+            let key = self.atomics.next_output_key.fetch_add(1, Ordering::AcqRel) + 1;
+            if let Ok(mut identity) = self.atomics.output_identity.lock() {
+                *identity = Some(crate::audio_devices::OutputIdentity {
+                    id: spec.id.clone(), name: spec.name.clone(), stable: spec.stable,
+                    key: key.to_string(), available: false,
+                });
+            }
+            // Fence the retained renderer before this stream can render a frame.
+            self.atomics.output_key.store(key, Ordering::Release);
             let stream = match spec.format {
                 SampleFormat::F32 => build_stream::<f32>(&device, &config, callback, failed),
                 SampleFormat::F64 => build_stream::<f64>(&device, &config, callback, failed),
@@ -167,17 +174,22 @@ impl OutputDriver<AudioCallbackState> for CpalDriver {
                     let _ = app.emit("audio-device-changed", &spec.name);
                 }
             }
-            Err(error) => self.report_error(error.clone()),
+            Err(error) => {
+                self.atomics.output_key.store(0, Ordering::Release);
+                self.report_error(error.clone());
+            },
         }
         result
     }
 
     fn availability(&mut self, available: bool) {
+        if !available { self.atomics.output_key.store(0, Ordering::Release); }
         self.atomics
             .output_available
             .store(available, Ordering::Release);
         if let Some(app) = &self.app {
             let _ = app.emit("audio-output-availability", available);
+            let _ = app.emit("audio-output-identity", self.atomics.identity());
         }
     }
 }

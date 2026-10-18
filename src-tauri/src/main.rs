@@ -41,6 +41,7 @@ mod theaudiodb;
 mod mediasession;
 mod musicbrainz;
 mod public_metadata;
+mod autoeq;
 mod metadata_service_settings;
 mod metadata_services;
 mod plex;
@@ -268,6 +269,7 @@ pub fn run() {
         .plugin(ytmusic::app_only_plugin(tauri_plugin_notification::init()))
         .manage(PlexState::new())
         .manage(matching_index::IndexState::default())
+        .manage(std::sync::Arc::new(autoeq::AutoEqState::default()))
         .manage(artwork_commands::ArtworkInventoryState::default())
         .manage(std::sync::Arc::new(soulsync::SoulSyncState::default()))
         .manage(std::sync::Arc::new(theaudiodb::TheAudioDbState::default()))
@@ -630,6 +632,8 @@ pub fn run() {
             musicbrainz::musicbrainz_search_identities,
             musicbrainz::musicbrainz_review_identity,
             public_metadata::wikidata_get_artist,
+            autoeq::autoeq_search,
+            autoeq::autoeq_download,
             public_metadata::coverartarchive_get_album,
             commands::musicbrainz_get_artist_info,
             commands::musicbrainz_get_album_info,
@@ -684,6 +688,8 @@ pub fn run() {
             audio_engine::bridge::audio_set_eq_enabled,
             audio_engine::bridge::audio_set_eq_postgain,
             audio_engine::bridge::audio_configure_eq,
+            audio_engine::bridge::audio_configure_eq_scene,
+            audio_engine::bridge::audio_get_output_identity,
             audio_engine::bridge::audio_duck_and_apply,
             audio_engine::bridge::audio_set_crossfade_window,
             audio_engine::bridge::audio_set_same_album_crossfade,

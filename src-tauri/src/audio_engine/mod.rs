@@ -62,6 +62,7 @@ pub struct AudioEngine {
     cmd_tx: Sender<ControlCommand>,
     command_admission: Mutex<()>,
     audio_cmd_tx: Sender<AudioCommand>,
+    eq_tx: Sender<self::command::PreparedEq>,
     atomics: Arc<SharedAtomics>,
     cache: Arc<AudioCache>,
     _output: Option<OutputThread>,
@@ -98,10 +99,12 @@ impl AudioEngine {
     pub fn unavailable(app_handle: &tauri::AppHandle, error: String) -> Self {
         let (cmd_tx, _) = crossbeam_channel::unbounded();
         let (audio_cmd_tx, _) = crossbeam_channel::bounded(1);
+        let (eq_tx, _) = crossbeam_channel::bounded(1);
         Self {
             cmd_tx,
             command_admission: Mutex::new(()),
             audio_cmd_tx,
+            eq_tx,
             atomics: Arc::new(SharedAtomics::new()),
             cache: Self::open_cache(app_handle),
             _output: None,
@@ -142,6 +145,9 @@ impl AudioEngine {
 
         // Control task → audio callback (commands)
         let (audio_cmd_tx, audio_cmd_rx) = crossbeam_channel::bounded::<AudioCommand>(256);
+        // Large fixed filter banks use their own bounded lane. Ordinary playback
+        // commands remain small and never copy a bank to change volume or pause.
+        let (eq_tx, eq_rx) = crossbeam_channel::bounded(2);
 
         // Bg decode → audio callback (per-deck sample channels)
         let (deck_a_tx, deck_a_rx) = crossbeam_channel::bounded::<SampleBatch>(4);
@@ -162,6 +168,7 @@ impl AudioEngine {
             vis_tx,
             atomics.clone(),
         );
+        cb_state.set_eq_receiver(eq_rx);
 
         let mix = output::initial_mix_params();
         cb_state.device_sample_rate = mix.sample_rate;
@@ -298,6 +305,7 @@ impl AudioEngine {
             cmd_tx,
             command_admission: Mutex::new(()),
             audio_cmd_tx,
+            eq_tx,
             atomics,
             cache: audio_cache,
             _output: Some(output),
@@ -552,6 +560,44 @@ impl AudioEngine {
 
     pub fn output_available(&self) -> bool {
         self.atomics.output_available.load(Ordering::Acquire)
+    }
+    pub fn output_identity(&self) -> Option<crate::audio_devices::OutputIdentity> {
+        self.atomics.identity()
+    }
+
+    /// Prepare the entire scene on a worker, then admit it only to the stream
+    /// incarnation selected by the user. Neither operation changes playback.
+    pub fn prepare_eq_scene(
+        &self, gains: [f32; 10], enabled: bool, postgain: Option<f32>,
+        correction: Option<dsp::correction::Profile>, output_key: &str,
+    ) -> Result<(dsp::eq_scene::AppliedEq, u64, u64), String> {
+        let key = output_key.parse::<u64>().map_err(|_| "Invalid audio output")?;
+        if key == 0 || key != self.atomics.output_key.load(Ordering::Acquire) || !self.output_available() {
+            return Err("The audio output changed or is unavailable".into());
+        }
+        let revision = self.atomics.eq_requested_revision.fetch_add(1, Ordering::AcqRel) + 1;
+        let rate = self.sample_rate()?;
+        let (scene, applied) = dsp::eq_scene::EqScene::prepare(gains, enabled, postgain, correction.as_ref(), rate)?;
+        if key != self.atomics.output_key.load(Ordering::Acquire)
+            || revision != self.atomics.eq_requested_revision.load(Ordering::Acquire) {
+            return Err("The equalizer selection changed".into());
+        }
+        self.eq_tx.try_send(self::command::PreparedEq {
+            scene, output_key: key, revision, rate,
+        }).map_err(|_| "Audio callback is unavailable")?;
+        Ok((applied, revision, key))
+    }
+
+    pub async fn wait_for_eq_scene(&self, revision: u64, key: u64) -> Result<(), String> {
+        for _ in 0..100 {
+            if self.atomics.output_key.load(Ordering::Acquire) != key
+                || self.atomics.eq_requested_revision.load(Ordering::Acquire) != revision {
+                return Err("The audio output or equalizer selection changed".into());
+            }
+            if self.atomics.eq_accepted_revision.load(Ordering::Acquire) == revision { return Ok(()); }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        Err("The audio callback did not accept the equalizer settings".into())
     }
     pub(crate) fn is_buffering(&self) -> bool {
         self.atomics.get_state() == EngineState::Buffering
@@ -1807,10 +1853,12 @@ mod control_tests {
         atomics.request_epoch.store(1, Ordering::SeqCst);
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
         let (audio_cmd_tx, audio_rx) = crossbeam_channel::bounded(capacity);
+        let (eq_tx, eq_rx) = crossbeam_channel::bounded(2);
         let engine = AudioEngine {
             cmd_tx,
             command_admission: Mutex::new(()),
             audio_cmd_tx,
+            eq_tx,
             atomics: atomics.clone(),
             cache: Arc::new(AudioCache::new(directory.into(), None)),
             _output: None,
@@ -1823,7 +1871,8 @@ mod control_tests {
         let (_b_tx, b_rx) = crossbeam_channel::bounded(4);
         let (events, event_rx) = crossbeam_channel::unbounded();
         let (visualizer, _vis_rx) = visualizer::transport::channel();
-        let callback = AudioCallbackState::new(audio_rx, a_rx, b_rx, events, visualizer, atomics);
+        let mut callback = AudioCallbackState::new(audio_rx, a_rx, b_rx, events, visualizer, atomics);
+        callback.set_eq_receiver(eq_rx);
         (engine, cmd_rx, callback, event_rx)
     }
 
@@ -2096,6 +2145,45 @@ mod control_tests {
             bypass, input,
             "Disabled EQ must bypass its positive manual gain too"
         );
+    }
+
+    #[tokio::test]
+    async fn prepared_device_eq_is_output_fenced_acknowledged_and_does_not_change_playback() {
+        use dsp::correction::{Profile, Filter, FilterKind};
+        let directory = tempfile::tempdir().unwrap();
+        let (engine, io, mut callback, _) = engine_with_callback(directory.path(), 8);
+        queue_test_play(&engine);
+        queue_test_load(&engine, io.recv().unwrap());
+        callback.process_callback(&mut [0.0; 1024]);
+        engine.atomics.output_key.store(1, Ordering::Release);
+        engine.atomics.output_available.store(true, Ordering::Release);
+        let position = engine.atomics.position_ms.load(Ordering::Acquire);
+        let state = engine.atomics.get_state();
+        let profile = Profile { preamp_db: -12.0, filters: vec![Filter {
+            kind: FilterKind::Peak, frequency: 1000.0, gain_db: 0.0, q: 1.0, enabled: true,
+        }] };
+        let (_, old, _) = engine.prepare_eq_scene([0.0;10], false, None, Some(profile.clone()), "1").unwrap();
+        engine.atomics.output_key.store(2, Ordering::Release);
+        callback.poll_without_output();
+        assert_eq!(engine.atomics.eq_accepted_revision.load(Ordering::Acquire), 0);
+        assert!(engine.wait_for_eq_scene(old, 1).await.is_err());
+        let mut samples = [0.1; 64]; callback.dsp_chain.process(&mut samples, 44100, 2);
+        assert!(samples.iter().all(|sample| (*sample-0.1).abs() < 1e-6));
+        assert!(engine.prepare_eq_scene([0.0;10], false, None, Some(profile.clone()), "1").is_err());
+        let (result, revision, key) = engine.prepare_eq_scene([0.0;10], false, None, Some(profile), "2").unwrap();
+        assert_eq!(result.correction_preamp_db, -12.0);
+        callback.poll_without_output();
+        engine.wait_for_eq_scene(revision, key).await.unwrap();
+        assert_eq!(engine.atomics.position_ms.load(Ordering::Acquire), position);
+        assert_eq!(engine.atomics.get_state(), state);
+        assert_eq!(callback.deck_mgr.active_deck().rating_key(), 42);
+        let mut samples = [0.1;4096]; callback.dsp_chain.process(&mut samples, 44100, 2);
+        assert!((samples[4095] - 0.1*10.0_f32.powf(-12.0/20.0)).abs() < 1e-6);
+        // A pending scene and its safety gain cannot survive an output change.
+        engine.atomics.output_key.store(3, Ordering::Release);
+        callback.poll_without_output();
+        let mut samples = [0.1;64]; callback.dsp_chain.process(&mut samples, 44100, 2);
+        assert!(samples.iter().all(|sample| (*sample-0.1).abs() < 1e-6));
     }
 
     #[test]
@@ -3037,10 +3125,12 @@ mod control_tests {
         let dir = tempfile::tempdir().unwrap();
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
         let (audio_cmd_tx, audio_rx) = crossbeam_channel::bounded(32);
+        let (eq_tx, _) = crossbeam_channel::bounded(2);
         let engine = AudioEngine {
             cmd_tx,
             command_admission: Mutex::new(()),
             audio_cmd_tx,
+            eq_tx,
             atomics: Arc::new(SharedAtomics::new()),
             cache: Arc::new(AudioCache::new(dir.path().to_path_buf(), None)),
             _output: None,
@@ -3115,10 +3205,12 @@ mod control_tests {
         let dir = tempfile::tempdir().unwrap();
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
         let (audio_cmd_tx, audio_rx) = crossbeam_channel::bounded(1);
+        let (eq_tx, _) = crossbeam_channel::bounded(2);
         let engine = AudioEngine {
             cmd_tx,
             command_admission: Mutex::new(()),
             audio_cmd_tx,
+            eq_tx,
             atomics: Arc::new(SharedAtomics::new()),
             cache: Arc::new(AudioCache::new(dir.path().to_path_buf(), None)),
             _output: None,

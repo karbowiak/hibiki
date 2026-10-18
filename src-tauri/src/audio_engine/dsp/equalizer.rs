@@ -22,6 +22,7 @@ pub struct Equalizer {
 
 impl Equalizer {
     pub(super) fn response_db(&self, frequency: f64, sample_rate: u32) -> f64 {
+        if !self.enabled { return 0.0; }
         let (sin, cos) = (2.0 * std::f64::consts::PI * frequency / f64::from(sample_rate)).sin_cos();
         self.filters.iter().map(|filter| 10.0 * filter.response_power(cos, sin).log10()).sum()
     }
