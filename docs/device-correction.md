@@ -1,7 +1,8 @@
 # Device correction
 
-Open the equalizer from the playbar. **Tone on/off** controls the ordinary ten
-bands; **Device correction → Enabled** controls the separate correction filters.
+Open the equalizer from the playbar. The **Tone** tab contains the ordinary ten
+bands and their on/off switch. The **Device correction** tab contains headphone
+and speaker correction, with its own **Enabled** switch.
 Correction runs before tone, followed by the common gain, limiter and volume path
 used for Plex, YTM and other native playback sources.
 
@@ -19,13 +20,18 @@ never replace saved originals or edits. Saved profiles and output bindings work
 offline; a custom speaker/headphone profile can also be pasted or imported as a
 text file without accessing AutoEq. Catalogue coverage is not universal.
 
-**Preview** temporarily applies the draft. **Cancel**, closing the panel or an
-output change restores the existing selection without storing the draft.
+**Preview** temporarily applies the draft. **Stop preview** restores the selected
+correction while keeping the editor open for comparison. **Cancel**, switching
+back to Tone, closing the panel or an output change restores the existing
+selection without storing the draft.
 **Apply** saves the correction in the local library and selects it. **Reset local
 edits** restores its original text in the editor; apply to keep that change.
 **Remove correction** also clears references to it from output bindings.
 
 Use **Save to output** to retain tone and the selected correction together.
+The saved/changed status reflects your actual tone and correction settings;
+native automatic gain recalculation does not mark an unchanged profile modified.
+The playbar equalizer icon also shows active correction when tone is switched off.
 Existing bindings retain their current edits when switching outputs; applying a
 library correction alone does not create a new automatic binding.
 Automatic recall is available for stable output IDs, including startup and

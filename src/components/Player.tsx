@@ -362,7 +362,7 @@ export function Player() {
     isArtExpanded: s.isArtExpanded,
     toggleArtExpanded: s.toggleArtExpanded,
   })))
-  const { enabled: eqEnabled, syncToEngine } = useEqStore(useShallow(s => ({ enabled: s.enabled, syncToEngine: s.syncToEngine })))
+  const { enabled: eqEnabled, syncToEngine } = useEqStore(useShallow(s => ({ enabled: s.enabled || !!s.correctionPreview || !!s.selectedCorrectionId && s.correctionEnabled, syncToEngine: s.syncToEngine })))
   const syncAudioSettings = useAudioSettingsStore(s => s.syncToEngine)
   const hasRadio = useCapability("radio")
   const youtubeConnected = useYoutubeMusicDiscoveryStore(s => s.connected)

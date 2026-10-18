@@ -40,6 +40,7 @@ try {
         errors: string[] = []
       page.on("pageerror", (error) => errors.push(error.message))
       await page.goto(`${origin}/tests/fixtures/deviceCorrection/index.html`)
+      await page.getByRole("tab", { name: "Device correction" }).click()
       const panel = page.getByRole("region", { name: "Device correction" })
       await panel.waitFor()
       assert.equal(
@@ -64,6 +65,9 @@ try {
         () =>
           (window as any).fixtureCorrection.state().correctionPreview !== null
       )
+      await panel.getByRole("button", { name: "Stop preview", exact: true }).click()
+      assert.equal(await page.evaluate(() => (window as any).fixtureCorrection.state().correctionPreview), null)
+      await panel.getByRole("button", { name: "Preview", exact: true }).click()
       assert.equal(
         await page.evaluate(
           () =>
@@ -124,7 +128,8 @@ try {
       await panel
         .getByRole("checkbox", { name: "Enabled", exact: true })
         .check()
-      await panel.getByRole("button", { name: "Save to output" }).click()
+      assert.equal(await panel.getByRole("button", { name: "Save to output" }).isDisabled(), true)
+      await panel.getByText("Saved for this output", { exact: true }).waitFor()
       await page.evaluate(() =>
         (window as any).fixtureCorrection.output("2", "2")
       )
@@ -152,6 +157,9 @@ try {
           })
       }
       await page.setViewportSize({ width: 340, height: 900 })
+      await page.getByRole("tab", { name: "Tone", exact: true }).click()
+      assert.equal(await page.locator('[role="tabpanel"]').filter({ visible: true }).evaluate(element => element.scrollWidth > element.clientWidth), false, `${name}: narrow tone panel overflow`)
+      await page.getByRole("tab", { name: "Tone", exact: true }).press("ArrowRight")
       await panel.getByRole("button", { name: "Edit filters" }).click()
       await panel.getByText("Source and licence", { exact: true }).click()
       await panel.getByRole("link", { name: /^AutoEq/ }).click()
@@ -174,6 +182,7 @@ try {
       await panel.getByRole("button", { name: "Cancel", exact: true }).click()
       await page.evaluate(() => localStorage.setItem("fixture-offline", "1"))
       await page.reload()
+      await page.getByRole("tab", { name: "Device correction" }).click()
       await page.waitForFunction(
         () =>
           (window as any).fixtureCorrection.state().appliedEq

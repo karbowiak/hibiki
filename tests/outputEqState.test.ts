@@ -11,6 +11,7 @@ import {
   type SavedCorrection,
 } from "../src/audio/deviceCorrection"
 import { deferred, settle } from "./helpers/radioAudioFakes"
+import { outputEqMatches } from "../src/stores/outputEqState"
 
 const original = engine.configureEqScene,
   initial = useEqStore.getState()
@@ -83,6 +84,22 @@ test("stable outputs recall independent tone and correction settings through A â
     correctionProfile(saved())
   )
   expect(state().outputProfiles["2"].gains[0]).toBe(-2)
+})
+
+test("saved output feedback distinguishes actual edits from derived automatic gain", () => {
+  state().setCurrentOutput(output("1"))
+  expect(outputEqMatches(state(), undefined)).toBe(false)
+  state().saveCorrection(saved())
+  state().saveOutputProfile()
+  const profile = state().outputProfiles["1"]
+  expect(outputEqMatches(state(), profile)).toBe(true)
+  useEqStore.setState({ postgainDb: -4.5 })
+  expect(outputEqMatches(state(), profile)).toBe(true)
+  state().setBand(0, 2)
+  expect(outputEqMatches(state(), profile)).toBe(false)
+  state().recallOutputProfile()
+  state().setCorrectionEnabled(false)
+  expect(outputEqMatches(state(), profile)).toBe(false)
 })
 
 test("reconnect invalidates acknowledgements and preserves the saved profile for recall", async () => {

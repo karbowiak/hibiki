@@ -61,6 +61,14 @@ function valid(profile: EqProfile) {
 const own = <T>(items: Record<string, T>, id: string): T | undefined =>
   Object.hasOwn(items, id) ? items[id] : undefined
 
+/** Automatic postgain is derived by native DSP, so it is not a user edit. */
+export function outputEqMatches(state: EqProfile & Pick<OutputEqState, "selectedCorrectionId" | "correctionEnabled">, profile: OutputProfile | null | undefined): boolean {
+  return !!profile && valid(profile) && profile.enabled === state.enabled && profile.autoPostgain === state.autoPostgain &&
+    (state.autoPostgain || profile.postgainDb === state.postgainDb) &&
+    profile.correctionId === state.selectedCorrectionId && profile.correctionEnabled === state.correctionEnabled &&
+    profile.gains.length === state.gains.length && profile.gains.every((gain, index) => gain === state.gains[index])
+}
+
 export function createOutputEqState(
   set: Set,
   get: () => EqState,

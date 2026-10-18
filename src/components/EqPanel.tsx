@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react"
+import { useCallback, useEffect, useId, useRef, useState } from "react"
 import { useEqStore, EQ_LABELS, EQ_PRESETS } from "../stores/eqStore"
 import { useDeviceStore } from "../stores/deviceStore"
 import { PlayerPanelHeader } from "./shared/PlayerPanelHeader"
@@ -103,9 +103,16 @@ export default function EqPanel({ onClose }: Props) {
     saveProfileForDevice,
     deleteProfileForDevice,
     currentOutput,
+    correctionEnabled,
+    selectedCorrectionId,
+    correctionPreview,
   } = useEqStore()
 
   const { currentDevice: deviceStoreDevice } = useDeviceStore()
+  const [tab, setTab] = useState<"tone" | "correction">("tone")
+  const panelId = useId()
+  const correctionTab = tab === "correction" && !!currentOutput
+  const correctionActive = !!correctionPreview || correctionEnabled && !!selectedCorrectionId
   const profileDevices = Object.keys(deviceProfiles)
   const barRefs = useRef<(HTMLDivElement | null)[]>([])
 
@@ -113,8 +120,8 @@ export default function EqPanel({ onClose }: Props) {
 
   useEffect(() => () => dragCleanup.current?.(), [])
   useEffect(() => {
-    if (!enabled) dragCleanup.current?.()
-  }, [enabled])
+    if (!enabled || correctionTab) dragCleanup.current?.()
+  }, [enabled, correctionTab])
 
   const handlePointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>, index: number) => {
@@ -234,7 +241,7 @@ export default function EqPanel({ onClose }: Props) {
   return (
     <>
       {/* Header */}
-      <PlayerPanelHeader title="Equalizer" onClose={onClose} actions={<>
+      <PlayerPanelHeader title="Equalizer" onClose={onClose} actions={!correctionTab ? <>
           <button
             onClick={() => applyPreset([0, 0, 0, 0, 0, 0, 0, 0, 0, 0])}
             className="player-panel-action"
@@ -253,7 +260,7 @@ export default function EqPanel({ onClose }: Props) {
           >
             {enabled ? "Tone on" : "Tone off"}
           </button>
-        </>} />
+        </> : undefined} />
 
       {eqError && (
         <div
@@ -282,6 +289,25 @@ export default function EqPanel({ onClose }: Props) {
         </div>
       )}
 
+      {currentOutput && <div role="tablist" aria-label="Equalizer controls" className="flex gap-1 border-b border-(--border) px-4 py-2">
+        {(["tone", "correction"] as const).map(value => <button
+          key={value} type="button" role="tab" id={`${panelId}-${value}`} aria-controls={`${panelId}-${value}-panel`}
+          aria-selected={value === (correctionTab ? "correction" : "tone")} tabIndex={value === (correctionTab ? "correction" : "tone") ? 0 : -1}
+          onClick={() => setTab(value)}
+          onKeyDown={event => {
+            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return
+            event.preventDefault()
+            const next = event.key === "Home" ? "tone" : event.key === "End" ? "correction" : value === "tone" ? "correction" : "tone"
+            setTab(next)
+            document.getElementById(`${panelId}-${next}`)?.focus()
+          }}
+          className={`flex min-h-9 flex-1 items-center justify-center gap-2 rounded-lg px-3 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-accent ${value === (correctionTab ? "correction" : "tone") ? "bg-(--accent-tint-subtle) text-accent" : "text-(--text-secondary) hover:bg-(--bg-surface-hover)"}`}
+        >{value === "tone" ? "Tone" : "Device correction"}
+          {value === "correction" && <span aria-label={correctionActive ? "Correction enabled" : "Correction bypassed"} className={`h-1.5 w-1.5 rounded-full ${correctionActive ? "bg-accent" : "bg-(--text-muted)"}`} />}
+        </button>)}
+      </div>}
+
+      <div id={`${panelId}-tone-panel`} role={currentOutput ? "tabpanel" : undefined} aria-labelledby={currentOutput ? `${panelId}-tone` : undefined} hidden={correctionTab}>
       {/* Preset grid */}
       <div
         className={`grid grid-cols-3 gap-1.5 border-b border-(--border) px-4 py-3 transition-opacity ${!enabled ? "pointer-events-none opacity-40" : ""}`}
@@ -334,7 +360,7 @@ export default function EqPanel({ onClose }: Props) {
             const fillHeight = db >= 0 ? centerY - currentY : currentY - centerY
 
             return (
-              <div key={i} className="flex flex-col items-center gap-1">
+              <div key={i} className="flex min-w-0 flex-1 flex-col items-center gap-1">
                 {/* dB value */}
                 <span
                   className={`h-4 text-[10px] tabular-nums leading-4 ${
@@ -361,7 +387,7 @@ export default function EqPanel({ onClose }: Props) {
                   aria-valuenow={db}
                   aria-label={`${EQ_LABELS[i].endsWith("K") ? `${EQ_LABELS[i].slice(0, -1)} kHz` : `${EQ_LABELS[i]} Hz`} band`}
                   className="relative cursor-pointer touch-none overflow-hidden rounded-md bg-(--bg-surface) focus-visible:ring-2 focus-visible:ring-accent"
-                  style={{ width: 32, height: BAR_HEIGHT }}
+                  style={{ width: "100%", maxWidth: 32, height: BAR_HEIGHT }}
                   onPointerDown={(e) => handlePointerDown(e, i)}
                   onDoubleClick={() => enabled && setBand(i, 0)}
                   onKeyDown={(e) => handleKeyDown(e, i)}
@@ -432,9 +458,10 @@ export default function EqPanel({ onClose }: Props) {
           />
         )}
       </div>
+      </div>
 
       {/* Device Profiles */}
-      {currentOutput && <DeviceCorrectionPanel />}
+      {currentOutput && <div id={`${panelId}-correction-panel`} role="tabpanel" aria-labelledby={`${panelId}-correction`} hidden={!correctionTab}>{correctionTab && <DeviceCorrectionPanel />}</div>}
       {!currentOutput && currentDevice && (
         <div className="border-t border-(--border) px-4 py-2">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-(--text-muted)">

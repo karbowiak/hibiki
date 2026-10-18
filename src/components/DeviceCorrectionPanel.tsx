@@ -8,6 +8,7 @@ import {
   type SavedCorrection,
 } from "../audio/deviceCorrection"
 import { useEqStore } from "../stores/eqStore"
+import { outputEqMatches } from "../stores/outputEqState"
 
 interface Model {
   id: string
@@ -66,6 +67,7 @@ export function DeviceCorrectionPanel() {
     ? eq.corrections[eq.selectedCorrectionId]
     : null
   const bound = output ? eq.outputProfiles[output.id] : null
+  const savedToOutput = outputEqMatches(eq, bound)
   const available = !!output?.available
   const active =
     eq.correctionPreview ?? (eq.correctionEnabled ? selected : null)
@@ -201,7 +203,7 @@ export function DeviceCorrectionPanel() {
   return (
     <section
       aria-label="Device correction"
-      className="border-t border-(--border) px-4 py-3 text-xs"
+      className="px-4 py-4 text-xs"
     >
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold text-(--text-primary)">
@@ -221,9 +223,6 @@ export function DeviceCorrectionPanel() {
                   : "Ready"}
         </span>
       </div>
-      <p className="mt-1 truncate text-(--text-muted)" title={output.name}>
-        {output.name}
-      </p>
       <label className="mt-3 block text-(--text-muted)">
         Correction profile
         <select
@@ -297,13 +296,15 @@ export function DeviceCorrectionPanel() {
           </p>
         )}
       <p className="mt-2 leading-relaxed text-(--text-muted)">
-        Correction runs before the tone controls above. For headphones sharing a
-        DAC, choose the profile when you change headphones.
+        For headphones sharing a DAC, choose the profile when you change headphones.
+      </p>
+      <p role="status" className="mt-4 text-(--text-secondary)">
+        {savedToOutput ? "Saved for this output" : bound ? "Output settings have changed" : "Not saved to this output"}
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
         <button
           className={button}
-          disabled={!available || !!eq.correctionPreview}
+          disabled={!available || !!eq.correctionPreview || savedToOutput}
           onClick={() => eq.saveOutputProfile()}
         >
           Save to output
@@ -518,6 +519,7 @@ export function DeviceCorrectionPanel() {
                 <button
                   className={button}
                   disabled={!available}
+                  aria-pressed={!!eq.correctionPreview}
                   onClick={() => {
                     try {
                       eq.previewCorrection(checkedDraft(), output.key)
@@ -529,6 +531,7 @@ export function DeviceCorrectionPanel() {
                 >
                   Preview
                 </button>
+                {eq.correctionPreview && <button className={button} onClick={() => eq.cancelCorrectionPreview(output.key)}>Stop preview</button>}
                 <button
                   className={`${button} bg-(--accent-tint-subtle)`}
                   disabled={!available}
