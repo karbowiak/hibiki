@@ -177,5 +177,16 @@ The real-world foreground/audible-playback measurement for #30 remains distinct
 from these native and renderer fixture measurements. No live playlist or rating
 mutations were used for validation.
 
+The ignored native test
+`matching_index::live_validation::full_live_census_measures_requests_bytes_and_foreground_reads`
+runs a complete read-only census when explicitly given
+`HIBIKI_MATCHING_LIVE_SETTINGS=<private Plex settings path>`. Use a separate Cargo
+target directory and run the test with `--ignored --nocapture`. It verifies the
+selected server/library, retires if settings change, caps runtime at 30 minutes
+and stores everything in a disposable SQLite database. Its aggregate log reports
+both listing passes, response bytes, database size, warm lookup batches and
+concurrent local reads/real artist requests. It performs no remote mutations,
+opens no application database and does not measure renderer or audible playback.
+
 Sources: [Plex API versioning and response customization](https://developer.plex.tv/pms/#section/API-Info),
 [Library API](https://developer.plex.tv/pms/#tag/Library).

@@ -95,7 +95,7 @@ Nyquist rejection, PCM response at multiple rates, smooth scene changes,
 superseding updates, and rejecting a retired output's queued configuration without
 changing track/state/position. Large filter banks use a separate bounded lane;
 ordinary playback commands remain small. The complete native suite passes
-**878 tests**, with 13 ignored and 73 remote integration tests excluded.
+**881 tests**, with 14 ignored and 73 remote integration tests excluded.
 
 The complete frontend suite passes **1,262 tests**; the subsequent focused
 EQ/parser/device/bridge suite passes **52 tests**. Both TypeScript projects pass.
@@ -179,9 +179,11 @@ writer waits do not hold connection/audio admission. The benchmark process's
 observed RSS was approximately **26 MiB**; the outer Cargo timing includes the
 compiler and is not an index-process peak-memory measurement.
 
-These are synthetic database/foreground measurements; a complete live census and
-audible playback under indexing were not measured. See
-[the index contract](plex-matching-index.md) for the read-only live page sample and
+These numbers are synthetic database/foreground measurements. The opt-in complete
+live census separately reports actual listing requests, bytes, storage, warm
+lookups and foreground reads into a disposable database; completed live results
+are tracked in #26. Audible playback under indexing remains a separate check in
+#30. See [the index contract](plex-matching-index.md) for the read-only probe and
 the distinction between matching metadata and full browse/offline data.
 
 - Full frontend suite: **1,251 passed**, zero failures; subsequent focused

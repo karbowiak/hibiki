@@ -5,6 +5,8 @@ pub use freshness::Hint as MatchingHint;
 pub mod row;
 pub mod store;
 mod transport;
+#[cfg(test)]
+mod live_validation;
 
 use crate::{
     commands::{PlexRequestContext, PlexState},
