@@ -11,6 +11,7 @@ import { buildExternalImageUrl } from "../../lib/imageUrl"
 import { useYoutubeMusicLikesStore } from "./likes"
 import type { MusicItem, MusicArtistCredit } from "../../types/music"
 import { normalizeArtistCredits } from "../../lib/artistCredits"
+import { withTimeout } from "../../lib/withTimeout"
 
 export interface YoutubeMusicItem {
   id: string
@@ -115,7 +116,7 @@ export function browseYoutubeMusic(destination: YoutubeMusicDestination, continu
   if (existing && (!force || existing.force)) return existing.promise
   const before = catalogSequence
   const likeMutation = useYoutubeMusicLikesStore.getState().mutation
-  const promise = (async () => {
+  const promise = withTimeout((async () => {
     await startCatalogEvents()
     const owns = () => useYoutubeMusicDiscoveryStore.getState().connected && useYoutubeMusicDiscoveryStore.getState().revision === revision
     if (!owns()) throw Error("YouTube Music connection changed.")
@@ -127,7 +128,7 @@ export function browseYoutubeMusic(destination: YoutubeMusicDestination, continu
     const result = updated && updated.sequence > before ? updated.page : page
     useYoutubeMusicLikesStore.getState().observe([...result.items, ...result.hubs.flatMap(hub => hub.items)], likeMutation, force)
     return result
-  })()
+  })(), 20_000, "YouTube Music did not respond. Please try again.")
   catalogRequests.set(key, { force, promise })
   void promise.then(() => { if (catalogRequests.get(key)?.promise === promise) catalogRequests.delete(key) },
     () => { if (catalogRequests.get(key)?.promise === promise) catalogRequests.delete(key) })

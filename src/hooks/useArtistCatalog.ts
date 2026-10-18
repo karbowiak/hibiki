@@ -46,8 +46,8 @@ export function useArtistCatalog(routeId: string) {
 
   useEffect(() => subscribeYoutubeMusicCatalog(update => {
     if ((update.browseId === "hibiki_artist_search" && update.params === name) ||
-      (update.browseId.startsWith("UC") && !update.params && !update.continuation)) setCatalogRevision(value => value + 1)
-  }), [name])
+      (update.browseId === (isYoutubeRoute ? routeId.slice(8) : state?.page?.artist?.id) && !update.params && !update.continuation)) setCatalogRevision(value => value + 1)
+  }), [name, isYoutubeRoute, routeId, state?.page?.artist?.id])
 
   useEffect(() => {
     if (!connection.connected || (!isYoutubeRoute && !name)) return

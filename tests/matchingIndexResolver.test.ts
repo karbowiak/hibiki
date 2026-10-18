@@ -122,3 +122,14 @@ test("typed identifier extraction never treats generic Plex MBIDs as recordings"
   expect(matchingIdentifiers(`musicbrainz://release/${id}`)[0].scheme).toBe("musicbrainz:release")
   expect(matchingIdentifiers("musicbrainz://recording/not-an-id")).toEqual([])
 })
+
+test("a hung native batch releases its coalescing slot and permits a retry", async () => {
+  let calls = 0
+  const resolve = createMatchingBatch({ current: () => true, delay: 0, timeoutMs: 10,
+    lookup: async inputs => ++calls === 1 ? new Promise<never>(() => {}) : inputs.map(input => result(input)),
+  })
+  const first = await Promise.allSettled([resolve(source()), resolve(source())])
+  expect(first.every(item => item.status === "rejected")).toBe(true)
+  expect((await resolve(source())).selected).toBe(7)
+  expect(calls).toBe(2)
+})

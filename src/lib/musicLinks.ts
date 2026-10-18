@@ -2,7 +2,7 @@ import { useProviderStore } from "../stores/providerStore"
 import { browseYoutubeMusic, useYoutubeMusicDiscoveryStore } from "../backends/ytmusic/discovery"
 import { createMusicLinkResolver } from "./musicLinkResolver"
 import { musicEntityHref, trackEntity } from "./musicEntity"
-import { resolveIndexedMusic } from "../matching/service"
+import { queryIndexedMusic } from "../matching/service"
 import { artistMatchingSource, albumMatchingSource } from "../matching/sources"
 import { youtubeMusicSongMetadata } from "../backends/ytmusic/metadata"
 import type { MusicEntityRef } from "./musicEntity"
@@ -29,7 +29,7 @@ export function resolveMusicEntity(ref: MusicEntityRef) {
         const id = ref.id ?? `link:${ref.kind}:${ref.name}:${ref.artist ?? ""}`
         const source = ref.kind === "artist" ? artistMatchingSource({ id, title: ref.name }) :
           albumMatchingSource({ id, title: ref.name, artistName: ref.artist ?? "", year: ref.year ?? 0 })
-        const result = await resolveIndexedMusic(source)
+        const result = await queryIndexedMusic(source)
         if (!result) return null
         if (result.status === "matched" && result.selected) return { handled: true, href: musicEntityHref(ref.kind, String(result.selected)) }
         if (ref.id || result.status === "ambiguous" || result.status === "limited" || result.status === "missing")

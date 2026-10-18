@@ -1,4 +1,5 @@
 import type { MatchingSource, MatchingResolution } from "./resolverTypes"
+import { withTimeout } from "../lib/withTimeout"
 
 /** One small native batch for simultaneous visible/queued requests. Completed
  * results stay in the revision-aware native store, not an expanding renderer map. */
@@ -7,6 +8,7 @@ export function createMatchingBatch(options: {
   lookup: (sources: MatchingSource[], force: boolean) => Promise<MatchingResolution[]>
   fallback?: (source: MatchingSource) => Promise<MatchingResolution>
   delay?: number
+  timeoutMs?: number
 }) {
   type Pending = { source: MatchingSource; force: boolean; live: boolean; promise: Promise<MatchingResolution>; resolve: (value: MatchingResolution) => void; reject: (error: Error) => void }
   const pending = new Map<string, Pending>()
@@ -20,7 +22,7 @@ export function createMatchingBatch(options: {
       if (fallbackQueue.length >= 32) return null
       await new Promise<void>(resolve => fallbackQueue.push(resolve))
     } else fallbackRunning++
-    try { current(); return await work() }
+    try { current(); return await withTimeout(work(), options.timeoutMs ?? 12_000, "Music matching timed out. Please retry.") }
     finally {
       const next = fallbackQueue.shift()
       if (next) next(); else fallbackRunning--
@@ -44,7 +46,7 @@ export function createMatchingBatch(options: {
     schedule()
     try {
       current()
-      const results = await options.lookup(work.map(item => item.source), first.force)
+      const results = await withTimeout(options.lookup(work.map(item => item.source), first.force), options.timeoutMs ?? 12_000, "Music matching timed out. Please retry.")
       current()
       if (results.length !== work.length || results.some((result, index) => result.sourceId !== work[index].source.id))
         throw Error("Matching returned a different batch. Please retry.")

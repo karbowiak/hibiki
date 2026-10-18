@@ -267,6 +267,8 @@ fn card(value: &Value, collection: bool, live: bool) -> Option<Item> {
         Some("MUSIC_PAGE_TYPE_ALBUM") => ("album", browse?["browseId"].as_str()?.to_owned()),
         Some("MUSIC_PAGE_TYPE_PLAYLIST") => ("playlist", browse?["browseId"].as_str()?.to_owned()),
         Some("MUSIC_PAGE_TYPE_ARTIST") if collection => ("artist", browse?["browseId"].as_str()?.to_owned()),
+        Some("MUSIC_PAGE_TYPE_USER_CHANNEL") if collection && browse?["browseId"].as_str().is_some_and(|id| id.starts_with("UC") || id.starts_with("MPLAUC")) =>
+            ("artist", browse?["browseId"].as_str()?.to_owned()),
         Some(_) => return None,
         None => {
             let watch_playlist = item.pointer("/navigationEndpoint/watchPlaylistEndpoint/playlistId");
@@ -661,10 +663,10 @@ async fn fetch(app: &tauri::AppHandle, request: &CatalogRequest) -> Result<Brows
         if page.items.is_empty() { return Err("Could not read this song's YouTube Music metadata. Try again.".into()); }
     }
     if id == "VLLM" { for item in &mut page.items { if item.kind == "song" { item.liked = Some(true); } } }
-    if general_search {
+    if general_search || artist_search {
         page.items.clear();
         collect_items(&response.value["contents"], &mut page.items, true, false, 0);
-        page.items.retain(|item| matches!(item.kind.as_str(), "artist" | "album" | "song"));
+        page.items.retain(|item| if artist_search { item.kind == "artist" } else { matches!(item.kind.as_str(), "artist" | "album" | "song") });
         page.continuation = None;
     }
     if id == "FEmusic_history" {
@@ -758,6 +760,21 @@ mod tests {
         }
         // A nested recommendation's state cannot become the featured song's.
         assert_eq!(liked(&json!({"contents":[{"likeStatus":"LIKE"}]})), None);
+    }
+    #[test]
+    fn artist_search_recognizes_channel_aliases_without_accepting_other_page_types() {
+        for page_type in ["MUSIC_PAGE_TYPE_ARTIST", "MUSIC_PAGE_TYPE_USER_CHANNEL"] {
+            for id in ["UC_katseye", "MPLAUC_katseye"] {
+                let value = json!({"musicResponsiveListItemRenderer":{
+                    "flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"KATSEYE"}]}}}],
+                    "navigationEndpoint":{"browseEndpoint":{"browseId":id,
+                        "browseEndpointContextSupportedConfigs":{"browseEndpointContextMusicConfig":{"pageType":page_type}}}}
+                }});
+                let item = card(&value, true, false).unwrap();
+                assert_eq!(item.kind, "artist");
+                assert_eq!(item.id, "UC_katseye");
+            }
+        }
     }
     #[test]
     fn search_keeps_the_featured_artist_and_its_nested_song_results() {

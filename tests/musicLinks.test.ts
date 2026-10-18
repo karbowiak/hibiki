@@ -95,3 +95,49 @@ test("missing links expire quickly and an account change rejects an in-flight lo
   finish([{ id: "123", name: artist.name }])
   expect(await pending).toBeNull()
 })
+
+test("KATSEYE known IDs use verified Plex proof or open YTM within the optional budget", async () => {
+  const ref: MusicEntityRef = { kind: "artist", id: "ytmusic:MPLAUC_katseye", name: "KATSEYE" }
+  const start = performance.now()
+  const resolve = createMusicLinkResolver({ current: () => true, optionalWaitMs: 10,
+    indexed: () => new Promise(() => {}), searchPlex: async () => { throw Error("No live Plex lookup for a known artist") }, searchYoutube: async () => [],
+  })
+  expect(await resolve(ref)).toBe("/ytmusic/UC_katseye")
+  expect(performance.now() - start).toBeLessThan(150)
+  const verified = createMusicLinkResolver({ current: () => true,
+    indexed: async () => ({ handled: true, href: "/artist/123" }), searchPlex: async () => [], searchYoutube: async () => [],
+  })
+  expect(await verified(ref)).toBe("/artist/123")
+})
+
+test("name-only artist lookup tolerates absent or stalled Plex and canonicalizes channel aliases", async () => {
+  for (const searchPlex of [async () => [], () => new Promise<never>(() => {}), async () => { throw Error("offline") }]) {
+    const resolve = createMusicLinkResolver({ current: () => true, optionalWaitMs: 5, searchPlex,
+      searchYoutube: async () => ["UC_katseye", "MPLAUC_katseye"].map(id => ({ id: `ytmusic:${id}`, name: "KATSEYE" })),
+    })
+    expect(await resolve({ kind: "artist", name: "KATSEYE" })).toBe("/ytmusic/UC_katseye")
+  }
+})
+
+test("artist ambiguity stays explicit and exact names beat fuzzy neighboring artists", async () => {
+  const resolve = createMusicLinkResolver({ current: () => true, searchPlex: async () => [],
+    searchYoutube: async ref => ref.name === "KATSEYE" ? [{ id: "ytmusic:UC_real", name: "KATSEYE" }, { id: "ytmusic:UC_neighbor", name: "KATSEYEE" }]
+      : ["one", "two"].map(id => ({ id: `ytmusic:UC_${id}`, name: ref.name })),
+  })
+  expect(await resolve({ kind: "artist", name: "KATSEYE" })).toBe("/ytmusic/UC_real")
+  await expect(resolve({ kind: "artist", name: "Same Name" })).rejects.toThrow("Several artists")
+})
+
+test("timed out/coalesced and failed searches can retry instead of caching a permanent pending lookup", async () => {
+  let calls = 0
+  const ref: MusicEntityRef = { kind: "artist", name: "KATSEYE" }
+  const resolve = createMusicLinkResolver({ current: () => true, lookupTimeoutMs: 10, searchPlex: async () => [],
+    searchYoutube: async () => { calls++; if (calls === 1) return new Promise<never>(() => {}); if (calls === 2) throw Error("temporary failure"); return [{ id: "ytmusic:UC_real", name: ref.name }] },
+  })
+  const first = await Promise.allSettled([resolve(ref), resolve(ref)])
+  expect(first.every(result => result.status === "rejected")).toBe(true)
+  expect(calls).toBe(1)
+  await expect(resolve(ref)).rejects.toThrow("temporary failure")
+  expect(await resolve(ref)).toBe("/ytmusic/UC_real")
+  expect(calls).toBe(3)
+})

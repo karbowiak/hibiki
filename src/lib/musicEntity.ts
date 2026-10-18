@@ -13,7 +13,8 @@ export interface MusicEntityRef {
 }
 export function musicEntityHref(kind: MusicEntityKind, id?: string | null) {
   if (!id) return null
-  return id.startsWith("ytmusic:") ? `/ytmusic/${encodeURIComponent(id.slice(8))}` : `/${kind}/${encodeURIComponent(id)}`
+  const remote = id.slice(8)
+  return id.startsWith("ytmusic:") ? `/ytmusic/${encodeURIComponent(kind === "artist" ? remote.replace(/^MPLA(?=UC)/, "") : remote)}` : `/${kind}/${encodeURIComponent(id)}`
 }
 export function trackEntity(track: MusicTrack | null | undefined, kind: MusicEntityKind): MusicEntityRef | null {
   if (!track) return null
