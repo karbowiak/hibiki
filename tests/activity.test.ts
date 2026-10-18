@@ -180,7 +180,7 @@ test("playlist progress distinguishes checks, available recordings and acknowled
   expect(waiting.busy).toBe(false)
 })
 
-test("ordinary matcher misses finish quietly; uncertain writes link to Info while matching can continue", () => {
+test("ordinary matcher misses finish quietly; known writes recover automatically without review notices", () => {
   const value = playlist()
   value.items[3].match = {
     status: "missing",
@@ -192,19 +192,24 @@ test("ordinary matcher misses finish quietly; uncertain writes link to Info whil
     id: "write",
     service: "ytmusic",
     kind: "append",
+    destinationId: "known-playlist",
     afterIds: [],
     state: "unknown",
   }
-  const review = mixedPlaylistActivity(value, false)!
-  expect(review.state).toBe("paused")
-  expect(review.detail).not.toContain("failed")
-  expect(review.action?.href).toContain("?info=sync")
+  value.automatic = false
+  value.status = "error"
+  const recovery = mixedPlaylistActivity(value, false)!
+  expect(recovery.state).toBe("waiting")
+  expect(recovery.detail).toContain("retries automatically")
+  expect(recovery.detail).not.toContain("review")
+  expect(recovery.action?.href).not.toContain("?info=sync")
   const ongoing = mixedPlaylistActivity(value, true, {
     kind: "matching",
     target: "ytmusic",
   })!
   expect(ongoing.busy).toBe(true)
-  expect(ongoing.detail).toContain("matching continues")
+  expect(ongoing.detail).not.toContain("needs review")
+  expect(mixedPlaylistActivity(value, false, undefined, true)?.state).toBe("paused")
 })
 
 test("old accounts cannot surface playlist activity, including locally saved drafts", () => {

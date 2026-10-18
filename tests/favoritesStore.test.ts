@@ -15,6 +15,7 @@ for (const scenario of [
   "matching_backlog",
   "sync_schedule",
   "sync_drain",
+  "sync_recovery",
   "reset",
   "reset_matching",
   "reset_controls",

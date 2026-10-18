@@ -25,6 +25,7 @@ mock.module("../../src/metadata/listenbrainz/authStore", () => ({
   useListenBrainzStore: auth,
 }))
 let calls = 0,
+  failedLikes = scenario === "sync_recovery" ? 2 : 0,
   pages = 0,
   resets = 0,
   resetFailure: unknown,
@@ -47,6 +48,7 @@ mock.module("../../src/favorites/native", () => ({
     peek: async () => false,
     set: async () => {
       calls++
+      if (failedLikes > 0) { failedLikes--; throw Error("temporarily unavailable") }
       return true
     },
   },
@@ -130,12 +132,12 @@ const track: any = {
   year: 2026,
   playCount: 0,
 }
-if (scenario === "sync_schedule" || scenario === "sync_drain") {
+if (scenario === "sync_schedule" || scenario === "sync_drain" || scenario === "sync_recovery") {
   await useFavoritesStore.getState().load()
-  if (scenario === "sync_drain") {
+  if (scenario === "sync_drain" || scenario === "sync_recovery") {
     const { setFavorite } = await import("../../src/favorites/model")
     await useFavoritesStore.getState().update(state => {
-      for (let i = 1; i <= 45; i++) state = setFavorite(state, { key: `local:${i}`, localTrackId: String(i), title: `Song ${i}`, artist: "Artist" }, true)
+      for (let i = 1; i <= (scenario === "sync_recovery" ? 1 : 45); i++) state = setFavorite(state, { key: `local:${i}`, localTrackId: String(i), title: `Song ${i}`, artist: "Artist" }, true)
       return { ...state, settings: { ...state.settings, lastfm: true }, bindings: { lastfm: { account: { service: "lastfm", user: "listener", revision: "lease" }, initialized: true } } }
     })
   }
@@ -153,7 +155,7 @@ if (scenario === "sync_schedule" || scenario === "sync_drain") {
   useFavoritesStore.setState({ sync: async (options = {}) => {
     syncs++
     requests.push(options)
-    if (scenario === "sync_drain") { await sync(options); return }
+    if (scenario === "sync_drain" || scenario === "sync_recovery") { await sync(options); return }
     // A worker publishes a new saved collection together with running=false.
     const collection = useFavoritesStore.getState().collection
     profile = { ...profile, revision: collection.revision + 1 }
@@ -173,7 +175,21 @@ if (scenario === "sync_schedule" || scenario === "sync_drain") {
   try {
     await act(async () => root.render(<Harness />))
     assert.equal(syncs, 1)
-    if (scenario === "sync_drain") {
+    if (scenario === "sync_recovery") {
+      const { pendingFavoriteSync } = await import("../../src/favorites/work")
+      assert.ok(useFavoritesStore.getState().collection.bindings.lastfm?.pending)
+      await advance(2000)
+      assert.equal(syncs, 2, "an unconfirmed like must retry automatically")
+      await advance(121999)
+      assert.equal(syncs, 2, "repeated failures must back off")
+      await advance(122000)
+      assert.equal(syncs, 3)
+      assert.equal(pendingFavoriteSync(useFavoritesStore.getState().collection), 0)
+      assert.equal(pages, 2, "recovery must not import whole rosters")
+      await advance(300000)
+      assert.equal(syncs, 3, "successful recovery must return to idle")
+      assert.deepEqual(requests, [{ refresh: true }, { refresh: false }, { refresh: false }])
+    } else if (scenario === "sync_drain") {
       const { pendingFavoriteSync } = await import("../../src/favorites/work")
       assert.equal(pendingFavoriteSync(useFavoritesStore.getState().collection), 25)
       await advance(5000)

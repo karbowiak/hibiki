@@ -247,26 +247,25 @@ export async function syncFavorites(
         if (applied) {
           await settlePending(repository, service, pending, plex)
         } else {
-          const unchanged =
-            service === "plex"
-              ? actual === pending.beforeHash
-              : actual === pending.before
-          if (!options.retryUnknown || !unchanged)
-            throw Error(
-              "An unconfirmed favorite change needs review before retrying"
-            )
-          await repository.update((state) => ({
-            ...state,
-            bindings: {
-              ...state.bindings,
-              [service]: { ...state.bindings[service]!, pending: undefined },
-            },
-          }))
+          // A fresh read settles the old attempt even when only part of a Plex
+          // batch arrived. Retain current local intent, acknowledge observed
+          // membership, then plan any remaining change against the new state.
+          // Binary likes are idempotent; no approval is needed to retry them.
+          if (service === "plex") await settlePending(repository, service, pending, plex)
+          else {
+            await repository.update(state => {
+              if (state.bindings[service]?.pending?.id !== pending.id) throw Error("Favorite receipt changed")
+              return { ...state, bindings: { ...state.bindings,
+                [service]: { ...state.bindings[service]!, pending: undefined } } }
+            })
+          }
         }
         progress("verifying", 1, 1)
       }
       if (!enabled()) continue
-      if (options.refresh !== false || !binding.initialized) {
+      // Recovery must finish exporting retained intentions before importing a
+      // remote roster; a failed write is not a new remote unlike.
+      if ((!pending && options.refresh !== false) || !binding.initialized) {
         progress("reading", 0)
         if (service === "plex" && !plex) plex = await services.plexRead(binding.playlistId!)
         const first = plex?.rows ?? await readFavoriteRoster(account, services, enabled, (done, total) => progress("reading", done, total))

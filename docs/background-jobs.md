@@ -63,9 +63,11 @@ turns to reject cycles, do not restart active work at expiry, and measure their
 next refresh interval from completion rather than admission.
 Liked-song imports run hourly or when the user clicks Sync. New likes and newly
 resolved recordings export promptly in bounded turns without importing both
-complete remote rosters again. Pending receipts are verified first; unresolved
-ones wait for review instead of repeatedly scanning the entire list. Their own
-saves do not request another import. Missing-recording checks have a separate
+complete remote rosters again. Pending receipts are verified first, then remaining
+membership changes retry automatically against the observed state. Recovery does
+not import a remote roster over retained local intent; stalled turns back off for
+two minutes. Disabled services stay idle. Their own saves do not request another
+import. Missing-recording checks have a separate
 Activity identity and drain in bounded batches, with progress measured across
 the saved daily backlog.
 
@@ -128,8 +130,14 @@ once per minute per active snapshot, rather than on every cache hit.
 
 YTM playlist writes run on the background runtime with two reserved permits,
 rather than entering an at-least-once mutation queue. The playlist's own journal
-retains its receipt and verifies uncertain results. A pending/uncertain provider
-write remains in Info; it is not permission to blindly repeat the operation.
+retains its receipt and verifies uncertain results. Interrupted song writes read
+the complete current playlist and replan only the remaining changes, preserving
+local intent and unexpected provider additions. Known destinations recover even
+if automatic sync was switched off after admission, with 30-second retry pacing.
+Fresh occurrence handles replace old ones before any positional edit. Recovery
+details remain in Info; Activity shows the retry without requesting review.
+An unidentified creation still needs its destination selected, so recovery never
+creates another copy by guessing.
 Expected ownership retirement and domain-level review outcomes do not become
 Butler handler failures. Worker startup, transport, and programming failures still do.
 

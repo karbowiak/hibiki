@@ -553,7 +553,7 @@ test("unknown remote write recovers by reads, preserving a local edit during the
   expect(f.state.entries["local:1"].liked).toBe(false)
   expect(f.writes).toBe(2)
 })
-test("unchanged unknown writes require explicit retry before resubmission", async () => {
+test("unchanged unknown writes retry automatically after reading current membership", async () => {
   const f = fixture(setFavorite(connected("lastfm", true), row(1), true))
   let calls = 0
   f.services.set = async () => {
@@ -562,27 +562,52 @@ test("unchanged unknown writes require explicit retry before resubmission", asyn
   }
   await syncFavorites(f.repository, f.services, f.current)
   await syncFavorites(f.repository, f.services, f.current)
-  expect(calls).toBe(1)
-  await syncFavorites(f.repository, f.services, f.current, {
-    retryUnknown: true,
-  })
   expect(calls).toBe(2)
+  expect(pendingFavoriteSync(f.state)).toBe(1)
+  const pending = f.state.bindings.lastfm!.pending
+  await f.repository.update(state => ({ ...state, settings: { ...state.settings, lastfm: false } }))
+  expect(pendingFavoriteSync(f.state)).toBe(0)
+  expect(f.state.bindings.lastfm!.pending).toEqual(pending)
 })
-test("a blocked saved receipt is checked before full remote lists and is not treated as runnable work", async () => {
+test("a saved receipt recovers before full remote lists and is scheduled for automatic retry", async () => {
   const f = fixture(setFavorite(connected("lastfm", true), row(1), true))
+  const write = f.services.set
   f.services.set = async () => { throw Error("lost response") }
   await syncFavorites(f.repository, f.services, f.current, { refresh: false })
   expect(f.state.bindings.lastfm?.pending).toBeDefined()
-  expect(pendingFavoriteSync(f.state)).toBe(0)
+  expect(pendingFavoriteSync(f.state)).toBe(1)
   let reads = 0, verified = 0
   const peek = f.services.peek
   f.services.page = async () => { reads++; throw Error("must not reread the whole roster") }
   f.services.peek = async (...args) => { verified++; return peek(...args) }
+  f.services.set = write
   const issues: string[] = []
   await syncFavorites(f.repository, f.services, f.current, { onIssue: (_service, message) => issues.push(message) })
-  expect(verified).toBe(1)
+  expect(verified).toBe(2)
   expect(reads).toBe(0)
-  expect(issues).toEqual(["An unconfirmed favorite change needs review before retrying"])
+  expect(issues).toEqual([])
+  expect(f.state.bindings.lastfm?.pending).toBeUndefined()
+  expect(pendingFavoriteSync(f.state)).toBe(0)
+  expect(f.writes).toBe(1)
+})
+test("a partial Plex favorite batch retries only missing songs against fresh membership", async () => {
+  let state = connected("plex", true)
+  for (let n = 1; n <= 5; n++) state = setFavorite(state, row(n), true)
+  const f = fixture(state), mutate = f.services.plexMutate
+  f.services.plexMutate = async (...args) => {
+    await mutate(...args)
+    f.ids = f.ids.slice(0, 2)
+    throw Error("partial response lost")
+  }
+  await syncFavorites(f.repository, f.services, f.current, { refresh: false })
+  expect(f.state.bindings.plex?.pending).toBeDefined()
+  f.services.plexMutate = mutate
+  const issues: string[] = []
+  await syncFavorites(f.repository, f.services, f.current, { onIssue: (_service, message) => issues.push(message) })
+  expect(issues).toEqual([])
+  expect(f.ids).toEqual(["1", "2", "3", "4", "5"])
+  expect(f.writes).toBe(2)
+  expect(f.state.bindings.plex?.pending).toBeUndefined()
 })
 test("already applied likes are acknowledged in bounded turns, without reading rosters or resubmitting writes", async () => {
   let state = connected("lastfm", true)

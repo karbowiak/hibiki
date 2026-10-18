@@ -7,7 +7,7 @@ import { counterpartPending, matchPlaylistBatch } from "../mixedPlaylists/matchi
 import { adoptRemote } from "../mixedPlaylists/reconcile"
 import { hydratePlaylist, playlistServices, type MixedPlaylist, type Service } from "../mixedPlaylists/model"
 import { appendDraftSongs, newDraft, reviewUnappliedCreation, validateDraftMetadata, type DraftMetadata } from "../mixedPlaylists/drafts"
-import { syncMixedPlaylist, mixedWriteOutcome } from "../mixedPlaylists/sync"
+import { syncMixedPlaylist, recoverMixedWrite } from "../mixedPlaylists/sync"
 import { syncAndMatchPlaylist } from "../mixedPlaylists/pipeline"
 import { syncDraftDetails } from "../mixedPlaylists/details"
 import { syncDraftListenBrainz } from "../mixedPlaylists/listenbrainz"
@@ -318,10 +318,7 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
     if (!target) throw Error("Enter the ID of the playlist created on the service.")
     const actual = await adapter.read(target)
     if (!capture.current()) return
-    if (mixedWriteOutcome(receipt, actual) === "diverged") throw Error("The current playlist matches neither the before nor after snapshot. Resolve its contents on the provider before retrying.")
-    if (actual.readOnly) throw Error("The recovery playlist must be writable.")
-    await save({ ...playlist, write: undefined, providers: { ...playlist.providers, [receipt.service]: { id: actual.id, readOnly: actual.readOnly } },
-      baseline: { ...playlist.baseline, [receipt.service]: actual }, status: "ready", message: "Write reviewed. Sync can continue." })
+    await save(recoverMixedWrite({ ...playlist, write: { ...receipt, destinationId: actual.id } }, actual))
     void get().sync(id).catch(() => {})
   }),
   automatic: (id, enabled) => serial(id, async () => { await save({ ...await latest(id), automatic: enabled }) }),

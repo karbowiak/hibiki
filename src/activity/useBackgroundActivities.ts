@@ -296,10 +296,10 @@ export function useBackgroundActivities(open: boolean): Activity[] {
         id: "favorites",
         label: favorites.resetting
           ? "Resetting favorite sync"
-          : favorites.running ? "Syncing liked songs" : "Liked-song sync needs review",
+          : favorites.running ? "Syncing liked songs" : "Liked-song sync pending",
         busy: favorites.running || favorites.resetting,
-        state: favorites.running || favorites.resetting ? undefined : "paused",
-        detail: !favorites.running && favorites.pending ? `Unverified saved changes on ${favorites.pending}.` : undefined,
+        state: favorites.running || favorites.resetting ? undefined : "waiting",
+        detail: !favorites.running && favorites.pending ? `Waiting to retry ${favorites.pending}.` : undefined,
         action: { label: "Liked songs", href: "/collection/tracks" },
       })
     if (youtube.connected && ratings.owner === youtube.accountId) {

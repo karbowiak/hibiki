@@ -4,7 +4,7 @@ import { hydratePlaylist, newOccurrence, snapshotIds, type MixedPlaylist, type R
 import { counterpartCandidates, matchPlaylistBatch } from "../src/mixedPlaylists/matching"
 import { retainMixedPlaylist } from "../src/mixedPlaylists/repository"
 import { adoptRemote, bindSnapshot, operationIds, projection, reconcileRemoteChanges } from "../src/mixedPlaylists/reconcile"
-import { syncMixedPlaylist } from "../src/mixedPlaylists/sync"
+import { recoverMixedWrite, syncMixedPlaylist } from "../src/mixedPlaylists/sync"
 import { mergeMatchingCheckpoint, syncAndMatchPlaylist } from "../src/mixedPlaylists/pipeline"
 import type { MixedAdapter } from "../src/mixedPlaylists/adapters"
 import { retainLibraryDates } from "../src/mixedPlaylists/libraryDates"
@@ -119,7 +119,7 @@ function harness(initial = linked(), batched = false) {
   for (const service of ["plex", "ytmusic"] as const) adapters[service] = {
     service, owner: `${service}-owner`,
     create: async title => { expect(saved.write?.kind).toBe("create"); creates++; remote[service] = { ...snapshot(service, []), title }; return remote[service]!.id },
-    read: async () => { if (failPostRead && pendingRead) { pendingRead = false; throw Error("Lost read") } return structuredClone(remote[service]!) },
+    read: async () => { if (failPostRead && pendingRead) { failPostRead = false; pendingRead = false; throw Error("Lost read") } return structuredClone(remote[service]!) },
     mutate: async (before, operation) => {
       expect(saved.write?.before).toEqual(before)
       mutations++
@@ -170,7 +170,7 @@ test("large appends checkpoint bounded batches and continue with the remaining o
   expect(resumed.status).toBe("ready")
   expect(h.remote.plex!.items).toHaveLength(650)
 })
-test("an interrupted batch settles exactly once and an uncertain partial batch cannot be blindly replayed", async () => {
+test("interrupted batches recover by fresh reads and append only the missing remainder", async () => {
   const playlist = linked(["1", "2", "3"]), h = harness(playlist, true)
   h.failReads()
   await expect(syncMixedPlaylist(playlist, h.options)).rejects.toThrow("Lost read")
@@ -183,7 +183,11 @@ test("an interrupted batch settles exactly once and an uncertain partial batch c
   partial.failReads()
   await expect(syncMixedPlaylist(playlist, partial.options)).rejects.toThrow()
   partial.remote.ytmusic!.items.pop()
-  await expect(syncMixedPlaylist(structuredClone(partial.saved()), partial.options)).rejects.toThrow("uncertain outcome")
+  const resumed = await syncMixedPlaylist(structuredClone(partial.saved()), partial.options)
+  expect(resumed.status).toBe("ready")
+  expect(resumed.write).toBeUndefined()
+  expect(snapshotIds(partial.remote.ytmusic!)).toEqual(playlist.items.map(row => row.songs.ytmusic!.track.id))
+  expect(partial.writes()).toBe(2)
   expect(partial.batchSizes).toEqual([3])
 })
 test("the 22-song unchanged YTM receipt resumes its 258 available songs without duplicating the original prefix", async () => {
@@ -206,24 +210,71 @@ test("the 22-song unchanged YTM receipt resumes its 258 available songs without 
   expect(h.creates()).toBe(0)
   expect(result.items).toHaveLength(307)
 })
-test("the same song IDs with replaced occurrences cannot settle an unchanged write", async () => {
+test("recovery uses replacement occurrence handles when planning the remaining write", async () => {
   const playlist = linked(["1", "2"]), before = snapshot("ytmusic", [playlist.items[0].songs.ytmusic!.track.id])
   playlist.providers.ytmusic = { id: before.id, readOnly: false }; playlist.baseline.ytmusic = before
   playlist.write = { id: "pending", service: "ytmusic", kind: "append", state: "unknown", before,
     afterIds: playlist.items.map(row => row.songs.ytmusic!.track.id) }
   const h = harness(playlist, true)
   h.remote.ytmusic = { ...before, items: before.items.map(row => ({ ...row, occurrenceId: "replaced-handle" })) }
-  await expect(syncMixedPlaylist(playlist, h.options)).rejects.toThrow("uncertain outcome")
-  expect(h.writes()).toBe(0)
-  expect(h.saved().write?.id).toBe("pending")
+  const recovered = await syncMixedPlaylist(playlist, h.options)
+  expect(recovered.status).toBe("ready")
+  expect(h.writes()).toBe(1)
+  expect(h.saved().write).toBeUndefined()
+  expect(h.remote.ytmusic!.items[0].occurrenceId).toBe("replaced-handle")
+  expect(snapshotIds(h.remote.ytmusic!)).toEqual(playlist.items.map(row => row.songs.ytmusic!.track.id))
 })
-test("playlist controls distinguish queued, matching, syncing and paused verification", () => {
+test("playlist controls distinguish queued recovery from an unidentified creation", () => {
   const playlist = linked()
   expect(mixedSyncStatus(playlist, false, true).button).toBe("Queued…")
   expect(mixedSyncStatus(playlist, true, true, { kind: "matching", syncing: true }).button).toBe("Matching…")
   expect(mixedSyncStatus(playlist, true, false, { kind: "syncing" }).button).toBe("Syncing…")
-  playlist.write = { id: "pending", service: "ytmusic", kind: "append", afterIds: [], state: "unknown" }
+  playlist.write = { id: "pending", service: "ytmusic", kind: "create", afterIds: [], state: "unknown" }
   expect(mixedSyncStatus(playlist, false, false)).toMatchObject({ button: "Review sync", label: "Sync paused", busy: false, review: true })
+  playlist.write.destinationId = "VLPLtest"
+  expect(mixedSyncStatus(playlist, false, false)).toMatchObject({ button: "Sync", label: "Verification queued", queued: true, review: false })
+})
+test("a partially settled Plex move resumes against current order and preserves new remote additions", async () => {
+  const playlist = linked(["1", "2", "3", "4"])
+  const before = playlist.baseline.plex!
+  playlist.items = [playlist.items[3], ...playlist.items.slice(0, 3)]
+  playlist.write = { id: "pending-move", service: "plex", kind: "move", state: "unknown", before,
+    afterIds: ["4", "1", "2", "3"] }
+  playlist.status = "error"
+  const h = harness(playlist, true)
+  h.remote.plex = snapshot("plex", ["1", "4", "2", "3", "5"])
+  h.remote.plex.items.forEach((row, index) => { row.occurrenceId = `current-${index}` })
+  const recovered = await syncMixedPlaylist(playlist, h.options)
+  expect(recovered.status).toBe("ready")
+  expect(recovered.write).toBeUndefined()
+  expect(snapshotIds(h.remote.plex!)).toEqual(["4", "1", "2", "3", "5"])
+  expect(recovered.items).toHaveLength(5)
+  expect(recovered.items[4].songs.plex?.track.id).toBe("5")
+  expect(h.remote.plex.items[0].occurrenceId).toBe("current-1")
+  expect(snapshotIds(h.remote.ytmusic!)).toEqual(playlist.items.map(row => row.songs.ytmusic!.track.id))
+})
+test("recovery can settle a partial delete without writes, then resume the retained order", async () => {
+  const playlist = linked(["1", "2", "3"]), before = playlist.baseline.plex!
+  delete playlist.owners.ytmusic
+  playlist.items = [playlist.items[2]]
+  playlist.write = { id: "pending-delete", service: "plex", kind: "delete", state: "unknown", before, afterIds: ["2", "3"] }
+  const h = harness(playlist)
+  h.remote.plex = snapshot("plex", ["1", "3"])
+  const settled = await syncMixedPlaylist(playlist, { ...h.options, maxWrites: 0 })
+  expect(settled.write).toBeUndefined()
+  expect(settled.items).toHaveLength(1)
+  expect(h.writes()).toBe(0)
+  const completed = await syncMixedPlaylist(settled, h.options)
+  expect(completed.status).toBe("ready")
+  expect(snapshotIds(h.remote.plex!)).toEqual(["3"])
+})
+test("automatic recovery rejects a changed destination, account or read-only playlist", () => {
+  const playlist = linked()
+  playlist.write = { id: "receipt", service: "plex", kind: "move", state: "unknown",
+    before: playlist.baseline.plex!, afterIds: ["2", "1"] }
+  const actual = snapshot("plex", ["1", "2"])
+  for (const change of [{ owner: "other-owner" }, { id: "other-playlist" }, { readOnly: true }])
+    expect(() => recoverMixedWrite(playlist, { ...actual, ...change })).toThrow("account or destination changed")
 })
 test("an uncertain provider write does not stop local matching or replay the mutation", async () => {
   const initial = linked(["1", "2", "3"])

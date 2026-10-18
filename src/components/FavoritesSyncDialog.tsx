@@ -203,8 +203,8 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
                   <div className="mt-3 text-sm">
                     <p>
                       An unconfirmed {binding.pending.liked ? "like" : "unlike"}{" "}
-                      is saved for review. Hibiki will check whether it reached{" "}
-                      {names[service]}.
+                      is waiting to sync. Hibiki checks {names[service]} and{" "}
+                      retries automatically.
                     </p>
                     <Button
                       size="md"

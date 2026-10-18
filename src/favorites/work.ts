@@ -1,8 +1,8 @@
 import { lastfmFavoriteKey } from "./model"
 import type { FavoriteState, FavoriteService } from "./types"
 
-/** Only executable membership changes count as pending work. Unknown receipts
- * must be inspected first; unmatched recordings and disabled services are idle. */
+/** Retained receipts are executable read-first recovery work. Unmatched
+ * recordings, disabled services and unidentified creations remain idle. */
 export function favoriteSyncCandidates(state: FavoriteState, service: FavoriteService) {
   if (!state.settings[service]) return []
   const entries = Object.values(state.entries)
@@ -18,6 +18,6 @@ export function favoriteSyncCandidates(state: FavoriteState, service: FavoriteSe
 export function pendingFavoriteSync(state: FavoriteState) {
   return (["plex", "listenbrainz", "lastfm"] as const).reduce((total, service) => {
     const binding = state.bindings[service]
-    return total + (!binding?.initialized || binding.pending || binding.creation ? 0 : favoriteSyncCandidates(state, service).length)
+    return total + (!state.settings[service] || binding?.creation ? 0 : binding?.pending ? 1 : !binding?.initialized ? 0 : favoriteSyncCandidates(state, service).length)
   }, 0)
 }

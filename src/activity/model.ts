@@ -1,5 +1,6 @@
 import { counterpartPending } from "../mixedPlaylists/matching"
 import {
+  mixedWriteCanRecover,
   playlistServices,
   type MixedPlaylist,
   type Owners,
@@ -172,9 +173,11 @@ export function mixedPlaylistActivity(
     playlist.listenbrainz?.creationPending ||
     playlist.listenbrainz?.detailsWrite
   )
-  const review =
+  const recovering = mixedWriteCanRecover(playlist)
+  const review = !recovering && (
     playlist.status === "conflict" || playlist.status === "error" || unsettled
-  const queued = playlist.automatic && (pending > 0 || !!playlist.merge?.pending)
+  )
+  const queued = recovering || playlist.automatic && (pending > 0 || !!playlist.merge?.pending)
   const throttled = playlist.items.some(
     (row) =>
       row.match.status === "pending" &&
@@ -184,7 +187,9 @@ export function mixedPlaylistActivity(
   )
   if (!running && !review && !queued) return null
   const mode = !running
-    ? review
+    ? recovering
+      ? offline ? "Verification paused · waiting for connection" : "Verifying playlist changes · retries automatically"
+      : review
       ? playlist.write
         ? "Waiting for playlist write verification"
         : "Sync needs review"

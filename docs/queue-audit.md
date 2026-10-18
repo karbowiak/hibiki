@@ -97,6 +97,13 @@ Fresh remote reads remain necessary around writes. A cached browsing snapshot
 cannot prove a provider accepted a change, detect a conflicting edit, or authorize
 repeating an uncertain mutation. YTM playlist writes continue outside the
 at-least-once job queue, on the embedded runtime with domain-owned receipts.
+Interrupted song writes now rebase onto a complete fresh snapshot and replan
+remaining operations with current occurrence handles. Partial batches and changed
+handles recover without review or duplicate appends; genuinely new remote songs
+remain saved. Liked-song receipts likewise settle observed membership before
+retrying retained local intent, without importing complete rosters during recovery.
+Retries remain paced, and unidentified remote creations are never recreated by
+guessing their outcome.
 
 ## Verification boundary
 

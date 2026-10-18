@@ -85,6 +85,10 @@ export interface MixedPlaylist {
 
 export const playlistServices = (playlist: MixedPlaylist): Service[] => (["plex", "ytmusic"] as const)
   .filter(service => !!playlist.owners[service] && (!playlist.destinations || playlist.destinations.includes(service)))
+export function mixedWriteCanRecover(playlist: MixedPlaylist) {
+  const receipt = playlist.write
+  return !!receipt && !!(receipt.destinationId ?? playlist.providers[receipt.service]?.id ?? receipt.before?.id)
+}
 export function playlistSourceLabel(playlist: MixedPlaylist) {
   const services = playlistServices(playlist)
   return services.length === 2 ? "Plex + YTM" : services[0] === "plex" ? "Plex" : services[0] === "ytmusic" ? "YTM" : "Hibiki"
