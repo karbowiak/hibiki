@@ -74,18 +74,26 @@ export function createMusicLinkResolver({ searchPlex, searchYoutube, hydrate, in
     if (saved && saved.until > now()) return saved.promise
     const promise = (async () => {
       // Start both services together. Optional Plex work cannot hold YTM fallback.
-      const local = withTimeout(plex(), optionalWaitMs, "Plex lookup timed out.").catch(() => { plexFailed = true; return null })
+      const local = withTimeout(plex(), lookupTimeoutMs, "Plex lookup timed out. Please try again.")
+        .then(href => ({ href }), error => { plexFailed = true; return { error } })
       const remote = withTimeout(searchYoutube(ref), lookupTimeoutMs, "YouTube Music lookup timed out. Please try again.")
         .then(rows => ({ rows }), error => ({ error }))
-      const mapped = await local
+      const early = await withTimeout(local, optionalWaitMs, "Optional Plex lookup is still running.").catch(() => null)
       if (!current()) return null
-      if (mapped) return mapped
+      if (early && "href" in early && early.href) return early.href
       const result = await remote
       if (!current()) return null
-      if ("error" in result) throw result.error
-      const rows = candidates(ref, result.rows)
+      const rows = "rows" in result ? candidates(ref, result.rows) : []
       if (rows.length > 1) throw Error(`Several ${ref.kind === "artist" ? "artists" : "albums"} match “${ref.name}”. Open Search to choose the right one.`)
-      return rows.length === 1 ? musicEntityHref(ref.kind, rows[0].id) : null
+      if (rows.length === 1) return musicEntityHref(ref.kind, rows[0].id)
+      // Without a YTM destination, give the remaining bounded Plex lookup a
+      // chance. Slow Plex-only credits must still work when YTM is disconnected.
+      const final = await local
+      if (!current()) return null
+      if ("href" in final && final.href) return final.href
+      if ("error" in result) throw result.error
+      if ("error" in final) throw final.error
+      return null
     })()
     cache.set(key, { until: now() + 10 * 60_000, promise })
     if (cache.size > 256) cache.delete(cache.keys().next().value!)

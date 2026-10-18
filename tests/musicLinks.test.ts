@@ -141,3 +141,10 @@ test("timed out/coalesced and failed searches can retry instead of caching a per
   expect(await resolve(ref)).toBe("/ytmusic/UC_real")
   expect(calls).toBe(3)
 })
+
+test("a Plex-only name credit can finish after the optional YTM fallback budget", async () => {
+  const resolve = createMusicLinkResolver({ current: () => true, optionalWaitMs: 1, lookupTimeoutMs: 100,
+    searchPlex: async () => { await Bun.sleep(10); return [{ id: "123", name: "Artist" }] }, searchYoutube: async () => [],
+  })
+  expect(await resolve({ kind: "artist", name: "Artist" })).toBe("/artist/123")
+})
