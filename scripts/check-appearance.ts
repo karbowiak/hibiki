@@ -11,6 +11,31 @@ const root = resolve(import.meta.dir, "..")
 const output = await fixtureBuild(["tests/fixtures/libraryLayout/index.html"], "windows")
 const artifacts = resolve(root, ".tmp/appearance-checks")
 
+async function checkMatchingConsumers(page: Page, name: string) {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.evaluate(() => (window as any).fixtureAppearance.route("/ytmusic/UC_fixture"))
+  await page.waitForFunction(() => (window as any).fixtureMatchingConsumers.counts().artist > 0)
+  for (let count = 0; count < 8; count++) {
+    await page.evaluate(() => (window as any).fixtureAppearance.route("/library"))
+    await page.getByRole("heading", { name: "Your Library", exact: true }).waitFor()
+    await page.evaluate(() => (window as any).fixtureAppearance.route("/ytmusic/UC_fixture"))
+    await page.getByRole("heading", { name: "YouTube Fixture Artist", exact: true }).waitFor()
+    assert.equal(await page.evaluate(() => (window as any).fixtureMatchingConsumers.links()), "/artist/42")
+    assert.equal(await page.evaluate(async () => (await (window as any).fixtureMatchingConsumers.queue()).track.id), "44")
+    assert.equal(await page.evaluate(async () => (await (window as any).fixtureMatchingConsumers.playlist())[0].id), "44")
+  }
+  assert.equal(await page.evaluate(() => (window as any).fixtureMatchingConsumers.counts().search), 0, `${name}: warm links, queue and playlist matching must not search Plex`)
+  await page.evaluate(() => (window as any).fixtureMatchingConsumers.state(false))
+  assert.equal(await page.evaluate(() => (window as any).fixtureMatchingConsumers.links()), "/ytmusic/UC_fixture")
+  await page.waitForFunction(() => document.querySelector('h1')?.textContent === "YouTube Fixture Artist")
+  await page.evaluate(() => (window as any).fixtureMatchingConsumers.state(true))
+  assert.equal(await page.evaluate(() => (window as any).fixtureMatchingConsumers.links()), "/artist/42")
+  const times = await page.evaluate(() => (window as any).fixtureMatchingConsumers.times()) as number[]
+  times.sort((a, b) => a - b)
+  console.log(`${name}: eight artist navigations, shared links, mixed queue, playlist, removal and reappearance passed; Plex searches=0; warm renderer links p50=${times[Math.floor(times.length * .5)].toFixed(1)}ms p95=${times[Math.floor(times.length * .95)].toFixed(1)}ms (fixture IPC)`)
+  await page.evaluate(() => (window as any).fixtureMatchingConsumers.retire())
+}
+
 async function checkIssueRegressions(page: Page, name: string) {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.evaluate(() => (window as any).fixtureAppearance.route("/server-library/artists"))
@@ -860,9 +885,14 @@ try {
       const errors: string[] = []
       page.on("pageerror", (error) => errors.push(error.message))
       await page.goto(
-        `${origin}/tests/fixtures/libraryLayout/index.html?appearance=1&player=1&discovery=1${process.argv.includes("--album-hover-only") ? "&virtual=1" : ""}`
+        `${origin}/tests/fixtures/libraryLayout/index.html?appearance=1&player=1&discovery=1${process.argv.includes("--album-hover-only") ? "&virtual=1" : ""}${process.argv.includes("--matching-consumers-only") ? "&matching-consumers=1" : ""}`
       )
       await page.waitForFunction(() => (window as any).visualFixtureReady)
+      if (process.argv.includes('--matching-consumers-only')) {
+        await checkMatchingConsumers(page, name)
+        assert.deepEqual(errors, [], `${name}: renderer errors`)
+        continue
+      }
       if (process.argv.includes('--matching-index-only')) {
         await checkMatchingIndex(page,name)
         assert.deepEqual(errors,[],`${name}: renderer errors`)

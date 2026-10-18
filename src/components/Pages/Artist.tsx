@@ -51,7 +51,8 @@ import { DiscoveryCard } from "../shared/DiscoveryCard"
 import { ArtistCatalogSection } from "../shared/ArtistCatalogSection"
 import { MusicSourceBadge } from "../shared/MusicSource"
 import { mergeDiscoveryItems, plexDiscoveryItems, youtubeDiscoveryItems, type DiscoveryItem } from "../../lib/discovery"
-import { youtubeMusicItemTrack, type YoutubeMusicHub } from "../../backends/ytmusic/discovery"
+import { youtubeMusicItemTrack, youtubeMusicItemMusic, type YoutubeMusicHub } from "../../backends/ytmusic/discovery"
+import { useMusicAssociations } from "../../hooks/useMusicAssociations"
 import { artistPlaybackSource } from "../../lib/artistPlayback"
 
 const DETAIL_SOURCES = ["lastfm", "deezer"] as const
@@ -127,10 +128,11 @@ export function ArtistPage({ artistId: routeArtistId }: { artistId: string }) {
   const { entry, isLoading, error, retry, artist } = catalog
   const fullAlbums = entry?.albums ?? []
   const singles = entry?.singles ?? []
+  const associations = useMusicAssociations(catalog.youtube?.items.map(youtubeMusicItemMusic) ?? [])
   const popularTracks = useTrackReleases(useMemo(() => mergeDiscoveryItems(
     plexDiscoveryItems((entry?.popularTracks ?? []).map(track => ({ ...track, type: "track" as const }))),
-    youtubeDiscoveryItems(catalog.youtube?.items.filter(item => item.kind === "song") ?? [])
-  ).map(item => item.source === "ytmusic" ? youtubeMusicItemTrack(item.item) : item.item as MusicTrack), [entry?.popularTracks, catalog.youtube]))
+    youtubeDiscoveryItems(catalog.youtube?.items.filter(item => item.kind === "song") ?? []), associations
+  ).map(item => item.source === "ytmusic" ? youtubeMusicItemTrack(item.item) : item.item as MusicTrack), [entry?.popularTracks, catalog.youtube, associations]))
   const similarArtists = entry?.similarArtists ?? []
   const sonicallySimilar = entry?.sonicallySimilar ?? []
   const relatedHubs = entry?.relatedHubs ?? []

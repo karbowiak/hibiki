@@ -5,6 +5,8 @@ import { browseYoutubeMusic, observeYoutubeMusicPages, useYoutubeMusicDiscoveryS
 import { useDiscoveryFeed } from "../../hooks/useDiscoveryFeed"
 import { useUIStore } from "../../stores/uiStore"
 import { mergeDiscoveryItems, youtubeDiscoveryItems, type DiscoveryItem } from "../../lib/discovery"
+import { useMusicAssociations } from "../../hooks/useMusicAssociations"
+import { youtubeMusicItemMusic } from "../../backends/ytmusic/discovery"
 
 /** Artist shelves expand on demand and retain the provider's continuation. */
 export function ArtistCatalogSection({ title, restoreKey, plex, youtube, renderItem, ownedReleases = [], artistName }: {
@@ -32,19 +34,22 @@ export function ArtistCatalogSection({ title, restoreKey, plex, youtube, renderI
       return slice(page)
     } : null, destination ? receive => observeYoutubeMusicPages(destination,
       (cursor, page) => receive(cursor, slice(page)), youtube?.category === "live") : undefined)
-  const entries = useMemo(() => {
+  const remote = useMemo(() => {
     const keepPreview = !expanded || !feed.initialized || youtube?.category === "live"
     const preview = new Map((keepPreview ? youtube?.items ?? [] : []).map(item => [item.id, item]))
     if (expanded && feed.initialized) feed.items.forEach(item => preview.set(item.id, item))
-    const remote = [...preview.values()].filter(item => !["albums", "singles"].includes(youtube?.category ?? "") || item.kind === "album")
-    const missing = mergeDiscoveryItems(ownedReleases, youtubeDiscoveryItems(remote)).filter(item => item.source === "ytmusic")
-    const merged = mergeDiscoveryItems(plex, missing)
+    return [...preview.values()].filter(item => !["albums", "singles"].includes(youtube?.category ?? "") || item.kind === "album")
+  }, [youtube, feed.items, feed.initialized, expanded])
+  const associations = useMusicAssociations(remote.map(youtubeMusicItemMusic))
+  const entries = useMemo(() => {
+    const missing = mergeDiscoveryItems(ownedReleases, youtubeDiscoveryItems(remote), associations).filter(item => item.source === "ytmusic")
+    const merged = mergeDiscoveryItems(plex, missing, associations)
     if (["albums", "singles"].includes(youtube?.category ?? "")) {
       const year = (entry: DiscoveryItem) => entry.source === "ytmusic" ? entry.item.year ?? 0 : "year" in entry.item ? entry.item.year : 0
       merged.sort((a, b) => year(b) - year(a))
     }
     return merged
-  }, [plex, youtube, feed.items, feed.initialized, ownedReleases, expanded])
+  }, [plex, youtube, remote, ownedReleases, associations])
   if (!entries.length && !destination) return null
   return <div>
     <ScrollRow title={title} restoreKey={restoreKey} onExpandedChange={destination ? setExpanded : undefined}>

@@ -69,6 +69,33 @@ test("index growth retries local identities without repeating a source's live fa
   await resolve(source(), true)
   expect(calls).toBe(2)
 })
+test("passive matching queries never schedule a provider fallback", async () => {
+  let calls = 0
+  const resolve = createMatchingBatch({ current: () => true, delay: 0,
+    lookup: async inputs => inputs.map(input => result(input, { status: "incomplete", selected: null })),
+    fallback: async input => { calls++; return result(input) },
+  })
+  expect((await resolve(source(), false, false)).status).toBe("incomplete")
+  expect(calls).toBe(0)
+  expect((await resolve(source())).status).toBe("matched")
+  expect(calls).toBe(1)
+})
+
+test("slow partial-index provider fallbacks cannot hold verified replies or subsequent native lookup batches", async () => {
+  const gate = deferred<void>()
+  let started = false
+  const resolve = createMatchingBatch({ current: () => true, delay: 0,
+    lookup: async inputs => inputs.map(input => result(input, input.id === "ytmusic:slow" ? { status: "incomplete", selected: null, cached: false } : {})),
+    fallback: async input => { started = true; await gate.promise; return result(input) },
+  })
+  const slow = resolve(source("slow"))
+  const quick = resolve(source("quick"))
+  for (let tick = 0; tick < 20 && !started; tick++) await Bun.sleep(1)
+  expect(started).toBe(true)
+  expect((await quick).status).toBe("matched")
+  expect((await resolve(source("later"))).status).toBe("matched")
+  gate.resolve(); await slow
+})
 
 test("wrong or truncated IPC batches fail every affected lookup without misrouting identities", async () => {
   for (const lookup of [async () => [], async () => [result(source("wrong"))]]) {

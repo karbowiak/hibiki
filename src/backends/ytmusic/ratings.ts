@@ -11,6 +11,8 @@ import { useListenBrainzStore } from "../../metadata/listenbrainz/authStore"
 import { useFavoritesStore } from "../../stores/favoritesStore"
 import { saveTrackRatingToPlex } from "../../favorites/saveRating"
 import { isYoutubeMusicId } from "./tracks"
+import { matchingUpdateAffectsRecording } from "../../matching/changes"
+import type { MatchingUpdate } from "../../matching/updates"
 
 export const youtubeRatingLiked = (value: number | null) => (value ?? 0) > 2
 export const scrobbleRatingLoved = (value: number | null) => (value ?? 0) >= 6
@@ -33,11 +35,13 @@ interface State {
   load(owner: string): Promise<void>
   rate(track: MusicTrack, value: number | null): Promise<boolean>
   resume(): Promise<void>
+  retryPlexMatches(update?: MatchingUpdate): Promise<void>
 }
 const key = (owner: string) => `ytmusic-stars-v1:${owner}`
 const lanes = new Map<string, Promise<void>>()
 const pendingLoads = new Map<string, Promise<void>>()
 let loadVersion = 0
+let matchingRetry: Promise<void> | undefined, matchingCursor = 0
 async function retain(entry: YoutubeMusicRating, expected?: string) {
   let saved: YoutubeMusicRating | undefined
   await update<Record<string, YoutubeMusicRating>>(key(entry.owner), previous => {
@@ -181,5 +185,27 @@ export const useYoutubeMusicRatingsStore = create<State>((set, state) => ({
     for (const entry of Object.values(state().entries).filter(entry => !entry.saved.ytmusic || (entry.plexOwner && !entry.saved.plex) || entry.error ||
       Object.entries(entry.serviceOwners ?? {}).some(([service, account]) => entry.saved[service] !== account)).slice(0, 20))
       await syncSong(owner, entry.track.id)
+  },
+  retryPlexMatches: update => {
+    if (matchingRetry) return matchingRetry
+    const work = (async () => {
+      const capture = captureMusicOwner(), owner = state().owner
+      if (!owner || !state().loaded || !capture.current() || !capture.provider?.matchingResolve || capture.provider.isOffline || capture.owners.ytmusic !== owner) return
+      if (update && update.provider !== capture.provider) return
+      const entries = Object.values(state().entries).filter(entry => entry.plexOwner === capture.owners.plex && entry.saved.plex !== entry.plexOwner &&
+        (!update || matchingUpdateAffectsRecording(update, entry.track)))
+      if (!entries.length) return
+      const batch = Array.from({ length: Math.min(20, entries.length) }, (_, index) => entries[(matchingCursor + index) % entries.length])
+      matchingCursor = (matchingCursor + batch.length) % entries.length
+      const [{ queryIndexedMusic }, { trackMatchingSource }] = await Promise.all([import("../../matching/service"), import("../../matching/sources")])
+      const results = await Promise.all(batch.map(entry => queryIndexedMusic(trackMatchingSource(entry.track)).catch(() => null)))
+      for (let index = 0; index < batch.length && capture.current() && state().owner === owner; index++) {
+        const entry = batch[index]
+        if (results[index]?.status === "matched" && state().entries[entry.track.id]?.id === entry.id) await syncSong(owner, entry.track.id)
+      }
+    })()
+    matchingRetry = work
+    void work.finally(() => { if (matchingRetry === work) matchingRetry = undefined }).catch(() => {})
+    return work
   },
 }))

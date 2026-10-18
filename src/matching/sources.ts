@@ -1,6 +1,8 @@
 import type { MusicAlbum, MusicArtist, MusicTrack } from "../types/music"
 import { itemArtistCredits } from "../lib/artistCredits"
 import type { MatchingIdentifier, MatchingSource, MatchingExample } from "./resolverTypes"
+import type { YoutubeMusicBrowsePage } from "../backends/ytmusic/discovery"
+import { youtubeArtistEvidence } from "../lib/artistMatching"
 
 export function matchingIdentifiers(guid?: string | null): MatchingIdentifier[] {
   if (!guid) return []
@@ -22,6 +24,14 @@ export function trackMatchingSource(track: MusicTrack): MatchingSource {
 }
 export function artistMatchingSource(artist: Pick<MusicArtist, "id" | "title"> & { guid?: string | null }, catalog: MatchingExample[] = []): MatchingSource {
   return { ...empty(), id: artist.id, kind: "artist", title: artist.title, artists: [], identifiers: matchingIdentifiers(artist.guid), catalog: catalog.slice(0, 64) }
+}
+export function artistPageMatchingSource(page: YoutubeMusicBrowsePage): MatchingSource | null {
+  if (!page.artist) return null
+  const evidence = youtubeArtistEvidence(page)
+  return artistMatchingSource({ id: `ytmusic:${page.artist.id}`, title: page.artist.name }, [
+    ...evidence.releases.map(item => ({ ...item, kind: "album" as const })),
+    ...evidence.songs.map(item => ({ ...item, kind: "track" as const })),
+  ])
 }
 export function albumMatchingSource(album: Pick<MusicAlbum, "id" | "title" | "artistName" | "year"> & Partial<MusicAlbum>, tracks: MatchingExample[] = []): MatchingSource {
   return { ...empty(), id: album.id, kind: "album", title: album.title,

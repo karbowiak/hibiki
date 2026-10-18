@@ -58,6 +58,7 @@ export class PlexProvider implements MusicProvider {
   matchingIndexStatus() { return this.api.matchingIndexStatus() }
   matchingResolve(sourceOwner: string, sources: import("../../matching/resolverTypes").MatchingSource[], force = false) { return this.api.matchingResolve(sourceOwner, sources, force) }
   matchingReverse(sourceOwner: string, kind: "artist" | "album" | "track", id: number) { return this.api.matchingReverse(sourceOwner, kind, id) }
+  matchingRows(kind: "artist" | "album" | "track", ids: number[]) { return this.api.matchingRows(kind, ids) }
   matchingChanges(since: number) { return this.api.matchingChanges(since) }
   matchingFallback(sourceOwner: string, source: import("../../matching/resolverTypes").MatchingSource) { return this.api.matchingFallback(sourceOwner, source) }
   matchingIndexControl(action: import("../../matching/types").MatchingAction) { return this.api.matchingIndexControl(action) }

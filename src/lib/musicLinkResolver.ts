@@ -4,11 +4,13 @@ import { releaseNameKey } from "./musicMatching"
 import { artistCreditsKey } from "./artistCredits"
 
 /** Resolve on navigation, never by scanning every visible playlist/queue row. */
-export function createMusicLinkResolver({ searchPlex, searchYoutube, hydrate, current, now = Date.now }: {
+export function createMusicLinkResolver({ searchPlex, searchYoutube, hydrate, indexed, knownPlex, current, now = Date.now }: {
   searchPlex: (ref: MusicEntityRef) => Promise<{ id: string; name: string; artist?: string; year?: number | null }[]>
   searchYoutube: (ref: MusicEntityRef) => Promise<{ id: string; name: string; artist?: string; year?: number | null }[]>
   current: () => boolean
   hydrate?: (ref: MusicEntityRef) => Promise<MusicEntityRef | null>
+  indexed?: (ref: MusicEntityRef) => Promise<{ handled: boolean; href: string | null; plexChecked?: boolean } | null>
+  knownPlex?: (ref: MusicEntityRef) => Promise<boolean>
   now?: () => number
 }) {
   const cache = new Map<string, { until: number; promise: Promise<string | null> }>()
@@ -18,19 +20,35 @@ export function createMusicLinkResolver({ searchPlex, searchYoutube, hydrate, cu
       artistNameSimilarity(artistCreditsKey(ref.artist), artistCreditsKey(item.artist)) >= ARTIST_NAME_THRESHOLD && (!ref.year || !item.year || ref.year === item.year)
   return async (ref: MusicEntityRef): Promise<string | null> => {
     if (!current()) return null
-    if (ref.id && !ref.id.startsWith("ytmusic:")) return musicEntityHref(ref.kind, ref.id)
+    if (ref.id && !ref.id.startsWith("ytmusic:")) {
+      const present = !knownPlex || await knownPlex(ref)
+      if (!current()) return null
+      if (present) return musicEntityHref(ref.kind, ref.id)
+      ref = { ...ref, id: null }
+    }
+    if (ref.kind === "album" && (!ref.id || !ref.name) && ref.trackId && hydrate) {
+      try { ref = await hydrate(ref) ?? ref } catch { if (!current()) return null }
+      if (!current()) return null
+    }
+    // Revalidate the shared proof on every navigation. A view-local TTL must not
+    // hide a newly indexed match or keep linking to a removed/rematched target.
+    let plexChecked = false
+    if (indexed && ref.name) {
+      try {
+        const match = await indexed(ref)
+        if (!current()) return null
+        if (match?.handled) return match.href
+        plexChecked = !!match?.plexChecked
+      } catch { if (!current()) return null }
+    }
     const key = JSON.stringify([ref.kind, ref.id, ref.name, ref.artist, ref.year, ref.trackId])
     const saved = cache.get(key)
-    if (saved && saved.until > now()) return saved.promise
+    if (!plexChecked && saved && saved.until > now()) return saved.promise
     const promise = (async () => {
-      if (ref.kind === "album" && (!ref.id || !ref.name) && ref.trackId && hydrate) {
-        try { ref = await hydrate(ref) ?? ref } catch { if (!current()) return null }
-        if (!current()) return null
-      }
       const known = musicEntityHref(ref.kind, ref.id)
       if (ref.id && !ref.id.startsWith("ytmusic:")) return known
       if (!ref.name) return known
-      try {
+      if (!plexChecked) try {
         const candidates = [...new Map((await searchPlex(ref)).filter(item => match(ref, item)).map(item => [item.id, item])).values()]
         if (!current()) return null
         // Ambiguous editions/names keep their known YTM destination instead of guessing.

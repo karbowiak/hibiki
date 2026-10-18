@@ -13,9 +13,17 @@ const first = deferred(), matching = deferred(), feedback = { lastfm: false, lis
 const provider = { cacheScope: "P", playbackSession: {}, isOffline: false,
   resolvePlaylistRecording: async () => ({ status: "verified", recordingMbid: "00000000-0000-4000-8000-000000000000" }) }
 let matchCalls = 0
+let indexed = false, indexQueries = 0
+const indexGate = deferred<void>()
+if (scenario.startsWith("index")) Object.assign(provider, { matchingResolve: async () => [] })
+mock.module("../../src/matching/service", () => ({ queryIndexedMusic: async () => {
+  indexQueries++
+  if (scenario === "indexaccount") await indexGate.promise
+  return { status: indexed ? "matched" : "missing", selected: indexed ? 42 : null }
+} }))
 mock.module("../../src/mixedPlaylists/counterparts", () => ({
   captureMusicOwner: () => { const captured = revision; return { owners: { ytmusic: owner, plex: "P" }, provider, current: () => captured === revision } },
-  resolveCounterpart: async () => { matchCalls++; if (scenario === "matching" && matchCalls === 1) await matching.promise; return { status: "matched", track: { ...track, id: "42" } } },
+  resolveCounterpart: async () => { matchCalls++; if (scenario.startsWith("index") && !indexed) return { status: "missing" }; if (scenario === "matching" && matchCalls === 1) await matching.promise; return { status: "matched", track: { ...track, id: "42" } } },
 }))
 mock.module("@tauri-apps/api/core", () => ({ invoke: async (command: string, args: any) => {
   if (command !== "ytmusic_set_song_like") throw Error(`Unexpected ${command}`)
@@ -44,7 +52,32 @@ mock.module("../../src/favorites/saveRating", () => ({ saveTrackRatingToPlex: as
 const { useYoutubeMusicRatingsStore: store, youtubeRatingLiked, scrobbleRatingLoved } = await import("../../src/backends/ytmusic/ratings")
 const wait = async (condition: () => boolean) => { for (let i = 0; i < 500 && !condition(); i++) await Bun.sleep(1); assert.ok(condition()) }
 await store.getState().load(owner)
-if (scenario === "thresholds") {
+if (scenario.startsWith("index")) {
+  await store.getState().rate(track, 8)
+  await wait(() => !!store.getState().entries[track.id]?.error)
+  assert.deepEqual(plexWrites, [])
+  const update = { provider, reset: false, coverageChanged: false, changes: [{ kind: "track", id: 42, titleKey: "different song" }] } as any
+  await store.getState().retryPlexMatches(update)
+  assert.equal(indexQueries, 0)
+  indexed = true
+  update.changes[0].titleKey = "song"
+  const retry = store.getState().retryPlexMatches(update)
+  if (scenario === "indexaccount") {
+    await wait(() => indexQueries > 0)
+    owner = "B"; revision++
+    await store.getState().load(owner)
+    indexGate.resolve()
+    await retry
+    assert.deepEqual(plexWrites, [])
+  } else {
+    await retry
+    assert.deepEqual(plexWrites, [8])
+    assert.deepEqual(ytWrites, [true])
+    assert.equal(store.getState().entries[track.id].saved.plex, "P")
+    await store.getState().retryPlexMatches(update)
+    assert.deepEqual(plexWrites, [8])
+  }
+} else if (scenario === "thresholds") {
   assert.deepEqual([2, 4, 6, 8, 10, null].map(youtubeRatingLiked), [false, true, true, true, true, false])
   assert.deepEqual([2, 4, 6, 8, 10, null].map(scrobbleRatingLoved), [false, false, true, true, true, false])
   for (const value of [2, 4, 6, 10, null]) {

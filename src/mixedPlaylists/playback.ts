@@ -3,7 +3,7 @@ import type { MusicTrack } from "../types/music"
 import type { MixedPlaylist } from "./model"
 
 export const mixedPlaylistTracks = (playlist: MixedPlaylist) => playlist.items.map(row => {
-  const reference = (row.songs.plex ?? row.songs.ytmusic)!
+  const reference = ((!row.songs.plex?.stale ? row.songs.plex : undefined) ?? (!row.songs.ytmusic?.stale ? row.songs.ytmusic : undefined) ?? row.songs[row.original])!
   const date = reference.libraryAdded
   return { ...reference.track, ...(date ? date.provenance === "provider" ? { addedAt: new Date(date.at).toISOString() } :
     { libraryObservedAt: new Date(date.at).toISOString() } : {}), playlistItemId: row.id }

@@ -98,8 +98,30 @@ changing totals/duplicate pages, absent or backwards server clocks, failed write
 owner retirement and unchanged restart reuse. Chromium/WebKit check separate
 coverage/freshness status and lifecycle controls. Capability discovery can fall
 back to complete listing reconciliation; a live server's undocumented filtering
-behavior is not assumed. Association invalidation/retry remains open until the
-shared resolver and consumers in #29–#30 are connected.
+behavior is not assumed. Targeted invalidation and bounded unresolved retries now
+connect the shared resolver to music consumers, completing the freshness work in
+#28. Real-world audible playback/foreground measurement remains tracked in #30.
+
+Consumer checks cover a later native match resuming a deliberate rating exactly
+once, owner retirement during that retry, unchanged binary likes, unknown writes,
+Plex library disappearance versus a true playlist removal, repeated occurrences,
+typed-ID-only rematches, original metadata/provenance retention, fresh candidate
+preflight, and view-cache invalidation. Mounted artist/album checks confirm that
+unrelated changes do not refetch a page, duplicate census observations do not
+cancel its in-flight read, and removals invalidate even older metadata while
+preserving open edits. A slow live fallback cannot delay other verified results
+or subsequent local lookup batches.
+
+Chromium and WebKit exercise eight repeated artist navigations plus shared links,
+mixed queue counterpart lookup, playlist candidates, target removal and return.
+Those warm paths make **zero Plex searches** in the isolated provider fixture.
+The playlist comparison measures **25 broad searches before / zero after** for
+25 retrievals; the new path retains 25 fresh metadata reads for preflight rather
+than treating a native identity row as a complete provider track. Warm renderer
+link latency was **12.8/29.6 ms p50/p95 in Chromium** and **9.0/59.0 ms in WebKit**.
+These include renderer batching with fixture IPC, not real network/SQLite timing.
+Native SQLite measurements are reported separately below. No live remote account
+mutations or audible-playback claim are inferred from the browser checks.
 
 The shared resolver's 400,000-track fixture measured **2.387 ms p50 / 2.660 ms
 p95** for a batch of 16 identities, an **11,391-byte** maximum response and
@@ -127,11 +149,11 @@ audible playback under indexing were not measured. See
 [the index contract](plex-matching-index.md) for the read-only live page sample and
 the distinction between matching metadata and full browse/offline data.
 
-- Full frontend suite: **1,228 passed**, zero failures, including the draft and
-  mixed-playlist regression cases above.
+- Full frontend suite: **1,251 passed**, zero failures; subsequent focused
+  matching/retention/rating checks pass for the final refinements.
 - Focused acceptance suite including those cases: **102 passed**, zero failures.
-- Full native suite: **852 passed**, 12 ignored; remote integration tests excluded
-  (followed by the focused index/connection checks for the latest additions).
+- Full native suite: **858 passed**, 12 ignored; 73 remote integration tests
+  excluded. Focused index checks: **36 passed**, one explicit benchmark ignored.
 - Native discovery parser rerun: **9 passed**, zero failures.
 - Application and script TypeScript projects pass `--noEmit`.
 - Chromium and WebKit issue interaction checks pass.

@@ -7,6 +7,8 @@ import { itemArtistCredits } from "../lib/artistCredits"
 import { counterpartCandidates, recordingFingerprint, type CounterpartResult } from "./matching"
 import type { MusicTrack } from "../types/music"
 import type { Owners, Service } from "./model"
+import { resolveIndexedMusic, reverseIndexedMusic } from "../matching/service"
+import { trackMatchingSource } from "../matching/sources"
 
 export function captureMusicOwner() {
   const provider = useProviderStore.getState().provider
@@ -26,13 +28,41 @@ export function resolveCounterpart(track: MusicTrack, target: Service, force = f
   const owner = captureMusicOwner()
   const fingerprint = recordingFingerprint(track)
   const key = JSON.stringify(["counterpart-v1", owner.owners, target, fingerprint])
-  const runtimeKey = `${key}:${String(owner.provider?.playbackSession)}:${owner.youtube.revision}`
+  const runtimeKey = `${key}:${String(owner.provider?.playbackSession)}:${owner.youtube.revision}:force:${force}`
   const active = pending.get(runtimeKey)
   if (active?.current()) return active.promise
   const work = (async (): Promise<CounterpartResult> => {
     const unavailable = (message: string): CounterpartResult => ({ status: "failed", checkedAt: Date.now(), message })
     if (!owner.owners.plex || !owner.owners.ytmusic || !owner.provider || owner.provider.isOffline)
       return unavailable("Connect the original Plex library and YouTube Music account to match this song.")
+    // Read the revision-aware shared proof before legacy fallback receipts. A
+    // previous miss must not hide a newly indexed counterpart for five minutes.
+    if (target === "plex" && owner.provider.matchingResolve) {
+      const indexed = await resolveIndexedMusic(trackMatchingSource(track), force).catch(failure => { if (!owner.current()) throw failure; return null })
+      if (!owner.current()) throw Error("Music accounts changed.")
+      if (indexed?.status === "ambiguous" || indexed?.status === "limited") return { status: "ambiguous", checkedAt: Date.now(), message: "Several recordings may match. The original song is retained." }
+      if (indexed?.status === "matched" && indexed.selected) {
+        const actual = await owner.provider.getTrack(String(indexed.selected))
+        if (!owner.current()) throw Error("Music accounts changed.")
+        if (actual.id !== String(indexed.selected) || counterpartCandidates(track, [actual]).length !== 1) return unavailable("The Plex recording changed. Retry matching.")
+        const result: CounterpartResult = { status: "matched", track: actual, checkedAt: Date.now(), fingerprint }
+        await set(key, result, playlistJournalDatabase())
+        if (!owner.current()) throw Error("Music accounts changed.")
+        return result
+      }
+      if (indexed?.status === "missing" || indexed?.status === "stale" && indexed.coverage === "complete")
+        return { status: "missing", checkedAt: Date.now(), message: "No current verified Plex recording exists. The original song is retained." }
+    } else if (target === "ytmusic" && owner.provider.matchingReverse) {
+      const known = await reverseIndexedMusic("track", track.id).catch(failure => { if (!owner.current()) throw failure; return [] })
+      if (!owner.current()) throw Error("Music accounts changed.")
+      if (known.length) {
+        const actual = await Promise.all(known.map(source => youtubeMusicSongMetadata(source.id)))
+        if (!owner.current()) throw Error("Music accounts changed.")
+        const choices = counterpartCandidates(track, actual.filter((song, index) => song.id === known[index].id))
+        if (choices.length === 1) return { status: "matched", track: choices[0], checkedAt: Date.now(), fingerprint }
+        if (choices.length > 1) return { status: "ambiguous", checkedAt: Date.now(), message: "Several YTM recordings match. The original song is retained." }
+      }
+    }
     const saved = !force ? await get<CounterpartResult>(key, playlistJournalDatabase()) : undefined
     if (!owner.current()) throw Error("Music accounts changed.")
     if (saved && Date.now() - saved.checkedAt < (saved.status === "matched" ? 86400000 : 300000)) {

@@ -3,6 +3,8 @@ import { useMixedPlaylistStore } from "../stores/mixedPlaylistStore"
 import { useProviderStore } from "../stores/providerStore"
 import { useYoutubeMusicDiscoveryStore } from "../backends/ytmusic/discovery"
 import { useListenBrainzStore } from "../metadata/listenbrainz/authStore"
+import { subscribeMatchingUpdates } from "../matching/updates"
+import { createMatchingConsumer } from "../matching/consumerQueue"
 
 /** Resumable bounded jobs, round-robin; no library-wide matching scan. */
 export function useMixedPlaylistSync() {
@@ -12,11 +14,14 @@ export function useMixedPlaylistSync() {
   const external = useListenBrainzStore(state => state.isAuthenticated)
   useEffect(() => {
     let active = true, timer: ReturnType<typeof setTimeout>
+    const matching = createMatchingConsumer(update => useMixedPlaylistStore.getState().retryIndexedMatches(update))
+    const unsubscribe = subscribeMatchingUpdates(update => matching.offer(update))
     const checked = new Map<string, number>()
     const tick = async () => {
       try {
         await useMixedPlaylistStore.getState().load()
         if (!active) return
+        matching.offer()
         const playlist = useMixedPlaylistStore.getState().playlists.filter(item => item.automatic &&
           (item.items.length || Object.keys(item.providers).length) &&
           Object.entries(item.owners).every(([side, owner]) => side === "plex" ? owner === scope && (!provider?.isOffline || external && item.external?.listenbrainz.enabled && item.external.listenbrainz.automatic) : owner === account) &&
@@ -30,6 +35,6 @@ export function useMixedPlaylistSync() {
       finally { if (active) timer = setTimeout(tick, 15000) }
     }
     void tick()
-    return () => { active = false; clearTimeout(timer) }
+    return () => { active = false; clearTimeout(timer); unsubscribe(); matching.stop() }
   }, [provider, scope, session, account, external])
 }

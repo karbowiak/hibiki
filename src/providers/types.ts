@@ -140,6 +140,7 @@ export interface MusicProvider {
   matchingIndexStatus?(): Promise<import("../matching/types").MatchingStatus>
   matchingResolve?(sourceOwner: string, sources: import("../matching/resolverTypes").MatchingSource[], force?: boolean): Promise<import("../matching/resolverTypes").MatchingResolution[]>
   matchingReverse?(sourceOwner: string, kind: "artist" | "album" | "track", id: number): Promise<import("../matching/resolverTypes").MatchingSource[]>
+  matchingRows?(kind: "artist" | "album" | "track", ids: number[]): Promise<import("../matching/resolverTypes").MatchingEntry[]>
   matchingChanges?(since: number): Promise<import("../matching/resolverTypes").MatchingChanges>
   matchingFallback?(sourceOwner: string, source: import("../matching/resolverTypes").MatchingSource): Promise<import("../matching/resolverTypes").MatchingResolution>
   matchingIndexControl?(action: import("../matching/types").MatchingAction): Promise<import("../matching/types").MatchingStatus>

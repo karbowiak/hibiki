@@ -1,7 +1,9 @@
 import { useProviderStore } from "../stores/providerStore"
 import { browseYoutubeMusic, useYoutubeMusicDiscoveryStore } from "../backends/ytmusic/discovery"
 import { createMusicLinkResolver } from "./musicLinkResolver"
-import { trackEntity } from "./musicEntity"
+import { musicEntityHref, trackEntity } from "./musicEntity"
+import { resolveIndexedMusic } from "../matching/service"
+import { artistMatchingSource, albumMatchingSource } from "../matching/sources"
 import { youtubeMusicSongMetadata } from "../backends/ytmusic/metadata"
 import type { MusicEntityRef } from "./musicEntity"
 import type { ContextAction } from "../stores/contextMenuStore"
@@ -19,6 +21,21 @@ export function resolveMusicEntity(ref: MusicEntityRef) {
     const identity = { provider, session, scope, revision: connection.revision, connected: connection.connected }
     owner = identity
     resolve = createMusicLinkResolver({
+      knownPlex: async ref => {
+        if (!provider?.matchingRows || !/^\d+$/.test(ref.id ?? "")) return true
+        try { return (await provider.matchingRows(ref.kind, [Number(ref.id)]))[0]?.state !== "removed" } catch { return true }
+      },
+      indexed: async ref => {
+        const id = ref.id ?? `link:${ref.kind}:${ref.name}:${ref.artist ?? ""}`
+        const source = ref.kind === "artist" ? artistMatchingSource({ id, title: ref.name }) :
+          albumMatchingSource({ id, title: ref.name, artistName: ref.artist ?? "", year: ref.year ?? 0 })
+        const result = await resolveIndexedMusic(source)
+        if (!result) return null
+        if (result.status === "matched" && result.selected) return { handled: true, href: musicEntityHref(ref.kind, String(result.selected)) }
+        if (ref.id || result.status === "ambiguous" || result.status === "limited" || result.status === "missing")
+          return { handled: !!ref.id, href: musicEntityHref(ref.kind, ref.id), plexChecked: true }
+        return null
+      },
       hydrate: async ref => {
         if (!ref.trackId) return null
         const track = ref.trackId.startsWith("ytmusic:") ? await youtubeMusicSongMetadata(ref.trackId) : await provider?.getTrack(ref.trackId)

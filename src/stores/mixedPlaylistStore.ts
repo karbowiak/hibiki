@@ -11,6 +11,11 @@ import { syncDraftDetails } from "../mixedPlaylists/details"
 import { syncDraftListenBrainz } from "../mixedPlaylists/listenbrainz"
 import { useListenBrainzStore } from "../metadata/listenbrainz/authStore"
 import type { MusicTrack } from "../types/music"
+import { verifyPlaylistIdentity } from "../mixedPlaylists/identity"
+import { matchingUpdateAffectsRecording } from "../matching/changes"
+import type { MatchingUpdate } from "../matching/updates"
+import { queryIndexedMusic } from "../matching/service"
+import { trackMatchingSource } from "../matching/sources"
 
 interface State {
   playlists: MixedPlaylist[]
@@ -28,7 +33,9 @@ interface State {
   chooseOrder(id: string, side: Service | "hibiki"): Promise<void>
   recover(id: string, destinationId?: string, reviewedNotApplied?: boolean): Promise<void>
   automatic(id: string, enabled: boolean): Promise<void>
+  retryIndexedMatches(update?: MatchingUpdate): Promise<void>
 }
+const matchingCursors = new Map<string, number>()
 const lanes = new Map<string, Promise<unknown>>()
 function serial<T>(id: string, run: () => Promise<T>): Promise<T> {
   const work = (lanes.get(id) ?? Promise.resolve()).catch(() => {}).then(run)
@@ -126,24 +133,33 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
     if (!current()) throw Error("Reconnect this playlist's original accounts to sync.")
     set(state => ({ running: { ...state.running, [id]: true } }))
     try {
-      if (useListenBrainzStore.getState().isAuthenticated)
-        playlist = await syncDraftListenBrainz(playlist, { current, save, provider: capture.provider, manual: retry, owners: capture.owners })
+      const checked = await verifyPlaylistIdentity(playlist, { provider: capture.provider, current })
+      if (checked !== playlist) playlist = await save(checked)
+      const verify = async (value: MixedPlaylist, snapshots: import("../mixedPlaylists/model").RemotePlaylist[]) => {
+        const checked = await verifyPlaylistIdentity(value, { provider: capture.provider, current, snapshots })
+        return checked === value ? value : save(checked)
+      }
+      if (!retry && !playlist.write && playlist.items.some(row => Object.values(row.songs).some(song => song?.stale))) return
       const adapters = mixedAdapters(capture)
       playlist = await syncDraftDetails(playlist, { adapters, current, save, provider: capture.provider, review: retry, settleOnly: true })
       if (playlist.status === "conflict" || playlist.write) {
-        playlist = await syncMixedPlaylist(playlist, { adapters: mixedAdapters(capture), current, save, maxWrites: 0 })
+        playlist = await syncMixedPlaylist(playlist, { adapters: mixedAdapters(capture), current, save, maxWrites: 0, verify })
         if (playlist.status === "conflict" || playlist.write) return
       }
       for (const target of playlistServices(playlist)) {
         // Retry prior misses after catalog changes, without starving new rows.
         if (retry || playlist.items.some(row => !row.songs[target] && row.match.checkedAt && Date.now() - row.match.checkedAt > 3600000))
-          playlist = await save({ ...playlist, items: playlist.items.map(row => row.songs[target] || (!retry && (!row.match.checkedAt || Date.now() - row.match.checkedAt <= 3600000)) ? row : { ...row, match: { status: "pending" } }) })
+          playlist = await save({ ...playlist, items: playlist.items.map(row => (row.songs[target] && !row.songs[target]?.stale) || (!retry && (!row.match.checkedAt || Date.now() - row.match.checkedAt <= 3600000)) ? row : { ...row, match: { status: "pending" } }) })
         const batch = await matchPlaylistBatch(playlist, target, { current, save, limit: 20,
           resolve: track => resolveCounterpart(track, target, retry) })
         playlist = batch.playlist
       }
       if (!current()) return
-      playlist = await syncMixedPlaylist(playlist, { adapters, current, save, maxWrites: 10 })
+      if (playlist.items.some(row => Object.values(row.songs).some(song => song?.stale))) return
+      playlist = await syncMixedPlaylist(playlist, { adapters, current, save, maxWrites: 10, verify })
+      if (playlist.items.some(row => Object.values(row.songs).some(song => song?.stale))) return
+      if (useListenBrainzStore.getState().isAuthenticated)
+        playlist = await syncDraftListenBrainz(playlist, { current, save, provider: capture.provider, manual: retry, owners: capture.owners })
       await syncDraftDetails(playlist, { adapters, current, save, provider: capture.provider, review: retry })
     } catch (failure) {
       if (current()) {
@@ -160,6 +176,11 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
     if (!current()) throw Error("Reconnect this playlist’s original music accounts.")
     set(state => ({ running: { ...state.running, [id]: true } }))
     try {
+      const adapters = mixedAdapters(capture)
+      const snapshots = playlist.providers.plex && adapters.plex ? [await adapters.plex.read(playlist.providers.plex.id)] : []
+      const checked = await verifyPlaylistIdentity(playlist, { provider: capture.provider, current, snapshots })
+      if (checked !== playlist) playlist = await save(checked)
+      if (playlist.items.some(row => Object.values(row.songs).some(song => song?.stale))) throw Error("Match the changed recording before syncing this playlist.")
       playlist = await syncDraftListenBrainz(playlist, { current, save, provider: capture.provider, owners: capture.owners, manual: true, ...options })
       if (current()) void get().sync(id).catch(() => {})
     } catch (failure) {
@@ -221,4 +242,40 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
     void get().sync(id).catch(() => {})
   }),
   automatic: (id, enabled) => serial(id, async () => { await save({ ...await latest(id), automatic: enabled }) }),
+  retryIndexedMatches: async update => {
+    const capture = captureMusicOwner(), provider = capture.provider
+    if (!get().loaded || !provider?.matchingResolve || provider.isOffline || update && update.provider !== provider) return
+    for (const retained of get().playlists) {
+      if (!capture.current()) return
+      if (retained.owners.plex !== capture.owners.plex || retained.owners.ytmusic !== capture.owners.ytmusic) continue
+      await serial(retained.id, async () => {
+        let playlist = await latest(retained.id)
+        const current = () => capture.current()
+        if (update) {
+          const ids = update.reset ? undefined : new Set(update.changes.filter(change => change.kind === "track").map(change => String(change.id)))
+          if (ids) for (const row of playlist.items) {
+            const track = row.songs.plex?.track
+            if (track && update.changes.some(change => change.kind === "album" && String(change.id) === track.albumId || change.kind === "artist" && String(change.id) === track.artistId)) ids.add(track.id)
+          }
+          if (!ids || ids.size) {
+            const checked = await verifyPlaylistIdentity(playlist, { provider, current, ids })
+            if (checked !== playlist) playlist = await save(checked)
+          }
+        }
+        const candidates = playlist.items.filter(row => (!row.songs.plex || row.songs.plex.stale) &&
+          row.songs[row.original] && (!update || matchingUpdateAffectsRecording(update, row.songs[row.original]!.track)))
+        if (!candidates.length) return
+        const cursor = matchingCursors.get(playlist.id) ?? 0
+        const batch = Array.from({ length: Math.min(20, candidates.length) }, (_, offset) => candidates[(cursor + offset) % candidates.length])
+        matchingCursors.set(playlist.id, (cursor + batch.length) % candidates.length)
+        if (matchingCursors.size > 256) matchingCursors.delete(matchingCursors.keys().next().value!)
+        const results = await Promise.all(batch.map(row => queryIndexedMusic(trackMatchingSource(row.songs[row.original]!.track)).catch(() => null)))
+        if (!current()) return
+        const eligible = new Set(batch.filter((_, index) => results[index]?.status === "matched").map(row => row.songs[row.original]!.track))
+        if (!eligible.size) return
+        await matchPlaylistBatch(playlist, "plex", { current, save, limit: 20, retry: true, eligible: track => eligible.has(track),
+          resolve: track => resolveCounterpart(track, "plex") })
+      })
+    }
+  },
 }))

@@ -7,7 +7,7 @@ let owner: { provider: ReturnType<typeof useProviderStore.getState>["provider"];
 let resolver: ReturnType<typeof createMatchingBatch> | undefined
 /** One index service shared by navigation, catalogs, queues and playlist matching.
  * Source IDs remain untouched; only an explicit verified target ID can be used. */
-export function resolveIndexedMusic(source: MatchingSource, force = false): Promise<MatchingResolution | null> {
+export function resolveIndexedMusic(source: MatchingSource, force = false, live = true): Promise<MatchingResolution | null> {
   const provider = useProviderStore.getState().provider
   if (!provider?.matchingResolve) return Promise.resolve(null)
   const youtube = useYoutubeMusicDiscoveryStore.getState()
@@ -21,8 +21,9 @@ export function resolveIndexedMusic(source: MatchingSource, force = false): Prom
       fallback: !provider.isOffline && provider.matchingFallback ? source => provider.matchingFallback!(sourceOwner, source) : undefined,
     })
   }
-  return resolver!(source, force)
+  return resolver!(source, force, live)
 }
+export const queryIndexedMusic = (source: MatchingSource, force = false) => resolveIndexedMusic(source, force, false)
 
 export async function reverseIndexedMusic(kind: "artist" | "album" | "track", id: string): Promise<MatchingSource[]> {
   const provider = useProviderStore.getState().provider

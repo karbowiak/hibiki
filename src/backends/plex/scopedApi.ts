@@ -886,6 +886,7 @@ export function createPlexApi(
     matchingIndexStatus: () => invoke<import("../../matching/types").MatchingStatus>("matching_index_status"),
     matchingResolve: (sourceOwner: string, sources: import("../../matching/resolverTypes").MatchingSource[], force = false) => invoke<import("../../matching/resolverTypes").MatchingResolution[]>("matching_index_resolve", { sourceOwner, sources, force }),
     matchingReverse: (sourceOwner: string, kind: "artist" | "album" | "track", id: number) => invoke<import("../../matching/resolverTypes").MatchingSource[]>("matching_index_reverse", { sourceOwner, kind, id }),
+    matchingRows: (kind: "artist" | "album" | "track", ids: number[]) => invoke<import("../../matching/resolverTypes").MatchingEntry[]>("matching_index_rows", { kind, ids }),
     matchingChanges: (since: number) => invoke<import("../../matching/resolverTypes").MatchingChanges>("matching_index_changes", { since }),
     matchingFallback: (sourceOwner: string, source: import("../../matching/resolverTypes").MatchingSource) => invoke<import("../../matching/resolverTypes").MatchingResolution>("matching_index_fallback", { sourceOwner, source }),
     matchingIndexControl: (action: import("../../matching/types").MatchingAction) => invoke<import("../../matching/types").MatchingStatus>("matching_index_control", { action }),

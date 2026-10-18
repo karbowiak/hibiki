@@ -16,6 +16,8 @@ import { DiscoveryMore } from "../shared/DiscoveryMore"
 import { MediaGrid } from "../shared/MediaGrid"
 import { PageRecovery } from "../shared/PageRecovery"
 import { PageLoading } from "../shared/PageLoading"
+import { useMusicAssociations } from "../../hooks/useMusicAssociations"
+import { youtubeMusicItemMusic } from "../../backends/ytmusic/discovery"
 
 export function HubPage({ hubId }: { hubId: string }) {
   const [, navigate] = useLocation()
@@ -61,9 +63,10 @@ export function HubPage({ hubId }: { hubId: string }) {
         next: preview ? preview.find(hub => hub.id === preferred?.id)?.continuation ?? undefined : page.continuation ?? undefined })
     }) : undefined)
   const local = recent && youtube.connected ? history : []
+  const associations = useMusicAssociations(youtube.connected ? [...local, ...remote.items].map(youtubeMusicItemMusic) : [])
   const plexItems = deduplicate ? deduplicateAlbumItems(plex.items) : plex.items
-  const merged = recent ? recentDiscoveryItems(plexItems, [...local, ...remote.items])
-    : mergeDiscoveryItems(plexDiscoveryItems(plexItems), youtube.connected ? youtubeDiscoveryItems(remote.items) : [])
+  const merged = recent ? recentDiscoveryItems(plexItems, [...local, ...remote.items], associations)
+    : mergeDiscoveryItems(plexDiscoveryItems(plexItems), youtube.connected ? youtubeDiscoveryItems(remote.items) : [], associations)
   const items = kind === "latest" ? sortLatestReleases(merged) : merged
   const anniversary = hub?.identifier.includes("anniversary")
   if (anniversary) items.sort((a, b) => {

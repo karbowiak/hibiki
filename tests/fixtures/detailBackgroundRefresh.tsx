@@ -7,6 +7,11 @@ import { create } from "zustand"
 import { deferred, settle } from "../helpers/radioAudioFakes"
 
 const kind = process.argv[2] as "artist" | "album"
+const matchingListeners = new Set<(update: any) => void>()
+mock.module("../../src/matching/updates", () => ({
+  subscribeMatchingUpdates: (listener: (update: any) => void) => { matchingListeners.add(listener); return () => matchingListeners.delete(listener) },
+  matchingKey: (value: string) => value.toLowerCase(),
+}))
 const dom = new JSDOM("<div id='root'></div>", { url: "https://hibiki.test/" })
 Object.assign(globalThis, {
   window: dom.window,
@@ -140,6 +145,7 @@ function load(_id: string, options: { force: boolean }) {
   return reply.promise
 }
 mock.module("../../src/stores/metadataCache", () => ({
+  invalidateMetadataItem() {},
   getCachedArtist: () => cached,
   getCachedAlbum: () => cached,
   loadArtistPage: load,
@@ -249,6 +255,18 @@ try {
     document.body.textContent!.includes("Editor open"),
     "metadata updates preserve unsaved editing"
   )
+  const before = reads.length
+  const change = (id: number, observed: number, removed = false) => ({ provider, reset: false, coverageChanged: false,
+    changes: [{ kind, id, observed, removed }] })
+  await act(async () => { matchingListeners.forEach(listener => listener(change(99, 2000))); await settle() })
+  assert.equal(reads.length, before, "unrelated index changes do not refetch the current page")
+  await act(async () => { matchingListeners.forEach(listener => listener(change(9, 1000))); await settle() })
+  assert.equal(reads.length, before + 1, "relevant verified evidence refreshes the full page DTO")
+  await act(async () => { matchingListeners.forEach(listener => listener(change(9, 1000))); await settle() })
+  assert.equal(reads.length, before + 1, "the same census observation cannot repeatedly retire an in-flight page")
+  await act(async () => { matchingListeners.forEach(listener => listener(change(9, 1, true))); await settle() })
+  assert.equal(reads.length, before + 2, "a removal invalidates the page even if its previous metadata observation is old")
+  assert(document.body.textContent!.includes("Editor open"), "targeted index refresh preserves unsaved editing")
 } finally {
   await act(async () => root.unmount())
   dom.window.close()

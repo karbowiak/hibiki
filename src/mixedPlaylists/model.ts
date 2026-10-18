@@ -9,6 +9,10 @@ export interface AddedDate {
 }
 export interface SongReference {
   track: MusicTrack
+  /** Retain the intended recording when its remote metadata disappears/rematches. */
+  stale?: boolean
+  observed?: { title: string; artistName: string; albumName: string; duration: number }
+  retired?: { track: MusicTrack; at: number }[]
   /** Library membership date, never substituted for the playlist-added date. */
   libraryAdded?: AddedDate
   /** Retained even after an authoritative provider date becomes available. */
@@ -90,11 +94,16 @@ export function playlistAlias(service: Service, id: string) {
   return service === "ytmusic" ? `ytmusic:${id}` : id
 }
 export function songReference(track: MusicTrack, previous?: SongReference, at = Date.now()): SongReference {
+  if (previous?.stale) return { ...previous, observed: { title: track.title, artistName: track.artistName, albumName: track.albumName, duration: track.duration } }
   const native = track.addedAt ? Date.parse(track.addedAt) : NaN
   const observed = track.libraryObservedAt ? Date.parse(track.libraryObservedAt) : NaN
   const observedAt = previous?.libraryObservedAt ?? (previous?.libraryAdded?.provenance === "observed" ? previous.libraryAdded.at : Number.isFinite(observed) ? observed : at)
-  return { track, libraryObservedAt: observedAt, libraryAdded: Number.isFinite(native) ? { at: native, provenance: "provider" } :
+  return { track, ...(previous?.retired ? { retired: previous.retired } : {}), libraryObservedAt: observedAt, libraryAdded: Number.isFinite(native) ? { at: native, provenance: "provider" } :
     previous?.libraryAdded ?? { at: observedAt, provenance: "observed" } }
+}
+export function verifiedSongReference(track: MusicTrack, previous?: SongReference, at=Date.now()):SongReference {
+  const retired=previous?.stale ? [...(previous.retired??[]),{track:previous.track,at}] : previous?.retired
+  return {...songReference(track,previous?{...previous,stale:undefined,observed:undefined}:undefined,at),...(retired?.length?{retired}:{})}
 }
 export function newOccurrence(track: MusicTrack, at = Date.now()): MixedOccurrence {
   const original = trackService(track)

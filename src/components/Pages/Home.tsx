@@ -30,7 +30,8 @@ import { Link } from "wouter"
 import "../../styles/discovery.css"
 import { PageLoading } from "../shared/PageLoading"
 import { DiscoveryCard } from "../shared/DiscoveryCard"
-import { useYoutubeMusicDiscovery, browseYoutubeMusic, youtubeMusicItemTrack } from "../../backends/ytmusic/discovery"
+import { useYoutubeMusicDiscovery, browseYoutubeMusic, youtubeMusicItemTrack, youtubeMusicItemMusic } from "../../backends/ytmusic/discovery"
+import { useMusicAssociations } from "../../hooks/useMusicAssociations"
 import { useYoutubeMusicHistory } from "../../backends/ytmusic/history"
 import { homeDiscoverySections, mixDiscoveryItems, sortLatestReleases, isRecentlyPlayedHub, mergeDiscoveryItems, plexDiscoveryItems, youtubeDiscoveryItems, recentDiscoveryItems, type DiscoveryItem } from "../../lib/discovery"
 import { advancePlaybackSelection, capturePlaybackSelectionVersion } from "../../lib/playbackSelection"
@@ -66,6 +67,7 @@ async function resolveDiscoveryTracks(items: DiscoveryItem[], provider: MusicPro
 export function Home() {
   const youtube = useYoutubeMusicDiscovery(true)
   const history = useYoutubeMusicHistory()
+  const associations = useMusicAssociations(youtube.connected ? [...youtube.hubs.flatMap(hub => hub.items), ...history].map(youtubeMusicItemMusic) : [])
   // Granular selector: only re-render when recentlyAdded or hubs actually change.
   // Changes to playlistItemsCache (from background prefetch) do NOT trigger re-renders here.
   const { recentlyAdded: rawAdded, latestReleases: rawReleases, hubs: rawHubs } = useLibraryStore(
@@ -118,13 +120,13 @@ export function Home() {
   }, [hubs])
 
   const mixedReleases = useMemo(() => sortLatestReleases(mergeDiscoveryItems(plexDiscoveryItems(latestReleaseItems),
-    youtube.connected ? youtubeDiscoveryItems(youtube.hubs.filter(hub => hub.category === "releases").flatMap(hub => hub.items)) : [])).slice(0, 30), [latestReleaseItems, youtube.connected, youtube.hubs])
+    youtube.connected ? youtubeDiscoveryItems(youtube.hubs.filter(hub => hub.category === "releases").flatMap(hub => hub.items)) : [], associations)).slice(0, 30), [latestReleaseItems, youtube.connected, youtube.hubs, associations])
   const mixedMixes = useMemo(() => mixDiscoveryItems(mixesItems, youtube.connected ? youtube.hubs : []), [mixesItems, youtube.connected, youtube.hubs])
   const recentItems = useMemo(() => recentDiscoveryItems(hubs.filter(isRecentlyPlayedHub).flatMap(hub => hub.items),
-    youtube.connected ? [...history, ...youtube.hubs.filter(hub => hub.category === "recent").flatMap(hub => hub.items)] : []).slice(0, 30), [hubs, youtube.connected, youtube.hubs, history])
+    youtube.connected ? [...history, ...youtube.hubs.filter(hub => hub.category === "recent").flatMap(hub => hub.items)] : [], associations).slice(0, 30), [hubs, youtube.connected, youtube.hubs, history, associations])
   const otherSections = useMemo(() => homeDiscoverySections(hubs.filter(hub => hub.items.length > 0 && hub.identifier
     && !hub.identifier.startsWith("music.mixes") && !isRecentlyPlayedHub(hub)
-    && !/recently[. ]?added|station/i.test(`${hub.identifier} ${hub.title}`)), youtube.connected ? youtube.hubs : []), [hubs, youtube.connected, youtube.hubs])
+    && !/recently[. ]?added|station/i.test(`${hub.identifier} ${hub.title}`)), youtube.connected ? youtube.hubs : [], associations), [hubs, youtube.connected, youtube.hubs, associations])
 
   const mixThumbs = useMixThumbnails(provider, mixesItems)
   const playbackView = useRef({ active: false, revision: 0 })

@@ -436,7 +436,8 @@ fn rank(conn: &Connection, scope: &str, source: &Source, row: Row) -> Result<Can
     let mut evidence = Vec::new();
     let mut score = 0.0;
     let mut verified = false;
-    if compatible(source, &row) {
+    let parent_removed=removed_parent(conn,scope,&row)?;
+    if !parent_removed && compatible(source, &row) {
         if exact_id {
             score = 100.0;
             verified = true;
@@ -534,6 +535,24 @@ fn rank(conn: &Connection, scope: &str, source: &Source, row: Row) -> Result<Can
         verified,
         evidence,
     })
+}
+fn removed_parent(conn:&Connection,scope:&str,row:&Row)->Result<bool> {
+    if row.kind=="artist" {return Ok(false)}
+    conn.query_row("SELECT EXISTS(SELECT 1 FROM matching_rows WHERE scope=?1 AND removed=1 AND ((kind='artist' AND id=?2) OR (kind='album' AND id=?3)))",params![scope,row.artist_id,row.album_id],|r|r.get(0)).map_err(error)
+}
+#[derive(Serialize)]
+pub struct Entry {pub id:i64,pub state:String,pub row:Option<Row>}
+pub fn entries(conn:&Connection,scope:&str,kind:&str,ids:&[i64])->Result<Vec<Entry>> {
+    if !["artist","album","track"].contains(&kind)||ids.len()>64||ids.iter().any(|id|*id<=0) {return Err("Invalid matching metadata batch".into())}
+    let mut entries=Vec::new();
+    for id in ids {
+        let row=load(conn,scope,kind,*id)?;
+        let state=if let Some(row)=&row {if removed_parent(conn,scope,row)? {"removed"}else{"active"}}else {
+            if conn.query_row("SELECT removed FROM matching_rows WHERE scope=?1 AND kind=?2 AND id=?3",params![scope,kind,id],|r|r.get::<_,bool>(0)).optional().map_err(error)?.unwrap_or(false){"removed"}else{"unknown"}
+        };
+        entries.push(Entry{id:*id,state:state.into(),row});
+    }
+    Ok(entries)
 }
 fn coverage(conn: &Connection, scope: &str, kind: &str) -> Result<String> {
     let state:Option<(String,Option<i64>,i64)>=conn.query_row("SELECT phase,completed,coalesce((SELECT last_checked FROM matching_refresh r WHERE r.scope=t.scope AND r.kind=t.kind),0) FROM matching_tasks t WHERE scope=?1 AND kind=?2",params![scope,kind],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(error)?;
@@ -1247,6 +1266,25 @@ mod tests {
         let result = lookup(&conn, &source("track", "Intro"));
         assert_eq!(result.selected, Some(7));
         assert!(!result.limited);
+    }
+    #[test]
+    fn known_removed_parents_cannot_be_reverified_from_a_retained_child() {
+        let conn = db();
+        complete(&conn, "track");
+        put(&conn, &row("artist", 1, "Artist"));
+        put(&conn, &row("album", 2, "Album"));
+        put(&conn, &row("track", 7, "Song"));
+        let input = source("track", "Song");
+        assert_eq!(lookup(&conn, &input).selected, Some(7));
+        conn.execute(
+            "UPDATE matching_rows SET removed=1 WHERE scope=?1 AND kind='artist' AND id=1",
+            [S],
+        )
+        .unwrap();
+        store::changed_row(&conn, S, "artist", 1).unwrap();
+        assert_eq!(lookup(&conn, &input).selected, None);
+        put(&conn, &row("artist", 1, "Artist"));
+        assert_eq!(lookup(&conn, &input).selected, Some(7));
     }
     #[test]
     fn typed_recordings_use_their_index_without_promoting_release_or_generic_mbids() {

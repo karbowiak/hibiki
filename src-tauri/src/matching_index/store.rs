@@ -94,6 +94,11 @@ pub struct Change {
     pub sequence: i64,
     pub kind: String,
     pub id: i64,
+    pub title_key:Option<String>,
+    pub artist_id:Option<i64>,
+    pub album_id:Option<i64>,
+    pub observed:Option<i64>,
+    pub removed:Option<bool>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -136,13 +141,14 @@ pub fn changes(conn: &Connection, scope: &str, since: i64) -> Result<Changes> {
             changes: vec![],
         });
     }
-    let mut query=conn.prepare("SELECT sequence,kind,id FROM matching_changes WHERE scope=?1 AND sequence>?2 ORDER BY sequence,kind,id LIMIT 201").map_err(error)?;
+    let mut query=conn.prepare("SELECT c.sequence,c.kind,c.id,r.title_key,r.artist_id,r.album_id,r.observed,r.removed FROM matching_changes c LEFT JOIN matching_rows r ON r.scope=c.scope AND r.kind=c.kind AND r.id=c.id WHERE c.scope=?1 AND c.sequence>?2 ORDER BY c.sequence,c.kind,c.id LIMIT 201").map_err(error)?;
     let mut changes = query
         .query_map(params![scope, since], |r| {
             Ok(Change {
                 sequence: r.get(0)?,
                 kind: r.get(1)?,
                 id: r.get(2)?,
+                title_key:r.get(3)?,artist_id:r.get(4)?,album_id:r.get(5)?,observed:r.get(6)?,removed:r.get(7)?,
             })
         })
         .map_err(error)?

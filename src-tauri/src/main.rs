@@ -391,10 +391,12 @@ pub fn run() {
                 });
             });
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler({
+            let dispatch: fn(tauri::ipc::Invoke)->bool = tauri::generate_handler![
             matching_index::matching_index_status,
             matching_index::matching_index_resolve,
             matching_index::matching_index_reverse,
+            matching_index::matching_index_rows,
             matching_index::matching_index_changes,
             matching_index::matching_index_fallback,
             matching_index::matching_index_notify,
@@ -695,7 +697,12 @@ pub fn run() {
             audio_engine::bridge::audio_set_cache_max_bytes,
             audio_engine::bridge::audio_clear_cache,
             audio_engine::bridge::audio_get_cache_stats,
-        ])
+            ];
+            move|invoke:tauri::ipc::Invoke| {
+                if let Some(index)=invoke.message.webview_ref().try_state::<matching_index::IndexState>() {index.foreground(invoke.message.command());}
+                dispatch(invoke)
+            }
+        })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {

@@ -35,6 +35,28 @@ const provider = (overrides: any = {}) =>
     ...overrides,
   }) as unknown as MusicProvider
 
+test("shared indexed playlist matches need one fresh metadata read and no broad searches", async () => {
+  let lookups = 0, reads = 0, searches = 0
+  const p = provider({ matchingResolve: async (owner: string, sources: any[]) => {
+    lookups++; expect(owner).toBe("playlist-sync"); expect(sources[0].identifiers[0].scheme).toBe("musicbrainz:recording")
+    return [{ status: "matched", selected: 10 }] },
+    getTrack: async () => { reads++; return row("10") }, search: async () => { searches++; return [] },
+  })
+  for (let index = 0; index < 25; index++) expect((await retrievePlaylistCandidates(p, source, () => true))[0].id).toBe("10")
+  expect({ lookups, reads, searches }).toEqual({ lookups: 25, reads: 25, searches: 0 })
+  const legacy = provider({ search: async () => { searches++; return [row("10")] } })
+  for (let index = 0; index < 25; index++) expect((await retrievePlaylistCandidates(legacy, source, () => true))[0].id).toBe("10")
+  expect(searches).toBe(25)
+})
+
+test("native ambiguity cannot fall through to an arbitrary broad playlist candidate", async () => {
+  let searches = 0, limited = ""
+  const p = provider({ matchingResolve: async () => [{ status: "ambiguous", selected: null }],
+    search: async () => { searches++; return [row("10")] } })
+  expect(await retrievePlaylistCandidates(p, source, () => true, reason => { limited = reason })).toEqual([])
+  expect(searches).toBe(0); expect(limited).toBe("truncated")
+})
+
 test("bounded artist discovery recovers a track absent from crowded broad search without promoting raw GUIDs", async () => {
   const calls: any[] = []
   const p = provider({

@@ -5,6 +5,10 @@ import { isYoutubeMusicId } from "../backends/ytmusic/tracks"
 import { browseYoutubeMusic, useYoutubeMusicDiscoveryStore, youtubeMusicItemTrack } from "../backends/ytmusic/discovery"
 import { sameRecording } from "./musicMatching"
 import { MusicRadioSession, type MusicRadioMode, type MusicRadioSeedType, type RadioSource } from "./musicRadio"
+import { resolveIndexedMusic } from "../matching/service"
+import { trackMatchingSource } from "../matching/sources"
+import { resolveCounterpart } from "../mixedPlaylists/counterparts"
+import { counterpartCandidates } from "../mixedPlaylists/matching"
 
 export async function createMusicRadio({ mode, provider, seedId, seedType, track, degrees, current }: {
   mode: MusicRadioMode; provider: MusicProvider | null; seedId: string; seedType: MusicRadioSeedType;
@@ -28,9 +32,17 @@ export async function createMusicRadio({ mode, provider, seedId, seedType, track
   await Promise.all([
     (async () => {
       if (mode === "ytmusic" || plexSeed || !track || !provider) return
-      const results = await provider.search(track.title, "track")
+      const indexed = provider.matchingResolve ? await resolveIndexedMusic(trackMatchingSource(track)).catch(() => null) : null
+      const results = indexed ? [] : await provider.search(track.title, "track")
       if (!providerCurrent()) throw Error("Music library changed.")
-      plexSeed = results.find(item => item.type === "track" && sameRecording(track, item))?.id ?? null
+      if (indexed?.status === "matched" && indexed.selected) {
+        const actual = await provider.getTrack(String(indexed.selected)).catch(() => null)
+        if (!providerCurrent()) throw Error("Music library changed.")
+        plexSeed = actual?.id === String(indexed.selected) && counterpartCandidates(track, [actual]).length === 1 ? actual.id : null
+      } else {
+        const matches = counterpartCandidates(track, results.flatMap(item => item.type === "track" ? [item] : []))
+        plexSeed = matches.length === 1 ? matches[0].id : null
+      }
       if (!plexSeed) {
         if (mode === "mixed") effectiveMode = "ytmusic"
         else throw Error("This song has no matching Plex recording to seed its radio.")
@@ -38,6 +50,14 @@ export async function createMusicRadio({ mode, provider, seedId, seedType, track
     })(),
     (async () => {
       if (mode === "plex" || youtubeSeed || !track) return
+      if (provider?.matchingReverse) {
+        const match = await resolveCounterpart(track, "ytmusic").catch(() => null)
+        if (!youtubeCurrent()) throw Error("YouTube Music connection changed.")
+        if (match?.status === "matched") { youtubeSeed = match.track.id.slice(8); return }
+        if (mode === "mixed") effectiveMode = "plex"
+        else throw Error("This song has no matching YTM recording to seed its radio.")
+        return
+      }
       const page = await browseYoutubeMusic({ browseId: "hibiki_song_search", params: `${track.artistName} ${track.title}` })
       if (!youtubeCurrent()) throw Error("YouTube Music connection changed.")
       youtubeSeed = page.items.filter(item => item.kind === "song").map(youtubeMusicItemTrack)

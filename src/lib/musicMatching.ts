@@ -34,12 +34,13 @@ export function sameMusicItem(left: MusicItem, right: MusicItem) {
 }
 
 /** Keep provider relevance within each group and Plex editions on duplicates. */
-export function mergeMusicSearchResults(plex: MusicItem[], youtube: MusicItem[]) {
+export function mergeMusicSearchResults(plex: MusicItem[], youtube: MusicItem[], associations?: ReadonlyMap<string, string | null>) {
   const result: MusicItem[] = [], seen = new Set<string>()
   for (const type of ["artist", "album", "track", "playlist"] as const) {
     const local = plex.filter(item => item.type === type)
     const remote = youtube.filter(item => {
-      if (item.type !== type || seen.has(item.id) || local.some(known => sameMusicItem(known, item))) return false
+      if (item.type !== type || seen.has(item.id) || (associations?.has(item.id)
+        ? local.some(known => known.id === associations.get(item.id)) : local.some(known => sameMusicItem(known, item)))) return false
       seen.add(item.id); return true
     })
     for (let i = 0; i < Math.max(local.length, remote.length); i++) {
@@ -51,9 +52,11 @@ export function mergeMusicSearchResults(plex: MusicItem[], youtube: MusicItem[])
 }
 
 /** Add missing recordings at YTM's album positions while retaining Plex order. */
-export function supplementAlbumTracks(plex: MusicTrack[], youtube: MusicTrack[]) {
+export function supplementAlbumTracks(plex: MusicTrack[], youtube: MusicTrack[], associations?: ReadonlyMap<string, string | null>) {
+  const related = (local: MusicTrack, remote: MusicTrack) => associations?.has(remote.id)
+    ? associations.get(remote.id) === local.id : sameRecording(local, remote)
   const matches = youtube.map(remote => {
-    const candidates = plex.filter(local => sameRecording(local, remote))
+    const candidates = plex.filter(local => related(local, remote))
     return candidates.length === 1 ? candidates[0] : null
   })
   const result = [...plex]
@@ -61,7 +64,7 @@ export function supplementAlbumTracks(plex: MusicTrack[], youtube: MusicTrack[])
   for (let index = 0; index < youtube.length; index++) {
     if (matches[index] || inserted.has(youtube[index].id)) continue
     // Ambiguous Plex recordings remain the authoritative local rows.
-    if (plex.some(local => sameRecording(local, youtube[index]))) continue
+    if (plex.some(local => related(local, youtube[index]))) continue
     inserted.add(youtube[index].id)
     const next = matches.slice(index + 1).find(Boolean)
     const position = next ? result.findIndex(track => track.id === next.id) : result.length

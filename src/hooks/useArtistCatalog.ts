@@ -8,6 +8,9 @@ import { buildExternalImageUrl } from "../lib/imageUrl"
 import { ARTIST_NAME_THRESHOLD, artistNameSimilarity, plexArtistEvidence, selectArtistCandidate, youtubeArtistEvidence } from "../lib/artistMatching"
 import { loadArtistPage } from "../stores/metadataCache"
 import type { MusicArtist } from "../types/music"
+import { resolveIndexedMusic, reverseIndexedMusic } from "../matching/service"
+import { artistPageMatchingSource } from "../matching/sources"
+import { matchingKey, subscribeMatchingUpdates } from "../matching/updates"
 
 // Bound catalog lookups without selecting from a truncated set of candidates.
 const MAX_ARTIST_CANDIDATES = 6
@@ -34,6 +37,13 @@ export function useArtistCatalog(routeId: string) {
     [isYoutubeRoute, entry?.albums, entry?.singles, entry?.popularTracks])
   const previousRequest = useRef({ routeId, refresh, attempt })
 
+  useEffect(() => subscribeMatchingUpdates(update => {
+    if (update.provider !== provider) return
+    const artist = state?.page?.artist
+    if (update.reset || update.coverageChanged || update.changes.some(change => change.kind === "artist" &&
+      (String(change.id) === plexId || change.titleKey === matchingKey(artist?.name ?? name ?? "")))) setCatalogRevision(value => value + 1)
+  }), [provider, plexId, state?.page?.artist?.name, name])
+
   useEffect(() => subscribeYoutubeMusicCatalog(update => {
     if ((update.browseId === "hibiki_artist_search" && update.params === name) ||
       (update.browseId.startsWith("UC") && !update.params && !update.continuation)) setCatalogRevision(value => value + 1)
@@ -54,7 +64,16 @@ export function useArtistCatalog(routeId: string) {
       if (isYoutubeRoute) {
         page = await browseYoutubeMusic({ browseId: routeId.slice(8) }, null, force)
       } else if (name && evidence) {
-        const results = await browseYoutubeMusic({ browseId: "hibiki_artist_search", params: name }, null, force)
+        const known = await reverseIndexedMusic("artist", routeId).catch(() => [])
+        if (!owns()) return
+        if (known.length) {
+          const pages = await Promise.all(known.slice(0, MAX_ARTIST_CANDIDATES).map(source => browseYoutubeMusic({ browseId: source.id.replace(/^ytmusic:/, "") }, null, force)))
+          if (!owns()) return
+          page = selectArtistCandidate(name, evidence, pages.filter(candidate => candidate.artist).map(candidate => ({
+            value: candidate, name: candidate.artist!.name, catalog: youtubeArtistEvidence(candidate), canonicalId: candidate.artist!.channelId,
+          })))
+        }
+        const results = page ? { items: [] } : await browseYoutubeMusic({ browseId: "hibiki_artist_search", params: name }, null, force)
         if (!owns()) return
         const matches = [...new Map(results.items.filter(item => item.kind === "artist" &&
           artistNameSimilarity(name, item.title) >= ARTIST_NAME_THRESHOLD).map(item => [item.id, item])).values()]
@@ -73,7 +92,16 @@ export function useArtistCatalog(routeId: string) {
         return
       }
       setValue(previous => ({ identity, page, plexId: isYoutubeRoute && previous?.identity === identity ? previous.plexId : null, loading: false, error: false }))
-      if (isYoutubeRoute && provider) {
+      const source = artistPageMatchingSource(page)
+      const indexed = source && provider?.matchingResolve ? await resolveIndexedMusic(source, force).catch(() => null) : null
+      if (!owns()) return
+      if (!isYoutubeRoute && indexed?.status === "matched" && String(indexed.selected) !== routeId) {
+        setValue({ identity, page: null, plexId: null, loading: false, error: false })
+        return
+      }
+      if (isYoutubeRoute && provider && indexed) {
+        setValue({ identity, page, plexId: indexed.status === "matched" && indexed.selected ? String(indexed.selected) : null, loading: false, error: false })
+      } else if (isYoutubeRoute && provider) {
         // A failed Plex lookup leaves the fully usable YTM artist page intact.
         try {
           const artistName = page.artist.name

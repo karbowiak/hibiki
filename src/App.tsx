@@ -33,6 +33,7 @@ import { WindowTitleBar } from "./components/WindowTitleBar"
 import { useGlobalHotkeys } from "./hooks/useGlobalHotkeys"
 import { initializeShutdown } from "./lib/shutdown"
 import { initializeQueuePersistence } from "./lib/queuePersistence"
+import { startMatchingUpdates } from "./matching/updates"
 import { HoverInformation } from "./components/HoverInformation"
 import { ListeningSyncStatus } from "./components/ListeningSyncStatus"
 import { ShutdownNotice } from "./components/ShutdownNotice"
@@ -78,6 +79,7 @@ function DesktopApp() {
     useShallow(s => ({ showCreatePlaylist: s.showCreatePlaylist, setShowCreatePlaylist: s.setShowCreatePlaylist, pendingPlaylistItemIds: s.pendingPlaylistItemIds, setPendingPlaylistItemIds: s.setPendingPlaylistItemIds }))
   )
   const initLastfm = useLastfmStore(s => s.initialize)
+  useEffect(() => startMatchingUpdates(), [])
   useEffect(() => {
     const update = (event: Event) => { if ((event as CustomEvent).detail === "playlists") void fetchPlaylists({ force: true }) }
     window.addEventListener("collection-cache-updated", update)

@@ -46,12 +46,14 @@ export function sortLatestReleases(items: DiscoveryItem[], currentYear = new Dat
   })
 }
 /** Keep Plex editions in preference to the same release from YouTube Music. */
-export function mergeDiscoveryItems(plex: DiscoveryItem[], youtube: DiscoveryItem[]) {
+export function mergeDiscoveryItems(plex: DiscoveryItem[], youtube: DiscoveryItem[], associations?: ReadonlyMap<string, string | null>) {
   const albums = new Set(plex.map(albumKey).filter(Boolean))
   const seen = new Set<string>()
   const remote = youtube.filter(entry => {
     const key = `${entry.source}:${entry.item.id}`
-    if (seen.has(key) || albums.has(albumKey(entry))) return false
+    const sourceId = entry.source === "ytmusic" ? `ytmusic:${entry.item.id}` : entry.item.id
+    const duplicate = associations?.has(sourceId) ? plex.some(known => known.item.id === associations.get(sourceId)) : albums.has(albumKey(entry))
+    if (seen.has(key) || duplicate) return false
     seen.add(key)
     return true
   })
@@ -84,7 +86,7 @@ export function mixDiscoveryItems(plex: MusicItem[], youtube: YoutubeMusicHub[])
     [interleaved[0], interleaved[1]] = [interleaved[1], interleaved[0]]
   return interleaved
 }
-export function homeDiscoverySections(plex: MusicHub[], youtube: YoutubeMusicHub[]) {
+export function homeDiscoverySections(plex: MusicHub[], youtube: YoutubeMusicHub[], associations?: ReadonlyMap<string, string | null>) {
   const remaining = youtube.filter(hub => hub.category === "music")
   const result: { id: string; title: string; items: DiscoveryItem[]; href: string }[] = []
   const remoteSection = (hub: YoutubeMusicHub) => ({ id: hub.id, title: hub.title,
@@ -93,7 +95,7 @@ export function homeDiscoverySections(plex: MusicHub[], youtube: YoutubeMusicHub
     const matches = matchingYoutubeHubs(hub, remaining)
     matches.forEach(match => remaining.splice(remaining.indexOf(match), 1))
     result.push({ id: hub.identifier, title: hub.title,
-      items: mergeDiscoveryItems(plexDiscoveryItems(hub.items), youtubeDiscoveryItems(matches.flatMap(match => match.items))),
+      items: mergeDiscoveryItems(plexDiscoveryItems(hub.items), youtubeDiscoveryItems(matches.flatMap(match => match.items)), associations),
       href: `/hub/${encodeURIComponent(hub.identifier)}` })
     // Keep a matching remote shelf for its Plex partner later in the page.
     const standalone = remaining.findIndex(remote => !plex.some(candidate => matchingYoutubeHubs(candidate, [remote]).length))
@@ -103,13 +105,13 @@ export function homeDiscoverySections(plex: MusicHub[], youtube: YoutubeMusicHub
   return result
 }
 
-export function recentDiscoveryItems(plex: MusicItem[], youtube: YoutubeMusicItem[]) {
+export function recentDiscoveryItems(plex: MusicItem[], youtube: YoutubeMusicItem[], associations?: ReadonlyMap<string, string | null>) {
   const recent = new Map<string, number>()
   for (const item of youtube) {
     const key = albumKey({ source: "ytmusic", item })
     if (key && item.playedAt) recent.set(key, Math.max(recent.get(key) ?? 0, item.playedAt))
   }
-  const items = mergeDiscoveryItems(plexDiscoveryItems(plex), youtubeDiscoveryItems(youtube))
+  const items = mergeDiscoveryItems(plexDiscoveryItems(plex), youtubeDiscoveryItems(youtube), associations)
   const timestamp = (entry: DiscoveryItem) => entry.source === "ytmusic" ? entry.item.playedAt ?? 0
     : Math.max(recent.get(albumKey(entry) ?? "") ?? 0,
       "lastPlayedAt" in entry.item && entry.item.lastPlayedAt ? Date.parse(entry.item.lastPlayedAt) || 0 : 0)

@@ -7,6 +7,7 @@ export interface MixedSyncOptions {
   current: () => boolean
   save: (playlist: MixedPlaylist) => Promise<MixedPlaylist>
   maxWrites?: number
+  verify?: (playlist: MixedPlaylist, snapshots: RemotePlaylist[]) => Promise<MixedPlaylist>
 }
 /** A receipt is durably retained before every write. Unknown creations never
  * create again; unknown edits can settle only against a fresh exact post-read. */
@@ -30,6 +31,8 @@ export async function syncMixedPlaylist(initial: MixedPlaylist, options: MixedSy
     if (!id) throw Error("A playlist creation has an unknown outcome. Select the playlist created on that service to recover it; another copy will not be created.")
     const actual = await adapter.read(id); owns()
     if (!sameSequence(snapshotIds(actual), receipt.afterIds)) throw Error("The pending playlist write has an uncertain outcome. Review the provider's current contents before retrying.")
+    if (options.verify) playlist = await options.verify(playlist, [actual])
+    owns()
     const providers = { ...playlist.providers, [receipt.service]: { id: actual.id, readOnly: actual.readOnly } }
     await save({ ...playlist, providers, baseline: { ...playlist.baseline, [receipt.service]: actual }, write: undefined })
     if (receipt.kind !== "create" && sameSequence(projection(playlist, receipt.service).map(row => row.songs[receipt.service]!.track.id), snapshotIds(actual)))
@@ -38,6 +41,11 @@ export async function syncMixedPlaylist(initial: MixedPlaylist, options: MixedSy
   for (const service of services) {
     const ref = playlist.providers[service]
     if (ref) { const snapshot = await options.adapters[service]!.read(ref.id); owns(); snapshots.push(snapshot) }
+  }
+  if (options.verify) playlist = await options.verify(playlist, snapshots)
+  owns()
+  if (playlist.items.some(row => Object.values(row.songs).some(song => song?.stale))) {
+    return save({ ...playlist, status: "error", message: "A saved recording changed or became unavailable. Its original song and playlist position are retained. Choose Match and sync to retry." })
   }
   if (playlist.status === "conflict") return playlist
   const reconciled = await save(reconcileRemoteChanges(playlist, snapshots))

@@ -7,6 +7,9 @@ import { browseYoutubeMusic, subscribeYoutubeMusicCatalog, useYoutubeMusicDiscov
 import { artistNameSimilarity, ARTIST_NAME_THRESHOLD } from "../lib/artistMatching"
 import { releaseNameKey, sameRecording, supplementAlbumTracks } from "../lib/musicMatching"
 import type { MusicTrack } from "../types/music"
+import { queryIndexedMusic, reverseIndexedMusic } from "../matching/service"
+import { albumMatchingSource, trackMatchingSource } from "../matching/sources"
+import { useMusicAssociations } from "./useMusicAssociations"
 
 /** Only the selected album is read; opening it never scans an artist's catalog. */
 export function useAlbumCatalog(albumId: string) {
@@ -43,7 +46,10 @@ export function useAlbumCatalog(albumId: string) {
     setSaved(value => value?.identity === identity ? { ...value, loading: true, error: false }
       : { identity, page: null, tracks: [], loading: true, error: false })
     void (async () => {
-      const search = await browseYoutubeMusic({ browseId: "hibiki_search", params: query }, null, force)
+      const known = await reverseIndexedMusic("album", albumId).catch(() => [])
+      if (!owns()) return
+      const search = known.length ? { items: known.map(source => ({ kind: "album", id: source.id.replace(/^ytmusic:/, ""), title: source.title,
+        artist: source.artists.join(", "), year: source.year })) } : await browseYoutubeMusic({ browseId: "hibiki_search", params: query }, null, force)
       if (!owns()) return
       const candidates = [...new Map(search.items.filter(item => item.kind === "album" && releaseNameKey(item.title) === releaseNameKey(album.title) &&
         artistNameSimilarity(item.artist, album.artistName) >= ARTIST_NAME_THRESHOLD && (!item.year || !album.year || item.year === album.year))
@@ -67,6 +73,14 @@ export function useAlbumCatalog(albumId: string) {
             artistId: artistNameSimilarity(item.artist || album.artistName, album.artistName) >= ARTIST_NAME_THRESHOLD ? album.artistId : item.artistId ? `ytmusic:${item.artistId}` : null,
             albumId: album.id, albumName: album.title, trackNumber: item.trackNumber || index + 1 }))
         if (!tracks.length || !tracks.some(track => artistNameSimilarity(track.artistName, album.artistName) >= ARTIST_NAME_THRESHOLD)) return null
+        const identity = albumMatchingSource({ id: `ytmusic:${item.id}`, title: page.title, artistName: item.artist, year: item.year ?? 0 },
+          items.filter(item => item.kind === "song").map(youtubeMusicItemTrack).map(track => ({ kind: "track", title: track.title, duration: track.duration })))
+        const proof = await queryIndexedMusic(identity, force).catch(() => null)
+        if (!owns()) return null
+        if (proof?.status === "ambiguous" || proof?.status === "limited" || proof?.status === "matched" && String(proof.selected) !== albumId) return null
+        // Recording proofs are retained for radio, lyrics and playlist matching.
+        await Promise.all(items.filter(item => item.kind === "song").slice(0, 100).map(item => queryIndexedMusic(trackMatchingSource(youtubeMusicItemTrack(item))).catch(() => null)))
+        if (!owns()) return null
         return { page: { ...page, items }, tracks, overlap: (entry?.tracks ?? []).filter(local => tracks.some(remote => sameRecording(local, remote))).length }
       })) : []
       if (!owns()) return
@@ -82,8 +96,9 @@ export function useAlbumCatalog(albumId: string) {
     return () => { active = false }
   }, [identity, albumId, album, entry?.tracks, query, youtube.connected, provider, session, scope, refresh, attempt, catalogRevision])
 
-  const tracks = useMemo(() => supplementAlbumTracks(entry?.tracks ?? [], youtube.connected && !provider?.isOffline ? state?.tracks ?? [] : []),
-    [entry?.tracks, youtube.connected, provider?.isOffline, state?.tracks])
+  const associations = useMusicAssociations((state?.tracks ?? []).map(track => ({ ...track, type: "track" })))
+  const tracks = useMemo(() => supplementAlbumTracks(entry?.tracks ?? [], youtube.connected && !provider?.isOffline ? state?.tracks ?? [] : [], associations),
+    [entry?.tracks, youtube.connected, provider?.isOffline, state?.tracks, associations])
   return { ...plex, entry, tracks, youtube: youtube.connected ? state?.page ?? null : null,
     youtubeLoading: !!state?.loading, youtubeError: !!state?.error,
     retry: useCallback(() => { plex.retry(); setAttempt(value => value + 1) }, [plex.retry]) }

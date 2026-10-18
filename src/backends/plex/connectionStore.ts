@@ -135,6 +135,7 @@ function savedProvider(
     matchingIndexStatus: audio.matchingIndexStatus,
     matchingResolve: audio.matchingResolve,
     matchingReverse: audio.matchingReverse,
+    matchingRows: audio.matchingRows,
     matchingChanges: audio.matchingChanges,
     matchingFallback: audio.matchingFallback,
     matchingIndexControl: audio.matchingIndexControl,

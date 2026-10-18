@@ -4,6 +4,8 @@ import { useYoutubeMusicRatingsStore } from "../backends/ytmusic/ratings"
 import { useProviderStore } from "../stores/providerStore"
 import { useLastfmStore } from "../metadata/lastfm/authStore"
 import { useListenBrainzStore } from "../metadata/listenbrainz/authStore"
+import { subscribeMatchingUpdates } from "../matching/updates"
+import { createMatchingConsumer } from "../matching/consumerQueue"
 
 export function useYoutubeMusicRatingsSync() {
   const owner = useYoutubeMusicDiscoveryStore(state => state.connected ? state.accountId : null)
@@ -13,6 +15,8 @@ export function useYoutubeMusicRatingsSync() {
   useEffect(() => {
     if (!owner) return
     let active = true, timer: ReturnType<typeof setTimeout>
+    const matching = createMatchingConsumer(update => useYoutubeMusicRatingsStore.getState().retryPlexMatches(update))
+    const unsubscribe = subscribeMatchingUpdates(update => matching.offer(update))
     const tick = async () => {
       try {
         await useYoutubeMusicRatingsStore.getState().load(owner)
@@ -21,6 +25,7 @@ export function useYoutubeMusicRatingsSync() {
       finally { if (active) timer = setTimeout(tick, 60000) }
     }
     void tick()
-    return () => { active = false; clearTimeout(timer) }
+    const retryTimer = setInterval(() => matching.offer(), 15000)
+    return () => { active = false; clearTimeout(timer); clearInterval(retryTimer); unsubscribe(); matching.stop() }
   }, [owner, provider, provider?.playbackSession, provider?.cacheScope, lastfm, listenbrainz])
 }

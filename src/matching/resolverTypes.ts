@@ -1,5 +1,6 @@
 export interface MatchingIdentifier { scheme: string; value: string }
-export interface MatchingChanges { revision: number; coverage: string; cursor: number; reset: boolean; changes: { sequence: number; kind: "artist" | "album" | "track"; id: number }[] }
+export interface MatchingEntry { id: number; state: "active" | "removed" | "unknown"; row: MatchingRow | null }
+export interface MatchingChanges { revision: number; coverage: string; cursor: number; reset: boolean; changes: { sequence: number; kind: "artist" | "album" | "track"; id: number; titleKey?: string | null; artistId?: number | null; albumId?: number | null; observed?: number | null; removed?: boolean | null }[] }
 export interface MatchingExample { kind: "album" | "track"; title: string; duration?: number | null; year?: number | null }
 export interface MatchingSource {
   id: string

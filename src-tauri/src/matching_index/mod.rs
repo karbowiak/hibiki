@@ -34,6 +34,77 @@ impl Default for IndexState {
         }
     }
 }
+impl IndexState {
+    pub fn foreground(&self, command: &str) {
+        if foreground_command(command) {
+            self.busy_until
+                .store(store::now() + 1500, Ordering::Relaxed)
+        }
+    }
+}
+fn foreground_command(command: &str) -> bool {
+    command.starts_with("search_")
+        || command.starts_with("collection_query")
+        || command.starts_with("catalogue_query")
+        || matches!(
+            command,
+            "get_track"
+                | "get_artist"
+                | "get_album"
+                | "get_artist_albums"
+                | "get_album_tracks"
+                | "get_artist_popular_tracks"
+                | "get_artist_singles"
+                | "get_artist_similar"
+                | "get_hubs"
+                | "get_discovery_page"
+                | "get_recently_added"
+                | "get_latest_releases"
+                | "get_recently_played"
+                | "get_playlist_tracks"
+                | "get_playlist_items"
+                | "playlist_sync_candidates"
+                | "ytmusic_search"
+                | "ytmusic_browse"
+                | "audio_play"
+                | "audio_prepare_queue"
+                | "audio_seek"
+        )
+}
+#[cfg(test)]
+mod priority_tests {
+    use super::*;
+    #[test]
+    fn real_foreground_commands_yield_without_polling_or_timeline_starvation() {
+        let index = IndexState::default();
+        index.foreground("audio_get_position");
+        assert_eq!(index.busy_until.load(Ordering::Relaxed), 0);
+        for command in [
+            "get_track",
+            "get_artist_albums",
+            "search_library",
+            "collection_query_page",
+            "ytmusic_browse",
+            "audio_play",
+            "audio_seek",
+        ] {
+            assert!(foreground_command(command));
+        }
+        for command in [
+            "matching_index_resolve",
+            "matching_index_changes",
+            "matching_index_status",
+            "report_timeline",
+            "audio_get_diagnostics",
+            "audio_get_position",
+            "set_now_playing_state",
+        ] {
+            assert!(!foreground_command(command));
+        }
+        index.foreground("get_track");
+        assert!(index.busy_until.load(Ordering::Relaxed) > store::now());
+    }
+}
 /// Recover an idle worker after transient storage/ownership races, including a
 /// pause/resume that happened while the previous job was finishing.
 pub fn start_watchdog(app: tauri::AppHandle) {
@@ -127,6 +198,13 @@ pub async fn matching_index_resolve(
         .await?;
     client(&app, &context).await?;
     Ok(result)
+}
+#[tauri::command]
+pub async fn matching_index_rows(app:tauri::AppHandle,context:PlexRequestContext,kind:String,ids:Vec<i64>)->Result<Vec<resolver::Entry>,String> {
+    client(&app,&context).await?;
+    let scope=context.cache_scope.clone();
+    let result=app.state::<DbState>().read(move|conn|resolver::entries(conn,&scope,&kind,&ids)).await?;
+    client(&app,&context).await?;Ok(result)
 }
 #[tauri::command]
 pub async fn matching_index_reverse(

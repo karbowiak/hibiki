@@ -3,6 +3,8 @@ import type { MusicTrack } from "../types/music"
 import { matchTrack, playlistSearchTitle, recordingMbid } from "./matching"
 import { playlistTrackFromMusic } from "./provider"
 import type { PlaylistTrack } from "./types"
+import type { MatchingSource } from "../matching/resolverTypes"
+import { itemArtistCredits } from "../lib/artistCredits"
 
 export function candidateQueryKey(track: PlaylistTrack): string {
   return JSON.stringify([
@@ -30,6 +32,27 @@ export async function retrievePlaylistCandidates(
   }
   owns()
   const merged = new Map<string, PlaylistTrack>()
+  if (provider.matchingResolve) {
+    const mbid = recordingMbid(source.recordingMbid)
+    const identity: MatchingSource = { id: source.id, kind: "track", title: source.title,
+      artists: itemArtistCredits({ artistName: source.artist, artistId: null }).map(credit => credit.name),
+      album: source.album, duration: source.durationMs, identifiers: mbid ? [{ scheme: "musicbrainz:recording", value: mbid }] : [], catalog: [], trackList: [] }
+    try {
+      // No playback DTO is fabricated from index rows. Only the selected
+      // recording receives fresh provider metadata before the planner uses it.
+      const [result] = await provider.matchingResolve("playlist-sync", [identity], false); owns()
+      if (result?.status === "matched" && result.selected) {
+        const actual = await provider.getTrack(String(result.selected)); owns()
+        const candidate = playlistTrackFromMusic(actual)
+        if (actual.id === String(result.selected) && matchTrack(source, [candidate]).status === "matched") return [candidate]
+      }
+      if (result?.status === "ambiguous" || result?.status === "limited") {
+        onLimited?.("truncated")
+        return []
+      }
+      if (result?.status === "missing" && result.coverage === "complete") return []
+    } catch { owns() }
+  }
   let usable = false
   async function collect(
     request: () => Promise<MusicTrack[]>,

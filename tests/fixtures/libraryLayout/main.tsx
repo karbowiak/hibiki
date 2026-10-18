@@ -397,6 +397,10 @@ async function setup() {
   await useLibraryStore.getState().activateProvider(provider)
   await activateMetadataCache(provider)
   useProviderStore.getState().setProvider(provider)
+  if (params.has("matching-consumers")) {
+    const { installMatchingConsumers } = await import("./matchingConsumers")
+    installMatchingConsumers(provider, artist, album, tracks[0])
+  }
   useLibraryStore.setState({
     playlists: virtual ? Array.from({ length: 3000 }, (_, i) => ({ ...playlists[0], id: `stress-${i}`, title: `Synthetic playlist ${i}`, trackCount: 20000, smart: true })) : playlists,
     likedTracks: tracks,

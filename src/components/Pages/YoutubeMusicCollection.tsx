@@ -29,6 +29,9 @@ import { PageLoading } from "../shared/PageLoading"
 import { PageRecovery } from "../shared/PageRecovery"
 import { YoutubeMusicLogo } from "../shared/MusicSource"
 import { MixedPlaylistControl } from "../MixedPlaylistControl"
+import { resolveIndexedMusic } from "../../matching/service"
+import { albumMatchingSource } from "../../matching/sources"
+import { matchingKey, subscribeMatchingUpdates } from "../../matching/updates"
 
 export function YoutubeMusicCollection({ browseId }: { browseId: string }) {
   const [, navigate] = useLocation()
@@ -67,12 +70,27 @@ export function YoutubeMusicCollection({ browseId }: { browseId: string }) {
   const albumArtist = card?.artist || metadata?.items.find(item => item.kind === "song" && item.artist)?.artist
   const albumYear = card?.year
   const session = provider?.playbackSession, scope = provider?.cacheScope
+  const [matchingRevision, setMatchingRevision] = useState(0)
+  useEffect(() => subscribeMatchingUpdates(update => {
+    if (update.provider === provider && (update.reset || update.coverageChanged || update.changes.some(change => change.kind === "album" && change.titleKey === matchingKey(albumTitle ?? ""))))
+      setMatchingRevision(value => value + 1)
+  }), [provider, albumTitle])
   useEffect(() => {
     if (!browseId.startsWith("MPRE") || !provider || provider.isOffline || !metadata || !albumTitle || !albumArtist) return
     let active = true
     const owns = () => active && currentIdentity.current === identity && useProviderStore.getState().provider === provider &&
       provider.playbackSession === session && provider.cacheScope === scope
     void (async () => {
+      if (provider.matchingResolve) {
+        const source = albumMatchingSource({ id: `ytmusic:${browseId}`, title: albumTitle, artistName: albumArtist, year: albumYear ?? 0 },
+          metadata.items.filter(item => item.kind === "song").map(youtubeMusicItemTrack).map(track => ({ kind: "track", title: track.title, duration: track.duration })))
+        const proof = await resolveIndexedMusic(source).catch(() => null)
+        if (!owns()) return
+        if (proof) {
+          if (proof.status === "matched" && proof.selected) navigate(`/album/${proof.selected}`, { replace: true })
+          return
+        }
+      }
       const results = await provider.search(albumTitle, "album")
       if (!owns()) return
       const candidates = [...new Map(results.flatMap(item => item.type === "album" && releaseNameKey(item.title) === releaseNameKey(albumTitle) &&
@@ -89,7 +107,7 @@ export function YoutubeMusicCollection({ browseId }: { browseId: string }) {
         navigate(`/album/${encodeURIComponent(best.entry.album.id)}`, { replace: true })
     })().catch(() => { /* The YTM album remains usable without a Plex match. */ })
     return () => { active = false }
-  }, [browseId, provider, session, scope, identity, metadata, albumTitle, albumArtist, albumYear, navigate])
+  }, [browseId, provider, session, scope, identity, metadata, albumTitle, albumArtist, albumYear, navigate, matchingRevision])
   const [filterQuery, setFilterQuery] = useState("")
   const [query, setQuery] = useState("")
   useEffect(() => { const timer = setTimeout(() => setQuery(filterQuery), 150); return () => clearTimeout(timer) }, [filterQuery])

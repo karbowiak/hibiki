@@ -68,9 +68,10 @@ supersedes old incremental windows. Network failures back off without advancing.
 
 New observations update row and relationship evidence and its revision; late
 census responses cannot overwrite newer verified detail responses. Row-change
-history is bounded independently of page membership. Association invalidation and
-retry consumers are part of the shared resolver work in #29–#30; freshness alone
-does not establish that those consumers are connected.
+history is bounded independently of page membership. Changed evidence reaches
+consumers through a scoped, coalesced native change tail. Relevant visible pages
+reload their full DTOs; unresolved owned playlist and rating work retries in
+bounded batches. Notifications never authorize a write.
 
 ## Shared identity resolver
 
@@ -113,8 +114,39 @@ Proof validity is capped at 24 hours. Reverse lookups revalidate the same proof
 before exposing an original YTM destination. Targeted change pages preserve each
 atomic row/relationship group; old cursors explicitly request a reset. Clearing
 the matching index clears these proofs without touching user ratings, playlist
-occurrences, queues or downloads. Consumer wiring and active unresolved retries
-remain tracked in #30 and the outstanding acceptance work for #28.
+occurrences, queues or downloads. Consumers reuse these proofs for artist/album
+navigation, links, visible search/discovery associations, album supplementation,
+radio, playlist matching, lyrics and deliberate ratings.
+
+## Consumer freshness and retained intent
+
+The renderer coalesces notifications, reads at most three 200-change pages per
+turn, and yields before another batch. Coverage changes and a pruned cursor
+trigger a bounded recheck. Native rows remain identity evidence; they never
+masquerade as full browse objects. Artist/album page hooks fetch ordinary DTOs
+after relevant new observations or removals, preserving open controls and edits.
+Old initial census observations cannot repeatedly cancel an in-flight refresh.
+
+Visible search/discovery association batches perform local lookups only. Missing,
+ambiguous or incomplete identities remain available from YTM. Live fallbacks have
+two separate lanes and a bounded backlog: a slow fallback cannot hold verified
+responses or native lookup lanes. Foreground reads and audio admission yield
+background refresh work; polling/timeline commands do not indefinitely starve it.
+
+Retained rating intent and playlist occurrences survive removals and metadata
+rematches. Relevant pending ratings retry through their original intent, account
+and fresh-write checks. Playlist retries preserve occurrence IDs and order. A
+changed/unavailable saved Plex recording retains its original metadata and is
+marked stale; its verified YTM side remains playable. A stale target cannot
+authorize synchronization writes. Fresh playlist membership changes are checked
+before reconciliation: library disappearance is not an instruction to delete the
+corresponding owned/YTM occurrence. Rematching archives former target metadata
+rather than overwriting its provenance.
+
+Navigation proofs are rechecked before view-local cache entries. Complete native
+misses avoid redundant Plex searches while retaining YTM discovery. Fresh provider
+metadata is still required for playlist candidates, radio seeds and write paths.
+Scope/session changes retire delayed consumer replies.
 
 ## Validation boundary
 
@@ -134,7 +166,9 @@ bodies were 116–238 kB. No per-track detail sweep is needed for the initial pa
 Large synthetic storage and foreground measurements are recorded in
 [issue-validation.md](issue-validation.md). These are repeatable native SQLite
 checks, distinct from live audible-playback or end-to-end account mutation proof.
-Shared associations and consumer integration remain tracked by #28–#30.
+The real-world foreground/audible-playback measurement for #30 remains distinct
+from these native and renderer fixture measurements. No live playlist or rating
+mutations were used for validation.
 
 Sources: [Plex API versioning and response customization](https://developer.plex.tv/pms/#section/API-Info),
 [Library API](https://developer.plex.tv/pms/#tag/Library).
