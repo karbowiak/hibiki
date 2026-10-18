@@ -1,10 +1,17 @@
 import { Button } from "../shared/Button"
-import { collectionPlaybackSource, selectCollectionTrack } from "../../lib/collectionPlayback"
-import { filterTracks, sortTracks, type TrackSortColumn } from "../../lib/trackOrder"
+import {
+  collectionPlaybackSource,
+  selectCollectionTrack,
+} from "../../lib/collectionPlayback"
+import {
+  filterTracks,
+  sortTracks,
+  type TrackSortColumn,
+} from "../../lib/trackOrder"
 import { useEntityDownloadStatus } from "../shared/DownloadBadge"
 import { PlaylistInformationDialog } from "../PlaylistInformationDialog"
-import { MixedPlaylistControl } from "../MixedPlaylistControl"
-import { IconInfoCircle } from "@tabler/icons-react"
+import { useMixedPlaylistLink } from "../MixedPlaylistControl"
+import { PlaylistAction } from "../shared/PlaylistAction"
 import { MetadataEditDialog } from "../shared/MetadataEditDialog"
 import { LinkedPlaylistManager } from "../PlaylistSync/LinkedPlaylistManager"
 import {
@@ -12,7 +19,7 @@ import {
   linksForPlaylist,
 } from "../../stores/linkedPlaylistStore"
 import { useListenBrainzStore } from "../../metadata/listenbrainz/authStore"
-import { ArtworkImage } from "../shared/ArtworkImage"
+import { PlaylistHero } from "../shared/PlaylistHero"
 import { AmbientHeroBackdrop } from "../shared/MediaBackdrop"
 import {
   useCallback,
@@ -43,19 +50,23 @@ import { SyncReviewIndicator } from "../shared/SyncReviewIndicator"
 const PLAYLIST_COLUMNS = ALL_COLUMNS
 
 export function Playlist({ playlistId }: { playlistId: string }) {
+  const mixedLink = useMixedPlaylistLink(playlistId)
   const [showLinked, setShowLinked] = useState(false)
   const [syncReview, setSyncReview] = useState(false)
   const [syncError, setSyncError] = useState<string | null>(null)
   const [showInformation, setShowInformation] = useState(false)
-  const downloadStatus=useEntityDownloadStatus("playlist",playlistId)
+  const downloadStatus = useEntityDownloadStatus("playlist", playlistId)
   const linkedState = useLinkedPlaylistStore()
   const syncAuthenticated = useListenBrainzStore((s) => s.isAuthenticated)
   const [showEdit, setShowEdit] = useState(false)
   const ownedMenuActions = useRef<ContextAction[]>([])
-  const invalidatePlaylistItems = useLibraryStore(s => s.invalidatePlaylistItems)
-  const currentPlaylist = useLibraryStore(s =>
-    s.playlists.find(playlist => playlist.id === playlistId) ??
-    (s.currentPlaylist?.id === playlistId ? s.currentPlaylist : null)
+  const invalidatePlaylistItems = useLibraryStore(
+    (s) => s.invalidatePlaylistItems
+  )
+  const currentPlaylist = useLibraryStore(
+    (s) =>
+      s.playlists.find((playlist) => playlist.id === playlistId) ??
+      (s.currentPlaylist?.id === playlistId ? s.currentPlaylist : null)
   )
   const [reorderError, setReorderError] = useState<string | null>(null)
   const [isReordering, setIsReordering] = useState(false)
@@ -80,7 +91,13 @@ export function Playlist({ playlistId }: { playlistId: string }) {
   )
   const provider = useProviderStore((s) => s.provider)
   const syncLink = linksForPlaylist(provider, playlistId)[0]
-  const syncNeedsReview = !!syncError || playlistNeedsReview(syncLink, !!linkedState.error || !!linkedState.checkedErrors?.[syncLink?.id ?? ""], !!linkedState.holds[syncLink?.id ?? ""])
+  const syncNeedsReview =
+    !!syncError ||
+    playlistNeedsReview(
+      syncLink,
+      !!linkedState.error || !!linkedState.checkedErrors?.[syncLink?.id ?? ""],
+      !!linkedState.holds[syncLink?.id ?? ""]
+    )
   const windowed = useWindowedPages(
     `playlist:${playlistId}`,
     async (offset, limit) =>
@@ -92,7 +109,8 @@ export function Playlist({ playlistId }: { playlistId: string }) {
   const currentPlaylistItems = windowed.loadedItems
   const isLoading = windowed.loading && !windowed.initialized
   const isFetchingMore = windowed.loading && windowed.initialized
-  const isFullyLoaded = windowed.initialized && windowed.residentCount >= windowed.total
+  const isFullyLoaded =
+    windowed.initialized && windowed.residentCount >= windowed.total
   const loadError = windowed.error
   const [fallbackEnd, setFallbackEnd] = useState(200)
   const pageRefreshKey = useUIStore((s) => s.pageRefreshKey)
@@ -192,15 +210,11 @@ export function Playlist({ playlistId }: { playlistId: string }) {
     (fromIndex: number, toIndex: number) => {
       const view = viewRef.current
       if (!provider || !canReorder || !view?.active || view.pending) return
-      const movedTrack =
-        windowed.getItem(fromIndex)
+      const movedTrack = windowed.getItem(fromIndex)
       if (!movedTrack?.playlistItemId) return
 
       const afterIndex = toIndex > fromIndex ? toIndex : toIndex - 1
-      const afterTrack =
-        afterIndex >= 0
-          ? windowed.getItem(afterIndex)
-          : null
+      const afterTrack = afterIndex >= 0 ? windowed.getItem(afterIndex) : null
       const afterItemId = afterTrack?.playlistItemId ?? "0"
 
       const current = () =>
@@ -232,7 +246,10 @@ export function Playlist({ playlistId }: { playlistId: string }) {
           )
       })()
         .then(() => {
-          if (current()) { invalidatePlaylistItems(playlistId); windowed.invalidate() }
+          if (current()) {
+            invalidatePlaylistItems(playlistId)
+            windowed.invalidate()
+          }
         })
         .catch(() => {
           if (!current()) return
@@ -247,13 +264,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
           setIsReordering(false)
         })
     },
-    [
-      provider,
-      canReorder,
-      windowed,
-      playlistId,
-      invalidatePlaylistItems,
-    ]
+    [provider, canReorder, windowed, playlistId, invalidatePlaylistItems]
   )
 
   const errorNotice = (loadError || reorderError) && (
@@ -310,322 +321,259 @@ export function Playlist({ playlistId }: { playlistId: string }) {
       }
     : null
 
-  const querySource = provider ? collectionPlaybackSource(provider, {
-    key: `playlist:${playlistId}`, filter: debouncedQuery, sort: sortCol, dir: sortDir,
-  }, queried.total) : null
+  const querySource = provider
+    ? collectionPlaybackSource(
+        provider,
+        {
+          key: `playlist:${playlistId}`,
+          filter: debouncedQuery,
+          sort: sortCol,
+          dir: sortDir,
+        },
+        queried.total
+      )
+    : null
 
   return (
     <div className="media-detail-page playlist-detail-page pb-12">
       <AmbientHeroBackdrop heroRef={heroRef} />
       {/* The global artwork layer supplies the sharp hero and aligned blur. */}
-      <div
-        ref={heroRef}
-        className="media-detail-hero hero-overlay relative flex items-end"
-      >
-        <div className="relative z-10 flex w-full flex-wrap items-end gap-5">
-          {/* Cover art */}
-          {thumbUrl ? (
-            <ArtworkImage
-              loading="eager"
-              src={thumbUrl}
-              alt=""
-              className="h-44 w-44 shrink-0 rounded-lg object-cover shadow-xl"
+      <PlaylistHero
+        heroRef={heroRef}
+        artwork={thumbUrl}
+        title={currentPlaylist.title}
+        description={
+          currentPlaylist.summary && (
+            <RichText
+              html={currentPlaylist.summary}
+              className="mt-2 line-clamp-2 max-w-xl text-sm text-gray-300"
             />
-          ) : (
-            <div className="h-44 w-44 shrink-0 rounded-lg bg-app-surface shadow-xl" />
-          )}
+          )
+        }
+      >
+        {/* Play in order */}
+        <PlaylistAction
+          action="play"
+          onClick={() =>
+            totalCount > 0 &&
+            void (useQuery && provider?.getCollectionPage
+              ? playPagedTracks(
+                  querySource,
+                  currentPlaylist.title,
+                  `/playlist/${playlistId}`
+                )
+              : playPlaylist(
+                  playlistId,
+                  totalCount,
+                  currentPlaylist.title,
+                  `/playlist/${playlistId}`
+                ))
+          }
+          disabled={
+            totalCount === 0 ||
+            (!!provider?.isOffline && currentPlaylist.offlineAvailable !== true)
+          }
+          title="Play"
+          className="media-primary"
+        />
 
-          {/* Info column */}
-          <div className="flex min-h-44 min-w-0 flex-[1_1_16rem] flex-col justify-between gap-4">
-            <div className="min-w-0">
-              <h1 className="media-detail-title wrap-break-word">
-                {currentPlaylist.title}
-              </h1>
-              {currentPlaylist.summary && (
-                <RichText
-                  html={currentPlaylist.summary}
-                  className="mt-2 line-clamp-2 max-w-xl text-sm text-gray-300"
-                />
-              )}
-            </div>
+        {/* Shuffle */}
+        <PlaylistAction
+          action="shuffle"
+          onClick={() =>
+            playbackSource &&
+            void playPagedTracks(
+              useQuery && provider?.getCollectionPage
+                ? querySource
+                : {
+                    ...playbackSource,
+                    prepare: () =>
+                      provider?.getCachedTrackSource?.(
+                        `playlist:${playlistId}`,
+                        true
+                      ) ?? Promise.resolve(null),
+                  },
+              currentPlaylist.title,
+              `/playlist/${playlistId}`,
+              true
+            )
+          }
+          disabled={
+            !playbackSource || totalCount === 0 || !!provider?.isOffline
+          }
+          title="Shuffle play"
+          className="media-secondary"
+        />
 
-            {/* Playlist actions stay beneath the description. */}
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="relative z-20 flex flex-wrap items-center gap-3">
-                {/* Play in order */}
-                <Button
-                  size="md"
-                  variant="primary"
-                  onClick={() =>
-                    totalCount > 0 &&
-                    void (useQuery && provider?.getCollectionPage
-                      ? playPagedTracks(
-                          querySource,
-                          currentPlaylist.title,
-                          `/playlist/${playlistId}`
-                        )
-                      : playPlaylist(
-                          playlistId,
-                          totalCount,
-                          currentPlaylist.title,
-                          `/playlist/${playlistId}`
-                        ))
-                  }
-                  disabled={
-                    totalCount === 0 ||
-                    (!!provider?.isOffline &&
-                      currentPlaylist.offlineAvailable !== true)
-                  }
-                  title="Play"
-                  className="media-primary"
-                >
-                  <svg
-                    aria-hidden="true"
-                    viewBox="0 0 16 16"
-                    width="22"
-                    height="22"
-                    fill="currentColor"
-                  >
-                    <polygon points="3,2 13,8 3,14" />
-                  </svg>
-                  Play
-                </Button>
+        {/* Playlist Radio */}
+        <PlaylistAction
+          action="radio"
+          onClick={() =>
+            totalCount > 0 &&
+            void playRadio(playlistId, "playlist", currentPlaylist.title)
+          }
+          disabled={totalCount === 0 || !provider?.capabilities.radio}
+          title="Playlist Radio — continuous sonically-similar music"
+          className="media-secondary"
+        />
 
-                {/* Shuffle */}
-                <Button
-                  size="md"
-                  variant="secondary"
-                  onClick={() =>
-                    playbackSource &&
-                    void playPagedTracks(
-                      useQuery && provider?.getCollectionPage
-                        ? querySource
-                        : {
-                            ...playbackSource,
-                            prepare: () =>
-                              provider?.getCachedTrackSource?.(
-                                `playlist:${playlistId}`,
-                                true
-                              ) ?? Promise.resolve(null),
-                          },
-                      currentPlaylist.title,
-                      `/playlist/${playlistId}`,
-                      true
-                    )
-                  }
-                  disabled={
-                    !playbackSource || totalCount === 0 || !!provider?.isOffline
-                  }
-                  title="Shuffle play"
-                  className="media-secondary"
-                >
-                  <svg
-                    aria-hidden="true"
-                    viewBox="0 0 16 16"
-                    width="16"
-                    height="16"
-                    fill="currentColor"
-                  >
-                    <path d="M13.151.922a.75.75 0 1 0-1.06 1.06L13.109 3H11.16a3.75 3.75 0 0 0-2.873 1.34l-6.173 7.356A2.25 2.25 0 0 1 .39 12.5H0V14h.391a3.75 3.75 0 0 0 2.873-1.34l6.173-7.356A2.25 2.25 0 0 1 11.16 4.5h1.949l-1.018 1.018a.75.75 0 0 0 1.06 1.06L15.98 3.75 13.15.922zM.391 3.5H0V2h.391c1.109 0 2.16.49 2.873 1.34L4.89 5.277l-.979 1.167-1.796-2.14A2.25 2.25 0 0 0 .39 3.5zm9.831 8.17l.979 1.167.28.334A3.75 3.75 0 0 0 14.36 14.5h1.64V13h-1.64a2.25 2.25 0 0 1-1.726-.83l-.28-.335-1.733-2.063-.979 1.167 1.18 1.731z" />
-                  </svg>
-                  Shuffle
-                </Button>
+        <PlaylistAction
+          action="sync"
+          type="button"
+          className="media-secondary"
+          disabled={
+            !syncLink ||
+            !!linkedState.running[syncLink.id] ||
+            (!syncNeedsReview && (!syncAuthenticated || !!provider?.isOffline))
+          }
+          title={
+            syncNeedsReview
+              ? "Review this playlist's sync"
+              : syncLink
+                ? "Run this playlist's configured sync"
+                : "Configure sync from the playlist menu first"
+          }
+          aria-label={
+            syncNeedsReview ? "Sync playlist — review needed" : "Sync playlist"
+          }
+          onClick={() => {
+            if (!syncLink) return
+            if (
+              syncNeedsReview ||
+              !syncLink.enabled ||
+              syncLink.paused ||
+              syncLink.state === "conflict" ||
+              !!syncLink.incomplete ||
+              syncLink.job?.step ||
+              syncLink.job?.descriptionStep ||
+              linkedState.holds[syncLink.id] ||
+              linkedState.error
+            ) {
+              setSyncReview(true)
+              setShowLinked(true)
+              return
+            }
+            const pageOwner = viewRef.current,
+              scope = provider?.cacheScope,
+              session = provider?.playbackSession
+            const current = () =>
+              !!pageOwner?.active &&
+              useProviderStore.getState().provider === provider &&
+              provider?.cacheScope === scope &&
+              provider?.playbackSession === session
+            setSyncError(null)
+            void linkedState.syncNow(syncLink.id, current).then(
+              () => {
+                if (current()) {
+                  invalidatePlaylistItems(playlistId)
+                  windowed.invalidate()
+                  queried.invalidate()
+                  void useLibraryStore
+                    .getState()
+                    .fetchPlaylists({ force: true })
+                }
+              },
+              () => {
+                if (current())
+                  setSyncError(
+                    "Sync needs review. Open Configure sync to check matching, settings or a retained update."
+                  )
+              }
+            )
+          }}
+        >
+          {syncLink && linkedState.running[syncLink.id] ? "Syncing…" : "Sync"}
+          {syncNeedsReview && <SyncReviewIndicator />}
+        </PlaylistAction>
+        {(syncError || mixedLink.error) && (
+          <p
+            role="status"
+            className="basis-full text-sm text-(--text-secondary)"
+          >
+            {syncError || mixedLink.error}
+          </p>
+        )}
 
-                {/* Playlist Radio */}
-                <Button
-                  size="md"
-                  variant="secondary"
-                  onClick={() =>
-                    totalCount > 0 &&
-                    void playRadio(
-                      playlistId,
-                      "playlist",
-                      currentPlaylist.title
-                    )
-                  }
-                  disabled={totalCount === 0 || !provider?.capabilities.radio}
-                  title="Playlist Radio — continuous sonically-similar music"
-                  className="media-secondary"
-                >
-                  <svg
-                    aria-hidden="true"
-                    viewBox="0 0 16 16"
-                    width="16"
-                    height="16"
-                    fill="currentColor"
-                  >
-                    <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6A3 3 0 0 0 8 5zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
-                  </svg>
-                  Radio
-                </Button>
-                {!currentPlaylist.smart && <MixedPlaylistControl alias={playlistId} />}
-
-                <Button
-                  size="md"
-                  variant="secondary"
-                  type="button"
-                  className="media-secondary"
-                  disabled={
-                    !syncLink ||
-                    !!linkedState.running[syncLink.id] ||
-                    (!syncNeedsReview && (!syncAuthenticated || !!provider?.isOffline))
-                  }
-                  title={
-                    syncNeedsReview ? "Review this playlist's sync" : syncLink
-                      ? "Run this playlist's configured sync"
-                      : "Configure sync from the playlist menu first"
-                  }
-                  aria-label={syncNeedsReview ? "Sync playlist — review needed" : "Sync playlist"}
-                  onClick={() => {
-                    if (!syncLink) return
-                    if (
-                      syncNeedsReview || !syncLink.enabled ||
-                      syncLink.paused ||
-                      syncLink.state === "conflict" ||
-                      !!syncLink.incomplete ||
-                      syncLink.job?.step ||
-                      syncLink.job?.descriptionStep ||
-                      linkedState.holds[syncLink.id] ||
-                      linkedState.error
-                    ) {
-                      setSyncReview(true)
-                      setShowLinked(true)
-                      return
-                    }
-                    const pageOwner = viewRef.current,
-                      scope = provider?.cacheScope,
-                      session = provider?.playbackSession
-                    const current = () =>
-                      !!pageOwner?.active &&
-                      useProviderStore.getState().provider === provider &&
-                      provider?.cacheScope === scope &&
-                      provider?.playbackSession === session
-                    setSyncError(null)
-                    void linkedState.syncNow(syncLink.id, current).then(
-                      () => {
+        {/* More actions */}
+        <PlaylistAction
+          action="more"
+          onClick={(e) => {
+            e.stopPropagation()
+            const rect = e.currentTarget.getBoundingClientRect()
+            const pageOwner = viewRef.current,
+              scope = provider?.cacheScope,
+              session = provider?.playbackSession
+            const current = () =>
+              pageOwner?.active &&
+              useProviderStore.getState().provider === provider &&
+              provider?.cacheScope === scope &&
+              provider?.playbackSession === session
+            const actions: ContextAction[] = [
+              ...(!currentPlaylist.smart && mixedLink.connected
+                ? [
+                    {
+                      label: "Link Plex + YTM",
+                      disabled: mixedLink.pending,
+                      run: () => {
+                        if (current()) void mixedLink.link()
+                      },
+                    },
+                  ]
+                : []),
+              ...(provider?.mutatePlaylistOccurrence && !provider.isOffline
+                ? [
+                    {
+                      label: "Configure sync",
+                      run: () => {
                         if (current()) {
-                          invalidatePlaylistItems(playlistId)
-                          windowed.invalidate()
-                          queried.invalidate()
-                          void useLibraryStore
-                            .getState()
-                            .fetchPlaylists({ force: true })
+                          setSyncReview(false)
+                          setShowLinked(true)
                         }
                       },
-                      () => {
-                        if (current())
-                          setSyncError(
-                            "Sync needs review. Open Configure sync to check matching, settings or a retained update."
-                          )
-                      }
-                    )
-                  }}
-                >
-                  {syncLink && linkedState.running[syncLink.id]
-                    ? "Syncing…"
-                    : "Sync"}
-                  {syncNeedsReview && <SyncReviewIndicator />}
-                </Button>
-                {syncError && (
-                  <p
-                    role="status"
-                    className="basis-full text-sm text-(--text-secondary)"
-                  >
-                    {syncError}
-                  </p>
-                )}
-
-                {/* More actions */}
-                <Button
-                  size="md"
-                  variant="secondary"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    const rect = e.currentTarget.getBoundingClientRect()
-                    const pageOwner = viewRef.current,
-                      scope = provider?.cacheScope,
-                      session = provider?.playbackSession
-                    const current = () =>
-                      pageOwner?.active &&
-                      useProviderStore.getState().provider === provider &&
-                      provider?.cacheScope === scope &&
-                      provider?.playbackSession === session
-                    const actions: ContextAction[] = [
-                      ...(provider?.mutatePlaylistOccurrence &&
-                      !provider.isOffline
-                        ? [
-                            {
-                              label: "Configure sync",
-                              run: () => {
-                                if (current()) {
-                                  setSyncReview(false)
-                                  setShowLinked(true)
-                                }
-                              },
-                            },
-                          ]
-                        : []),
-                      ...(provider?.capabilities.playlistEdit &&
-                      !currentPlaylist.smart
-                        ? [
-                            {
-                              label: "Edit playlist",
-                              run: () => {
-                                if (current()) setShowEdit(true)
-                              },
-                            },
-                          ]
-                        : []),
-                    ]
-                    ownedMenuActions.current = actions
-                    useContextMenuStore
-                      .getState()
-                      .show(
-                        rect.right,
-                        rect.bottom + 4,
-                        "playlist",
-                        currentPlaylist,
-                        null,
-                        actions
-                      )
-                  }}
-                  title="More actions"
-                  className="media-secondary"
-                >
-                  <svg
-                    aria-hidden="true"
-                    viewBox="0 0 16 16"
-                    width="16"
-                    height="16"
-                    fill="currentColor"
-                  >
-                    <circle cx="3" cy="8" r="1.5" />
-                    <circle cx="8" cy="8" r="1.5" />
-                    <circle cx="13" cy="8" r="1.5" />
-                  </svg>
-                  More
-                </Button>
-                <Button
-                  size="md"
-                  variant="secondary"
-                  className="media-secondary"
-                  aria-haspopup="dialog"
-                  aria-label="Playlist information"
-                  title="Playlist information and download issues"
-                  onClick={(event) => {
-                    event.currentTarget.focus({ preventScroll: true })
-                    setShowInformation(true)
-                  }}
-                >
-                  <IconInfoCircle size={16} aria-hidden="true" />
-                  Info
-                  {downloadStatus?.failed ? <SyncReviewIndicator /> : null}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+                    },
+                  ]
+                : []),
+              ...(provider?.capabilities.playlistEdit && !currentPlaylist.smart
+                ? [
+                    {
+                      label: "Edit playlist",
+                      run: () => {
+                        if (current()) setShowEdit(true)
+                      },
+                    },
+                  ]
+                : []),
+            ]
+            ownedMenuActions.current = actions
+            useContextMenuStore
+              .getState()
+              .show(
+                rect.right,
+                rect.bottom + 4,
+                "playlist",
+                currentPlaylist,
+                null,
+                actions
+              )
+          }}
+          title="More actions"
+          className="media-secondary"
+        />
+        <PlaylistAction
+          action="info"
+          className="media-secondary"
+          aria-haspopup="dialog"
+          aria-label="Playlist information"
+          title="Playlist information and download issues"
+          onClick={(event) => {
+            event.currentTarget.focus({ preventScroll: true })
+            setShowInformation(true)
+          }}
+        >
+          Info
+          {downloadStatus?.failed ? <SyncReviewIndicator /> : null}
+        </PlaylistAction>
+      </PlaylistHero>
 
       {showEdit && (
         <MetadataEditDialog
@@ -645,7 +593,9 @@ export function Playlist({ playlistId }: { playlistId: string }) {
           playlist={{ ...currentPlaylist, trackCount: totalCount }}
           downloads={downloadStatus}
           link={syncLink}
-          syncError={syncError || linkedState.checkedErrors?.[syncLink?.id ?? ""]}
+          syncError={
+            syncError || linkedState.checkedErrors?.[syncLink?.id ?? ""]
+          }
           onClose={() => setShowInformation(false)}
           onReviewSync={() => {
             setShowInformation(false)
@@ -696,7 +646,13 @@ export function Playlist({ playlistId }: { playlistId: string }) {
         onPlay={(track, all, index) => {
           if (playbackSource && (!useQuery || provider?.getCollectionPage))
             void playPagedTracks(
-              useQuery ? selectCollectionTrack(querySource, track, index ?? all.indexOf(track)) : playbackSource,
+              useQuery
+                ? selectCollectionTrack(
+                    querySource,
+                    track,
+                    index ?? all.indexOf(track)
+                  )
+                : playbackSource,
               currentPlaylist.title,
               `/playlist/${playlistId}`,
               false,
@@ -747,9 +703,12 @@ export function Playlist({ playlistId }: { playlistId: string }) {
               disabled={isFetchingMore || isLoading}
               onClick={() => {
                 if (loadError) windowed.retry()
-                else { windowed.ensureRange(fallbackEnd, fallbackEnd + 200); setFallbackEnd(fallbackEnd + 200) }
+                else {
+                  windowed.ensureRange(fallbackEnd, fallbackEnd + 200)
+                  setFallbackEnd(fallbackEnd + 200)
+                }
               }}
-              className="rounded-full bg-app-surface px-4 py-2 text-sm text-(--text-primary) hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
+              className="bg-app-surface hover:bg-app-surface-hover focus-visible:outline-accent rounded-full px-4 py-2 text-sm text-(--text-primary) focus-visible:outline focus-visible:outline-2 disabled:opacity-50"
             >
               {isFetchingMore
                 ? "Loading more…"
@@ -762,14 +721,15 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                 variant="bare"
                 type="button"
                 onClick={() => windowed.invalidate()}
-                className="rounded-full border border-white/20 px-4 py-2 text-sm text-(--text-primary) focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                className="focus-visible:outline-accent rounded-full border border-white/20 px-4 py-2 text-sm text-(--text-primary) focus-visible:outline focus-visible:outline-2"
               >
                 Reload playlist
               </Button>
             )}
             {filterQuery && (
               <span className="text-xs text-(--text-secondary)">
-                Filter applies to loaded songs; up to 1,600 songs are kept in this view.
+                Filter applies to loaded songs; up to 1,600 songs are kept in
+                this view.
               </span>
             )}
           </div>

@@ -40,12 +40,48 @@
   --playlist-detail-gutter: clamp(1.5rem, 3vw, 3rem);
 }
 .playlist-detail-page .media-detail-hero,
-.playlist-detail-page .playlist-overview > div {
+.playlist-detail-page .playlist-overview > div,
+.playlist-detail-page .playlist-sync-status {
   padding-inline: var(--playlist-detail-gutter);
 }
 .playlist-detail-page .media-primary,
 .playlist-detail-page .media-secondary {
   flex-shrink: 0;
+}
+.playlist-detail-page .media-detail-hero {
+  --text-secondary: var(--artwork-hero-secondary, #ddd);
+}
+.playlist-overview:has(.playlist-sync-summary) {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(17rem, 2fr);
+}
+.playlist-overview .playlist-sync-summary {
+  min-width: 0;
+}
+.playlist-overview .playlist-sync-summary dd {
+  font-size: 0.8125rem;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+.playlist-sync-summary .playlist-sync-pending {
+  min-height: 0;
+  padding: 0;
+  font-size: 0.6875rem;
+  font-weight: 400;
+  line-height: inherit;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+/* The shell owns the sharp hero and blurred continuation, as on artist and
+   album pages. No local surface or blur should cover the playlist header. */
+.app-artwork-shell[data-artwork-background="ready"] .playlist-detail-page .media-detail-hero {
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 .playlist-editor .media-secondary {
   color: var(--text-primary);

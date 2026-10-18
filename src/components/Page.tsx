@@ -113,6 +113,8 @@ const bg = {
     "bg-linear-to-b from-(--bg-elevated) from-10% via-(--bg-base) via-40% to-(--bg-base) to-90%",
   playlist:
     "bg-linear-to-b from-(--bg-base) from-10% via-(--bg-base) via-40% to-(--bg-base) to-90%",
+  "mixed-playlist":
+    "bg-linear-to-b from-(--bg-base) from-10% via-(--bg-base) via-40% to-(--bg-base) to-90%",
   artist:
     "bg-linear-to-b from-(--bg-base) from-10% via-(--bg-base) via-40% to-(--bg-base) to-90%",
   album:
@@ -132,6 +134,7 @@ const bg = {
 
 const NO_PADDING_ROUTES = new Set([
   "playlist",
+  "mixed-playlist",
   "ytmusic",
   "mix",
   "artist",

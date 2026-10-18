@@ -1,7 +1,7 @@
 import { Button } from "../shared/Button"
 import { MusicEntityLink } from "../shared/MusicEntityLink"
 import { ArtistCredits } from "../shared/ArtistCredits"
-import { ArtworkImage } from "../shared/ArtworkImage"
+import { PlaylistHero } from "../shared/PlaylistHero"
 import { MediaBackdrop } from "../shared/MediaBackdrop"
 import { buildExternalImageUrl } from "../../lib/imageUrl"
 import { useEffect, useMemo, useRef, useState } from "react"
@@ -22,14 +22,18 @@ import { useTableSort } from "../../hooks/useTableSort"
 import { filterTracks, sortTracks, type TrackSortColumn } from "../../lib/trackOrder"
 import { formatTotalMs } from "../../lib/formatters"
 import type { PagedTrackSource } from "../../lib/pagedPlayback"
-import { IconPlayerPlay, IconArrowsShuffle } from "@tabler/icons-react"
+import { PlaylistAction } from "../shared/PlaylistAction"
 import { DiscoveryCard } from "../shared/DiscoveryCard"
 import { ScrollRow } from "../ScrollRow"
 import { DiscoveryMore } from "../shared/DiscoveryMore"
 import { PageLoading } from "../shared/PageLoading"
 import { PageRecovery } from "../shared/PageRecovery"
 import { YoutubeMusicLogo } from "../shared/MusicSource"
-import { MixedPlaylistControl } from "../MixedPlaylistControl"
+import { useMixedPlaylistLink } from "../MixedPlaylistControl"
+import { useMixedPlaylistStore } from "../../stores/mixedPlaylistStore"
+import { useContextMenuStore } from "../../stores/contextMenuStore"
+import { PlaylistInformationDialog } from "../PlaylistInformationDialog"
+import { CreatePlaylist } from "./CreatePlaylist"
 import { resolveIndexedMusic } from "../../matching/service"
 import { albumMatchingSource } from "../../matching/sources"
 import { matchingKey, subscribeMatchingUpdates } from "../../matching/updates"
@@ -39,12 +43,21 @@ export function YoutubeMusicCollection({ browseId }: { browseId: string }) {
   const provider = useProviderStore(state => state.provider)
   const heroRef = useRef<HTMLDivElement>(null)
   const youtube = useYoutubeMusicDiscovery()
+  const linker = useMixedPlaylistLink(`ytmusic:${browseId}`)
+  const mixed = useMixedPlaylistStore()
+  const linked = mixed.playlists.find(item => item.aliases.includes(`ytmusic:${browseId}`) && item.owners.ytmusic === youtube.accountId)
+  const [information, setInformation] = useState(false), [editing, setEditing] = useState(false)
+  const [syncError, setSyncError] = useState<string | null>(null)
   const library = useYoutubeMusicLibraryStore()
   const refresh = useUIStore(state => state.pageRefreshKey)
   const openedAtRefresh = useRef(refresh)
   const identity = useMemo(() => ({}), [browseId, youtube.revision, refresh])
   const currentIdentity = useRef(identity)
   currentIdentity.current = identity
+  useEffect(() => () => {
+    const menu = useContextMenuStore.getState()
+    if (menu.type === "actions" && menu.data && "owner" in menu.data && menu.data.owner === identity) menu.close()
+  }, [identity])
   const [detail, setDetail] = useState<{ identity: object; page: YoutubeMusicBrowsePage } | null>(null)
   const metadata = detail?.identity === identity ? detail.page : null
   const player = usePlayerStore(useShallow(state => ({ playPagedTracks: state.playPagedTracks,
@@ -133,30 +146,50 @@ export function YoutubeMusicCollection({ browseId }: { browseId: string }) {
   const totalMs = tracks.reduce((sum, track) => sum + track.duration, 0)
   const count = feed.more ? Math.max(card?.trackCount ?? 0, tracks.length) : tracks.length
   const description = card?.description || metadata?.description || artists
+  const sync = () => {
+    if (!linked) return
+    setSyncError(null)
+    void mixed.sync(linked.id, true).catch(failure => setSyncError(failure instanceof Error ? failure.message : String(failure)))
+  }
+  const radio = () => {
+    if (!sorted.length) return
+    const seed = sorted[Math.floor(Math.random() * sorted.length)]
+    void usePlayerStore.getState().playRadio(seed.id, "track", title, "ytmusic", seed)
+  }
   if (!youtube.connected) return <PageRecovery kind="empty" title="Connect YouTube Music" description="Sign in with the YTM button to browse this collection." />
   if (!card && !metadata && loading) return <PageLoading message="Loading playlist…" variant="playlist" />
   return <div className="media-detail-page playlist-detail-page pb-12">
+    {editing && linked && <CreatePlaylist key={linked.id} playlist={linked} onClose={() => setEditing(false)} />}
+    {information && <PlaylistInformationDialog playlist={{ id: `ytmusic:${browseId}`, title, smart: !browseId.startsWith("VLPL"), trackCount: count, duration: totalMs, thumbUrl: cover, summary: description, addedAt: null, providerKey: "ytmusic" }}
+      sourceLabel="YouTube Music" downloadsSupported={false} onClose={() => setInformation(false)} onReviewSync={() => { setInformation(false); if (linked) setEditing(true); else void linker.link() }}
+      syncContent={<div className="space-y-3 text-sm"><p>{linked ? "Linked to Hibiki. Review service links and unmatched songs in Edit playlist." : "This playlist has no configured Hibiki sync."}</p>
+        {browseId.startsWith("VLPL") && <Button disabled={linker.pending || !linker.connected} onClick={() => { setInformation(false); if (linked) setEditing(true); else void linker.link() }}>{linked ? "Edit playlist and review links" : "Link Plex + YTM"}</Button>}
+      </div>} />}
     <MediaBackdrop src={cover} heroRef={heroRef} />
-    <div ref={heroRef} className="media-detail-hero hero-overlay relative flex items-end">
-      <div className="relative z-10 flex w-full flex-wrap items-end gap-5">
-        {cover ? <ArtworkImage loading="eager" src={cover} alt="" className="h-44 w-44 shrink-0 rounded-lg object-cover shadow-xl" />
-          : <div className="h-44 w-44 shrink-0 rounded-lg bg-app-surface shadow-xl" />}
-        <div className="flex min-h-44 min-w-0 flex-[1_1_16rem] flex-col justify-between gap-4">
-          <div className="min-w-0"><h1 className="media-detail-title wrap-break-word">{title}</h1>
-            <p className="mt-2 flex items-center gap-2 text-sm text-(--text-secondary)"><YoutubeMusicLogo size={16} />YouTube Music</p>
+    <PlaylistHero heroRef={heroRef} artwork={cover} title={title}
+      byline={<p className="mt-2 flex items-center gap-2 text-sm text-(--text-secondary)"><YoutubeMusicLogo size={16} />YouTube Music</p>}
+      description={<>
             {browseId.startsWith("MPRE") && albumArtist && <p className="mt-2 text-sm text-(--text-secondary)">
               {tracks[0] ? <ArtistCredits item={tracks[0]} className="hover:underline" /> : <MusicEntityLink entity={{ kind: "artist", name: albumArtist, id: card?.artistId ? `ytmusic:${card.artistId}` : null }} className="hover:underline">{albumArtist}</MusicEntityLink>}
             </p>}
             {description && description !== albumArtist && <p className="mt-2 line-clamp-2 max-w-xl text-sm text-(--text-secondary)">{description}</p>}
-          </div>
-          <div className="relative z-20 flex flex-wrap items-center gap-3">
-            <Button size="md" variant="primary" type="button" onClick={() => play()} disabled={!sorted.length} className="media-primary"><IconPlayerPlay size={22} aria-hidden="true" />Play</Button>
-            <Button size="md" variant="secondary" type="button" onClick={() => play(true)} disabled={!sorted.length} className="media-secondary"><IconArrowsShuffle size={16} aria-hidden="true" />Shuffle</Button>
-            {browseId.startsWith("VLPL") && <MixedPlaylistControl alias={`ytmusic:${browseId}`} />}
-          </div>
-        </div>
-      </div>
-    </div>
+      </>}>
+            <PlaylistAction action="play" onClick={() => play()} disabled={!sorted.length} />
+            <PlaylistAction action="shuffle" onClick={() => play(true)} disabled={!sorted.length} />
+            <PlaylistAction action="radio" onClick={radio} disabled={!sorted.length} />
+            <PlaylistAction action="sync" onClick={sync} disabled={!linked || mixed.running[linked.id]} title={linked ? "Match and sync this playlist" : "Configure sync from More first"}>{linked && mixed.running[linked.id] ? "Syncing…" : "Sync"}</PlaylistAction>
+            <PlaylistAction action="more" title="More actions" aria-haspopup="dialog" onClick={event => {
+              const rect = event.currentTarget.getBoundingClientRect()
+              useContextMenuStore.getState().showActions(rect.right, rect.bottom + 4, { title, owner: identity, actions: [
+                ...(browseId.startsWith("VLPL") ? [{ label: linked ? "Review song links" : "Link Plex + YTM", disabled: linker.pending || !linker.connected,
+                  run: () => { if (linked) setEditing(true); else void linker.link() } }] : []),
+                ...(linked ? [{ label: "Edit playlist", run: () => setEditing(true) }] : []),
+                { label: "Refresh playlist", run: () => useUIStore.getState().incrementPageRefreshKey() },
+              ] })
+            }} />
+            <PlaylistAction action="info" aria-label="Playlist information" aria-haspopup="dialog" onClick={() => setInformation(true)} />
+            {(linker.error || syncError) && <p role="alert" className="basis-full text-sm text-(--text-secondary)">{linker.error || syncError}</p>}
+    </PlaylistHero>
     <dl className="media-ledger playlist-overview" aria-label="Playlist overview">
       <div><dt>Songs</dt><dd>{count.toLocaleString()}{feed.more && !card?.trackCount ? "+" : ""}</dd></div>
       {totalMs > 0 && <div><dt>Runtime{feed.more ? " so far" : ""}</dt><dd>{formatTotalMs(totalMs)}</dd></div>}

@@ -6,12 +6,11 @@ import { useModalLifecycle } from "../../hooks/useModalLifecycle"
 import { createPortal } from "react-dom"
 import { useId, useLayoutEffect, useRef, useState } from "react"
 import type { MusicPlaylist } from "../../types/music"
-import type { MixedPlaylist } from "../../mixedPlaylists/model"
+import { playlistServices, type MixedPlaylist } from "../../mixedPlaylists/model"
 import { defaultPlaylistSync } from "../../mixedPlaylists/drafts"
 import { createLocalPlaylist, draftPlaylistSummary } from "../../mixedPlaylists/create"
 import { useMixedPlaylistStore } from "../../stores/mixedPlaylistStore"
 import { useListenBrainzStore } from "../../metadata/listenbrainz/authStore"
-import { lastFmPlaylistCapabilities } from "../../playlistSync/lastfm"
 import { IconCheck, IconPhoto, IconX } from "@tabler/icons-react"
 
 
@@ -31,6 +30,12 @@ export function CreatePlaylist({ onClose, onCreated, itemIds = [], playlist }: {
   const [description, setDescription] = useState(playlist?.description ?? "")
   const [artwork, setArtwork] = useState<string | null>(playlist?.artwork ?? null)
   const [external, setExternal] = useState(playlist?.external ?? defaultPlaylistSync())
+  const [automatic, setAutomatic] = useState(playlist?.automatic ?? true)
+  const [unmatchedLimit, setUnmatchedLimit] = useState(50)
+  const retained = useMixedPlaylistStore(state => state.playlists.find(item => item.id === playlist?.id)) ?? playlist
+  const services = retained ? playlistServices(retained) : []
+  const unmatched = retained?.items.filter(row => services.some(service => !row.songs[service] || row.songs[service]?.stale)) ?? []
+  const metadataReadOnly = !!playlist && !playlist.local
   const [created, setCreated] = useState(false), [busy, setBusy] = useState(false), [imageBusy, setImageBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const listenbrainz = useListenBrainzStore(state => state.isAuthenticated)
@@ -46,10 +51,11 @@ export function CreatePlaylist({ onClose, onCreated, itemIds = [], playlist }: {
     if (!name.trim() || !session.active || session.pending || session.completed || imageBusy) return
     session.pending = true; setBusy(true); setError(null)
     try {
-      const metadata = { title: name, description, artwork, external }
+      const metadata = { title: name, description, artwork, external, automatic }
       let result: MusicPlaylist
       if (playlist) {
-        await useMixedPlaylistStore.getState().metadata(playlist.id, metadata)
+        if (playlist.local) await useMixedPlaylistStore.getState().metadata(playlist.id, metadata)
+        else await useMixedPlaylistStore.getState().automatic(playlist.id, automatic)
         result = draftPlaylistSummary({ ...playlist, ...metadata })
       } else result = await createLocalPlaylist(metadata, [...itemIds], creationId.current)
       if (!session.active) return
@@ -84,18 +90,28 @@ export function CreatePlaylist({ onClose, onCreated, itemIds = [], playlist }: {
             <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-app-card">
               {artwork ? <img src={artwork} alt="Playlist artwork preview" className="h-full w-full object-cover" /> : <IconPhoto size={30} aria-hidden="true" className="text-(--text-muted)" />}
             </div>
-            <div className="min-w-0 space-y-2"><Button size="md" variant="secondary" type="button" disabled={busy || imageBusy} onClick={() => fileRef.current?.click()} className="media-secondary">{imageBusy ? "Preparing image…" : artwork ? "Replace image" : "Choose image"}</Button>
+            <div className="min-w-0 space-y-2"><Button size="md" variant="secondary" type="button" disabled={busy || imageBusy || metadataReadOnly} onClick={() => fileRef.current?.click()} className="media-secondary">{imageBusy ? "Preparing image…" : artwork ? "Replace image" : "Choose image"}</Button>
               <input ref={fileRef} id={artworkId} aria-label="Playlist image" type="file" accept="image/jpeg,image/png,image/webp" disabled={busy || imageBusy} tabIndex={-1} className="hidden" onChange={event => { void selectArtwork(event.target.files?.[0]); event.target.value = "" }} />
-              {artwork && <Button variant="bare" type="button" disabled={busy} title="Remove the image in Hibiki. Synced services retain their current image." onClick={() => { ++lifetime.current.image; setArtwork(null); setImageBusy(false) }} className="block text-sm text-(--text-secondary) underline underline-offset-4">Remove image</Button>}
+              {artwork && <Button variant="bare" type="button" disabled={busy || metadataReadOnly} title="Remove the image in Hibiki. Synced services retain their current image." onClick={() => { ++lifetime.current.image; setArtwork(null); setImageBusy(false) }} className="block text-sm text-(--text-secondary) underline underline-offset-4">Remove image</Button>}
             </div>
           </div>
           <div className="space-y-2"><label htmlFor={inputId} className="block text-sm font-semibold">Playlist name</label>
-            <input ref={inputRef} id={inputId} disabled={busy} required maxLength={500} value={name} onChange={event => setName(event.target.value)} placeholder="My playlist" className="app-input w-full" />
+            <input ref={inputRef} id={inputId} disabled={busy} readOnly={metadataReadOnly} required maxLength={500} value={name} onChange={event => setName(event.target.value)} placeholder="My playlist" className="app-input w-full" />
           </div>
           <div className="space-y-2"><label htmlFor={descriptionId} className="block text-sm font-semibold">Description <span className="font-normal text-(--text-muted)">(optional)</span></label>
-            <textarea id={descriptionId} disabled={busy} maxLength={5000} rows={3} value={description} onChange={event => setDescription(event.target.value)} className="app-input w-full resize-y" />
+            <textarea id={descriptionId} disabled={busy} readOnly={metadataReadOnly} maxLength={5000} rows={3} value={description} onChange={event => setDescription(event.target.value)} className="app-input w-full resize-y" />
           </div>
-          <fieldset disabled={busy} className="space-y-3 border-t border-(--border) pt-4"><legend className="px-0 text-sm font-semibold">External sync</legend>
+          {playlist && <fieldset disabled={busy} className="space-y-3 border-t border-(--border) pt-4"><legend className="px-0 text-sm font-semibold">Playlist sync</legend>
+            <label className="flex items-center gap-2 text-sm"><Checkbox checked={automatic} onChange={event => setAutomatic(event.target.checked)} />Automatic sync</label>
+            {unmatched.length > 0 && <details><summary className="cursor-pointer text-sm">{unmatched.length} unmatched songs</summary>
+              <ul className="mt-3 max-h-60 space-y-3 overflow-y-auto text-sm">{unmatched.slice(0, unmatchedLimit).map(row => <li key={row.id}>
+                <p>{row.songs[row.original]?.track.title} · {row.songs[row.original]?.track.artistName}</p>
+                <p className="mt-1 text-xs text-(--text-secondary)">Missing {services.filter(service => !row.songs[service] || row.songs[service]?.stale).map(service => service === "plex" ? "Plex" : "YTM").join(" and ")}{row.match.message ? ` · ${row.match.message}` : ""}</p>
+              </li>)}</ul>
+              {unmatchedLimit < unmatched.length && <Button type="button" className="mt-3" onClick={() => setUnmatchedLimit(value => value + 50)}>Show more songs</Button>}
+            </details>}
+          </fieldset>}
+          <fieldset disabled={busy || metadataReadOnly} className="space-y-3 border-t border-(--border) pt-4"><legend className="px-0 text-sm font-semibold">External sync</legend>
             <label className="flex items-center gap-2 text-sm"><Checkbox checked={external.listenbrainz.enabled} onChange={event => setExternal({ listenbrainz: { ...external.listenbrainz, enabled: event.target.checked } })} />ListenBrainz</label>
             {external.listenbrainz.enabled && <div className="space-y-3 pl-5 text-sm">
               {!listenbrainz && <p className="text-(--text-secondary)">Connect ListenBrainz in Settings when you’re ready. Your preference is saved here.</p>}
@@ -103,7 +119,6 @@ export function CreatePlaylist({ onClose, onCreated, itemIds = [], playlist }: {
               <label className="flex items-center gap-2"><Checkbox checked={external.listenbrainz.automatic} onChange={event => setExternal({ listenbrainz: { ...external.listenbrainz, automatic: event.target.checked } })} />Sync automatically</label>
             </div>}
             {artwork && <p className="text-xs text-(--text-secondary)">Artwork syncs to Plex. YTM and ListenBrainz keep their own images.</p>}
-            <div className="text-sm"><label className="flex items-center gap-2 text-(--text-muted)"><Checkbox disabled checked={false} readOnly />Last.fm · unavailable</label><p className="mt-1 pl-5 text-xs text-(--text-secondary)">{lastFmPlaylistCapabilities.reason}</p></div>
           </fieldset>
           {!playlist && <p className="text-sm leading-relaxed text-(--text-secondary)">Saved on this device first. Adding songs connects the playlist to their music services.</p>}
           {error && <p role="alert" className="text-sm text-red-400">{error}</p>}

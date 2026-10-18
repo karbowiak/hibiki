@@ -1,5 +1,5 @@
 import { Button } from "./shared/Button"
-import { useEffect, useState } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { AppDialog } from "./shared/AppDialog"
 import { ArtworkImage } from "./shared/ArtworkImage"
 import { RichText } from "./RichText"
@@ -26,6 +26,9 @@ export function PlaylistInformationDialog({
   syncError,
   onClose,
   onReviewSync,
+  sourceLabel,
+  syncContent,
+  downloadsSupported = true,
 }: {
   playlist: MusicPlaylist
   downloads?: EntityDownloadStatus
@@ -33,6 +36,9 @@ export function PlaylistInformationDialog({
   syncError?: string | null
   onClose: () => void
   onReviewSync: () => void
+  sourceLabel?: string
+  syncContent?: ReactNode
+  downloadsSupported?: boolean
 }) {
   const provider = useProviderStore((state) => state.provider)
   const [owner] = useState(() => ({
@@ -145,6 +151,7 @@ export function PlaylistInformationDialog({
     >
       <div className="space-y-6">
         <dl className="flex flex-wrap gap-x-8 gap-y-3 text-sm">
+          {sourceLabel && <div><dt className="text-(--text-secondary)">Source</dt><dd className="mt-1 font-medium">{sourceLabel}</dd></div>}
           <div>
             <dt className="text-(--text-secondary)">Songs</dt>
             <dd className="mt-1 font-medium tabular-nums">
@@ -172,7 +179,7 @@ export function PlaylistInformationDialog({
             className="text-sm leading-relaxed text-(--text-secondary)"
           />
         )}
-        <section
+        {downloadsSupported && <section
           aria-labelledby="playlist-download-heading"
           className="border-t border-(--border) pt-5"
         >
@@ -235,8 +242,8 @@ export function PlaylistInformationDialog({
               Show more issues
             </Button>
           )}
-        </section>
-        <section
+        </section>}
+        {syncContent ? <section className="border-t border-(--border) pt-5"><h3 className="mb-3 font-semibold">Playlist sync</h3>{syncContent}</section> : <section
           aria-labelledby="playlist-sync-heading"
           className="border-t border-(--border) pt-5"
         >
@@ -291,7 +298,7 @@ export function PlaylistInformationDialog({
               )}
             </>
           )}
-        </section>
+        </section>}
         {error && (
           <p role="alert" className="text-sm text-(--text-primary)">
             {error}{" "}

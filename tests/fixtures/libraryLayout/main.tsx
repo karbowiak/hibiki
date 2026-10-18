@@ -46,6 +46,7 @@ import { useMixedPlaylistStore } from "../../../src/stores/mixedPlaylistStore.ts
 import { newDraft, defaultPlaylistSync } from "../../../src/mixedPlaylists/drafts.ts"
 import { mixedPlaylistRepository } from "../../../src/mixedPlaylists/repository.ts"
 import { hydratePlaylist, newOccurrence } from "../../../src/mixedPlaylists/model.ts"
+import { COUNTERPART_POLICY } from "../../../src/mixedPlaylists/matching.ts"
 import { HoverInformation } from "../../../src/components/HoverInformation.tsx"
 import { useCatalogueStore } from "../../../src/offline/catalogueStore.ts"
 import { initializeQueuePersistence, flushQueuePersistence } from "../../../src/lib/queuePersistence.ts"
@@ -90,6 +91,10 @@ async function setup() {
       if (/^(?:create_playlist|edit_playlist|ytmusic_playlist_write|save_library_artwork|playlist_sync_listenbrainz_(?:create|mutate|describe))$/.test(command))
         (w.fixturePlaylistWrites ??= []).push(command)
       if (command === "ytmusic_status") return { enabled: youtubeArtistEnabled, phase: youtubeArtistEnabled ? "connected" : "disconnected", accountId: youtubeArtistEnabled ? "fixture-youtube-owner" : null, lastCheckedAt: null, nextRefreshAt: null, message: null }
+      if (command === "ytmusic_browse" && args.browseId === "VLPLfixture") return {
+        title: "YouTube fixture playlist", thumbnail: thumb, description: "Synthetic playlist for shared layout checks", hubs: [], continuation: null,
+        items: tracks.slice(0, 3).map((track, index) => ({ id: `a123456789${index}`, kind: "song", title: track.title, artist: track.artistName, album: track.albumName, thumbnail: thumb, duration: "3:00" })),
+      }
       if (command === "ytmusic_browse" && args.browseId === "VLLM" && youtubeLikesEnabled) {
         const song = (id: string, title: string, videoType = "MUSIC_VIDEO_TYPE_ATV") => ({ id, kind: "song", title, artist: tracks[0].artistName, album: tracks[0].albumName, thumbnail: thumb, duration: "3:00", year: null, videoType })
         const first = song("abcdefghijk", tracks[0].title)
@@ -459,7 +464,7 @@ async function setup() {
       const current=usePlayerStore.getState()
       w.fixtureVirtual.playback = { total: current.queue.length, shuffle, index: current.queueIndex, ids: current.queue.slice(0,500).map((track: any) => track.id) }
     } } : {}),
-    playRadio: async () => {},
+    playRadio: async (...args: any[]) => { (w.fixtureRadioCalls ??= []).push(args) },
     addToQueue: (items) => {
       interactions.push({ action: "queue", id: items[0]?.id })
     },
@@ -566,6 +571,7 @@ async function setup() {
         mutatePlaylistOccurrence: async (id: string, _before: unknown, operation: any) => {
           const list = remote.get(id)
           if (operation.kind === "append") list.items.push({ ...tracks.find(track => track.id === operation.trackId), playlistItemId: `handle-${list.items.length}` })
+          else if (operation.kind === "appendMany") for (const trackId of operation.trackIds) list.items.push({ ...tracks.find(track => track.id === trackId), playlistItemId: `handle-${list.items.length}` })
           else if (operation.kind === "delete") list.items.splice(operation.index, 1)
           else list.items.splice(operation.to, 0, list.items.splice(operation.from, 1)[0])
         },
@@ -573,11 +579,32 @@ async function setup() {
         editPlaylist: async (id: string, title: string, summary: string) => { const item = playlists.find(item => item.id === id); if (item) Object.assign(item, { title, summary }) },
       })
     },
+    mixedSyncProgress: (phase: "admitted" | "verified" | "unknown" | "complete") => {
+      const items = Array.from({ length: 307 }, (_, index) => {
+        const row = newOccurrence({ ...tracks[index % tracks.length], id: String(10000 + index) }, 100)
+        row.id = `sync-occurrence-${index}`
+        if (index < 3) row.songs.ytmusic = { track: youtubeMusicTrack({ videoId: `a123456789${index}`, title: row.songs.plex!.track.title, artist: "Fixture Artist", album: "Fixture Album", duration: "3:14", thumbnail: null }) }
+        row.match = { status: index < 3 ? "matched" : "missing", policy: COUNTERPART_POLICY, checkedAt: 100 }
+        return row
+      })
+      const before = { service: "plex" as const, owner: provider.cacheScope, id: "sync-progress", title: "Merged playlist sync", readOnly: false,
+        items: items.slice(0, phase === "verified" || phase === "complete" ? 307 : 14).map((row, index) => ({ track: row.songs.plex!.track, occurrenceId: `plex-${index}` })) }
+      const playlist = { ...newDraft({ title: before.title, description: "", artwork: null, external: defaultPlaylistSync() }, "mixed:sync-progress"),
+        owners: { plex: provider.cacheScope, ytmusic: "fixture-youtube-owner" }, automatic: true, items,
+        merge: { sources: [], duplicates: "verified" as const, reviewedAt: 1 },
+        providers: { plex: { id: before.id, readOnly: false } }, baseline: { plex: before },
+        message: "304 unmatched songs retained in Hibiki.", status: phase === "unknown" ? "error" as const : "ready" as const,
+        write: phase === "admitted" || phase === "unknown" ? { id: "progress-receipt", service: "plex" as const, kind: "append" as const,
+          before, afterIds: items.map(row => row.songs.plex!.track.id), state: phase === "unknown" ? "unknown" as const : "admitted" as const } : undefined }
+      useYoutubeMusicDiscoveryStore.setState({ connected: true, accountId: "fixture-youtube-owner" })
+      useMixedPlaylistStore.setState({ loaded: true, playlists: [playlist], running: { [playlist.id]: phase === "admitted" || phase === "verified" }, load: async () => {} })
+    },
     drafts: {
       disconnect: () => { useProviderStore.setState({ provider: null }); useYoutubeMusicDiscoveryStore.setState({ connected: false, accountId: null }) },
       snapshot: () => useMixedPlaylistStore.getState().playlists.filter(item => item.local),
       reload: async () => { useMixedPlaylistStore.setState({ playlists: [], loaded: false }); await useMixedPlaylistStore.getState().load() },
       writes: () => w.fixturePlaylistWrites ?? [],
+      radioCalls: () => w.fixtureRadioCalls ?? [],
     },
     likedPreview: () => {
       youtubeLikesEnabled = true
