@@ -884,6 +884,10 @@ export function createPlexApi(
   return {
     context: requestContext,
     matchingIndexStatus: () => invoke<import("../../matching/types").MatchingStatus>("matching_index_status"),
+    matchingResolve: (sourceOwner: string, sources: import("../../matching/resolverTypes").MatchingSource[], force = false) => invoke<import("../../matching/resolverTypes").MatchingResolution[]>("matching_index_resolve", { sourceOwner, sources, force }),
+    matchingReverse: (sourceOwner: string, kind: "artist" | "album" | "track", id: number) => invoke<import("../../matching/resolverTypes").MatchingSource[]>("matching_index_reverse", { sourceOwner, kind, id }),
+    matchingChanges: (since: number) => invoke<import("../../matching/resolverTypes").MatchingChanges>("matching_index_changes", { since }),
+    matchingFallback: (sourceOwner: string, source: import("../../matching/resolverTypes").MatchingSource) => invoke<import("../../matching/resolverTypes").MatchingResolution>("matching_index_fallback", { sourceOwner, source }),
     matchingIndexControl: (action: import("../../matching/types").MatchingAction) => invoke<import("../../matching/types").MatchingStatus>("matching_index_control", { action }),
     matchingIndexStart: () => invoke<import("../../matching/types").MatchingStatus>("matching_index_start"),
     matchingIndexNotify: (changes: import("../../offline/catalogue").CatalogueChange[], catchup: boolean) => invoke<void>("matching_index_notify", { changes, catchup }),

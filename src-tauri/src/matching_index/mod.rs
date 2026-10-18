@@ -1,5 +1,6 @@
 //! Compact, scoped Plex matching evidence; independent of browse/offline DTOs.
 mod freshness;
+mod resolver;
 pub use freshness::Hint as MatchingHint;
 pub mod row;
 pub mod store;
@@ -21,6 +22,7 @@ pub struct IndexState {
     running: Mutex<HashSet<(u64, String)>>,
     busy_until: AtomicI64,
     network: std::sync::Arc<tokio::sync::Semaphore>,
+    lookups: std::sync::Arc<tokio::sync::Semaphore>,
 }
 impl Default for IndexState {
     fn default() -> Self {
@@ -28,6 +30,7 @@ impl Default for IndexState {
             running: Mutex::new(HashSet::new()),
             busy_until: AtomicI64::new(0),
             network: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
+            lookups: std::sync::Arc::new(tokio::sync::Semaphore::new(2)),
         }
     }
 }
@@ -82,6 +85,147 @@ async fn write<T: Send + 'static>(
         .await
 }
 #[tauri::command]
+pub async fn matching_index_resolve(
+    app: tauri::AppHandle,
+    context: PlexRequestContext,
+    source_owner: String,
+    sources: Vec<resolver::Source>,
+    force: bool,
+) -> Result<Vec<resolver::Resolution>, String> {
+    if sources.is_empty()
+        || sources.len() > 32
+        || source_owner.is_empty()
+        || source_owner.len() > 256
+    {
+        return Err("Invalid bounded matching batch".into());
+    }
+    for source in &sources {
+        resolver::validate(source)?;
+    }
+    client(&app, &context).await?;
+    let owner = app.clone();
+    let captured = context.clone();
+    let result = app
+        .state::<DbState>()
+        .write(move |conn| {
+            let tx = conn
+                .unchecked_transaction()
+                .map_err(|_| "Matching associations are unavailable")?;
+            store::ensure_scope(&tx, &captured.cache_scope)?;
+            let result = sources
+                .iter()
+                .map(|source| {
+                    resolver::resolve(&tx, &captured.cache_scope, &source_owner, source, force)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let state = owner.state::<PlexState>();
+            let _guard = state.cache_identity_guard(&captured)?;
+            tx.commit()
+                .map_err(|_| "Matching associations are unavailable")?;
+            Ok(result)
+        })
+        .await?;
+    client(&app, &context).await?;
+    Ok(result)
+}
+#[tauri::command]
+pub async fn matching_index_reverse(
+    app: tauri::AppHandle,
+    context: PlexRequestContext,
+    source_owner: String,
+    kind: String,
+    id: i64,
+) -> Result<Vec<resolver::Source>, String> {
+    client(&app, &context).await?;
+    let captured = context.clone();
+    let app_owner = app.clone();
+    let result = app
+        .state::<DbState>()
+        .write(move |conn| {
+            let tx = conn
+                .unchecked_transaction()
+                .map_err(|_| "Matching associations are unavailable")?;
+            let result = resolver::reverse(&tx, &captured.cache_scope, &source_owner, &kind, id)?;
+            let state = app_owner.state::<PlexState>();
+            let _guard = state.cache_identity_guard(&captured)?;
+            tx.commit()
+                .map_err(|_| "Matching associations are unavailable")?;
+            Ok(result)
+        })
+        .await?;
+    client(&app, &context).await?;
+    Ok(result)
+}
+#[tauri::command]
+pub async fn matching_index_fallback(
+    app: tauri::AppHandle,
+    context: PlexRequestContext,
+    source_owner: String,
+    source: resolver::Source,
+) -> Result<resolver::Resolution, String> {
+    resolver::validate(&source)?;
+    if source_owner.is_empty() || source_owner.len() > 256 {
+        return Err("Invalid matching source owner".into());
+    }
+    let _permit = app
+        .state::<IndexState>()
+        .lookups
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| "Matching lookup stopped")?;
+    app.state::<IndexState>()
+        .busy_until
+        .store(store::now() + 1500, Ordering::Relaxed);
+    let (plex, library) = crate::catalogue_commands::verify_library(&app, &context).await?;
+    let epoch = snapshot(&app, &context).await?.epoch;
+    let modern = tokio::time::timeout(std::time::Duration::from_secs(5), plex.get_identity())
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .is_some_and(|id| transport::modern(&id.version));
+    let observed = store::now();
+    let page = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        transport::candidates(&plex, library, &source.kind, &source.title, modern),
+    )
+    .await
+    .map_err(|_| "Plex matching lookup timed out")??;
+    let complete = page.total == page.rows.len() as i64;
+    let result = write(&app, &context, move |conn, plex, context| {
+        if store::status(conn, &context.cache_scope)?.epoch != epoch {
+            return Err("Matching lookup was superseded".into());
+        }
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|_| "Matching evidence storage is unavailable")?;
+        for row in page.rows {
+            store::upsert(&tx, &context.cache_scope, &row, observed)?;
+        }
+        let result = resolver::resolve_confirmed(
+            &tx,
+            &context.cache_scope,
+            &source_owner,
+            &source,
+            true,
+            complete,
+            !complete,
+        )?;
+        store::trim_changes(&tx, &context.cache_scope)?;
+        let _guard = plex.cache_commit_guard(context)?;
+        tx.commit()
+            .map_err(|_| "Matching evidence storage is unavailable")?;
+        Ok(result)
+    })
+    .await?;
+    client(&app, &context).await?;
+    let _ = app.emit(
+        "matching-index-changed",
+        serde_json::json!({"scope":context.cache_scope}),
+    );
+    Ok(result)
+}
+#[tauri::command]
 pub async fn matching_index_notify(
     app: tauri::AppHandle,
     context: PlexRequestContext,
@@ -104,6 +248,21 @@ pub async fn matching_index_status(
     snapshot(&app, &context).await
 }
 #[tauri::command]
+pub async fn matching_index_changes(
+    app: tauri::AppHandle,
+    context: PlexRequestContext,
+    since: i64,
+) -> Result<store::Changes, String> {
+    client(&app, &context).await?;
+    let scope = context.cache_scope.clone();
+    let changes = app
+        .state::<DbState>()
+        .read(move |conn| store::changes(conn, &scope, since))
+        .await?;
+    client(&app, &context).await?;
+    Ok(changes)
+}
+#[tauri::command]
 pub async fn matching_index_control(
     app: tauri::AppHandle,
     context: PlexRequestContext,
@@ -119,6 +278,10 @@ pub async fn matching_index_control(
         .await?;
     client(&app, &context).await?;
     start(&app, &context).await?;
+    let _ = app.emit(
+        "matching-index-changed",
+        serde_json::json!({"scope":context.cache_scope}),
+    );
     Ok(result)
 }
 #[tauri::command]

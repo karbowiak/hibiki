@@ -133,6 +133,10 @@ function savedProvider(
   )
   return Object.assign(saved, {
     matchingIndexStatus: audio.matchingIndexStatus,
+    matchingResolve: audio.matchingResolve,
+    matchingReverse: audio.matchingReverse,
+    matchingChanges: audio.matchingChanges,
+    matchingFallback: audio.matchingFallback,
     matchingIndexControl: audio.matchingIndexControl,
   })
 }

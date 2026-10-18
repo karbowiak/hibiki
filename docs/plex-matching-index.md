@@ -72,6 +72,50 @@ history is bounded independently of page membership. Association invalidation an
 retry consumers are part of the shared resolver work in #29–#30; freshness alone
 does not establish that those consumers are connected.
 
+## Shared identity resolver
+
+The provider exposes bounded native batch, fallback, reverse-association and
+change-cursor operations. Renderer requests coalesce for eight milliseconds, with
+at most 16 items per IPC, two active batches and 256 pending identities. Completed
+results live in SQLite rather than an expanding renderer cache. A provider,
+session, library or YTM-account change rejects delayed replies.
+
+Native lookup starts with retained associations, typed identifiers and indexed
+normalized names. FTS supplies bounded candidates when exact recording/release
+labels are absent; broad prefix results cannot make an existing exact match look
+truncated. Candidate ranking preserves original credit labels and non-Latin
+marks. Artist catalogs can disambiguate close names. Recordings require matching
+credits and version/duration/explicit evidence, or a compatible typed identity.
+Release dates, types, editions and supplied track lists fence release matching.
+A Plex release may contain a verified subset of the YTM track list without being
+treated as a different album.
+
+Outcomes distinguish verified matches, candidates, ambiguity, absence, incomplete
+source/index evidence, stale coverage, limited discovery and provider failure.
+Partial index misses cannot establish absence. A bounded on-demand fallback reads
+at most 50 scoped Plex records, with two network lanes and a 15 second listing
+deadline. It retains useful native evidence, then reruns identity checks. A
+complete bounded query can verify a positive match before the full census ends;
+a truncated reply cannot. No YTM searches, ratings or playlist edits are scheduled
+by indexing or identity lookup.
+
+Proofs retain original source IDs, source-account binding, algorithm version,
+evidence and separate target item IDs. Recording MBIDs remain separate from
+release IDs and physical Plex copies. Multiple copies retain separate candidates;
+a unique matching release occurrence may identify the preferred copy. Automatic
+consumers never receive a selected ID for ambiguity. Returned matching rows are
+identity evidence, never playback, offline or full browse DTOs.
+
+Saved proofs reference native rows instead of duplicating their metadata.
+Positive proofs validate row and parent-relationship revisions and relevant new
+candidates. Negative proofs expire after a minute or on coverage/content changes.
+Proof validity is capped at 24 hours. Reverse lookups revalidate the same proof
+before exposing an original YTM destination. Targeted change pages preserve each
+atomic row/relationship group; old cursors explicitly request a reset. Clearing
+the matching index clears these proofs without touching user ratings, playlist
+occurrences, queues or downloads. Consumer wiring and active unresolved retries
+remain tracked in #30 and the outstanding acceptance work for #28.
+
 ## Validation boundary
 
 Tests cover strict paging, changing/repeated records, failed storage, interruption,

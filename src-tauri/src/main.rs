@@ -393,6 +393,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             matching_index::matching_index_status,
+            matching_index::matching_index_resolve,
+            matching_index::matching_index_reverse,
+            matching_index::matching_index_changes,
+            matching_index::matching_index_fallback,
             matching_index::matching_index_notify,
             matching_index::matching_index_start,
             matching_index::matching_index_control,

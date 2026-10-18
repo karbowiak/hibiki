@@ -269,9 +269,17 @@ impl PlexState {
     /// native owner publication, leaving connection/audio admission available
     /// while the matching writer prepares a bounded transaction.
     pub(crate) fn cache_commit_guard(&self, context: &PlexRequestContext) -> Result<std::sync::RwLockReadGuard<'_, crate::image_protocol::ImageContext>, String> {
+        let guard=self.cache_identity_guard(context)?;
+        if guard.client.as_ref().is_none_or(|client|client.offline_only) {return Err("Plex matching owner is offline".into())}
+        Ok(guard)
+    }
+
+    /// App-owned association proofs may be retained while offline. Remote
+    /// observations still require cache_commit_guard's online admission.
+    pub(crate) fn cache_identity_guard(&self, context: &PlexRequestContext) -> Result<std::sync::RwLockReadGuard<'_, crate::image_protocol::ImageContext>, String> {
         let guard = self.3.read().map_err(|_| "Plex ownership unavailable")?;
         if !self.is_current(context.connection_revision) || guard.revision != context.connection_revision ||
-            guard.client.as_ref().is_none_or(|client| client.offline_only || client.library_scope != context.cache_scope) {
+            guard.client.as_ref().is_none_or(|client| client.library_scope != context.cache_scope) {
             return Err("Plex matching owner was superseded".into());
         }
         Ok(guard)
@@ -3035,6 +3043,19 @@ mod connection_tests {
         finish_tx.send(()).unwrap();
         assert!(tokio::task::spawn_blocking(move||work.join().unwrap()).await.unwrap().is_err());
         assert_eq!(db.0.lock().unwrap().query_row("SELECT count(*) FROM matching_rows",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    }
+
+    #[tokio::test]
+    async fn association_identity_fences_support_offline_reads_but_never_old_owners_or_remote_observations() {
+        let state=PlexState::new();let revision=state.begin_connection().await;
+        let mut client=scoped_client("https://server.test","dummy",4);client.offline_only=true;
+        let context=PlexRequestContext{connection_revision:revision,cache_scope:client.library_scope.clone()};
+        state.publish(revision,client).await.unwrap();
+        assert!(state.cache_identity_guard(&context).is_ok());
+        assert!(state.cache_commit_guard(&context).is_err());
+        state.begin_connection().await;
+        assert!(state.cache_identity_guard(&context).is_err());
+        assert!(state.cache_commit_guard(&context).is_err());
     }
 
     #[tokio::test]

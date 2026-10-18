@@ -82,6 +82,15 @@ against a user's playlists. No release tag is created by this work.
 
 ## Recorded checks
 
+Shared-resolver fixtures cover typed IDs versus generic MBIDs, non-Latin labels,
+collaboration credits, live/version and explicit/duration fences, homonyms,
+release editions and track lists, multiple Plex copies, durable proof reload,
+partial misses, late matches, row/parent changes, removals, account/scope isolation,
+bounded fallback outcomes and atomic change cursors. Batch fixtures verify
+coalescing, native payload bounds, source ownership, fallback failures and
+retirement. These are identity-only checks; no remote ratings or playlist edits
+were made. Consumer behavior remains separately tracked in #30.
+
 The #28 refresh foundation covers coalescing and overflow, late notification
 responses, missing details without deletion, rematches/reparenting/version edits,
 advertised-filter validation, day-boundary overlap, durable partial windows,
@@ -92,7 +101,16 @@ back to complete listing reconciliation; a live server's undocumented filtering
 behavior is not assumed. Association invalidation/retry remains open until the
 shared resolver and consumers in #29–#30 are connected.
 
-The compact-index foundation for #27 adds native paging/ownership, storage,
+The shared resolver's 400,000-track fixture measured **2.387 ms p50 / 2.660 ms
+p95** for a batch of 16 identities, an **11,391-byte** maximum response and
+**30.5 MiB measured process peak RSS**. All repeated batches used durable native
+proofs and made zero network requests. The updated index with relationship
+revisions and lookup indexes completed in **170.54 s** and used **435,146,752
+bytes (415.0 MiB)**. During it, **12,487** concurrent WAL reads measured **0.035 /
+0.075 ms**; the final native ownership guard measured **21.518 ms p95**. This is a
+native database/core measurement, not an end-to-end UI or audible-playback claim.
+
+The earlier compact-index foundation for #27 added native paging/ownership, storage,
 restart and cache-retention checks and a Chromium/WebKit settings check. The
 400,000-track native SQLite fixture completed a two-pass census in **121.66 s**,
 using **380,977,152 bytes (363.3 MiB)**, without loading the library into renderer
@@ -109,10 +127,10 @@ audible playback under indexing were not measured. See
 [the index contract](plex-matching-index.md) for the read-only live page sample and
 the distinction between matching metadata and full browse/offline data.
 
-- Full frontend suite: **1,220 passed**, zero failures, including the draft and
+- Full frontend suite: **1,228 passed**, zero failures, including the draft and
   mixed-playlist regression cases above.
 - Focused acceptance suite including those cases: **102 passed**, zero failures.
-- Full native suite: **829 passed**, 12 ignored; remote integration tests excluded
+- Full native suite: **852 passed**, 12 ignored; remote integration tests excluded
   (followed by the focused index/connection checks for the latest additions).
 - Native discovery parser rerun: **9 passed**, zero failures.
 - Application and script TypeScript projects pass `--noEmit`.

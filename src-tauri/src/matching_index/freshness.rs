@@ -634,7 +634,7 @@ mod tests {
         assert_eq!(
             scalar(
                 &conn,
-                "SELECT count(*) FROM matching_changes WHERE scope=?1"
+                "SELECT count(*) FROM matching_changes WHERE scope=?1 AND kind='track'"
             ),
             1
         );

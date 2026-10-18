@@ -98,6 +98,43 @@ pub async fn listing(
     modern: bool,
     filters: &[(&str, String)],
 ) -> Result<Page, String> {
+    listing_size(client, library, kind, offset, modern, filters, PAGE).await
+}
+pub async fn candidates(
+    client: &PlexClient,
+    library: i64,
+    kind: &str,
+    title: &str,
+    modern: bool,
+) -> Result<Page, String> {
+    if title.trim().is_empty() || title.len() > 512 {
+        return Err("Invalid matching search".into());
+    }
+    let page = listing_size(
+        client,
+        library,
+        kind,
+        0,
+        modern,
+        &[("title", title.to_owned())],
+        50,
+    )
+    .await?;
+    let key = row::key(title);
+    if key.is_empty() || page.rows.iter().any(|row| !row.title_key.contains(&key)) {
+        return Err("Plex did not honor its matching title filter".into());
+    }
+    Ok(page)
+}
+async fn listing_size(
+    client: &PlexClient,
+    library: i64,
+    kind: &str,
+    offset: i64,
+    modern: bool,
+    filters: &[(&str, String)],
+    size: i64,
+) -> Result<Page, String> {
     let kind_number = match kind {
         "artist" => 8,
         "album" => 9,
@@ -115,7 +152,7 @@ pub async fn listing(
         .query(&[
             ("type", kind_number.to_string()),
             ("X-Plex-Container-Start", offset.to_string()),
-            ("X-Plex-Container-Size", PAGE.to_string()),
+            ("X-Plex-Container-Size", size.to_string()),
             ("includeGuids", "1".into()),
             (
                 "excludeElements",
@@ -160,6 +197,9 @@ pub async fn listing(
         bytes,
     )?;
     page.server_time = server_time;
+    if page.rows.len() as i64 > size {
+        return Err("Plex matching response exceeded its requested bound".into());
+    }
     Ok(page)
 }
 fn request(

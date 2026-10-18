@@ -138,6 +138,10 @@ export interface MusicProvider {
   getLibraryCacheInfo?(): Promise<{ collections: number; items: number; snapshots: number; bytes: number }>
   clearLibraryCache?(): Promise<void>
   matchingIndexStatus?(): Promise<import("../matching/types").MatchingStatus>
+  matchingResolve?(sourceOwner: string, sources: import("../matching/resolverTypes").MatchingSource[], force?: boolean): Promise<import("../matching/resolverTypes").MatchingResolution[]>
+  matchingReverse?(sourceOwner: string, kind: "artist" | "album" | "track", id: number): Promise<import("../matching/resolverTypes").MatchingSource[]>
+  matchingChanges?(since: number): Promise<import("../matching/resolverTypes").MatchingChanges>
+  matchingFallback?(sourceOwner: string, source: import("../matching/resolverTypes").MatchingSource): Promise<import("../matching/resolverTypes").MatchingResolution>
   matchingIndexControl?(action: import("../matching/types").MatchingAction): Promise<import("../matching/types").MatchingStatus>
   getCachedTrackSource?(key: string, shuffle?: boolean, query?: import("../lib/pagedPlayback").CollectionOrder): Promise<import("../lib/pagedPlayback").PagedTrackSource | null>
   readonly savedQueue?: import("../lib/queueSession").SavedQueueStorage

@@ -88,6 +88,83 @@ pub fn ensure_scope(conn: &Connection, scope: &str) -> Result<()> {
     .map_err(error)?;
     Ok(())
 }
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Change {
+    pub sequence: i64,
+    pub kind: String,
+    pub id: i64,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Changes {
+    pub revision: i64,
+    pub coverage: String,
+    pub cursor: i64,
+    pub reset: bool,
+    pub changes: Vec<Change>,
+}
+pub fn changes(conn: &Connection, scope: &str, since: i64) -> Result<Changes> {
+    if since < 0 {
+        return Err("Invalid matching change cursor".into());
+    }
+    let revision: i64 = conn
+        .query_row(
+            "SELECT revision FROM matching_scopes WHERE scope=?1",
+            [scope],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(error)?
+        .unwrap_or(0);
+    let oldest: Option<i64> = conn
+        .query_row(
+            "SELECT min(sequence) FROM matching_changes WHERE scope=?1",
+            [scope],
+            |r| r.get(0),
+        )
+        .map_err(error)?;
+    let coverage:String=conn.query_row("SELECT coalesce(group_concat(value,'|'),'') FROM (SELECT kind||':'||phase||':'||generation||':'||coalesce(completed,0) AS value FROM matching_tasks WHERE scope=?1 ORDER BY kind)",[scope],|r|r.get(0)).map_err(error)?;
+    let coverage = hex::encode(Sha256::digest(coverage.as_bytes()));
+    let reset = since > revision || since < revision && oldest.is_none_or(|old| since < old - 1);
+    if reset {
+        return Ok(Changes {
+            revision,
+            coverage,
+            cursor: revision,
+            reset,
+            changes: vec![],
+        });
+    }
+    let mut query=conn.prepare("SELECT sequence,kind,id FROM matching_changes WHERE scope=?1 AND sequence>?2 ORDER BY sequence,kind,id LIMIT 201").map_err(error)?;
+    let mut changes = query
+        .query_map(params![scope, since], |r| {
+            Ok(Change {
+                sequence: r.get(0)?,
+                kind: r.get(1)?,
+                id: r.get(2)?,
+            })
+        })
+        .map_err(error)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(error)?;
+    if changes.len() > 200 {
+        let boundary = changes[200].sequence;
+        changes.truncate(200);
+        // Never split one atomic row/relationship change across cursors.
+        if changes.last().is_some_and(|last| last.sequence == boundary) {
+            changes.retain(|row| row.sequence != boundary)
+        }
+    }
+    let cursor = changes.last().map(|row| row.sequence).unwrap_or(revision);
+    Ok(Changes {
+        revision,
+        coverage,
+        cursor,
+        reset: false,
+        changes,
+    })
+}
 pub fn admit(conn: &Connection, scope: &str, epoch: i64) -> Result<()> {
     if !conn
         .query_row(
@@ -126,7 +203,13 @@ pub fn control(conn: &Connection, scope: &str, action: &str) -> Result<Status> {
                     .map_err(error)?;
                 tx.execute("DELETE FROM matching_changes WHERE scope=?1", [scope])
                     .map_err(error)?;
-                for table in ["matching_hints", "matching_health", "matching_refresh"] {
+                for table in [
+                    "matching_hints",
+                    "matching_health",
+                    "matching_refresh",
+                    "matching_associations",
+                    "matching_relationships",
+                ] {
                     tx.execute(&format!("DELETE FROM {table} WHERE scope=?1"), [scope])
                         .map_err(error)?;
                 }
@@ -171,23 +254,23 @@ pub fn current(conn: &Connection, scope: &str, task: &Task, epoch: i64) -> Resul
     Ok(())
 }
 pub fn upsert(conn: &Connection, scope: &str, row: &Row, observed: i64) -> Result<bool> {
-    let old: Option<(String, bool, i64)> = conn
+    let old: Option<(String, bool, i64,Option<i64>,Option<i64>)> = conn
         .query_row(
-            "SELECT revision,removed,observed FROM matching_rows WHERE scope=?1 AND kind=?2 AND id=?3",
+            "SELECT revision,removed,observed,artist_id,album_id FROM matching_rows WHERE scope=?1 AND kind=?2 AND id=?3",
             params![scope, row.kind, row.id],
-            |r| Ok((r.get(0)?, r.get(1)?,r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)),
         )
         .optional()
         .map_err(error)?;
     if old
         .as_ref()
-        .is_some_and(|(_, _, previous)| *previous > observed)
+        .is_some_and(|(_, _, previous, _, _)| *previous > observed)
     {
         return Ok(false);
     }
     let changed = old
         .as_ref()
-        .is_none_or(|(revision, removed, _)| *removed || revision != &row.revision);
+        .is_none_or(|(revision, removed, _, _, _)| *removed || revision != &row.revision);
     let mut evidence = serde_json::to_value(row).map_err(|_| "Invalid matching evidence")?;
     // Indexed columns carry these values already. Retain only additional typed
     // evidence in JSON, without null padding or duplicated normalized strings.
@@ -212,6 +295,18 @@ pub fn upsert(conn: &Connection, scope: &str, row: &Row, observed: i64) -> Resul
     let payload = serde_json::to_string(&evidence).map_err(|_| "Invalid matching evidence")?;
     conn.execute("INSERT INTO matching_rows(scope,kind,id,title,title_key,artist_key,artist_id,album_id,duration,evidence,revision,observed) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12) ON CONFLICT(scope,kind,id) DO UPDATE SET title=excluded.title,title_key=excluded.title_key,artist_key=excluded.artist_key,artist_id=excluded.artist_id,album_id=excluded.album_id,duration=excluded.duration,evidence=excluded.evidence,revision=excluded.revision,observed=excluded.observed,removed=0",params![scope,row.kind,row.id,row.title,row.title_key,row.artist_key,row.artist_id,row.album_id,row.duration,payload,row.revision,observed]).map_err(error)?;
     if changed {
+        if let Some((_, _, _, artist, album)) = &old {
+            for (kind, previous, current) in [
+                ("artist", *artist, row.artist_id),
+                ("album", *album, row.album_id),
+            ] {
+                if previous != current {
+                    if let Some(id) = previous {
+                        touch_relationship(conn, scope, kind, id)?;
+                    }
+                }
+            }
+        }
         conn.execute(
             "DELETE FROM matching_identifiers WHERE scope=?1 AND kind=?2 AND id=?3",
             params![scope, row.kind, row.id],
@@ -225,12 +320,37 @@ pub fn upsert(conn: &Connection, scope: &str, row: &Row, observed: i64) -> Resul
     Ok(changed)
 }
 pub fn changed_row(conn: &Connection, scope: &str, kind: &str, id: i64) -> Result<()> {
+    let (artist, album): (Option<i64>, Option<i64>) = conn
+        .query_row(
+            "SELECT artist_id,album_id FROM matching_rows WHERE scope=?1 AND kind=?2 AND id=?3",
+            params![scope, kind, id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(error)?;
+    let mut relationships = std::collections::BTreeSet::new();
+    if kind != "track" {
+        relationships.insert((kind, id));
+    }
+    if let Some(id) = artist {
+        relationships.insert(("artist", id));
+    }
+    if let Some(id) = album {
+        relationships.insert(("album", id));
+    }
+    for (kind, id) in relationships {
+        touch_relationship(conn, scope, kind, id)?;
+    }
     conn.execute(
         "UPDATE matching_scopes SET revision=revision+1 WHERE scope=?1",
         [scope],
     )
     .map_err(error)?;
-    conn.execute("INSERT INTO matching_changes(scope,sequence,kind,id) SELECT scope,revision,?2,?3 FROM matching_scopes WHERE scope=?1",params![scope,kind,id]).map_err(error)?;
+    conn.execute("INSERT OR IGNORE INTO matching_changes(scope,sequence,kind,id) SELECT scope,revision,?2,?3 FROM matching_scopes WHERE scope=?1",params![scope,kind,id]).map_err(error)?;
+    Ok(())
+}
+fn touch_relationship(conn: &Connection, scope: &str, kind: &str, id: i64) -> Result<()> {
+    conn.execute("INSERT INTO matching_relationships(scope,kind,id) VALUES(?1,?2,?3) ON CONFLICT(scope,kind,id) DO UPDATE SET revision=revision+1",params![scope,kind,id]).map_err(error)?;
+    conn.execute("INSERT OR IGNORE INTO matching_changes(scope,sequence,kind,id) SELECT scope,revision+1,?2,?3 FROM matching_scopes WHERE scope=?1",params![scope,kind,id]).map_err(error)?;
     Ok(())
 }
 #[cfg(test)]
@@ -704,6 +824,41 @@ mod tests {
         }
         transactions.sort_by(f64::total_cmp);
         latencies.sort_by(f64::total_cmp);
+        let mut resolver_times = Vec::new();
+        let mut largest_payload = 0;
+        let sources:Vec<super::super::resolver::Source>=(1..=16).map(|n|{let id=(n*379) % rows+1;serde_json::from_value(serde_json::json!({"id":format!("ytmusic:fixture-{id}"),"kind":"track","title":format!("Song {id}"),"artists":[format!("Artist {}",id%8306)],"duration":180000})).unwrap()}).collect();
+        for pass in 0..100 {
+            let tick = std::time::Instant::now();
+            let tx = conn.unchecked_transaction().unwrap();
+            let found: Vec<_> = sources
+                .iter()
+                .map(|source| {
+                    super::super::resolver::resolve(&tx, S, "benchmark", source, false).unwrap()
+                })
+                .collect();
+            tx.commit().unwrap();
+            assert!(found.iter().all(|result| result.status == "matched"));
+            if pass > 0 {
+                assert!(found.iter().all(|result| result.cached));
+            }
+            largest_payload = largest_payload.max(serde_json::to_vec(&found).unwrap().len());
+            resolver_times.push(tick.elapsed().as_secs_f64() * 1000.0);
+        }
+        resolver_times.sort_by(f64::total_cmp);
+        let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+        let peak_rss = unsafe {
+            if libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) == 0 {
+                let max = usage.assume_init().ru_maxrss as i64;
+                if cfg!(target_os = "macos") {
+                    max
+                } else {
+                    max * 1024
+                }
+            } else {
+                0
+            }
+        };
+        println!("matching_resolver_benchmark batch=16 p50_ms={:.3} p95_ms={:.3} max_response_bytes={largest_payload} peak_process_rss_bytes={peak_rss} warm_network_requests=0",resolver_times[50],resolver_times[95]);
         running.store(false, std::sync::atomic::Ordering::Relaxed);
         let mut foreground = reader.join().unwrap();
         foreground.sort_by(f64::total_cmp);
