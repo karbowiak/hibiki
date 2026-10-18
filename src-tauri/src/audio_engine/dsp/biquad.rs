@@ -54,6 +54,14 @@ pub struct BiquadFilter {
 }
 
 impl BiquadFilter {
+    /// Prepare an explicitly validated parametric filter without the legacy
+    /// tone EQ's +/-12 dB slider clamp. Never called by the audio callback.
+    pub(super) fn parametric(filter_type: BiquadType, frequency: f64, q: f64, gain_db: f64, sample_rate: u32) -> Self {
+        let mut filter = Self::new(filter_type, frequency, q, sample_rate);
+        filter.gain_db = gain_db;
+        filter.compute_coefficients();
+        filter
+    }
     /// Squared magnitude of the actual normalized filter at e^(i * omega).
     /// Used outside the audio callback when preparing EQ headroom.
     pub(super) fn response_power(&self, cos: f64, sin: f64) -> f64 {

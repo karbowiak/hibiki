@@ -8,6 +8,9 @@ pub struct Postgain {
 }
 
 impl Postgain {
+    /// The complete scene's validated gain is prepared off the callback. Its
+    /// safety attenuation may exceed the ordinary manual slider's 24 dB range.
+    pub(super) fn prepared(gain: f32) -> Self { Self { enabled: true, gain_linear: gain } }
     pub fn new() -> Self {
         Self {
             enabled: false,

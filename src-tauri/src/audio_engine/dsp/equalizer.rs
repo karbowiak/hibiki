@@ -13,6 +13,7 @@ const EQ_FREQS: [f64; NUM_BANDS] = [
     32.0, 64.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0,
 ];
 
+#[derive(Debug, Clone)]
 pub struct Equalizer {
     enabled: bool,
     filters: [BiquadFilter; NUM_BANDS],
@@ -20,6 +21,10 @@ pub struct Equalizer {
 }
 
 impl Equalizer {
+    pub(super) fn response_db(&self, frequency: f64, sample_rate: u32) -> f64 {
+        let (sin, cos) = (2.0 * std::f64::consts::PI * frequency / f64::from(sample_rate)).sin_cos();
+        self.filters.iter().map(|filter| 10.0 * filter.response_power(cos, sin).log10()).sum()
+    }
     /// Compensate the peak response of the complete cascade, including band
     /// overlap and shelf responses. Preparation runs outside the audio callback.
     pub fn auto_postgain_db(gains_db: &[f32; NUM_BANDS], sample_rate: u32) -> f32 {

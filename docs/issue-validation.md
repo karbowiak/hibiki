@@ -82,6 +82,16 @@ against a user's playlists. No release tag is created by this work.
 
 ## Recorded checks
 
+AutoEq groundwork for #34 adds strict parametric import and prepared native filter
+banks. Arbitrary peak/shelf frequency, gain and Q are retained; tone sliders keep
+their existing limits. Native checks cover original preamp, combined headroom,
+manual gain safety, disabled filters, independent channel state, explicit Nyquist
+rejection, actual PCM frequency response, smooth scene changes and superseding
+deferred updates. The complete native suite passes **869 tests** with 12 ignored
+and 73 remote integration tests excluded. Parser/edit/offline-retention checks
+pass independently. Catalogue, output binding and the correction picker remain
+in progress; this groundwork does not yet expose a completed AutoEq feature.
+
 Shared-resolver fixtures cover typed IDs versus generic MBIDs, non-Latin labels,
 collaboration credits, live/version and explicit/duration fences, homonyms,
 release editions and track lists, multiple Plex copies, durable proof reload,

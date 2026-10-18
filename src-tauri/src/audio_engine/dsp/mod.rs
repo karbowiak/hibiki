@@ -4,7 +4,9 @@
 //! Each block can be independently enabled/disabled.
 
 pub mod biquad;
+pub mod correction;
 pub mod equalizer;
+pub mod eq_scene;
 pub mod limiter;
 pub mod postgain;
 pub mod preamp;
@@ -16,6 +18,8 @@ use self::limiter::Limiter;
 use self::postgain::Postgain;
 use self::preamp::Preamp;
 use self::volume::Volume;
+use self::correction::PreparedCorrection;
+use self::eq_scene::EqScene;
 
 fn gain_from_db(db: f32) -> f32 {
     10.0_f32.powf(
@@ -45,6 +49,11 @@ pub struct DspChain {
     pub postgain: Postgain,
     pub limiter: Limiter,
     pub volume: Volume,
+    correction: PreparedCorrection,
+    previous_eq: Option<EqScene>,
+    pending_eq: Option<(EqScene, u32)>,
+    transition_frames: u32,
+    transition_remaining: u32,
 }
 
 impl DspChain {
@@ -55,6 +64,11 @@ impl DspChain {
             postgain: Postgain::new(),
             limiter: Limiter::new(sample_rate),
             volume: Volume::new(),
+            correction: PreparedCorrection::bypassed(sample_rate),
+            previous_eq: None,
+            pending_eq: None,
+            transition_frames: 0,
+            transition_remaining: 0,
         }
     }
 
@@ -67,8 +81,35 @@ impl DspChain {
             }
         }
         self.preamp.process(samples, sample_rate, channels);
-        self.equalizer.process(samples, sample_rate, channels);
-        self.postgain.process(samples, sample_rate, channels);
+        if self.transition_remaining == 0 {
+            if let Some((scene, frames)) = self.pending_eq.take() { self.apply_prepared_eq(scene, frames); }
+        }
+        if self.transition_remaining > 0 {
+            let channels_count = usize::from(channels);
+            if channels_count == 0 || channels_count > biquad::MAX_CHANNELS { samples.fill(0.0); return }
+            let complete = samples.len() / channels_count * channels_count;
+            samples[complete..].fill(0.0);
+            for frame in samples[..complete].chunks_exact_mut(channels_count) {
+                let mut before = [0.0; biquad::MAX_CHANNELS];
+                before[..channels_count].copy_from_slice(frame);
+                self.correction.process(frame, channels);
+                self.equalizer.process(frame, sample_rate, channels);
+                self.postgain.process(frame, sample_rate, channels);
+                if self.transition_remaining > 0 {
+                    if let Some(previous) = &mut self.previous_eq {
+                        previous.process(&mut before[..channels_count], sample_rate, channels);
+                        let blend = 1.0 - self.transition_remaining as f32 / self.transition_frames.max(1) as f32;
+                        for (sample, old) in frame.iter_mut().zip(before) { *sample = old + (*sample - old) * blend; }
+                    }
+                    self.transition_remaining -= 1;
+                }
+            }
+            if self.transition_remaining == 0 { self.previous_eq = None; }
+        } else {
+            self.correction.process(samples, channels);
+            self.equalizer.process(samples, sample_rate, channels);
+            self.postgain.process(samples, sample_rate, channels);
+        }
         self.limiter.process(samples, sample_rate, channels);
         self.volume.process(samples, sample_rate, channels);
     }
@@ -77,15 +118,43 @@ impl DspChain {
     pub fn set_sample_rate(&mut self, rate: u32) {
         self.equalizer.set_sample_rate(rate);
         self.limiter.set_sample_rate(rate);
+        // A configuration for another mixer rate is never reinterpreted. The
+        // control side must prepare its correction again at the new rate.
+        self.correction = PreparedCorrection::bypassed(rate);
+        self.previous_eq = None;
+        self.pending_eq = None;
+        self.transition_remaining = 0;
     }
 
     /// Reset all stateful blocks (call on seek / track change).
     pub fn reset(&mut self) {
         self.equalizer.reset();
         self.limiter.reset();
+        self.correction.reset();
+        self.previous_eq = None;
+        self.transition_remaining = 0;
     }
 
     // -- Convenience setters that match the JS engine API --
+
+    /// Adopt prepared coefficients/gains together. Mid-ramp updates retain only
+    /// the latest pending scene; restarting from a half-mixed filter would click.
+    /// Fixed arrays keep adoption, deferral and retirement allocation-free.
+    pub fn apply_prepared_eq(&mut self, scene: EqScene, transition_frames: u32) {
+        if self.transition_remaining > 0 {
+            self.pending_eq = Some((scene, transition_frames));
+            return;
+        }
+        self.pending_eq = None;
+        self.previous_eq = (transition_frames > 0).then(|| EqScene {
+            tone: self.equalizer.clone(), correction: self.correction.clone(), gain: self.postgain.current_gain(),
+        });
+        self.equalizer = scene.tone;
+        self.correction = scene.correction;
+        self.postgain = Postgain::prepared(scene.gain);
+        self.transition_frames = transition_frames;
+        self.transition_remaining = transition_frames;
+    }
 
     pub fn set_preamp_db(&mut self, db: f32) {
         self.preamp.set_gain_db(db);
@@ -113,6 +182,51 @@ impl DspChain {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn correction_scene(db: f64) -> EqScene {
+        use correction::{Filter, FilterKind, Profile};
+        EqScene::prepare([0.0;10],false,None,Some(&Profile {preamp_db:db,filters:vec![Filter {kind:FilterKind::Peak,frequency:1000.0,q:1.0,gain_db:0.0,enabled:true}]}),48000).unwrap().0
+    }
+
+    #[test]
+    fn complete_prepared_eq_changes_ramp_without_an_instant_gain_step() {
+        let mut chain = DspChain::new(48000);
+        chain.apply_prepared_eq(correction_scene(-12.0), 480);
+        let mut audio = vec![0.2;4096];
+        chain.process(&mut audio,48000,2);
+        assert!((audio[0]-0.2).abs()<1e-7);
+        let expected=0.2*10.0_f32.powf(-12.0/20.0);
+        assert!((audio[audio.len()-1]-expected).abs()<1e-7);
+        assert!(audio.chunks_exact(2).all(|frame|frame[0]==frame[1]));
+        assert!(audio.windows(3).step_by(2).all(|values|(values[2]-values[0]).abs()<0.001));
+    }
+
+    #[test]
+    fn rapid_profile_changes_finish_the_current_ramp_then_adopt_only_the_latest_snapshot() {
+        let mut chain=DspChain::new(48000);
+        chain.apply_prepared_eq(correction_scene(-6.0),480);
+        chain.process(&mut [0.2;320],48000,2);
+        chain.apply_prepared_eq(correction_scene(-12.0),480);
+        chain.apply_prepared_eq(correction_scene(-18.0),480);
+        chain.process(&mut [0.2;1280],48000,2);
+        let mut audio=[0.2;2048];chain.process(&mut audio,48000,2);
+        let expected=0.2*10.0_f32.powf(-18.0/20.0);
+        assert!((audio[audio.len()-1]-expected).abs()<1e-7);
+        assert_eq!(chain.transition_remaining,0);
+        assert!(chain.pending_eq.is_none());
+    }
+
+    #[test]
+    fn a_new_snapshot_after_a_finished_ramp_supersedes_its_previously_deferred_update() {
+        let mut chain=DspChain::new(48000);
+        chain.apply_prepared_eq(correction_scene(-6.0),80);
+        chain.apply_prepared_eq(correction_scene(-12.0),80);
+        chain.process(&mut [0.2;320],48000,2);
+        chain.apply_prepared_eq(correction_scene(-18.0),80);
+        let mut audio=[0.2;640];chain.process(&mut audio,48000,2);
+        assert!((audio[audio.len()-1]-0.2*10.0_f32.powf(-18.0/20.0)).abs()<1e-7);
+        assert!(chain.pending_eq.is_none());
+    }
 
     #[test]
     fn full_chain_passthrough_at_defaults() {
