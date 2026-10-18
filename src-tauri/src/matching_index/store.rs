@@ -559,6 +559,23 @@ mod tests {
         while !prune(conn, S, &task(conn), 0).unwrap() {}
     }
     #[test]
+    fn unnamed_identities_survive_verified_membership_and_pruning() {
+        let conn = db();
+        let unnamed = super::super::row::parse(
+            &serde_json::json!({"type":"artist","ratingKey":7,"librarySectionID":4}),
+            "artist", 4,
+        ).unwrap();
+        upsert(&conn, S, &row(9000), 0).unwrap();
+        complete(&conn, &[row(1), unnamed]);
+        assert_eq!(task(&conn).phase, "complete");
+        assert_eq!(task(&conn).count, 2);
+        let saved: (String, bool) = conn.query_row(
+            "SELECT title,removed FROM matching_rows WHERE scope=?1 AND kind='artist' AND id=7",
+            [S], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(saved, (String::new(), false));
+    }
+    #[test]
     fn interrupted_large_census_resumes_and_deletes_only_after_verified_membership() {
         let conn = db();
         upsert(&conn, S, &row(9000), 0).unwrap();

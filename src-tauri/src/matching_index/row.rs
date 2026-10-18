@@ -167,7 +167,12 @@ pub fn parse(raw: &Value, kind: &str, library: i64) -> Result<Row, String> {
     let id = number(&raw["ratingKey"])
         .filter(|id| *id > 0)
         .ok_or("Invalid Plex matching identity")?;
-    let title = text(raw, "title").ok_or("Plex matching item has no title")?;
+    // A valid library identity can have incomplete metadata (including a blank
+    // title). Keep it in the membership census instead of retrying this entire
+    // page forever. Empty matching evidence must never become an invented name.
+    let title = text(raw, "title")
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or_default();
     let artist_id = if kind == "artist" {
         Some(id)
     } else {
@@ -229,7 +234,7 @@ pub fn parse(raw: &Value, kind: &str, library: i64) -> Result<Row, String> {
     } else {
         split_credits(&name)
     };
-    if artists.is_empty() {
+    if artists.is_empty() && !title.is_empty() {
         return Err("Plex matching item lacks artist credits".into());
     }
     let mut normalized: Vec<_> = artists.iter().map(|v| key(v)).collect();
@@ -285,6 +290,37 @@ pub fn parse(raw: &Value, kind: &str, library: i64) -> Result<Row, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn untitled_identities_remain_in_the_census_without_placeholder_names() {
+        for kind in ["artist", "album", "track"] {
+            for title in [
+                Value::Null,
+                "".into(),
+                "  \n ".into(),
+                "x".repeat(4097).into(),
+            ] {
+                let mut raw = serde_json::json!({"type":kind,"ratingKey":7,
+                    "librarySectionID":4,"parentRatingKey":2,"grandparentRatingKey":1,
+                    "parentTitle":"Artist","grandparentTitle":"Artist","title":title});
+                let row = parse(&raw, kind, 4).unwrap();
+                assert_eq!(row.id, 7);
+                assert!(row.title.is_empty());
+                assert!(row.title_key.is_empty());
+                assert_eq!(
+                    row.artist_id,
+                    Some(if kind == "artist" {
+                        7
+                    } else if kind == "album" {
+                        2
+                    } else {
+                        1
+                    })
+                );
+                raw["ratingKey"] = 0.into();
+                assert!(parse(&raw, kind, 4).is_err());
+            }
+        }
+    }
     #[test]
     fn credits_follow_shared_policy_and_preserve_unicode_and_typed_ids() {
         assert_eq!(

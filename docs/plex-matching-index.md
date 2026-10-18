@@ -107,6 +107,13 @@ a unique matching release occurrence may identify the preferred copy. Automatic
 consumers never receive a selected ID for ambiguity. Returned matching rows are
 identity evidence, never playback, offline or full browse DTOs.
 
+Plex records without a usable bounded title still retain their real identities
+and census membership. They cannot become automatic matches, even through a
+typed identifier, and matching coverage for that kind remains incomplete until
+the missing evidence is refreshed. This prevents one unnamed album from stopping
+the entire index or an incomplete catalogue from proving a false absence. Type,
+library, identity and parent checks remain enforced.
+
 Saved proofs reference native rows instead of duplicating their metadata.
 Positive proofs validate row and parent-relationship revisions and relevant new
 candidates. Negative proofs expire after a minute or on coverage/content changes.

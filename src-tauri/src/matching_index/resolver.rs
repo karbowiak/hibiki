@@ -437,7 +437,9 @@ fn rank(conn: &Connection, scope: &str, source: &Source, row: Row) -> Result<Can
     let mut score = 0.0;
     let mut verified = false;
     let parent_removed=removed_parent(conn,scope,&row)?;
-    if !parent_removed && compatible(source, &row) {
+    // Untitled identities still participate in membership reconciliation, but
+    // even a typed identifier cannot verify their missing version/name evidence.
+    if !row.title_key.is_empty() && !parent_removed && compatible(source, &row) {
         if exact_id {
             score = 100.0;
             verified = true;
@@ -555,6 +557,16 @@ pub fn entries(conn:&Connection,scope:&str,kind:&str,ids:&[i64])->Result<Vec<Ent
     Ok(entries)
 }
 fn coverage(conn: &Connection, scope: &str, kind: &str) -> Result<String> {
+    // A complete membership census is not complete matching evidence when Plex
+    // has unnamed items. Use the existing scoped name index to keep this bounded
+    // and preserve remote fallback instead of declaring authoritative absence.
+    let unnamed: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM matching_rows WHERE scope=?1 AND kind=?2 AND title_key='' AND removed=0)",
+        params![scope, kind], |row| row.get(0),
+    ).map_err(error)?;
+    if unnamed {
+        return Ok("incomplete".into());
+    }
     let state:Option<(String,Option<i64>,i64)>=conn.query_row("SELECT phase,completed,coalesce((SELECT last_checked FROM matching_refresh r WHERE r.scope=t.scope AND r.kind=t.kind),0) FROM matching_tasks t WHERE scope=?1 AND kind=?2",params![scope,kind],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(error)?;
     Ok(match state {
         Some((phase, Some(at), _)) if phase == "complete" && store::now() - at < 86400000 => {
@@ -1236,6 +1248,34 @@ mod tests {
         assert_eq!(result.status, "incomplete");
         assert_eq!(result.coverage, "complete");
         assert_eq!(result.selected, None);
+    }
+    #[test]
+    fn unnamed_membership_cannot_verify_identifiers_or_authoritative_absence() {
+        let conn = db();
+        complete(&conn, "track");
+        let mut target = row("track", 7, "");
+        let identifier = Identifier { scheme: "musicbrainz:recording".into(),
+            value: "22222222-2222-4222-8222-222222222222".into() };
+        target.identifiers.push(identifier.clone());
+        put(&conn, &target);
+        let mut input = source("track", "Song");
+        input.identifiers.push(identifier);
+        let result = resolve_confirmed(&conn, S, "ytm-account", &input, true, true, false).unwrap();
+        assert_eq!(result.coverage, "incomplete");
+        assert_eq!(result.status, "incomplete");
+        assert_eq!(result.selected, None);
+        assert!(result.candidates.is_empty());
+        assert_eq!(entries(&conn, S, "track", &[7]).unwrap()[0].state, "active");
+
+        // Once a targeted refresh supplies the missing name, both coverage and
+        // the old negative proof are re-evaluated without rebuilding membership.
+        target.title = "Song".into();
+        target.title_key = "song".into();
+        put(&conn, &target);
+        let restored = lookup(&conn, &input);
+        assert!(!restored.cached);
+        assert_eq!(restored.coverage, "complete");
+        assert_eq!(restored.selected, Some(7));
     }
     #[test]
     fn version_qualifiers_in_release_labels_cannot_select_other_remixes() {
