@@ -18,6 +18,7 @@ const Playlist = lazy(() =>
   import("./Pages/Playlist").then((module) => ({ default: module.Playlist }))
 )
 const MixedPlaylist = lazy(() => import("./Pages/MixedPlaylist").then(module => ({ default: module.MixedPlaylist })))
+const ServerLibraryOverview = lazy(() => import("./Pages/ServerLibraryOverview").then(module => ({ default: module.ServerLibraryOverview })))
 const Library = lazy(() =>
   import("./Pages/Library").then((module) => ({ default: module.Library }))
 )
@@ -219,6 +220,7 @@ export function Page() {
             <Route path="/library" key="library">
               <Library />
             </Route>
+            <Route path="/server-library" key="server-library-overview"><ServerLibraryOverview /></Route>
             <Route path="/server-library/:kind" key="server-library">
               {(params: { kind?: string }) => params.kind === "artists" || params.kind === "albums" || params.kind === "songs"
                 ? <ServerLibrary kind={params.kind} /> : invalidLibraryLink}

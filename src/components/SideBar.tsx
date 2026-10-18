@@ -55,22 +55,25 @@ const LIBRARY_EXPANDED_KEY = "plex-sidebar-library-expanded"
 
 function ServerLibraryNavigation() {
   const [location] = useLocation()
-  const active = location.startsWith("/server-library/")
+  const active = location === "/server-library" || location.startsWith("/server-library/")
   const [expanded, setExpanded] = useState(() => {
     try { return active || localStorage.getItem("hibiki-server-library-expanded") === "true" } catch { return active }
   })
   useEffect(() => { if (active) setExpanded(true) }, [location, active])
   return <li>
-    <Button variant="bare" type="button" aria-expanded={expanded} aria-controls="sidebar-server-library-links"
-      onClick={() => setExpanded(previous => {
-        try { localStorage.setItem("hibiki-server-library-expanded", String(!previous)) } catch {}
-        return !previous
-      })}
-      className={clsx("shell-nav-link sidebar-nav-link flex w-full items-center gap-3 rounded-md px-3 text-left transition-colors hover:bg-accent-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
-        active ? "shell-nav-active bg-accent-tint-strong text-accent" : "text-(--text-secondary)")}>
-      <IconServer size={20} aria-hidden="true" /><span className="min-w-0 flex-1 truncate">Server Library</span>
-      <IconChevronRight size={16} className={expanded ? "rotate-90" : ""} aria-hidden="true" />
-    </Button>
+    <div className={clsx("flex items-center rounded-md", active && "shell-nav-active bg-accent-tint-strong text-accent")}>
+      <Link href="/server-library" aria-current={location === "/server-library" ? "page" : undefined}
+        className="shell-nav-link sidebar-nav-link flex min-w-0 flex-1 items-center gap-3 rounded-md px-3 text-(--text-secondary) no-underline hover:bg-accent-tint hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent">
+        <IconServer size={20} aria-hidden="true" /><span className="truncate">Server Library</span>
+      </Link>
+      <Button variant="bare" size="icon" aria-label={expanded ? "Collapse Server Library" : "Expand Server Library"}
+        aria-expanded={expanded} aria-controls="sidebar-server-library-links" onClick={() => setExpanded(previous => {
+          try { localStorage.setItem("hibiki-server-library-expanded", String(!previous)) } catch {}
+          return !previous
+        })} className="mr-1 shrink-0 rounded-md text-(--text-secondary) hover:bg-accent-tint">
+        <IconChevronRight size={16} className={expanded ? "rotate-90" : ""} aria-hidden="true" />
+      </Button>
+    </div>
     {expanded && <ul id="sidebar-server-library-links" className="sidebar-library-links mb-2 ml-8 mt-1 space-y-0.5 text-sm font-normal">
       {["Artists", "Albums", "Songs"].map(title => {
         const href = `/server-library/${title.toLowerCase()}`
