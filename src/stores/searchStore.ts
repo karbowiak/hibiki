@@ -128,7 +128,7 @@ export function createSearchStore(
       const publish = () => {
         if (!current()) return
         const results = combined()
-        set({ results, suggestions: suggest(get().suggestions, results), isSearching: remaining > 0, error: !remaining && !results.length && failures.length ? failures.join(" · ") : null })
+        set({ results, suggestions: suggest(get().suggestions, results), isSearching: remaining > 0, error: !remaining && failures.length ? failures.join(" · ") : null })
       }
       const run = async (source: string, load: () => Promise<MusicItem[]>, apply: (items: MusicItem[]) => void) => {
         try {

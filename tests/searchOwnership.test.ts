@@ -232,3 +232,14 @@ test("late providers join canonical categories and refreshed snapshots retire mi
   store.getState().setQuery("new")
   expect(store.getState().suggestions).toEqual([])
 })
+
+test("a failed supplemental provider keeps local results usable and exposes partial failure", async () => {
+  const provider = { search: async () => result("Available") } as any
+  const store = createSearchStore(() => provider, () => {}, {
+    owner: () => "account", search: async () => { throw Error("Temporarily unavailable") }, merge: mergeMusicSearchResults,
+  })
+  await store.getState().search("Query")
+  expect(store.getState().suggestions).toEqual(result("Available"))
+  expect(store.getState().isSearching).toBe(false)
+  expect(store.getState().error).toContain("Temporarily unavailable")
+})

@@ -313,6 +313,7 @@ export function SearchDropdown({
   useLayoutEffect(() => {
     const scroll = popupRef.current?.querySelector<HTMLElement>("[data-search-scroll]")
     if (scroll) scroll.scrollTop = 0
+    captureAnchor()
   }, [context, query])
 
   // Presentation is canonical; stable category and result keys retain row DOM.
@@ -334,7 +335,7 @@ export function SearchDropdown({
     >
       <div className="discovery-search-caption flex h-10 shrink-0 items-center justify-between gap-3 whitespace-nowrap">
         <span>{emptyQuery ? "A shortcut to your music" : "Search music"}</span>
-        <span role="status" className="normal-case tracking-normal font-normal">{!emptyQuery && isSearching ? "Searching…" : ""}</span>
+        <span role="status" title={error ?? undefined} className="min-w-0 truncate normal-case tracking-normal font-normal">{!emptyQuery && isSearching ? "Searching…" : !emptyQuery && error && items.length ? "Some results unavailable" : ""}</span>
       </div>
       <div data-search-scroll onScroll={captureAnchor} className="min-h-0 flex-1 overflow-y-auto overscroll-contain" style={{ overflowAnchor: "none" }}>
         {emptyQuery ? (["action", "recent", "music"] as const).map(kind => {
