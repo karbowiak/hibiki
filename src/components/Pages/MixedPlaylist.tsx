@@ -14,7 +14,8 @@ import { PageRecovery } from "../shared/PageRecovery"
 import { ArtworkImage } from "../shared/ArtworkImage"
 import { AmbientHeroBackdrop } from "../shared/MediaBackdrop"
 import type { MusicTrack } from "../../types/music"
-import { playlistSourceLabel } from "../../mixedPlaylists/model"
+import { playlistSourceLabel, playlistServices } from "../../mixedPlaylists/model"
+import { projection } from "../../mixedPlaylists/reconcile"
 import { CreatePlaylist } from "./CreatePlaylist"
 import { useDragStore } from "../../stores/dragStore"
 
@@ -43,7 +44,8 @@ export function MixedPlaylist({ id }: { id: string }) {
   const play = (track?: MusicTrack, all = sorted, index = 0) => {
     if (all.length) void playMixedPlaylist(playlist, track ? index : 0, all)
   }
-  const busy = state.running[id], pending = Object.keys(playlist.owners).length === 2 ? playlist.items.filter(row => row.match.status !== "matched") : []
+  const services = playlistServices(playlist)
+  const busy = state.running[id], pending = playlist.items.filter(row => services.some(service => !row.songs[service] || row.songs[service]?.stale))
   return <div className="media-detail-page playlist-detail-page pb-12" data-playlist-drop-target={playlist.local ? id : undefined}>
     {editing && <CreatePlaylist playlist={playlist} onClose={() => setEditing(false)} />}
     <AmbientHeroBackdrop heroRef={heroRef} />
@@ -61,6 +63,7 @@ export function MixedPlaylist({ id }: { id: string }) {
     </div>
     <div className="mx-8 mb-6 space-y-3 text-sm text-(--text-secondary)" aria-live="polite">
       <p>{error ?? playlist.message ?? "Songs are retained locally while their counterparts are matched."}</p>
+      {playlist.merge && <p>{services.map(service => `${service === "plex" ? "Plex" : "YTM"}: ${playlist.baseline[service]?.items.length ?? 0} synced / ${projection(playlist, service).length} representable`).join(" · ")} · {playlist.items.length} saved in Hibiki</p>}
       {(playlist.detailsWrite || playlist.artworkWrite) && <div className="space-y-2"><p>Review the current details on the service before retrying. For a changed Plex image, this accepts its current image.</p><Button size="md" variant="secondary" type="button" className="media-secondary" disabled={busy} onClick={() => run(state.sync(id, true))}>Review and retry details</Button></div>}
       {playlist.external?.listenbrainz.enabled && <details className="space-y-3"><summary className="cursor-pointer">ListenBrainz sync</summary>
         <p>{playlist.listenbrainz?.message ?? "Only verified recording IDs are synced. Unmatched songs stay in Hibiki."}</p>

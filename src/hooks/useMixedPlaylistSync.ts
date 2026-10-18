@@ -23,7 +23,7 @@ export function useMixedPlaylistSync() {
         if (!active) return
         matching.offer()
         const playlist = useMixedPlaylistStore.getState().playlists.filter(item => item.automatic &&
-          (item.items.length || Object.keys(item.providers).length) &&
+          (item.merge || item.items.length || Object.keys(item.providers).length) &&
           Object.entries(item.owners).every(([side, owner]) => side === "plex" ? owner === scope && (!provider?.isOffline || external && item.external?.listenbrainz.enabled && item.external.listenbrainz.automatic) : owner === account) &&
           item.items.every(row => item.owners[row.original]))
           .sort((a, b) => (checked.get(a.id) ?? 0) - (checked.get(b.id) ?? 0))[0]

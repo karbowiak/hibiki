@@ -6,6 +6,7 @@ export function projection(playlist: MixedPlaylist, service: Service) {
   const represented = new Set(playlist.items.flatMap(row => service === "plex" && row.remote.plex && row.songs.plex ? [row.songs.plex.track.id] : []))
   return playlist.items.filter(row => {
     const id = row.songs[service]?.track.id
+    if (playlist.merge && row.songs[service]?.stale && !row.remote[service]) return false
     if (!id || (service === "plex" && !row.remote.plex && (seen.has(id) || represented.has(id)))) return false
     seen.add(id)
     return true

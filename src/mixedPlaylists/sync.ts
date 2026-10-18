@@ -15,7 +15,7 @@ export async function syncMixedPlaylist(initial: MixedPlaylist, options: MixedSy
   let playlist = initial, budget = options.maxWrites ?? 10
   const services = playlistServices(playlist)
   // Empty drafts never create resources; existing lists can receive removals.
-  if (!services.length || (!playlist.items.length && !Object.keys(playlist.providers).length)) return playlist
+  if (!services.length || (!playlist.merge && !playlist.items.length && !Object.keys(playlist.providers).length)) return playlist
   const owns = () => {
     if (!options.current()) throw Error("Music accounts changed. Sync will resume when the original accounts reconnect.")
     for (const service of services) {
@@ -44,16 +44,20 @@ export async function syncMixedPlaylist(initial: MixedPlaylist, options: MixedSy
   }
   if (options.verify) playlist = await options.verify(playlist, snapshots)
   owns()
-  if (playlist.items.some(row => Object.values(row.songs).some(song => song?.stale))) {
+  if (!playlist.merge && playlist.items.some(row => Object.values(row.songs).some(song => song?.stale))) {
     return save({ ...playlist, status: "error", message: "A saved recording changed or became unavailable. Its original song and playlist position are retained. Choose Match and sync to retry." })
   }
   if (playlist.status === "conflict") return playlist
-  const reconciled = await save(reconcileRemoteChanges(playlist, snapshots))
+  // A missing catalogue recording is not permission to remove its occurrence.
+  // Pause that existing destination while other verified destinations progress.
+  const blocked = new Set(services.filter(service => playlist.items.some(row => row.songs[service]?.stale && row.remote[service])))
+  const reconciled = await save(reconcileRemoteChanges(playlist, snapshots.filter(snapshot => !blocked.has(snapshot.service))))
   if (reconciled.status === "conflict") return reconciled
   for (const service of services) {
+    if (blocked.has(service)) continue
     const adapter = options.adapters[service]!
     if (!playlist.providers[service]) {
-      if (!playlist.items.length) continue
+      if (!playlist.merge && !playlist.items.length) continue
       if (!budget) return playlist
       await save({ ...playlist, status: "syncing", write: { id: crypto.randomUUID(), kind: "create", service, afterIds: [], state: "admitted" } })
       budget--
@@ -88,9 +92,10 @@ export async function syncMixedPlaylist(initial: MixedPlaylist, options: MixedSy
     if (!sameSequence(snapshotIds(before), desired)) return playlist
     await save(bindSnapshot(playlist, before))
   }
-  const unmatched = services.length === 2 ? playlist.items.filter(row => !row.songs.plex || !row.songs.ytmusic).length : 0
+  const unmatched = playlist.items.filter(row => services.some(service => !row.songs[service] || row.songs[service]?.stale)).length
   const repeats = unsupportedPlexRepeats(playlist)
-  return save({ ...playlist, status: "ready", baselineOrder: playlist.items.map(row => row.id), baselineTitle: playlist.title,
+  return save({ ...playlist, status: blocked.size ? "error" : "ready", baselineOrder: blocked.size ? playlist.baselineOrder : playlist.items.map(row => row.id), baselineTitle: blocked.size ? playlist.baselineTitle : playlist.title,
     message: [unmatched ? `${unmatched} unmatched songs retained in Hibiki.` : services.length === 2 ? "Both playlists are up to date." : "Playlist is up to date.",
-      repeats ? `${repeats} repeated copies are retained in Hibiki and YTM; Plex cannot retain these duplicates.` : ""].filter(Boolean).join(" ") })
+      repeats ? `${repeats} repeated copies are retained in Hibiki${services.includes("ytmusic") ? " and YTM" : ""}; Plex cannot retain these duplicates.` : "",
+      blocked.size ? "A destination has unavailable saved recordings; its writes are paused until rematched. Other destinations can continue." : ""].filter(Boolean).join(" ") })
 }

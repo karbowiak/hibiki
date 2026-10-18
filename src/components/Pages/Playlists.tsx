@@ -1,3 +1,4 @@
+import { MergePlaylistsDialog } from "../PlaylistSync/MergePlaylistsDialog"
 import { Button } from "../shared/Button"
 import { useState } from "react"
 import { PlaylistSyncDialog } from "../PlaylistSync/PlaylistSyncDialog"
@@ -8,6 +9,7 @@ import { DiscoveryMore } from "../shared/DiscoveryMore"
 
 export function Playlists() {
   const [showSync, setShowSync] = useState(false)
+  const [showMerge, setShowMerge] = useState(false)
   const { playlists, youtube } = useLibraryPlaylists()
 
   const count = playlists.length
@@ -29,6 +31,7 @@ export function Playlists() {
             {count.toLocaleString()} {count === 1 ? "playlist" : "playlists"}
           </p>
         </div>
+        <div className="flex flex-wrap gap-2"><Button size="md" disabled={count < 2} onClick={() => setShowMerge(true)}>Merge playlists</Button>
         <Button
           size="md"
           variant="secondary"
@@ -37,8 +40,9 @@ export function Playlists() {
           onClick={() => setShowSync(true)}
         >
           Sync
-        </Button>
+        </Button></div>
       </div>
+      {showMerge && <MergePlaylistsDialog onClose={() => setShowMerge(false)} />}
       {showSync && <PlaylistSyncDialog onClose={() => setShowSync(false)} />}
       {/* Playlist grid */}
       <div className="px-8 pt-2">

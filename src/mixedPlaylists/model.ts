@@ -23,6 +23,8 @@ export interface MixedOccurrence {
   original: Service
   songs: Partial<Record<Service, SongReference>>
   added: AddedDate
+  /** Provenance of a copied occurrence; never a live sync relationship. */
+  copiedFrom?: { playlist: string; occurrence: string }
   remote: Partial<Record<Service, { occurrenceId: string; added?: AddedDate }>>
   match: { status: "pending" | "matched" | "missing" | "ambiguous" | "failed"; checkedAt?: number; message?: string }
 }
@@ -41,6 +43,9 @@ export interface MixedPlaylist {
   id: string
   title: string
   owners: Owners
+  /** Explicit merge destinations; source ownership must not imply a write target. */
+  destinations?: Service[]
+  merge?: { sources: { key: string; fingerprint: string; title: string }[]; duplicates: "preserve" | "verified"; reviewedAt: number }
   /** App-owned drafts remain browseable/editable independently of connections. */
   local?: true
   description?: string
@@ -78,7 +83,7 @@ export interface MixedPlaylist {
 }
 
 export const playlistServices = (playlist: MixedPlaylist): Service[] => (["plex", "ytmusic"] as const)
-  .filter(service => !!playlist.owners[service])
+  .filter(service => !!playlist.owners[service] && (!playlist.destinations || playlist.destinations.includes(service)))
 export function playlistSourceLabel(playlist: MixedPlaylist) {
   const services = playlistServices(playlist)
   return services.length === 2 ? "Plex + YTM" : services[0] === "plex" ? "Plex" : services[0] === "ytmusic" ? "YTM" : "Hibiki"

@@ -43,6 +43,8 @@ import { youtubeMusicTrack } from "../../../src/backends/ytmusic/tracks.ts"
 import { useYoutubeMusicDiscoveryStore } from "../../../src/backends/ytmusic/discovery.ts"
 import { useYoutubeMusicRatingsStore } from "../../../src/backends/ytmusic/ratings.ts"
 import { useMixedPlaylistStore } from "../../../src/stores/mixedPlaylistStore.ts"
+import { newDraft, defaultPlaylistSync } from "../../../src/mixedPlaylists/drafts.ts"
+import { mixedPlaylistRepository } from "../../../src/mixedPlaylists/repository.ts"
 import { hydratePlaylist, newOccurrence } from "../../../src/mixedPlaylists/model.ts"
 import { HoverInformation } from "../../../src/components/HoverInformation.tsx"
 import { useCatalogueStore } from "../../../src/offline/catalogueStore.ts"
@@ -542,6 +544,35 @@ async function setup() {
   }
   setHome(5)
   w.fixtureAppearance = {
+    playlistManagement: async () => {
+      youtubeArtistEnabled = true
+      useYoutubeMusicDiscoveryStore.setState({ connected: true, accountId: "fixture-youtube-owner" })
+      const draft = (id: string, title: string) => newDraft({ title, description: "Synthetic playlist for merge review", artwork: null, external: defaultPlaylistSync() }, id)
+      const first = { ...draft("mixed:merge-first", "First collection"), owners: { plex: provider.cacheScope }, automatic: false,
+        items: tracks.slice(0, 3).map(track => newOccurrence(track, 100)) }
+      const second = { ...draft("mixed:merge-second", "Second collection"), owners: { plex: provider.cacheScope }, automatic: false,
+        items: tracks.slice(2, 5).map(track => newOccurrence(track, 200)) }
+      const linked = { ...draft("mixed:badge-both", "Linked Plex and YouTube playlist with an exceptionally long title"), owners: { plex: provider.cacheScope, ytmusic: "fixture-youtube-owner" },
+        providers: { plex: { id: "badge-plex", readOnly: false }, ytmusic: { id: "VLPLbadge", readOnly: false } }, automatic: false }
+      const youtube = { ...draft("mixed:badge-youtube", "YouTube Music collection"), owners: { ytmusic: "fixture-youtube-owner" }, providers: { ytmusic: { id: "VLPLbadge2", readOnly: false } }, automatic: false }
+      for (const item of [first, second, linked, youtube]) await mixedPlaylistRepository.save(item)
+      await useMixedPlaylistStore.getState().load()
+      const remote = new Map<string, any>()
+      Object.assign(provider, {
+        createPlaylist: async (title: string) => {
+          const created = { ...playlists[0], id: `fixture-created-${remote.size}`, title, trackCount: 0 }
+          playlists.push(created); remote.set(created.id, { title, items: [] }); return created
+        },
+        mutatePlaylistOccurrence: async (id: string, _before: unknown, operation: any) => {
+          const list = remote.get(id)
+          if (operation.kind === "append") list.items.push({ ...tracks.find(track => track.id === operation.trackId), playlistItemId: `handle-${list.items.length}` })
+          else if (operation.kind === "delete") list.items.splice(operation.index, 1)
+          else list.items.splice(operation.to, 0, list.items.splice(operation.from, 1)[0])
+        },
+        getPlaylistItems: async (id: string, offset = 0, limit = 100) => ({ items: (remote.get(id)?.items ?? tracks).slice(offset, offset + limit), total: remote.get(id)?.items.length ?? tracks.length, offset }),
+        editPlaylist: async (id: string, title: string, summary: string) => { const item = playlists.find(item => item.id === id); if (item) Object.assign(item, { title, summary }) },
+      })
+    },
     drafts: {
       disconnect: () => { useProviderStore.setState({ provider: null }); useYoutubeMusicDiscoveryStore.setState({ connected: false, accountId: null }) },
       snapshot: () => useMixedPlaylistStore.getState().playlists.filter(item => item.local),

@@ -12,6 +12,7 @@ const checks = [
   "notifications",
   "virtual-collections",
   "playlist-information",
+  "playlist-management",
   "appearance",
   "device-correction",
 ]

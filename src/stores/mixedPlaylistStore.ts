@@ -16,6 +16,7 @@ import { matchingUpdateAffectsRecording } from "../matching/changes"
 import type { MatchingUpdate } from "../matching/updates"
 import { queryIndexedMusic } from "../matching/service"
 import { trackMatchingSource } from "../matching/sources"
+import { mergedDraft, readMergeSource, revalidateMerge, type MergePreview } from "../mixedPlaylists/merge"
 
 interface State {
   playlists: MixedPlaylist[]
@@ -24,6 +25,7 @@ interface State {
   running: Record<string, boolean>
   load(): Promise<void>
   createDraft(metadata: DraftMetadata, id?: string): Promise<MixedPlaylist>
+  createMerge(preview: MergePreview, metadata: DraftMetadata, id: string): Promise<MixedPlaylist>
   metadata(id: string, metadata: DraftMetadata): Promise<void>
   externalSync(id: string, options?: { recoveryId?: string; prefer?: "hibiki" | "listenbrainz"; reviewNoCreation?: boolean }): Promise<void>
   convert(alias: string): Promise<MixedPlaylist>
@@ -93,6 +95,21 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
     }
     return save(newDraft(metadata, id))
   }),
+  createMerge: (preview, metadata, id) => serial(id, async () => {
+    // This stable local ID is the admission receipt, including after restart.
+    const existing = (await mixedPlaylistRepository.load()).find(item => item.id === id)
+    if (existing) {
+      if (!existing.merge) throw Error("This playlist ID is already in use.")
+      publish(existing); return existing
+    }
+    const capture = captureMusicOwner(), adapters = mixedAdapters(capture)
+    await revalidateMerge(preview, key => readMergeSource(key, { ...capture, adapters, local: mixedPlaylistRepository.load }))
+    if (!capture.current()) throw Error("Music accounts changed. Review the merge again.")
+    const playlist = await save(mergedDraft(preview, metadata, capture.owners, id))
+    // No external resource is created until the complete merge intent is durable.
+    void get().sync(id).catch(() => {})
+    return playlist
+  }),
   metadata: (id, metadata) => serial(id, async () => {
     const value = validateDraftMetadata(metadata), playlist = await latest(id)
     if (!playlist.local) throw Error("This playlist’s metadata is managed by its source service.")
@@ -120,7 +137,7 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
   sync: (id, retry = false) => serial(id, async () => {
     const capture = captureMusicOwner()
     let playlist = await latest(id)
-    if (!playlist.items.length && !Object.keys(playlist.providers).length) return
+    if (!playlist.merge && !playlist.items.length && !Object.keys(playlist.providers).length) return
     // Only an explicit retry can bind songs added without a connected owner.
     if (playlist.local && retry) {
       const owners = { ...playlist.owners }
@@ -139,7 +156,7 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
         const checked = await verifyPlaylistIdentity(value, { provider: capture.provider, current, snapshots })
         return checked === value ? value : save(checked)
       }
-      if (!retry && !playlist.write && playlist.items.some(row => Object.values(row.songs).some(song => song?.stale))) return
+      if (!playlist.merge && !retry && !playlist.write && playlist.items.some(row => Object.values(row.songs).some(song => song?.stale))) return
       const adapters = mixedAdapters(capture)
       playlist = await syncDraftDetails(playlist, { adapters, current, save, provider: capture.provider, review: retry, settleOnly: true })
       if (playlist.status === "conflict" || playlist.write) {
@@ -155,9 +172,9 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
         playlist = batch.playlist
       }
       if (!current()) return
-      if (playlist.items.some(row => Object.values(row.songs).some(song => song?.stale))) return
+      if (!playlist.merge && playlist.items.some(row => Object.values(row.songs).some(song => song?.stale))) return
       playlist = await syncMixedPlaylist(playlist, { adapters, current, save, maxWrites: 10, verify })
-      if (playlist.items.some(row => Object.values(row.songs).some(song => song?.stale))) return
+      if (!playlist.merge && playlist.items.some(row => Object.values(row.songs).some(song => song?.stale))) return
       if (useListenBrainzStore.getState().isAuthenticated)
         playlist = await syncDraftListenBrainz(playlist, { current, save, provider: capture.provider, manual: retry, owners: capture.owners })
       await syncDraftDetails(playlist, { adapters, current, save, provider: capture.provider, review: retry })

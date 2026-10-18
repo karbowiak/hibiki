@@ -13,7 +13,7 @@ export function PlaylistSourceBadge({ playlist }: { playlist: LibraryPlaylist })
     : [playlist.youtubeMusic ? "ytmusic" as const : "plex" as const]
   return <span className="inline-flex items-center gap-1.5">
     {sources.length ? sources.map(source => <MusicSourceBadge key={source} source={source} />)
-      : <span title="Hibiki · saved on this device" className="inline-flex"><IconDeviceDesktop size={14} aria-hidden="true" /><span className="sr-only">Hibiki · saved on this device</span></span>}
+      : <span title="Hibiki · saved on this device" className="inline-flex text-white"><IconDeviceDesktop size={14} aria-hidden="true" /><span className="sr-only">Hibiki · saved on this device</span></span>}
   </span>
 }
 
