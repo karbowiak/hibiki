@@ -1,3 +1,4 @@
+import { Button } from "../shared/Button"
 import { collectionPlaybackSource, selectCollectionTrack } from "../../lib/collectionPlayback"
 import { getSelection, subscribeSelection } from "../../lib/mixSelection"
 import { mixPlaybackSource, orderMixTracks, shuffleTracks } from "../../lib/mixOrder"
@@ -259,7 +260,8 @@ export function MixPage() {
 
               <div className="relative z-20 flex items-center gap-3">
                 {/* Play in listed order */}
-                <button
+                <Button
+                  variant="bare"
                   onClick={handlePlayInOrder}
                   disabled={tracks.length === 0}
                   title="Play in order"
@@ -273,10 +275,11 @@ export function MixPage() {
                   >
                     <polygon points="3,2 13,8 3,14" />
                   </svg>
-                </button>
+                </Button>
 
                 {/* Shuffle the fetched track list */}
-                <button
+                <Button
+                  variant="bare"
                   onClick={handlePlayShuffled}
                   disabled={tracks.length === 0}
                   title="Shuffle play"
@@ -290,7 +293,7 @@ export function MixPage() {
                   >
                     <path d="M13.151.922a.75.75 0 1 0-1.06 1.06L13.109 3H11.16a3.75 3.75 0 0 0-2.873 1.34l-6.173 7.356A2.25 2.25 0 0 1 .39 12.5H0V14h.391a3.75 3.75 0 0 0 2.873-1.34l6.173-7.356A2.25 2.25 0 0 1 11.16 4.5h1.949l-1.018 1.018a.75.75 0 0 0 1.06 1.06L15.98 3.75 13.15.922zM.391 3.5H0V2h.391c1.109 0 2.16.49 2.873 1.34L4.89 5.277l-.979 1.167-1.796-2.14A2.25 2.25 0 0 0 .39 3.5zm9.831 8.17l.979 1.167.28.334A3.75 3.75 0 0 0 14.36 14.5h1.64V13h-1.64a2.25 2.25 0 0 1-1.726-.83l-.28-.335-1.733-2.063-.979 1.167 1.18 1.731z" />
                   </svg>
-                </button>
+                </Button>
               </div>
             </div>
           </div>
@@ -303,12 +306,13 @@ export function MixPage() {
           className="mx-8 my-4 rounded-lg border border-red-400/30 p-4 text-sm text-red-400"
         >
           <p>Could not load this mix.</p>
-          <button
+          <Button
+            variant="bare"
             onClick={() => page.retry()}
             className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white"
           >
             Try again
-          </button>
+          </Button>
         </div>
       ) : (
         <TrackTable

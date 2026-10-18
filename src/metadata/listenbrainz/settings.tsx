@@ -1,3 +1,5 @@
+import { Switch } from "../../components/shared/Checkbox"
+import { Button } from "../../components/shared/Button"
 import { useState } from "react"
 import { openUrl as open } from "@tauri-apps/plugin-opener"
 import { useListenBrainzStore } from "./authStore"
@@ -44,12 +46,13 @@ export function ListenBrainzSettings() {
           <div className="space-y-4">
             <p className="text-sm text-white/50">
               Connect your ListenBrainz account to enable scrobbling.{" "}
-              <button
+              <Button
+                variant="bare"
                 className="text-accent/80 hover:text-accent underline-offset-2 hover:underline"
                 onClick={() => void open("https://listenbrainz.org/settings/")}
               >
                 Get your user token
-              </button>
+              </Button>
             </p>
             <div>
               <label className="mb-1.5 block text-xs font-medium text-white/50">User Token</label>
@@ -63,13 +66,14 @@ export function ListenBrainzSettings() {
               />
             </div>
             {error && <p className="text-sm text-red-400">{error}</p>}
-            <button
+            <Button
+              variant="primary"
               onClick={() => void handleSave()}
               disabled={isSaving || !token.trim()}
-              className="rounded-lg bg-accent/80 hover:bg-accent px-4 py-2 text-sm font-medium text-white transition-colors disabled:opacity-50"
+              className="rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50"
             >
               {isSaving ? "Validating..." : "Save Token"}
-            </button>
+            </Button>
           </div>
         ) : (
           <div className="space-y-4">
@@ -88,28 +92,16 @@ export function ListenBrainzSettings() {
                 <p className="text-sm font-medium text-white">Scrobbling</p>
                 <p className="text-xs text-white/40">Report what you're listening to ListenBrainz</p>
               </div>
-              <button
-                onClick={() => void setEnabled(!isEnabled)}
-                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                  isEnabled ? "bg-accent" : "bg-white/20"
-                }`}
-                role="switch"
-                aria-checked={isEnabled}
-              >
-                <span
-                  className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                    isEnabled ? "translate-x-4" : "translate-x-0"
-                  }`}
-                />
-              </button>
+              <Switch aria-label="Scrobbling" checked={isEnabled}  onChange={() => void setEnabled(!isEnabled)} />
             </div>
 
-            <button
+            <Button
+              variant="bare"
               onClick={() => void disconnect()}
               className="text-sm text-red-400 hover:text-red-300 transition-colors"
             >
               Disconnect
-            </button>
+            </Button>
           </div>
         )}
       </div>
@@ -126,13 +118,14 @@ export function ListenBrainzSettings() {
             <span className="text-sm font-medium text-white tabular-nums">{mbidRecordings}</span>
           </div>
         </div>
-        <button
+        <Button
+          variant="secondary"
           onClick={handleClearMbids}
           disabled={clearing || mbidRecordings === 0}
-          className="mt-2 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 hover:border-white/20 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className="mt-2 rounded-lg border border-white/10 px-3 py-1.5 text-xs hover:border-white/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {clearing ? "Cleared" : "Clear Cache"}
-        </button>
+        </Button>
       </div>
     </div>
   )

@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { useEffect, useState } from "react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 
@@ -28,17 +29,19 @@ export function WindowTitleBar() {
       {/* Window controls */}
       <div className="flex h-full">
         {/* Minimize */}
-        <button
+        <Button
+          variant="bare"
           onClick={() => void win.minimize()}
           className="flex h-full w-11 items-center justify-center text-white/70 hover:bg-white/10"
         >
           <svg width="10" height="1" viewBox="0 0 10 1">
             <rect width="10" height="1" fill="currentColor" />
           </svg>
-        </button>
+        </Button>
 
         {/* Maximize / Restore */}
-        <button
+        <Button
+          variant="bare"
           onClick={() => void win.toggleMaximize()}
           className="flex h-full w-11 items-center justify-center text-white/70 hover:bg-white/10"
         >
@@ -58,17 +61,18 @@ export function WindowTitleBar() {
               <rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1" />
             </svg>
           )}
-        </button>
+        </Button>
 
         {/* Close */}
-        <button
+        <Button
+          variant="bare"
           onClick={() => void win.close()}
           className="flex h-full w-11 items-center justify-center text-white/70 hover:bg-red-600 hover:text-white"
         >
           <svg width="10" height="10" viewBox="0 0 10 10">
             <path stroke="currentColor" strokeWidth="1.2" d="M1 1l8 8M9 1l-8 8" />
           </svg>
-        </button>
+        </Button>
       </div>
     </div>
   )

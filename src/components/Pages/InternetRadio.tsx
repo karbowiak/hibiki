@@ -1,3 +1,4 @@
+import { Button } from "../shared/Button"
 import { buildExternalImageUrl } from "../../lib/imageUrl"
 import { radioDirectoryErrorHint } from "../../lib/radioDirectoryError"
 import { AudioBrowseCard } from "../shared/AudioBrowseCard"
@@ -227,12 +228,13 @@ function RadioLoadError({
           {hint}
         </p>
       )}
-      <button
+      <Button
+        variant="bare"
         onClick={retry}
         className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white"
       >
         Try again
-      </button>
+      </Button>
     </div>
   )
 }
@@ -333,7 +335,8 @@ export function InternetRadioPage() {
             className="broadcast-input"
           />
           {searchQuery && (
-            <button
+            <Button
+              variant="bare"
               aria-label="Clear radio search"
               onClick={() => setSearchQuery("")}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-(--text-muted) hover:text-(--text-secondary)"
@@ -346,7 +349,7 @@ export function InternetRadioPage() {
               >
                 <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
               </svg>
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -387,7 +390,8 @@ export function InternetRadioPage() {
           {/* Tab bar */}
           <div className="broadcast-tabs">
             {TABS.map((t) => (
-              <button
+              <Button
+                variant="bare"
                 key={t.key}
                 aria-pressed={tab === t.key}
                 onClick={() => setTab(t.key)}
@@ -404,7 +408,7 @@ export function InternetRadioPage() {
                     ({favorites.length})
                   </span>
                 )}
-              </button>
+              </Button>
             ))}
           </div>
 
@@ -500,12 +504,13 @@ export function InternetRadioPage() {
               ) : (
                 <>
                   <div className="mb-3 flex justify-end">
-                    <button
+                    <Button
+                      variant="bare"
                       onClick={clearRecent}
                       className="text-xs text-(--text-muted) transition-colors hover:text-(--text-secondary)"
                     >
                       Clear history
-                    </button>
+                    </Button>
                   </div>
                   <MediaGrid>
                     {recentStations.map((s) => (
@@ -521,7 +526,8 @@ export function InternetRadioPage() {
             <div>
               {selectedCountry ? (
                 <>
-                  <button
+                  <Button
+                    variant="bare"
                     onClick={() => {
                       setSelectedCountry(null)
                     }}
@@ -536,7 +542,7 @@ export function InternetRadioPage() {
                       <path d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z" />
                     </svg>
                     Back to countries
-                  </button>
+                  </Button>
                   <h3 className="mb-4 text-lg font-bold text-white">
                     {selectedCountry}
                   </h3>
@@ -584,7 +590,8 @@ export function InternetRadioPage() {
               ) : (
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
                   {countries.slice(0, 60).map((c) => (
-                    <button
+                    <Button
+                      variant="bare"
                       key={c.code || c.name}
                       onClick={() => setSelectedCountry(c.name)}
                       className="bg-app-surface/30 hover:bg-app-surface/60 flex items-center gap-2 rounded-lg p-3 text-left transition-colors"
@@ -598,7 +605,7 @@ export function InternetRadioPage() {
                           {c.station_count.toLocaleString()} stations
                         </p>
                       </div>
-                    </button>
+                    </Button>
                   ))}
                 </div>
               )}
@@ -609,7 +616,8 @@ export function InternetRadioPage() {
             <div>
               {selectedTag ? (
                 <>
-                  <button
+                  <Button
+                    variant="bare"
                     onClick={() => {
                       setSelectedTag(null)
                     }}
@@ -624,7 +632,7 @@ export function InternetRadioPage() {
                       <path d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z" />
                     </svg>
                     Back to genres
-                  </button>
+                  </Button>
                   <h3 className="mb-4 text-lg font-bold capitalize text-white">
                     {selectedTag}
                   </h3>
@@ -672,7 +680,8 @@ export function InternetRadioPage() {
               ) : (
                 <div className="flex flex-wrap gap-2">
                   {tags.map((t) => (
-                    <button
+                    <Button
+                      variant="bare"
                       key={t.name}
                       onClick={() => setSelectedTag(t.name)}
                       className="broadcast-pill"
@@ -681,7 +690,7 @@ export function InternetRadioPage() {
                       <span className="ml-1.5 text-xs text-(--text-muted)">
                         {t.station_count.toLocaleString()}
                       </span>
-                    </button>
+                    </Button>
                   ))}
                 </div>
               )}

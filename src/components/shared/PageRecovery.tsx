@@ -1,3 +1,4 @@
+import { Button } from "./Button"
 import { useId } from "react"
 
 export type PageRecoveryProps = {
@@ -41,7 +42,8 @@ export function PageRecovery({
       {(onRetry || onOpenSettings || onReturnLibrary) && (
         <div className="mt-4 flex flex-wrap gap-2">
           {onRetry && (
-            <button
+            <Button
+              variant="bare"
               type="button"
               className={actionClass}
               onClick={() => {
@@ -49,25 +51,27 @@ export function PageRecovery({
               }}
             >
               Try again
-            </button>
+            </Button>
           )}
           {onOpenSettings && (
-            <button
+            <Button
+              variant="bare"
               type="button"
               className={actionClass}
               onClick={onOpenSettings}
             >
               Open Settings
-            </button>
+            </Button>
           )}
           {onReturnLibrary && (
-            <button
+            <Button
+              variant="bare"
               type="button"
               className={actionClass}
               onClick={onReturnLibrary}
             >
               Return to Library
-            </button>
+            </Button>
           )}
         </div>
       )}

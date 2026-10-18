@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { IconPhoto, IconPlayerPause, IconPlayerPlay } from "@tabler/icons-react"
 import { useAmbientArtworkControls } from "../lib/ambientArtworkContext"
 export function AmbientArtworkControls() {
@@ -9,7 +10,8 @@ export function AmbientArtworkControls() {
       aria-label="Background artwork"
       className="flex items-center gap-1"
     >
-      <button
+      <Button
+        variant="bare"
         type="button"
         onClick={togglePaused}
         aria-label={
@@ -28,8 +30,9 @@ export function AmbientArtworkControls() {
         ) : (
           <IconPlayerPause size={14} aria-hidden="true" />
         )}
-      </button>
-      <button
+      </Button>
+      <Button
+        variant="bare"
         type="button"
         onClick={next}
         aria-label="Next background image"
@@ -37,7 +40,7 @@ export function AmbientArtworkControls() {
         className="topbar-control topbar-icon-control shell-control-secondary flex items-center justify-center rounded-full"
       >
         <IconPhoto size={16} aria-hidden="true" />
-      </button>
+      </Button>
     </div>
   )
 }

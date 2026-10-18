@@ -1,3 +1,5 @@
+import { Checkbox } from "../shared/Checkbox"
+import { Button } from "../shared/Button"
 import { useEffect, useId, useState } from "react"
 import { useTheAudioDbStore } from "../../metadata/theaudiodb/store"
 export function TheAudioDbSettings({ embedded = false }: { embedded?: boolean } = {}) {
@@ -47,8 +49,7 @@ export function TheAudioDbSettings({ embedded = false }: { embedded?: boolean } 
           className="rounded-lg border border-(--border) bg-app-bg px-3 py-2"
         />
         <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={enabled}
             disabled={loading}
             onChange={(event) => setEnabled(event.target.checked)}
@@ -74,22 +75,24 @@ export function TheAudioDbSettings({ embedded = false }: { embedded?: boolean } 
           </p>
         )}
         <div className="flex flex-wrap gap-2">
-          <button
+          <Button type="submit" variant="primary"
             disabled={loading || !status}
-            className="rounded-lg bg-accent px-3 py-2 text-sm text-(--artwork-ink,var(--accent-foreground,#111)) disabled:opacity-50"
+            className="rounded-lg px-3 py-2 text-sm text-(--artwork-ink,var(--accent-foreground,#111)) disabled:opacity-50"
           >
             Save settings
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="secondary"
             type="button"
             disabled={loading}
             onClick={() => void load()}
             className="rounded-lg border border-(--border) px-3 py-2 text-sm"
           >
             Reload settings
-          </button>
+          </Button>
           {status?.hasApiKey && (
-            <button
+            <Button
+              variant="secondary"
               type="button"
               disabled={loading}
               onClick={async () => {
@@ -98,7 +101,7 @@ export function TheAudioDbSettings({ embedded = false }: { embedded?: boolean } 
               className="rounded-lg border border-(--border) px-3 py-2 text-sm"
             >
               Clear saved key
-            </button>
+            </Button>
           )}
         </div>
       </form>

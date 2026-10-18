@@ -1,3 +1,4 @@
+import { Button } from "../shared/Button"
 import "../../styles/broadcast.css"
 import { PageLoading } from "../shared/PageLoading"
 import { PageRecovery } from "../shared/PageRecovery"
@@ -184,12 +185,13 @@ export function PodcastDetailPage({ feedUrl }: { feedUrl: string }) {
                   {podcast.description}
                 </p>
                 {podcast.description.length > 120 && (
-                  <button
+                  <Button
+                    variant="bare"
                     onClick={() => setDescExpanded(!descExpanded)}
                     className="mt-1 text-xs font-medium text-(--text-secondary) hover:text-white/90"
                   >
                     {descExpanded ? "Show less" : "Show more"}
-                  </button>
+                  </Button>
                 )}
               </div>
             )}
@@ -210,7 +212,8 @@ export function PodcastDetailPage({ feedUrl }: { feedUrl: string }) {
 
             {/* Action buttons */}
             <div className="broadcast-detail__actions">
-              <button
+              <Button
+                variant="bare"
                 aria-label={`Play ${podcast.title}`}
                 onClick={handlePlayAll}
                 disabled={playableEpisodes.length === 0}
@@ -224,8 +227,9 @@ export function PodcastDetailPage({ feedUrl }: { feedUrl: string }) {
                 >
                   <polygon points="3,2 13,8 3,14" />
                 </svg>
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="bare"
                 onClick={handleSubscribe}
                 aria-pressed={subscribed}
                 className={`broadcast-secondary rounded-full border px-5 py-1.5 text-sm font-semibold transition-colors ${
@@ -235,7 +239,7 @@ export function PodcastDetailPage({ feedUrl }: { feedUrl: string }) {
                 }`}
               >
                 {subscribed ? "Subscribed" : "Subscribe"}
-              </button>
+              </Button>
             </div>
 
             <p className="mt-3 text-xs text-(--text-muted)">

@@ -1,3 +1,5 @@
+import { DropdownSurface } from "./shared/DropdownSurface"
+import { Button } from "./shared/Button"
 import { ArtistCredits } from "./shared/ArtistCredits"
 import { MusicEntityLink } from "./shared/MusicEntityLink"
 import { trackEntity } from "../lib/musicLinks"
@@ -300,7 +302,7 @@ export function SearchDropdown({
     groups.at(-1)!.rows.push({ row, index })
   })
   return (
-    <div
+    <DropdownSurface
       ref={popupRef}
       id={id}
       role="listbox"
@@ -338,7 +340,7 @@ export function SearchDropdown({
         }) : items.length === 0 ? error ? (
           <div role="alert" className="p-3 text-sm text-red-400">
             <p>Search failed: {error}</p>
-            <button type="button" onMouseDown={event => event.preventDefault()} onClick={() => void search(query)} className="mt-2 rounded-md bg-app-surface px-3 py-2 text-(--text-primary)">Try again</button>
+            <Button variant="secondary" type="button" onMouseDown={event => event.preventDefault()} onClick={() => void search(query)} className="mt-2 rounded-md bg-app-surface px-3 py-2 text-(--text-primary)">Try again</Button>
           </div>
         ) : !isSearching && <p role="status" className="px-3 py-3 text-sm text-(--text-secondary)">No results for “{query}”.</p> : groups.map(({ kind, rows }) => {
           const label = kind === "artist" ? "Artists" : kind === "album" ? "Albums" : kind === "playlist" ? "Playlists" : "Tracks"
@@ -375,6 +377,6 @@ export function SearchDropdown({
       <div className="discovery-search-hints shrink-0" aria-hidden="true">
         <span><kbd>↑ ↓</kbd> move</span><span><kbd>Enter</kbd> open</span><span><kbd>Esc</kbd> close</span>
       </div>
-    </div>
+    </DropdownSurface>
   )
 }

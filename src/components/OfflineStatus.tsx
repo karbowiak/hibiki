@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { useEffect } from "react"
 import { useLocation } from "wouter"
 import { useOfflineStatusStore } from "../offline/statusStore"
@@ -52,13 +53,14 @@ export function PlexOfflineBanner() {
           music. Library and playlist changes are disabled until you reconnect.
         </p>
       </div>
-      <button
+      <Button
+        variant="bare"
         type="button"
         onClick={() => navigate("/settings/plex")}
         className="shrink-0 rounded-lg border border-amber-200/30 px-3 py-2 text-sm font-medium transition-colors hover:bg-amber-100/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-200"
       >
         Reconnect
-      </button>
+      </Button>
     </aside>
   )
 }

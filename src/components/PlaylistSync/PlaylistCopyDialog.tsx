@@ -1,3 +1,5 @@
+import { Button } from "../shared/Button"
+import { Checkbox } from "../shared/Checkbox"
 import { useEffect, useRef, useState } from "react"
 import { openUrl as open } from "@tauri-apps/plugin-opener"
 import { useProviderStore } from "../../stores/providerStore"
@@ -346,15 +348,17 @@ export function PlaylistCopyDialog({
       footer={
         <>
           {unretained ? (
-            <button
+            <Button
+              variant="secondary"
               className={button}
               disabled={committing || resolving}
               onClick={() => void retain()}
             >
               Retry saving receipt
-            </button>
+            </Button>
           ) : !result && plan ? (
-            <button
+            <Button
+              variant="secondary"
               className={button}
               disabled={
                 loading ||
@@ -373,7 +377,7 @@ export function PlaylistCopyDialog({
                 : mode === "import"
                   ? "Import this copy"
                   : "Export this private copy"}
-            </button>
+            </Button>
           ) : null}
         </>
       }
@@ -401,12 +405,13 @@ export function PlaylistCopyDialog({
         >
           <p>{error}</p>
           {!committing && !unretained && !result && (
-            <button
+            <Button
+              variant="secondary"
               className={`${button} mt-2`}
               onClick={() => setRetry((value) => value + 1)}
             >
               Retry preview
-            </button>
+            </Button>
           )}
         </div>
       )}
@@ -428,12 +433,13 @@ export function PlaylistCopyDialog({
           <ul className="space-y-2">
             {choices.map((choice) => (
               <li key={choice.id}>
-                <button
+                <Button
+                  variant="secondary"
                   className={`${button} w-full text-left`}
                   onClick={() => void choose(choice.id)}
                 >
                   {choice.title}
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
@@ -441,21 +447,23 @@ export function PlaylistCopyDialog({
             <p>No ListenBrainz playlists on this page.</p>
           )}
           <div className="mt-4 flex items-center gap-3">
-            <button
+            <Button
+              variant="secondary"
               className={button}
               disabled={page === 0}
               onClick={() => setPage((value) => value - 1)}
             >
               Previous page
-            </button>
+            </Button>
             <span className="text-sm">Page {page + 1}</span>
-            <button
+            <Button
+              variant="secondary"
               className={button}
               disabled={(page + 1) * 50 >= total}
               onClick={() => setPage((value) => value + 1)}
             >
               Next page
-            </button>
+            </Button>
           </div>
         </>
       )}
@@ -680,15 +688,15 @@ export function OccurrenceResolver({
             </a>
           )}
           <label className="flex items-start gap-2 text-sm">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={confirmed}
               disabled={!canonical}
               onChange={(event) => setConfirmed(event.target.checked)}
             />
             I checked this recording’s artist and title.
           </label>
-          <button
+          <Button
+            variant="secondary"
             className={button}
             disabled={!canonical || !confirmed}
             onClick={() =>
@@ -696,7 +704,7 @@ export function OccurrenceResolver({
             }
           >
             Use verified recording for occurrence {index + 1}
-          </button>
+          </Button>
         </div>
       )}
       {!disabled && mode === "import" && (
@@ -719,7 +727,8 @@ export function OccurrenceResolver({
                 }}
               />
             </label>
-            <button
+            <Button
+              variant="secondary"
               className={`${button} self-end`}
               disabled={
                 busy ||
@@ -729,7 +738,7 @@ export function OccurrenceResolver({
               onClick={() => void search()}
             >
               {busy ? "Searching…" : "Search library"}
-            </button>
+            </Button>
           </div>
           <p className="mt-2 text-xs text-(--text-secondary)">
             Use * for several characters or ? for one character to narrow names.
@@ -740,7 +749,8 @@ export function OccurrenceResolver({
             <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto">
               {candidates.map((candidate) => (
                 <li key={candidate.id}>
-                  <button
+                  <Button
+                    variant="secondary"
                     className={`${button} w-full text-left`}
                     onClick={() => onResolve(candidate)}
                   >
@@ -749,7 +759,7 @@ export function OccurrenceResolver({
                     {candidate.durationMs
                       ? ` · ${Math.round(candidate.durationMs / 1000)}s`
                       : ""}
-                  </button>
+                  </Button>
                 </li>
               ))}
             </ul>

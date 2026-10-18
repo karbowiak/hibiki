@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { useId, useRef, useState, useEffect } from "react"
 import { usePlaybackDiagnostics } from "../hooks/usePlaybackDiagnostics"
 import { usePlayerStore } from "../stores/playerStore"
@@ -303,13 +304,13 @@ export default function PlaybackDiagnostics() {
           Render time samples engine work, not device latency. Graphs retain 30
           seconds while this panel is visible.
         </p>
-        <button type="button" className="track-info-copy" onClick={copy}>
+        <Button variant="bare" type="button" className="track-info-copy" onClick={copy}>
           {copyState === "copied"
             ? "Copied"
             : copyState === "failed"
               ? "Retry copy"
               : "Copy diagnostics"}
-        </button>
+        </Button>
       </div>
     </div>
   )

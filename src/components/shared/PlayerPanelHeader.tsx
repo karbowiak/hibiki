@@ -1,3 +1,4 @@
+import { Button } from "./Button"
 import type { ReactNode } from "react"
 import { IconX } from "@tabler/icons-react"
 
@@ -15,10 +16,10 @@ export function PlayerPanelHeader({ title, subtitle, actions, onClose }: {
       </div>
       <div className="player-panel-header-actions">
         {actions}
-        <button type="button" onClick={onClose} className="player-panel-icon"
+        <Button variant="bare" type="button" onClick={onClose} className="player-panel-icon"
           aria-label={`Close ${title}`} title="Close">
           <IconX size={16} aria-hidden="true" />
-        </button>
+        </Button>
       </div>
     </header>
   )

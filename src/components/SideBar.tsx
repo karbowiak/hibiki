@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { youtubeMusicContext } from "../backends/ytmusic/contextActions"
 import "../styles/shellArtwork.css"
 import "../styles/sidebar.css"
@@ -60,7 +61,7 @@ function ServerLibraryNavigation() {
   })
   useEffect(() => { if (active) setExpanded(true) }, [location, active])
   return <li>
-    <button type="button" aria-expanded={expanded} aria-controls="sidebar-server-library-links"
+    <Button variant="bare" type="button" aria-expanded={expanded} aria-controls="sidebar-server-library-links"
       onClick={() => setExpanded(previous => {
         try { localStorage.setItem("hibiki-server-library-expanded", String(!previous)) } catch {}
         return !previous
@@ -69,7 +70,7 @@ function ServerLibraryNavigation() {
         active ? "shell-nav-active bg-accent-tint-strong text-accent" : "text-(--text-secondary)")}>
       <IconServer size={20} aria-hidden="true" /><span className="min-w-0 flex-1 truncate">Server Library</span>
       <IconChevronRight size={16} className={expanded ? "rotate-90" : ""} aria-hidden="true" />
-    </button>
+    </Button>
     {expanded && <ul id="sidebar-server-library-links" className="sidebar-library-links mb-2 ml-8 mt-1 space-y-0.5 text-sm font-normal">
       {["Artists", "Albums", "Songs"].map(title => {
         const href = `/server-library/${title.toLowerCase()}`
@@ -203,7 +204,8 @@ function SortablePlaylistItem({
               draggable={false}
             />
           )}
-          <button
+          <Button
+            variant="bare"
             onClick={(e) => {
               e.preventDefault()
               e.stopPropagation()
@@ -222,7 +224,7 @@ function SortablePlaylistItem({
             <svg viewBox="0 0 16 16" width="16" height="16" fill="white">
               <polygon points="3,2 13,8 3,14" />
             </svg>
-          </button>
+          </Button>
         </div>
         <span
           title={playlist.title}
@@ -504,7 +506,8 @@ export function SideBar({
                     <span className="truncate">{i.title}</span>
                   </Link>
                   {i.href === "/library" && (
-                    <button
+                    <Button
+                      variant="bare"
                       aria-label={
                         libraryExpanded ? "Collapse library" : "Expand library"
                       }
@@ -536,7 +539,7 @@ export function SideBar({
                       >
                         <path d="M6 3l5 5-5 5z" />
                       </svg>
-                    </button>
+                    </Button>
                   )}
                 </div>
                 {i.href === "/library" && libraryExpanded && (
@@ -571,7 +574,8 @@ export function SideBar({
       </ul>
 
       <div className="sidebar-create-wrap shrink-0 pb-1 pt-4 text-sm font-medium">
-        <button
+        <Button
+          variant="bare"
           onClick={onCreatePlaylist}
           style={
             { "--playlist-create-accent": savedAccent } as React.CSSProperties
@@ -590,7 +594,7 @@ export function SideBar({
             </svg>
           </span>
           <span>Create Playlist</span>
-        </button>
+        </Button>
       </div>
 
       <div className="sidebar-playlists-heading">
@@ -650,8 +654,8 @@ export function SideBar({
                 />
               )}
               {youtubePlaylists.connected && (youtubePlaylists.more || youtubePlaylists.error) && <li>
-                <button type="button" disabled={youtubePlaylists.loading} onClick={() => void (youtubePlaylists.error ? youtubePlaylists.retry() : youtubePlaylists.loadMore())}
-                  className="px-3 py-2 text-xs text-(--text-secondary)">{youtubePlaylists.error ? "Retry YTM playlists" : youtubePlaylists.loading ? "Loading YTM playlists…" : "More YTM playlists"}</button>
+                <Button variant="bare" type="button" disabled={youtubePlaylists.loading} onClick={() => void (youtubePlaylists.error ? youtubePlaylists.retry() : youtubePlaylists.loadMore())}
+                  className="px-3 py-2 text-xs text-(--text-secondary)">{youtubePlaylists.error ? "Retry YTM playlists" : youtubePlaylists.loading ? "Loading YTM playlists…" : "More YTM playlists"}</Button>
               </li>}
             </ul>
           </SortableContext>

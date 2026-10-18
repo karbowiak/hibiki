@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import "../styles/shellArtwork.css"
 import { useArtworkAppearanceStore } from "../stores/artworkAppearanceStore"
 import { useEffect, useMemo, useRef, useState } from "react"
@@ -42,7 +43,8 @@ function LyricsOffsetBar({ hidden }: { hidden?: boolean }) {
         onChange={e => setOffset(parseInt(e.target.value, 10))}
         className="flex-1 range-styled accent-(--accent) cursor-pointer"
       />
-      <button
+      <Button
+        variant="bare"
         onClick={resetOffset}
         onDoubleClick={resetOffset}
         title="Reset lyrics timing offset"
@@ -54,7 +56,7 @@ function LyricsOffsetBar({ hidden }: { hidden?: boolean }) {
         }`}
       >
         {formatOffset(offsetMs)}
-      </button>
+      </Button>
     </div>
   )
 }
@@ -85,7 +87,8 @@ function LyricsSourceSelector() {
     <div className="shrink-0 border-b border-(--border) px-4 py-2">
       <div className="flex items-center gap-1.5 flex-wrap">
         {sources.map(source => (
-          <button
+          <Button
+            variant="bare"
             key={source.id}
             onClick={() => selectSource(source.id)}
             className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
@@ -96,7 +99,7 @@ function LyricsSourceSelector() {
           >
             {source.label}
             {!source.isSynced && <span className="ml-1 opacity-50">(plain)</span>}
-          </button>
+          </Button>
         ))}
         {isSearching && (
           <span className="text-xs text-(--text-muted) animate-pulse">Searching Genius...</span>
@@ -105,19 +108,21 @@ function LyricsSourceSelector() {
           <span className="text-xs text-(--text-muted) animate-pulse">Loading lyrics...</span>
         )}
         {unloadedHits.length > 0 && (
-          <button
+          <Button
+            variant="bare"
             onClick={() => setExpanded(!expanded)}
             className="rounded-full px-2 py-1 text-xs text-(--text-muted) hover:text-(--text-primary) transition-colors"
           >
             {expanded ? "Less" : `+${unloadedHits.length} more`}
-          </button>
+          </Button>
         )}
       </div>
 
       {expanded && unloadedHits.length > 0 && (
         <div className="mt-2 space-y-1 max-h-32 overflow-y-auto">
           {unloadedHits.map(hit => (
-            <button
+            <Button
+              variant="bare"
               key={hit.id}
               onClick={() => {
                 void fetchGeniusLyrics(hit)
@@ -132,7 +137,7 @@ function LyricsSourceSelector() {
                 <p className="text-xs font-medium text-(--text-primary) truncate">{hit.title}</p>
                 <p className="text-[10px] text-(--text-muted) truncate">{hit.artist}</p>
               </div>
-            </button>
+            </Button>
           ))}
         </div>
       )}
@@ -249,7 +254,8 @@ export function LyricsContent() {
               const isActive = i === activeIndex
               if (!line.text) return <div key={i} className="h-4" />
               return (
-                <button
+                <Button
+                  variant="bare"
                   key={i}
                   disabled={!isSynced}
                   aria-current={isActive ? "true" : undefined}
@@ -262,7 +268,7 @@ export function LyricsContent() {
                   }}
                 >
                   {line.text}
-                </button>
+                </Button>
               )
             })}
           </div>
@@ -327,7 +333,8 @@ export default function LyricsPanel() {
           Lyrics
         </span>
         <div className="flex items-center gap-0.5 shrink-0">
-          <button
+          <Button
+            variant="bare"
             onClick={() => setLyricsPinned(!isLyricsPinned)}
             title={isLyricsPinned ? "Unpin lyrics" : "Pin lyrics to sidebar"}
             className={`panel-toolbar-button panel-toolbar-icon flex items-center justify-center rounded-full transition-colors ${
@@ -338,14 +345,15 @@ export default function LyricsPanel() {
             aria-label={isLyricsPinned ? "Unpin lyrics" : "Pin lyrics"}
           >
             <PinIcon />
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="bare"
             onClick={() => setLyricsOpen(false)}
             className="panel-toolbar-button panel-toolbar-icon flex items-center justify-center rounded-full text-(--text-muted) hover:text-(--text-primary) transition-colors"
             aria-label="Close lyrics"
           >
             <CloseIcon />
-          </button>
+          </Button>
         </div>
       </div>
     </div>

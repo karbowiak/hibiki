@@ -1,3 +1,5 @@
+import { Button } from "../shared/Button"
+import { Switch } from "../shared/Checkbox"
 import { MetadataPriorityList } from "../Settings/MetadataPriorityList"
 import { LikedSyncControls } from "../Settings/LikedSyncControls"
 import { useArtworkAppearanceStore } from "../../stores/artworkAppearanceStore"
@@ -108,26 +110,7 @@ const NAV: { id: Section; label: string; icon: React.ReactNode }[] = [
 // ---------------------------------------------------------------------------
 
 function Toggle({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-label={label}
-      aria-checked={value}
-      onClick={() => onChange(!value)}
-      className={clsx(
-        "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent",
-        value ? "bg-accent" : "bg-white/20"
-      )}
-    >
-      <span
-        className={clsx(
-          "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-sm transform transition-transform duration-200 ease-in-out mt-0.5",
-          value ? "translate-x-[22px]" : "translate-x-0.5"
-        )}
-      />
-    </button>
-  )
+  return <Switch aria-label={label} checked={value} onChange={event => onChange(event.target.checked)} />
 }
 
 function PillGroup<T>({
@@ -149,20 +132,17 @@ function PillGroup<T>({
   return (
     <div role="group" aria-label={label} className="flex gap-2 flex-wrap">
       {options.map((opt, i) => (
-        <button
+        <Button
+          size="md"
+          variant="secondary"
           key={i}
           type="button"
           aria-pressed={check(opt, value)}
           onClick={() => onChange(opt)}
-          className={clsx(
-            "settings-choice rounded-full px-4 py-1.5 text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-            check(opt, value)
-              ? "bg-accent text-black font-semibold"
-              : "bg-white/10 text-white hover:bg-white/20"
-          )}
+          className="settings-choice"
         >
           {getLabel(opt)}
-        </button>
+        </Button>
       ))}
     </div>
   )
@@ -295,20 +275,17 @@ function AppearanceSection() {
                 )}
                 <div className="flex flex-wrap gap-2">
                   {presets.map(preset => (
-                    <button
+                    <Button
+                      size="md"
+                      variant="secondary"
                       key={preset.name}
                       onClick={() => setFont(preset.name)}
                       aria-pressed={font.name === preset.name}
                       style={{ fontFamily: preset.stack }}
-                      className={clsx(
-                        "settings-choice rounded-full px-4 py-1.5 text-sm transition-colors",
-                        font.name === preset.name
-                          ? "bg-accent text-black font-semibold"
-                          : "bg-white/10 text-white hover:bg-white/20"
-                      )}
+                      className="settings-choice"
                     >
                       {preset.label}
-                    </button>
+                    </Button>
                   ))}
                 </div>
               </div>
@@ -324,7 +301,8 @@ function AppearanceSection() {
           {ACCENT_PRESETS.map(preset => {
             const active = preset.hex.toLowerCase() === accent.toLowerCase()
             return (
-              <button
+              <Button
+                variant="bare"
                 key={preset.hex}
                 onClick={() => { setAccent(preset.hex); setCustom(preset.hex) }}
                 aria-pressed={active}
@@ -351,7 +329,7 @@ function AppearanceSection() {
                 <span className={`text-xs transition-colors ${active ? "text-white" : "text-(--text-secondary) group-hover:text-white/70"}`}>
                   {preset.name}
                 </span>
-              </button>
+              </Button>
             )
           })}
         </div>
@@ -383,7 +361,8 @@ function AppearanceSection() {
 
         {/* HSV Color Picker (collapsible) */}
         <div className="mt-4">
-          <button
+          <Button
+            variant="bare"
             onClick={() => setShowPicker(!showPicker)}
             className="flex items-center gap-2 text-xs text-(--text-secondary) hover:text-white/70 transition-colors"
           >
@@ -394,7 +373,7 @@ function AppearanceSection() {
               <path d="M6 4l4 4-4 4z" />
             </svg>
             Advanced color picker
-          </button>
+          </Button>
           {showPicker && (
             <div className="mt-3">
               <ColorPicker value={accent} onChange={hex => { setAccent(hex); setCustom(hex) }} />
@@ -406,9 +385,9 @@ function AppearanceSection() {
         <div className="mt-6 rounded-xl bg-accent-tint-subtle p-4 flex flex-wrap items-center gap-4 border border-white/5">
           <span className="text-xs text-(--text-secondary) w-16 shrink-0">Preview</span>
           <div className="flex items-center gap-3 flex-wrap">
-            <button className="flex h-8 w-8 items-center justify-center rounded-full text-black text-sm font-bold shadow-md" style={{ backgroundColor: accent }}>
+            <Button variant="bare" className="flex h-8 w-8 items-center justify-center rounded-full text-black text-sm font-bold shadow-md" style={{ backgroundColor: accent }}>
               <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><polygon points="3,2 13,8 3,14" /></svg>
-            </button>
+            </Button>
             <div className="h-1.5 w-32 rounded-full overflow-hidden bg-white/10">
               <div className="h-full w-3/5 rounded-full" style={{ backgroundColor: accent }} />
             </div>
@@ -471,15 +450,17 @@ function AppearanceSection() {
         <div className="flex items-center justify-between mb-3">
           <Toggle label="Custom Colors" value={customColorsEnabled} onChange={setCustomColorsEnabled} />
           {customColorsEnabled && Object.keys(overrides).length > 0 && (
-            <button
+            <Button
+              variant="bare"
               onClick={resetCustomColors}
               className="text-xs text-(--text-secondary) hover:text-white/70 transition-colors"
             >
               Reset all
-            </button>
+            </Button>
           )}
         </div>
-        <button
+        <Button
+          variant="bare"
           onClick={() => setShowCustomColors(!showCustomColors)}
           className="flex items-center gap-2 text-xs text-(--text-secondary) hover:text-white/70 transition-colors"
         >
@@ -490,7 +471,7 @@ function AppearanceSection() {
             <path d="M6 4l4 4-4 4z" />
           </svg>
           {showCustomColors ? "Hide color overrides" : "Show color overrides"}
-        </button>
+        </Button>
         {showCustomColors && (
           <div className="mt-3 grid gap-2">
             {(Object.keys(SEMANTIC_COLOR_LABELS) as SemanticColor[]).map((key, idx) => (
@@ -508,12 +489,13 @@ function AppearanceSection() {
                 />
                 <span className="text-sm text-white/60 flex-1">{SEMANTIC_COLOR_LABELS[key]}</span>
                 {overrides[key] && (
-                  <button
+                  <Button
+                    variant="bare"
                     onClick={() => setOverride(key, null)}
                     className="text-xs text-(--text-secondary) hover:text-white/60"
                   >
                     Reset
-                  </button>
+                  </Button>
                 )}
               </div>
               </React.Fragment>
@@ -595,7 +577,8 @@ function HighlightCard() {
       </div>
 
       {/* Advanced per-category sliders */}
-      <button
+      <Button
+        variant="bare"
         onClick={() => setShowAdvanced(o => !o)}
         className="mt-4 flex items-center gap-1.5 text-xs text-(--text-secondary) hover:text-white/70 transition-colors"
       >
@@ -606,7 +589,7 @@ function HighlightCard() {
           <path d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06z"/>
         </svg>
         Per-element fine tuning
-      </button>
+      </Button>
 
       {showAdvanced && (
         <div className="mt-3 flex flex-col gap-4 pl-2 border-l border-white/10">
@@ -631,13 +614,14 @@ function HighlightCard() {
                   />
                   <span className="text-xs font-mono text-(--text-secondary) w-10 text-right">{Math.round(val * 100)}%</span>
                   {val !== defVal && (
-                    <button
+                    <Button
+                      variant="bare"
                       onClick={() => setCategory(key, defVal)}
                       className="text-xs text-(--text-secondary) hover:text-white/60 transition-colors"
                       title="Reset to default"
                     >
                       Reset
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
@@ -648,12 +632,13 @@ function HighlightCard() {
 
       {/* Reset all button */}
       {!isDefault && (
-        <button
+        <Button
+          variant="bare"
           onClick={reset}
           className="mt-4 text-xs text-(--text-secondary) hover:text-white/70 transition-colors underline underline-offset-2"
         >
           Reset all to defaults
-        </button>
+        </Button>
       )}
     </SettingCard>
   )
@@ -694,7 +679,8 @@ function VisualizerColorsCard() {
           </div>
         ))}
         {!isDefault && (
-          <button
+          <Button
+            variant="bare"
             onClick={() => {
               setVizColorLow(VIZ_COLOR_DEFAULTS.low)
               setVizColorMid(VIZ_COLOR_DEFAULTS.mid)
@@ -703,7 +689,7 @@ function VisualizerColorsCard() {
             className="text-xs text-(--text-secondary) hover:text-white/70 transition-colors ml-auto"
           >
             Reset
-          </button>
+          </Button>
         )}
       </div>
       {/* Preview gradient */}
@@ -767,13 +753,14 @@ function CacheSection() {
               {metaStats.artistCount} artists · {metaStats.albumCount} albums
             </p>
           </div>
-          <button
+          <Button
+            variant="bare"
             onClick={handleClearMetadata}
             disabled={metaClearing || (metaStats.artistCount === 0 && metaStats.albumCount === 0)}
             className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 hover:border-white/20 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
           >
             {metaClearing ? "Clearing..." : "Clear"}
-          </button>
+          </Button>
         </div>
       </SettingCard>
     </div>
@@ -803,7 +790,8 @@ function GeneralSection() {
       <SettingCard title="Language" description="Choose the display language for the interface.">
         <div className="flex flex-wrap gap-2">
           {LANGUAGES.map(lang => (
-            <button
+            <Button
+              variant="bare"
               key={lang.code}
               onClick={() => setLanguage(lang.code)}
               className={clsx(
@@ -814,7 +802,7 @@ function GeneralSection() {
               )}
             >
               {lang.label}
-            </button>
+            </Button>
           ))}
         </div>
         <p className="mt-2 text-xs text-(--text-secondary)">More languages coming soon. Contribute translations on GitHub.</p>
@@ -841,13 +829,7 @@ function GeneralSection() {
             description="Show warnings and errors in system notifications while Hibiki is in the background. In-app notifications are always available."
             inline
           >
-            <button
-              role="switch"
-              aria-label="System alerts"
-              aria-checked={warningNotificationsEnabled}
-              disabled={requestingNotificationPermission}
-              className={clsx("relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent disabled:opacity-50", warningNotificationsEnabled ? "bg-accent" : "bg-white/20")}
-              onClick={() => {
+            <Switch aria-label="System alerts" checked={warningNotificationsEnabled} disabled={requestingNotificationPermission} onChange={() => {
                 if (notificationPermissionRequest.current) return
                 const enabling = !warningNotificationsEnabled
                 notificationPermissionRequest.current = true
@@ -855,10 +837,7 @@ function GeneralSection() {
                 void setWarningNotificationsEnabled(enabling).then(accepted => {
                   if (enabling && !accepted) useNotificationCenterStore.getState().notify({ id: "system.notifications.permission", title: "System notifications are unavailable", message: "Allow notifications for Hibiki in your system settings, then try again. In-app notifications remain available.", severity: "info" })
                 }).finally(() => { notificationPermissionRequest.current = false; setRequestingNotificationPermission(false) })
-              }}
-            >
-              <span className={clsx("pointer-events-none mt-0.5 inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform", warningNotificationsEnabled ? "translate-x-[22px]" : "translate-x-0.5")} />
-            </button>
+              }} />
           </SettingRow>
 
           <div className="border-t border-white/[0.06]" />
@@ -997,7 +976,8 @@ function MetadataListView({ setSection }: { setSection: (s: Section) => void }) 
             const enabled = mb.useIsEnabled()
             const Icon = mb.icon
             return (
-              <button
+              <Button
+                variant="bare"
                 key={mb.id}
                 onClick={() => setSection(`metadata/${mb.id}` as Section)}
                 className="w-full rounded-xl bg-white/5 px-5 py-4 text-left hover:bg-white/8 transition-colors group"
@@ -1016,7 +996,7 @@ function MetadataListView({ setSection }: { setSection: (s: Section) => void }) 
                   </svg>
                 </div>
                 <p className="mt-1.5 text-xs text-(--text-secondary)">{mb.description}</p>
-              </button>
+              </Button>
             )
           })}
         </div>
@@ -1031,10 +1011,10 @@ function MetadataSubPage({ backendId, goBack }: { backendId: string; goBack: () 
   if (!metaBackend) {
     return (
       <div className="max-w-2xl">
-        <button onClick={goBack} className="mb-6 flex items-center gap-1.5 text-sm text-(--text-secondary) hover:text-white transition-colors">
+        <Button variant="bare" onClick={goBack} className="mb-6 flex items-center gap-1.5 text-sm text-(--text-secondary) hover:text-white transition-colors">
           <svg height="16" width="16" viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" /></svg>
           Back to Metadata
-        </button>
+        </Button>
         <p className="text-sm text-(--text-secondary)">Metadata source not found.</p>
       </div>
     )
@@ -1047,10 +1027,10 @@ function MetadataSubPage({ backendId, goBack }: { backendId: string; goBack: () 
     <div className="max-w-2xl space-y-8">
       {/* Back button + header */}
       <div>
-        <button onClick={goBack} className="mb-4 flex items-center gap-1.5 text-sm text-(--text-secondary) hover:text-white transition-colors">
+        <Button variant="bare" onClick={goBack} className="mb-4 flex items-center gap-1.5 text-sm text-(--text-secondary) hover:text-white transition-colors">
           <svg height="16" width="16" viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" /></svg>
           Back to Metadata
-        </button>
+        </Button>
         <div className="flex items-center gap-3">
           <span className="text-white/60"><Icon size={24} /></span>
           <h2 className="text-2xl font-bold">{metaBackend.name}</h2>
@@ -1074,9 +1054,9 @@ function MetadataSubPage({ backendId, goBack }: { backendId: string; goBack: () 
 
 function CreditLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
-    <button onClick={() => void open(href)} className="text-accent hover:underline text-left">
+    <Button variant="bare" onClick={() => void open(href)} className="text-accent hover:underline text-left">
       {children}
-    </button>
+    </Button>
   )
 }
 
@@ -1111,12 +1091,13 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 function TechBadge({ item }: { item: typeof TECH_STACK[number] }) {
   return (
-    <button
+    <Button
+      variant="bare"
       onClick={() => void open(item.href)}
       className="group relative rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-white/60 transition-all duration-200 hover:border-accent/30 hover:bg-accent/10 hover:text-accent"
     >
       {item.label}
-    </button>
+    </Button>
   )
 }
 
@@ -1168,20 +1149,22 @@ function AboutSection() {
 
           {/* Quick links */}
           <div className="mt-6 flex gap-3">
-            <button
+            <Button
+              variant="bare"
               onClick={() => void open("https://github.com/karbowiak/hibiki")}
               className="flex items-center gap-2 rounded-full bg-white/[0.08] px-4 py-2 text-xs font-medium text-white/70 ring-1 ring-white/[0.06] transition-all hover:bg-white/[0.14] hover:text-white"
             >
               <svg height="14" width="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
               GitHub
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="bare"
               onClick={() => void open("https://github.com/karbowiak/hibiki/releases")}
               className="flex items-center gap-2 rounded-full bg-white/[0.08] px-4 py-2 text-xs font-medium text-white/70 ring-1 ring-white/[0.06] transition-all hover:bg-white/[0.14] hover:text-white"
             >
               <svg height="14" width="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Releases
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -1195,13 +1178,14 @@ function AboutSection() {
 
         <div className="flex flex-col gap-3">
           <div className="flex items-center gap-3">
-            <button
+            <Button
+              variant="bare"
               onClick={() => void checkForUpdate()}
               disabled={checking}
               className="rounded-full px-4 py-1.5 text-sm bg-white/[0.08] text-white/80 ring-1 ring-white/[0.06] hover:bg-white/[0.14] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {checking ? "Checking\u2026" : "Check for Updates"}
-            </button>
+            </Button>
             {checking && (
               <svg className="animate-spin text-accent" height="16" width="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
@@ -1216,12 +1200,13 @@ function AboutSection() {
                 <p className="text-sm font-semibold text-accent">Version {update.version} available</p>
                 {update.body && <p className="text-xs text-(--text-secondary) mt-0.5 line-clamp-1">{update.body}</p>}
               </div>
-              <button
+              <Button
+                variant="bare"
                 onClick={() => setShowDialog(true)}
                 className="rounded-full px-4 py-1.5 text-sm bg-accent text-black font-semibold shrink-0"
               >
                 Install
-              </button>
+              </Button>
             </div>
           )}
 
@@ -1365,7 +1350,8 @@ export function SettingsPage({ section: sectionProp }: { section?: string }) {
               const active = section === item.id || (item.id === "metadata" && section.startsWith("metadata/"))
               return (
                 <li key={item.id}>
-                  <button
+                  <Button
+                    variant="bare"
                     aria-current={active ? "page" : undefined}
                     onClick={() => setSection(item.id)}
                     className={clsx(
@@ -1379,7 +1365,7 @@ export function SettingsPage({ section: sectionProp }: { section?: string }) {
                       {item.icon}
                     </span>
                     {item.label}
-                  </button>
+                  </Button>
                 </li>
               )
             })}

@@ -1,3 +1,4 @@
+import { Button } from "../shared/Button"
 import { PageRecovery } from "../shared/PageRecovery"
 import { PageLoading } from "../shared/PageLoading"
 import { ArtworkImage } from "../shared/ArtworkImage"
@@ -167,7 +168,8 @@ export function RadioPage({ stationType }: Props) {
       <p className="mb-8 text-sm text-white/50">Radio Station</p>
 
       {/* Play button */}
-      <button
+      <Button
+        variant="bare"
         onClick={handlePlay}
         className="mb-12 flex items-center gap-3 rounded-full bg-accent px-8 py-3 text-sm font-bold text-black hover:brightness-110 transition-colors"
       >
@@ -175,7 +177,7 @@ export function RadioPage({ stationType }: Props) {
           <path d="M3 1.713a.7.7 0 0 1 1.05-.607l10.89 6.288a.7.7 0 0 1 0 1.212L4.05 14.894A.7.7 0 0 1 3 14.288V1.713z" />
         </svg>
         Play Station
-      </button>
+      </Button>
 
       {/* Now playing */}
       {currentTrack && (

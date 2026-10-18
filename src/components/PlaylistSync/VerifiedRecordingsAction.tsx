@@ -1,3 +1,4 @@
+import { Button } from "../shared/Button"
 import { useEffect, useRef, useState } from "react"
 import type { MusicProvider } from "../../providers/types"
 import type { PlaylistPlan } from "../../playlistSync/types"
@@ -101,26 +102,30 @@ export function VerifiedRecordingsAction({
         accepted; songs with uncertain matches still need your choice.
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-3">
-        <button
+        <Button
+          size="md"
+          variant="secondary"
           type="button"
           className="media-secondary"
           disabled={disabled || running}
           onClick={() => void run()}
         >
           Resolve verified recording IDs
-        </button>
+        </Button>
         {running && (
           <>
             <span role="status" className="text-sm">
               Checking {progress.completed} / {progress.total} tracks…
             </span>
-            <button
+            <Button
+              size="md"
+              variant="secondary"
               type="button"
               className="media-secondary"
               onClick={() => pending.current?.abort()}
             >
               Cancel lookup
-            </button>
+            </Button>
           </>
         )}
       </div>

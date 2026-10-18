@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { useShallow } from "zustand/react/shallow"
@@ -125,7 +126,8 @@ export function ActivityIndicator() {
   }, [isOpen])
   return (
     <>
-      <button
+      <Button
+        variant="bare"
         ref={buttonRef}
         type="button"
         onClick={() => setIsOpen((open) => !open)}
@@ -145,7 +147,7 @@ export function ActivityIndicator() {
           className={active ? "animate-spin text-accent" : ""}
           style={active ? { animationDuration: "2s" } : undefined}
         />
-      </button>
+      </Button>
       {isOpen &&
         createPortal(
           <div
@@ -196,13 +198,14 @@ export function ActivityIndicator() {
                           </p>
                         )}
                         {activity.retry && (
-                          <button
+                          <Button
+                            variant="secondary"
                             type="button"
                             onClick={activity.retry}
                             className="mt-2 rounded-md border border-(--border) px-2 py-1 text-xs text-(--text-primary) hover:bg-app-surface-hover"
                           >
                             Retry indexing
-                          </button>
+                          </Button>
                         )}
                       </div>
                     </li>

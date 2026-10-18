@@ -1,3 +1,5 @@
+import { Button } from "../shared/Button"
+import { Checkbox } from "../shared/Checkbox"
 import { isCollectionIndexItem } from "../../lib/collectionIndexItem"
 import { sortTracks, type TrackSortColumn } from "../../lib/trackOrder"
 import { useEffect, useMemo, useState } from "react"
@@ -328,7 +330,9 @@ export function Liked() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <button
+          <Button
+            size="md"
+            variant="secondary"
             className="media-secondary"
             title={
               syncNeedsReview
@@ -345,8 +349,10 @@ export function Liked() {
           >
             Sync
             {syncNeedsReview && <SyncReviewIndicator />}
-          </button>
-          <button
+          </Button>
+          <Button
+            size="md"
+            variant="primary"
             className="media-primary"
             aria-label="Play liked songs"
             disabled={!count}
@@ -354,8 +360,10 @@ export function Liked() {
           >
             <IconPlayerPlay size={16} aria-hidden="true" />
             Play
-          </button>
-          <button
+          </Button>
+          <Button
+            size="md"
+            variant="secondary"
             className="media-secondary"
             aria-label="Shuffle liked songs"
             disabled={!count}
@@ -363,13 +371,14 @@ export function Liked() {
           >
             <IconArrowsShuffle size={16} aria-hidden="true" />
             Shuffle
-          </button>
+          </Button>
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-4 px-8 pb-4">
         <div className="flex flex-wrap gap-2" role="group" aria-label="Liked Songs filter">
         {(["loved", "rated", "all"] as const).map((value) => (
-          <button
+          <Button
+            variant="bare"
             type="button"
             key={value}
             aria-pressed={kind === value}
@@ -384,13 +393,14 @@ export function Liked() {
             onClick={() => setKind(value)}
           >
             {value === "loved" ? "Loved" : value === "rated" ? "Rated" : "All"}
-          </button>
+          </Button>
         ))}
         </div>
         {youtube.connected && (
           <div className="flex flex-wrap gap-2" role="group" aria-label="Music source">
             {(["all", "plex", "ytmusic"] as const).map(value => (
-              <button
+              <Button
+                variant="bare"
                 key={value}
                 type="button"
                 aria-pressed={activeService === value}
@@ -401,13 +411,13 @@ export function Liked() {
                 {value === "plex" && <PlexLogo size={14} />}
                 {value === "ytmusic" && <YoutubeMusicLogo size={14} />}
                 {value === "all" ? "Both" : value === "plex" ? "Plex" : "YTM"}
-              </button>
+              </Button>
             ))}
           </div>
         )}
         {includesYoutube && (
           <label className="flex items-center gap-2 text-sm text-(--text-secondary)" title="Include music videos and uploaded music returned in your YouTube Music likes. This does not load all YouTube video likes.">
-            <input type="checkbox" checked={includeVideos} onChange={event => setIncludeVideos(event.target.checked)} className="accent-(--accent)" />
+            <Checkbox checked={includeVideos} onChange={event => setIncludeVideos(event.target.checked)} className="accent-(--accent)" />
             Include music videos
           </label>
         )}
@@ -421,7 +431,8 @@ export function Liked() {
       {includesPlex && favorites.error && (
         <p role="alert" className="mx-8 mb-4 text-sm text-red-400">
           {favorites.error}{" "}
-          <button
+          <Button
+            variant="bare"
             className="underline"
             onClick={() =>
               void useFavoritesStore
@@ -431,19 +442,19 @@ export function Liked() {
             }
           >
             Retry local favorites
-          </button>
+          </Button>
         </p>
       )}
       {includesYoutube && youtube.error && (
         <p role="alert" className="mx-8 mb-4 text-sm text-(--text-secondary)">
           Could not load all YouTube Music likes. Loaded songs are still available.{" "}
-          <button className="underline" onClick={() => void youtube.retry()}>Try again</button>
+          <Button variant="bare" className="underline" onClick={() => void youtube.retry()}>Try again</Button>
         </p>
       )}
       {includesPlex && !preparing && (ratedIndex.error || favoriteIndex.error) && (
         <p role="alert" className="mx-8 mb-4 text-sm text-(--text-secondary)">
           {favoriteIndex.error || ratedIndex.error}{" "}
-          <button type="button" className="underline" onClick={() => { if (favoriteIndex.error) favoriteIndex.retry(); if (ratedIndex.error) ratedIndex.retry() }}>Try again</button>
+          <Button variant="bare" type="button" className="underline" onClick={() => { if (favoriteIndex.error) favoriteIndex.retry(); if (ratedIndex.error) ratedIndex.retry() }}>Try again</Button>
         </p>
       )}
       {preparing ? (
@@ -452,7 +463,7 @@ export function Liked() {
           className="px-8 py-12 text-sm text-(--text-secondary)"
         >
           {favoriteIndex.error || ratedIndex.error || "Preparing your complete collection…"}
-          {(ratedIndex.error || favoriteIndex.error) && <button type="button" className="ml-2 underline" onClick={() => { if (favoriteIndex.error) favoriteIndex.retry(); if (ratedIndex.error) ratedIndex.retry() }}>Try again</button>}
+          {(ratedIndex.error || favoriteIndex.error) && <Button variant="bare" type="button" className="ml-2 underline" onClick={() => { if (favoriteIndex.error) favoriteIndex.retry(); if (ratedIndex.error) ratedIndex.retry() }}>Try again</Button>}
         </p>
       ) : (
         <TrackTable

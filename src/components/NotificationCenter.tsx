@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { createPortal } from "react-dom"
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react"
 import { useLocation } from "wouter"
@@ -36,10 +37,11 @@ function NotificationAction({
 }) {
   if (!notification.action) return null
   return (
-    <button
+    <Button
+      variant="secondary"
       type="button"
       disabled={notification.actionPending}
-      className="mt-3 rounded-md bg-app-surface px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-app-surface-hover disabled:opacity-50"
+      className="mt-3 rounded-md bg-app-surface px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-app-surface-hover disabled:opacity-50"
       onClick={() => {
         void useNotificationCenterStore
           .getState()
@@ -64,7 +66,7 @@ function NotificationAction({
       }}
     >
       {notification.actionPending ? "Working…" : notification.action.label}
-    </button>
+    </Button>
   )
 }
 
@@ -193,7 +195,8 @@ export function NotificationCenter() {
 
   return (
     <>
-      <button
+      <Button
+        variant="bare"
         ref={buttonRef}
         type="button"
         aria-label={
@@ -215,7 +218,7 @@ export function NotificationCenter() {
             {unread > 99 ? "99+" : unread}
           </span>
         )}
-      </button>
+      </Button>
       {open &&
         position &&
         createPortal(
@@ -240,24 +243,26 @@ export function NotificationCenter() {
                 Notifications
               </h2>
               {notifications.some((n) => !n.active) && (
-                <button
+                <Button
+                  variant="secondary"
                   type="button"
                   onClick={() =>
                     useNotificationCenterStore.getState().clearHistory()
                   }
-                  className="rounded px-2 py-1 text-xs text-white/60 hover:bg-app-surface hover:text-white"
+                  className="rounded px-2 py-1 text-xs hover:bg-app-surface"
                 >
                   Clear history
-                </button>
+                </Button>
               )}
-              <button
+              <Button
+                variant="bare"
                 type="button"
                 onClick={close}
                 aria-label="Close notifications"
                 className="flex h-7 w-7 items-center justify-center rounded-full text-white/60 hover:bg-app-surface hover:text-white"
               >
                 <IconX size={16} aria-hidden="true" />
-              </button>
+              </Button>
             </div>
             <div className="min-h-0 overflow-y-auto overscroll-contain">
               {history.length ? (
@@ -342,7 +347,8 @@ function NotificationToast({
       }}
     >
       <NotificationContent notification={notification} />
-      <button
+      <Button
+        variant="bare"
         type="button"
         aria-label={`Dismiss notification: ${notification.title}`}
         onClick={() =>
@@ -351,7 +357,7 @@ function NotificationToast({
         className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full text-white/50 hover:bg-app-surface hover:text-white"
       >
         <IconX size={14} aria-hidden="true" />
-      </button>
+      </Button>
     </div>
   )
 }

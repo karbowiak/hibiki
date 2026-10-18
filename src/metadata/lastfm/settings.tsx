@@ -1,3 +1,5 @@
+import { Switch } from "../../components/shared/Checkbox"
+import { Button } from "../../components/shared/Button"
 import { useState } from "react"
 import { useLocation } from "wouter"
 import { openUrl as open } from "@tauri-apps/plugin-opener"
@@ -92,14 +94,15 @@ export function LastfmSettings() {
               <p className="text-sm text-white/50">
                 Connect your Last.fm account to enable scrobbling and metadata
                 enrichment.{" "}
-                <button
+                <Button
+                  variant="bare"
                   className="text-accent/80 underline-offset-2 hover:text-accent hover:underline"
                   onClick={() =>
                     void open("https://www.last.fm/api/account/create")
                   }
                 >
                   Get your free API key
-                </button>
+                </Button>
               </p>
               <div className="space-y-3">
                 <div>
@@ -128,13 +131,14 @@ export function LastfmSettings() {
                 </div>
               </div>
               {error && <p className="text-sm text-red-400">{error}</p>}
-              <button
+              <Button
+                variant="primary"
                 onClick={() => void handleConnect()}
                 disabled={isConnecting || !apiKey.trim() || !apiSecret.trim()}
-                className="rounded-lg bg-accent/80 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent disabled:opacity-50"
+                className="rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50"
               >
                 {isConnecting ? "Opening browser..." : "Connect to Last.fm"}
-              </button>
+              </Button>
             </div>
           ) : (
             <div className="space-y-4">
@@ -152,19 +156,21 @@ export function LastfmSettings() {
               </div>
               {error && <p className="text-sm text-red-400">{error}</p>}
               <div className="flex gap-3">
-                <button
+                <Button
+                  variant="primary"
                   onClick={() => void handleComplete()}
                   disabled={isConnecting}
-                  className="rounded-lg bg-accent/80 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent disabled:opacity-50"
+                  className="rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50"
                 >
                   {isConnecting ? "Connecting..." : "Complete Connection"}
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="secondary"
                   onClick={handleCancel}
-                  className="rounded-lg border border-white/10 px-4 py-2 text-sm text-white/60 transition-colors hover:border-white/25 hover:text-white"
+                  className="rounded-lg border border-white/10 px-4 py-2 text-sm transition-colors hover:border-white/25"
                 >
                   Cancel
-                </button>
+                </Button>
               </div>
             </div>
           )
@@ -187,20 +193,7 @@ export function LastfmSettings() {
                   Report what you're listening to Last.fm
                 </p>
               </div>
-              <button
-                onClick={() => void setEnabled(!isEnabled)}
-                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                  isEnabled ? "bg-accent" : "bg-white/20"
-                }`}
-                role="switch"
-                aria-checked={isEnabled}
-              >
-                <span
-                  className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                    isEnabled ? "translate-x-4" : "translate-x-0"
-                  }`}
-                />
-              </button>
+              <Switch aria-label="Scrobbling" checked={isEnabled}  onChange={() => void setEnabled(!isEnabled)} />
             </div>
 
             <div className="flex items-center justify-between gap-4 py-2">
@@ -210,20 +203,23 @@ export function LastfmSettings() {
                   Configure two-way favorites sync in Liked Songs → Sync.
                 </p>
               </div>
-              <button
+              <Button
+                size="md"
+                variant="secondary"
                 className="media-secondary shrink-0"
                 onClick={() => navigate("/collection/tracks")}
               >
                 Liked Songs
-              </button>
+              </Button>
             </div>
 
-            <button
+            <Button
+              variant="bare"
               onClick={() => void disconnect()}
               className="text-sm text-red-400 transition-colors hover:text-red-300"
             >
               Disconnect
-            </button>
+            </Button>
           </div>
         )}
       </div>
@@ -253,7 +249,8 @@ export function LastfmSettings() {
             </span>
           </div>
         </div>
-        <button
+        <Button
+          variant="secondary"
           onClick={handleClearCache}
           disabled={
             clearing ||
@@ -262,10 +259,10 @@ export function LastfmSettings() {
               lastfmStats.trackCount ===
               0
           }
-          className="mt-2 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 transition-colors hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+          className="mt-2 rounded-lg border border-white/10 px-3 py-1.5 text-xs transition-colors hover:border-white/20 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {clearing ? "Cleared" : "Clear Cache"}
-        </button>
+        </Button>
       </div>
     </div>
   )

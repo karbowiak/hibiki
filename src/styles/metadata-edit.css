@@ -276,11 +276,10 @@ dialog.metadata-edit-dialog {
   flex-wrap: wrap;
   margin-bottom: 10px;
 }
-.metadata-edit-source-title select {
+.metadata-edit-source-title .ui-select {
   width: auto;
   max-width: 100%;
   margin-top: 0;
-  padding: 6px 10px;
   font-size: 0.75rem;
 }
 @media (max-width: 900px) {

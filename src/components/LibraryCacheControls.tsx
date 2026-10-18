@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { useEffect, useState } from "react"
 import { useProviderOwner } from "../hooks/useProviderOwner"
 import { useProviderStore } from "../stores/providerStore"
@@ -44,10 +45,10 @@ export function LibraryCacheControls() {
           {info ? `${info.collections} collections · ${info.items.toLocaleString()} items · ${info.snapshots} pages · ${(info.bytes / 1024 / 1024).toFixed(1)} MB` : provider?.getLibraryCacheInfo ? "Checking saved library data…" : "Connect a music library to manage its cache."}
         </p>
       </div>
-      <button type="button" onClick={() => void clear()} disabled={clearing || !provider?.clearLibraryCache}
+      <Button variant="bare" type="button" onClick={() => void clear()} disabled={clearing || !provider?.clearLibraryCache}
         className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 hover:border-white/20 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0">
         {clearing ? "Clearing…" : "Clear"}
-      </button>
+      </Button>
     </div>
     {error && <p role="alert" className="text-xs text-(--text-secondary) mt-2">{error}</p>}
   </div>

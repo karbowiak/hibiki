@@ -1,3 +1,4 @@
+import { Button } from "../shared/Button"
 import { MusicEntityLink } from "../shared/MusicEntityLink"
 import { ArtistCredits } from "../shared/ArtistCredits"
 import { ArtworkImage } from "../shared/ArtworkImage"
@@ -149,8 +150,8 @@ export function YoutubeMusicCollection({ browseId }: { browseId: string }) {
             {description && description !== albumArtist && <p className="mt-2 line-clamp-2 max-w-xl text-sm text-(--text-secondary)">{description}</p>}
           </div>
           <div className="relative z-20 flex flex-wrap items-center gap-3">
-            <button type="button" onClick={() => play()} disabled={!sorted.length} className="media-primary"><IconPlayerPlay size={22} aria-hidden="true" />Play</button>
-            <button type="button" onClick={() => play(true)} disabled={!sorted.length} className="media-secondary"><IconArrowsShuffle size={16} aria-hidden="true" />Shuffle</button>
+            <Button size="md" variant="primary" type="button" onClick={() => play()} disabled={!sorted.length} className="media-primary"><IconPlayerPlay size={22} aria-hidden="true" />Play</Button>
+            <Button size="md" variant="secondary" type="button" onClick={() => play(true)} disabled={!sorted.length} className="media-secondary"><IconArrowsShuffle size={16} aria-hidden="true" />Shuffle</Button>
             {browseId.startsWith("VLPL") && <MixedPlaylistControl alias={`ytmusic:${browseId}`} />}
           </div>
         </div>

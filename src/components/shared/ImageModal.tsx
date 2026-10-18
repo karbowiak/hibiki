@@ -1,3 +1,4 @@
+import { Button } from "./Button"
 import { useModalLifecycle } from "../../hooks/useModalLifecycle"
 import { ArtworkImage } from "./ArtworkImage"
 import { useRef } from "react"
@@ -40,7 +41,8 @@ export function ImageModal({
         e.stopPropagation()
       }}
     >
-      <button
+      <Button
+        variant="bare"
         ref={closeRef}
         type="button"
         aria-label="Close image"
@@ -49,7 +51,7 @@ export function ImageModal({
         onClick={onClose}
       >
         <IconX size={24} aria-hidden="true" />
-      </button>
+      </Button>
       <ArtworkImage loading="eager"
         src={src}
         alt={alt}

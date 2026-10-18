@@ -1,3 +1,4 @@
+import { Button } from "./Button"
 import { useModalLifecycle } from "../../hooks/useModalLifecycle"
 import { useEffect, useId, useRef, useState } from "react"
 import { isTauri } from "@tauri-apps/api/core"
@@ -174,7 +175,8 @@ export function ArtworkSourcePicker(props: ArtworkSourcePickerProps) {
   const open = !!key && openFor === ownerKey
   return (
     <>
-      <button
+      <Button
+        variant="bare"
         type="button"
         aria-label={
           props.iconOnly ? (props.label ?? "Artwork sources") : undefined
@@ -207,7 +209,7 @@ export function ArtworkSourcePicker(props: ArtworkSourcePickerProps) {
         ) : (
           (props.label ?? "Artwork sources")
         )}
-      </button>
+      </Button>
       {open && key && (
         <SourceDialog
           {...props}
@@ -268,14 +270,15 @@ function SourceDialog({
               : props.artistName}
           </p>
         </div>
-        <button
+        <Button
+          variant="bare"
           ref={close}
           type="button"
           onClick={onClose}
           className="rounded-full px-3 py-2 text-sm hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
         >
           Close
-        </button>
+        </Button>
       </div>
       <ArtworkSourcePanelContent
         {...props}
@@ -465,7 +468,8 @@ function ArtworkSourcePanelContent({
       <p role="status" className="mb-4 text-sm text-(--text-secondary)">
         {artworkStatus(info)}
       </p>
-      <button
+      <Button
+        variant="bare"
         type="button"
         aria-pressed={!info.preference}
         onClick={() => choose(null)}
@@ -477,7 +481,7 @@ function ArtworkSourcePanelContent({
             ? "Prefer Plex background art, then follow your source order. Reused covers are labeled. Poster choices stay separate."
             : "Follow your global artwork source order."}
         </span>
-      </button>
+      </Button>
       <div
         className={`grid gap-2 ${props.role === "background" ? "grid-cols-[repeat(auto-fill,minmax(150px,200px))]" : "grid-cols-[repeat(auto-fill,minmax(104px,132px))]"}`}
       >
@@ -486,7 +490,8 @@ function ArtworkSourcePanelContent({
             ? info.images[source]!
             : [{ id: "default", url: "" }]
           ).map((image, imageIndex) => (
-            <button
+            <Button
+              variant="bare"
               type="button"
               key={`${source}:${image.id}`}
               disabled={(source === "heya" || source === "theaudiodb") && !image.url}
@@ -542,7 +547,7 @@ function ArtworkSourcePanelContent({
                   {image.label}
                 </span>
               )}
-            </button>
+            </Button>
           ))
         )}
       </div>
@@ -551,7 +556,8 @@ function ArtworkSourcePanelContent({
         available sources can appear if the selected artwork fails.
       </p>
       <div className="mt-4 flex flex-wrap items-center gap-3">
-        <button
+        <Button
+          variant="bare"
           type="button"
           disabled={busy || !info.preference || info.preference === "plex"}
           onClick={() => {
@@ -591,7 +597,7 @@ function ArtworkSourcePanelContent({
           className="rounded-full border border-(--border) px-4 py-2 text-sm hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
         >
           {busy ? "Checking artwork…" : "Refresh choices"}
-        </button>
+        </Button>
         <p className="text-xs text-(--text-muted)">
           {props.refreshImage
             ? "Refresh choices checks metadata. Use Refresh image to reload this image’s cached bytes."
@@ -599,7 +605,8 @@ function ArtworkSourcePanelContent({
         </p>
       </div>
       {props.refreshImage && (
-        <button
+        <Button
+          variant="bare"
           type="button"
           disabled={
             busy ||
@@ -644,7 +651,7 @@ function ArtworkSourcePanelContent({
           }}
         >
           Refresh image
-        </button>
+        </Button>
       )}
       {message && (
         <p role="status" className="mt-3 text-sm text-(--text-secondary)">

@@ -1,3 +1,5 @@
+import { Checkbox } from "../shared/Checkbox"
+import { Button } from "../shared/Button"
 import { useEffect, useId, useState } from "react"
 import { useSoulSyncStore } from "../../metadata/soulsync/store"
 export function SoulSyncSettings({ embedded = false }: { embedded?: boolean } = {}) {
@@ -76,8 +78,7 @@ export function SoulSyncSettings({ embedded = false }: { embedded?: boolean } = 
           disabled={loading}
         />
         <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={enabled}
             onChange={(event) => setEnabled(event.target.checked)}
             disabled={loading}
@@ -101,14 +102,17 @@ export function SoulSyncSettings({ embedded = false }: { embedded?: boolean } = 
           </p>
         )}
         <div className="flex flex-wrap gap-2">
-          <button
+          <Button
+            size="md"
+            variant="primary"
             type="submit"
             disabled={loading || !status}
             className="media-primary disabled:opacity-50"
           >
             {loading ? "Saving…" : "Save connection"}
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="secondary"
             type="button"
             disabled={loading}
             onClick={() => {
@@ -118,8 +122,9 @@ export function SoulSyncSettings({ embedded = false }: { embedded?: boolean } = 
             className="rounded-lg border border-(--border) px-4 py-2 text-sm"
           >
             Reload settings
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="secondary"
             type="button"
             disabled={loading || !(status?.hasApiKey || status?.configured)}
             onClick={async () => {
@@ -132,7 +137,7 @@ export function SoulSyncSettings({ embedded = false }: { embedded?: boolean } = 
             className="rounded-lg border border-(--border) px-4 py-2 text-sm disabled:opacity-50"
           >
             Clear credentials
-          </button>
+          </Button>
         </div>
       </form>
     </section>

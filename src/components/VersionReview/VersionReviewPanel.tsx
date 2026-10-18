@@ -1,3 +1,4 @@
+import { Button } from "../shared/Button"
 import { useEffect, useRef, useState } from "react"
 import { Link } from "wouter"
 import { useProviderStore } from "../../stores/providerStore"
@@ -146,13 +147,14 @@ export function VersionReviewPanel({
             Some versions could not be loaded. Saved details remain available;
             reconnect to Plex for uncached versions.
           </p>
-          <button
+          <Button
+            variant="secondary"
             type="button"
             onClick={() => setAttempt((value) => value + 1)}
             className="mt-2 rounded-lg border border-(--border) px-3 py-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >
             Retry version details
-          </button>
+          </Button>
         </div>
       )}
       <ul aria-label="Album copies" className="space-y-2">

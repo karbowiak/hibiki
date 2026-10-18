@@ -1,3 +1,6 @@
+import { Button } from "../shared/Button"
+import { Select } from "../shared/Select"
+import { Checkbox } from "../shared/Checkbox"
 import { useEffect, useRef, useState, useId } from "react"
 import { PlaylistSyncFrame, navigateSyncTabs } from "./PlaylistSyncFrame"
 import { VerifiedRecordingsAction } from "./VerifiedRecordingsAction"
@@ -860,7 +863,8 @@ export function LinkedPlaylistManager({
         className="mb-5 flex flex-wrap gap-1 rounded-xl bg-app-surface p-1"
       >
         {(["setup", "review", "settings"] as const).map((value) => (
-          <button
+          <Button
+            variant="secondary"
             key={value}
             role="tab"
             id={`${tabsId}-${value}`}
@@ -876,7 +880,7 @@ export function LinkedPlaylistManager({
               : value === "review"
                 ? "Review"
                 : "Settings"}
-          </button>
+          </Button>
         ))}
       </div>
       <p className="mb-4 text-sm text-(--text-secondary)">
@@ -902,13 +906,14 @@ export function LinkedPlaylistManager({
                 className="mb-4 text-sm text-(--text-primary)"
               >
                 {error}
-                <button
+                <Button
+                  variant="secondary"
                   className={`${button} ml-2`}
                   disabled={busy || resolving}
                   onClick={() => setRetry((value) => value + 1)}
                 >
                   Reload settings
-                </button>
+                </Button>
               </div>
             )}
             {busy && <p role="status">Reading or retaining playlist state…</p>}
@@ -920,8 +925,8 @@ export function LinkedPlaylistManager({
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="text-sm">
                     Library playlist
-                    <select
-                      className={`${button} mt-1 w-full`}
+                    <Select
+                      className="mt-1 w-full"
                       value={libraryId}
                       disabled={busy || resolving}
                       onChange={(event) => {
@@ -940,12 +945,12 @@ export function LinkedPlaylistManager({
                           {item.smart ? " · Smart snapshot" : ""}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </label>
                   <label className="text-sm">
                     ListenBrainz playlist
-                    <select
-                      className={`${button} mt-1 w-full`}
+                    <Select
+                      className="mt-1 w-full"
                       value={remoteId}
                       disabled={busy || resolving}
                       onChange={(event) => {
@@ -972,7 +977,7 @@ export function LinkedPlaylistManager({
                           {item.title}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </label>
                 </div>
                 {remoteId === NEW_REMOTE && (
@@ -991,26 +996,28 @@ export function LinkedPlaylistManager({
                 )}
                 {total > 50 && (
                   <div className="flex gap-2">
-                    <button
+                    <Button
+                      variant="secondary"
                       className={button}
                       disabled={busy || resolving || page === 0}
                       onClick={() => setPage((value) => value - 1)}
                     >
                       Previous playlists
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      variant="secondary"
                       className={button}
                       disabled={busy || resolving || (page + 1) * 50 >= total}
                       onClick={() => setPage((value) => value + 1)}
                     >
                       Next playlists
-                    </button>
+                    </Button>
                   </div>
                 )}
                 <label className="block text-sm">
                   Sync direction
-                  <select
-                    className={`${button} mt-1 w-full`}
+                  <Select
+                    className="mt-1 w-full"
                     value={direction}
                     disabled={busy || resolving}
                     onChange={(event) => {
@@ -1043,7 +1050,7 @@ export function LinkedPlaylistManager({
                     >
                       Two-way
                     </option>
-                  </select>
+                  </Select>
                 </label>
                 {smartLibrary(libraryId) && (
                   <p className="text-sm text-(--text-secondary)">
@@ -1059,8 +1066,7 @@ export function LinkedPlaylistManager({
                   </p>
                 )}
                 <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={direction === "bidirectional"}
                     disabled={
                       busy ||
@@ -1082,8 +1088,7 @@ export function LinkedPlaylistManager({
                   Enable two-way sync
                 </label>
                 <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={automatic}
                     disabled={busy || resolving || remoteId === NEW_REMOTE}
                     onChange={(event) => setAutomatic(event.target.checked)}
@@ -1102,8 +1107,8 @@ export function LinkedPlaylistManager({
                 </p>
                 <label className="block text-sm">
                   Initial version to keep
-                  <select
-                    className={`${button} ml-2`}
+                  <Select
+                    className="ml-2"
                     value={source}
                     disabled={
                       busy || resolving || direction !== "bidirectional"
@@ -1114,9 +1119,10 @@ export function LinkedPlaylistManager({
                   >
                     <option value="library">Library order</option>
                     <option value="listenbrainz">ListenBrainz order</option>
-                  </select>
+                  </Select>
                 </label>
-                <button
+                <Button
+                  variant="secondary"
                   className={button}
                   disabled={
                     busy ||
@@ -1136,7 +1142,7 @@ export function LinkedPlaylistManager({
                   {remoteId === NEW_REMOTE
                     ? "Create ListenBrainz playlist"
                     : "Preview link"}
-                </button>
+                </Button>
               </section>
             )}
             {!preview && tab === "review" && (
@@ -1241,7 +1247,8 @@ export function LinkedPlaylistManager({
                       />
                       {row.match.status === "matched" &&
                         row.match.by === "metadata" && (
-                          <button
+                          <Button
+                            variant="secondary"
                             className={`${button} mt-2`}
                             disabled={busy || resolving}
                             onClick={() => {
@@ -1266,14 +1273,13 @@ export function LinkedPlaylistManager({
                             }}
                           >
                             Confirm local match occurrence {index + 1}
-                          </button>
+                          </Button>
                         )}
                     </li>
                   ))}
                 </ol>
                 <label className="flex gap-2 text-sm">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={approved}
                     disabled={busy || resolving}
                     onChange={(event) => setApproved(event.target.checked)}
@@ -1282,14 +1288,16 @@ export function LinkedPlaylistManager({
                   selected sync direction. No unresolved songs will be dropped.
                 </label>
                 <div className="flex gap-2">
-                  <button
+                  <Button
+                    variant="secondary"
                     className={button}
                     disabled={busy || resolving || !approved}
                     onClick={() => void enable()}
                   >
                     Save reviewed link
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    variant="secondary"
                     className={button}
                     disabled={busy || resolving}
                     onClick={() => {
@@ -1298,7 +1306,7 @@ export function LinkedPlaylistManager({
                     }}
                   >
                     Back
-                  </button>
+                  </Button>
                 </div>
               </section>
             )}
@@ -1322,13 +1330,14 @@ export function LinkedPlaylistManager({
                       {available &&
                       !(link.job?.step || link.job?.descriptionStep) &&
                       services.repository.rebind ? (
-                        <button
+                        <Button
+                          variant="secondary"
                           className={button}
                           disabled={busy || resolving}
                           onClick={() => void rebind(link)}
                         >
                           Review connection for {available.title}
-                        </button>
+                        </Button>
                       ) : (
                         <p className="text-xs text-(--text-secondary)">
                           Reconnect the original connection to review its
@@ -1364,8 +1373,7 @@ export function LinkedPlaylistManager({
                   ))}
                 </ol>
                 <label className="flex gap-2 text-sm">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={rebindApproved}
                     disabled={busy || resolving}
                     onChange={(event) =>
@@ -1375,13 +1383,14 @@ export function LinkedPlaylistManager({
                   I confirm this is my original Plex account, server and music
                   library and reviewed the current playlist.
                 </label>
-                <button
+                <Button
+                  variant="secondary"
                   className={button}
                   disabled={busy || resolving || !rebindApproved}
                   onClick={() => void rebind(rebindView.link, true)}
                 >
                   Retain reviewed connection
-                </button>
+                </Button>
               </section>
             )}
             <section
@@ -1472,8 +1481,8 @@ export function LinkedPlaylistManager({
                     <div className="mt-3 grid gap-3 sm:grid-cols-2">
                       <label className="text-sm">
                         Direction for {link.baseline.library.title}
-                        <select
-                          className={`${button} mt-1 w-full`}
+                        <Select
+                          className="mt-1 w-full"
                           value={linkedSyncDirection(link)}
                           disabled={
                             busy ||
@@ -1512,11 +1521,10 @@ export function LinkedPlaylistManager({
                           >
                             Two-way
                           </option>
-                        </select>
+                        </Select>
                       </label>
                       <label className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
+                        <Checkbox
                           checked={linkedAutomaticSync(link)}
                           disabled={busy || resolving}
                           onChange={(event) =>
@@ -1541,7 +1549,8 @@ export function LinkedPlaylistManager({
                             (link.state === "ready" ||
                               link.state === "error"))) &&
                         !(link.job?.step || link.job?.descriptionStep) && (
-                          <button
+                          <Button
+                            variant="secondary"
                             className={button}
                             disabled={
                               busy || resolving || !!backgroundRunning[link.id]
@@ -1553,26 +1562,29 @@ export function LinkedPlaylistManager({
                               : canRematchIncomplete(link)
                                 ? "Find more matches"
                                 : "Retry background lookups"}
-                          </button>
+                          </Button>
                         )}
-                      <button
+                      <Button
+                        variant="secondary"
                         className={button}
                         disabled={busy || resolving}
                         onClick={() => void settings(link, true, false)}
                       >
                         Disable
-                      </button>
+                      </Button>
                       {link.enabled && !link.paused && (
-                        <button
+                        <Button
+                          variant="secondary"
                           className={button}
                           disabled={busy || resolving}
                           onClick={() => void settings(link, true)}
                         >
                           Pause
-                        </button>
+                        </Button>
                       )}
                       {link.enabled && !link.paused && (
-                        <button
+                        <Button
+                          variant="secondary"
                           className={button}
                           disabled={
                             busy || resolving || !!backgroundRunning[link.id]
@@ -1580,7 +1592,7 @@ export function LinkedPlaylistManager({
                           onClick={() => void check(link)}
                         >
                           Sync now
-                        </button>
+                        </Button>
                       )}
                       {link.job?.step || link.job?.descriptionStep ? (
                         <>
@@ -1627,8 +1639,7 @@ export function LinkedPlaylistManager({
                             </div>
                           )}
                           <label className="flex items-center gap-2 text-sm">
-                            <input
-                              type="checkbox"
+                            <Checkbox
                               disabled={
                                 busy || resolving || !recoveryViews[link.id]
                               }
@@ -1643,7 +1654,8 @@ export function LinkedPlaylistManager({
                             I reviewed the current destination and acknowledge
                             that the previous update may have applied.
                           </label>
-                          <button
+                          <Button
+                            variant="secondary"
                             className={button}
                             disabled={busy || resolving}
                             onClick={() => void check(link, true)}
@@ -1651,10 +1663,11 @@ export function LinkedPlaylistManager({
                             {recoveryViews[link.id] && recoveryApproval[link.id]
                               ? "Retain reviewed current state"
                               : "Read recovery proof"}
-                          </button>
+                          </Button>
                         </>
                       ) : (
-                        <button
+                        <Button
+                          variant="secondary"
                           className={button}
                           disabled={
                             busy || resolving || !!backgroundRunning[link.id]
@@ -1662,7 +1675,7 @@ export function LinkedPlaylistManager({
                           onClick={() => void prepare(link)}
                         >
                           Review versions and resume
-                        </button>
+                        </Button>
                       )}
                     </div>
                   </article>

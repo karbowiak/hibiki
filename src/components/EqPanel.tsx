@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { useCallback, useEffect, useId, useRef, useState } from "react"
 import { useEqStore, EQ_LABELS, EQ_PRESETS } from "../stores/eqStore"
 import { useDeviceStore } from "../stores/deviceStore"
@@ -242,13 +243,15 @@ export default function EqPanel({ onClose }: Props) {
     <>
       {/* Header */}
       <PlayerPanelHeader title="Equalizer" onClose={onClose} actions={!correctionTab ? <>
-          <button
+          <Button
+            variant="bare"
             onClick={() => applyPreset([0, 0, 0, 0, 0, 0, 0, 0, 0, 0])}
             className="player-panel-action"
           >
             Reset
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="bare"
             onClick={() => setEnabled(!enabled)}
             aria-pressed={enabled}
             aria-label="Tone equalizer"
@@ -259,7 +262,7 @@ export default function EqPanel({ onClose }: Props) {
             }`}
           >
             {enabled ? "Tone on" : "Tone off"}
-          </button>
+          </Button>
         </> : undefined} />
 
       {eqError && (
@@ -268,12 +271,13 @@ export default function EqPanel({ onClose }: Props) {
           className="flex items-center gap-2 border-b border-(--border) px-4 py-2 text-xs text-(--text-primary)"
         >
           <span>{eqError}</span>
-          <button
+          <Button
+            variant="bare"
             onClick={syncToEngine}
             className="shrink-0 text-accent underline"
           >
             Retry
-          </button>
+          </Button>
         </div>
       )}
 
@@ -290,7 +294,7 @@ export default function EqPanel({ onClose }: Props) {
       )}
 
       {currentOutput && <div role="tablist" aria-label="Equalizer controls" className="flex gap-1 border-b border-(--border) px-4 py-2">
-        {(["tone", "correction"] as const).map(value => <button
+        {(["tone", "correction"] as const).map(value => <Button variant="bare"
           key={value} type="button" role="tab" id={`${panelId}-${value}`} aria-controls={`${panelId}-${value}-panel`}
           aria-selected={value === (correctionTab ? "correction" : "tone")} tabIndex={value === (correctionTab ? "correction" : "tone") ? 0 : -1}
           onClick={() => setTab(value)}
@@ -304,7 +308,7 @@ export default function EqPanel({ onClose }: Props) {
           className={`flex min-h-9 flex-1 items-center justify-center gap-2 rounded-lg px-3 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-accent ${value === (correctionTab ? "correction" : "tone") ? "bg-(--accent-tint-subtle) text-accent" : "text-(--text-secondary) hover:bg-(--bg-surface-hover)"}`}
         >{value === "tone" ? "Tone" : "Device correction"}
           {value === "correction" && <span aria-label={correctionActive ? "Correction enabled" : "Correction bypassed"} className={`h-1.5 w-1.5 rounded-full ${correctionActive ? "bg-accent" : "bg-(--text-muted)"}`} />}
-        </button>)}
+        </Button>)}
       </div>}
 
       <div id={`${panelId}-tone-panel`} role={currentOutput ? "tabpanel" : undefined} aria-labelledby={currentOutput ? `${panelId}-tone` : undefined} hidden={correctionTab}>
@@ -317,7 +321,8 @@ export default function EqPanel({ onClose }: Props) {
             (g, i) => Math.abs(g - gains[i]) < 0.01
           )
           return (
-            <button
+            <Button
+              variant="bare"
               key={preset.name}
               onClick={() => applyPreset(preset.gains)}
               disabled={!enabled}
@@ -337,7 +342,7 @@ export default function EqPanel({ onClose }: Props) {
               }}
             >
               {preset.name}
-            </button>
+            </Button>
           )
         })}
       </div>
@@ -428,7 +433,8 @@ export default function EqPanel({ onClose }: Props) {
           <span className="shrink-0 text-[11px] text-(--text-muted)">
             Gain
           </span>
-          <button
+          <Button
+            variant="bare"
             onClick={() => setAutoPostgain(!autoPostgain)}
             disabled={!enabled}
             aria-pressed={autoPostgain}
@@ -440,7 +446,7 @@ export default function EqPanel({ onClose }: Props) {
             }`}
           >
             Auto
-          </button>
+          </Button>
           {autoPostgain && (
             <span className="text-[11px] tabular-nums text-(--text-muted)">
               {applying
@@ -486,19 +492,21 @@ export default function EqPanel({ onClose }: Props) {
                       <path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z" />
                     </svg>
                   )}
-                  <button
+                  <Button
+                    variant="bare"
                     onClick={() => saveProfileForDevice(currentDevice)}
                     className="shrink-0 rounded bg-(--bg-surface) px-1.5 py-0.5 text-[10px] text-(--text-muted) transition-colors hover:bg-(--bg-surface-hover) hover:text-(--text-primary)"
                   >
                     Save
-                  </button>
+                  </Button>
                   {hasProfile && (
-                    <button
+                    <Button
+                      variant="bare"
                       onClick={() => deleteProfileForDevice(currentDevice)}
                       className="shrink-0 rounded bg-(--bg-surface) px-1.5 py-0.5 text-[10px] text-(--text-muted) transition-colors hover:bg-red-500/20 hover:text-red-400"
                     >
                       Clear
-                    </button>
+                    </Button>
                   )}
                 </div>
               )
@@ -521,12 +529,13 @@ export default function EqPanel({ onClose }: Props) {
                   >
                     <path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z" />
                   </svg>
-                  <button
+                  <Button
+                    variant="bare"
                     onClick={() => deleteProfileForDevice(dev)}
                     className="shrink-0 rounded bg-(--bg-surface) px-1.5 py-0.5 text-[10px] text-(--text-muted) transition-colors hover:bg-red-500/20 hover:text-red-400"
                   >
                     Clear
-                  </button>
+                  </Button>
                 </div>
               ))}
           </div>

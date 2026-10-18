@@ -1,3 +1,5 @@
+import { Button } from "../../components/shared/Button"
+import { Checkbox } from "../../components/shared/Checkbox"
 import { useState, useEffect, useRef } from "react"
 import { useLocation } from "wouter"
 import { useShallow } from "zustand/react/shallow"
@@ -328,25 +330,26 @@ export function PlexSettings() {
           )}
         </div>
         {isConnected && !showManual && (
-          <button
+          <Button
+            variant="bare"
             onClick={handleDisconnect}
             disabled={isDisconnecting}
             className="ml-auto shrink-0 rounded-full border border-white/20 px-4 py-1.5 text-xs font-semibold text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-30 transition-colors"
           >
             {isDisconnecting ? "Disconnecting..." : "Disconnect"}
-          </button>
+          </Button>
         )}
       </div>
 
       {(
         <div className="rounded-xl border border-(--border) bg-(--bg-surface) p-4 text-(--text-primary)">
           <p className="text-sm">Browse saved pages and play complete cached or downloaded music without Plex. Library changes are disabled offline. Switching to saved-library mode stops current playback.</p>
-          <button type="button" disabled={isLoading} className="mt-3 rounded-lg border border-(--border) px-4 py-2 text-sm font-medium hover:bg-(--bg-elevated) focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50" onClick={async () => {
+          <Button variant="secondary" type="button" disabled={isLoading} className="mt-3 rounded-lg border border-(--border) px-4 py-2 text-sm font-medium hover:bg-(--bg-elevated) focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50" onClick={async () => {
             stopPolling()
             const request = authGeneration.current
             await browseSavedLibrary()
             if (authIsCurrent(request) && useConnectionStore.getState().isOffline) navigate("/")
-          }}>{isLoading ? "Opening saved library…" : isOffline ? "Return to saved library" : isConnected ? "Browse offline" : "Browse saved library"}</button>
+          }}>{isLoading ? "Opening saved library…" : isOffline ? "Return to saved library" : isConnected ? "Browse offline" : "Browse saved library"}</Button>
         </div>
       )}
 
@@ -358,12 +361,13 @@ export function PlexSettings() {
             <p className="mt-0.5 text-sm text-white">{musicSectionTitle ?? "Unknown"}</p>
           </div>
           {availableMusicSections.length > 1 && (
-            <button
+            <Button
+              variant="bare"
               onClick={() => void handleOpenLibrarySwitcher()}
               className="shrink-0 rounded-full border border-white/20 px-4 py-1.5 text-xs font-semibold text-white/60 hover:bg-white/10 hover:text-white transition-colors"
             >
               Switch
-            </button>
+            </Button>
           )}
         </div>
       )}
@@ -377,7 +381,8 @@ export function PlexSettings() {
               const isCurrent = section.key === useConnectionStore.getState().musicSectionId
               return (
                 <li key={section.key}>
-                  <button
+                  <Button
+                    variant="bare"
                     onClick={() => void handleSwitchLibrary(section)}
                     disabled={isSwitching || isCurrent}
                     className="w-full rounded-xl bg-white/5 px-5 py-3.5 text-left hover:bg-white/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -397,18 +402,19 @@ export function PlexSettings() {
                     {section.total_size != null && (
                       <p className="mt-0.5 text-xs text-white/40">{section.total_size.toLocaleString()} items</p>
                     )}
-                  </button>
+                  </Button>
                 </li>
               )
             })}
           </ul>
-          <button
+          <Button
+            variant="bare"
             onClick={() => setShowLibrarySwitcher(false)}
             disabled={isSwitching}
             className="w-full rounded-full border border-white/20 py-2.5 text-sm font-semibold text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             Cancel
-          </button>
+          </Button>
         </div>
       )}
 
@@ -419,7 +425,8 @@ export function PlexSettings() {
           <ul className="space-y-2">
             {availableMusicSections.map(section => (
               <li key={section.key}>
-                <button
+                <Button
+                  variant="bare"
                   onClick={() => void handlePickLibrary(section)}
                   disabled={isLoading}
                   className="w-full rounded-xl bg-white/5 px-5 py-3.5 text-left hover:bg-white/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -436,7 +443,7 @@ export function PlexSettings() {
                   {section.total_size != null && (
                     <p className="mt-0.5 text-xs text-white/40">{section.total_size.toLocaleString()} items</p>
                   )}
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
@@ -445,13 +452,14 @@ export function PlexSettings() {
               {authError}
             </div>
           )}
-          <button
+          <Button
+            variant="bare"
             onClick={() => { stopPolling(); setPendingToken(""); setResources([]); setAuthState("idle"); setAuthError(null); useConnectionStore.getState().disconnect() }}
             disabled={isLoading}
             className="w-full rounded-full border border-white/20 py-2.5 text-sm font-semibold text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             Back
-          </button>
+          </Button>
         </div>
       )}
 
@@ -468,12 +476,13 @@ export function PlexSettings() {
               Sign in to Plex, then return here.
             </p>
           </div>
-          <button
+          <Button
+            variant="bare"
             onClick={() => { stopPolling(); setAuthState("idle"); setAuthError(null) }}
             className="w-full rounded-full border border-white/20 py-2.5 text-sm font-semibold text-white/60 hover:bg-white/10 hover:text-white transition-colors"
           >
             Cancel
-          </button>
+          </Button>
         </div>
       )}
 
@@ -490,7 +499,8 @@ export function PlexSettings() {
               const isDisabled = connectingServer !== null
               return (
                 <li key={r.client_identifier}>
-                  <button
+                  <Button
+                    variant="bare"
                     onClick={() => handlePickServer(r)}
                     disabled={isDisabled}
                     className="w-full rounded-xl bg-white/5 px-5 py-3.5 text-left hover:bg-white/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -521,7 +531,7 @@ export function PlexSettings() {
                         Testing {r.connections.length} URLs...
                       </p>
                     )}
-                  </button>
+                  </Button>
                 </li>
               )
             })}
@@ -531,13 +541,14 @@ export function PlexSettings() {
               {authError}
             </div>
           )}
-          <button
+          <Button
+            variant="bare"
             onClick={() => { stopPolling(); setPendingToken(""); setResources([]); setAuthState("idle"); setAuthError(null) }}
             disabled={connectingServer !== null}
             className="w-full rounded-full border border-white/20 py-2.5 text-sm font-semibold text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             Back
-          </button>
+          </Button>
         </div>
       )}
 
@@ -555,7 +566,8 @@ export function PlexSettings() {
               </p>
             </div>
           ) : (
-            <button
+            <Button
+              variant="bare"
               onClick={() => void handlePlexSignIn()}
               className="flex w-full items-center justify-center gap-3 rounded-full bg-[#e5a00d] py-3 text-sm font-bold text-black hover:bg-[#f0aa10] active:scale-95 transition-all"
             >
@@ -563,7 +575,7 @@ export function PlexSettings() {
                 <path d="M11.994 2C6.477 2 2 6.477 2 11.994S6.477 22 11.994 22 22 17.523 22 12.006 17.523 2 11.994 2zm5.284 12.492l-7.285 4.206a.566.566 0 0 1-.567 0 .572.572 0 0 1-.284-.491V5.793c0-.202.109-.39.284-.491a.566.566 0 0 1 .567 0l7.285 4.206a.572.572 0 0 1 .284.491c0 .204-.108.39-.284.493z" />
               </svg>
               Sign in with Plex
-            </button>
+            </Button>
           )}
 
           {authError && connectingServer === null && (
@@ -575,12 +587,13 @@ export function PlexSettings() {
           {connectingServer === null && <>
             <div className="flex items-center gap-3">
               <div className="h-px flex-1 bg-white/10" />
-              <button
+              <Button
+                variant="bare"
                 onClick={() => setShowManual(v => !v)}
                 className="text-xs text-white/30 hover:text-white/60 transition-colors"
               >
                 {showManual ? "hide manual" : "or connect manually"}
-              </button>
+              </Button>
               <div className="h-px flex-1 bg-white/10" />
             </div>
 
@@ -617,7 +630,8 @@ export function PlexSettings() {
                       spellCheck={false}
                       autoComplete="off"
                     />
-                    <button
+                    <Button
+                      variant="bare"
                       type="button"
                       onClick={() => setShowToken(v => !v)}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/70 transition-colors"
@@ -632,13 +646,13 @@ export function PlexSettings() {
                           <path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z" />
                         </svg>
                       )}
-                    </button>
+                    </Button>
                   </div>
                 </div>
 
                 {/^https:\/\//i.test(url.trim()) && (
                   <label className="flex items-start gap-3 rounded-xl border border-white/10 p-3 text-sm text-white/70">
-                    <input type="checkbox" checked={allowInvalidCertificate} onChange={e => setAllowInvalidCertificate(e.target.checked)} className="mt-1 accent-accent" />
+                    <Checkbox checked={allowInvalidCertificate} onChange={e => setAllowInvalidCertificate(e.target.checked)} className="mt-1 accent-accent" />
                     <span>Allow an unverified certificate for this server
                       <span className="mt-1 block text-xs text-white/40">Use only for a server you trust. Normal certificate checks remain enabled for other hosts.</span>
                     </span>
@@ -651,21 +665,23 @@ export function PlexSettings() {
                 )}
 
                 <div className="flex items-center justify-between pt-1">
-                  <button
+                  <Button
+                    variant="bare"
                     type="button"
                     onClick={handleDisconnect}
                     disabled={isDisconnecting || (!isConnected && !savedUrl)}
                     className="rounded-full px-4 py-2 text-sm font-semibold text-white/50 hover:bg-white/10 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                   >
                     {isDisconnecting ? "Disconnecting..." : "Disconnect"}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    variant="bare"
                     type="submit"
                     disabled={isLoading || !url.trim() || !token.trim()}
                     className="rounded-full bg-accent px-6 py-2 text-sm font-semibold text-black disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110 active:scale-95 transition-all"
                   >
                     {isLoading ? "Connecting..." : isConnected && !isDirty ? "Reconnect" : "Save & Connect"}
-                  </button>
+                  </Button>
                 </div>
               </form>
             )}

@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { useState } from "react"
 import { IconLoader2, IconPlayerPlay } from "@tabler/icons-react"
 import { useShallow } from "zustand/react/shallow"
@@ -37,11 +38,11 @@ export default function DjPanel({ onClose }: { onClose: () => void }) {
     } finally { setStarting(null) }
   }
   const radioButton = (mode: "plex" | "ytmusic", available: boolean, name: string) => (
-    <button type="button" disabled={disabled || !available} aria-pressed={isRadioMode && radioMode === mode}
+    <Button variant="bare" type="button" disabled={disabled || !available} aria-pressed={isRadioMode && radioMode === mode}
       onClick={() => { void start(mode) }} className="player-panel-option flex w-full items-center justify-center gap-2 !py-2.5 disabled:cursor-default disabled:opacity-40">
       {starting === mode ? <IconLoader2 size={14} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <IconPlayerPlay size={14} aria-hidden="true" />}
       {name}
-    </button>
+    </Button>
   )
   return (
     <div>
@@ -54,13 +55,13 @@ export default function DjPanel({ onClose }: { onClose: () => void }) {
           {hasDjModes && <div className="mt-4">
             <h4 className="mb-1 px-1 text-xs font-medium text-(--text-secondary)">Guest DJ</h4>
             {DJ_MODES.map(dj => (
-              <button key={dj.key} type="button" disabled={!canDj || !!starting} aria-pressed={djMode === dj.key}
+              <Button variant="bare" key={dj.key} type="button" disabled={!canDj || !!starting} aria-pressed={djMode === dj.key}
                 title={dj.desc} onClick={() => { setDjMode(djMode === dj.key ? null : dj.key); onClose() }}
                 className="player-panel-option mt-1 block w-full !px-2 !py-2 text-left !text-xs disabled:cursor-default disabled:opacity-40">
                 {dj.name}
-              </button>
+              </Button>
             ))}
-            {djMode && <button type="button" onClick={() => { setDjMode(null); onClose() }} className="player-panel-action mt-2 w-full">Turn off Guest DJ</button>}
+            {djMode && <Button variant="bare" type="button" onClick={() => { setDjMode(null); onClose() }} className="player-panel-action mt-2 w-full">Turn off Guest DJ</Button>}
           </div>}
         </section>
         <section className="min-w-0 p-3" aria-label="YouTube Music listening options">
@@ -73,12 +74,12 @@ export default function DjPanel({ onClose }: { onClose: () => void }) {
       </div>
       {playerError && <p role="alert" className="px-4 pb-3 text-xs text-(--text-secondary)">{playerError}</p>}
       <div className="sticky bottom-0 border-t border-(--border) bg-(--bg-surface) p-3">
-        <button type="button" disabled={disabled || !plexAvailable || !connected} aria-pressed={isRadioMode && radioMode === "mixed"}
+        <Button variant="bare" type="button" disabled={disabled || !plexAvailable || !connected} aria-pressed={isRadioMode && radioMode === "mixed"}
           onClick={() => { void start("mixed") }}
           className="flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-black transition-opacity hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-default disabled:opacity-40">
           {starting === "mixed" ? <IconLoader2 size={16} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <><PlexLogo size={15} /><YoutubeMusicLogo size={15} /></>}
           Radio
-        </button>
+        </Button>
         <p className="mt-2 text-center text-xs text-(--text-secondary)">5 Plex + 5 YTM songs, alternating</p>
       </div>
     </div>

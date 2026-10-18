@@ -1,3 +1,5 @@
+import { Button } from "./shared/Button"
+import { Select } from "./shared/Select"
 import { useEffect, useId, useRef, useState } from "react"
 import type { AudioCacheStats } from "../audio/RustAudioEngine"
 
@@ -121,15 +123,16 @@ export function AudioCacheControls({
                 : "Loading..."}
           </p>
         </div>
-        <button
+        <Button
+          variant="secondary"
           onClick={() => {
             void change("clear")
           }}
           disabled={pending !== null || !stats || stats.total_bytes === 0}
-          className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 transition-colors hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-lg border border-white/10 px-3 py-1.5 text-xs transition-colors hover:border-white/20 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {pending === "clear" ? "Clearing..." : "Clear"}
-        </button>
+        </Button>
       </div>
       <div className="flex items-center gap-4">
         <label
@@ -143,21 +146,21 @@ export function AudioCacheControls({
             Updating...
           </span>
         )}
-        <select
+        <Select
           id={limitId}
           value={maximum}
           disabled={pending !== null}
           onChange={(event) => {
             void change("limit", Number(event.target.value))
           }}
-          className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/70 transition-colors hover:border-white/20 disabled:opacity-40"
+
         >
           {OPTIONS.map((option) => (
             <option key={option.bytes} value={option.bytes}>
               {option.label}
             </option>
           ))}
-        </select>
+        </Select>
       </div>
       {error && (
         <p role="alert" className="text-xs text-red-300">

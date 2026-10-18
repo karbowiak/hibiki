@@ -1,3 +1,5 @@
+import { Button } from "../shared/Button"
+import { DropdownSurface } from "../shared/DropdownSurface"
 import { ArtistCredits } from "../shared/ArtistCredits"
 import { MusicEntityLink } from "../shared/MusicEntityLink"
 import { albumArtistEntity } from "../../lib/musicLinks"
@@ -273,7 +275,8 @@ export function AlbumPage({ albumId }: { albumId: string }) {
           {/* Album art — click to open modal */}
           <div className="artwork-edit-frame relative flex shrink-0 flex-col items-start">
             {thumbUrl ? (
-              <button
+              <Button
+                variant="bare"
                 type="button"
                 aria-label={`View ${album.title} artwork`}
                 onClick={(e) => {
@@ -289,7 +292,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                   alt=""
                   className="h-full w-full rounded-md object-cover"
                 />
-              </button>
+              </Button>
             ) : (
               <div className="h-52 w-52 shrink-0 rounded-md bg-app-surface shadow-2xl" />
             )}
@@ -409,7 +412,9 @@ export function AlbumPage({ albumId }: { albumId: string }) {
           </div>
           <div className="relative z-20 flex w-full flex-wrap items-center gap-2 pt-3">
             {/* Play */}
-            <button
+            <Button
+              size="md"
+              variant="primary"
               onClick={() =>
                 playableTracks.length > 0 &&
                 void playTrack(
@@ -433,9 +438,11 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                 <polygon points="3,2 13,8 3,14" />
               </svg>
               <span>Play</span>
-            </button>
+            </Button>
             {/* Shuffle */}
-            <button
+            <Button
+              size="md"
+              variant="secondary"
               onClick={() => {
                 if (playableTracks.length === 0) return
                 const s = [...playableTracks].sort(() => Math.random() - 0.5)
@@ -462,10 +469,12 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                 <path d="m7.5 10.723.98-1.167.957 1.14a2.25 2.25 0 0 0 1.724.804h1.947l-1.017-1.018a.75.75 0 1 1 1.06-1.06l2.829 2.828-2.829 2.828a.75.75 0 1 1-1.06-1.06L13.109 13H11.16a3.75 3.75 0 0 1-2.873-1.34l-.787-.938z" />
               </svg>
               <span>Shuffle</span>
-            </button>
+            </Button>
             {/* Album Radio */}
             {hasRadio && (
-              <button
+              <Button
+                size="md"
+                variant="secondary"
                 onClick={() => void playRadio(albumId, "album")}
                 title="Album Radio — continuous sonically-similar music"
                 className="media-secondary"
@@ -479,11 +488,12 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                   <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6A3 3 0 0 0 8 5zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
                 </svg>
                 <span>Radio</span>
-              </button>
+              </Button>
             )}
             {/* Three-dot menu */}
             <div className="relative">
-              <button
+              <Button
+                variant="bare"
                 ref={menuBtnRef}
                 onClick={() => setMenuOpen((v) => !v)}
                 className="flex h-9 w-9 items-center justify-center rounded-full text-white/50 transition-all hover:bg-white/10 hover:text-white"
@@ -499,7 +509,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                   <circle cx="8" cy="8" r="1.5" />
                   <circle cx="8" cy="13" r="1.5" />
                 </svg>
-              </button>
+              </Button>
               {album &&
                 menuOpen &&
                 (() => {
@@ -510,7 +520,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                         className="fixed inset-0 z-9998"
                         onClick={() => setMenuOpen(false)}
                       />
-                      <div
+                      <DropdownSurface
                         className="app-overlay-surface fixed z-9999 max-h-[70vh] w-56 overflow-y-auto rounded-lg border border-(--border) bg-app-surface py-1 shadow-xl"
                         style={{
                           top: (rect?.bottom ?? 0) + 4,
@@ -528,7 +538,8 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                           }
                         />
                         {/* Queue */}
-                        <button
+                        <Button
+                          variant="menu"
                           type="button"
                           onClick={() => {
                             setMenuOpen(false)
@@ -537,8 +548,9 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                           className="flex w-full items-center gap-2 px-3 py-2 text-sm text-(--text-primary) hover:bg-(--bg-surface-hover)"
                         >
                           Edit metadata and sources…
-                        </button>
-                        <button
+                        </Button>
+                        <Button
+                          variant="menu"
                           type="button"
                           onClick={() => {
                             setMenuOpen(false)
@@ -547,8 +559,9 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                           className="flex w-full items-center gap-2 px-3 py-2 text-sm text-(--text-primary) hover:bg-(--bg-surface-hover)"
                         >
                           Compare album and media versions…
-                        </button>
-                        <button
+                        </Button>
+                        <Button
+                          variant="menu"
                           onClick={() => {
                             addNext(tracks)
                             setMenuOpen(false)
@@ -564,8 +577,9 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                             <path d="M6 18l8.5-6L6 6v12zm2-8.14L11.03 12 8 14.14V9.86zM16 6h2v12h-2z" />
                           </svg>
                           Play next
-                        </button>
-                        <button
+                        </Button>
+                        <Button
+                          variant="menu"
                           onClick={() => {
                             addToQueue(tracks)
                             setMenuOpen(false)
@@ -581,7 +595,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                             <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z" />
                           </svg>
                           Add to queue
-                        </button>
+                        </Button>
 
                         <hr className="my-1 border-t border-(--border)" />
 
@@ -603,7 +617,8 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                         <div className="px-3 pb-0.5 pt-2 text-xs font-semibold text-(--text-secondary)">
                           Share
                         </div>
-                        <button
+                        <Button
+                          variant="menu"
                           onClick={() => {
                             void open(
                               `https://www.last.fm/music/${encodeURIComponent(album.artistName)}`
@@ -621,8 +636,9 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                             <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
                           </svg>
                           Last.fm artist
-                        </button>
-                        <button
+                        </Button>
+                        <Button
+                          variant="menu"
                           onClick={() => {
                             void open(
                               `https://www.last.fm/music/${encodeURIComponent(album.artistName)}/${encodeURIComponent(album.title)}`
@@ -640,9 +656,10 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                             <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
                           </svg>
                           Last.fm album
-                        </button>
+                        </Button>
                         {deezerData?.externalUrl && (
-                          <button
+                          <Button
+                            variant="menu"
                             onClick={() => {
                               void open(deezerData.externalUrl)
                               setMenuOpen(false)
@@ -658,7 +675,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                               <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" />
                             </svg>
                             Deezer
-                          </button>
+                          </Button>
                         )}
 
                         <hr className="my-1 border-t border-(--border)" />
@@ -687,7 +704,8 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                             <div className="px-3 pb-0.5 pt-2 text-xs font-semibold text-(--text-secondary)">
                               Debug
                             </div>
-                            <button
+                            <Button
+                              variant="menu"
                               onClick={() => {
                                 showDebugPanel("album", album)
                                 setMenuOpen(false)
@@ -703,10 +721,10 @@ export function AlbumPage({ albumId }: { albumId: string }) {
                                 <path d="M20 8h-2.81a5.985 5.985 0 0 0-1.82-1.96L17 4.41 15.59 3l-2.17 2.17a5.947 5.947 0 0 0-2.84 0L8.41 3 7 4.41l1.62 1.63C7.88 6.55 7.26 7.22 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81A6.008 6.008 0 0 0 12 22a6.008 6.008 0 0 0 5.19-3H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z" />
                               </svg>
                               Debug Info
-                            </button>
+                            </Button>
                           </>
                         )}
-                      </div>
+                      </DropdownSurface>
                     </>,
                     document.body
                   )
@@ -744,7 +762,7 @@ export function AlbumPage({ albumId }: { albumId: string }) {
       {/* Track list */}
       <div className="px-8">
         {catalog.youtubeLoading && <p role="status" className="mb-3 text-sm text-(--text-secondary)">Loading YouTube Music tracks…</p>}
-        {catalog.youtubeError && <p className="mb-3 text-sm text-(--text-secondary)">Couldn’t load YouTube Music tracks. <button type="button" onClick={retry} className="text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Try again</button></p>}
+        {catalog.youtubeError && <p className="mb-3 text-sm text-(--text-secondary)">Couldn’t load YouTube Music tracks. <Button variant="bare" type="button" onClick={retry} className="text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Try again</Button></p>}
         {error && metadataRefreshMessage(error, "album") && (
           <PageRecovery
             title="Couldn't refresh this album"

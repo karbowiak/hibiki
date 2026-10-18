@@ -1,3 +1,4 @@
+import { Button } from "./Button"
 import { useState } from "react"
 import { useMetadataIdentityChooser } from "../../hooks/useMetadataIdentityChooser"
 import type { MetadataIdentity } from "../../metadata/core/types"
@@ -36,7 +37,7 @@ export function MetadataIdentityPanel({ identity, disabled = false }: { identity
     {chooser.selected && <section className="metadata-edit-section">
       <h4 className="metadata-edit-section-title">Current match</h4>
       <IdentityEvidence candidate={chooser.selected} />
-      <button type="button" disabled={locked} className="metadata-edit-button mt-4" onClick={() => setMessage(chooser.reset() ? "Using the library identity again." : "This identity could not be reset.")}>Use library identity</button>
+      <Button variant="secondary" type="button" disabled={locked} className="metadata-edit-button mt-4" onClick={() => setMessage(chooser.reset() ? "Using the library identity again." : "This identity could not be reset.")}>Use library identity</Button>
     </section>}
     {chooser.resolution?.blockedReason && <p role="alert" className="metadata-edit-note">{chooser.resolution.blockedReason}</p>}
     <section className="metadata-edit-section space-y-3">
@@ -44,21 +45,21 @@ export function MetadataIdentityPanel({ identity, disabled = false }: { identity
         <input className="metadata-edit-input" value={query} disabled={locked} onChange={e => setQuery(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !locked && query.trim()) { e.preventDefault(); setMessage(null); void chooser.search("musicbrainz", query) } }} />
       </label>
       <div className="flex flex-wrap gap-2">
-        <button type="button" className="metadata-edit-button" disabled={locked || !query.trim()} onClick={() => { setMessage(null); void chooser.search("musicbrainz", query) }}>Search MusicBrainz</button>
-        {chooser.heyaAvailable && <button type="button" className="metadata-edit-button" disabled={locked || !query.trim()} onClick={() => { setMessage(null); void chooser.search("heya", query) }}>Search HeyaMetadata</button>}
+        <Button variant="secondary" type="button" className="metadata-edit-button" disabled={locked || !query.trim()} onClick={() => { setMessage(null); void chooser.search("musicbrainz", query) }}>Search MusicBrainz</Button>
+        {chooser.heyaAvailable && <Button variant="secondary" type="button" className="metadata-edit-button" disabled={locked || !query.trim()} onClick={() => { setMessage(null); void chooser.search("heya", query) }}>Search HeyaMetadata</Button>}
       </div>
     </section>
     {chooser.loading && <p role="status" className="metadata-edit-note">Verifying identities…</p>}
-    {!!chooser.candidates.length && !chooser.reviewed && <div className="space-y-2" aria-label="Identity candidates">{chooser.candidates.map(candidate => <button type="button" className="metadata-edit-section w-full text-left hover:bg-app-surface-hover" disabled={locked} key={`${candidate.provider}:${candidate.id}`} onClick={() => void chooser.review(candidate)}>
+    {!!chooser.candidates.length && !chooser.reviewed && <div className="space-y-2" aria-label="Identity candidates">{chooser.candidates.map(candidate => <Button variant="bare" type="button" className="metadata-edit-section w-full text-left hover:bg-app-surface-hover" disabled={locked} key={`${candidate.provider}:${candidate.id}`} onClick={() => void chooser.review(candidate)}>
       <span className="block font-semibold">{candidate.title}</span>
       <span className="metadata-edit-note mt-1 block">{[candidate.kind === "album" ? candidate.artist : candidate.artistType, candidate.disambiguation, candidate.area, candidate.releaseDate].filter(Boolean).join(" · ") || sourceName(candidate)}</span>
       <span className="metadata-edit-note mt-2 block text-xs">Review this match →</span>
-    </button>)}</div>}
+    </Button>)}</div>}
     {chooser.reviewed && <section className="metadata-edit-section">
       <h4 className="metadata-edit-section-title">Verified match</h4>
       <IdentityEvidence candidate={chooser.reviewed.candidate} />
       <p className="metadata-edit-note mt-4">Applying this match refreshes enrichment and artwork for this item in Hibiki.</p>
-      <button type="button" className="metadata-edit-button metadata-edit-button--primary mt-4" disabled={locked} onClick={() => setMessage(chooser.apply() ? "Identity applied in Hibiki." : "The identity changed. Review the match again.")}>Apply this identity</button>
+      <Button variant="primary" type="button" className="metadata-edit-button metadata-edit-button--primary mt-4" disabled={locked} onClick={() => setMessage(chooser.apply() ? "Identity applied in Hibiki." : "The identity changed. Review the match again.")}>Apply this identity</Button>
     </section>}
     {chooser.error && <p role="alert" className="metadata-edit-note">{chooser.error}</p>}
     <HeyaDiscoveryPanel identity={identity} disabled={disabled || chooser.loading} onReviewed={chooser.adoptReviewed} />

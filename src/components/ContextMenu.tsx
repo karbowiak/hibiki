@@ -1,3 +1,5 @@
+import { Button } from "./shared/Button"
+import { DropdownSurface } from "./shared/DropdownSurface"
 import { loadAlbumTracks } from "../lib/albumContents"
 import { openMusicEntity, trackEntity, albumArtistEntity } from "../lib/musicLinks"
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react"
@@ -239,18 +241,20 @@ function InlineDeleteConfirm({
     <div className="px-3 py-2">
       <p className="mb-2 text-xs text-white/70">Delete "{title}"?</p>
       <div className="flex gap-2">
-        <button
+        <Button
+          variant="secondary"
           onClick={onConfirm}
-          className="flex-1 rounded bg-red-600/80 px-2 py-1 text-xs text-white transition-colors hover:bg-red-600"
+          className="flex-1 rounded bg-red-600/80 px-2 py-1 text-xs transition-colors hover:bg-red-600"
         >
           Delete
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="secondary"
           onClick={onCancel}
-          className="flex-1 rounded bg-white/10 px-2 py-1 text-xs text-white/70 transition-colors hover:bg-white/20"
+          className="flex-1 rounded px-2 py-1 text-xs transition-colors"
         >
           Cancel
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -467,7 +471,7 @@ export function ContextMenu() {
             close()
           }}
         />
-        <div
+        <DropdownSurface
           ref={menuRef}
           role="dialog"
           aria-modal="true"
@@ -498,7 +502,7 @@ export function ContextMenu() {
               {actionsError}
             </p>
           )}
-        </div>
+        </DropdownSurface>
       </>
     )
   }
@@ -744,7 +748,7 @@ export function ContextMenu() {
           }}
           onClick={close}
         />
-        <div
+        <DropdownSurface
           ref={menuRef}
           role="dialog"
           aria-modal="true"
@@ -851,7 +855,7 @@ export function ContextMenu() {
               )}
             </>
           )}
-        </div>
+        </DropdownSurface>
       </>
     )
   }
@@ -869,7 +873,7 @@ export function ContextMenu() {
       />
 
       {/* Menu */}
-      <div
+      <DropdownSurface
         ref={menuRef}
         role="dialog"
         aria-modal="true"
@@ -1043,7 +1047,7 @@ export function ContextMenu() {
             />
           </>
         )}
-      </div>
+      </DropdownSurface>
     </>
   )
 }

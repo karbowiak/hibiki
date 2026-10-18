@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { AmbientArtworkControls } from "./AmbientArtworkControls"
 import { useArtworkAppearanceStore } from "../stores/artworkAppearanceStore"
 import "../styles/discovery.css"
@@ -246,7 +247,8 @@ export function TopBar() {
         className="topbar-navigation flex min-w-0 flex-[1_1_18rem] flex-row items-center gap-2"
       >
         {/* Back button */}
-        <button
+        <Button
+          variant="bare"
           onClick={() => window.history.back()}
           aria-label="Go back"
           className="topbar-control topbar-icon-control shell-control-secondary rounded-full bg-app-surface transition-colors hover:bg-app-surface-hover"
@@ -260,10 +262,11 @@ export function TopBar() {
           >
             <path d="M11.03.47a.75.75 0 0 1 0 1.06L4.56 8l6.47 6.47a.75.75 0 1 1-1.06 1.06L2.44 8 9.97.47a.75.75 0 0 1 1.06 0z" />
           </svg>
-        </button>
+        </Button>
 
         {/* Forward button */}
-        <button
+        <Button
+          variant="bare"
           onClick={() => window.history.forward()}
           aria-label="Go forward"
           className="topbar-control topbar-icon-control shell-control-secondary rounded-full bg-app-surface transition-colors hover:bg-app-surface-hover"
@@ -277,7 +280,7 @@ export function TopBar() {
           >
             <path d="M4.97.47a.75.75 0 0 0 0 1.06L11.44 8l-6.47 6.47a.75.75 0 1 0 1.06 1.06L13.56 8 6.03.47a.75.75 0 0 0-1.06 0z" />
           </svg>
-        </button>
+        </Button>
 
         {/* Search input — always visible, wired to store */}
         <div className="relative w-[364px] min-w-0 max-w-full shrink text-sm text-(--text-primary)">
@@ -313,7 +316,8 @@ export function TopBar() {
             className="topbar-search discovery-search-input w-full min-w-0 rounded-full pl-10 pr-9 focus:outline-none"
           />
           {localQuery && (
-            <button
+            <Button
+              variant="bare"
               type="button"
               aria-label="Clear search"
               onMouseDown={(e) => e.preventDefault()}
@@ -334,7 +338,7 @@ export function TopBar() {
               >
                 <path d="M2.47 2.47a.75.75 0 0 1 1.06 0L8 6.94l4.47-4.47a.75.75 0 1 1 1.06 1.06L9.06 8l4.47 4.47a.75.75 0 1 1-1.06 1.06L8 9.06l-4.47 4.47a.75.75 0 0 1-1.06-1.06L6.94 8 2.47 3.53a.75.75 0 0 1 0-1.06z" />
               </svg>
-            </button>
+            </Button>
           )}
           {showDropdown && (
             <SearchDropdown
@@ -351,15 +355,16 @@ export function TopBar() {
       <div className="topbar-actions ml-auto flex shrink-0 items-center gap-2">
         <MusicLibraryPicker />
         <YoutubeMusicConnection />
-        {(offlineMode || savedCount > 0) && <button type="button" className="topbar-control shell-control-secondary rounded-full px-3 text-xs" onClick={() => navigate("/settings")} title="Previously saved pages; open connection settings">
+        {(offlineMode || savedCount > 0) && <Button variant="bare" type="button" className="topbar-control shell-control-secondary rounded-full px-3 text-xs" onClick={() => navigate("/settings")} title="Previously saved pages; open connection settings">
           {offlineMode ? "Saved library" : "Saved copy"}
-        </button>}
+        </Button>}
         <AmbientArtworkControls />
         {/* Activity indicator — always visible, animates when busy */}
         <ActivityIndicator />
 
         {/* Refresh button */}
-        <button
+        <Button
+          variant="bare"
           onClick={() => void handleRefresh()}
           disabled={isRefreshing || (!isConnected && !youtubeConnected)}
           title="Refresh page (⌘R)"
@@ -375,12 +380,13 @@ export function TopBar() {
           >
             <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
           </svg>
-        </button>
+        </Button>
 
         <NotificationCenter />
         <ThemeToggle />
         {/* Settings toggle — click again to go back */}
-        <button
+        <Button
+          variant="bare"
           onClick={() =>
             location.startsWith("/settings")
               ? window.history.back()
@@ -428,7 +434,7 @@ export function TopBar() {
           >
             Settings
           </span>
-        </button>
+        </Button>
       </div>
     </div>
   )

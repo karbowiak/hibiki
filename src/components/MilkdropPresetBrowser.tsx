@@ -1,3 +1,6 @@
+import { Checkbox } from "./shared/Checkbox"
+import { Select } from "./shared/Select"
+import { Button } from "./shared/Button"
 import { useState, useRef, useEffect, useMemo } from "react"
 import { useVisualizerStore, type AutoCycleMode } from "../stores/visualizerStore"
 import { useShallow } from "zustand/react/shallow"
@@ -83,8 +86,7 @@ export default function MilkdropPresetBrowser() {
         {/* Auto-cycle controls */}
         <div className="px-4 py-2 border-b border-white/10 flex flex-wrap items-center gap-2 text-xs">
           <label className="flex items-center gap-1.5 text-white/70 cursor-pointer">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={autoCycleEnabled}
               onChange={(e) => setAutoCycleEnabled(e.target.checked)}
               className="accent-(--accent)"
@@ -93,27 +95,27 @@ export default function MilkdropPresetBrowser() {
           </label>
           {autoCycleEnabled && (
             <>
-              <select
+              <Select
                 aria-label="Preset auto-cycle interval"
                 value={autoCycleIntervalSec}
                 onChange={(e) => setAutoCycleIntervalSec(Number(e.target.value))}
-                className="bg-white/10 text-white/80 rounded px-1.5 py-0.5 text-xs border-none outline-none"
+
               >
                 {INTERVAL_OPTIONS.map((s) => (
                   <option key={s} value={s}>
                     {s}s
                   </option>
                 ))}
-              </select>
-              <select
+              </Select>
+              <Select
                 aria-label="Preset auto-cycle order"
                 value={autoCycleMode}
                 onChange={(e) => setAutoCycleMode(e.target.value as AutoCycleMode)}
-                className="bg-white/10 text-white/80 rounded px-1.5 py-0.5 text-xs border-none outline-none"
+
               >
                 <option value="random">Random</option>
                 <option value="sequential">Sequential</option>
-              </select>
+              </Select>
             </>
           )}
         </div>
@@ -138,7 +140,8 @@ export default function MilkdropPresetBrowser() {
             ["favorites", `Favorites (${favoritePresets.length})`],
             ["history", "History"],
           ] as [Tab, string][]).map(([t, label]) => (
-            <button
+            <Button
+              variant="bare"
               key={t}
               onClick={() => setTab(t)}
               aria-pressed={tab === t}
@@ -149,7 +152,7 @@ export default function MilkdropPresetBrowser() {
               }`}
             >
               {label}
-            </button>
+            </Button>
           ))}
         </div>
 
@@ -170,7 +173,8 @@ export default function MilkdropPresetBrowser() {
                       : "text-white/70 hover:bg-white/5 hover:text-white"
                   }`}
                 >
-                  <button
+                  <Button
+                    variant="bare"
                     onClick={(e) => {
                       e.stopPropagation()
                       toggleFavorite(name)
@@ -182,10 +186,10 @@ export default function MilkdropPresetBrowser() {
                     aria-pressed={isFav}
                   >
                     <IconHeart size={16} fill={isFav ? "currentColor" : "none"} aria-hidden="true" />
-                  </button>
-                  <button type="button" ref={isActive ? activeRef : undefined}
+                  </Button>
+                  <Button variant="bare" type="button" ref={isActive ? activeRef : undefined}
                     onClick={() => setCurrentPreset(name)} aria-pressed={isActive}
-                    title={name} className="min-w-0 flex-1 truncate py-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">{name}</button>
+                    title={name} className="min-w-0 flex-1 truncate py-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">{name}</Button>
                 </div>
               )
             })

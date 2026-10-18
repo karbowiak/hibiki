@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { useShallow } from "zustand/react/shallow"
 import { usePlayerStore } from "../stores"
 import { PlayerPanelHeader } from "./shared/PlayerPanelHeader"
@@ -51,12 +52,13 @@ export default function RadioPanel({ onClose }: Props) {
       <PlayerPanelHeader title="Radio" onClose={onClose}
         subtitle={`${radioSeedArtist ? `${radioSeedArtist} — ${seedName}` : seedName}${typeLabel ? ` · ${typeLabel}` : ""}`}
         actions={
-          <button
+          <Button
+            variant="bare"
             onClick={() => { stopRadio(); onClose() }}
             className="player-panel-action"
           >
             Stop
-          </button>
+          </Button>
         } />
 
       {/* Variety */}
@@ -68,7 +70,8 @@ export default function RadioPanel({ onClose }: Props) {
           {VARIETY_OPTIONS.map(opt => {
             const selected = radioDegreesOfSeparation === opt.value
             return (
-              <button
+              <Button
+                variant="bare"
                 key={opt.value}
                 onClick={() => setRadioDegreesOfSeparation(opt.value)}
                 aria-pressed={selected}
@@ -76,7 +79,7 @@ export default function RadioPanel({ onClose }: Props) {
                 className="player-panel-option !px-2 !text-xs"
               >
                 {opt.label}
-              </button>
+              </Button>
             )
           })}
         </div>

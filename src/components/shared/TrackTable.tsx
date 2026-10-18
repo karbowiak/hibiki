@@ -1,3 +1,4 @@
+import { Button } from "./Button"
 import { ArtistCredits } from "./ArtistCredits"
 import { useFavoritesStore } from "../../stores/favoritesStore"
 import { useProviderStore } from "../../stores/providerStore"
@@ -230,7 +231,8 @@ function TrackRowCells({
   return (
     <>
       <td className="w-8 p-2 text-center">
-        <button
+        <Button
+          variant="bare"
           type="button"
           disabled={unavailable}
           title={unavailable ? "Not available offline" : undefined}
@@ -276,7 +278,7 @@ function TrackRowCells({
           >
             <polygon points="3,2 13,8 3,14" />
           </svg>
-        </button>
+        </Button>
       </td>
 
       <td className="p-2">
@@ -966,9 +968,9 @@ export function TrackTable({
       {paged?.error && (
         <div role="alert" className="py-4 text-sm text-(--text-secondary)">
           {paged.error}{" "}
-          <button className="media-secondary ml-3" onClick={paged.retry}>
+          <Button size="md" variant="secondary" className="media-secondary ml-3" onClick={paged.retry}>
             Try again
-          </button>
+          </Button>
         </div>
       )}
     </div>

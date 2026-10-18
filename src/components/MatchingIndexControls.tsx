@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { useEffect, useRef, useState } from "react"
 import { useProviderOwner } from "../hooks/useProviderOwner"
 import { useProviderStore } from "../stores/providerStore"
@@ -140,7 +141,8 @@ export function MatchingIndexControls() {
             "clear",
           ] as MatchingAction[]
         ).map((action) => (
-          <button
+          <Button
+            variant="secondary"
             key={action}
             type="button"
             disabled={busy || !provider?.matchingIndexControl}
@@ -154,7 +156,7 @@ export function MatchingIndexControls() {
                 : action === "rebuild"
                   ? "Rebuild index"
                   : "Clear index"}
-          </button>
+          </Button>
         ))}
       </div>
       {error && (

@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { ArtworkImage } from "./shared/ArtworkImage"
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react"
 import { createPortal } from "react-dom"
@@ -650,13 +651,14 @@ export default function VisualizerFullscreen() {
       <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-10 z-10" />
 
       {/* Close button — top right corner */}
-      <button
+      <Button
+        variant="bare"
         onClick={closeFullscreen}
         className="fullscreen-visualizer-close absolute top-4 right-4 z-20"
         aria-label="Close visualizer"
       >
         <IconX size={20} aria-hidden="true" />
-      </button>
+      </Button>
 
       {/* Canvas area — two canvases, only one visible at a time */}
       <div className="fullscreen-visualizer-stage relative min-h-0 flex-1">
@@ -695,12 +697,13 @@ export default function VisualizerFullscreen() {
 
         {/* Playback controls */}
         <div className="flex items-center gap-3">
-          <button onClick={() => prev()} className="text-white/70 hover:text-white transition-colors" aria-label="Previous">
+          <Button variant="bare" onClick={() => prev()} className="text-white/70 hover:text-white transition-colors" aria-label="Previous">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
               <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
             </svg>
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="bare"
             onClick={() => isPlaying ? pause() : resume()}
             className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors"
             aria-label={isPlaying ? "Pause" : "Play"}
@@ -714,12 +717,12 @@ export default function VisualizerFullscreen() {
                 <path d="M8 5v14l11-7z" />
               </svg>
             )}
-          </button>
-          <button onClick={() => next()} className="text-white/70 hover:text-white transition-colors" aria-label="Next">
+          </Button>
+          <Button variant="bare" onClick={() => next()} className="text-white/70 hover:text-white transition-colors" aria-label="Next">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
               <path d="M6 18l8.5-6L6 6v12zm2.5-6 8.5 6V6z" />
             </svg>
-          </button>
+          </Button>
         </div>
 
         {/* Seek bar with waveform */}
@@ -762,7 +765,8 @@ export default function VisualizerFullscreen() {
         </div>
 
         {/* Native fullscreen toggle stays next to the transport at every width. */}
-        <button
+        <Button
+          variant="bare"
           onClick={toggleNativeFullscreen}
           className="fullscreen-visualizer-expand text-white/70 hover:text-white transition-colors"
           aria-label={isNativeFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
@@ -772,7 +776,7 @@ export default function VisualizerFullscreen() {
             {isNativeFullscreen ? <path d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3" />
               : <path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3" />}
           </svg>
-        </button>
+        </Button>
         </div>
         <div className="fullscreen-visualizer-options">
         <div className="fullscreen-visualizer-settings">
@@ -801,46 +805,52 @@ export default function VisualizerFullscreen() {
         {isMilkdrop && getAllNames().length > 0 && (
           <>
             <div className="flex min-w-0 flex-wrap items-center gap-2 text-white/70 text-sm">
-              <button
+              <Button
+                variant="bare"
                 onClick={() => { const n = getNextPresetName(-1); if (n) setCurrentPreset(n) }}
                 className="hover:text-white" aria-label="Previous preset"
               >
                 <svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor">
                   <path d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" />
                 </svg>
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="bare"
                 onClick={() => setPresetBrowserOpen(true)}
                 className="max-w-[180px] truncate text-xs hover:text-white transition-colors"
                 title={currentPresetName ?? ""}
               >
                 {currentPresetName ?? "Loading…"}
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="bare"
                 onClick={() => { const n = getNextPresetName(1); if (n) setCurrentPreset(n) }}
                 className="hover:text-white" aria-label="Next preset"
               >
                 <svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor">
                   <path d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" />
                 </svg>
-              </button>
+              </Button>
               <span className="text-white/20">|</span>
-              <button
+              <Button
+                variant="bare"
                 onClick={() => { const n = getRandomPresetName(currentPresetName ?? undefined); if (n) setCurrentPreset(n) }}
                 className="hover:text-white" aria-label="Random preset" title="Random (R)"
               >
                 <svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor">
                   <path d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-1.06 1.06a7 7 0 0012.712-3.526h1.737l-2.5-3-2.5 3h1.812zm-10.624-2.848a5.5 5.5 0 019.201-2.466l1.06-1.06A7 7 0 002.237 8.576H.5l2.5 3 2.5-3H3.688z" />
                 </svg>
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="bare"
                 onClick={() => currentPresetName && toggleFavorite(currentPresetName)}
                 className={`transition-colors ${currentIsFav ? "text-red-400" : "hover:text-white"}`}
                 aria-label={currentIsFav ? "Unfavorite" : "Favorite"} title="Favorite (F)"
               >
                 {currentIsFav ? "♥" : "♡"}
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="bare"
                 onClick={() => useVisualizerStore.getState().setAutoCycleEnabled(!autoCycleEnabled)}
                 className={`transition-colors ${autoCycleEnabled ? "text-(--accent)" : "hover:text-white"}`}
                 aria-label={autoCycleEnabled ? "Disable auto-cycle" : "Enable auto-cycle"}
@@ -849,8 +859,9 @@ export default function VisualizerFullscreen() {
                 <svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor">
                   <path d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" />
                 </svg>
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="bare"
                 onClick={() => setPresetBrowserOpen(!presetBrowserOpen)}
                 className={`transition-colors ${presetBrowserOpen ? "text-(--accent)" : "hover:text-white"}`}
                 aria-label="Browse presets" title="Browse (B)"
@@ -858,7 +869,7 @@ export default function VisualizerFullscreen() {
                 <svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor">
                   <path d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" />
                 </svg>
-              </button>
+              </Button>
             </div>
           </>
         )}
@@ -868,7 +879,8 @@ export default function VisualizerFullscreen() {
         {/* Mode pills — far right */}
         <div className="fullscreen-visualizer-modes flex flex-wrap gap-1.5" role="group" aria-label="Visualization mode">
           {MODES.map(m => (
-            <button
+            <Button
+              variant="bare"
               key={m}
               onClick={() => setFullscreenMode(m)}
               aria-pressed={fullscreenMode === m}
@@ -880,7 +892,7 @@ export default function VisualizerFullscreen() {
               style={fullscreenMode === m ? { color: "var(--artwork-ink, #000)" } : undefined}
             >
               {m}
-            </button>
+            </Button>
           ))}
         </div>
         </div>

@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { MusicEntityLink } from "./shared/MusicEntityLink"
 import { trackEntity } from "../lib/musicLinks"
 import { useEffect, useState } from "react"
@@ -180,7 +181,8 @@ export default function TrackInfoPanel({ onClose }: Props) {
           <p className="track-info-caption">Track information</p>
         </div>
         <div className="flex items-center gap-2">
-          <button
+          <Button
+            variant="bare"
             type="button"
             onClick={onClose}
             aria-label="Close track info"
@@ -189,7 +191,7 @@ export default function TrackInfoPanel({ onClose }: Props) {
             <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
               <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
             </svg>
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -198,20 +200,22 @@ export default function TrackInfoPanel({ onClose }: Props) {
         role="group"
         aria-label="Track information view"
       >
-        <button
+        <Button
+          variant="bare"
           type="button"
           aria-pressed={view === "track"}
           onClick={() => setView("track")}
         >
           Track
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="bare"
           type="button"
           aria-pressed={view === "playback"}
           onClick={() => setView("playback")}
         >
           Playback
-        </button>
+        </Button>
       </div>
       <div className="track-info-body">
         {view === "playback" ? (

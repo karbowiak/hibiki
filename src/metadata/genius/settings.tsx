@@ -1,3 +1,5 @@
+import { Switch } from "../../components/shared/Checkbox"
+import { Button } from "../../components/shared/Button"
 import { useState } from "react"
 import { useGeniusStore } from "./authStore"
 
@@ -68,13 +70,14 @@ export function GeniusSettings() {
             </div>
           </div>
           {error && <p className="text-sm text-red-400">{error}</p>}
-          <button
+          <Button
+            variant="primary"
             onClick={() => void handleSave()}
             disabled={isSaving || !clientId.trim() || !clientSecret.trim()}
-            className="rounded-lg bg-accent/80 hover:bg-accent px-4 py-2 text-sm font-medium text-white transition-colors disabled:opacity-50"
+            className="rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50"
           >
             {isSaving ? "Saving..." : "Save Credentials"}
-          </button>
+          </Button>
         </div>
       ) : (
         <div className="space-y-4">
@@ -93,20 +96,7 @@ export function GeniusSettings() {
               <p className="text-sm font-medium text-white">Enable Genius Lyrics</p>
               <p className="text-xs text-white/40">Fetch lyrics from Genius when Plex has none</p>
             </div>
-            <button
-              onClick={() => void setEnabled(!isEnabled)}
-              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                isEnabled ? "bg-accent" : "bg-white/20"
-              }`}
-              role="switch"
-              aria-checked={isEnabled}
-            >
-              <span
-                className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                  isEnabled ? "translate-x-4" : "translate-x-0"
-                }`}
-              />
-            </button>
+            <Switch aria-label="Enable Genius Lyrics" checked={isEnabled}  onChange={() => void setEnabled(!isEnabled)} />
           </div>
 
           {isEnabled && (
@@ -115,29 +105,17 @@ export function GeniusSettings() {
                 <p className="text-sm font-medium text-white">Fetch even when Plex has lyrics</p>
                 <p className="text-xs text-white/40">Show both Plex and Genius lyrics as selectable sources</p>
               </div>
-              <button
-                onClick={() => void setAlwaysFetch(!alwaysFetch)}
-                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                  alwaysFetch ? "bg-accent" : "bg-white/20"
-                }`}
-                role="switch"
-                aria-checked={alwaysFetch}
-              >
-                <span
-                  className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                    alwaysFetch ? "translate-x-4" : "translate-x-0"
-                  }`}
-                />
-              </button>
+              <Switch aria-label="Fetch even when Plex has lyrics" checked={alwaysFetch}  onChange={() => void setAlwaysFetch(!alwaysFetch)} />
             </div>
           )}
 
-          <button
+          <Button
+            variant="bare"
             onClick={() => void disconnect()}
             className="text-sm text-red-400 hover:text-red-300 transition-colors"
           >
             Disconnect
-          </button>
+          </Button>
         </div>
       )}
     </div>

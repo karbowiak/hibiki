@@ -1,3 +1,4 @@
+import { Button } from "./Button"
 import type { ReactNode } from "react"
 
 export function MenuItem({
@@ -14,15 +15,16 @@ export function MenuItem({
   disabled?: boolean
 }) {
   return (
-    <button
+    <Button
+      variant="menu"
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent enabled:hover:bg-hl-menu disabled:cursor-default disabled:opacity-40 ${danger ? "text-red-400" : "text-(--text-primary)"}`}
+      data-danger={danger || undefined}
     >
       {icon && <span className="h-4 w-4 shrink-0 opacity-70">{icon}</span>}
       {label}
-    </button>
+    </Button>
   )
 }
 

@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { useSyncExternalStore } from "react"
 import { IconMoon, IconSun } from "@tabler/icons-react"
 import { getTheme, setTheme, subscribeTheme } from "../stores/themeStore"
@@ -15,7 +16,7 @@ function snapshot() {
 export function ThemeToggle() {
   const light = useSyncExternalStore(subscribe, snapshot, () => getTheme() === "light")
   const label = `Switch to ${light ? "dark" : "light"} mode`
-  return <button
+  return <Button variant="bare"
     type="button"
     aria-label={label}
     title={label}
@@ -23,5 +24,5 @@ export function ThemeToggle() {
     onClick={() => setTheme(light ? "dark" : "light")}
   >
     {light ? <IconMoon size={17} aria-hidden="true" /> : <IconSun size={17} aria-hidden="true" />}
-  </button>
+  </Button>
 }

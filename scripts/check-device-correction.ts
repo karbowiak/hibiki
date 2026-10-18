@@ -191,8 +191,8 @@ try {
       assert.equal(
         await panel
           .getByRole("combobox", { name: "Correction profile" })
-          .inputValue(),
-        profile.id
+          .textContent(),
+        profile.label
       )
       await panel.getByRole("button", { name: "Find or import" }).click()
       await panel.getByLabel("AutoEq model or manufacturer").fill("offline")

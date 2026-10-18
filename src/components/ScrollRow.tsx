@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { useState, useEffect } from "react"
 import { Link } from "wouter"
 import { useScrollRestore } from "../hooks/useScrollRestore"
@@ -75,7 +76,8 @@ export function ScrollRow({ title, titleHref, children, restoreKey, onPlayAll, o
           <h2 className="media-row__heading truncate">{title}</h2>
         )}
         {onPlayAll && (
-          <button
+          <Button
+            variant="bare"
             onClick={onPlayAll}
             aria-label="Play all"
             type="button"
@@ -84,10 +86,11 @@ export function ScrollRow({ title, titleHref, children, restoreKey, onPlayAll, o
             <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
               <path d="M8 5v14l11-7z"/>
             </svg>
-          </button>
+          </Button>
         )}
         {onShuffleAll && (
-          <button
+          <Button
+            variant="bare"
             onClick={onShuffleAll}
             aria-label="Shuffle all"
             type="button"
@@ -100,12 +103,13 @@ export function ScrollRow({ title, titleHref, children, restoreKey, onPlayAll, o
               <line x1="15" y1="15" x2="21" y2="21"/>
               <line x1="4" y1="4" x2="9" y2="9"/>
             </svg>
-          </button>
+          </Button>
         )}
         <div className="media-row__rule" aria-hidden="true" />
         {!expanded && overflows && (
           <>
-            <button
+            <Button
+              variant="bare"
               onClick={() => scroll("left")}
               aria-label="Scroll left"
               type="button"
@@ -114,8 +118,9 @@ export function ScrollRow({ title, titleHref, children, restoreKey, onPlayAll, o
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="15 18 9 12 15 6" />
               </svg>
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="bare"
               onClick={() => scroll("right")}
               aria-label="Scroll right"
               type="button"
@@ -124,11 +129,12 @@ export function ScrollRow({ title, titleHref, children, restoreKey, onPlayAll, o
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="9 18 15 12 9 6" />
               </svg>
-            </button>
+            </Button>
           </>
         )}
         {(showButtons || onExpandedChange) && (
-          <button
+          <Button
+            variant="bare"
             onClick={() => { setExpanded(!expanded); onExpandedChange?.(!expanded) }}
             aria-label={expanded ? "Collapse" : "Expand"}
             aria-expanded={expanded}
@@ -141,7 +147,7 @@ export function ScrollRow({ title, titleHref, children, restoreKey, onPlayAll, o
             >
               <polyline points="6 9 12 15 18 9" />
             </svg>
-          </button>
+          </Button>
         )}
       </div>
       {expanded ? (

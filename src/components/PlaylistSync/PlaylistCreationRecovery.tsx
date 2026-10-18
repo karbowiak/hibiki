@@ -1,3 +1,6 @@
+import { Select } from "../shared/Select"
+import { Checkbox } from "../shared/Checkbox"
+import { Button } from "../shared/Button"
 import { useEffect, useRef, useState } from "react"
 import { useLinkedPlaylistStore } from "../../stores/linkedPlaylistStore"
 import { useProviderStore } from "../../stores/providerStore"
@@ -150,8 +153,8 @@ function RecoveryRow({
                 }}
               />
             ) : (
-              <select
-                className={`${button} mt-1 w-full bg-app-surface`}
+              <Select
+                className="mt-1 w-full"
                 value={destination}
                 disabled={busy}
                 onChange={(event) => {
@@ -167,12 +170,11 @@ function RecoveryRow({
                       {item.title}
                     </option>
                   ))}
-              </select>
+              </Select>
             )}
           </label>
           <label className="mt-3 flex items-start gap-2 text-sm">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={acknowledged}
               disabled={busy}
               onChange={(event) => setAcknowledged(event.target.checked)}
@@ -182,7 +184,8 @@ function RecoveryRow({
           </label>
         </>
       )}
-      <button
+      <Button
+        variant="secondary"
         className={`${button} mt-3`}
         disabled={
           busy || (!intent.destinationId && (!destination || !acknowledged))
@@ -190,7 +193,7 @@ function RecoveryRow({
         onClick={() => void recover()}
       >
         {busy ? "Checking recovery…" : "Recover without creating"}
-      </button>
+      </Button>
       {error && (
         <p role="alert" className="mt-2 text-sm">
           {error}

@@ -1,3 +1,5 @@
+import { Button } from "../shared/Button"
+import { Checkbox } from "../shared/Checkbox"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { mixedPlaylistTracks, playMixedPlaylist } from "../../mixedPlaylists/playback"
 import { useMixedPlaylistStore } from "../../stores/mixedPlaylistStore"
@@ -50,38 +52,38 @@ export function MixedPlaylist({ id }: { id: string }) {
       <div className="relative min-w-0 flex-1"><h1 className="media-detail-title wrap-break-word">{playlist.title}</h1>
         <p className="my-3 text-sm text-(--artwork-hero-secondary,#ddd)">{playlistSourceLabel(playlist)} · {tracks.length.toLocaleString()} songs</p>
         {playlist.description && <p className="mb-4 max-w-prose whitespace-pre-wrap text-sm text-(--artwork-hero-secondary,#ddd)">{playlist.description}</p>}
-        <div className="flex flex-wrap gap-3"><button type="button" className="media-primary" disabled={!tracks.length} onClick={() => play()}>Play</button>
-          <button type="button" className="media-secondary" disabled={busy} onClick={() => run(state.sync(id, true))}>{busy ? "Syncing…" : "Match and sync"}</button>
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={playlist.automatic} onChange={event => run(state.automatic(id, event.target.checked))} />Automatic sync</label>
-          {playlist.local && <button type="button" className="media-secondary" disabled={busy || !!playlist.write || !!playlist.detailsWrite || !!playlist.artworkWrite || !!playlist.listenbrainz?.detailsWrite} onClick={() => setEditing(true)}>Edit details</button>}
+        <div className="flex flex-wrap gap-3"><Button size="md" variant="primary" type="button" className="media-primary" disabled={!tracks.length} onClick={() => play()}>Play</Button>
+          <Button size="md" variant="secondary" type="button" className="media-secondary" disabled={busy} onClick={() => run(state.sync(id, true))}>{busy ? "Syncing…" : "Match and sync"}</Button>
+          <label className="flex items-center gap-2 text-sm"><Checkbox checked={playlist.automatic} onChange={event => run(state.automatic(id, event.target.checked))} />Automatic sync</label>
+          {playlist.local && <Button size="md" variant="secondary" type="button" className="media-secondary" disabled={busy || !!playlist.write || !!playlist.detailsWrite || !!playlist.artworkWrite || !!playlist.listenbrainz?.detailsWrite} onClick={() => setEditing(true)}>Edit details</Button>}
         </div>
       </div>
     </div>
     <div className="mx-8 mb-6 space-y-3 text-sm text-(--text-secondary)" aria-live="polite">
       <p>{error ?? playlist.message ?? "Songs are retained locally while their counterparts are matched."}</p>
-      {(playlist.detailsWrite || playlist.artworkWrite) && <div className="space-y-2"><p>Review the current details on the service before retrying. For a changed Plex image, this accepts its current image.</p><button type="button" className="media-secondary" disabled={busy} onClick={() => run(state.sync(id, true))}>Review and retry details</button></div>}
+      {(playlist.detailsWrite || playlist.artworkWrite) && <div className="space-y-2"><p>Review the current details on the service before retrying. For a changed Plex image, this accepts its current image.</p><Button size="md" variant="secondary" type="button" className="media-secondary" disabled={busy} onClick={() => run(state.sync(id, true))}>Review and retry details</Button></div>}
       {playlist.external?.listenbrainz.enabled && <details className="space-y-3"><summary className="cursor-pointer">ListenBrainz sync</summary>
         <p>{playlist.listenbrainz?.message ?? "Only verified recording IDs are synced. Unmatched songs stay in Hibiki."}</p>
-        <div className="flex flex-wrap gap-2"><button type="button" className="media-secondary" disabled={busy} onClick={() => run(state.externalSync(id))}>Sync ListenBrainz</button>
-          {playlist.listenbrainz?.link?.state === "conflict" && <>{(["hibiki", "listenbrainz"] as const).map(prefer => <button key={prefer} type="button" className="media-secondary" disabled={busy} onClick={() => run(state.externalSync(id, { prefer }))}>Keep {prefer === "hibiki" ? "Hibiki" : "ListenBrainz"} order</button>)}</>}
+        <div className="flex flex-wrap gap-2"><Button size="md" variant="secondary" type="button" className="media-secondary" disabled={busy} onClick={() => run(state.externalSync(id))}>Sync ListenBrainz</Button>
+          {playlist.listenbrainz?.link?.state === "conflict" && <>{(["hibiki", "listenbrainz"] as const).map(prefer => <Button size="md" variant="secondary" key={prefer} type="button" className="media-secondary" disabled={busy} onClick={() => run(state.externalSync(id, { prefer }))}>Keep {prefer === "hibiki" ? "Hibiki" : "ListenBrainz"} order</Button>)}</>}
         </div>
-        {!playlist.listenbrainz?.link && playlist.listenbrainz?.creationPending && <div className="space-y-3"><div className="flex flex-wrap gap-2"><input aria-label="Created ListenBrainz playlist ID" placeholder="Earlier ListenBrainz playlist ID" value={externalRecovery} onChange={event => setExternalRecovery(event.target.value)} className="app-input min-w-0 flex-1" /><button type="button" className="media-secondary" disabled={busy || !externalRecovery.trim()} onClick={() => run(state.externalSync(id, { recoveryId: externalRecovery.trim() }))}>Recover earlier creation</button></div>
-          <label className="flex items-center gap-2"><input type="checkbox" checked={noExternalCreation} onChange={event => setNoExternalCreation(event.target.checked)} />I checked ListenBrainz; no playlist was created.</label><button type="button" className="media-secondary" disabled={busy || !noExternalCreation} onClick={() => { setNoExternalCreation(false); run(state.externalSync(id, { reviewNoCreation: true })) }}>Retry ListenBrainz creation after review</button>
+        {!playlist.listenbrainz?.link && playlist.listenbrainz?.creationPending && <div className="space-y-3"><div className="flex flex-wrap gap-2"><input aria-label="Created ListenBrainz playlist ID" placeholder="Earlier ListenBrainz playlist ID" value={externalRecovery} onChange={event => setExternalRecovery(event.target.value)} className="app-input min-w-0 flex-1" /><Button size="md" variant="secondary" type="button" className="media-secondary" disabled={busy || !externalRecovery.trim()} onClick={() => run(state.externalSync(id, { recoveryId: externalRecovery.trim() }))}>Recover earlier creation</Button></div>
+          <label className="flex items-center gap-2"><Checkbox checked={noExternalCreation} onChange={event => setNoExternalCreation(event.target.checked)} />I checked ListenBrainz; no playlist was created.</label><Button size="md" variant="secondary" type="button" className="media-secondary" disabled={busy || !noExternalCreation} onClick={() => { setNoExternalCreation(false); run(state.externalSync(id, { reviewNoCreation: true })) }}>Retry ListenBrainz creation after review</Button>
         </div>}
-        {playlist.listenbrainz?.link?.job?.step && <button type="button" className="media-secondary" disabled={busy} onClick={() => run(state.externalSync(id))}>Review and retry pending ListenBrainz write</button>}
+        {playlist.listenbrainz?.link?.job?.step && <Button size="md" variant="secondary" type="button" className="media-secondary" disabled={busy} onClick={() => run(state.externalSync(id))}>Review and retry pending ListenBrainz write</Button>}
       </details>}
       {playlist.status === "conflict" && <div className="flex flex-wrap items-center gap-2"><span>Keep the current order from:</span>
-        {(["plex", "ytmusic", "hibiki"] as const).map(side => <button key={side} type="button" className="media-secondary" disabled={busy} onClick={() => run(state.chooseOrder(id, side))}>{side === "plex" ? "Plex" : side === "ytmusic" ? "YTM" : "Hibiki"}</button>)}
+        {(["plex", "ytmusic", "hibiki"] as const).map(side => <Button size="md" variant="secondary" key={side} type="button" className="media-secondary" disabled={busy} onClick={() => run(state.chooseOrder(id, side))}>{side === "plex" ? "Plex" : side === "ytmusic" ? "YTM" : "Hibiki"}</Button>)}
       </div>}
       {playlist.write && <div className="flex flex-wrap items-center gap-2">
         {playlist.write.kind === "create" && !playlist.write.destinationId && <input aria-label="Created playlist ID" placeholder="ID of the playlist created on the service" value={recovery} onChange={event => setRecovery(event.target.value)} className="rounded border border-(--border) bg-app-surface px-3 py-2" />}
-        <button type="button" className="media-secondary" disabled={busy} onClick={() => run(state.recover(id, recovery || undefined))}>Review and retry pending write</button>
-        {playlist.write.kind === "create" && !playlist.write.destinationId && <div className="w-full space-y-2"><label className="flex items-center gap-2"><input type="checkbox" checked={noCreation} onChange={event => setNoCreation(event.target.checked)} />I checked {playlist.write.service === "plex" ? "Plex" : "YouTube Music"}; no playlist was created.</label><button type="button" className="media-secondary" disabled={busy || !noCreation} onClick={() => { setNoCreation(false); run(state.recover(id, undefined, true)) }}>Retry creation after review</button></div>}
+        <Button size="md" variant="secondary" type="button" className="media-secondary" disabled={busy} onClick={() => run(state.recover(id, recovery || undefined))}>Review and retry pending write</Button>
+        {playlist.write.kind === "create" && !playlist.write.destinationId && <div className="w-full space-y-2"><label className="flex items-center gap-2"><Checkbox checked={noCreation} onChange={event => setNoCreation(event.target.checked)} />I checked {playlist.write.service === "plex" ? "Plex" : "YouTube Music"}; no playlist was created.</label><Button size="md" variant="secondary" type="button" className="media-secondary" disabled={busy || !noCreation} onClick={() => { setNoCreation(false); run(state.recover(id, undefined, true)) }}>Retry creation after review</Button></div>}
       </div>}
       {pending.length > 0 && <details><summary className="cursor-pointer">{pending.length} songs awaiting a counterpart</summary>
         <ul className="mt-3 max-h-64 space-y-2 overflow-y-auto">{pending.map(row => <li key={row.id} className="flex flex-wrap items-center justify-between gap-3">
           <span>{row.songs[row.original]!.track.title} · {row.match.status}{row.match.message ? ` — ${row.match.message}` : ""}</span>
-          <button type="button" className="media-secondary" disabled={busy} onClick={() => run(state.edit(id, { kind: "delete", index: playlist.items.findIndex(item => item.id === row.id) }))}>Remove from playlist</button>
+          <Button size="md" variant="secondary" type="button" className="media-secondary" disabled={busy} onClick={() => run(state.edit(id, { kind: "delete", index: playlist.items.findIndex(item => item.id === row.id) }))}>Remove from playlist</Button>
         </li>)}</ul>
       </details>}
     </div>

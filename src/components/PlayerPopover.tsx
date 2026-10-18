@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { usePlaybackPalette } from "../lib/playbackPaletteContext"
 import { createPortal } from "react-dom"
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react"
@@ -132,7 +133,8 @@ export default function PlayerPopover({
 
       {/* Toggle button */}
       <div className={`relative flex flex-col items-center ${wide ? "min-w-0" : "shrink-0"}`}>
-        <button
+        <Button
+          variant="bare"
           ref={buttonRef}
           onClick={toggle}
           disabled={disabled}
@@ -158,7 +160,7 @@ export default function PlayerPopover({
           ].join(" ")}
         >
           {icon}
-        </button>
+        </Button>
         {subtitle && (
           <span className="absolute top-full mt-0.5 text-[0.5625rem] leading-none font-medium text-accent whitespace-nowrap pointer-events-none">
             {subtitle}

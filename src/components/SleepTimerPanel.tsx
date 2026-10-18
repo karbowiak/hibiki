@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { useEffect, useId, useState } from "react"
 import { useSleepTimerStore } from "../stores/sleepTimerStore"
 import { PlayerPanelHeader } from "./shared/PlayerPanelHeader"
@@ -63,12 +64,13 @@ export default function SleepTimerPanel({ onClose }: Props) {
     <>
       {/* Header */}
       <PlayerPanelHeader title="Sleep Timer" onClose={onClose} actions={isActive ? (
-          <button
+          <Button
+            variant="bare"
             onClick={() => { cancel(); onClose() }}
             className="player-panel-action"
           >
             Cancel timer
-          </button>
+          </Button>
         ) : undefined} />
 
       <div className="px-4 py-3 flex flex-col gap-3">
@@ -86,24 +88,26 @@ export default function SleepTimerPanel({ onClose }: Props) {
           {PRESETS.map(({ label, value }) => {
             const selected = isPresetSelected(value)
             return (
-              <button
+              <Button
+                variant="bare"
                 key={value}
                 onClick={() => handlePreset(value)}
                 aria-pressed={selected}
                 className="player-panel-option"
               >
                 {label}
-              </button>
+              </Button>
             )
           })}
           {/* End of track */}
-          <button
+          <Button
+            variant="bare"
             onClick={() => { startEndOfTrack(); onClose() }}
             aria-pressed={endOfTrack}
             className="player-panel-option col-span-2"
           >
             End of track
-          </button>
+          </Button>
         </div>
 
         {/* Custom duration input */}
@@ -123,13 +127,14 @@ export default function SleepTimerPanel({ onClose }: Props) {
               onKeyDown={e => { if (e.key === "Enter") handleCustom() }}
               className="app-input w-full [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
             />
-            <button
+            <Button
+              variant="bare"
               onClick={handleCustom}
               disabled={!validDuration}
               className="player-panel-option shrink-0 disabled:cursor-default disabled:opacity-40"
             >
               Set
-            </button>
+            </Button>
           </div>
         </div>
       </div>

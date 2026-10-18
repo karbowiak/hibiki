@@ -1,3 +1,4 @@
+import { Button } from "./Button"
 import { useState, useEffect } from "react"
 import { useHeyaDiscovery } from "../../hooks/useHeyaDiscovery"
 import type { MetadataIdentity } from "../../metadata/core/types"
@@ -37,14 +38,15 @@ export function HeyaDiscoveryPanel({
       <div className="metadata-edit-note">
         <p>{discovery.capability.reason}</p>
         {discovery.capability.retryable && (
-          <button
+          <Button
+            variant="secondary"
             type="button"
             className="metadata-edit-button mt-2"
             disabled={disabled}
             onClick={discovery.retryAvailability}
           >
             Check discovery availability
-          </button>
+          </Button>
         )}
       </div>
     )
@@ -71,14 +73,15 @@ export function HeyaDiscoveryPanel({
           onChange={(event) => setQuery(event.currentTarget.value)}
         />
       </label>
-      <button
+      <Button
+        variant="secondary"
         className="metadata-edit-button mt-3"
         type="button"
         disabled={locked || !query.trim() || !!discovery.progress}
         onClick={() => void discovery.start(query)}
       >
         Discover with HeyaMetadata
-      </button>
+      </Button>
       {discovery.loading && (
         <p className="metadata-edit-note mt-3" role="status">
           Checking discovery…
@@ -93,14 +96,15 @@ export function HeyaDiscoveryPanel({
             <p className="metadata-edit-note" role="status">
               Discovery is still running. Automatic checks stop after a minute.
             </p>
-            <button
+            <Button
+              variant="secondary"
               className="metadata-edit-button mt-2"
               type="button"
               disabled={locked}
               onClick={() => void discovery.check()}
             >
               Check discovery status
-            </button>
+            </Button>
           </div>
         )}
       {discovery.progress?.state === "needs-selection" && (
@@ -110,7 +114,8 @@ export function HeyaDiscoveryPanel({
             canonical identity before applying it.
           </p>
           {discovery.progress.candidates.map((candidate) => (
-            <button
+            <Button
+              variant="bare"
               className="metadata-edit-section w-full text-left hover:bg-app-surface-hover"
               type="button"
               disabled={locked}
@@ -130,7 +135,7 @@ export function HeyaDiscoveryPanel({
               <span className="metadata-edit-note mt-2 block text-xs">
                 Resolve this candidate →
               </span>
-            </button>
+            </Button>
           ))}
           {!discovery.progress.candidates.length && (
             <p className="metadata-edit-note">
@@ -141,14 +146,15 @@ export function HeyaDiscoveryPanel({
         </div>
       )}
       {discovery.progress?.canonicalId && !discovery.previewed && (
-        <button
+        <Button
+          variant="secondary"
           className="metadata-edit-button mt-3"
           type="button"
           disabled={locked}
           onClick={() => void discovery.review()}
         >
           Review discovered identity
-        </button>
+        </Button>
       )}
       {discovery.previewed && (
         <p className="metadata-edit-note mt-3" role="status">

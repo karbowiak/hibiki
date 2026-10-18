@@ -1,3 +1,4 @@
+import { Button } from "./Button"
 import type { MusicTrack } from "../../types/music"
 import { isYoutubeMusicTrack } from "../../backends/ytmusic/tracks"
 import { YoutubeMusicLikeButton } from "./YoutubeMusicLikeButton"
@@ -30,7 +31,8 @@ export function TrackRowActions({
       onPointerDown={(event) => event.stopPropagation()}
     >
       {showLike && <YoutubeMusicLikeButton track={track} size={14} />}
-      <button
+      <Button
+        variant="bare"
         type="button"
         disabled={unavailable}
         aria-label={`Add ${track.title} to queue`}
@@ -50,9 +52,10 @@ export function TrackRowActions({
           <path d="M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2z" />
         </svg>
         Queue
-      </button>
+      </Button>
       {(youtube ? youtubeConnected : showRadio) && (
-        <button
+        <Button
+          variant="bare"
           type="button"
           disabled={unavailable}
           aria-label={`Start radio for ${track.title}`}
@@ -73,7 +76,7 @@ export function TrackRowActions({
             <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6A3 3 0 0 0 8 5zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
           </svg>
           Radio
-        </button>
+        </Button>
       )}
     </div>
   )

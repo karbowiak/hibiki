@@ -1,3 +1,4 @@
+import { Button } from "./Button"
 import { useModalLifecycle } from "../../hooks/useModalLifecycle"
 import {
   useId,
@@ -96,7 +97,8 @@ export function AppDialog({
               )}
             </div>
           </div>
-          <button
+          <Button
+            variant="bare"
             ref={close}
             type="button"
             aria-label={`Close ${title}`}
@@ -105,7 +107,7 @@ export function AppDialog({
             className="app-dialog-close player-panel-icon relative disabled:opacity-40"
           >
             <IconX size={20} aria-hidden="true" />
-          </button>
+          </Button>
         </header>
         <div className={bodyClassName}>{children}</div>
         {footer && (

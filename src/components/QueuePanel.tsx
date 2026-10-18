@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { ArtistCredits } from "./shared/ArtistCredits"
 import { QueueRadioControls } from "./QueueRadioControls"
 import { MusicEntityLink } from "./shared/MusicEntityLink"
@@ -113,7 +114,8 @@ function PlayedRow({
       )}
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5">
-          <button
+          <Button
+            variant="bare"
             type="button"
             onPointerDown={(e) => e.stopPropagation()}
             onKeyDown={(e) => e.stopPropagation()}
@@ -125,7 +127,7 @@ function PlayedRow({
             className="truncate rounded text-left text-sm text-(--text-primary) focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           >
             {title}
-          </button>
+          </Button>
         </div>
         <div className="queue-track-meta">
           <span className="min-w-0 truncate">
@@ -290,7 +292,8 @@ function SortableUpcomingItem({
 
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5">
-          <button
+          <Button
+            variant="bare"
             type="button"
             onPointerDown={(e) => e.stopPropagation()}
             onKeyDown={(e) => e.stopPropagation()}
@@ -302,7 +305,7 @@ function SortableUpcomingItem({
             className="truncate rounded text-left text-sm text-(--text-primary) focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           >
             {title}
-          </button>
+          </Button>
         </div>
         <div className="queue-track-meta">
           <span className="min-w-0 truncate">
@@ -320,7 +323,8 @@ function SortableUpcomingItem({
       </span>
 
       {track && <QueuePlaylistDrag track={track} />}
-      <button
+      <Button
+        variant="bare"
         className="queue-remove-button shrink-0 text-(--text-muted) opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 hover:text-(--text-primary) focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
         onClick={(e) => {
           e.stopPropagation()
@@ -334,7 +338,7 @@ function SortableUpcomingItem({
         <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
           <path d="M2.47 2.47a.75.75 0 0 1 1.06 0L8 6.94l4.47-4.47a.75.75 0 1 1 1.06 1.06L9.06 8l4.47 4.47a.75.75 0 1 1-1.06 1.06L8 9.06l-4.47 4.47a.75.75 0 0 1-1.06-1.06L6.94 8 2.47 3.53a.75.75 0 0 1 0-1.06z" />
         </svg>
-      </button>
+      </Button>
     </div>
   )
 }
@@ -448,7 +452,8 @@ function QueueTrackList({
       {error && (
         <p role="alert" className="px-3 py-2 text-sm">
           {error}{" "}
-          <button
+          <Button
+            variant="bare"
             className="underline"
             onClick={() =>
               void load().then(
@@ -458,7 +463,7 @@ function QueueTrackList({
             }
           >
             Try again
-          </button>
+          </Button>
         </p>
       )}
     </div>
@@ -761,20 +766,22 @@ export function QueuePanel() {
           aria-label="Player panel"
           className="flex min-w-0 flex-1 items-center gap-1.5"
         >
-          <button
+          <Button
+            variant="bare"
             onClick={() => setQueueActiveTab("queue")}
             aria-pressed={queueActiveTab === "queue"}
             className="panel-toolbar-button shell-control-secondary px-3 text-sm font-medium"
           >
             Queue
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="bare"
             onClick={() => setQueueActiveTab("lyrics")}
             aria-pressed={queueActiveTab === "lyrics"}
             className="panel-toolbar-button shell-control-secondary px-3 text-sm font-medium"
           >
             Lyrics
-          </button>
+          </Button>
         </div>
       ) : (
         <h2 className="text-sm font-semibold text-(--text-primary)">
@@ -782,7 +789,8 @@ export function QueuePanel() {
         </h2>
       )}
       <div className="flex items-center gap-0.5">
-        <button
+        <Button
+          variant="bare"
           onClick={() => {
             setQueuePinned(!isQueuePinned)
             setQueueOpen(true)
@@ -798,8 +806,9 @@ export function QueuePanel() {
           <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
             <path d="M4.146.146A.5.5 0 0 1 4.5 0h7a.5.5 0 0 1 .5.5c0 .68-.342 1.174-.646 1.479-.126.125-.25.224-.354.298v4.431l.078.048c.203.127.476.314.751.555C12.36 7.775 13 8.527 13 9.5a.5.5 0 0 1-.5.5h-4v4.5c0 .276-.224 1.5-.5 1.5s-.5-1.224-.5-1.5V10h-4a.5.5 0 0 1-.5-.5c0-.973.64-1.725 1.17-2.189A5.921 5.921 0 0 1 5 6.708V2.277a2.77 2.77 0 0 1-.354-.298C4.342 1.674 4 1.179 4 .5a.5.5 0 0 1 .146-.354z" />
           </svg>
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="bare"
           onClick={() => setQueueOpen(false)}
           className="panel-toolbar-button panel-toolbar-icon flex items-center justify-center rounded-full text-(--text-muted) transition-colors hover:text-(--text-primary)"
           aria-label="Close queue"
@@ -807,7 +816,7 @@ export function QueuePanel() {
           <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
             <path d="M2.47 2.47a.75.75 0 0 1 1.06 0L8 6.94l4.47-4.47a.75.75 0 1 1 1.06 1.06L9.06 8l4.47 4.47a.75.75 0 1 1-1.06 1.06L8 9.06l-4.47 4.47a.75.75 0 0 1-1.06-1.06L6.94 8 2.47 3.53a.75.75 0 0 1 0-1.06z" />
           </svg>
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -901,12 +910,13 @@ export function QueuePanel() {
             <SectionHeader
               label={`Next Up \u00b7 ${upcomingCount} item${upcomingCount !== 1 ? "s" : ""}`}
               right={
-                <button
+                <Button
+                  variant="secondary"
                   onClick={clearUpcoming}
                   className="rounded-md px-2 py-1 text-xs text-(--text-secondary) transition-colors hover:bg-app-surface-hover hover:text-(--text-primary)"
                 >
                   Clear
-                </button>
+                </Button>
               }
             />
             {shuffle && <IndicatorRow icon={<ShuffleIcon />} text="Shuffled" />}
@@ -935,8 +945,8 @@ export function QueuePanel() {
         {isRadioMode && (
           <div className="px-5 py-4 text-center text-xs leading-relaxed text-(--text-secondary)">
             <p role="status">{radioError ?? (radioLoading ? "Loading more radio songs…" : "More songs will load as the queue progresses.")}</p>
-            {radioError && <button type="button" disabled={radioLoading} onClick={() => { void refillRadio() }}
-              className="player-panel-action mt-2">{radioLoading ? "Retrying…" : "Retry"}</button>}
+            {radioError && <Button variant="bare" type="button" disabled={radioLoading} onClick={() => { void refillRadio() }}
+              className="player-panel-action mt-2">{radioLoading ? "Retrying…" : "Retry"}</Button>}
           </div>
         )}
       </div>

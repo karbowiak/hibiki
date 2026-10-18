@@ -1,3 +1,4 @@
+import { Button } from "../shared/Button"
 import { useState } from "react"
 import { PlaylistSyncDialog } from "../PlaylistSync/PlaylistSyncDialog"
 import { MediaGrid } from "../shared/MediaGrid"
@@ -28,13 +29,15 @@ export function Playlists() {
             {count.toLocaleString()} {count === 1 ? "playlist" : "playlists"}
           </p>
         </div>
-        <button
+        <Button
+          size="md"
+          variant="secondary"
           type="button"
           className="media-secondary"
           onClick={() => setShowSync(true)}
         >
           Sync
-        </button>
+        </Button>
       </div>
       {showSync && <PlaylistSyncDialog onClose={() => setShowSync(false)} />}
       {/* Playlist grid */}

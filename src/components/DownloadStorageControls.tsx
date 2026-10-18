@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { useEffect, useRef, useState } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { IconFolder, IconFolderOpen } from "@tabler/icons-react"
@@ -97,15 +98,19 @@ export function DownloadStorageControls() {
         song is stored once.
       </p>
       <div className="flex flex-wrap gap-2">
-        <button
+        <Button
+          size="md"
+          variant="secondary"
           type="button"
           disabled={moving || !info}
           className="settings-choice rounded-lg border border-(--border) bg-app-surface px-3 py-1.5 text-sm text-(--text-primary) transition-colors hover:bg-app-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
           onClick={() => void change("download_storage_choose")}
         >
           {moving ? "Moving downloads…" : "Change folder…"}
-        </button>
-        <button
+        </Button>
+        <Button
+          size="md"
+          variant="secondary"
           type="button"
           disabled={moving || !info}
           className="settings-choice inline-flex items-center gap-2 rounded-lg border border-(--border) bg-app-surface px-3 py-1.5 text-sm text-(--text-primary) transition-colors hover:bg-app-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
@@ -117,7 +122,7 @@ export function DownloadStorageControls() {
         >
           <IconFolderOpen size={16} aria-hidden="true" />
           Open folder
-        </button>
+        </Button>
       </div>
       <p className="text-xs leading-relaxed text-(--text-secondary)">
         Hibiki uses a dedicated Hibiki folder inside your chosen location.
@@ -136,14 +141,16 @@ export function DownloadStorageControls() {
           className="space-y-2 text-sm text-(--text-primary)"
         >
           <p>{error || info?.error}</p>
-          <button
+          <Button
+            size="md"
+            variant="secondary"
             type="button"
             disabled={moving}
             className="settings-choice rounded-lg border border-(--border) bg-app-surface px-3 py-1.5 text-sm text-(--text-primary) transition-colors hover:bg-app-surface-hover disabled:cursor-not-allowed disabled:opacity-40"
             onClick={() => void change("download_storage_retry")}
           >
             Try again
-          </button>
+          </Button>
         </div>
       )}
     </div>

@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { ArtworkImage } from "./shared/ArtworkImage"
 import { buildExternalImageUrl } from "../lib/imageUrl"
 import clsx from "clsx"
@@ -43,7 +44,8 @@ export function EpisodeRow({ episode, podcastArtworkUrl, isPlaying, progress, is
       {/* Artwork + play button */}
       <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-white/5">
         {thumb && <ArtworkImage src={thumb} alt="" className="h-full w-full object-cover" loading="lazy" />}
-        <button
+        <Button
+          variant="bare"
           onClick={onPlay}
           aria-label={`${isPlaying ? "Pause" : "Play"} ${episode.title}`}
           className={clsx(
@@ -61,7 +63,7 @@ export function EpisodeRow({ episode, podcastArtworkUrl, isPlaying, progress, is
               <polygon points="3,2 13,8 3,14" />
             </svg>
           )}
-        </button>
+        </Button>
       </div>
 
       {/* Info */}

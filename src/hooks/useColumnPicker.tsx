@@ -1,3 +1,6 @@
+import { Button } from "../components/shared/Button"
+import { DropdownSurface } from "../components/shared/DropdownSurface"
+import { Checkbox } from "../components/shared/Checkbox"
 import {
   useEffect,
   useId,
@@ -171,22 +174,23 @@ export function ColumnPicker({
 
   return (
     <div ref={ref} className="relative inline-block">
-      <button
+      <Button
+        variant="secondary"
         ref={trigger}
         type="button"
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-gray-400 transition-colors hover:bg-hl-menu hover:text-white"
+        className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-gray-400 transition-colors hover:bg-hl-menu"
       >
         <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
           <path d="M1 3.5A.5.5 0 0 1 1.5 3h13a.5.5 0 0 1 0 1h-13A.5.5 0 0 1 1 3.5zm3 3A.5.5 0 0 1 4.5 6h7a.5.5 0 0 1 0 1h-7a.5.5 0 0 1-.5-.5zm2 3A.5.5 0 0 1 6.5 9h3a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5z" />
         </svg>
         Columns
-      </button>
+      </Button>
       {open && (
-        <div
+        <DropdownSurface
           ref={panel}
           id={panelId}
           role="dialog"
@@ -198,8 +202,7 @@ export function ColumnPicker({
               key={col.id}
               className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm text-gray-300 hover:bg-hl-menu"
             >
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={visible.has(col.id)}
                 onChange={() => toggle(col.id)}
                 style={{ accentColor: "var(--accent)" }}
@@ -207,7 +210,7 @@ export function ColumnPicker({
               {col.label}
             </label>
           ))}
-        </div>
+        </DropdownSurface>
       )}
     </div>
   )

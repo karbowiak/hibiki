@@ -1,3 +1,4 @@
+import { Button } from "../shared/Button"
 import { MusicSourceBadge } from "../shared/MusicSource"
 import { useYoutubeMusicDiscovery } from "../../backends/ytmusic/discovery"
 import { mixDiscoveryItems } from "../../lib/discovery"
@@ -74,14 +75,14 @@ function ActionTile({ title, actionLabel, onClick, children, ...props }: Omit<Re
     const menu = useContextMenuStore.getState()
     if (menu.type === "actions" && menu.data && "owner" in menu.data && menu.data.owner === owner.current) menu.close()
   }, [title])
-  return <button {...props} type="button" title={title} onClick={onClick}
+  return <Button variant="bare" {...props} type="button" title={title} onClick={onClick}
     onContextMenu={actionsHandler({ title, owner: owner.current, actions: [{ label: actionLabel, run: onClick }] })}
     onKeyDown={e => {
       if (e.repeat || e.nativeEvent.isComposing || e.altKey || e.ctrlKey || e.metaKey) return
       if (e.key !== "ContextMenu" && !(e.key === "F10" && e.shiftKey)) return
       e.preventDefault(); e.stopPropagation()
       e.currentTarget.dispatchEvent(new window.MouseEvent("contextmenu", { bubbles: true, cancelable: true }))
-    }}>{children}</button>
+    }}>{children}</Button>
 }
 
 function StationIcon() {
@@ -293,7 +294,8 @@ function SearchBasedMixBuilder({
             const atLimit = seeds.length >= MAX_SEEDS
             const thumb = getThumb(item)
             return (
-              <button
+              <Button
+                variant="bare"
                 type="button"
                 aria-label={`Add ${title} to mix`}
                 aria-pressed={isSeeded}
@@ -351,7 +353,7 @@ function SearchBasedMixBuilder({
                     </svg>
                   )}
                 </div>
-              </button>
+              </Button>
             )
           })}
         </div>
@@ -360,12 +362,13 @@ function SearchBasedMixBuilder({
       {searchError && (
         <div role="alert" className="text-sm text-red-400">
           <p>Could not search this library.</p>
-          <button
+          <Button
+            variant="bare"
             onClick={() => setSearchAttempt((value) => value + 1)}
             className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white"
           >
             Try again
-          </button>
+          </Button>
         </div>
       )}
       {!isSearching &&
@@ -406,7 +409,8 @@ function SearchBasedMixBuilder({
                     />
                   )}
                   <span className="max-w-[120px] truncate">{item.title}</span>
-                  <button
+                  <Button
+                    variant="bare"
                     aria-label={`Remove ${item.title} from mix`}
                     onClick={() =>
                       setSeeds((prev) => prev.filter((s) => s.id !== key))
@@ -421,12 +425,13 @@ function SearchBasedMixBuilder({
                     >
                       <path d="M2.22 2.22a.75.75 0 0 1 1.06 0L6 4.94l2.72-2.72a.75.75 0 1 1 1.06 1.06L7.06 6l2.72 2.72a.75.75 0 1 1-1.06 1.06L6 7.06 3.28 9.78a.75.75 0 0 1-1.06-1.06L4.94 6 2.22 3.28a.75.75 0 0 1 0-1.06z" />
                     </svg>
-                  </button>
+                  </Button>
                 </div>
               )
             })}
           </div>
-          <button
+          <Button
+            variant="bare"
             onClick={handleStartMix}
             className="mt-2 flex items-center gap-2 rounded-full bg-accent px-6 py-2.5 text-sm font-bold text-black transition-all hover:brightness-110 active:scale-95"
           >
@@ -435,7 +440,7 @@ function SearchBasedMixBuilder({
             </svg>
             Start Mix ({seeds.length} {tabType}
             {seeds.length !== 1 ? "s" : ""})
-          </button>
+          </Button>
         </div>
       )}
     </div>
@@ -547,20 +552,22 @@ export function TagGridMixBuilder({
             Showing {(start + 1).toLocaleString()}–{(start + visible.length).toLocaleString()} of {filtered.length.toLocaleString()} {tabType}s
           </p>
           <div className="flex gap-2">
-            <button
+            <Button
+              variant="bare"
               type="button"
               aria-label={`Previous ${tabType}s`}
               disabled={currentPage === 0}
               onClick={() => setPage(currentPage - 1)}
               className="rounded-full border border-white/20 px-4 py-2 transition-colors hover:bg-white/10 disabled:cursor-default disabled:opacity-40"
-            >Previous</button>
-            <button
+            >Previous</Button>
+            <Button
+              variant="bare"
               type="button"
               aria-label={`Next ${tabType}s`}
               disabled={currentPage === lastPage}
               onClick={() => setPage(currentPage + 1)}
               className="rounded-full border border-white/20 px-4 py-2 transition-colors hover:bg-white/10 disabled:cursor-default disabled:opacity-40"
-            >Next</button>
+            >Next</Button>
           </div>
         </div>
       )}
@@ -772,7 +779,7 @@ export function StationsPage() {
         {stationError && (
           <div role="alert" className="text-sm text-red-400">
             <p>Could not load stations.</p>
-            <button onClick={() => setStationAttempt(value => value + 1)} className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white">Try again</button>
+            <Button variant="bare" onClick={() => setStationAttempt(value => value + 1)} className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white">Try again</Button>
           </div>
         )}
         {stationsLoaded && !stationError && stations.length === 0 && (
@@ -823,7 +830,8 @@ export function StationsPage() {
         {/* Tab bar */}
         <div role="group" aria-label="Mix source" className="station-builder-tabs mb-6 flex w-fit max-w-full flex-wrap gap-1 rounded-xl bg-app-surface p-1">
           {BUILDER_TABS.map(tab => (
-            <button
+            <Button
+              variant="bare"
               key={tab.key}
               aria-pressed={activeTab === tab.key}
               onClick={() => setActiveTab(tab.key)}
@@ -835,7 +843,7 @@ export function StationsPage() {
               )}
             >
               {tab.label}
-            </button>
+            </Button>
           ))}
         </div>
 

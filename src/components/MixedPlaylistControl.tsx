@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { useEffect, useRef, useState } from "react"
 import { useLocation } from "wouter"
 import { useMixedPlaylistStore } from "../stores/mixedPlaylistStore"
@@ -13,11 +14,11 @@ function ConnectedPlaylistControl({ alias }: { alias: string }) {
   useEffect(() => { active.current = true; return () => { active.current = false } }, [])
   const [pending, setPending] = useState(false), [error, setError] = useState<string | null>(null)
   return <div>
-    <button type="button" className="media-secondary" disabled={pending} onClick={() => {
+    <Button size="md" variant="secondary" type="button" className="media-secondary" disabled={pending} onClick={() => {
       setPending(true); setError(null)
       void useMixedPlaylistStore.getState().convert(alias).then(playlist => { if (active.current) navigate(`/mixed-playlist/${encodeURIComponent(playlist.id)}`) })
         .catch(failure => { if (active.current) setError(String(failure instanceof Error ? failure.message : failure)) }).finally(() => { if (active.current) setPending(false) })
-    }}>{pending ? "Preparing playlist…" : "Link Plex + YTM"}</button>
+    }}>{pending ? "Preparing playlist…" : "Link Plex + YTM"}</Button>
     {error && <p role="status" className="mt-2 max-w-lg text-sm text-(--text-secondary)">{error}</p>}
   </div>
 }

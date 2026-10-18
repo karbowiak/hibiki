@@ -1,3 +1,4 @@
+import { Button } from "./Button"
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type MouseEvent } from "react"
 import { Link, useLocation } from "wouter"
 import { musicEntityHref, resolveMusicEntity, captureMusicLinkOwner, beginMusicLinkNavigation, isMusicLinkNavigation, type MusicEntityRef } from "../../lib/musicLinks"
@@ -51,5 +52,5 @@ export function MusicEntityLink({ entity, children, className = "", style, title
     onKeyDown: (event: React.KeyboardEvent) => event.stopPropagation(),
     onDoubleClick: (event: MouseEvent) => event.stopPropagation(), onClick: open }
   return href ? <Link href={href} {...props}>{children}</Link>
-    : <button type="button" {...props}>{children}</button>
+    : <Button variant="bare" type="button" {...props}>{children}</Button>
 }

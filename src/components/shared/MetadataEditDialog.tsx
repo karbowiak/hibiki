@@ -1,3 +1,5 @@
+import { Button } from "./Button"
+import { Select } from "./Select"
 import { useSoulSyncStore } from "../../metadata/soulsync/store"
 import { nativeSoulSyncAdapter } from "../../metadata/soulsync/adapter"
 import {
@@ -439,7 +441,8 @@ export function MetadataEditDialog({
           <div className="min-w-0">
             {tab === "library" ? (
               preview?.changes.length ? (
-                <button
+                <Button
+                  variant="secondary"
                   type="button"
                   className={button}
                   disabled={busy}
@@ -449,9 +452,10 @@ export function MetadataEditDialog({
                   }}
                 >
                   Back to editing
-                </button>
+                </Button>
               ) : (
-                <button
+                <Button
+                  variant="secondary"
                   type="button"
                   className={button}
                   disabled={busy}
@@ -459,7 +463,7 @@ export function MetadataEditDialog({
                 >
                   <IconRefresh size={15} aria-hidden="true" />
                   Reload current values
-                </button>
+                </Button>
               )
             ) : (
               <p className="metadata-edit-note">
@@ -468,17 +472,19 @@ export function MetadataEditDialog({
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button
+            <Button
+              variant="secondary"
               type="button"
               className={button}
               disabled={pending.current === "write"}
               onClick={onClose}
             >
               {tab === "library" && dirty ? "Cancel" : "Done"}
-            </button>
+            </Button>
             {tab === "library" &&
               (preview?.changes.length ? (
-                <button
+                <Button
+                  variant="primary"
                   type="button"
                   className={`${button} metadata-edit-button--primary`}
                   disabled={busy || needsReload || !allowed}
@@ -486,16 +492,17 @@ export function MetadataEditDialog({
                 >
                   <IconCheck size={16} aria-hidden="true" />
                   {busy ? "Saving…" : "Save to Plex"}
-                </button>
+                </Button>
               ) : (
-                <button
+                <Button
+                  variant="primary"
                   type="button"
                   className={`${button} metadata-edit-button--primary`}
                   disabled={busy || needsReload || !allowed || !dirty}
                   onClick={review}
                 >
                   Review changes
-                </button>
+                </Button>
               ))}
           </div>
         </div>
@@ -514,7 +521,8 @@ export function MetadataEditDialog({
                   Artwork
                 </p>
               )}
-              <button
+              <Button
+                variant="bare"
                 key={key}
                 ref={(element) => {
                   tabs.current[index] = element!
@@ -558,7 +566,7 @@ export function MetadataEditDialog({
               >
                 <Icon size={17} aria-hidden="true" />
                 {label}
-              </button>
+              </Button>
             </div>
           ))}
         </div>
@@ -696,14 +704,15 @@ export function MetadataEditDialog({
                 </section>
               )}
               {needsReload && (
-                <button
+                <Button
+                  variant="secondary"
                   type="button"
                   className={`${button} mt-4`}
                   disabled={busy}
                   onClick={() => void reload()}
                 >
                   Reload current values
-                </button>
+                </Button>
               )}
               {message && (
                 <p
@@ -798,14 +807,15 @@ export function MetadataEditDialog({
                       <span className="ml-2 text-(--text-secondary)">
                         {status}
                       </span>
-                      <button
+                      <Button
+                        variant="bare"
                         type="button"
                         className="ml-3 underline disabled:opacity-40"
                         disabled={!requested || (requested && !result)}
                         onClick={() => metadata.refresh(adapter.id)}
                       >
                         Refresh
-                      </button>
+                      </Button>
                     </div>
                   )
                 })}
@@ -824,9 +834,9 @@ export function MetadataEditDialog({
                         <h3 className="text-sm font-semibold">
                           {fieldLabels[field]}
                         </h3>
-                        <select
+                        <Select
                           aria-label={`${fieldLabels[field]} source`}
-                          className={input}
+
                           value={selected}
                           onChange={(event) =>
                             select(field, event.target.value)
@@ -856,7 +866,7 @@ export function MetadataEditDialog({
                                 </option>
                               )
                             })}
-                        </select>
+                        </Select>
                       </div>
                       <p className="max-h-40 overflow-y-auto whitespace-pre-wrap wrap-break-word text-sm">
                         {Array.isArray(value)
@@ -882,7 +892,8 @@ export function MetadataEditDialog({
                         (field === "biography" || field === "summary") &&
                         typeof value === "string" &&
                         value !== draft.summary && (
-                          <button
+                          <Button
+                            variant="secondary"
                             type="button"
                             className={`${button} mt-3`}
                             onClick={() => {
@@ -893,7 +904,7 @@ export function MetadataEditDialog({
                             }}
                           >
                             Use for Plex description
-                          </button>
+                          </Button>
                         )}
                     </section>
                   )

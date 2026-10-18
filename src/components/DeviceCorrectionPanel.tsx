@@ -1,3 +1,6 @@
+import { Select } from "./shared/Select"
+import { Button } from "./shared/Button"
+import { Checkbox } from "./shared/Checkbox"
 import { useEffect, useRef, useState } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
@@ -225,9 +228,9 @@ export function DeviceCorrectionPanel() {
       </div>
       <label className="mt-3 block text-(--text-muted)">
         Correction profile
-        <select
+        <Select
           aria-label="Correction profile"
-          className={`${field} mt-1`}
+          className="mt-1 w-full"
           value={eq.selectedCorrectionId ?? ""}
           disabled={!available}
           onChange={(event) => {
@@ -245,10 +248,11 @@ export function DeviceCorrectionPanel() {
               {profile.label}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        <button
+        <Button
+          variant="secondary"
           className={button}
           disabled={!available}
           onClick={() => {
@@ -257,9 +261,10 @@ export function DeviceCorrectionPanel() {
           }}
         >
           Find or import
-        </button>
+        </Button>
         {selected && (
-          <button
+          <Button
+            variant="secondary"
             className={button}
             disabled={!available}
             onClick={() => {
@@ -268,11 +273,10 @@ export function DeviceCorrectionPanel() {
             }}
           >
             Edit filters
-          </button>
+          </Button>
         )}
         <label className="ml-auto flex min-h-8 items-center gap-1.5 text-(--text-muted)">
-          <input
-            type="checkbox"
+          <Checkbox
             className="accent-accent"
             checked={eq.correctionEnabled}
             disabled={!available || !selected}
@@ -302,34 +306,36 @@ export function DeviceCorrectionPanel() {
         {savedToOutput ? "Saved for this output" : bound ? "Output settings have changed" : "Not saved to this output"}
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
-        <button
+        <Button
+          variant="secondary"
           className={button}
           disabled={!available || !!eq.correctionPreview || savedToOutput}
           onClick={() => eq.saveOutputProfile()}
         >
           Save to output
-        </button>
+        </Button>
         {bound && (
           <>
-            <button
+            <Button
+              variant="secondary"
               className={button}
               disabled={!available}
               onClick={() => eq.recallOutputProfile()}
             >
               Recall saved
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="secondary"
               className={button}
               onClick={() => eq.removeOutputProfile(output.id)}
             >
               Forget output
-            </button>
+            </Button>
           </>
         )}
       </div>
       <label className="mt-2 flex min-h-8 items-center gap-2 text-(--text-muted)">
-        <input
-          type="checkbox"
+        <Checkbox
           className="accent-accent"
           checked={bound?.automatic ?? false}
           disabled={!available || !output.stable}
@@ -357,12 +363,13 @@ export function DeviceCorrectionPanel() {
               <span className="min-w-0 truncate">
                 {profile.name} · another output
               </span>
-              <button
+              <Button
+                variant="secondary"
                 className={button}
                 onClick={() => eq.removeOutputProfile(id)}
               >
                 Forget
-              </button>
+              </Button>
             </div>
           ))}
           {Object.keys(eq.deviceProfiles).map((name) => (
@@ -373,13 +380,14 @@ export function DeviceCorrectionPanel() {
               <span className="min-w-0 truncate">
                 {name} · older tone settings
               </span>
-              <button
+              <Button
+                variant="secondary"
                 className={button}
                 disabled={!available}
                 onClick={() => eq.loadProfileForDevice(name)}
               >
                 Load tone
-              </button>
+              </Button>
             </div>
           ))}
         </details>
@@ -390,9 +398,9 @@ export function DeviceCorrectionPanel() {
             <h4 className="font-semibold text-(--text-primary)">
               {draft ? "Correction filters" : "Find a correction"}
             </h4>
-            <button className={button} onClick={cancel}>
+            <Button variant="secondary" className={button} onClick={cancel}>
               Cancel
-            </button>
+            </Button>
           </div>
           {!draft ? (
             <>
@@ -420,7 +428,8 @@ export function DeviceCorrectionPanel() {
                 <ul className="mt-2 max-h-52 divide-y divide-(--border) overflow-y-auto">
                   {catalogue.items.map((model) => (
                     <li key={model.id}>
-                      <button
+                      <Button
+                        variant="bare"
                         className="focus-visible:outline-accent w-full rounded px-1 py-2 text-left text-(--text-primary) hover:bg-(--bg-surface-hover) focus-visible:outline-2 disabled:opacity-40"
                         disabled={!!downloading || !available}
                         onClick={() => void download(model)}
@@ -433,15 +442,15 @@ export function DeviceCorrectionPanel() {
                           {model.measurement} · {model.rig}
                           {model.target ? ` · ${model.target}` : ""}
                         </span>
-                      </button>
+                      </Button>
                     </li>
                   ))}
                 </ul>
               )}
               <div className="mt-3 flex flex-wrap gap-2">
-                <button className={button} onClick={() => custom()}>
+                <Button variant="secondary" className={button} onClick={() => custom()}>
                   Paste custom filters
-                </button>
+                </Button>
                 <label
                   className={`${button} focus-within:outline-accent inline-flex cursor-pointer items-center focus-within:outline-2`}
                 >
@@ -516,7 +525,8 @@ export function DeviceCorrectionPanel() {
                 frequency, gain and Q. Unsupported commands are rejected.
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
-                <button
+                <Button
+                  variant="secondary"
                   className={button}
                   disabled={!available}
                   aria-pressed={!!eq.correctionPreview}
@@ -530,9 +540,10 @@ export function DeviceCorrectionPanel() {
                   }}
                 >
                   Preview
-                </button>
-                {eq.correctionPreview && <button className={button} onClick={() => eq.cancelCorrectionPreview(output.key)}>Stop preview</button>}
-                <button
+                </Button>
+                {eq.correctionPreview && <Button variant="secondary" className={button} onClick={() => eq.cancelCorrectionPreview(output.key)}>Stop preview</Button>}
+                <Button
+                  variant="secondary"
                   className={`${button} bg-(--accent-tint-subtle)`}
                   disabled={!available}
                   onClick={() => {
@@ -556,17 +567,19 @@ export function DeviceCorrectionPanel() {
                   }}
                 >
                   Apply
-                </button>
+                </Button>
                 {draft.originalText && (
-                  <button
+                  <Button
+                    variant="secondary"
                     className={button}
                     onClick={() => setText(draft.originalText)}
                   >
                     Reset local edits
-                  </button>
+                  </Button>
                 )}
                 {eq.corrections[draft.id] && (
-                  <button
+                  <Button
+                    variant="secondary"
                     className={button}
                     onClick={() => {
                       eq.cancelCorrectionPreview(output.key)
@@ -576,7 +589,7 @@ export function DeviceCorrectionPanel() {
                     }}
                   >
                     Remove correction
-                  </button>
+                  </Button>
                 )}
               </div>
               {draft.source.kind === "autoeq" && (

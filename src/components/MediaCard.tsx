@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { ArtistCreditLinks } from "./shared/ArtistCredits"
 import { itemArtistCredits } from "../lib/artistCredits"
 import { useCallback, useEffect, useRef, useState } from "react"
@@ -306,7 +307,8 @@ function MediaCardInner({
       <div className="media-card__gradient" aria-hidden="true" />
       {artworkBadge && <span className="absolute top-2 right-2 z-10 flex h-7 min-w-7 items-center justify-center rounded-full bg-black/70 p-1.5 pointer-events-none">{artworkBadge}</span>}
       {onViewVersions && (versionCount ?? 0) > 1 && (
-        <button
+        <Button
+          variant="bare"
           type="button"
           className="media-card__versions"
           aria-label={`Compare ${versionCount} versions of ${title}`}
@@ -317,7 +319,7 @@ function MediaCardInner({
           }}
         >
           {versionCount} versions
-        </button>
+        </Button>
       )}
       <div
         className={clsx(
@@ -367,7 +369,8 @@ function MediaCardInner({
         )}
       </div>
       {onPlay && (
-        <button
+        <Button
+          variant="bare"
           type="button"
           disabled={unavailable}
           title={
@@ -398,7 +401,7 @@ function MediaCardInner({
           >
             <polygon points="3,2 13,8 3,14" />
           </svg>
-        </button>
+        </Button>
       )}
     </>
   )
@@ -460,7 +463,8 @@ function MediaCardInner({
           {...dragHandlers}
         />
       ) : onClick ? (
-        <button
+        <Button
+          variant="bare"
           type="button"
           onClick={onClick}
           aria-label={title}

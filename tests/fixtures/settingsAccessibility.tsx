@@ -72,8 +72,9 @@ for (const section of ["general", "appearance", "eastereggs"]) {
   const doc = page(section)
   for (const toggle of doc.querySelectorAll('[role="switch"]')) {
     assert(toggle.getAttribute("aria-label"), `${section}: unnamed switch`)
-    assert.match(toggle.className, /focus-visible:outline-2/)
-    assert(["true", "false"].includes(toggle.getAttribute("aria-checked")!))
+    assert.equal(toggle.tagName, "INPUT")
+    assert.equal(toggle.getAttribute("type"), "checkbox")
+    assert.equal(typeof (toggle as HTMLInputElement).checked, "boolean")
   }
   if (section === "appearance") {
     const theme = doc.querySelector('[role="group"][aria-label="Theme"]')!

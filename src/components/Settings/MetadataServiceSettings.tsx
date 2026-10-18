@@ -1,3 +1,5 @@
+import { Checkbox } from "../shared/Checkbox"
+import { Button } from "../shared/Button"
 import { useEffect, useId, useState } from "react"
 import {
   useFanartServiceStore,
@@ -90,8 +92,7 @@ export function MetadataServiceSettings({
           className={input}
         />
         <label className="mt-2 flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={enabled}
             onChange={(event) => setEnabled(event.target.checked)}
             disabled={loading}
@@ -126,23 +127,26 @@ export function MetadataServiceSettings({
           </p>
         )}
         <div className="mt-2 flex flex-wrap gap-2">
-          <button
+          <Button
+            variant="primary"
             type="submit"
-            className="rounded-lg bg-accent px-3 py-2 text-sm text-(--artwork-ink,var(--accent-foreground,#111)) disabled:opacity-50"
+            className="rounded-lg px-3 py-2 text-sm text-(--artwork-ink,var(--accent-foreground,#111)) disabled:opacity-50"
             disabled={loading || !status}
           >
             {loading ? "Saving…" : "Save settings"}
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="secondary"
             type="button"
             className="rounded-lg border border-(--border) px-3 py-2 text-sm disabled:opacity-50"
             disabled={loading}
             onClick={() => void load()}
           >
             Reload settings
-          </button>
+          </Button>
           {status?.hasApiKey && (
-            <button
+            <Button
+              variant="secondary"
               type="button"
               className="rounded-lg border border-(--border) px-3 py-2 text-sm disabled:opacity-50"
               disabled={loading}
@@ -152,7 +156,7 @@ export function MetadataServiceSettings({
               }}
             >
               Clear saved key
-            </button>
+            </Button>
           )}
         </div>
       </form>

@@ -1,3 +1,4 @@
+import { Button } from "../shared/Button"
 import { MusicSourceBadge } from "../shared/MusicSource"
 import { getMediaInfo, makeDragPayload } from "../../lib/mediaCardInfo"
 import { deduplicateAlbums, deduplicateAlbumItems, deduplicateHubAlbums } from "../../lib/dedup"
@@ -181,16 +182,17 @@ export function Home() {
       <div className="mx-auto max-w-lg space-y-3 rounded-xl border border-(--border) bg-app-card px-6 py-8 text-center">
         <h1 className="text-xl font-semibold">{isOffline ? "Your saved library" : "Connect your music library"}</h1>
         <p className="text-sm text-(--text-secondary)">{message}</p>
-        <button
+        <Button
+          variant="bare"
           onClick={() => navigate("/settings")}
           className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-black"
         >
           Open Settings
-        </button>
+        </Button>
         {isOffline && (
-          <button onClick={() => navigate("/library")} className="ml-2 rounded-full border border-(--border) px-4 py-2 text-sm">
+          <Button variant="bare" onClick={() => navigate("/library")} className="ml-2 rounded-full border border-(--border) px-4 py-2 text-sm">
             Browse saved library
-          </button>
+          </Button>
         )}
       </div>
     )

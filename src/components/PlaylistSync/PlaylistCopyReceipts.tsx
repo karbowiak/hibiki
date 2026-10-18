@@ -1,3 +1,5 @@
+import { Button } from "../shared/Button"
+import { Checkbox } from "../shared/Checkbox"
 import { useEffect, useRef, useState } from "react"
 import { PlaylistSyncFrame } from "./PlaylistSyncFrame"
 import { useListenBrainzStore } from "../../metadata/listenbrainz/authStore"
@@ -104,12 +106,13 @@ export function PlaylistCopyReceipts({
       {error && (
         <div role="alert">
           <p>{error}</p>
-          <button
+          <Button
+            variant="secondary"
             className={`${button} mt-2`}
             onClick={() => setRetry((value) => value + 1)}
           >
             Retry loading receipts
-          </button>
+          </Button>
         </div>
       )}
       {!loading && !error && items.length === 0 && (
@@ -326,60 +329,64 @@ function Receipt({
           </p>
           {!attempt.destinationId && (
             <>
-              <button
+              <Button
+                variant="secondary"
                 className={button}
                 disabled={busy}
                 onClick={() => void browse()}
               >
                 Browse destination playlists
-              </button>
+              </Button>
               {choices.length > 0 && (
                 <ul className="max-h-48 space-y-1 overflow-y-auto">
                   {choices.map((choice) => (
                     <li key={choice.id}>
-                      <button
+                      <Button
+                        variant="secondary"
                         className={`${button} w-full text-left`}
                         disabled={busy}
                         onClick={() => setId(choice.id)}
                       >
                         {choice.title}
-                      </button>
+                      </Button>
                     </li>
                   ))}
                 </ul>
               )}
               {choices.length > 0 && (
                 <div className="flex gap-2">
-                  <button
+                  <Button
+                    variant="secondary"
                     className={button}
                     disabled={busy || page === 0}
                     onClick={() => void browse(page - 1)}
                   >
                     Previous destinations
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    variant="secondary"
                     className={button}
                     disabled={busy || !more}
                     onClick={() => void browse(page + 1)}
                   >
                     More destinations
-                  </button>
+                  </Button>
                 </div>
               )}
             </>
           )}
-          <button
+          <Button
+            variant="secondary"
             className={button}
             disabled={busy || !id.trim()}
             onClick={() => void verify()}
           >
             {busy ? "Checking and saving…" : "Verify this copy"}
-          </button>
+          </Button>
           {!attempt.destinationId && (
             <div className="mt-4 border-t border-(--border) pt-3">
               <label className="flex items-start gap-2 text-sm">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={acknowledged}
                   disabled={busy}
                   onChange={(event) => setAcknowledged(event.target.checked)}
@@ -387,7 +394,8 @@ function Receipt({
                 I inspected the original account. This copy may already exist,
                 and trying again could create a duplicate.
               </label>
-              <button
+              <Button
+                variant="secondary"
                 className={`${button} mt-2`}
                 disabled={busy || !acknowledged}
                 onClick={() => void dismiss()}
@@ -395,7 +403,7 @@ function Receipt({
                 {dismissalFailed
                   ? "Retry local dismissal"
                   : "Dismiss this local blocker"}
-              </button>
+              </Button>
               <p className="mt-1 text-xs text-(--text-secondary)">
                 The receipt stays in local history. This does not delete a
                 playlist or send another create request.

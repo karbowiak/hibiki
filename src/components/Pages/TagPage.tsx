@@ -1,3 +1,4 @@
+import { Button } from "../shared/Button"
 import { PageRecovery } from "../shared/PageRecovery"
 import { PageLoading } from "../shared/PageLoading"
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
@@ -192,7 +193,8 @@ export function TagPage({
           <h1 className="text-3xl font-bold">{tagName}</h1>
         </div>
         {albums.length > 0 && (
-          <button
+          <Button
+            variant="bare"
             onClick={handlePlayAll}
             title={`Shuffle all ${tagName} tracks`}
             className="flex items-center gap-2 rounded-full border border-accent/40 bg-accent/10 px-4 py-1.5 text-sm font-semibold text-accent transition-all hover:border-accent hover:bg-accent/20 active:scale-95"
@@ -202,7 +204,7 @@ export function TagPage({
               <path d="m7.5 10.723.98-1.167.957 1.14a2.25 2.25 0 0 0 1.724.804h1.947l-1.017-1.018a.75.75 0 1 1 1.06-1.06l2.829 2.828-2.829 2.828a.75.75 0 1 1-1.06-1.06L13.109 13H11.16a3.75 3.75 0 0 1-2.873-1.34l-.787-.938z" />
             </svg>
             Shuffle all
-          </button>
+          </Button>
         )}
       </div>
 
@@ -252,7 +254,8 @@ export function TagPage({
         />
       )}
       {hasMore && (
-        <button
+        <Button
+          variant="bare"
           onClick={() => void loadMore()}
           disabled={isLoadingMore}
           className="mt-4 rounded-full border border-white/20 px-4 py-2 text-sm disabled:opacity-50"
@@ -262,7 +265,7 @@ export function TagPage({
             : pageError
               ? "Try loading more again"
               : "Load more albums"}
-        </button>
+        </Button>
       )}
 
       {/* Sentinel — always in DOM so IntersectionObserver can attach */}

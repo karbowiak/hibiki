@@ -1,3 +1,5 @@
+import { Button } from "../shared/Button"
+import { Select } from "../shared/Select"
 import { useEffect, useMemo, useState, useId, useRef } from "react"
 import { navigateSyncTabs } from "./PlaylistSyncFrame"
 import { AppDialog } from "../shared/AppDialog"
@@ -384,9 +386,9 @@ export function PlaylistSyncDialog({
                   {!remote.access.writable && " · Remote read-only"}
                 </p>
               </div>
-              <button className={button} disabled={writeBusy} onClick={back}>
+              <Button variant="secondary" className={button} disabled={writeBusy} onClick={back}>
                 Choose another playlist
-              </button>
+              </Button>
             </div>
           )}
           {remote && (
@@ -396,7 +398,8 @@ export function PlaylistSyncDialog({
               aria-label="Selected ListenBrainz playlist"
               className="mb-4 flex flex-wrap gap-2"
             >
-              <button
+              <Button
+                variant="secondary"
                 role="tab"
                 id={`${tabsId}-destination`}
                 aria-controls={`${tabsId}-panel`}
@@ -407,8 +410,9 @@ export function PlaylistSyncDialog({
                 onClick={() => setStep("destination")}
               >
                 Destination
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="secondary"
                 role="tab"
                 id={`${tabsId}-recovery`}
                 aria-controls={`${tabsId}-panel`}
@@ -419,7 +423,7 @@ export function PlaylistSyncDialog({
                 onClick={() => setStep("recovery")}
               >
                 Review previous copies
-              </button>
+              </Button>
             </div>
           )}
           {error && (
@@ -428,12 +432,13 @@ export function PlaylistSyncDialog({
               className="mb-4 rounded-xl border border-(--border) p-4"
             >
               {error}
-              <button
+              <Button
+                variant="secondary"
                 className={`${button} ml-3`}
                 onClick={() => setRetry((v) => v + 1)}
               >
                 Retry
-              </button>
+              </Button>
             </div>
           )}
           {loading && <p role="status">Loading playlist summaries…</p>}
@@ -450,20 +455,20 @@ export function PlaylistSyncDialog({
                   }}
                   className="min-w-0 flex-1 rounded-lg border border-(--border) bg-app-surface px-3 py-2"
                 />
-                <select
+                <Select
                   aria-label="Playlist source"
                   value={filter}
                   onChange={(e) => {
                     setFilter(e.target.value as typeof filter)
                     setPage(0)
                   }}
-                  className={button}
+
                 >
                   <option value="all">All playlists</option>
                   <option value="created">Created by you</option>
                   <option value="generated">Generated for you</option>
                   <option value="shared">Collaborations</option>
-                </select>
+                </Select>
               </div>
               {truncated && current && (
                 <p
@@ -494,7 +499,8 @@ export function PlaylistSyncDialog({
                   className="mb-5 grid gap-3 sm:grid-cols-2"
                 >
                   {visibleChannels.map((channel) => (
-                    <button
+                    <Button
+                      variant="bare"
                       key={channel.family}
                       type="button"
                       className="rounded-xl border border-(--border) bg-app-surface p-4 text-left hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
@@ -518,7 +524,7 @@ export function PlaylistSyncDialog({
                       <span className="mt-2 block text-xs text-(--text-secondary)">
                         Generated for you · import-only
                       </span>
-                    </button>
+                    </Button>
                   ))}
                 </section>
               )}
@@ -538,13 +544,14 @@ export function PlaylistSyncDialog({
                   <ul className="mt-3 space-y-2">
                     {weeklyChoice.editions.map((edition) => (
                       <li key={edition.playlistId}>
-                        <button
+                        <Button
+                          variant="secondary"
                           className={button}
                           onClick={() => chooseEdition(edition)}
                         >
                           {weeklyDate(edition)} · {edition.createdAt} ·{" "}
                           {edition.playlistId.slice(-8)}
-                        </button>
+                        </Button>
                       </li>
                     ))}
                   </ul>
@@ -553,7 +560,8 @@ export function PlaylistSyncDialog({
               <ul className="space-y-2">
                 {filtered.slice(page * 30, (page + 1) * 30).map((item) => (
                   <li key={item.id}>
-                    <button
+                    <Button
+                      variant="bare"
                       className="flex w-full items-center gap-4 rounded-xl border border-(--border) bg-app-surface p-4 text-left transition-colors hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                       onClick={() => {
                         setSelected(item)
@@ -586,29 +594,31 @@ export function PlaylistSyncDialog({
                         </span>
                       </span>
                       <span aria-hidden="true">→</span>
-                    </button>
+                    </Button>
                   </li>
                 ))}
               </ul>
               {filtered.length > 30 && (
                 <div className="mt-4 flex items-center justify-between gap-2">
-                  <button
+                  <Button
+                    variant="secondary"
                     className={button}
                     disabled={page === 0}
                     onClick={() => setPage((v) => v - 1)}
                   >
                     Previous
-                  </button>
+                  </Button>
                   <span className="text-sm text-(--text-secondary)">
                     {page + 1} / {Math.ceil(filtered.length / 30)}
                   </span>
-                  <button
+                  <Button
+                    variant="secondary"
                     className={button}
                     disabled={(page + 1) * 30 >= filtered.length}
                     onClick={() => setPage((v) => v + 1)}
                   >
                     Next
-                  </button>
+                  </Button>
                 </div>
               )}
             </section>
@@ -633,7 +643,9 @@ export function PlaylistSyncDialog({
                     className={`${button} mt-2 w-full bg-app-surface`}
                   />
                 </label>
-                <button
+                <Button
+                  size="md"
+                  variant="primary"
                   className="media-primary mt-4"
                   disabled={
                     writeBusy || !createTitle.trim() || !!pendingReceipt
@@ -650,7 +662,7 @@ export function PlaylistSyncDialog({
                     : existingLink
                       ? "Open configured sync"
                       : "Create Sync"}
-                </button>
+                </Button>
                 <p className="mt-3 text-sm text-(--text-secondary)">
                   Creates a fresh local playlist. Matching continues in the
                   background; songs needing a choice remain in its Review.
@@ -675,21 +687,22 @@ export function PlaylistSyncDialog({
                   )}
                 </div>
               )}
-              <button
+              <Button
+                variant="secondary"
                 className={button}
                 disabled={writeBusy}
                 onClick={() => setChooseExisting((value) => !value)}
               >
                 Select existing local playlist
-              </button>
+              </Button>
               {chooseExisting && (
                 <>
                   <label className="block text-sm">
                     Existing Plex playlist
-                    <select
+                    <Select
                       value={localId}
                       onChange={(e) => setLocalId(e.target.value)}
-                      className={`${button} mt-2 w-full`}
+                      className="mt-2 w-full"
                     >
                       <option value="">Choose a playlist</option>
                       {locals.map((item) => (
@@ -697,16 +710,18 @@ export function PlaylistSyncDialog({
                           {item.title}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </label>
                   <div className="flex flex-wrap gap-2">
-                    <button
+                    <Button
+                      size="md"
+                      variant="primary"
                       className="media-primary"
                       disabled={!localId || !provider?.mutatePlaylistOccurrence}
                       onClick={() => setStep("link")}
                     >
                       Configure this link
-                    </button>
+                    </Button>
                   </div>
                 </>
               )}

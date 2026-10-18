@@ -1,3 +1,4 @@
+import { Button } from "../../components/shared/Button"
 import { useState } from "react"
 import { useDeezerMetadataStore } from "./store"
 
@@ -28,13 +29,14 @@ export function DeezerSettings() {
           <span className="text-sm font-medium text-white tabular-nums">{stats.albumCount}</span>
         </div>
       </div>
-      <button
+      <Button
+        variant="secondary"
         onClick={handleClear}
         disabled={clearing || (stats.artistCount + stats.albumCount === 0)}
-        className="mt-2 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 hover:border-white/20 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        className="mt-2 rounded-lg border border-white/10 px-3 py-1.5 text-xs hover:border-white/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
       >
         {clearing ? "Cleared" : "Clear Cache"}
-      </button>
+      </Button>
     </div>
   )
 }

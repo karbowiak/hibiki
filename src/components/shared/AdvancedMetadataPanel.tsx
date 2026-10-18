@@ -1,3 +1,5 @@
+import { Button } from "./Button"
+import { Checkbox } from "./Checkbox"
 import { useEffect, useRef, useState } from "react"
 import { useProviderStore } from "../../stores/providerStore"
 import {
@@ -172,14 +174,15 @@ export function AdvancedMetadataPanel({
         </p>
       )}
       {!baseline && (
-        <button
+        <Button
+          variant="secondary"
           type="button"
           className="metadata-edit-button"
           disabled={saving || disabled}
           onClick={() => setReload((v) => v + 1)}
         >
           Reload values and locks
-        </button>
+        </Button>
       )}
       {baseline && <div className="metadata-advanced-grid">
         {(["sortTitle", "studio", "genres", "styles", "moods", "labels", "posterLock", "backgroundLock"] as AdvancedMetadataKey[]).filter(key => !!draft[key]).map((key) => {
@@ -229,8 +232,7 @@ export function AdvancedMetadataPanel({
                 </p>
               ) : (
                 <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={field.locked === true}
                     className="accent-(--artwork-primary)"
                     disabled={saving || disabled}
@@ -268,18 +270,20 @@ export function AdvancedMetadataPanel({
               })}</div>
             </div>
           ))}
-          <button
+          <Button
+            variant="primary"
             type="button"
             className="metadata-edit-button metadata-edit-button--primary"
             disabled={saving || disabled}
             onClick={() => void save()}
           >
             {saving ? "Saving…" : "Confirm Plex save"}
-          </button>
+          </Button>
         </div>
       )}
       {baseline && !review && (
-        <button
+        <Button
+          variant="secondary"
           type="button"
           className="metadata-edit-button"
           disabled={saving || disabled || !Object.keys(draft).some(key => JSON.stringify(draft[key as AdvancedMetadataKey]) !== JSON.stringify(baseline.fields[key as AdvancedMetadataKey]))}
@@ -295,7 +299,7 @@ export function AdvancedMetadataPanel({
           }}
         >
           Review advanced changes
-        </button>
+        </Button>
       )}
     </section>
   )

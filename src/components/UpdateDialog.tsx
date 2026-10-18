@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { useState, useEffect } from "react"
 import { runPreparedUpdate } from "../lib/gracefulShutdown"
 import { prepareUpdateExit, keepOpen } from "../lib/shutdown"
@@ -62,12 +63,13 @@ export function UpdateDialog() {
         <div className="mb-5 flex items-center justify-between">
           <h2 className="text-lg font-bold text-white">Update Available</h2>
           {!installing && (
-            <button
+            <Button
+              variant="bare"
               onClick={dismiss}
               className="flex h-7 w-7 items-center justify-center rounded-full text-gray-400 hover:bg-white/10"
             >
               &#10005;
-            </button>
+            </Button>
           )}
         </div>
 
@@ -108,18 +110,20 @@ export function UpdateDialog() {
             {installError && <p role="alert" className="mb-3 text-sm text-amber-200">{installError}</p>}
             {!installing && (
               <div className="flex justify-end gap-3">
-                <button
+                <Button
+                  variant="bare"
                   onClick={dismiss}
                   className="rounded-full px-5 py-2 text-sm font-semibold text-white hover:bg-white/10"
                 >
                   Later
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="bare"
                   onClick={handleInstall}
                   className="rounded-full bg-white px-5 py-2 text-sm font-semibold text-black transition-opacity hover:scale-105 active:scale-95"
                 >
                   Update & Restart
-                </button>
+                </Button>
               </div>
             )}
           </>

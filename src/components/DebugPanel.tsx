@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { useEffect, useState } from "react"
 import { useDebugPanelStore } from "../stores/debugPanelStore"
 import type { MusicTrack, MusicAlbum, MusicArtist, MusicPlaylist } from "../types/music"
@@ -30,7 +31,8 @@ function RawJson({ data }: { data: unknown }) {
   const [expanded, setExpanded] = useState(false)
   return (
     <div className="mb-2">
-      <button
+      <Button
+        variant="bare"
         onClick={() => setExpanded(v => !v)}
         className="text-[10px] font-semibold uppercase tracking-wider text-white/30 hover:text-white/50 transition-colors flex items-center gap-1"
       >
@@ -39,7 +41,7 @@ function RawJson({ data }: { data: unknown }) {
           <path d="M6 4l4 4-4 4V4z" />
         </svg>
         Raw JSON
-      </button>
+      </Button>
       {expanded && (
         <pre className="mt-2 p-3 rounded bg-white/5 text-[10px] text-white/60 overflow-auto max-h-64 font-mono leading-relaxed">
           {JSON.stringify(data, null, 2)}
@@ -260,13 +262,15 @@ export function DebugPanel() {
               {subtitle && <span className="ml-2 text-xs text-white/50 truncate">{subtitle}</span>}
             </div>
             <div className="flex items-center gap-2">
-              <button
+              <Button
+                variant="secondary"
                 onClick={handleCopy}
-                className="px-3 py-1 rounded text-xs bg-white/8 hover:bg-white/14 text-white/70 hover:text-white transition-colors"
+                className="px-3 py-1 rounded text-xs transition-colors"
               >
                 {copied ? "Copied!" : "Copy JSON"}
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="bare"
                 onClick={close}
                 className="w-6 h-6 flex items-center justify-center rounded text-white/40 hover:text-white/80 hover:bg-white/8 transition-colors"
                 aria-label="Close"
@@ -274,7 +278,7 @@ export function DebugPanel() {
                 <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
                   <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
                 </svg>
-              </button>
+              </Button>
             </div>
           </div>
 

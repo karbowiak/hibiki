@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { useEffect, useState } from "react"
 import { AppDialog } from "./shared/AppDialog"
 import { ArtworkImage } from "./shared/ArtworkImage"
@@ -180,13 +181,15 @@ export function PlaylistInformationDialog({
               Offline downloads
             </h3>
             {!!downloads?.requested && !!downloads.failed && (
-              <button
+              <Button
+                size="md"
+                variant="secondary"
                 className="media-secondary shell-control-secondary text-sm"
                 disabled={busy || provider?.isOffline}
                 onClick={() => void retryDownloads()}
               >
                 {busy ? "Queueing…" : "Retry downloads"}
-              </button>
+              </Button>
             )}
           </div>
           <p className="mt-2 text-sm text-(--text-secondary)">
@@ -223,12 +226,14 @@ export function PlaylistInformationDialog({
             </p>
           )}
           {issues.length < total && !loading && (
-            <button
+            <Button
+              size="md"
+              variant="secondary"
               className="media-secondary shell-control-secondary mt-3 text-sm"
               onClick={() => setOffset(issues.length)}
             >
               Show more issues
-            </button>
+            </Button>
           )}
         </section>
         <section
@@ -240,12 +245,14 @@ export function PlaylistInformationDialog({
               Playlist sync
             </h3>
             {link && (
-              <button
+              <Button
+                size="md"
+                variant="secondary"
                 className="media-secondary shell-control-secondary text-sm"
                 onClick={onReviewSync}
               >
                 Open Sync review
-              </button>
+              </Button>
             )}
           </div>
           <p className="mt-2 text-sm text-(--text-secondary)">
@@ -288,12 +295,13 @@ export function PlaylistInformationDialog({
         {error && (
           <p role="alert" className="text-sm text-(--text-primary)">
             {error}{" "}
-            <button
+            <Button
+              variant="bare"
               className="underline"
               onClick={() => setRevision((value) => value + 1)}
             >
               Try again
-            </button>
+            </Button>
           </p>
         )}
       </div>

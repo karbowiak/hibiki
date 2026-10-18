@@ -1,3 +1,6 @@
+import { Button } from "../shared/Button"
+import { Checkbox } from "../shared/Checkbox"
+import { Select } from "../shared/Select"
 import { useModalLifecycle } from "../../hooks/useModalLifecycle"
 import { createPortal } from "react-dom"
 import { useId, useLayoutEffect, useRef, useState } from "react"
@@ -91,7 +94,7 @@ export function CreatePlaylist({ onClose, onCreated, itemIds = [], playlist }: {
     onClick={event => { if (event.target === event.currentTarget) onClose() }} onCancel={event => { event.preventDefault(); onClose() }} onKeyDown={event => event.stopPropagation()}>
     <div className="app-overlay-surface playlist-editor max-h-[90dvh] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-2xl bg-app-surface p-6">
       <div className="mb-5 flex items-center justify-between gap-4"><h2 id={titleId} className="text-xl font-bold">{playlist ? "Edit playlist" : "Create playlist"}</h2>
-        <button ref={closeRef} type="button" aria-label="Close create playlist" onClick={onClose} className="player-panel-icon"><IconX size={20} aria-hidden="true" /></button>
+        <Button variant="bare" ref={closeRef} type="button" aria-label="Close create playlist" onClick={onClose} className="player-panel-icon"><IconX size={20} aria-hidden="true" /></Button>
       </div>
       {created ? <div className="py-4 text-center"><IconCheck size={36} aria-hidden="true" className="mx-auto mb-3 text-accent" /><p role="status" className="font-semibold">Saved in Hibiki</p>{error && <p role="alert" className="mt-3 text-sm text-red-400">{error}</p>}</div> :
         <form onSubmit={submit} className="space-y-5">
@@ -99,9 +102,9 @@ export function CreatePlaylist({ onClose, onCreated, itemIds = [], playlist }: {
             <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-app-card">
               {artwork ? <img src={artwork} alt="Playlist artwork preview" className="h-full w-full object-cover" /> : <IconPhoto size={30} aria-hidden="true" className="text-(--text-muted)" />}
             </div>
-            <div className="min-w-0 space-y-2"><button type="button" disabled={busy || imageBusy} onClick={() => fileRef.current?.click()} className="media-secondary">{imageBusy ? "Preparing image…" : artwork ? "Replace image" : "Choose image"}</button>
+            <div className="min-w-0 space-y-2"><Button size="md" variant="secondary" type="button" disabled={busy || imageBusy} onClick={() => fileRef.current?.click()} className="media-secondary">{imageBusy ? "Preparing image…" : artwork ? "Replace image" : "Choose image"}</Button>
               <input ref={fileRef} id={artworkId} aria-label="Playlist image" type="file" accept="image/jpeg,image/png,image/webp" disabled={busy || imageBusy} tabIndex={-1} className="hidden" onChange={event => { void selectArtwork(event.target.files?.[0]); event.target.value = "" }} />
-              {artwork && <button type="button" disabled={busy} title="Remove the image in Hibiki. Synced services retain their current image." onClick={() => { ++lifetime.current.image; setArtwork(null); setImageBusy(false) }} className="block text-sm text-(--text-secondary) underline underline-offset-4">Remove image</button>}
+              {artwork && <Button variant="bare" type="button" disabled={busy} title="Remove the image in Hibiki. Synced services retain their current image." onClick={() => { ++lifetime.current.image; setArtwork(null); setImageBusy(false) }} className="block text-sm text-(--text-secondary) underline underline-offset-4">Remove image</Button>}
             </div>
           </div>
           <div className="space-y-2"><label htmlFor={inputId} className="block text-sm font-semibold">Playlist name</label>
@@ -111,18 +114,18 @@ export function CreatePlaylist({ onClose, onCreated, itemIds = [], playlist }: {
             <textarea id={descriptionId} disabled={busy} maxLength={5000} rows={3} value={description} onChange={event => setDescription(event.target.value)} className="app-input w-full resize-y" />
           </div>
           <fieldset disabled={busy} className="space-y-3 border-t border-(--border) pt-4"><legend className="px-0 text-sm font-semibold">External sync</legend>
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={external.listenbrainz.enabled} onChange={event => setExternal({ listenbrainz: { ...external.listenbrainz, enabled: event.target.checked } })} />ListenBrainz</label>
+            <label className="flex items-center gap-2 text-sm"><Checkbox checked={external.listenbrainz.enabled} onChange={event => setExternal({ listenbrainz: { ...external.listenbrainz, enabled: event.target.checked } })} />ListenBrainz</label>
             {external.listenbrainz.enabled && <div className="space-y-3 pl-5 text-sm">
               {!listenbrainz && <p className="text-(--text-secondary)">Connect ListenBrainz in Settings when you’re ready. Your preference is saved here.</p>}
-              <label className="flex flex-wrap items-center gap-2">Direction<select aria-label="ListenBrainz sync direction" value={external.listenbrainz.direction} onChange={event => setExternal({ listenbrainz: { ...external.listenbrainz, direction: event.target.value as "export" | "import" | "two-way" } })} className="app-input"><option value="export">Hibiki → ListenBrainz</option><option value="import">ListenBrainz → Hibiki</option><option value="two-way">Both ways</option></select></label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={external.listenbrainz.automatic} onChange={event => setExternal({ listenbrainz: { ...external.listenbrainz, automatic: event.target.checked } })} />Sync automatically</label>
+              <label className="flex flex-wrap items-center gap-2">Direction<Select aria-label="ListenBrainz sync direction" value={external.listenbrainz.direction} onChange={event => setExternal({ listenbrainz: { ...external.listenbrainz, direction: event.target.value as "export" | "import" | "two-way" } })}><option value="export">Hibiki → ListenBrainz</option><option value="import">ListenBrainz → Hibiki</option><option value="two-way">Both ways</option></Select></label>
+              <label className="flex items-center gap-2"><Checkbox checked={external.listenbrainz.automatic} onChange={event => setExternal({ listenbrainz: { ...external.listenbrainz, automatic: event.target.checked } })} />Sync automatically</label>
             </div>}
             {artwork && <p className="text-xs text-(--text-secondary)">Artwork syncs to Plex. YTM and ListenBrainz keep their own images.</p>}
-            <div className="text-sm"><label className="flex items-center gap-2 text-(--text-muted)"><input type="checkbox" disabled checked={false} readOnly />Last.fm · unavailable</label><p className="mt-1 pl-5 text-xs text-(--text-secondary)">{lastFmPlaylistCapabilities.reason}</p></div>
+            <div className="text-sm"><label className="flex items-center gap-2 text-(--text-muted)"><Checkbox disabled checked={false} readOnly />Last.fm · unavailable</label><p className="mt-1 pl-5 text-xs text-(--text-secondary)">{lastFmPlaylistCapabilities.reason}</p></div>
           </fieldset>
           {!playlist && <p className="text-sm leading-relaxed text-(--text-secondary)">Saved on this device first. Adding songs connects the playlist to their music services.</p>}
           {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
-          <div className="flex justify-end gap-3 pt-1"><button type="button" onClick={onClose} className="media-secondary">Cancel</button><button type="submit" disabled={!name.trim() || busy || imageBusy} className="media-primary">{busy ? "Saving…" : playlist ? "Save changes" : "Create"}</button></div>
+          <div className="flex justify-end gap-3 pt-1"><Button size="md" variant="secondary" type="button" onClick={onClose} className="media-secondary">Cancel</Button><Button size="md" variant="primary" type="submit" disabled={!name.trim() || busy || imageBusy} className="media-primary">{busy ? "Saving…" : playlist ? "Save changes" : "Create"}</Button></div>
         </form>}
     </div>
   </dialog>, document.body)

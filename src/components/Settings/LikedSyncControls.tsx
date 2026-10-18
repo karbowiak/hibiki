@@ -1,3 +1,4 @@
+import { Button } from "../shared/Button"
 import { useEffect, useRef, useState } from "react"
 import { useFavoritesStore } from "../../stores/favoritesStore"
 import { useProviderStore } from "../../stores/providerStore"
@@ -113,7 +114,9 @@ export function LikedSyncControls() {
             connections stay saved.
           </p>
           <div className="flex flex-wrap gap-2">
-            <button
+            <Button
+              size="md"
+              variant="secondary"
               ref={cancelButton}
               type="button"
               className="media-secondary"
@@ -123,20 +126,24 @@ export function LikedSyncControls() {
               }}
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
+              size="md"
+              variant="primary"
               type="button"
               className="media-primary"
               disabled={disabled}
               onClick={() => void reset()}
             >
               {resetting ? "Resetting…" : "Reset and reimport"}
-            </button>
+            </Button>
           </div>
         </div>
       ) : (
         <div className="flex flex-wrap gap-2">
-          <button
+          <Button
+            size="md"
+            variant="secondary"
             ref={manageButton}
             type="button"
             className="media-secondary"
@@ -144,8 +151,10 @@ export function LikedSyncControls() {
             onClick={() => setManage(true)}
           >
             Manage sync
-          </button>
-          <button
+          </Button>
+          <Button
+            size="md"
+            variant="secondary"
             ref={resetButton}
             type="button"
             className="media-secondary"
@@ -157,7 +166,7 @@ export function LikedSyncControls() {
             }}
           >
             Reset liked sync…
-          </button>
+          </Button>
         </div>
       )}
       {!provider?.favorites && (

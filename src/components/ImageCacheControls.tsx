@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { useEffect, useRef, useState } from "react"
 import {
   clearImageCache,
@@ -94,7 +95,8 @@ export function ImageCacheControls({
             </p>
           )}
         </div>
-        <button
+        <Button
+          variant="bare"
           type="button"
           aria-label="Clear image cache"
           onClick={() => void request(true)}
@@ -102,21 +104,22 @@ export function ImageCacheControls({
           className="shrink-0 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 transition-colors hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
         >
           {pending === "clearing" ? "Clearing..." : "Clear"}
-        </button>
+        </Button>
       </div>
       {error && (
         <div className="flex items-center justify-between gap-3">
           <p role="alert" className="text-xs text-red-300">
             {error.message}
           </p>
-          <button
+          <Button
+            variant="secondary"
             type="button"
             disabled={pending !== null}
             onClick={() => void request(error.clear)}
-            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 hover:text-white disabled:opacity-40"
+            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs disabled:opacity-40"
           >
             Retry
-          </button>
+          </Button>
         </div>
       )}
     </div>

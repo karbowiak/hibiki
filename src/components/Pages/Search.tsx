@@ -1,3 +1,4 @@
+import { Button } from "../shared/Button"
 import { albumArtistEntity, trackEntity } from "../../lib/musicLinks"
 import { deduplicateAlbumItems } from "../../lib/dedup"
 import { useUIStore } from "../../stores/uiStore"
@@ -232,12 +233,13 @@ export function Search() {
               className="rounded-lg border border-red-400/30 bg-red-400/5 p-4 text-sm text-(--text-primary)"
             >
               <p>Search failed: {error}</p>
-              <button
+              <Button
+                variant="bare"
                 onClick={() => void search(query)}
                 className="mt-3 rounded-full border border-white/20 px-4 py-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
               >
                 Try again
-              </button>
+              </Button>
             </div>
           )}
           {!isSearching && !error && total === 0 && (
@@ -255,7 +257,8 @@ export function Search() {
               {(["all", ...GROUP_ORDER] as const).map((type) => {
                 const count = type === "all" ? total : groups[type].length
                 return (
-                  <button
+                  <Button
+                    variant="bare"
                     key={type}
                     type="button"
                     aria-pressed={view.filter === type}
@@ -267,7 +270,7 @@ export function Search() {
                   >
                     {type === "all" ? "All" : GROUP_LABELS[type]}{" "}
                     <span className="ml-1 tabular-nums">{count}</span>
-                  </button>
+                  </Button>
                 )
               })}
             </div>
@@ -371,7 +374,8 @@ export function Search() {
                 )}
                 {visible < items.length && (
                   <div className="mt-4 flex flex-wrap items-center gap-3">
-                    <button
+                    <Button
+                      variant="bare"
                       type="button"
                       onClick={() =>
                         updateView((current) => ({
@@ -386,7 +390,7 @@ export function Search() {
                     >
                       Show more {GROUP_LABELS[type].toLowerCase()} (
                       {Math.min(PAGE_SIZE[type], items.length - visible)})
-                    </button>
+                    </Button>
                     <span className="text-xs tabular-nums text-(--text-secondary)">
                       Showing {visible} of {items.length}
                     </span>
@@ -420,7 +424,8 @@ export function Search() {
                 <span className="text-sm font-semibold text-(--text-secondary)">
                   Recent searches
                 </span>
-                <button
+                <Button
+                  variant="bare"
                   onClick={() => {
                     if (clearRecentSearches()) {
                       setRecentSearches([])
@@ -433,17 +438,18 @@ export function Search() {
                   className="text-xs text-(--text-muted) transition-colors hover:text-(--text-primary)"
                 >
                   Clear
-                </button>
+                </Button>
               </div>
               <div className="flex flex-wrap gap-2">
                 {recentSearches.map((q) => (
-                  <button
+                  <Button
+                    variant="bare"
                     key={q}
                     onClick={() => void search(q)}
                     className="rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-sm text-(--text-secondary) transition-colors hover:border-accent/30 hover:bg-hl-menu hover:text-(--text-primary)"
                   >
                     {q}
-                  </button>
+                  </Button>
                 ))}
               </div>
             </>

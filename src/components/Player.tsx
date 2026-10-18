@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { ArtistCredits } from "./shared/ArtistCredits"
 import { buildExternalImageUrl } from "../lib/imageUrl"
 import { PlaybackPalette } from "./PlaybackPalette"
@@ -176,7 +177,8 @@ function RadioPlayerBar() {
             <div className="flex w-[40%] max-w-[45.125rem] flex-col items-center px-4">
               <div className="flex items-center gap-x-3">
                 {/* Play/Pause */}
-                <button
+                <Button
+                  variant="bare"
                   onClick={isStreamPlaying ? pauseStream : resumeStream}
                   className="shell-control-primary flex h-8 w-8 items-center justify-center rounded-full bg-(--text-primary) text-(--bg-base) hover:scale-[1.06]"
                 >
@@ -189,7 +191,7 @@ function RadioPlayerBar() {
                       <path d="M3 1.713a.7.7 0 0 1 1.05-.607l10.89 6.288a.7.7 0 0 1 0 1.212L4.05 14.894A.7.7 0 0 1 3 14.288V1.713z" />
                     </svg>
                   )}
-                </button>
+                </Button>
               </div>
 
               {/* Live indicator bar */}
@@ -215,7 +217,8 @@ function RadioPlayerBar() {
             {/* Right: volume + stop */}
             <div className="flex w-[30%] min-w-[11.25rem] items-center justify-end gap-1">
               {/* Stop Radio button */}
-              <button
+              <Button
+                variant="bare"
                 onClick={stopStream}
                 className="mr-2 flex items-center gap-1.5 rounded-full bg-white/5 px-3 py-1.5 text-xs font-medium text-white/60 transition-colors hover:bg-white/10 hover:text-white"
               >
@@ -223,10 +226,10 @@ function RadioPlayerBar() {
                   <rect x="3" y="3" width="10" height="10" rx="1" />
                 </svg>
                 Stop Radio
-              </button>
+              </Button>
 
               {/* Volume icon */}
-              <button onClick={toggleMute} aria-label={volume === 0 ? "Unmute" : "Mute"} className="shrink-0 flex h-8 w-8 items-center justify-center text-white/70 hover:text-white transition-colors">
+              <Button variant="bare" onClick={toggleMute} aria-label={volume === 0 ? "Unmute" : "Mute"} className="shrink-0 flex h-8 w-8 items-center justify-center text-white/70 hover:text-white transition-colors">
                 {volume === 0 ? (
                   <svg aria-hidden="true" focusable="false" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
                     <path d="M13.86 5.47a.75.75 0 0 0-1.061 0l-1.47 1.47-1.47-1.47A.75.75 0 0 0 8.8 6.53L10.269 8l-1.47 1.47a.75.75 0 1 0 1.06 1.06l1.47-1.47 1.47 1.47a.75.75 0 0 0 1.06-1.06L12.39 8l1.47-1.47a.75.75 0 0 0 0-1.06z" />
@@ -241,7 +244,7 @@ function RadioPlayerBar() {
                     <path d="M9.741.85a.75.75 0 0 1 .375.65v13a.75.75 0 0 1-1.125.65l-6.925-4a3.642 3.642 0 0 1-1.33-4.967 3.639 3.639 0 0 1 1.33-1.332l6.925-4a.75.75 0 0 1 .75 0zm-6.924 5.3a2.139 2.139 0 0 0 0 3.7l5.8 3.35V2.8l-5.8 3.35zm8.683 6.087a4.502 4.502 0 0 0 0-8.474v1.65a2.999 2.999 0 0 1 0 5.175v1.649z" />
                   </svg>
                 )}
-              </button>
+              </Button>
               {/* Volume slider */}
               <div ref={volumeSliderRef} className="relative flex h-7 w-32 items-center">
                 {volumeTooltipVisible && (
@@ -529,20 +532,22 @@ export function Player() {
           </MusicEntityLink>
           {/* Hover overlay buttons — bottom-right */}
           <div className="pointer-events-none absolute inset-0 flex items-end justify-end gap-1 opacity-0 transition-opacity group-hover/expanded:opacity-100 group-focus-within/expanded:opacity-100 p-1.5">
-            <button
+            <Button
+              variant="bare"
               onClick={e => { e.stopPropagation(); e.preventDefault(); toggleArtExpanded() }}
               className="pointer-events-auto flex h-6 w-6 items-center justify-center rounded-sm bg-black/70 text-white/80 hover:text-white hover:bg-black/90 transition-colors"
               title="Collapse art"
             >
               <IconChevronDown size={16} stroke={2} />
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="bare"
               onClick={e => { e.stopPropagation(); e.preventDefault(); e.currentTarget.focus({ preventScroll: true }); setShowImageModal(true) }}
               className="pointer-events-auto flex h-6 w-6 items-center justify-center rounded-sm bg-black/70 text-white/80 hover:text-white hover:bg-black/90 transition-colors"
               title="View full size"
             >
               <IconMaximize size={14} stroke={2} />
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -595,20 +600,22 @@ export function Player() {
                     {/* Hover overlay buttons — bottom-right */}
                     {thumbUrl && (
                       <div className="pointer-events-none absolute inset-0 flex items-end justify-end gap-0.5 opacity-0 transition-opacity group-hover/art:opacity-100 group-focus-within/art:opacity-100 p-0.5">
-                        <button
+                        <Button
+                          variant="bare"
                           onClick={e => { e.stopPropagation(); e.preventDefault(); toggleArtExpanded() }}
                           className="pointer-events-auto flex h-5 w-5 items-center justify-center rounded-sm bg-black/70 text-white/80 hover:text-white hover:bg-black/90 transition-colors"
                           title={isArtExpanded ? "Collapse art" : "Expand art"}
                         >
                           {isArtExpanded ? <IconChevronDown size={14} stroke={2} /> : <IconChevronUp size={14} stroke={2} />}
-                        </button>
-                        <button
+                        </Button>
+                        <Button
+                          variant="bare"
                           onClick={e => { e.stopPropagation(); e.preventDefault(); e.currentTarget.focus({ preventScroll: true }); setShowImageModal(true) }}
                           className="pointer-events-auto flex h-5 w-5 items-center justify-center rounded-sm bg-black/70 text-white/80 hover:text-white hover:bg-black/90 transition-colors"
                           title="View full size"
                         >
                           <IconMaximize size={12} stroke={2} />
-                        </button>
+                        </Button>
                       </div>
                     )}
                   </div>
@@ -649,7 +656,8 @@ export function Player() {
                           size={11}
                           eagerLike
                         />
-                        <button
+                        <Button
+                          variant="bare"
                           ref={threeDotRef}
                           onClick={e => {
                             e.stopPropagation()
@@ -663,7 +671,7 @@ export function Player() {
                           <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
                             <circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/>
                           </svg>
-                        </button>
+                        </Button>
                       </div>
                     )}
                   </div>
@@ -703,7 +711,8 @@ export function Player() {
                 )}
 
                 {/* Shuffle */}
-                <button
+                <Button
+                  variant="bare"
                   onClick={toggleShuffle}
                   aria-label="Shuffle"
                   aria-pressed={shuffle}
@@ -713,14 +722,15 @@ export function Player() {
                     <path d="M13.151.922a.75.75 0 1 0-1.06 1.06L13.109 3H11.16a3.75 3.75 0 0 0-2.873 1.34l-6.173 7.356A2.25 2.25 0 0 1 .39 12.5H0V14h.391a3.75 3.75 0 0 0 2.873-1.34l6.173-7.356a2.25 2.25 0 0 1 1.724-.804h1.947l-1.017 1.018a.75.75 0 0 0 1.06 1.06L15.98 3.75 13.15.922zM.391 3.5H0V2h.391c1.109 0 2.16.49 2.873 1.34L4.89 5.277l-.979 1.167-1.796-2.14A2.25 2.25 0 0 0 .39 3.5z" />
                     <path d="m7.5 10.723.98-1.167.957 1.14a2.25 2.25 0 0 0 1.724.804h1.947l-1.017-1.018a.75.75 0 1 1 1.06-1.06l2.829 2.828-2.829 2.828a.75.75 0 1 1-1.06-1.06L13.109 13H11.16a3.75 3.75 0 0 1-2.873-1.34l-.787-.938z" />
                   </svg>
-                </button>
+                </Button>
 
                 </div>
 
                 {/* Center: prev / play-pause / next — FIXED position, never shifts */}
                 <div className="flex items-center gap-x-1.5 px-1.5">
                 {/* Prev */}
-                <button
+                <Button
+                  variant="bare"
                   disabled={!currentTrack}
                   onClick={prev}
                   aria-label="Previous track"
@@ -729,10 +739,11 @@ export function Player() {
                   <svg role="img" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
                     <path d="M3.3 1a.7.7 0 0 1 .7.7v5.15l9.95-5.744a.7.7 0 0 1 1.05.606v12.575a.7.7 0 0 1-1.05.607L4 9.149V14.3a.7.7 0 0 1-.7.7H1.7a.7.7 0 0 1-.7-.7V1.7a.7.7 0 0 1 .7-.7h1.6z" />
                   </svg>
-                </button>
+                </Button>
 
                 {/* Play/Pause — long-press to stop & clear queue */}
-                <button
+                <Button
+                  variant="bare"
                   {...playPauseLongPress}
                   disabled={!currentTrack}
                   aria-label={isPlaying ? "Pause" : "Play"}
@@ -753,10 +764,11 @@ export function Player() {
                       <path d="M3 1.713a.7.7 0 0 1 1.05-.607l10.89 6.288a.7.7 0 0 1 0 1.212L4.05 14.894A.7.7 0 0 1 3 14.288V1.713z" />
                     </svg>
                   )}
-                </button>
+                </Button>
 
                 {/* Next */}
-                <button
+                <Button
+                  variant="bare"
                   disabled={!currentTrack}
                   onClick={next}
                   aria-label="Next track"
@@ -765,14 +777,15 @@ export function Player() {
                   <svg role="img" height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
                     <path d="M12.7 1a.7.7 0 0 0-.7.7v5.15L2.05 1.107A.7.7 0 0 0 1 1.712v12.575a.7.7 0 0 0 1.05.607L12 9.149V14.3a.7.7 0 0 0 .7.7h1.6a.7.7 0 0 0 .7-.7V1.7a.7.7 0 0 0-.7-.7h-1.6z" />
                   </svg>
-                </button>
+                </Button>
 
                 </div>
 
                 {/* Right wing: repeat, media info */}
                 <div className="flex min-w-0 items-center justify-start gap-x-1.5">
                 {/* Repeat */}
-                <button
+                <Button
+                  variant="bare"
                   onClick={cycleRepeat}
                   title={repeat === 0 ? "Repeat off" : repeat === 1 ? "Repeat one" : "Repeat all"}
                   className={`relative flex h-8 w-8 items-center justify-center transition-colors ${repeatActive ? "text-accent" : "text-white text-opacity-70 hover:text-opacity-100"}`}
@@ -786,7 +799,7 @@ export function Player() {
                   {repeat === 2 && (
                     <span className="absolute -top-0.5 -right-1.5 flex h-3.5 w-auto min-w-[14px] px-0.5 items-center justify-center rounded-full bg-accent text-[7px] font-bold text-black">ALL</span>
                   )}
-                </button>
+                </Button>
 
                 {/* Track info — plain text quality label, clickable */}
                 {currentTrack && (
@@ -836,7 +849,8 @@ export function Player() {
 
                 {/* Lyrics — only shown when lyrics are available */}
                 {hasLyrics && lyricsLines !== null && (
-                  <button
+                  <Button
+                    variant="bare"
                     onClick={() => {
                       if (isQueuePinned) {
                         if (!isQueueOpen || queueActiveTab !== "lyrics") {
@@ -859,7 +873,7 @@ export function Player() {
                     aria-pressed={isQueuePinned ? isQueueOpen && queueActiveTab === "lyrics" : isLyricsOpen}
                   >
                     <IconBlockquote size={18} stroke={1.5} />
-                  </button>
+                  </Button>
                 )}
 
                 {/* Sleep timer */}
@@ -876,24 +890,26 @@ export function Player() {
                 </PlayerPopover>
 
                 {/* Visualizer mode cycle */}
-                <button
+                <Button
+                  variant="bare"
                   onClick={cycleCompactMode}
                   title={`Visualizer: ${compactMode}`}
                   className="shrink-0 flex h-8 w-8 items-center justify-center transition-colors text-white/40 hover:text-white/70"
                   aria-label="Cycle visualizer mode"
                 >
                   <IconActivity size={18} stroke={1.5} />
-                </button>
+                </Button>
 
                 {/* Fullscreen visualizer expand */}
-                <button
+                <Button
+                  variant="bare"
                   onClick={event => { event.currentTarget.focus({ preventScroll: true }); openFullscreen() }}
                   title="Open fullscreen visualizer"
                   className="shrink-0 flex h-8 w-8 items-center justify-center transition-colors text-white/40 hover:text-white/70"
                   aria-label="Open fullscreen visualizer"
                 >
                   <IconMaximize size={18} stroke={1.5} />
-                </button>
+                </Button>
 
                 {/* EQ */}
                 <PlayerPopover
@@ -908,18 +924,19 @@ export function Player() {
                 </PlayerPopover>
 
                 {/* Queue toggle */}
-                <button
+                <Button
+                  variant="bare"
                   onClick={() => setQueueOpen(!isQueueOpen)}
                   className={`shrink-0 mr-1 flex h-8 w-8 items-center justify-center transition-colors ${isQueueOpen ? "text-accent" : "text-white/40 hover:text-white/70"}`}
                   aria-label="Queue"
                 >
                   <IconPlaylist size={18} stroke={1.5} />
-                </button>
+                </Button>
 
               </div>
               <div className="flex shrink-0 items-center gap-1">
                 {/* Volume icon — muted / low / full */}
-                <button onClick={toggleMute} aria-label={volume === 0 ? "Unmute" : "Mute"} className="shrink-0 flex h-8 w-8 items-center justify-center text-white/70 hover:text-white transition-colors">
+                <Button variant="bare" onClick={toggleMute} aria-label={volume === 0 ? "Unmute" : "Mute"} className="shrink-0 flex h-8 w-8 items-center justify-center text-white/70 hover:text-white transition-colors">
                   {volume === 0 ? (
                     <IconVolumeOff size={18} stroke={1.5} />
                   ) : volume < 50 ? (
@@ -927,7 +944,7 @@ export function Player() {
                   ) : (
                     <IconVolume size={18} stroke={1.5} />
                   )}
-                </button>
+                </Button>
                 {/* Squiggly volume slider */}
                 <div ref={volumeSliderRef} className="relative flex items-center">
                   {volumeTooltipVisible && (

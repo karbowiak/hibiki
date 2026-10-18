@@ -1,3 +1,4 @@
+import { Button } from "../shared/Button"
 import { useEffect, useRef, useState } from "react"
 import clsx from "clsx"
 import {
@@ -117,7 +118,8 @@ export function MetadataPriorityList() {
                   : "bg-transparent"
             )}
           >
-            <button
+            <Button
+              variant="bare"
               type="button"
               className="shrink-0 cursor-grab touch-none rounded-md p-1 text-(--text-muted) hover:text-(--text-primary) focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent active:cursor-grabbing"
               aria-label={`Reorder ${SOURCE_LABELS[item]}`}
@@ -146,7 +148,7 @@ export function MetadataPriorityList() {
               }}
             >
               <IconGripVertical size={16} />
-            </button>
+            </Button>
             <div className="min-w-0 flex-1 basis-36">
               <p className="text-sm font-medium">{SOURCE_LABELS[item]}</p>
               <p className="mt-0.5 text-xs leading-relaxed text-(--text-muted)">
@@ -157,7 +159,8 @@ export function MetadataPriorityList() {
               {status(item)}
             </span>
             <div className="flex items-center gap-1">
-              <button
+              <Button
+                variant="bare"
                 type="button"
                 onClick={() => move(index, index - 1)}
                 disabled={index === 0}
@@ -165,8 +168,9 @@ export function MetadataPriorityList() {
                 className="rounded-md p-1 text-(--text-muted) hover:bg-white/10 disabled:opacity-25"
               >
                 <IconChevronUp size={15} />
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="bare"
                 type="button"
                 onClick={() => move(index, index + 1)}
                 disabled={index === priority.length - 1}
@@ -174,16 +178,17 @@ export function MetadataPriorityList() {
                 className="rounded-md p-1 text-(--text-muted) hover:bg-white/10 disabled:opacity-25"
               >
                 <IconChevronDown size={15} />
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="secondary"
                 type="button"
                 onClick={() => setSource(item)}
                 aria-label={`Configure ${SOURCE_LABELS[item]}`}
-                className="ml-1 inline-flex items-center gap-1.5 rounded-lg border border-(--border) px-3 py-1.5 text-xs hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                className="ml-1 inline-flex items-center gap-1.5 rounded-lg border border-(--border) px-3 py-1.5 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
               >
                 <IconSettings size={14} />
                 Configure
-              </button>
+              </Button>
             </div>
           </div>
         ))}

@@ -1,3 +1,4 @@
+import { Button } from "../shared/Button"
 import { collectionPlaybackSource, selectCollectionTrack } from "../../lib/collectionPlayback"
 import { filterTracks, sortTracks, type TrackSortColumn } from "../../lib/trackOrder"
 import { useEntityDownloadStatus } from "../shared/DownloadBadge"
@@ -263,7 +264,8 @@ export function Playlist({ playlistId }: { playlistId: string }) {
       <p>
         {loadError ? "Could not load this playlist's songs." : reorderError}
       </p>
-      <button
+      <Button
+        variant="bare"
         disabled={isLoading}
         onClick={() => {
           setReorderError(null)
@@ -272,7 +274,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
         className="mt-2 rounded-full border border-white/20 px-4 py-2 text-white disabled:opacity-50"
       >
         Reload playlist
-      </button>
+      </Button>
     </div>
   )
 
@@ -351,7 +353,9 @@ export function Playlist({ playlistId }: { playlistId: string }) {
             <div className="flex flex-wrap items-center gap-3">
               <div className="relative z-20 flex flex-wrap items-center gap-3">
                 {/* Play in order */}
-                <button
+                <Button
+                  size="md"
+                  variant="primary"
                   onClick={() =>
                     totalCount > 0 &&
                     void (useQuery && provider?.getCollectionPage
@@ -385,10 +389,12 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                     <polygon points="3,2 13,8 3,14" />
                   </svg>
                   Play
-                </button>
+                </Button>
 
                 {/* Shuffle */}
-                <button
+                <Button
+                  size="md"
+                  variant="secondary"
                   onClick={() =>
                     playbackSource &&
                     void playPagedTracks(
@@ -423,10 +429,12 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                     <path d="M13.151.922a.75.75 0 1 0-1.06 1.06L13.109 3H11.16a3.75 3.75 0 0 0-2.873 1.34l-6.173 7.356A2.25 2.25 0 0 1 .39 12.5H0V14h.391a3.75 3.75 0 0 0 2.873-1.34l6.173-7.356A2.25 2.25 0 0 1 11.16 4.5h1.949l-1.018 1.018a.75.75 0 0 0 1.06 1.06L15.98 3.75 13.15.922zM.391 3.5H0V2h.391c1.109 0 2.16.49 2.873 1.34L4.89 5.277l-.979 1.167-1.796-2.14A2.25 2.25 0 0 0 .39 3.5zm9.831 8.17l.979 1.167.28.334A3.75 3.75 0 0 0 14.36 14.5h1.64V13h-1.64a2.25 2.25 0 0 1-1.726-.83l-.28-.335-1.733-2.063-.979 1.167 1.18 1.731z" />
                   </svg>
                   Shuffle
-                </button>
+                </Button>
 
                 {/* Playlist Radio */}
-                <button
+                <Button
+                  size="md"
+                  variant="secondary"
                   onClick={() =>
                     totalCount > 0 &&
                     void playRadio(
@@ -449,10 +457,12 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                     <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6A3 3 0 0 0 8 5zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
                   </svg>
                   Radio
-                </button>
+                </Button>
                 {!currentPlaylist.smart && <MixedPlaylistControl alias={playlistId} />}
 
-                <button
+                <Button
+                  size="md"
+                  variant="secondary"
                   type="button"
                   className="media-secondary"
                   disabled={
@@ -515,7 +525,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                     ? "Syncing…"
                     : "Sync"}
                   {syncNeedsReview && <SyncReviewIndicator />}
-                </button>
+                </Button>
                 {syncError && (
                   <p
                     role="status"
@@ -526,7 +536,9 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                 )}
 
                 {/* More actions */}
-                <button
+                <Button
+                  size="md"
+                  variant="secondary"
                   onClick={(e) => {
                     e.stopPropagation()
                     const rect = e.currentTarget.getBoundingClientRect()
@@ -592,8 +604,10 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                     <circle cx="13" cy="8" r="1.5" />
                   </svg>
                   More
-                </button>
-                <button
+                </Button>
+                <Button
+                  size="md"
+                  variant="secondary"
                   className="media-secondary"
                   aria-haspopup="dialog"
                   aria-label="Playlist information"
@@ -606,7 +620,7 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                   <IconInfoCircle size={16} aria-hidden="true" />
                   Info
                   {downloadStatus?.failed ? <SyncReviewIndicator /> : null}
-                </button>
+                </Button>
               </div>
             </div>
           </div>
@@ -727,7 +741,8 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                 {loadError}
               </p>
             )}
-            <button
+            <Button
+              variant="bare"
               type="button"
               disabled={isFetchingMore || isLoading}
               onClick={() => {
@@ -741,15 +756,16 @@ export function Playlist({ playlistId }: { playlistId: string }) {
                 : loadError
                   ? "Retry loading more"
                   : "Load more songs"}
-            </button>
+            </Button>
             {loadError && (
-              <button
+              <Button
+                variant="bare"
                 type="button"
                 onClick={() => windowed.invalidate()}
                 className="rounded-full border border-white/20 px-4 py-2 text-sm text-(--text-primary) focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
               >
                 Reload playlist
-              </button>
+              </Button>
             )}
             {filterQuery && (
               <span className="text-xs text-(--text-secondary)">

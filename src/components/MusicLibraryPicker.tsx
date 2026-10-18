@@ -1,3 +1,5 @@
+import { Button } from "./shared/Button"
+import { DropdownSurface } from "./shared/DropdownSurface"
 import {
   useEffect,
   useId,
@@ -313,7 +315,8 @@ export function MusicLibraryPicker() {
   if (!context && !selected) return null
   return (
     <>
-      <button
+      <Button
+        variant="bare"
         ref={trigger}
         type="button"
         className="topbar-control shell-control-secondary library-picker-trigger"
@@ -349,10 +352,10 @@ export function MusicLibraryPicker() {
           aria-hidden="true"
           className={`library-picker-chevron ${open ? "is-open" : ""}`}
         />
-      </button>
+      </Button>
       {open &&
         createPortal(
-          <div
+          <DropdownSurface
             ref={panel}
             id={id}
             role="menu"
@@ -366,7 +369,8 @@ export function MusicLibraryPicker() {
           >
             <div className="library-picker-heading">
               <span>Music libraries</span>
-              <button
+              <Button
+                variant="bare"
                 type="button"
                 role="menuitem"
                 aria-label="Refresh music libraries"
@@ -378,7 +382,7 @@ export function MusicLibraryPicker() {
                   className={loading ? "animate-spin" : ""}
                   aria-hidden="true"
                 />
-              </button>
+              </Button>
             </div>
             <div className="library-picker-list">
               {displayed.map((server) => (
@@ -398,7 +402,8 @@ export function MusicLibraryPicker() {
                       library.key === sectionId &&
                       library.uuid === sectionUuid
                     return (
-                      <button
+                      <Button
+                        variant="bare"
                         type="button"
                         role="menuitemradio"
                         aria-checked={checked}
@@ -422,15 +427,15 @@ export function MusicLibraryPicker() {
                             aria-hidden="true"
                           />
                         ) : null}
-                      </button>
+                      </Button>
                     )
                   })}
                   {server.error ? (
                     <div className="library-picker-status">
                       {server.error}
-                      <button type="button" role="menuitem" onClick={() => void discover()}>
+                      <Button variant="bare" type="button" role="menuitem" onClick={() => void discover()}>
                         Retry
-                      </button>
+                      </Button>
                     </div>
                   ) : !server.sections ? (
                     <p className="library-picker-status" role="status">
@@ -452,7 +457,8 @@ export function MusicLibraryPicker() {
             {notice && (
               <div className="library-picker-note">
                 <p>{notice}</p>
-                <button
+                <Button
+                  variant="bare"
                   type="button"
                   role="menuitem"
                   onClick={() => {
@@ -461,10 +467,10 @@ export function MusicLibraryPicker() {
                   }}
                 >
                   Connection settings
-                </button>
+                </Button>
               </div>
             )}
-          </div>,
+          </DropdownSurface>,
           document.body
         )}
     </>

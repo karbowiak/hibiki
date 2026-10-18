@@ -1,5 +1,7 @@
+import { Checkbox } from "./shared/Checkbox"
+import { Select } from "./shared/Select"
+import { Button } from "./shared/Button"
 import { useEffect, useState } from "react"
-import { IconChevronDown } from "@tabler/icons-react"
 import { useFavoritesStore } from "../stores/favoritesStore"
 import { useProviderStore } from "../stores/providerStore"
 import { useLastfmStore } from "../metadata/lastfm/authStore"
@@ -109,8 +111,7 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
                   {service === "plex"
                     ? "Sync likes to Plex"
                     : `Sync likes with ${names[service]}`}
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     className="h-4 w-4 shrink-0 accent-accent"
                     checked={enabled}
                     disabled={busy || (!enabled && !connected)}
@@ -131,8 +132,8 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
                   !binding?.creation && (
                     <label className="relative mt-3 block text-sm">
                       Plex destination
-                      <select
-                        className="mt-1 min-h-10 w-full appearance-none rounded-lg border border-(--border) bg-app-card px-3 py-2 pr-9"
+                      <Select
+                        className="mt-1 w-full"
                         value={selected}
                         disabled={busy || enabled}
                         onChange={(event) => setSelected(event.target.value)}
@@ -145,11 +146,7 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
                             {item.title}
                           </option>
                         ))}
-                      </select>
-                      <IconChevronDown
-                        className="pointer-events-none absolute bottom-3 right-3"
-                        size={16}
-                      />
+                      </Select>
                     </label>
                   )}
                 {binding?.playlistId && (
@@ -165,8 +162,8 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
                       Playlist creation needs inspection. Select the original
                       empty Liked Songs playlist to recover it.
                     </p>
-                    <select
-                      className="mt-2 w-full rounded-lg bg-app-card p-2"
+                    <Select
+                      className="mt-2 w-full"
                       value={selected}
                       onChange={(event) => setSelected(event.target.value)}
                     >
@@ -178,8 +175,10 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
                             {item.title} · {item.trackCount} songs
                           </option>
                         ))}
-                    </select>
-                    <button
+                    </Select>
+                    <Button
+                      size="md"
+                      variant="secondary"
                       className="media-secondary mt-2"
                       disabled={busy || !selected || running}
                       onClick={() => {
@@ -192,7 +191,7 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
                       }}
                     >
                       Recover without creating
-                    </button>
+                    </Button>
                   </div>
                 )}
                 {issues[service] && (
@@ -207,7 +206,9 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
                       is saved for review. Hibiki will check whether it reached{" "}
                       {names[service]}.
                     </p>
-                    <button
+                    <Button
+                      size="md"
+                      variant="secondary"
                       className="media-secondary mt-2"
                       disabled={running || busy}
                       onClick={() =>
@@ -218,7 +219,7 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
                       }
                     >
                       Check and retry pending changes
-                    </button>
+                    </Button>
                   </div>
                 )}
               </section>
@@ -240,7 +241,9 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
               {unresolvedIds} favorites still need recording IDs before they can
               be sent to ListenBrainz. They remain saved in Hibiki.
             </p>
-            <button
+            <Button
+              size="md"
+              variant="secondary"
               className="media-secondary"
               disabled={running || busy}
               onClick={() => {
@@ -253,7 +256,7 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
               }}
             >
               Find recording IDs
-            </button>
+            </Button>
             <details>
               <summary className="cursor-pointer text-sm">
                 Review missing recording IDs
@@ -273,7 +276,9 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
                       <span className="truncate">
                         {item.artist} — {item.title}
                       </span>
-                      <button
+                      <Button
+                        size="md"
+                        variant="secondary"
                         className="media-secondary shrink-0"
                         onClick={() => {
                           setIdReview(item)
@@ -281,7 +286,7 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
                         }}
                       >
                         Choose recording ID
-                      </button>
+                      </Button>
                     </li>
                   ))}
               </ul>
@@ -315,19 +320,21 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
               onChange={(event) => setRecordingId(event.target.value)}
             />
             <div className="flex gap-2">
-              <button
+              <Button size="md" type="submit" variant="primary"
                 className="media-primary"
                 disabled={busy || !recordingId.trim()}
               >
                 Use this recording
-              </button>
-              <button
+              </Button>
+              <Button
+                size="md"
+                variant="secondary"
                 type="button"
                 className="media-secondary"
                 onClick={() => setIdReview(null)}
               >
                 Cancel
-              </button>
+              </Button>
             </div>
           </form>
         )}
@@ -337,7 +344,9 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
               <h3 className="font-semibold">
                 {missing.length} songs to match to your library
               </h3>
-              <button
+              <Button
+                size="md"
+                variant="secondary"
                 className="media-secondary"
                 disabled={running || busy}
                 onClick={() =>
@@ -348,7 +357,7 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
                 }
               >
                 Find more matches
-              </button>
+              </Button>
             </div>
             <ul className="mt-3 max-h-64 space-y-2 overflow-auto">
               {missing.slice(0, 100).map((item) => (
@@ -360,13 +369,17 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
                     {item.artist || "Unknown artist"} —{" "}
                     {item.title || "Unknown recording"}
                   </span>
-                  <button
+                  <Button
+                    size="md"
+                    variant="secondary"
                     className="media-secondary shrink-0"
                     onClick={() => setReview(item)}
                   >
                     Choose track
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    size="md"
+                    variant="secondary"
                     className="media-secondary shrink-0"
                     aria-label={`Unlike ${item.title || "recording"}`}
                     disabled={busy}
@@ -378,7 +391,7 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
                     }
                   >
                     Remove
-                  </button>
+                  </Button>
                 </li>
               ))}
             </ul>
@@ -403,7 +416,9 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
               ? "Syncing favorites in the background…"
               : "Likes are available locally, including offline."}
           </span>
-          <button
+          <Button
+            size="md"
+            variant="primary"
             className="media-primary"
             disabled={
               running ||
@@ -423,7 +438,7 @@ export function FavoritesSyncDialog({ onClose }: { onClose: () => void }) {
             }
           >
             Sync now
-          </button>
+          </Button>
         </div>
       </div>
     </PlaylistSyncFrame>
@@ -449,9 +464,9 @@ function FavoriteMatch({
     <section className="space-y-3 rounded-xl border border-(--border) p-4">
       <div className="flex items-center justify-between">
         <h3 className="font-semibold">Match {entry.title || "recording"}</h3>
-        <button className="media-secondary" onClick={onClose}>
+        <Button size="md" variant="secondary" className="media-secondary" onClick={onClose}>
           Close
-        </button>
+        </Button>
       </div>
       <form
         className="flex gap-2"
@@ -480,14 +495,15 @@ function FavoriteMatch({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
-        <button className="media-secondary" disabled={busy || !query.trim()}>
+        <Button size="md" type="submit" variant="secondary" className="media-secondary" disabled={busy || !query.trim()}>
           Search
-        </button>
+        </Button>
       </form>
       <ul className="max-h-56 overflow-auto">
         {items.map((track) => (
           <li key={track.id}>
-            <button
+            <Button
+              variant="bare"
               className="w-full rounded-lg p-2 text-left hover:bg-app-surface"
               disabled={busy}
               onClick={() => {
@@ -507,7 +523,7 @@ function FavoriteMatch({
               <span className="block text-xs text-(--text-muted)">
                 {track.albumName} · {track.codec} {track.bitrate}
               </span>
-            </button>
+            </Button>
           </li>
         ))}
       </ul>

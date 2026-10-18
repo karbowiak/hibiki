@@ -1,3 +1,4 @@
+import { Button } from "./shared/Button"
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import {
@@ -188,7 +189,8 @@ export function YoutubeMusicConnection({
 
   return (
     <>
-      <button
+      <Button
+        variant="bare"
         ref={trigger}
         type="button"
         data-ytmusic-connection
@@ -224,7 +226,7 @@ export function YoutubeMusicConnection({
             className="ring-app-surface absolute right-0 bottom-0 h-2 w-2 rounded-full bg-green-600 ring-2"
           />
         ) : null}
-      </button>
+      </Button>
       {open &&
         createPortal(
           <div
@@ -256,7 +258,8 @@ export function YoutubeMusicConnection({
                   {phaseLabels[status.phase]}
                 </p>
               </div>
-              <button
+              <Button
+                variant="bare"
                 type="button"
                 aria-label="Close YouTube Music"
                 className="player-panel-icon"
@@ -266,7 +269,7 @@ export function YoutubeMusicConnection({
                 }}
               >
                 <IconX size={18} aria-hidden="true" />
-              </button>
+              </Button>
             </header>
             {status.message && (
               <p className="mt-3 text-sm text-(--text-secondary)">
@@ -279,32 +282,35 @@ export function YoutubeMusicConnection({
                 : "Connect your YouTube Music account."}
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
-              <button
+              <Button
+                variant="secondary"
                 type="button"
                 disabled={working}
                 className={`${button} bg-accent text-black hover:brightness-110`}
                 onClick={() => void act("connect")}
               >
                 {status.enabled ? "Open sign-in window" : "Sign in"}
-              </button>
+              </Button>
               {status.enabled && (
                 <>
-                  <button
+                  <Button
+                    variant="secondary"
                     type="button"
                     disabled={busy}
                     className={`${button} bg-accent-tint-strong text-(--text-primary) hover:bg-accent-tint-hover`}
                     onClick={() => void act("refresh")}
                   >
                     Refresh session
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    variant="secondary"
                     type="button"
                     disabled={working}
                     className={`${button} text-red-700 hover:bg-red-500/10 dark:text-red-400`}
                     onClick={() => void act("disconnect")}
                   >
                     Disconnect
-                  </button>
+                  </Button>
                 </>
               )}
             </div>
@@ -328,7 +334,8 @@ export function YoutubeMusicConnection({
                         ? "Playback tools available on this computer."
                         : "Install playback tools to start listening."}
                 </p>
-                <button
+                <Button
+                  variant="secondary"
                   type="button"
                   className={`${button} mt-3 bg-accent-tint-strong text-(--text-primary) hover:bg-accent-tint-hover`}
                   disabled={toolsBusy}
@@ -339,7 +346,7 @@ export function YoutubeMusicConnection({
                     : helpers.managed
                       ? "Reinstall playback tools"
                       : "Install playback tools"}
-                </button>
+                </Button>
                 <p className="mt-2 text-xs text-(--text-secondary)">
                   yt-dlp · Node
                 </p>

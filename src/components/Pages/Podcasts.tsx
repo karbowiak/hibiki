@@ -1,3 +1,4 @@
+import { Button } from "../shared/Button"
 import { AudioBrowseCard } from "../shared/AudioBrowseCard"
 import { MediaCardSkeleton } from "../shared/Skeleton"
 import { MediaGrid } from "../shared/MediaGrid"
@@ -101,14 +102,16 @@ function ErrorBanner({
     >
       <span className="min-w-0 flex-1 wrap-break-word">{message}</span>
       {onRetry && (
-        <button
+        <Button
+          variant="bare"
           onClick={onRetry}
           className="shrink-0 rounded px-2.5 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-500/20 dark:text-red-200"
         >
           Retry
-        </button>
+        </Button>
       )}
-      <button
+      <Button
+        variant="bare"
         type="button"
         aria-label="Dismiss podcast error"
         onClick={onDismiss}
@@ -117,7 +120,7 @@ function ErrorBanner({
         <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
           <path d="M2.22 2.22a.75.75 0 0 1 1.06 0L8 6.94l4.72-4.72a.75.75 0 1 1 1.06 1.06L9.06 8l4.72 4.72a.75.75 0 1 1-1.06 1.06L8 9.06l-4.72 4.72a.75.75 0 0 1-1.06-1.06L6.94 8 2.22 3.28a.75.75 0 0 1 0-1.06z" />
         </svg>
-      </button>
+      </Button>
     </div>
   )
 }
@@ -314,7 +317,8 @@ export function PodcastsPage() {
             <path d="M10.533 1.279c-5.18 0-9.407 4.14-9.407 9.279s4.226 9.279 9.407 9.279c2.234 0 4.29-.77 5.907-2.058l4.353 4.353a1 1 0 1 0 1.414-1.414l-4.344-4.344a9.157 9.157 0 0 0 2.077-5.816c0-5.14-4.226-9.28-9.407-9.28zm-7.407 9.279c0-4.006 3.302-7.28 7.407-7.28s7.407 3.274 7.407 7.28-3.302 7.279-7.407 7.279-7.407-3.273-7.407-7.28z" />
           </svg>
           {query && (
-            <button
+            <Button
+              variant="bare"
               type="button"
               aria-label="Clear podcast search"
               onClick={() => handleSearch("")}
@@ -328,7 +332,7 @@ export function PodcastsPage() {
               >
                 <path d="M2.22 2.22a.75.75 0 0 1 1.06 0L8 6.94l4.72-4.72a.75.75 0 1 1 1.06 1.06L9.06 8l4.72 4.72a.75.75 0 1 1-1.06 1.06L8 9.06l-4.72 4.72a.75.75 0 0 1-1.06-1.06L6.94 8 2.22 3.28a.75.75 0 0 1 0-1.06z" />
               </svg>
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -417,7 +421,8 @@ export function PodcastsPage() {
               <h2 className="mb-4 text-xl font-bold">Categories</h2>
               <div className="flex flex-wrap gap-2">
                 {categories.map((cat) => (
-                  <button
+                  <Button
+                    variant="bare"
                     key={cat.id}
                     onClick={() => handleCategory(cat.name)}
                     aria-pressed={selectedCategory === cat.name}
@@ -428,7 +433,7 @@ export function PodcastsPage() {
                     }`}
                   >
                     {cat.name}
-                  </button>
+                  </Button>
                 ))}
               </div>
             </div>

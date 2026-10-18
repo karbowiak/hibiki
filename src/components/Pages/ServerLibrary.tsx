@@ -1,3 +1,4 @@
+import { Button } from "../shared/Button"
 import { useMemo } from "react"
 import { useShallow } from "zustand/react/shallow"
 import { Link } from "wouter"
@@ -49,6 +50,6 @@ export function ServerLibrary({ kind }: { kind: ServerLibraryKind }) {
             loadPage: (offset, limit) => provider.getAllTracks!(offset, limit) }, "Songs", "/server-library/songs", false, selected)
         }} onAddToQueue={player.addToQueue} onPlayRadio={player.playRadio} showRadio={!provider.isOffline} />
       : <MediaGrid paged={pages} renderItem={item => <DiscoveryCard entry={{ source: "plex", item }} showYear />} />}
-    {pages.error && <p role="alert" className="text-sm text-(--text-secondary)">{pages.error} <button type="button" className="underline" onClick={pages.retry}>Try again</button></p>}
+    {pages.error && <p role="alert" className="text-sm text-(--text-secondary)">{pages.error} <Button variant="bare" type="button" className="underline" onClick={pages.retry}>Try again</Button></p>}
   </div>
 }
