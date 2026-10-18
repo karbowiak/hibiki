@@ -4,7 +4,7 @@ import { useLocation } from "wouter"
 import { IconX, IconPhoto } from "@tabler/icons-react"
 import { useLibraryPlaylists } from "../../hooks/useLibraryPlaylists"
 import { useModalLifecycle } from "../../hooks/useModalLifecycle"
-import { captureMusicOwner, resolveCounterpart } from "../../mixedPlaylists/counterparts"
+import { captureMusicOwner, createPlaylistCounterpartResolver } from "../../mixedPlaylists/counterparts"
 import { mixedAdapters } from "../../mixedPlaylists/adapters"
 import { mixedPlaylistRepository } from "../../mixedPlaylists/repository"
 import { prepareMerge, readMergeSource, mergeDuplicateCount, mergeServices, type MergePreview, type MergeDestination, type MergeDuplicates } from "../../mixedPlaylists/merge"
@@ -54,7 +54,8 @@ export function MergePlaylistsDialog({ onClose }: { onClose(): void }) {
       const options = { ...capture, current, adapters: mixedAdapters({ ...capture, current }), local: mixedPlaylistRepository.load }
       const sources = await Promise.all([readMergeSource(first, options), readMergeSource(second, options)])
       if (!current()) throw Error("Music accounts changed. Review the merge again.")
-      const result = await prepareMerge([sources[0], sources[1]], destination, duplicates, { ...capture, current, resolve: resolveCounterpart,
+      const resolve = createPlaylistCounterpartResolver(sources.flatMap(source => source.items.flatMap(row => row.songs[row.original] ? [row.songs[row.original]!.track] : [])), false, current)
+      const result = await prepareMerge([sources[0], sources[1]], destination, duplicates, { ...capture, current, resolve,
         progress: (done, total) => { if (current()) setProgress(`Checking destination coverage · ${done.toLocaleString()} of ${total.toLocaleString()} songs`) } })
       if (!current()) return
       reviewOwner.current = capture; setPreview(result); setPage(0)

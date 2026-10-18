@@ -1,7 +1,7 @@
 import type { MusicTrack } from "../types/music"
 import type { MixedAdapter } from "./adapters"
 import type { CounterpartResult } from "./matching"
-import { recordingFingerprint } from "./matching"
+import { COUNTERPART_POLICY, counterpartAttempt, counterpartDeferred, counterpartFailure, recordingFingerprint } from "./matching"
 import { newDraft, type DraftMetadata } from "./drafts"
 import { newOccurrence, verifiedSongReference, type MixedOccurrence, type MixedPlaylist, type Owners, type Service } from "./model"
 import { reconcileRemoteChanges } from "./reconcile"
@@ -78,6 +78,7 @@ export async function prepareMerge(sources: [MergeSource, MergeSource], destinat
   const items = sources.flatMap(source => source.items.map(row => copiedOccurrence(row, source.key)))
   if (items.length > 10000) throw Error("A merged playlist can contain at most 10,000 occurrences. Choose smaller sources.")
   const lookups = new Map<string, Promise<CounterpartResult>>()
+  const deferred = new Map<Service, CounterpartResult>()
   let cancelled = false
   const check = () => { if (cancelled || !options.current()) throw Error("Merge cancelled or music accounts changed. Review it again.") }
   let cursor = 0, done = 0
@@ -91,12 +92,13 @@ export async function prepareMerge(sources: [MergeSource, MergeSource], destinat
         if (row.songs[target] && !row.songs[target]?.stale) continue
         const key = sourceFingerprint([target, recordingFingerprint(original.track)])
         let lookup = lookups.get(key)
-        if (!lookup) { lookup = options.resolve(original.track, target).catch((): CounterpartResult => ({ status: "failed", checkedAt: Date.now(), message: "Lookup failed. Retained for retry." })); lookups.set(key, lookup) }
+        if (!lookup) { lookup = deferred.has(target) ? Promise.resolve(deferred.get(target)!) : options.resolve(original.track, target).catch(counterpartFailure); lookups.set(key, lookup) }
         const result = await lookup; check()
+        if (counterpartDeferred(result)) deferred.set(target, result)
         if (result.status === "matched") row.songs[target] = verifiedSongReference(result.track)
-        row.match = { status: result.status, checkedAt: result.checkedAt, message: result.status === "matched" ? undefined : result.message }
+        row.match = counterpartAttempt(result)
       }
-      if (services.every(service => row.songs[service] && !row.songs[service]?.stale)) row.match = { status: "matched" }
+      if (services.every(service => row.songs[service] && !row.songs[service]?.stale)) row.match = { ...row.match, status: "matched", policy: COUNTERPART_POLICY }
       options.progress?.(++done, items.length)
     }
   })).catch(error => { cancelled = true; throw error })

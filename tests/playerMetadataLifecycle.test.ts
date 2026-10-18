@@ -1617,11 +1617,29 @@ test("YouTube artwork survives saving a mixed queue and repeated restores, inclu
 const lyricSong = () => youtubeMusicTrack({ videoId: "QWERTYuiopa", title: "Lyrics track", artist: "Artist", album: "Album", duration: "3:00", thumbnail: null })
 async function prepareYoutubeLyrics() {
   const { useYoutubeMusicDiscoveryStore } = await import("../src/backends/ytmusic/discovery")
+  // The assertions drain microtasks; finish loading the lazy module first.
+  await import("../src/backends/ytmusic/lyrics")
   const before = useYoutubeMusicDiscoveryStore.getState()
   useYoutubeMusicDiscoveryStore.setState({ connected: true, accountId: "lyrics-owner", revision: before.revision + 1 })
   usePlayerStore.setState({ currentTrack: lyricSong(), lyricsLines: null })
   return { connection: useYoutubeMusicDiscoveryStore, before }
 }
+for (const staleProof of [false, true]) test(`YTM counterpart search accepts a verified first-page song with continuation${staleProof ? " after an unavailable reverse mapping" : ""}`, async () => {
+  const { connection, before } = await prepareYoutubeLyrics()
+  const { resolveCounterpart } = await import("../src/mixedPlaylists/counterparts")
+  const { trackMatchingSource } = await import("../src/matching/sources")
+  const old = { ...lyricSong(), id: "ytmusic:old12345678" }
+  useProviderStore.getState().setProvider(provider(`ytm-counterpart-${staleProof}`, staleProof ? {
+    matchingReverse: async () => [trackMatchingSource(old)],
+  } : {}))
+  youtubeBrowsePage = { title: "Songs", hubs: [], continuation: "more-ranked-results", items: [
+    { id: "QWERTYuiopa", kind: "song", title: "Lyrics track", artist: "Artist", album: "Album", duration: "3:00", thumbnail: null, year: null },
+  ] }
+  try {
+    const result = await resolveCounterpart({ ...lyricSong(), id: "735", streamUrl: null }, "ytmusic", true)
+    expect(result).toMatchObject({ status: "matched", track: { id: "ytmusic:QWERTYuiopa" } })
+  } finally { connection.setState(before) }
+})
 test("YTM lyrics are preferred and work without a Plex provider", async () => {
   const { connection, before } = await prepareYoutubeLyrics()
   try {

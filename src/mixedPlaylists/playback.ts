@@ -8,8 +8,8 @@ export const mixedPlaylistTracks = (playlist: MixedPlaylist) => playlist.items.m
   return { ...reference.track, ...(date ? date.provenance === "provider" ? { addedAt: new Date(date.at).toISOString() } :
     { libraryObservedAt: new Date(date.at).toISOString() } : {}), playlistItemId: row.id }
 })
-export function playMixedPlaylist(playlist: MixedPlaylist, startIndex = 0, tracks: MusicTrack[] = mixedPlaylistTracks(playlist)) {
+export function playMixedPlaylist(playlist: MixedPlaylist, startIndex = 0, tracks: MusicTrack[] = mixedPlaylistTracks(playlist), shuffle = false) {
   return usePlayerStore.getState().playPagedTracks({ key: `${playlist.id}:${playlist.revision}`, entries: tracks, total: tracks.length,
     loadPage: async (offset, limit) => ({ items: tracks.slice(offset, offset + limit), total: tracks.length, offset }) },
-  playlist.title, `/mixed-playlist/${encodeURIComponent(playlist.id)}`, false, startIndex)
+  playlist.title, `/mixed-playlist/${encodeURIComponent(playlist.id)}`, shuffle, startIndex)
 }

@@ -142,6 +142,15 @@ function similarity(a: string, b: string) {
   }
   return 1 - previous[right.length] / Math.max(left.length, right.length)
 }
+/** Playlist suggestions may be fuzzy, while recording versions and numbered
+ * titles still distinguish a remix, live performance or different song. */
+export function playlistTitleSimilarity(source: PlaylistTrack, candidate: PlaylistTrack): number {
+  const title = recordingTitle(source), other = recordingTitle(candidate)
+  const versions = recordingVersions(source), otherVersions = recordingVersions(candidate)
+  if (versions.size !== otherVersions.size || [...versions].some(word => !otherVersions.has(word))) return 0
+  if (JSON.stringify(title.match(/\d+/gu)) !== JSON.stringify(other.match(/\d+/gu))) return 0
+  return similarity(title, other)
+}
 /** A score ranks name similarity. Known IDs, versions and duration still fence selection. */
 export function playlistCandidateScore(
   source: PlaylistTrack,

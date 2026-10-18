@@ -11,6 +11,8 @@ export interface MixedAdapter {
   read(id: string): Promise<RemotePlaylist>
   create(title: string): Promise<string>
   mutate(before: RemotePlaylist, operation: SequenceOperation): Promise<void>
+  /** One preflighted append and one exact post-read for an ordered batch. */
+  appendMany?(before: RemotePlaylist, trackIds: string[]): Promise<void>
   describe?(before: RemotePlaylist, title: string, description: string): Promise<void>
 }
 export function mixedAdapters(capture = captureMusicOwner()): Partial<Record<Service, MixedAdapter>> {
@@ -59,6 +61,13 @@ export function mixedAdapters(capture = captureMusicOwner()): Partial<Record<Ser
         await provider.mutatePlaylistOccurrence(before.id, { title: before.title,
           items: before.items.map(item => ({ trackId: item.track.id, occurrenceId: item.occurrenceId })) }, operation)
         assert()
+      },
+      appendMany: async (before, trackIds) => {
+        assert()
+        if (before.readOnly || before.owner !== owners.plex || !provider.mutatePlaylistOccurrence) throw Error("This Plex playlist cannot be edited.")
+        await provider.mutatePlaylistOccurrence(before.id, { title: before.title,
+          items: before.items.map(item => ({ trackId: item.track.id, occurrenceId: item.occurrenceId })) }, { kind: "appendMany", trackIds })
+        assert()
       } }
   }
   if (owners.ytmusic) {
@@ -91,6 +100,10 @@ export function mixedAdapters(capture = captureMusicOwner()): Partial<Record<Ser
         if (before.readOnly || before.owner !== owners.ytmusic) throw Error("This YouTube Music playlist is read-only.")
         await write(before.id.replace(/^VL/, ""), before.items,
           operation.kind === "append" ? { kind: "append", videoId: operation.trackId.slice(8) } : operation)
+      },
+      appendMany: async (before, trackIds) => {
+        if (before.readOnly || before.owner !== owners.ytmusic) throw Error("This YouTube Music playlist is read-only.")
+        await write(before.id.replace(/^VL/, ""), before.items, { kind: "appendMany", videoIds: trackIds.map(id => id.slice(8)) })
       } }
   }
   return result

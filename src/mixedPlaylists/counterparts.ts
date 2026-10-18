@@ -4,7 +4,9 @@ import { useProviderStore } from "../stores/providerStore"
 import { browseYoutubeMusic, useYoutubeMusicDiscoveryStore, youtubeMusicItemTrack } from "../backends/ytmusic/discovery"
 import { youtubeMusicSongMetadata } from "../backends/ytmusic/metadata"
 import { itemArtistCredits } from "../lib/artistCredits"
-import { counterpartCandidates, recordingFingerprint, type CounterpartResult } from "./matching"
+import { COUNTERPART_POLICY, counterpartCandidates, counterpartDeferred, counterpartFailure, recordingFingerprint, selectPlaylistCounterpart, type CounterpartResult } from "./matching"
+import { youtubeCounterpartCandidates } from "./youtubeMatching"
+import { createYoutubeCatalogMatcher } from "./youtubeCatalogMatching"
 import type { MusicTrack } from "../types/music"
 import type { Owners, Service } from "./model"
 import { resolveIndexedMusic, reverseIndexedMusic } from "../matching/service"
@@ -24,10 +26,16 @@ export function captureMusicOwner() {
 const pending = new Map<string, { current: () => boolean; promise: Promise<CounterpartResult> }>()
 /** Shared persisted proof used by playlist conversion, exact ratings and lyrics.
  * Failed/ambiguous results have a short retry window; force explicitly bypasses it. */
-export function resolveCounterpart(track: MusicTrack, target: Service, force = false): Promise<CounterpartResult> {
+export function resolveCounterpart(track: MusicTrack, target: Service, force = false, mode: "strict" | "playlist" = "strict",
+  catalogCandidates?: (track: MusicTrack) => Promise<MusicTrack[]>): Promise<CounterpartResult> {
   const owner = captureMusicOwner()
   const fingerprint = recordingFingerprint(track)
-  const key = JSON.stringify(["counterpart-v1", owner.owners, target, fingerprint])
+  const key = JSON.stringify([`counterpart-v${COUNTERPART_POLICY}`, mode, owner.owners, target, fingerprint])
+  const choose = (candidates: MusicTrack[]) => {
+    if (mode === "playlist") return selectPlaylistCounterpart(track, candidates)
+    const choices = counterpartCandidates(track, candidates)
+    return choices.length === 1 ? { track: choices[0], confidence: undefined } : null
+  }
   const runtimeKey = `${key}:${String(owner.provider?.playbackSession)}:${owner.youtube.revision}:force:${force}`
   const active = pending.get(runtimeKey)
   if (active?.current()) return active.promise
@@ -40,27 +48,30 @@ export function resolveCounterpart(track: MusicTrack, target: Service, force = f
     if (target === "plex" && owner.provider.matchingResolve) {
       const indexed = await resolveIndexedMusic(trackMatchingSource(track), force).catch(failure => { if (!owner.current()) throw failure; return null })
       if (!owner.current()) throw Error("Music accounts changed.")
-      if (indexed?.status === "ambiguous" || indexed?.status === "limited") return { status: "ambiguous", checkedAt: Date.now(), message: "Several recordings may match. The original song is retained." }
+      if (mode === "strict" && (indexed?.status === "ambiguous" || indexed?.status === "limited")) return { status: "ambiguous", checkedAt: Date.now(), message: "Several recordings may match. The original song is retained." }
       if (indexed?.status === "matched" && indexed.selected) {
         const actual = await owner.provider.getTrack(String(indexed.selected))
         if (!owner.current()) throw Error("Music accounts changed.")
-        if (actual.id !== String(indexed.selected) || counterpartCandidates(track, [actual]).length !== 1) return unavailable("The Plex recording changed. Retry matching.")
-        const result: CounterpartResult = { status: "matched", track: actual, checkedAt: Date.now(), fingerprint }
+        const selected = choose([actual])
+        if (actual.id !== String(indexed.selected) || !selected) return unavailable("The Plex recording changed. Retry matching.")
+        const result: CounterpartResult = { status: "matched", ...selected, checkedAt: Date.now(), fingerprint }
         await set(key, result, playlistJournalDatabase())
         if (!owner.current()) throw Error("Music accounts changed.")
         return result
       }
-      if (indexed?.status === "missing" || indexed?.status === "stale" && indexed.coverage === "complete")
+      if (mode === "strict" && (indexed?.status === "missing" || indexed?.status === "stale" && indexed.coverage === "complete"))
         return { status: "missing", checkedAt: Date.now(), message: "No current verified Plex recording exists. The original song is retained." }
     } else if (target === "ytmusic" && owner.provider.matchingReverse) {
       const known = await reverseIndexedMusic("track", track.id).catch(failure => { if (!owner.current()) throw failure; return [] })
       if (!owner.current()) throw Error("Music accounts changed.")
       if (known.length) {
-        const actual = await Promise.all(known.map(source => youtubeMusicSongMetadata(source.id)))
+        // A removed/unavailable old video must not prevent a new catalog search.
+        const actual = await Promise.all(known.map(source => youtubeMusicSongMetadata(source.id).catch(() => null)))
         if (!owner.current()) throw Error("Music accounts changed.")
-        const choices = counterpartCandidates(track, actual.filter((song, index) => song.id === known[index].id))
-        if (choices.length === 1) return { status: "matched", track: choices[0], checkedAt: Date.now(), fingerprint }
-        if (choices.length > 1) return { status: "ambiguous", checkedAt: Date.now(), message: "Several YTM recordings match. The original song is retained." }
+        const candidates = actual.filter((song, index): song is MusicTrack => song?.id === known[index].id)
+        const selected = choose(candidates)
+        if (selected) return { status: "matched", ...selected, checkedAt: Date.now(), fingerprint }
+        if (mode === "strict" && counterpartCandidates(track, candidates).length > 1) return { status: "ambiguous", checkedAt: Date.now(), message: "Several YTM recordings match. The original song is retained." }
       }
     }
     const saved = !force ? await get<CounterpartResult>(key, playlistJournalDatabase()) : undefined
@@ -71,7 +82,9 @@ export function resolveCounterpart(track: MusicTrack, target: Service, force = f
       try {
         const actual = target === "plex" ? await owner.provider.getTrack(saved.track.id) : await youtubeMusicSongMetadata(saved.track.id)
         if (!owner.current()) throw Error("Music accounts changed.")
-        if (actual.id === saved.track.id && counterpartCandidates(track, [actual]).length === 1) return { ...saved, track: actual }
+        const selected = choose([actual])
+        if (actual.id === saved.track.id && selected) return { ...saved, ...selected,
+          confidence: saved.confidence !== undefined && selected.confidence !== undefined ? Math.min(saved.confidence, selected.confidence) : selected.confidence }
       } catch { if (!owner.current()) throw Error("Music accounts changed.") }
     }
     let result: CounterpartResult
@@ -87,24 +100,52 @@ export function resolveCounterpart(track: MusicTrack, target: Service, force = f
           candidates = (await owner.provider.search(track.title, "track")).flatMap(item => item.type === "track" ? [item] : [])
         }
       } else {
-        const page = await browseYoutubeMusic({ browseId: "hibiki_song_search", params: `${artist} ${track.title}` }, null, force)
-        if (page.continuation) throw Error("Search was incomplete. Retry matching.")
-        candidates = page.items.filter(item => item.kind === "song").map(youtubeMusicItemTrack)
+        // Artist/release pages often supply the whole album in a single call.
+        // Individual ranked searches are reserved for remaining catalog misses.
+        candidates = await youtubeCounterpartCandidates(track, {
+          current: owner.current, fuzzy: mode === "playlist", catalog: catalogCandidates, search: async query => {
+            const page = await browseYoutubeMusic({ browseId: "hibiki_song_search", params: query }, null, force)
+            return page.items.filter(item => item.kind === "song").map(youtubeMusicItemTrack)
+          } })
       }
       if (!owner.current()) throw Error("Music accounts changed.")
-      const choices = counterpartCandidates(track, candidates)
-      result = choices.length === 1 ? { status: "matched", track: choices[0], checkedAt: Date.now(), fingerprint }
-        : { status: choices.length ? "ambiguous" : "missing", checkedAt: Date.now(),
-          message: choices.length ? "Several recordings match. The original song is retained." : "No verified recording found. The original song is retained." }
+      const selected = choose(candidates)
+      const ambiguous = mode === "strict" && counterpartCandidates(track, candidates).length > 1
+      result = selected ? { status: "matched", ...selected, checkedAt: Date.now(), fingerprint }
+        : { status: ambiguous ? "ambiguous" : "missing", checkedAt: Date.now(),
+          message: ambiguous ? "Several recordings match. The original song is retained." : "No suitable recording found. The original song is retained." }
     } catch (failure) {
-      result = unavailable(failure instanceof Error ? failure.message : "Song lookup failed. Retry matching.")
+      result = counterpartFailure(failure)
     }
     if (!owner.current()) throw Error("Music accounts changed.")
-    await set(key, result, playlistJournalDatabase())
+    if (!counterpartDeferred(result)) await set(key, result, playlistJournalDatabase())
     if (!owner.current()) throw Error("Music accounts changed.")
     return result
   })()
   pending.set(runtimeKey, { current: owner.current, promise: work })
   void work.then(() => { if (pending.get(runtimeKey)?.promise === work) pending.delete(runtimeKey) }, () => { if (pending.get(runtimeKey)?.promise === work) pending.delete(runtimeKey) })
   return work
+}
+
+/** Playlist playback tolerates a scored best guess; exact consumers opt out. */
+export const resolvePlaylistCounterpart = (track: MusicTrack, target: Service, force = false) => resolveCounterpart(track, target, force, "playlist")
+
+/** Share artist and release discovery across all occurrences in this job. Native
+ * SWR retains the same catalog pages between batches and client restarts. */
+export function createPlaylistCounterpartResolver(tracks: MusicTrack[], force = false, current: () => boolean = () => true) {
+  const owner = captureMusicOwner()
+  const owns = () => current() && owner.current()
+  const catalog = createYoutubeCatalogMatcher(tracks, { current: owns, toTrack: youtubeMusicItemTrack,
+    browse: (destination, cursor) => browseYoutubeMusic(destination, cursor, force),
+    knownArtists: async group => {
+      const ids = [...new Set(group.flatMap(track => itemArtistCredits(track)[0]?.id ? [itemArtistCredits(track)[0].id!] : []))].slice(0, 3)
+      const sources = []
+      for (const id of ids) sources.push(...await reverseIndexedMusic("artist", id).catch(failure => { if (!owns()) throw failure; return [] }))
+      return sources.map(source => source.id)
+    },
+  })
+  return (track: MusicTrack, target: Service) => {
+    if (!owns()) return Promise.reject(Error("Music accounts changed."))
+    return resolveCounterpart(track, target, force, "playlist", target === "ytmusic" ? catalog : undefined)
+  }
 }

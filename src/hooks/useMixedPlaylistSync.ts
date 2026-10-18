@@ -5,6 +5,8 @@ import { useYoutubeMusicDiscoveryStore } from "../backends/ytmusic/discovery"
 import { useListenBrainzStore } from "../metadata/listenbrainz/authStore"
 import { subscribeMatchingUpdates } from "../matching/updates"
 import { createMatchingConsumer } from "../matching/consumerQueue"
+import { counterpartPending } from "../mixedPlaylists/matching"
+import { playlistServices } from "../mixedPlaylists/model"
 
 /** Resumable bounded jobs, round-robin; no library-wide matching scan. */
 export function useMixedPlaylistSync() {
@@ -26,8 +28,12 @@ export function useMixedPlaylistSync() {
           (item.merge || item.items.length || Object.keys(item.providers).length) &&
           Object.entries(item.owners).every(([side, owner]) => side === "plex" ? owner === scope && (!provider?.isOffline || external && item.external?.listenbrainz.enabled && item.external.listenbrainz.automatic) : owner === account) &&
           item.items.every(row => item.owners[row.original]))
+          .filter(item => {
+            const pending = item.items.some(row => playlistServices(item).some(service => counterpartPending(row, service)))
+            return Date.now() - (checked.get(item.id) ?? 0) >= (item.status === "syncing" || pending ? 15000 : 120000)
+          })
           .sort((a, b) => (checked.get(a.id) ?? 0) - (checked.get(b.id) ?? 0))[0]
-        if (playlist && Date.now() - (checked.get(playlist.id) ?? 0) >= (playlist.status === "syncing" ? 15000 : 120000)) {
+        if (playlist && !useMixedPlaylistStore.getState().running[playlist.id]) {
           checked.set(playlist.id, Date.now())
           await useMixedPlaylistStore.getState().sync(playlist.id)
         }

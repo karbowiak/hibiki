@@ -40,6 +40,7 @@ export interface PlaylistOccurrenceState {
 }
 export type PlaylistOccurrenceMutation =
   | { kind: "append"; trackId: string }
+  | { kind: "appendMany"; trackIds: string[] }
   | { kind: "move"; from: number; to: number }
   | { kind: "delete"; index: number }
 

@@ -238,8 +238,14 @@ fn card(value: &Value, collection: bool, live: bool) -> Option<Item> {
     }
     // Playlist artist runs may be plain text, with no artist browse destination.
     if artists.is_empty() && flat.is_some() {
-        let label = text(subtitle);
-        if !label.is_empty() { artists.push(label.to_owned()); }
+        let subtitle = text(subtitle);
+        // Search rows also include album and duration after bullet separators.
+        // These are metadata, not part of an unlinked performer's name.
+        let label = subtitle.split('•').next().unwrap_or_default().trim();
+        if !label.is_empty() && !label.chars().all(|c| c.is_ascii_digit() || c == ':') {
+            artists.push(label.to_owned());
+            artist_credits.push(ArtistCredit { name: label.into(), id: None });
+        }
     }
     if flat.is_some() && album.is_none() {
         let column = item.pointer("/flexColumns/2/musicResponsiveListItemFlexColumnRenderer/text");
@@ -706,6 +712,22 @@ mod tests {
     fn shelf(title: &str, contents: Vec<Value>) -> Value {
         json!({"musicCarouselShelfRenderer":{"header":{"musicCarouselShelfBasicHeaderRenderer":{"title":{"runs":[{"text":title}]}}},"contents":contents,
             "continuations":[{"nextContinuationData":{"continuation":"shelf-token"}}]}})
+    }
+    #[test]
+    fn plain_search_performer_does_not_include_release_or_duration() {
+        let row = json!({"musicResponsiveListItemRenderer":{
+            "flexColumns":[
+                {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Kalinka!","navigationEndpoint":{"watchEndpoint":{"videoId":"abcdefghijk"}}}]}}},
+                {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Unicorn on K"},{"text":" • "},
+                    {"text":"Kalinka!","navigationEndpoint":{"browseEndpoint":{"browseId":"MPRE_album"}}},{"text":" • "},{"text":"2:31"}]}}}
+            ]
+        }});
+        let song = card(&row, true, false).unwrap();
+        assert_eq!(song.artist, "Unicorn on K");
+        assert_eq!(song.artist_credits.len(), 1);
+        assert_eq!(song.artist_credits[0].name, "Unicorn on K");
+        assert_eq!(song.album.as_deref(), Some("Kalinka!"));
+        assert_eq!(song.duration.as_deref(), Some("2:31"));
     }
     #[test]
     fn artist_popularity_is_not_release_metadata_and_credits_keep_individual_ids() {

@@ -26,7 +26,7 @@ export interface MixedOccurrence {
   /** Provenance of a copied occurrence; never a live sync relationship. */
   copiedFrom?: { playlist: string; occurrence: string }
   remote: Partial<Record<Service, { occurrenceId: string; added?: AddedDate }>>
-  match: { status: "pending" | "matched" | "missing" | "ambiguous" | "failed"; checkedAt?: number; message?: string }
+  match: { status: "pending" | "matched" | "missing" | "ambiguous" | "failed"; policy?: number; checkedAt?: number; message?: string; confidence?: number }
 }
 export interface RemotePlaylist {
   service: Service

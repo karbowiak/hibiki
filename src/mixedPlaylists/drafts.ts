@@ -6,12 +6,14 @@ export interface DraftMetadata {
   description: string
   artwork: string | null
   external: NonNullable<MixedPlaylist["external"]>
+  automatic?: boolean
 }
 export const defaultPlaylistSync = () => ({ listenbrainz: { enabled: false, automatic: true, direction: "export" as const } })
 export function validateDraftMetadata(value: DraftMetadata): DraftMetadata {
   const title = value.title.trim()
   if (!title || title.length > 500) throw Error("Choose a playlist name of 1–500 characters.")
   if (value.description.length > 5000) throw Error("Keep the description under 5,000 characters.")
+  if (value.automatic !== undefined && typeof value.automatic !== "boolean") throw Error("Choose valid automatic sync settings.")
   if (value.artwork && (value.artwork.length > 3_000_000 || !/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/.test(value.artwork)))
     throw Error("Choose a JPEG, PNG or WebP image under 2 MB.")
   if (!value.external || typeof value.external.listenbrainz?.enabled !== "boolean" ||

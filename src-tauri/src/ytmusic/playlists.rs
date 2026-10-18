@@ -18,6 +18,7 @@ pub struct Snapshot {
 pub enum Operation {
     Create { title: String },
     Append { #[serde(rename = "videoId")] video_id: String },
+    AppendMany { #[serde(rename = "videoIds")] video_ids: Vec<String> },
     Delete { index: usize },
     Move { from: usize, to: usize },
     Metadata { title: String, description: String, #[serde(rename = "expectedTitle")] expected_title: String,
@@ -111,7 +112,8 @@ pub(super) async fn ytmusic_playlist_write(app: tauri::AppHandle, playlist_id: O
             vec![json!({ "action": "ACTION_SET_PLAYLIST_NAME", "playlistName": title }),
                 json!({ "action": "ACTION_SET_PLAYLIST_DESCRIPTION", "playlistDescription": description })]
         },
-        Operation::Append { video_id } if api::valid_video_id(&video_id) => vec![json!({ "action": "ACTION_ADD_VIDEO", "addedVideoId": video_id, "dedupeOption": "DEDUPE_OPTION_SKIP" })],
+        Operation::Append { video_id } if api::valid_video_id(&video_id) && expected.len() < 10000 => append_actions(vec![video_id], expected.len())?,
+        Operation::AppendMany { video_ids } => append_actions(video_ids, expected.len())?,
         Operation::Delete { index } if index < expected.len() => vec![json!({ "action": "ACTION_REMOVE_VIDEO", "removedVideoId": expected[index].video_id, "setVideoId": expected[index].occurrence_id })],
         Operation::Move { from, to } if from < expected.len() && to < expected.len() && from != to => {
             let moved = &expected[from];
@@ -126,4 +128,30 @@ pub(super) async fn ytmusic_playlist_write(app: tauri::AppHandle, playlist_id: O
     if value["status"] != "STATUS_SUCCEEDED" { return Err("Playlist write was not acknowledged. Read the playlist before retrying.".into()); }
     if let Ok(directory) = app.path().app_cache_dir() { state.discovery_cache.playlist_changed(directory.join("ytmusic-discovery"), format!("VL{id}")).await; }
     Ok(id)
+}
+
+fn append_actions(video_ids: Vec<String>, current_len: usize) -> Result<Vec<Value>, String> {
+    if video_ids.is_empty() || video_ids.len() > 100 || current_len + video_ids.len() > 10000
+        || video_ids.iter().any(|id| !api::valid_video_id(id)) {
+        return Err("Invalid or oversized playlist append batch.".into());
+    }
+    Ok(video_ids.into_iter().map(|id| json!({ "action": "ACTION_ADD_VIDEO", "addedVideoId": id, "dedupeOption": "DEDUPE_OPTION_SKIP" })).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn append_batch_retains_order_and_repeats_with_bounded_actions() {
+        let ids = vec!["a1234567890".into(), "b1234567890".into(), "a1234567890".into()];
+        let actions = append_actions(ids, 3).unwrap();
+        assert_eq!(actions.iter().map(|action| action["addedVideoId"].as_str().unwrap()).collect::<Vec<_>>(),
+            vec!["a1234567890", "b1234567890", "a1234567890"]);
+        assert!(actions.iter().all(|action| action["action"] == "ACTION_ADD_VIDEO"));
+        assert!(append_actions(vec![], 0).is_err());
+        assert!(append_actions(vec!["invalid".into()], 0).is_err());
+        assert!(append_actions(vec!["a1234567890".into(); 101], 0).is_err());
+        assert!(append_actions(vec!["a1234567890".into(); 2], 9999).is_err());
+    }
 }

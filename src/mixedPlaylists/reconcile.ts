@@ -87,6 +87,13 @@ export function nextMixedOperation(before: string[], desired: string[]): Sequenc
   }
   return before.length > desired.length ? { kind: "delete", index: before.length - 1 } : null
 }
+/** A new merge (or a resumed append) already has the desired prefix. Append
+ * its remaining ordered songs together; edits within that prefix still use
+ * occurrence-based moves/deletions and their individual receipts. */
+export function appendBatchIds(before: string[], desired: string[], limit: number) {
+  if (!before.every((id, index) => desired[index] === id)) return []
+  return desired.slice(before.length, before.length + limit)
+}
 export function operationIds(ids: string[], operation: SequenceOperation) {
   const result = [...ids]
   if (operation.kind === "append") result.push(operation.trackId)

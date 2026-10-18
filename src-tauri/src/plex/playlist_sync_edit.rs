@@ -21,6 +21,11 @@ pub enum PlaylistSyncOperation {
         #[serde(rename = "trackId")]
         track_id: String,
     },
+    #[serde(rename = "appendMany")]
+    AppendMany {
+        #[serde(rename = "trackIds")]
+        track_ids: Vec<String>,
+    },
     Move {
         from: usize,
         to: usize,
@@ -75,6 +80,22 @@ impl PlaylistSyncState {
                     bail!("Playlist item limit reached")
                 };
                 ids.push(track_id.clone())
+            }
+            PlaylistSyncOperation::AppendMany { track_ids } => {
+                if track_ids.is_empty()
+                    || track_ids.len() > 500
+                    || ids.len() + track_ids.len() > 1000
+                {
+                    bail!("Invalid or oversized playlist append batch")
+                }
+                let mut seen: HashSet<_> = ids.iter().cloned().collect();
+                for id in track_ids {
+                    positive(id)?;
+                    if !seen.insert(id.clone()) {
+                        bail!("Plex cannot append repeated recordings")
+                    }
+                }
+                ids.extend(track_ids.iter().cloned());
             }
             PlaylistSyncOperation::Move { from, to } => {
                 if *from >= ids.len() || *to >= ids.len() || from == to {
@@ -169,6 +190,39 @@ impl PlexClient {
                 bail!("Plex server identity unavailable")
             }
         }
+        if let PlaylistSyncOperation::AppendMany { track_ids } = operation {
+            if self.machine_identifier.is_empty() {
+                bail!("Plex server identity unavailable")
+            }
+            // Fresh catalogue verification is also batched; do not replace a
+            // single append with hundreds of individual track preflights.
+            let raw: serde_json::Value = self
+                .get(&format!(
+                    "/library/metadata/{}?skipRefresh=1",
+                    track_ids.join(",")
+                ))
+                .await?;
+            let tracks = raw["Metadata"]
+                .as_array()
+                .context("Missing append batch recordings")?;
+            if tracks.len() != track_ids.len() {
+                bail!("Some append batch recordings are no longer available")
+            }
+            let expected: HashSet<_> = track_ids.iter().map(String::as_str).collect();
+            let mut seen = HashSet::new();
+            for track in tracks {
+                let id = super::catalogue::number(&track["ratingKey"])
+                    .context("Invalid append batch recording")?
+                    .to_string();
+                if !expected.contains(id.as_str())
+                    || !seen.insert(id)
+                    || track["type"].as_str() != Some("track")
+                    || super::catalogue::number(&track["librarySectionID"]) != Some(section_id)
+                {
+                    bail!("Append batch recording or music library changed")
+                }
+            }
+        }
         if self.playlist_sync_state(section_id, playlist_id).await? != *expected {
             bail!("Playlist changed. Review again before updating")
         }
@@ -193,6 +247,21 @@ impl PlexClient {
         let expected = &prepared.expected;
         let operation = &prepared.operation;
         match operation {
+            PlaylistSyncOperation::AppendMany { track_ids } => {
+                let uri = format!(
+                    "server://{}/com.plexapp.plugins.library/library/metadata/{}",
+                    self.machine_identifier,
+                    track_ids.join(",")
+                );
+                self.mutate_params_once(
+                    reqwest::Method::PUT,
+                    &format!("/playlists/{playlist_id}/items"),
+                    &[("uri", &uri)],
+                    None,
+                    None,
+                )
+                .await?;
+            }
             PlaylistSyncOperation::Append { track_id } => {
                 let uri = format!(
                     "server://{}/com.plexapp.plugins.library/library/metadata/{track_id}",
@@ -296,7 +365,10 @@ mod tests {
     ) -> (PlexClient, std::thread::JoinHandle<Vec<String>>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}/proxy", listener.local_addr().unwrap());
-        let count = if matches!(&operation, PlaylistSyncOperation::Append { .. }) {
+        let count = if matches!(
+            &operation,
+            PlaylistSyncOperation::Append { .. } | PlaylistSyncOperation::AppendMany { .. }
+        ) {
             8
         } else {
             7
@@ -355,8 +427,24 @@ mod tests {
                     json!({"MediaContainer":{"size":items.len(),"totalSize":items.len(),"offset":0,"Metadata":items.iter().map(|(track,occurrence)|json!({"ratingKey":track.to_string(),"title":"Song","librarySectionID":5,"playlistItemID":occurrence.to_string()})).collect::<Vec<_>>()}})
                 } else if method == "GET" && path == "/proxy/library/metadata/1" {
                     json!({"MediaContainer":{"Metadata":[{"ratingKey":"1","title":"Song","librarySectionID":5}]}})
+                } else if method == "GET" && path == "/proxy/library/metadata/3,4" {
+                    json!({"MediaContainer":{"Metadata":[{"ratingKey":"3","type":"track","librarySectionID":5},{"ratingKey":"4","type":"track","librarySectionID":5}]}})
                 } else {
                     match &operation {
+                        PlaylistSyncOperation::AppendMany { track_ids } => {
+                            assert_eq!(method, "PUT");
+                            assert_eq!(path, "/proxy/playlists/19/items");
+                            let uri = url
+                                .query_pairs()
+                                .find(|(key, _)| key == "uri")
+                                .unwrap()
+                                .1
+                                .into_owned();
+                            assert_eq!(uri, format!("server://machine/com.plexapp.plugins.library/library/metadata/{}", track_ids.join(",")));
+                            for (index, id) in track_ids.iter().enumerate() {
+                                items.push((id.parse().unwrap(), 14 + index as i64));
+                            }
+                        }
                         PlaylistSyncOperation::Append { track_id } => {
                             assert_eq!(method, "PUT");
                             assert_eq!(path, "/proxy/playlists/19/items");
@@ -498,6 +586,9 @@ mod tests {
             PlaylistSyncOperation::Append {
                 track_id: "1".into(),
             },
+            PlaylistSyncOperation::AppendMany {
+                track_ids: vec!["3".into(), "4".into()],
+            },
             PlaylistSyncOperation::Move { from: 2, to: 1 },
             PlaylistSyncOperation::Move { from: 0, to: 1 },
             PlaylistSyncOperation::Move { from: 0, to: 2 },
@@ -539,6 +630,23 @@ mod tests {
     #[test]
     fn invalid_occurrence_and_duplicate_handle_inputs_are_rejected_before_io() {
         let expected = state();
+        for ids in [
+            vec![],
+            vec!["01".into()],
+            vec!["1".into()],
+            vec!["3".into(), "3".into()],
+            vec!["3".into(); 501],
+        ] {
+            assert!(expected
+                .after_ids(&PlaylistSyncOperation::AppendMany { track_ids: ids })
+                .is_err());
+        }
+        let batch: PlaylistSyncOperation =
+            serde_json::from_value(json!({"kind":"appendMany","trackIds":["3","4"]})).unwrap();
+        assert_eq!(
+            expected.after_ids(&batch).unwrap(),
+            vec!["1", "2", "1", "3", "4"]
+        );
         assert!(expected
             .after_ids(&PlaylistSyncOperation::Append {
                 track_id: "01".into()

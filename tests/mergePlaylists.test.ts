@@ -12,6 +12,28 @@ const source = (key: string, ids: string[]): MergeSource => ({ key, title: key, 
 const metadata = { title: "Merged", description: "New playlist", artwork: null, external: defaultPlaylistSync() }
 const options = { owners, current: () => true, resolve: async () => ({ status: "missing" as const, checkedAt: 1, message: "Unavailable" }) }
 
+test("a throttled merge stops new lookups and retains all songs for later matching", async () => {
+  const sources: [MergeSource, MergeSource] = [source("one", Array.from({ length: 150 }, (_, i) => String(i + 1))), source("two", ["200"])]
+  let calls = 0
+  const preview = await prepareMerge(sources, "mixed", "preserve", { ...options, resolve: async () => {
+    calls++; return { status: "failed", checkedAt: Date.now(), message: "YouTube Music is rate limited. Hibiki will retry after the cooldown." }
+  } })
+  expect(calls).toBeLessThanOrEqual(2)
+  expect(preview.items).toHaveLength(151)
+  expect(preview.items.every(row => row.match.status === "pending" && row.songs.plex)).toBe(true)
+})
+test("YTM throttling does not defer independent Plex lookups", async () => {
+  let plex = 0
+  const preview = await prepareMerge([source("one", ["1"]), source("two", ["ytmusic:b1234567890"])], "mixed", "preserve", {
+    ...options, resolve: async (_track, target) => target === "ytmusic"
+      ? { status: "failed", checkedAt: Date.now(), message: "YouTube Music is rate limited. Hibiki will retry after the cooldown." }
+      : (plex++, { status: "matched", checkedAt: Date.now(), track: song("200"), fingerprint: "proof" }),
+  })
+  expect(plex).toBe(1)
+  expect(preview.items[0].match.status).toBe("pending")
+  expect(preview.items[1].songs.plex?.track.id).toBe("200")
+})
+
 test("merge retains ordered occurrences, source dates and provenance with fresh sync identities", async () => {
   const sources: [MergeSource, MergeSource] = [source("one", ["1", "1"]), source("two", ["ytmusic:b1234567890"])]
   sources[0].items[0].remote.plex = { occurrenceId: "source-handle" }

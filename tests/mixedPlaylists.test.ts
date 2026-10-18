@@ -5,6 +5,7 @@ import { counterpartCandidates, matchPlaylistBatch } from "../src/mixedPlaylists
 import { retainMixedPlaylist } from "../src/mixedPlaylists/repository"
 import { adoptRemote, bindSnapshot, operationIds, projection, reconcileRemoteChanges } from "../src/mixedPlaylists/reconcile"
 import { syncMixedPlaylist } from "../src/mixedPlaylists/sync"
+import { syncAndMatchPlaylist } from "../src/mixedPlaylists/pipeline"
 import type { MixedAdapter } from "../src/mixedPlaylists/adapters"
 import { retainLibraryDates } from "../src/mixedPlaylists/libraryDates"
 
@@ -107,8 +108,9 @@ test("Plex limitations never remove local or YTM duplicate occurrences", () => {
   expect(projection(playlist, "plex")).toHaveLength(1)
   expect(projection(playlist, "ytmusic")).toHaveLength(2)
 })
-function harness(initial = linked()) {
+function harness(initial = linked(), batched = false) {
   let saved = initial, sequence = 0, mutations = 0, creates = 0, failPostRead = false, pendingRead = false
+  const batchSizes: number[] = []
   const remote: Partial<Record<Service, RemotePlaylist>> = { plex: structuredClone(initial.baseline.plex) }
   const adapters: Partial<Record<Service, MixedAdapter>> = {}
   for (const service of ["plex", "ytmusic"] as const) adapters[service] = {
@@ -126,10 +128,102 @@ function harness(initial = linked()) {
       expect(rows.map(row => row.track.id)).toEqual(ids)
       remote[service] = { ...before, items: rows }; pendingRead = true
     },
+    ...(batched ? { appendMany: async (before: RemotePlaylist, ids: string[]) => {
+      expect(saved.write?.before).toEqual(before)
+      expect(saved.write?.afterIds).toEqual([...snapshotIds(before), ...ids])
+      batchSizes.push(ids.length); mutations++
+      remote[service] = { ...before, items: [...before.items, ...ids.map(id => ({ track: song(id), occurrenceId: `new-${++sequence}` }))] }
+      pendingRead = true
+    } } : {}),
   }
   const options = { adapters, current: () => true, save: async (value: MixedPlaylist) => { saved = structuredClone({ ...value, revision: saved.revision + 1 }); return saved } }
-  return { options, remote, saved: () => saved, writes: () => mutations, creates: () => creates, failReads: () => { failPostRead = true } }
+  return { options, remote, batchSizes, saved: () => saved, writes: () => mutations, creates: () => creates, failReads: () => { failPostRead = true } }
 }
+test("a 307-song merge appends its known Plex remainder in one batch, independently of unmatched YTM songs", async () => {
+  const playlist = linked(Array.from({ length: 307 }, (_, index) => String(index + 1)))
+  playlist.merge = { sources: [], duplicates: "verified", reviewedAt: 1 }
+  playlist.baseline.plex!.items = playlist.baseline.plex!.items.slice(0, 14)
+  playlist.items.forEach((row, index) => { if (index >= 14) row.remote = {}; if (index >= 3) delete row.songs.ytmusic })
+  const h = harness(playlist, true)
+  const result = await syncMixedPlaylist(playlist, h.options)
+  expect(result.status).toBe("ready")
+  expect(h.batchSizes).toEqual([293, 3])
+  expect(h.writes()).toBe(2)
+  expect(snapshotIds(h.remote.plex!)).toEqual(playlist.items.map(row => row.songs.plex!.track.id))
+  expect(h.remote.ytmusic!.items).toHaveLength(3)
+  expect(result.items.map(row => row.id)).toEqual(playlist.items.map(row => row.id))
+  expect(result.items).toHaveLength(307)
+})
+test("large appends checkpoint bounded batches and continue with the remaining ordered suffix", async () => {
+  const playlist = linked(Array.from({ length: 650 }, (_, index) => String(index + 1)))
+  delete playlist.owners.ytmusic
+  playlist.items.forEach(row => { row.remote = {} })
+  playlist.baseline.plex!.items = []
+  const h = harness(playlist, true)
+  await syncMixedPlaylist(playlist, { ...h.options, maxWrites: 1 })
+  expect(h.batchSizes).toEqual([500])
+  const resumed = await syncMixedPlaylist(structuredClone(h.saved()), h.options)
+  expect(h.batchSizes).toEqual([500, 150])
+  expect(resumed.status).toBe("ready")
+  expect(h.remote.plex!.items).toHaveLength(650)
+})
+test("an interrupted batch settles exactly once and an uncertain partial batch cannot be blindly replayed", async () => {
+  const playlist = linked(["1", "2", "3"]), h = harness(playlist, true)
+  h.failReads()
+  await expect(syncMixedPlaylist(playlist, h.options)).rejects.toThrow("Lost read")
+  expect(h.saved().write?.afterIds).toHaveLength(3)
+  expect(h.saved().write?.state).toBe("unknown")
+  const recovered = await syncMixedPlaylist(structuredClone(h.saved()), h.options)
+  expect(recovered.status).toBe("ready")
+  expect(h.batchSizes).toEqual([3])
+  const partial = harness(playlist, true)
+  partial.failReads()
+  await expect(syncMixedPlaylist(playlist, partial.options)).rejects.toThrow()
+  partial.remote.ytmusic!.items.pop()
+  await expect(syncMixedPlaylist(structuredClone(partial.saved()), partial.options)).rejects.toThrow("uncertain outcome")
+  expect(partial.batchSizes).toEqual([3])
+})
+test("an uncertain provider write does not stop local matching or replay the mutation", async () => {
+  const initial = linked(["1", "2"]), h = harness(initial, true)
+  h.failReads()
+  let matches = 0
+  await expect(syncAndMatchPlaylist(initial, { current: () => true, sync: playlist => syncMixedPlaylist(playlist, h.options),
+    reload: async () => h.saved(), match: async playlist => {
+      expect(playlist.write?.state).toBe("unknown")
+      matches++
+      return h.options.save({ ...playlist, items: playlist.items.map(row => ({ ...row, match: { status: "matched", confidence: 0.91 } })) })
+    } })).rejects.toThrow("Lost read")
+  expect(matches).toBe(1)
+  expect(h.writes()).toBe(1)
+  expect(h.saved().items[0].match.confidence).toBe(0.91)
+  expect(h.saved().write?.state).toBe("unknown")
+})
+test("one stale YTM post-read is confirmed without repeating the write", async () => {
+  const initial = linked(["1", "2"]), h = harness(initial, true)
+  const adapter = h.options.adapters.ytmusic!, read = adapter.read, append = adapter.appendMany!
+  let stale = false, confirmationReads = 0
+  adapter.appendMany = async (before, ids) => {
+    await append(before, ids)
+    stale = true
+  }
+  adapter.read = async id => {
+    if (stale) { stale = false; confirmationReads++; return structuredClone(h.saved().write!.before!) }
+    return read(id)
+  }
+  const result = await syncMixedPlaylist(initial, h.options)
+  expect(confirmationReads).toBe(1)
+  expect(h.writes()).toBe(1)
+  expect(result.write).toBeUndefined()
+  expect(result.status).toBe("ready")
+})
+test("YTM batches retain repeated occurrences and respect the 100-action limit", async () => {
+  const playlist = linked(Array.from({ length: 205 }, () => "1")), h = harness(playlist, true)
+  const result = await syncMixedPlaylist(playlist, h.options)
+  expect(h.batchSizes).toEqual([100, 100, 5])
+  expect(h.remote.ytmusic!.items).toHaveLength(205)
+  expect(new Set(h.remote.ytmusic!.items.map(row => row.occurrenceId)).size).toBe(205)
+  expect(result.status).toBe("ready")
+})
 test("conversion creates one counterpart and verifies all its original songs", async () => {
   const playlist = linked(), h = harness(playlist)
   const completed = await syncMixedPlaylist(playlist, h.options)

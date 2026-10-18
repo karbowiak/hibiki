@@ -1,5 +1,5 @@
 import type { MixedAdapter } from "./adapters"
-import { bindSnapshot, nextMixedOperation, operationIds, projection, reconcileRemoteChanges, unsupportedPlexRepeats } from "./reconcile"
+import { appendBatchIds, bindSnapshot, nextMixedOperation, operationIds, projection, reconcileRemoteChanges, unsupportedPlexRepeats } from "./reconcile"
 import { playlistServices, sameSequence, snapshotIds, type MixedPlaylist, type RemotePlaylist, type Service } from "./model"
 
 export interface MixedSyncOptions {
@@ -78,12 +78,22 @@ export async function syncMixedPlaylist(initial: MixedPlaylist, options: MixedSy
       owns()
       const operation = nextMixedOperation(snapshotIds(before), desired)
       if (!operation) break
-      const afterIds = operationIds(snapshotIds(before), operation)
+      const additions = operation.kind === "append" && adapter.appendMany
+        ? appendBatchIds(snapshotIds(before), desired, service === "plex" ? 500 : 100) : []
+      const batched = additions.length > 1
+      const afterIds = batched ? [...snapshotIds(before), ...additions] : operationIds(snapshotIds(before), operation)
       await save({ ...playlist, status: "syncing", write: { id: crypto.randomUUID(), service, kind: operation.kind, before, afterIds, state: "admitted" } })
       budget--
       try {
-        await adapter.mutate(before, operation); owns()
-        const actual = await adapter.read(before.id); owns()
+        if (batched) await adapter.appendMany!(before, additions)
+        else await adapter.mutate(before, operation)
+        owns()
+        let actual = await adapter.read(before.id); owns()
+        // A post-read may still show the order from before an acknowledged edit.
+        // Confirm once, paced by the shared limiter; never replay the mutation.
+        if (service === "ytmusic" && !sameSequence(snapshotIds(actual), afterIds)) {
+          actual = await adapter.read(before.id); owns()
+        }
         if (!sameSequence(snapshotIds(actual), afterIds)) throw Error("Provider contents did not match the expected write. Review this playlist.")
         await save({ ...playlist, baseline: { ...playlist.baseline, [service]: actual }, write: undefined })
         before = actual
