@@ -97,7 +97,13 @@ unmatched recordings cannot starve later intentions.
 - Mixed-playlist matching and two-way Plex/YTM reconciliation. A lookup producer
   and coalescing writer run concurrently: newly verified matches can sync before
   the remaining lookup batch finishes. Checkpoints preserve membership, order,
-  revisions, and uncertain-write receipts.
+  revisions, and uncertain-write receipts. Settled playlists check upstream once
+  per hour or on manual Sync, retaining their last attempt time in SQLite across
+  worker/app restarts. Unchanged matching misses do not expire into another scan;
+  only new/changed recordings or the explicit Retry unmatched songs action enter
+  matching again. New matching batches and successful bounded write tails can
+  continue after 15 seconds. Idle polling reuses the current store rather than
+  reloading the full journal every tick.
 - ListenBrainz linked-playlist matching and reconciliation, favorites sync, and
   exact YTM/Plex/Last.fm/ListenBrainz rating propagation. Their background entry
   points run in the reconciliation worker; presentation and user edits stay in
@@ -133,9 +139,12 @@ rather than entering an at-least-once mutation queue. The playlist's own journal
 retains its receipt and verifies uncertain results. Interrupted song writes read
 the complete current playlist and replan only the remaining changes, preserving
 local intent and unexpected provider additions. Known destinations recover even
-if automatic sync was switched off after admission, with 30-second retry pacing.
+if automatic sync was switched off after admission. An unconfirmed write alone
+waits for the next hourly check or manual Sync instead of creating a retry loop.
 Fresh occurrence handles replace old ones before any positional edit. Recovery
-details remain in Info; Activity shows the retry without requesting review.
+details remain in Info. Activity shows only running playlist/favorite operations
+and actual queue admissions, then removes them when that turn finishes. Unmatched
+songs, conflicts and retained recovery receipts never keep an idle Activity row.
 An unidentified creation still needs its destination selected, so recovery never
 creates another copy by guessing.
 Expected ownership retirement and domain-level review outcomes do not become

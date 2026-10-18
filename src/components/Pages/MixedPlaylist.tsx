@@ -461,7 +461,7 @@ export function MixedPlaylist({ id }: { id: string }) {
                     {
                       label: "Retry unmatched songs",
                       disabled: busy || !pending.length,
-                      run: () => run(state.sync(id, true)),
+                      run: () => run(state.sync(id, true, true)),
                     },
                     ...(downloads.saved
                       ? [

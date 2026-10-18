@@ -232,7 +232,7 @@ test("playlist controls distinguish queued recovery from an unidentified creatio
   playlist.write = { id: "pending", service: "ytmusic", kind: "create", afterIds: [], state: "unknown" }
   expect(mixedSyncStatus(playlist, false, false)).toMatchObject({ button: "Review sync", label: "Sync paused", busy: false, review: true })
   playlist.write.destinationId = "VLPLtest"
-  expect(mixedSyncStatus(playlist, false, false)).toMatchObject({ button: "Sync", label: "Verification queued", queued: true, review: false })
+  expect(mixedSyncStatus(playlist, false, false)).toMatchObject({ button: "Sync", label: "Verification pending", queued: false, review: false })
 })
 test("a partially settled Plex move resumes against current order and preserves new remote additions", async () => {
   const playlist = linked(["1", "2", "3", "4"])

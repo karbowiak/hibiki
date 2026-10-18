@@ -5,8 +5,8 @@ import { useYoutubeMusicDiscoveryStore } from "../backends/ytmusic/discovery"
 import { useListenBrainzStore } from "../metadata/listenbrainz/authStore"
 import { subscribeMatchingUpdates } from "../matching/updates"
 import { createMatchingConsumer } from "../matching/consumerQueue"
-import { counterpartPending } from "../mixedPlaylists/matching"
-import { mixedWriteCanRecover, playlistServices } from "../mixedPlaylists/model"
+import { mixedWriteCanRecover } from "../mixedPlaylists/model"
+import { nextPlaylistSyncAt } from "../mixedPlaylists/schedule"
 import { playlistNeedsIndexCheck } from "../mixedPlaylists/indexUpdates"
 import type { MatchingUpdate } from "../matching/updates"
 
@@ -29,18 +29,15 @@ export function useMixedPlaylistSync() {
     const checked = new Map<string, number>()
     const tick = async () => {
       try {
-        await useMixedPlaylistStore.getState().load()
+        if (!useMixedPlaylistStore.getState().loaded) await useMixedPlaylistStore.getState().load()
         if (!active) return
         if (initialCheck) { initialCheck = false; offerMatching() }
         const playlist = useMixedPlaylistStore.getState().playlists.filter(item => (item.automatic || mixedWriteCanRecover(item)) &&
           (item.merge || item.items.length || Object.keys(item.providers).length) &&
           Object.entries(item.owners).every(([side, owner]) => side === "plex" ? owner === scope && (!provider?.isOffline || external && item.external?.listenbrainz.enabled && item.external.listenbrainz.automatic) : owner === account) &&
           item.items.every(row => item.owners[row.original]))
-          .filter(item => {
-            const pending = item.items.some(row => playlistServices(item).some(service => counterpartPending(row, service)))
-            return Date.now() - (checked.get(item.id) ?? 0) >= (mixedWriteCanRecover(item) ? 30000 : item.status === "syncing" || pending ? 15000 : 120000)
-          })
-          .sort((a, b) => (checked.get(a.id) ?? 0) - (checked.get(b.id) ?? 0))[0]
+          .filter(item => Date.now() >= nextPlaylistSyncAt(item, checked.get(item.id)))
+          .sort((a, b) => nextPlaylistSyncAt(a, checked.get(a.id)) - nextPlaylistSyncAt(b, checked.get(b.id)))[0]
         if (playlist && !useMixedPlaylistStore.getState().running[playlist.id]) {
           checked.set(playlist.id, Date.now())
           await useMixedPlaylistStore.getState().sync(playlist.id)

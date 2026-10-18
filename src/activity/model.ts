@@ -1,6 +1,5 @@
 import { counterpartPending } from "../mixedPlaylists/matching"
 import {
-  mixedWriteCanRecover,
   playlistServices,
   type MixedPlaylist,
   type Owners,
@@ -158,47 +157,17 @@ export function ownsPlaylistActivity(playlist: MixedPlaylist, owners: Owners) {
 export function mixedPlaylistActivity(
   playlist: MixedPlaylist,
   running: boolean,
-  phase?: PlaylistActivityPhase,
-  offline = false
+  phase?: PlaylistActivityPhase
 ): Activity | null {
+  // Coverage and recovery receipts belong in playlist Info. Only an executing
+  // operation contributes a domain row; actual queued jobs come from Butler.
+  if (!running) return null
   const services = playlistServices(playlist)
   const pending = playlist.items.filter((row) =>
     services.some((service) => counterpartPending(row, service))
   ).length
   const checked = playlist.items.length - pending
-  const unsettled = !!(
-    playlist.write ||
-    playlist.detailsWrite ||
-    playlist.artworkWrite ||
-    playlist.listenbrainz?.creationPending ||
-    playlist.listenbrainz?.detailsWrite
-  )
-  const recovering = mixedWriteCanRecover(playlist)
-  const review = !recovering && (
-    playlist.status === "conflict" || playlist.status === "error" || unsettled
-  )
-  const queued = recovering || playlist.automatic && (pending > 0 || !!playlist.merge?.pending)
-  const throttled = playlist.items.some(
-    (row) =>
-      row.match.status === "pending" &&
-      /YouTube Music (?:is rate limited|request queue is busy)\./.test(
-        row.match.message ?? ""
-      )
-  )
-  if (!running && !review && !queued) return null
-  const mode = !running
-    ? recovering
-      ? offline ? "Verification paused · waiting for connection" : "Verifying playlist changes · retries automatically"
-      : review
-      ? playlist.write
-        ? "Waiting for playlist write verification"
-        : "Sync needs review"
-      : offline
-        ? "Matching paused"
-        : throttled
-          ? "Waiting for YouTube Music · retries automatically"
-          : playlist.merge?.pending ? "Preparing merge queued" : "Matching queued"
-    : phase?.kind === "preparing"
+  const mode = phase?.kind === "preparing"
       ? "Preparing source playlists"
       : phase?.kind === "matching"
       ? `Matching ${phase.target ? serviceName(phase.target) : "songs"}${phase.syncing ? " · syncing verified songs" : ""}`
@@ -220,12 +189,8 @@ export function mixedPlaylistActivity(
         const synced = playlist.baseline[service]?.items.length ?? 0
         return `${serviceName(service)} · ${count(matched)} available · ${count(synced)} synced`
       }),
-      ...(running && review && phase?.kind === "matching"
-        ? ["Sync needs review in Info; matching continues."]
-        : []),
     ].join("\n"),
-    busy: running,
-    state: running ? undefined : review || offline ? "paused" : "waiting",
+    busy: true,
     progress:
       pending || phase?.kind === "matching"
         ? {
@@ -235,8 +200,8 @@ export function mixedPlaylistActivity(
           }
         : undefined,
     action: {
-      label: review && !running ? "Review sync" : "Open playlist",
-      href: `/mixed-playlist/${encodeURIComponent(playlist.id)}${review && !running ? "?info=sync" : ""}`,
+      label: "Open playlist",
+      href: `/mixed-playlist/${encodeURIComponent(playlist.id)}`,
     },
   }
 }

@@ -9,8 +9,8 @@ export function mixedSyncStatus(playlist: MixedPlaylist, running: boolean, queue
       title: phase?.kind === "matching" && phase.syncing ? "Matching songs and syncing verified songs" : `${label} this playlist` }
   }
   if (queued) return { label: "Queued", button: "Queued…", busy: true, queued: true, review: false, title: "Playlist sync is queued" }
-  if (recovering) return { label: "Verification queued", button: "Sync", busy: false, queued: true, review: false,
-    title: "Verify the last playlist change and resume sync" }
+  if (recovering) return { label: "Verification pending", button: "Sync", busy: false, queued: false, review: false,
+    title: "Check upstream playlists and resume pending changes" }
   if (review) return { label: "Sync paused", button: "Review sync", busy: false, queued: false, review: true,
     title: playlist.write ? "Playlist write is awaiting verification. Open sync details." : "Open playlist sync details" }
   return { label: "Sync", button: "Sync", busy: false, queued: false, review: false, title: "Match and sync this playlist" }

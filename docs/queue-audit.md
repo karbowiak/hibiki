@@ -61,7 +61,7 @@ admission, resource contention, retries, ownership and restart behavior.
 
 | Task family | Trigger and reuse | Bounds / correctness |
 | --- | --- | --- |
-| Mixed playlists | Retained merge/edit intent; pending/settled polling; relevant index changes | Artist/release grouping shares catalogue pages; bounded matching and write passes; local revisions and remote receipts stay authoritative |
+| Mixed playlists | New work continues in bounded turns; hourly/manual upstream checks; relevant index changes | Last check persists across restarts; unchanged misses stay settled until their recording changes or explicit retry; artist/release grouping shares catalogue pages; local revisions and remote receipts stay authoritative |
 | Linked ListenBrainz playlists | Explicit links and configured automatic sync | Ownership/holds checked; bounded write budget; interrupted writes require fresh verification |
 | Favorites | Hourly/manual import; prompt export of new likes/resolved identities | Separate bounded matching backlog; pending receipts settle first; acknowledgements do not trigger another full import |
 | Exact ratings | New intent, actionable pending retry, relevant index event | Current enabled accounts only; 20-entry rotating turns; per-song intent IDs protect newer ratings |

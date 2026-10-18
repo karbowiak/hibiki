@@ -10,8 +10,10 @@ const credits = (track: MusicTrack) => itemArtistCredits(track).map(credit => la
 /** Retry old search misses once through the grouped artist/release catalog. */
 export const COUNTERPART_POLICY = 4
 export function counterpartPending(row: MixedOccurrence, target: Service) {
+  const source = row.songs[row.original]?.track
   return (!row.songs[target] || !!row.songs[target]?.stale) &&
-    (row.match.status === "pending" || row.match.policy !== COUNTERPART_POLICY)
+    (row.match.status === "pending" || row.match.policy !== COUNTERPART_POLICY ||
+      !!source && !!row.match.fingerprint && row.match.fingerprint !== recordingFingerprint(source))
 }
 const creditKey = (name: string) => label(name).normalize("NFKD")
   .replace(/(\p{Script=Latin})\p{M}+/gu, "$1").normalize("NFC").replace(/[^\p{L}\p{N}\p{M}]/gu, "")
@@ -173,7 +175,7 @@ export async function matchPlaylistBatch(playlist: MixedPlaylist, target: Servic
       ...item, songs: result.status === "matched" ? { ...item.songs, [target]: verifiedSongReference(result.track, item.songs[target]) } : item.songs,
       remote: result.status === "matched" && item.songs[target]?.stale && item.songs[target]?.track.id !== result.track.id
         ? { ...item.remote, [target]: undefined } : item.remote,
-      match: counterpartAttempt(result),
+      match: { ...counterpartAttempt(result), fingerprint },
     }) })
     completed++
     // Throttling is not evidence that the remaining songs are unavailable.

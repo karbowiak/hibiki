@@ -37,7 +37,7 @@ interface State {
   convert(alias: string): Promise<MixedPlaylist>
   copy(title: string, description: string, tracks: MusicTrack[], receipt: string): Promise<MixedPlaylist>
   append(alias: string, tracks: MusicTrack[], admission: string): Promise<void>
-  sync(id: string, retry?: boolean): Promise<void>
+  sync(id: string, retry?: boolean, retryMatches?: boolean): Promise<void>
   edit(id: string, operation: { kind: "move"; from: number; to: number } | { kind: "delete"; index: number }): Promise<void>
   chooseOrder(id: string, side: Service | "hibiki"): Promise<void>
   recover(id: string, destinationId?: string, reviewedNotApplied?: boolean): Promise<void>
@@ -159,7 +159,7 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
     })
     void get().sync(playlist.id).catch(() => {})
   }),
-  sync: (id, retry = false) => serial(id, async () => {
+  sync: (id, retry = false, retryMatches = false) => serial(id, async () => {
     const capture = captureMusicOwner()
     let playlist = await latest(id)
     if (!playlist.merge && !playlist.items.length && !Object.keys(playlist.providers).length) return
@@ -216,13 +216,17 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
         // Flush known songs first. Readback problems pause writes, not matching.
         return syncMixedPlaylist(value, { adapters, current, save, maxWrites: 10, verify })
       }, match: async (value, save) => {
-        const resolve = createPlaylistCounterpartResolver(value.items.flatMap(row => row.songs[row.original] ? [row.songs[row.original]!.track] : []), retry, current)
+        const targets = playlistServices(value).filter(target => value.items.some(row =>
+          retryMatches ? !row.songs[target] || row.songs[target]?.stale : counterpartPending(row, target)))
+        if (!targets.length) return value
+        const resolve = createPlaylistCounterpartResolver(value.items.flatMap(row => row.songs[row.original] ? [row.songs[row.original]!.track] : []), retryMatches, current)
         try {
-          for (const target of playlistServices(value)) {
+          for (const target of targets) {
             matchingTarget = target; workPhase()
-            // Finish new work before recycling old misses back to the front.
-            if (retry || (!value.items.some(row => counterpartPending(row, target)) && value.items.some(row => !row.songs[target] && row.match.checkedAt && Date.now() - row.match.checkedAt > 3600000)))
-              value = await save({ ...value, items: value.items.map(row => (row.songs[target] && !row.songs[target]?.stale) || (!retry && (!row.match.checkedAt || Date.now() - row.match.checkedAt <= 3600000)) ? row : { ...row, match: { status: "pending" } }) })
+            // Ordinary Sync reconciles upstream changes. Only the dedicated
+            // Retry unmatched songs action discards settled matching results.
+            if (retryMatches)
+              value = await save({ ...value, items: value.items.map(row => row.songs[target] && !row.songs[target]?.stale ? row : { ...row, match: { status: "pending" } }) })
             const batch = await matchPlaylistBatch(value, target, { current, save, limit: 20,
               resolve: track => resolve(track, target) })
             value = batch.playlist
@@ -252,7 +256,11 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
         await save({ ...retained, status: retained.status === "conflict" ? "conflict" : "error", message: String(failure instanceof Error ? failure.message : failure) })
       }
       throw failure
-    } finally { set(state => ({ running: { ...state.running, [id]: false }, phases: { ...state.phases, [id]: undefined } })) }
+    } finally {
+      try {
+        if (current()) await save({ ...await latest(id), syncCheckedAt: Date.now() })
+      } finally { set(state => ({ running: { ...state.running, [id]: false }, phases: { ...state.phases, [id]: undefined } })) }
+    }
   }),
   externalSync: (id, options = {}) => serial(id, async () => {
     const capture = captureMusicOwner()

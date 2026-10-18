@@ -7,7 +7,6 @@ import { useCatalogueStore } from "../offline/catalogueStore"
 import { useMixedPlaylistStore } from "../stores/mixedPlaylistStore"
 import { useLinkedPlaylistStore } from "../stores/linkedPlaylistStore"
 import { useFavoritesStore } from "../stores/favoritesStore"
-import type { FavoriteService } from "../favorites/types"
 import { useListenBrainzStore } from "../metadata/listenbrainz/authStore"
 import { useYoutubeMusicDiscoveryStore } from "../backends/ytmusic/discovery"
 import { useYoutubeMusicRatingsStore } from "../backends/ytmusic/ratings"
@@ -92,7 +91,6 @@ export function useBackgroundActivities(open: boolean): Activity[] {
     useShallow((state) => ({
       links: state.links,
       running: state.running,
-      checkedErrors: state.checkedErrors,
       creationIntents: state.creationIntents,
       activeCreationIds: state.activeCreationIds,
     }))
@@ -109,7 +107,6 @@ export function useBackgroundActivities(open: boolean): Activity[] {
       session: state.session,
       running: state.running,
       resetting: state.resetting,
-      pending: Object.entries(state.collection.bindings).filter(([service, binding]) => state.collection.settings[service as FavoriteService] && (binding?.pending || binding?.creation)).map(([service]) => service === "lastfm" ? "Last.fm" : service === "listenbrainz" ? "ListenBrainz" : "Plex").join(" and "),
     }))
   )
   const ratings = useYoutubeMusicRatingsStore(
@@ -212,8 +209,7 @@ export function useBackgroundActivities(open: boolean): Activity[] {
         const row = mixedPlaylistActivity(
           playlist,
           !!mixed.running[playlist.id],
-          mixed.phases[playlist.id],
-          offline
+          mixed.phases[playlist.id]
         )
         if (row) activities.push(row)
       }
@@ -225,26 +221,15 @@ export function useBackgroundActivities(open: boolean): Activity[] {
           !samePlaylistIdentity(link.library, account)
         )
           continue
-        const busy = !!linked.running[link.id],
-          incomplete = link.incomplete
-        const review =
-          ["conflict", "unknown", "error"].includes(link.state) ||
-          !!linked.checkedErrors[link.id]
-        const pending = incomplete && !incomplete.matchingDone && link.enabled
-        if (!busy && !review && !pending && !link.job) continue
+        const busy = !!linked.running[link.id], incomplete = link.incomplete
+        if (!busy) continue
         activities.push({
           id: `linked:${link.id}`,
           label: link.baseline.library.title,
           detail: [
-            busy
-              ? incomplete && !incomplete.matchingDone
+            incomplete && !incomplete.matchingDone
                 ? "Matching ListenBrainz songs"
-                : "Syncing ListenBrainz"
-              : review
-                ? "Sync needs review"
-                : link.paused || offline
-                  ? "Sync paused"
-                  : "Sync queued",
+                : "Syncing ListenBrainz",
             ...(incomplete
               ? [
                   `${incomplete.matchingCursor.toLocaleString()} of ${incomplete.total.toLocaleString()} checked · ${incomplete.matchedCount.toLocaleString()} matched`,
@@ -255,11 +240,6 @@ export function useBackgroundActivities(open: boolean): Activity[] {
               : []),
           ].join("\n"),
           busy,
-          state: busy
-            ? undefined
-            : review || link.paused || offline
-              ? "paused"
-              : "waiting",
           action: {
             label: "Open playlist",
             href: `/playlist/${encodeURIComponent(link.libraryPlaylistId)}`,
@@ -272,17 +252,14 @@ export function useBackgroundActivities(open: boolean): Activity[] {
         if (
           !samePlaylistIdentity(owner.library, account) ||
           owner.listenbrainz.user !== auth.username ||
-          (!busy && ["linked", "cancelled"].includes(intent.state))
+          !busy
         )
           continue
         activities.push({
           id: `creation:${intent.id}`,
           label: intent.title,
-          detail: busy
-            ? "Creating linked playlist"
-            : "Playlist creation needs review",
+          detail: "Creating linked playlist",
           busy,
-          state: busy ? undefined : "paused",
           action: { label: "Review playlists", href: "/collection/playlists" },
         })
       }
@@ -290,16 +267,14 @@ export function useBackgroundActivities(open: boolean): Activity[] {
     if (
       favorites.provider === provider &&
       favorites.session === session &&
-      (favorites.running || favorites.resetting || favorites.pending)
+      (favorites.running || favorites.resetting)
     )
       activities.push({
         id: "favorites",
         label: favorites.resetting
           ? "Resetting favorite sync"
-          : favorites.running ? "Syncing liked songs" : "Liked-song sync pending",
+          : "Syncing liked songs",
         busy: favorites.running || favorites.resetting,
-        state: favorites.running || favorites.resetting ? undefined : "waiting",
-        detail: !favorites.running && favorites.pending ? `Waiting to retry ${favorites.pending}.` : undefined,
         action: { label: "Liked songs", href: "/collection/tracks" },
       })
     if (youtube.connected && ratings.owner === youtube.accountId) {

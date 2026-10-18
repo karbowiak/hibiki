@@ -70,21 +70,15 @@ test("queue and domain reports render each operation once, retaining its navigat
   })
 })
 
-test("a queued retry cannot turn a playlist requiring write verification into a running indicator", () => {
-  const domain = {
-    id: "mixed:one",
-    label: "My playlist",
-    busy: false,
-    state: "paused" as const,
-    detail: "Waiting for playlist write verification",
-    action: { label: "Review sync", href: "/playlist/one?info=sync" },
-  }
-  expect(
-    combineBackgroundActivities(
-      [domain],
-      [{ id: domain.id, label: "Playlist sync", busy: true }]
-    )
-  ).toEqual([domain])
+test("finished playlist diagnostics disappear while actual queue admissions remain visible", () => {
+  const value = playlist()
+  value.status = "error"
+  value.write = { id: "receipt", service: "plex", kind: "move", afterIds: [], state: "unknown" }
+  expect(mixedPlaylistActivity(value, false)).toBeNull()
+  const queued = { id: `mixed:${value.id}`, label: "Playlist sync", busy: false, state: "waiting" as const }
+  expect(combineBackgroundActivities([], [queued])).toEqual([queued])
+  const running = mixedPlaylistActivity(value, true)!
+  expect(combineBackgroundActivities([running], [queued])).toEqual([running])
 })
 
 test("native queue activity distinguishes waiting capacity from running jobs", () => {
@@ -175,12 +169,10 @@ test("playlist progress distinguishes checks, available recordings and acknowled
     total: 4,
     label: "Songs checked",
   })
-  const waiting = mixedPlaylistActivity(value, false)!
-  expect(waiting.state).toBe("waiting")
-  expect(waiting.busy).toBe(false)
+  expect(mixedPlaylistActivity(value, false)).toBeNull()
 })
 
-test("ordinary matcher misses finish quietly; known writes recover automatically without review notices", () => {
+test("best-effort matching outcomes and retained receipts do not keep a finished playlist in Activity", () => {
   const value = playlist()
   value.items[3].match = {
     status: "missing",
@@ -198,18 +190,19 @@ test("ordinary matcher misses finish quietly; known writes recover automatically
   }
   value.automatic = false
   value.status = "error"
-  const recovery = mixedPlaylistActivity(value, false)!
-  expect(recovery.state).toBe("waiting")
-  expect(recovery.detail).toContain("retries automatically")
-  expect(recovery.detail).not.toContain("review")
-  expect(recovery.action?.href).not.toContain("?info=sync")
+  expect(mixedPlaylistActivity(value, false)).toBeNull()
+  value.status = "conflict"
+  expect(mixedPlaylistActivity(value, false)).toBeNull()
+  value.write = undefined
+  value.detailsWrite = { service: "plex", before: value.baseline.plex!, title: value.title, description: "" }
+  expect(mixedPlaylistActivity(value, false)).toBeNull()
   const ongoing = mixedPlaylistActivity(value, true, {
     kind: "matching",
     target: "ytmusic",
   })!
   expect(ongoing.busy).toBe(true)
   expect(ongoing.detail).not.toContain("needs review")
-  expect(mixedPlaylistActivity(value, false, undefined, true)?.state).toBe("paused")
+  expect(mixedPlaylistActivity(value, false)).toBeNull()
 })
 
 test("old accounts cannot surface playlist activity, including locally saved drafts", () => {
@@ -221,9 +214,7 @@ test("old accounts cannot surface playlist activity, including locally saved dra
   expect(
     ownsPlaylistActivity(value, { plex: "another", ytmusic: "ytm-owner" })
   ).toBe(false)
-  expect(mixedPlaylistActivity(value, false, undefined, true)?.state).toBe(
-    "paused"
-  )
+  expect(mixedPlaylistActivity(value, false)).toBeNull()
 })
 
 test("download queue activity includes remaining work, transfer progress and offline pause", () => {
