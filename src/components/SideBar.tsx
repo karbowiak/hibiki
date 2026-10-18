@@ -8,7 +8,7 @@ import { useAccentStore } from "../stores/accentStore"
 import { useArtworkAppearanceStore } from "../stores/artworkAppearanceStore"
 import { ArtworkImage } from "./shared/ArtworkImage"
 import { Link, useLocation } from "wouter"
-import { useRef, useState, useEffect } from "react"
+import { Fragment, useRef, useState, useEffect } from "react"
 import { useVirtualWindow, virtualRef } from "../hooks/useVirtualWindow"
 import clsx from "clsx"
 import { useShallow } from "zustand/react/shallow"
@@ -56,10 +56,8 @@ const LIBRARY_EXPANDED_KEY = "plex-sidebar-library-expanded"
 function ServerLibraryNavigation() {
   const [location] = useLocation()
   const active = location === "/server-library" || location.startsWith("/server-library/")
-  const [expanded, setExpanded] = useState(() => {
-    try { return active || localStorage.getItem("hibiki-server-library-expanded") === "true" } catch { return active }
-  })
-  useEffect(() => { if (active) setExpanded(true) }, [location, active])
+  const [expanded, setExpanded] = useState(active)
+  useEffect(() => { setExpanded(active) }, [location, active])
   return <li>
     <div className={clsx("flex items-center rounded-md", active && "shell-nav-active bg-accent-tint-strong text-accent")}>
       <Link href="/server-library" aria-current={location === "/server-library" ? "page" : undefined}
@@ -67,10 +65,7 @@ function ServerLibraryNavigation() {
         <IconServer size={20} aria-hidden="true" /><span className="truncate">Server Library</span>
       </Link>
       <Button variant="bare" size="icon" aria-label={expanded ? "Collapse Server Library" : "Expand Server Library"}
-        aria-expanded={expanded} aria-controls="sidebar-server-library-links" onClick={() => setExpanded(previous => {
-          try { localStorage.setItem("hibiki-server-library-expanded", String(!previous)) } catch {}
-          return !previous
-        })} className="mr-1 shrink-0 rounded-md text-(--text-secondary) hover:bg-accent-tint">
+        aria-expanded={expanded} aria-controls="sidebar-server-library-links" onClick={() => setExpanded(previous => !previous)} className="mr-1 shrink-0 rounded-md text-(--text-secondary) hover:bg-accent-tint">
         <IconChevronRight size={16} className={expanded ? "rotate-90" : ""} aria-hidden="true" />
       </Button>
     </div>
@@ -473,7 +468,7 @@ export function SideBar({
                 ? location === "/library" || location.startsWith("/collection/")
                 : location === i.href
             return (
-              <li key={`${i.href}-${index}`}>
+              <Fragment key={`${i.href}-${index}`}><li>
                 <div
                   className={clsx(
                     "sidebar-nav-row flex items-center rounded-md",
@@ -483,14 +478,6 @@ export function SideBar({
                   <Link
                     href={i.href}
                     aria-current={location === i.href ? "page" : undefined}
-                    onClick={() => {
-                      if (i.href === "/library" && !libraryExpanded) {
-                        setLibraryExpanded(true)
-                        try {
-                          localStorage.setItem(LIBRARY_EXPANDED_KEY, "true")
-                        } catch {}
-                      }
-                    }}
                     className={clsx(
                       "shell-nav-link sidebar-nav-link flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded px-3 no-underline transition-colors duration-200 hover:bg-accent-tint hover:fill-(--text-primary) hover:text-(--text-primary) hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
                       !isActive
@@ -570,10 +557,9 @@ export function SideBar({
                     ))}
                   </ul>
                 )}
-              </li>
+              </li>{i.href === "/library" && <ServerLibraryNavigation />}</Fragment>
             )
           })}
-        <ServerLibraryNavigation />
       </ul>
 
       <div className="sidebar-create-wrap shrink-0 pb-1 pt-4 text-sm font-medium">
