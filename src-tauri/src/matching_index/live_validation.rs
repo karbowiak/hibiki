@@ -94,6 +94,76 @@ async fn full_live_census_measures_requests_bytes_and_foreground_reads() {
         }
         return;
     }
+    if std::env::var_os("HIBIKI_MATCHING_LIVE_FORMAT_SWEEP").is_some() {
+        // Importing libraries may never hold a stable census long enough for a
+        // complete two-pass measurement. Validate page shapes independently,
+        // without claiming unique membership, freshness or deletion evidence.
+        let started = Instant::now();
+        let mut progress = Instant::now();
+        let mut kinds = Vec::new();
+        let mut calls = 0usize;
+        let mut bytes = 0i64;
+        for kind in ["artist", "album", "track"] {
+            let mut offset = 0i64;
+            let mut initial = None;
+            let mut unnamed = 0usize;
+            loop {
+                assert!(
+                    started.elapsed() < Duration::from_secs(1800),
+                    "Format sweep exceeded its bound"
+                );
+                assert!(
+                    std::fs::read(&path).ok().as_deref() == Some(original.as_slice()),
+                    "Settings changed; retire this read-only validation"
+                );
+                calls += 1;
+                let page = tokio::time::timeout(
+                    Duration::from_secs(30),
+                    transport::page(&client, settings.section_id, kind, offset, modern),
+                )
+                .await
+                .expect("Format sweep page timed out")
+                .unwrap_or_else(|reason| {
+                    panic!("Format sweep: kind={kind} offset={offset}: {reason}")
+                });
+                assert!(
+                    page.total <= 2_000_000,
+                    "Library exceeds this validation's bound"
+                );
+                let total = *initial.get_or_insert(page.total);
+                unnamed += page
+                    .rows
+                    .iter()
+                    .filter(|row| row.title_key.is_empty())
+                    .count();
+                bytes += page.bytes;
+                offset += page.rows.len() as i64;
+                if progress.elapsed() >= Duration::from_secs(30) {
+                    println!(
+                        "live_format_progress {}",
+                        serde_json::json!({
+                        "seconds":started.elapsed().as_secs(),"kind":kind,"rowsExamined":offset,
+                        "initialTotal":total,"latestTotal":page.total,"pageCalls":calls,"bodyBytes":bytes})
+                    );
+                    progress = Instant::now();
+                }
+                if offset >= total.min(page.total) {
+                    kinds.push(serde_json::json!({"kind":kind,"rowsExamined":offset,
+                        "initialTotal":total,"latestTotal":page.total,"unnamedRowsExamined":unnamed}));
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(125)).await;
+            }
+        }
+        println!(
+            "live_format_summary {}",
+            serde_json::json!({
+            "seconds":started.elapsed().as_secs_f64(),"serverVersion":identity.version,
+            "kinds":kinds,"pageCalls":calls,"bodyBytes":bytes,
+            "scope":"page parsing only; counts may overlap while importing; no membership, storage, foreground or audible claim"})
+        );
+        return;
+    }
     let directory = tempfile::tempdir().unwrap();
     let database = directory.path().join("disposable-index.sqlite");
     let conn = Connection::open(&database).unwrap();

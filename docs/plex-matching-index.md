@@ -188,5 +188,11 @@ both listing passes, response bytes, database size, warm lookup batches and
 concurrent local reads/real artist requests. It performs no remote mutations,
 opens no application database and does not measure renderer or audible playback.
 
+If imports prevent a stable census, `HIBIKI_MATCHING_LIVE_FORMAT_SWEEP=1` uses the
+same opt-in test to check bounded pages across each kind independently. It checks
+the compact parser against more library metadata without opening SQLite. Its
+examined-row counts may overlap while the library changes: they do not establish
+complete membership, pruning eligibility, storage cost or foreground latency.
+
 Sources: [Plex API versioning and response customization](https://developer.plex.tv/pms/#section/API-Info),
 [Library API](https://developer.plex.tv/pms/#tag/Library).
