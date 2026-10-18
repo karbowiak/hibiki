@@ -4,6 +4,36 @@ These checks cover main before the next release. They are source/fixture and
 browser validations, not a claim that remote account mutations were exercised
 against a user's playlists. No release tag is created by this work.
 
+## Implementation handoff: #26, #30 and #34
+
+All three features are implemented and ready for client testing. The remaining
+live-library measurements and listening checks below are acceptance work, rather
+than missing implementation. Earlier synthetic measurements remain labelled as
+such; they do not establish a completed live census or an audible result.
+
+- **Matching index (#26):** Settings → Cache → Plex Matching Index shows separate
+  artist/release/song progress. Try Pause/Resume while a song plays. A late status
+  poll cannot override a control, and an unavailable reply releases the controls
+  for retry. A library switch retires pending work. A full live census remains an
+  optional diagnostic; no full-library scan was repeated for this handoff.
+- **Shared consumers (#30):** Reopen a matched YTM artist/release, then an artist
+  absent from Plex. Check mixed-queue playback, radio and playlist matching while
+  the index progresses. A verified Plex counterpart is preferred; missing or
+  unfinished matching leaves the YTM destination usable. Metadata removals and
+  newly indexed counterparts must update the relevant views without changing
+  saved playlist order or deliberate rating intent.
+- **Device correction (#34):** In Equalizer → Device correction, choose/import a
+  profile, Preview/Stop preview, Apply and Save to output. Compare with Enabled
+  unchecked, switch output A → B → A, and restart. Tone and correction remain
+  independently switchable; saved settings stay available offline. Listen for
+  unexpected clicks, clipping, position jumps or incorrect output recall. These
+  listening results require the user's client and outputs.
+
+Follow-up implementation separates the EQ tabs, keeps the tone sliders within
+narrow panels, exposes saved/modified output state and cancels a draft preview
+when leaving correction. The native filter/limiter path and scoped index storage
+are unchanged by this refinement.
+
 ## Navigation, browsing and presentation (#12–#15, #22)
 
 - Artist-credit tests cover the reported `NEEDY GIRL OVERDOSE, Aiobahn +81`
