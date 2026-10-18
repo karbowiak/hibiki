@@ -34,6 +34,8 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (21, include_str!("migrations/V21__matching_associations.sql")),
     (22, include_str!("migrations/V22__matching_relationships.sql")),
     (23, include_str!("migrations/V23__matching_reverse_lookup.sql")),
+    (24, include_str!("migrations/V24__provider_playlist_downloads.sql")),
+    (25, include_str!("migrations/V25__metadata_freshness.sql")),
 ];
 
 /// Run all pending migrations against the given connection.

@@ -227,8 +227,11 @@ mod tests {
                 Instant::now()
             }
         );
-        assert!(a >= start + GAP - Duration::from_millis(100));
-        assert!(b >= a + GAP);
+        // join! may poll either contender first. The limiter guarantees
+        // spacing, not the identity of the caller admitted first.
+        let (first,second) = if a <= b { (a,b) } else { (b,a) };
+        assert!(first >= start + GAP - Duration::from_millis(100));
+        assert!(second >= first + GAP);
     }
     #[tokio::test(start_paused = true)]
     async fn a_new_cooldown_retires_waiting_admission_and_grows_on_repeated_limits() {

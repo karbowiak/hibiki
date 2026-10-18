@@ -114,7 +114,7 @@ try {
     assert.ok(Math.abs(frame!.x - heroBox!.x) < 1, "mixed playlist has an outer inset")
     assert.equal(await overview.getByText("304 unmatched YTM", { exact: true }).count(), 1)
     assert.equal(await hero.getByRole("checkbox", { name: "Automatic sync", exact: true }).count(), 0)
-    assert.deepEqual(await hero.getByRole("button").allTextContents(), ["Play", "Shuffle", "Radio", "Syncing…", "More", "Info"])
+    assert.deepEqual(await hero.getByRole("button").allTextContents(), ["Play", "Shuffle", "Radio", "Syncing…", "Download", "More", "Info"])
     await hero.getByRole("button", { name: "Radio", exact: true }).click()
     const radio = await page.evaluate(() => (window as any).fixtureAppearance.drafts.radioCalls().at(-1))
     assert.equal(radio[1], "track")
@@ -141,7 +141,7 @@ try {
     await page.screenshot({ path: `${artifacts}/sync-${theme}.png` })
     await page.evaluate(() => (window as any).fixtureAppearance.mixedSyncProgress("unknown"))
     assert.equal(await page.getByRole("button", { name: "Review and retry pending write", exact: true }).count(), 0)
-    await hero.getByRole("button", { name: "Info", exact: true }).click()
+    await hero.getByRole("button", { name: "Playlist information", exact: true }).click()
     const syncInfo = page.getByRole("dialog", { name: "Merged playlist sync", exact: true })
     await syncInfo.getByRole("button", { name: "Review and retry pending write", exact: true }).waitFor()
     await syncInfo.getByRole("button", { name: "Close Merged playlist sync", exact: true }).click()
@@ -155,7 +155,7 @@ try {
       const height = (await page.locator('[aria-label="Playlist overview"]').boundingBox())!.height
       assert.ok(Math.abs(height - overviewHeight) < 1, `playlist overview heights differ: ${height} vs ${overviewHeight}`)
       assert.equal(await page.locator(".app-page-content").evaluate(element => getComputedStyle(element).paddingLeft), "0px")
-      assert.deepEqual(await page.locator(".media-detail-hero").getByRole("button").allTextContents(), ["Play", "Shuffle", "Radio", "Sync", "More", "Info"])
+      assert.deepEqual(await page.locator(".media-detail-hero").getByRole("button").allTextContents(), ["Play", "Shuffle", "Radio", "Sync", "Link Plex + YTM", "Download", "More", "Info"])
       if (path.startsWith("/ytmusic/")) {
         await page.locator(".media-detail-hero").getByRole("button", { name: "Radio", exact: true }).click()
         assert.equal(await page.evaluate(() => (window as any).fixtureAppearance.drafts.radioCalls().at(-1)[3]), "ytmusic")

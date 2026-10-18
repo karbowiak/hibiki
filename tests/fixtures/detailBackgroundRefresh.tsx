@@ -146,6 +146,8 @@ function load(_id: string, options: { force: boolean }) {
 }
 mock.module("../../src/stores/metadataCache", () => ({
   invalidateMetadataItem() {},
+  expireMetadataItem() {},
+  subscribeMetadataPages: () => () => {},
   getCachedArtist: () => cached,
   getCachedAlbum: () => cached,
   loadArtistPage: load,

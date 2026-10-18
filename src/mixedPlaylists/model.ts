@@ -76,6 +76,7 @@ export interface MixedPlaylist {
   baseline: Partial<Record<Service, RemotePlaylist>>
   baselineOrder?: string[]
   baselineTitle?: string
+  baselineDescription?: string
   /** Saved before an external write. An uncertain write is read back, never blindly retried. */
   write?: { id: string; service: Service; kind: "create" | "append" | "delete" | "move"; before?: RemotePlaylist; afterIds: string[]; destinationId?: string; state: "admitted" | "unknown" }
   admittedDrops: string[]

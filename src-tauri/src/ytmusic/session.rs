@@ -268,7 +268,7 @@ pub(crate) async fn check(app: &tauri::AppHandle, generation: u64) -> Result<(),
             if switched {
                 playback::forget_cache_owner(app);
                 if let Ok(directory) = app.path().app_cache_dir() {
-                    state.discovery_cache.clear(directory.join("ytmusic-discovery")).await;
+                    state.discovery_cache.clear(directory.join("metadata")).await;
                 }
             }
             if let (Some(path), Some(identity)) = (marker, identity.as_ref()) {
@@ -283,6 +283,7 @@ pub(crate) async fn check(app: &tauri::AppHandle, generation: u64) -> Result<(),
                 current.status.next_refresh_at = Some(next_refresh(&cookies, now()));
                 current.interactive = false;
             });
+            crate::provider_downloads::start_youtube_worker(app.clone());
             if let Some(window) = app.get_webview_window(WINDOW) {
                 let _ = window.hide();
             }

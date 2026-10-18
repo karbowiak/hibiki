@@ -13,6 +13,8 @@ const dom = new JSDOM(
 )
 globalThis.document = dom.window.document
 globalThis.window = dom.window as any
+globalThis.location = dom.window.location
+globalThis.history = dom.window.history
 globalThis.localStorage = dom.window.localStorage
 globalThis.getComputedStyle = dom.window.getComputedStyle
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true

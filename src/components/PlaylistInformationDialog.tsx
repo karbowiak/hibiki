@@ -29,6 +29,7 @@ export function PlaylistInformationDialog({
   sourceLabel,
   syncContent,
   downloadsSupported = true,
+  downloadControls,
 }: {
   playlist: MusicPlaylist
   downloads?: EntityDownloadStatus
@@ -39,6 +40,14 @@ export function PlaylistInformationDialog({
   sourceLabel?: string
   syncContent?: ReactNode
   downloadsSupported?: boolean
+  downloadControls?: {
+    issues: DownloadIssue[]
+    loadMore?(): void
+    retry(): void
+    remove(): void
+    busy: boolean
+    disabled?: boolean
+  }
 }) {
   const provider = useProviderStore((state) => state.provider)
   const [owner] = useState(() => ({
@@ -65,6 +74,7 @@ export function PlaylistInformationDialog({
   )
   useEffect(() => setOffset(0), [downloads?.failed])
   useEffect(() => {
+    if (downloadControls) return
     const captured = captureDownloadOwner()
     if (!captured || !downloads?.failed) {
       setIssues([])
@@ -103,7 +113,7 @@ export function PlaylistInformationDialog({
     return () => {
       active = false
     }
-  }, [playlist.id, downloads?.failed, offset, revision])
+  }, [playlist.id, downloads?.failed, offset, revision, !!downloadControls])
   async function retryDownloads() {
     const captured = captureDownloadOwner()
     if (!captured || busy) return
@@ -151,7 +161,12 @@ export function PlaylistInformationDialog({
     >
       <div className="space-y-6">
         <dl className="flex flex-wrap gap-x-8 gap-y-3 text-sm">
-          {sourceLabel && <div><dt className="text-(--text-secondary)">Source</dt><dd className="mt-1 font-medium">{sourceLabel}</dd></div>}
+          {sourceLabel && (
+            <div>
+              <dt className="text-(--text-secondary)">Source</dt>
+              <dd className="mt-1 font-medium">{sourceLabel}</dd>
+            </div>
+          )}
           <div>
             <dt className="text-(--text-secondary)">Songs</dt>
             <dd className="mt-1 font-medium tabular-nums">
@@ -179,126 +194,152 @@ export function PlaylistInformationDialog({
             className="text-sm leading-relaxed text-(--text-secondary)"
           />
         )}
-        {downloadsSupported && <section
-          aria-labelledby="playlist-download-heading"
-          className="border-t border-(--border) pt-5"
-        >
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h3 id="playlist-download-heading" className="font-semibold">
-              Offline downloads
-            </h3>
-            {!!downloads?.requested && !!downloads.failed && (
+        {downloadsSupported && (
+          <section
+            aria-labelledby="playlist-download-heading"
+            className="border-t border-(--border) pt-5"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h3 id="playlist-download-heading" className="font-semibold">
+                Offline downloads
+              </h3>
+              {!!downloads?.requested && !!downloads.failed && (
+                <Button
+                  size="md"
+                  variant="secondary"
+                  className="media-secondary shell-control-secondary text-sm"
+                  disabled={
+                    downloadControls
+                      ? downloadControls.busy || downloadControls.disabled
+                      : busy || provider?.isOffline
+                  }
+                  onClick={() =>
+                    downloadControls
+                      ? downloadControls.retry()
+                      : void retryDownloads()
+                  }
+                >
+                  {busy ? "Queueing…" : "Retry downloads"}
+                </Button>
+              )}
+            </div>
+            <p className="mt-2 text-sm text-(--text-secondary)">
+              {downloads?.requested
+                ? `${downloads.downloaded.toLocaleString()} of ${downloads.total.toLocaleString()} songs saved${downloads.pending ? ` · ${downloads.pending} downloading or paused` : ""}${downloads.failed ? ` · ${downloads.failed} failed` : ""}.${downloadControls ? "" : " New songs are checked at startup and hourly while connected."}`
+                : "This playlist is not set to stay downloaded."}
+            </p>
+            {downloadControls && downloads?.requested && (
               <Button
-                size="md"
-                variant="secondary"
-                className="media-secondary shell-control-secondary text-sm"
-                disabled={busy || provider?.isOffline}
-                onClick={() => void retryDownloads()}
+                className="mt-3"
+                disabled={downloadControls.busy}
+                onClick={downloadControls.remove}
               >
-                {busy ? "Queueing…" : "Retry downloads"}
+                {downloads.pending
+                  ? "Cancel and remove downloads"
+                  : "Remove downloads"}
               </Button>
             )}
-          </div>
-          <p className="mt-2 text-sm text-(--text-secondary)">
-            {downloads?.requested
-              ? `${downloads.downloaded.toLocaleString()} of ${downloads.total.toLocaleString()} songs saved${downloads.pending ? ` · ${downloads.pending} downloading` : ""}${downloads.failed ? ` · ${downloads.failed} failed` : ""}. New songs are checked at startup and hourly while connected.`
-              : "This playlist is not set to stay downloaded."}
-          </p>
-          {issues.length > 0 && (
-            <ul className="mt-4 divide-y divide-(--border)">
-              {issues.map((issue) => (
-                <li key={issue.trackId} className="py-3">
-                  <p className="text-sm font-medium">
-                    {issue.title}
-                    {issue.artist && (
-                      <span className="font-normal text-(--text-secondary)">
-                        {" "}
-                        · {issue.artist}
-                      </span>
-                    )}
-                  </p>
-                  <p className="mt-1 text-sm leading-relaxed text-(--text-secondary)">
-                    {issue.error}
-                  </p>
-                </li>
-              ))}
-            </ul>
-          )}
-          {loading && (
-            <p
-              role="status"
-              className="mt-3 text-sm text-(--text-secondary)"
-            >
-              Loading download details…
-            </p>
-          )}
-          {issues.length < total && !loading && (
-            <Button
-              size="md"
-              variant="secondary"
-              className="media-secondary shell-control-secondary mt-3 text-sm"
-              onClick={() => setOffset(issues.length)}
-            >
-              Show more issues
-            </Button>
-          )}
-        </section>}
-        {syncContent ? <section className="border-t border-(--border) pt-5"><h3 className="mb-3 font-semibold">Playlist sync</h3>{syncContent}</section> : <section
-          aria-labelledby="playlist-sync-heading"
-          className="border-t border-(--border) pt-5"
-        >
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h3 id="playlist-sync-heading" className="font-semibold">
-              Playlist sync
-            </h3>
-            {link && (
-              <Button
-                size="md"
-                variant="secondary"
-                className="media-secondary shell-control-secondary text-sm"
-                onClick={onReviewSync}
-              >
-                Open Sync review
-              </Button>
-            )}
-          </div>
-          <p className="mt-2 text-sm text-(--text-secondary)">
-            {syncError ||
-              (link
-                ? playlistNeedsReview(link)
-                  ? "Some songs or changes need review."
-                  : link.paused || !link.enabled
-                    ? "Automatic sync is paused."
-                    : "This playlist is connected to ListenBrainz."
-                : "No playlist sync is configured.")}
-          </p>
-          {link?.message && (
-            <p className="mt-2 text-sm leading-relaxed text-(--text-secondary)">
-              {link.message}
-            </p>
-          )}
-          {unmatched.length > 0 && (
-            <>
-              <h4 className="mt-4 text-sm font-medium">
-                {unmatched.length.toLocaleString()} unmatched{" "}
-                {unmatched.length === 1 ? "song" : "songs"}
-              </h4>
-              <ul className="mt-2 space-y-2 text-sm text-(--text-secondary)">
-                {unmatched.slice(0, 8).map((item) => (
-                  <li key={item.occurrenceId}>
-                    {item.track.title} · {item.track.artist}
+            {(downloadControls?.issues ?? issues).length > 0 && (
+              <ul className="mt-4 divide-y divide-(--border)">
+                {(downloadControls?.issues ?? issues).map((issue, index) => (
+                  <li key={`${issue.trackId}:${index}`} className="py-3">
+                    <p className="text-sm font-medium">
+                      {issue.title}
+                      {issue.artist && (
+                        <span className="font-normal text-(--text-secondary)">
+                          {" "}
+                          · {issue.artist}
+                        </span>
+                      )}
+                    </p>
+                    <p className="mt-1 text-sm leading-relaxed text-(--text-secondary)">
+                      {issue.error}
+                    </p>
                   </li>
                 ))}
               </ul>
-              {unmatched.length > 8 && (
-                <p className="mt-2 text-sm text-(--text-secondary)">
-                  Open Sync review to see all unmatched songs and choose their
-                  matches.
-                </p>
+            )}
+            {loading && (
+              <p role="status" className="mt-3 text-sm text-(--text-secondary)">
+                Loading download details…
+              </p>
+            )}
+            {(downloadControls ? downloadControls.issues.length < (downloads?.failed ?? 0) : issues.length < total) && !loading && (
+              <Button
+                size="md"
+                variant="secondary"
+                className="media-secondary shell-control-secondary mt-3 text-sm"
+                disabled={downloadControls?.busy}
+                onClick={() => downloadControls ? downloadControls.loadMore?.() : setOffset(issues.length)}
+              >
+                Show more issues
+              </Button>
+            )}
+          </section>
+        )}
+        {syncContent ? (
+          <section className="border-t border-(--border) pt-5">
+            <h3 className="mb-3 font-semibold">Playlist sync</h3>
+            {syncContent}
+          </section>
+        ) : (
+          <section
+            aria-labelledby="playlist-sync-heading"
+            className="border-t border-(--border) pt-5"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h3 id="playlist-sync-heading" className="font-semibold">
+                Playlist sync
+              </h3>
+              {link && (
+                <Button
+                  size="md"
+                  variant="secondary"
+                  className="media-secondary shell-control-secondary text-sm"
+                  onClick={onReviewSync}
+                >
+                  Open Sync review
+                </Button>
               )}
-            </>
-          )}
-        </section>}
+            </div>
+            <p className="mt-2 text-sm text-(--text-secondary)">
+              {syncError ||
+                (link
+                  ? playlistNeedsReview(link)
+                    ? "Some songs or changes need review."
+                    : link.paused || !link.enabled
+                      ? "Automatic sync is paused."
+                      : "This playlist is connected to ListenBrainz."
+                  : "No playlist sync is configured.")}
+            </p>
+            {link?.message && (
+              <p className="mt-2 text-sm leading-relaxed text-(--text-secondary)">
+                {link.message}
+              </p>
+            )}
+            {unmatched.length > 0 && (
+              <>
+                <h4 className="mt-4 text-sm font-medium">
+                  {unmatched.length.toLocaleString()} unmatched{" "}
+                  {unmatched.length === 1 ? "song" : "songs"}
+                </h4>
+                <ul className="mt-2 space-y-2 text-sm text-(--text-secondary)">
+                  {unmatched.slice(0, 8).map((item) => (
+                    <li key={item.occurrenceId}>
+                      {item.track.title} · {item.track.artist}
+                    </li>
+                  ))}
+                </ul>
+                {unmatched.length > 8 && (
+                  <p className="mt-2 text-sm text-(--text-secondary)">
+                    Open Sync review to see all unmatched songs and choose their
+                    matches.
+                  </p>
+                )}
+              </>
+            )}
+          </section>
+        )}
         {error && (
           <p role="alert" className="text-sm text-(--text-primary)">
             {error}{" "}

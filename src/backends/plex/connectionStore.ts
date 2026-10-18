@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event"
 import {
   catalogueHealth,
   projectOfflineAvailability,
@@ -7,8 +8,10 @@ import { createCatalogueRefreshQueue } from "../../offline/catalogueUpdates"
 import type { MusicProvider } from "../../providers/types"
 import type { PlexRequestContext } from "./scopedApi"
 import { PlexProvider } from "./provider"
+import { useSearchStore } from "../../stores/searchStore"
 import { useOfflineStatusStore } from "../../offline/statusStore"
 import { createOfflineProvider } from "../../offline/providerCache"
+import { expireMetadataEvents } from "../../offline/metadataEvents"
 import { createCollectionCacheProvider } from "../../offline/collectionCache"
 import { createSavedLibraryProvider } from "../../offline/offlineProvider"
 import { createPlexApi } from "./scopedApi"
@@ -25,8 +28,7 @@ import {
   activateMetadataCache,
   disconnectMetadataCache,
   clearMetadataCache,
-  invalidateMetadataItem,
-  getCachedAlbum,
+  expireMetadataItem,
 } from "../../stores/metadataCache"
 import { useLibraryStore } from "../../stores/libraryStore"
 import { useUIStore } from "../../stores/uiStore"
@@ -45,26 +47,10 @@ import { createPlexConnectionStore } from "./connectionLifecycle"
 
 let wsManager: PlexWebSocketManager | null = null
 let stopMonitor: (() => void) | null = null
-let pageTimer: ReturnType<typeof setTimeout> | null = null
-let pageSession: unknown
-function refreshPageInBackground(session: unknown) {
-  if (useProviderStore.getState().provider?.playbackSession !== session) return
-  pageSession = session
-  if (pageTimer) return
-  pageTimer = setTimeout(() => {
-    pageTimer = null
-    if (useProviderStore.getState().provider?.playbackSession === pageSession)
-      useUIStore.getState().incrementPageRefreshKey()
-    pageSession = undefined
-  }, 1000)
-}
 if (import.meta.hot)
   import.meta.hot.dispose(() => {
     stopMonitor?.()
     wsManager?.disconnect()
-    if (pageTimer) clearTimeout(pageTimer)
-    pageTimer = null
-    pageSession = undefined
   })
 function savedProvider(
   context: PlexRequestContext,
@@ -150,9 +136,6 @@ export const useConnectionStore = createPlexConnectionStore({
   testServerConnection,
   startPlexAuth: plexAuthStart,
   clearSession: () => {
-    if (pageTimer) clearTimeout(pageTimer)
-    pageTimer = null
-    pageSession = undefined
     stopMonitor?.()
     stopMonitor = null
     useCatalogueStore.getState().activate(null)
@@ -261,6 +244,30 @@ export const useConnectionStore = createPlexConnectionStore({
       running = false,
       revision = 0
     void createPlexApi(captured, undefined, ownsRequest).matchingIndexStart().catch(() => {})
+    let stopMetadata: (() => void) | undefined
+    let metadataTimer: ReturnType<typeof setTimeout> | undefined
+    const changedEntities = new Map<string, {kind: "artist" | "album" | "track";id:string}>()
+    let changedSearch = false
+    void listen<{ cacheScope: string; connectionRevision: number; path: string; entity?: {kind: "artist" | "album" | "track";id:string} | null }>("plex://metadata", event => {
+      if (retired || !ownsRequest() || event.payload.cacheScope !== captured.cacheScope || event.payload.connectionRevision !== captured.connectionRevision) return
+      const entity=event.payload.entity
+      if (entity) changedEntities.set(`${entity.kind}:${entity.id}`,entity)
+      changedSearch ||= event.payload.path?.includes("search")
+      if (metadataTimer) return
+      metadataTimer=setTimeout(() => {
+        metadataTimer=undefined
+        if (retired || !ownsRequest()) return
+        for (const entity of changedEntities.values()) expireMetadataItem(entity.kind,entity.id)
+        changedEntities.clear()
+        useLibraryStore.getState().invalidateLibraryTTLs()
+        void useLibraryStore.getState().refreshAll()
+        if (changedSearch) {
+          changedSearch=false
+          const search=useSearchStore.getState()
+          if (search.query.trim()) void search.search(search.query)
+        }
+      },200)
+    }).then(stop => { if (retired) stop(); else stopMetadata = stop }).catch(() => {})
     const refreshes = createCatalogueRefreshQueue(
       () =>
         !retired &&
@@ -279,25 +286,12 @@ export const useConnectionStore = createPlexConnectionStore({
         undefined,
         async (changes, catchup) => {
           if (retired || !ownsRequest()) return
+          await expireMetadataEvents(provider, changes, catchup, () => !retired && ownsRequest()).catch(() => {})
+          if (retired || !ownsRequest()) return
           await createPlexApi(captured, undefined, ownsRequest)
             .matchingIndexNotify(changes.filter(change => [8, 9, 10].includes(change.type)), catchup)
-            .catch(() => {}) // Visible browse refresh must survive an index storage failure.
+            .catch(() => {})
           if (retired || !ownsRequest()) return
-          for (const change of changes) {
-            const kind =
-              change.type === 8 ? "artist" : change.type === 9 ? "album" : null
-            if (!kind) continue
-            const id = String(change.id)
-            const path = window.location.pathname
-            const album = /^\/album\/([^/]+)/.exec(path)?.[1]
-            const affectsPage =
-              path === `/${kind}/${id}` ||
-              (kind === "album" &&
-                !!album &&
-                getCachedAlbum(album)?.album._alternateIds?.includes(id))
-            invalidateMetadataItem(kind, id)
-            if (affectsPage) refreshPageInBackground(provider.playbackSession)
-          }
           // Compact matching refresh and visible browse refresh have separate
           // lifecycles; neither schedules the retired raw mirror or waveform crawl.
           refreshes.offer(++revision)
@@ -310,6 +304,8 @@ export const useConnectionStore = createPlexConnectionStore({
     void provider.resumeDownloads?.().catch(() => {})
     stopMonitor = () => {
       retired = true
+      stopMetadata?.()
+      clearTimeout(metadataTimer)
       clearInterval(timer)
       refreshes.stop()
     }

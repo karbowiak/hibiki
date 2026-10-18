@@ -51,7 +51,7 @@ test("native proofs remove only the selected Plex duplicate and preserve ambiguo
   expect(calls).toBe(1)
   expect(mergeMusicSearchResults([local], [remote], associations)).toHaveLength(2)
   associations = await associateMusicItems([remote], () => true, async () => ({ ...partial, status: "matched", selected: 1 }))
-  expect(mergeMusicSearchResults([local], [remote], associations)).toEqual([local])
+  expect(mergeMusicSearchResults([local], [remote], associations)).toEqual([{ ...local, counterparts: { plex: local.id, ytmusic: remote.id } }])
   expect(mergeMusicSearchResults([{ ...local, id: "2" }], [remote], associations)).toHaveLength(2)
 })
 

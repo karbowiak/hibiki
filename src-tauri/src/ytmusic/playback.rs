@@ -4,7 +4,7 @@ use super::*;
 use crate::audio_engine::source::MediaSource;
 use sha2::{Digest, Sha256};
 
-pub(super) fn cache_owner(app: &tauri::AppHandle) -> Result<String, String> {
+pub(crate) fn cache_owner(app: &tauri::AppHandle) -> Result<String, String> {
     let path = app
         .path()
         .app_config_dir()
@@ -38,13 +38,13 @@ pub(super) fn forget_cache_owner(app: &tauri::AppHandle) {
     }
 }
 
-fn cache_key(owner: &str, video_id: &str) -> String {
-    // This policy selects the best direct M4A, falling back to other direct audio.
-    // Bump the policy version if encoding/quality selection becomes configurable.
+pub(crate) fn cache_key(owner: &str, video_id: &str) -> String {
+    // Container-neutral best supported/reachable audio. Old temporary M4A cache
+    // entries cannot pin this policy to the previous lower-quality selection.
     format!(
         "s1-{}",
         hex::encode(Sha256::digest(format!(
-            "hibiki-ytmusic-m4a-v1\0{owner}\0{video_id}"
+            "hibiki-ytmusic-best-audio-v2\0{owner}\0{video_id}"
         )))
     )
 }
@@ -70,8 +70,14 @@ pub(crate) fn source(
     if track_key >= 0 || has_plex_context {
         return Err("YouTube Music playback requires its own track identity.".into());
     }
-    let generation = app.state::<Arc<YoutubeMusic>>().generation()?;
     let key = cache_key(&cache_owner(app)?, &id);
+    // Explicit audio is durable and can play before a remote session refresh.
+    let downloads = app.state::<crate::offline_audio::AudioDownloads>().cache();
+    if let Some(path) = downloads.lookup(&key) {
+        return Ok(MediaSource::cached(key, path.extension().and_then(|ext| ext.to_str()).unwrap_or("dat").into(),
+            crate::provider_downloads::youtube_scope(app)?, downloads));
+    }
+    let generation = app.state::<Arc<YoutubeMusic>>().generation()?;
     let cache = app
         .state::<crate::audio_engine::bridge::AudioEngineState>()
         .0

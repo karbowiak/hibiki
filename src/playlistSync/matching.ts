@@ -120,6 +120,11 @@ function recordingVersions(track: PlaylistTrack) {
     words.add("live")
   if (track.album && /[([]\s*(?:the\s+)?remixes\s*[)\]]/iu.test(track.album))
     words.add("remix")
+  if (track.album && /\bremaster(?:ed)?\b/iu.test(track.album)) {
+    // Albums can carry mastering identity that their individual song labels omit.
+    const qualifier = track.album.match(/[([]([^()[\]]*\bremaster(?:ed)?\b[^()[\]]*)[)\]]/iu)?.[1]
+    words.add(`remaster:${comparable(qualifier ?? "remaster")}`)
+  }
   return words
 }
 function similarity(a: string, b: string) {

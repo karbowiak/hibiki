@@ -105,6 +105,7 @@ export async function syncMixedPlaylist(initial: MixedPlaylist, options: MixedSy
   const unmatched = playlist.items.filter(row => services.some(service => !row.songs[service] || row.songs[service]?.stale)).length
   const repeats = unsupportedPlexRepeats(playlist)
   return save({ ...playlist, status: blocked.size ? "error" : "ready", baselineOrder: blocked.size ? playlist.baselineOrder : playlist.items.map(row => row.id), baselineTitle: blocked.size ? playlist.baselineTitle : playlist.title,
+    baselineDescription: blocked.size ? playlist.baselineDescription : playlist.description ?? "",
     message: [unmatched ? `${unmatched} unmatched songs retained in Hibiki.` : services.length === 2 ? "Both playlists are up to date." : "Playlist is up to date.",
       repeats ? `${repeats} repeated copies are retained in Hibiki${services.includes("ytmusic") ? " and YTM" : ""}; Plex cannot retain these duplicates.` : "",
       blocked.size ? "A destination has unavailable saved recordings; its writes are paused until rematched. Other destinations can continue." : ""].filter(Boolean).join(" ") })

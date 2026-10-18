@@ -5,9 +5,9 @@ mod discovery_cache;
 mod lyrics;
 mod playlists;
 mod rate_limit;
-mod extractor;
+pub(crate) mod extractor;
 mod main_window_plugin;
-mod playback;
+pub(crate) mod playback;
 mod session;
 mod tools;
 
@@ -89,7 +89,7 @@ pub(crate) fn now() -> i64 {
 }
 
 impl YoutubeMusic {
-    fn generation(&self) -> Result<u64, String> {
+    pub(crate) fn generation(&self) -> Result<u64, String> {
         let current = self
             .current
             .lock()
@@ -100,7 +100,7 @@ impl YoutubeMusic {
         Ok(current.generation)
     }
 
-    fn owns(&self, generation: u64) -> bool {
+    pub(crate) fn owns(&self, generation: u64) -> bool {
         self.current
             .lock()
             .is_ok_and(|current| current.status.enabled && current.generation == generation)
@@ -320,7 +320,7 @@ pub async fn ytmusic_disconnect(app: tauri::AppHandle) -> Result<(), String> {
     let _ = app.emit_to("main", "ytmusic://status", status);
     playback::forget_cache_owner(&app);
     if let Ok(directory) = app.path().app_cache_dir() {
-        state.discovery_cache.clear(directory.join("ytmusic-discovery")).await;
+        state.discovery_cache.clear(directory.join("metadata")).await;
     }
     if let Ok(path) = settings_path(&app) {
         match std::fs::remove_file(path) {

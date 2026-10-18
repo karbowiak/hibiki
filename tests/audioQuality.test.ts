@@ -2,7 +2,71 @@ import { expect, test } from "bun:test"
 import {
   formatAudioQuality,
   playbackAudioQuality,
+  clearlyBetterAudio,
+  preferVerifiedYoutubeAudio,
 } from "../src/lib/audioQuality"
+import type { MusicTrack, MusicMediaVersion } from "../src/types/music"
+
+test("source preference requires verified audio, codec-specific margins and every usable Plex version", () => {
+  const now = Date.now()
+  const plex = { codec: "mp3", bitrate: 96 } as MusicTrack
+  const youtube = {
+    mediaInfo: {
+      verifiedAudio: {
+        codec: "opus",
+        bitrate: 256,
+        formatId: "251",
+        checkedAt: now,
+      },
+    },
+  } as MusicTrack
+  expect(preferVerifiedYoutubeAudio(plex, youtube, now)).toBe(true)
+  for (const audio of [
+    { codec: "flac", bitrate: 900 },
+    { codec: "aac", bitrate: 256 },
+    { codec: "aac", bitrate: 192 },
+    { codec: null, bitrate: 64 },
+    { codec: "mp3", bitrate: null },
+  ])
+    expect(clearlyBetterAudio(audio, { codec: "opus", bitrate: 256 })).toBe(
+      false
+    )
+  expect(
+    preferVerifiedYoutubeAudio(plex, { ...youtube, mediaInfo: undefined }, now)
+  ).toBe(false)
+  expect(preferVerifiedYoutubeAudio(plex, youtube, now + 31 * 60_000)).toBe(
+    false
+  )
+  const version = (codec: string, bitrate: number, partCount = 1) =>
+    ({ codec, bitrate, partId: "1", partCount }) as MusicMediaVersion
+  expect(
+    preferVerifiedYoutubeAudio(
+      {
+        ...plex,
+        mediaInfo: { versions: [version("mp3", 96), version("flac", 900)] },
+      },
+      youtube,
+      now
+    )
+  ).toBe(false)
+  expect(
+    preferVerifiedYoutubeAudio(
+      {
+        ...plex,
+        mediaInfo: { versions: [version("mp3", 96), version("flac", 900, 2)] },
+      },
+      youtube,
+      now
+    )
+  ).toBe(true)
+  expect(
+    preferVerifiedYoutubeAudio(
+      { ...plex, mediaInfo: { versionsTruncated: true } },
+      youtube,
+      now
+    )
+  ).toBe(false)
+})
 
 test("lossless quality keeps source depth and exact useful sample-rate precision", () => {
   expect(

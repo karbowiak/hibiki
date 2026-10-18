@@ -122,6 +122,8 @@ const load = (id: string) => {
 }
 mock.module("../../src/stores/metadataCache", () => ({
   invalidateMetadataItem() {},
+  expireMetadataItem() {},
+  subscribeMetadataPages: () => () => {},
   getCachedArtist: (id: string) => cache.get(cacheKey(id)),
   getCachedAlbum: (id: string) => cache.get(cacheKey(id)),
   loadArtistPage: load,

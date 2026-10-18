@@ -1,0 +1,1 @@
+ALTER TABLE offline_snapshots ADD COLUMN invalidated INTEGER NOT NULL DEFAULT 0;

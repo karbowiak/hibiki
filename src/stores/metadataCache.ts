@@ -29,3 +29,6 @@ export const prefetchArtist = metadata.prefetchArtist
 export const prefetchAlbum = metadata.prefetchAlbum
 
 export const refreshMetadataCache = metadata.refresh
+export const expireMetadataItem = metadata.expire
+export const metadataParents = metadata.parents
+export const subscribeMetadataPages = metadata.subscribe

@@ -478,13 +478,15 @@ pub async fn get_library_sections(
 /// `libtype` filters by item type: "artist", "album", "track" for music.
 #[tauri::command]
 pub async fn search_library(
+    app: tauri::AppHandle,
     context: PlexRequestContext,
     section_id: i64,
     query: String,
     libtype: Option<String>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<crate::plex::PlexMedia>, String> {
-    let c = client!(state, context);
+    let mut c = client!(state, context);
+    c.metadata_cache = Some(crate::plex::metadata_cache::Context { app, request: context.clone() });
     c.search(section_id, &query, libtype.as_deref(), None, None, Some(50))
         .await
         .map_err(|e| format!("{:#}", e))
@@ -493,13 +495,15 @@ pub async fn search_library(
 /// Get recently added items in a section.
 #[tauri::command]
 pub async fn get_recently_added(
+    app: tauri::AppHandle,
     context: PlexRequestContext,
     section_id: i64,
     libtype: Option<String>,
     limit: Option<i32>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<crate::plex::PlexMedia>, String> {
-    let c = client!(state, context);
+    let mut c = client!(state, context);
+    c.metadata_cache = Some(crate::plex::metadata_cache::Context { app, request: context.clone() });
     c.recently_added(section_id, libtype.as_deref(), limit)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -508,23 +512,27 @@ pub async fn get_recently_added(
 /// Get discovery hubs for a section (home screen content).
 #[tauri::command]
 pub async fn get_latest_releases(
+    app: tauri::AppHandle,
     context: PlexRequestContext,
     section_id: i64,
     limit: Option<i32>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<crate::plex::Album>, String> {
-    let c = client!(state, context);
+    let mut c = client!(state, context);
+    c.metadata_cache = Some(crate::plex::metadata_cache::Context { app, request: context.clone() });
     c.latest_releases(section_id, limit).await.map_err(|e| format!("{e:#}"))
 }
 
 /// Get discovery hubs for a section (home screen content).
 #[tauri::command]
 pub async fn get_hubs(
+    app: tauri::AppHandle,
     context: PlexRequestContext,
     section_id: i64,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Hub>, String> {
-    let c = client!(state, context);
+    let mut c = client!(state, context);
+    c.metadata_cache = Some(crate::plex::metadata_cache::Context { app, request: context.clone() });
     c.get_section_hubs(section_id)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -533,6 +541,7 @@ pub async fn get_hubs(
 /// Page a discovery destination independently of its short home preview.
 #[tauri::command]
 pub async fn get_discovery_page(
+    app: tauri::AppHandle,
     context: PlexRequestContext,
     section_id: i64,
     kind: String,
@@ -542,7 +551,8 @@ pub async fn get_discovery_page(
     key: Option<String>,
     state: State<'_, PlexState>,
 ) -> Result<crate::plex::discovery::DiscoveryPage, String> {
-    let c = client!(state, context);
+    let mut c = client!(state, context);
+    c.metadata_cache = Some(crate::plex::metadata_cache::Context { app, request: context.clone() });
     c.discovery_page(section_id, &kind, offset, limit, hub_id.as_deref(), key.as_deref())
         .await.map_err(|error| format!("{error:#}"))
 }
@@ -563,12 +573,14 @@ pub async fn get_on_deck(
 /// `tag_type` should be "genre", "mood", or "style".
 #[tauri::command]
 pub async fn get_section_tags(
+    app: tauri::AppHandle,
     context: PlexRequestContext,
     section_id: i64,
     tag_type: String,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Tag>, String> {
-    let c = client!(state, context);
+    let mut c = client!(state, context);
+    c.metadata_cache = Some(crate::plex::metadata_cache::Context { app, request: context.clone() });
     c.get_tags(section_id, &tag_type)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -581,11 +593,13 @@ pub async fn get_section_tags(
 /// Get a specific track by rating key.
 #[tauri::command]
 pub async fn get_track(
+    app: tauri::AppHandle,
     context: PlexRequestContext,
     rating_key: i64,
     state: State<'_, PlexState>,
 ) -> Result<Track, String> {
-    let c = client!(state, context);
+    let mut c = client!(state, context);
+    c.metadata_cache = Some(crate::plex::metadata_cache::Context { app, request: context.clone() });
     let track = c.get_track(rating_key).await.map_err(|e| format!("{e:#}"))?;
     let guard = state.0.lock().await;
     state.checked_client(&context, &guard)?;
@@ -595,11 +609,13 @@ pub async fn get_track(
 /// Get an artist by rating key.
 #[tauri::command]
 pub async fn get_artist(
+    app: tauri::AppHandle,
     context: PlexRequestContext,
     rating_key: i64,
     state: State<'_, PlexState>,
 ) -> Result<Artist, String> {
-    let c = client!(state, context);
+    let mut c = client!(state, context);
+    c.metadata_cache = Some(crate::plex::metadata_cache::Context { app, request: context.clone() });
     c.get_artist(rating_key)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -608,11 +624,13 @@ pub async fn get_artist(
 /// Get an album by rating key.
 #[tauri::command]
 pub async fn get_album(
+    app: tauri::AppHandle,
     context: PlexRequestContext,
     rating_key: i64,
     state: State<'_, PlexState>,
 ) -> Result<Album, String> {
-    let c = client!(state, context);
+    let mut c = client!(state, context);
+    c.metadata_cache = Some(crate::plex::metadata_cache::Context { app, request: context.clone() });
     c.get_album(rating_key)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -626,12 +644,14 @@ pub async fn get_album(
 /// - `"!Single"` → full albums and EPs (excludes singles)
 #[tauri::command]
 pub async fn get_artist_albums(
+    app: tauri::AppHandle,
     context: PlexRequestContext,
     rating_key: i64,
     format_filter: Option<String>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Album>, String> {
-    let c = client!(state, context);
+    let mut c = client!(state, context);
+    c.metadata_cache = Some(crate::plex::metadata_cache::Context { app, request: context.clone() });
     c.artist_albums(rating_key, format_filter.as_deref())
         .await
         .map_err(|e| format!("{:#}", e))
@@ -640,11 +660,13 @@ pub async fn get_artist_albums(
 /// Get all tracks in an album.
 #[tauri::command]
 pub async fn get_album_tracks(
+    app: tauri::AppHandle,
     context: PlexRequestContext,
     rating_key: i64,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Track>, String> {
-    let c = client!(state, context);
+    let mut c = client!(state, context);
+    c.metadata_cache = Some(crate::plex::metadata_cache::Context { app, request: context.clone() });
     c.album_tracks(rating_key)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -653,12 +675,14 @@ pub async fn get_album_tracks(
 /// Get popular tracks for an artist (legacy: /library/all sort by ratingCount).
 #[tauri::command]
 pub async fn get_artist_popular_tracks(
+    app: tauri::AppHandle,
     context: PlexRequestContext,
     rating_key: i64,
     limit: Option<i32>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Track>, String> {
-    let c = client!(state, context);
+    let mut c = client!(state, context);
+    c.metadata_cache = Some(crate::plex::metadata_cache::Context { app, request: context.clone() });
     c.artist_popular_tracks(rating_key, limit)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -667,12 +691,14 @@ pub async fn get_artist_popular_tracks(
 /// Get popular tracks for an artist using the /popularLeaves endpoint.
 #[tauri::command]
 pub async fn get_artist_popular_leaves(
+    app: tauri::AppHandle,
     context: PlexRequestContext,
     rating_key: i64,
     limit: Option<i32>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Track>, String> {
-    let c = client!(state, context);
+    let mut c = client!(state, context);
+    c.metadata_cache = Some(crate::plex::metadata_cache::Context { app, request: context.clone() });
     c.artist_popular_leaves(rating_key, limit)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -688,6 +714,7 @@ pub struct PagedMediaItems {
 /// Get albums (or artists/tracks) filtered by a tag (genre/mood/style).
 #[tauri::command]
 pub async fn get_items_by_tag(
+    app: tauri::AppHandle,
     context: PlexRequestContext,
     section_id: i64,
     tag_type: String,
@@ -697,7 +724,8 @@ pub async fn get_items_by_tag(
     offset: Option<i32>,
     state: State<'_, PlexState>,
 ) -> Result<PagedMediaItems, String> {
-    let c = client!(state, context);
+    let mut c = client!(state, context);
+    c.metadata_cache = Some(crate::plex::metadata_cache::Context { app, request: context.clone() });
     let (items, total) = c
         .get_by_tag(
             section_id,
@@ -715,11 +743,13 @@ pub async fn get_items_by_tag(
 /// Get metadata-based similar artists for an artist.
 #[tauri::command]
 pub async fn get_artist_similar(
+    app: tauri::AppHandle,
     context: PlexRequestContext,
     rating_key: i64,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Artist>, String> {
-    let c = client!(state, context);
+    let mut c = client!(state, context);
+    c.metadata_cache = Some(crate::plex::metadata_cache::Context { app, request: context.clone() });
     c.artist_similar(rating_key)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -728,12 +758,14 @@ pub async fn get_artist_similar(
 /// Get hubs related to a specific item.
 #[tauri::command]
 pub async fn get_related_hubs(
+    app: tauri::AppHandle,
     context: PlexRequestContext,
     rating_key: i64,
     limit: Option<i32>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Hub>, String> {
-    let c = client!(state, context);
+    let mut c = client!(state, context);
+    c.metadata_cache = Some(crate::plex::metadata_cache::Context { app, request: context.clone() });
     c.get_related_hubs(rating_key, limit)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -746,13 +778,15 @@ pub async fn get_related_hubs(
 /// section on the artist page.
 #[tauri::command]
 pub async fn get_artist_sonically_similar(
+    app: tauri::AppHandle,
     context: PlexRequestContext,
     rating_key: i64,
     limit: Option<i32>,
     max_distance: Option<f64>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Artist>, String> {
-    let c = client!(state, context);
+    let mut c = client!(state, context);
+    c.metadata_cache = Some(crate::plex::metadata_cache::Context { app, request: context.clone() });
     c.artist_sonically_similar(rating_key, limit, max_distance)
         .await
         .map_err(|e| format!("{:#}", e))
@@ -766,13 +800,15 @@ pub async fn get_artist_sonically_similar(
 /// `format` examples: `"EP,Single"` (singles + EPs), `null` (all albums).
 #[tauri::command]
 pub async fn get_artist_albums_in_section(
+    app: tauri::AppHandle,
     context: PlexRequestContext,
     section_id: i64,
     rating_key: i64,
     format: Option<String>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Album>, String> {
-    let c = client!(state, context);
+    let mut c = client!(state, context);
+    c.metadata_cache = Some(crate::plex::metadata_cache::Context { app, request: context.clone() });
     c.artist_albums_in_section(section_id, rating_key, format.as_deref())
         .await
         .map_err(|e| format!("{:#}", e))
@@ -784,13 +820,15 @@ pub async fn get_artist_albums_in_section(
 /// compilations/live albums. This matches the Plex Web approach.
 #[tauri::command]
 pub async fn get_artist_popular_tracks_in_section(
+    app: tauri::AppHandle,
     context: PlexRequestContext,
     section_id: i64,
     rating_key: i64,
     limit: Option<i32>,
     state: State<'_, PlexState>,
 ) -> Result<Vec<Track>, String> {
-    let c = client!(state, context);
+    let mut c = client!(state, context);
+    c.metadata_cache = Some(crate::plex::metadata_cache::Context { app, request: context.clone() });
     c.artist_popular_tracks_in_section(section_id, rating_key, limit)
         .await
         .map_err(|e| format!("{:#}", e))

@@ -64,3 +64,10 @@ ffmpeg -i aac-lc-stereo.m4a -c copy -movflags +faststart -map_metadata -1 aac-lc
 ```
 
 Both declared-length and chunked-style sources must produce their first batch before the remaining bytes arrive, then yield the same full PCM as cached decoding.
+
+`opus-stereo.webm` remuxes the same generated stereo Opus packets, without
+re-encoding, to exercise YouTube's WebM path and forward/backward decoder seeks:
+
+```sh
+ffmpeg -i opus-stereo.ogg -c copy -map_metadata -1 opus-stereo.webm
+```

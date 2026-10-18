@@ -4,12 +4,14 @@ import { startTiming } from "../lib/performance"
 export interface OfflineSnapshot {
   payload: unknown
   cachedAt: number
+  invalidated?: boolean
 }
 export interface OfflineCache {
   get(key: string): Promise<OfflineSnapshot | null>
   put(key: string, payload: unknown): Promise<void>
   invalidate?(prefixes: string[]): Promise<void>
   clear?(): Promise<void>
+  expire?(prefixes: string[], removedIds?: string[]): Promise<void>
 }
 export interface OfflineReadNotice {
   key: string
@@ -167,31 +169,6 @@ export function sanitizeOfflineData(value: unknown, depth = 0): unknown {
   throw new Error("Unsupported saved browsing data")
 }
 
-/** Native JSON can reorder object fields; only values and array order matter. */
-function sameOfflineData(left: unknown, right: unknown): boolean {
-  if (left === right) return true
-  if (!left || !right || typeof left !== "object" || typeof right !== "object")
-    return false
-  if (Array.isArray(left) || Array.isArray(right))
-    return (
-      Array.isArray(left) &&
-      Array.isArray(right) &&
-      left.length === right.length &&
-      left.every((value, index) => sameOfflineData(value, right[index]))
-    )
-  const a = left as Record<string, unknown>,
-    b = right as Record<string, unknown>
-  const keys = Object.keys(a)
-  return (
-    keys.length === Object.keys(b).length &&
-    keys.every(
-      (key) =>
-        Object.prototype.hasOwnProperty.call(b, key) &&
-        sameOfflineData(a[key], b[key])
-    )
-  )
-}
-
 export function isUnavailable(error: unknown): boolean {
   const message =
     error instanceof Error
@@ -238,8 +215,12 @@ type PlaylistReads = Pick<MusicProvider, "getPlaylists" | "getPlaylistItems">
 export function forwardFreshPlaylistReads(target: MusicProvider, source: MusicProvider) {
   const reads = freshReads.get(source)
   if (reads) freshReads.set(target, reads)
+  const controls = cacheControls.get(source)
+  if (controls) cacheControls.set(target, controls)
 }
 const freshReads = new WeakMap<MusicProvider, PlaylistReads>()
+const cacheControls = new WeakMap<MusicProvider, { expire(prefixes: string[], removedIds?: string[]): Promise<void> }>()
+export const expireProviderMetadata = (provider: MusicProvider, prefixes: string[], removedIds?: string[]) => cacheControls.get(provider)?.expire(prefixes, removedIds) ?? Promise.resolve()
 
 /** Sync must never treat saved browsing data as a fresh server snapshot. */
 export function freshPlaylistReads(provider: MusicProvider): PlaylistReads {
@@ -262,11 +243,9 @@ export function createOfflineProvider<T extends MusicProvider>(
     onOfflineRead?: (notice: OfflineReadNotice) => void
     onOnlineRead?: (key: string) => void
     unavailable?: (error: unknown) => boolean
-    localFirst?: boolean
     isOffline?: () => boolean
     offlineProvider?: MusicProvider
     projectOffline?: (payload: unknown) => Promise<unknown>
-    onRefresh?: (method: string, args: unknown[], payload: unknown) => void
   } = {}
 ): T {
   const methods = new Map<PropertyKey, unknown>()
@@ -278,8 +257,6 @@ export function createOfflineProvider<T extends MusicProvider>(
   let invalidations: Promise<void> = Promise.resolve()
   let cacheEpoch = 0
   let fallbackSafe = true
-  const revalidations = new Map<string, Promise<unknown>>()
-  const refreshed = new Map<string, number>()
   const proxy = new Proxy(provider, {
     get(target, property) {
       if (property === "clearLibraryCache" && cache.clear) {
@@ -287,8 +264,6 @@ export function createOfflineProvider<T extends MusicProvider>(
           const owns = () => target.cacheScope === initialScope && target.playbackSession === initialSession && (options.owns?.() ?? true)
           if (!owns()) throw Error("Saved library request was superseded")
           cacheEpoch++
-          refreshed.clear()
-          revalidations.clear()
           const clearing = writes.then(async () => {
             if (!owns()) throw Error("Saved library request was superseded")
             await cache.clear!()
@@ -351,9 +326,7 @@ export function createOfflineProvider<T extends MusicProvider>(
           const invalidateOwned = async () => {
             if (!ownsMutation()) return
             cacheEpoch++
-            refreshed.clear()
-            revalidations.clear()
-            const invalidation = writes.then(async () => {
+                const invalidation = writes.then(async () => {
               if (!ownsMutation()) return
               if (!cache.invalidate) {
                 fallbackSafe = false
@@ -482,7 +455,7 @@ export function createOfflineProvider<T extends MusicProvider>(
           if (!saving && versions.get(key) === version) versions.delete(key)
         }
       }
-      const localFirst = async (...args: unknown[]) => {
+      const read = async (...args: unknown[]) => {
         if (options.isOffline?.()) {
           const current = () =>
             target.cacheScope === initialScope &&
@@ -521,83 +494,19 @@ export function createOfflineProvider<T extends MusicProvider>(
           options.onOfflineRead?.({ key, cachedAt: saved.cachedAt })
           return result
         }
-        if (!target.cacheScope || !options.localFirst) return wrapped(...args)
-        const timing = startTiming(property)
-        try {
-          const scope = target.cacheScope,
-            session = target.playbackSession,
-            epoch = cacheEpoch
-          const current = () =>
-            target.cacheScope === initialScope &&
-            target.cacheScope === scope &&
-            target.playbackSession === initialSession &&
-            target.playbackSession === session &&
-            (options.owns?.() ?? true) &&
-            epoch === cacheEpoch
-          const check = () => {
-            if (!current())
-              throw new Error("Saved library request was superseded")
-          }
-          const key = offlineKey(property, args)
-          // Mutations remain a read barrier. Unrelated optional snapshot saves
-          // cannot delay local reads or the result of an online request.
-          await invalidations
-          timing.phase("write_queue")
-          check()
-          const saved = fallbackSafe
-            ? await cache.get(key).catch(() => null)
-            : null
-          timing.phase("cache_read")
-          check()
-          if (options.isOffline?.()) {
-            if (!saved)
-              throw new Error(
-                "This content is not saved locally. Reconnect to Plex to load it."
-              )
-            options.onOfflineRead?.({ key, cachedAt: saved.cachedAt })
-            const payload = structuredClone(saved.payload)
-            const projected = options.projectOffline
-              ? await options.projectOffline(payload)
-              : payload
-            check()
-            return projected
-          }
-          const revalidate = () => {
-            let pending = revalidations.get(key)
-            if (!pending) {
-              pending = wrapped(...args)
-                .then((result) => {
-                  check()
-                  if (options.isOffline?.()) return result
-                  const sanitized = sanitizeOfflineData(result)
-                  if (saved && !sameOfflineData(sanitized, saved.payload))
-                    options.onRefresh?.(property, args, sanitized)
-                  refreshed.delete(key)
-                  refreshed.set(key, Date.now())
-                  if (refreshed.size > 256)
-                    refreshed.delete(refreshed.keys().next().value!)
-                  return result
-                })
-                .finally(() => {
-                  if (revalidations.get(key) === pending)
-                    revalidations.delete(key)
-                })
-              revalidations.set(key, pending)
-            }
-            return pending
-          }
-          if (saved) {
-            if (Date.now() - (refreshed.get(key) ?? 0) > 30_000)
-              void revalidate().catch(() => {})
-            return structuredClone(saved.payload)
-          }
-          return await revalidate()
-        } finally {
-          timing.end("provider_local")
-        }
+        // Native provider libraries own online cache freshness and SWR.
+        return wrapped(...args)
       }
-      methods.set(property, localFirst)
-      return localFirst
+      methods.set(property, read)
+      return read
+    },
+  })
+  cacheControls.set(proxy, {
+    expire: async (prefixes, removedIds) => {
+      cacheEpoch++
+      const expiring = writes.then(() => cache.expire ? cache.expire(prefixes, removedIds) : cache.invalidate?.(prefixes))
+      writes = expiring.catch(() => {}); invalidations = writes
+      await expiring
     },
   })
   const checkFresh = () => {

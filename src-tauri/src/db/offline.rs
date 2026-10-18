@@ -14,6 +14,7 @@ const MAX_GLOBAL_ENTRIES: i64 = 8000;
 pub struct Snapshot {
     pub payload: Value,
     pub cached_at: i64,
+    pub invalidated: bool,
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,11 +25,10 @@ pub struct CacheInfo {
 }
 
 pub(super) fn check_identity(scope: &str, key: &str) -> Result<(), String> {
-    if scope.len() != 69
-        || !scope.starts_with("plex-")
-        || !scope[5..]
+    let suffix = scope.strip_prefix("plex-").or_else(|| scope.strip_prefix("ytmusic-"));
+    if suffix.is_none_or(|suffix| suffix.len() != 64 || !suffix
             .bytes()
-            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()))
     {
         return Err("Invalid saved library scope".into());
     }
@@ -37,7 +37,7 @@ pub(super) fn check_identity(scope: &str, key: &str) -> Result<(), String> {
     }
     Ok(())
 }
-pub(super) fn check_payload(value: &Value, depth: usize) -> Result<(), String> {
+pub(crate) fn check_payload(value: &Value, depth: usize) -> Result<(), String> {
     if depth > 24 {
         return Err("Saved browsing data is too deeply nested".into());
     }
@@ -107,21 +107,21 @@ pub fn get(
 /// Reading a visited snapshot never requires the catalogue writer.
 pub fn peek(conn: &Connection, scope: &str, key: &str) -> Result<Option<Snapshot>, String> {
     check_identity(scope, key)?;
-    let row: Option<(String, i64)> = conn
+    let row: Option<(String, i64, bool)> = conn
         .query_row(
-            "SELECT payload,cached_at FROM offline_snapshots WHERE scope=?1 AND cache_key=?2",
+            "SELECT payload,cached_at,invalidated FROM offline_snapshots WHERE scope=?1 AND cache_key=?2",
             params![scope, key],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()
         .map_err(|_| "Cannot read saved browsing data")?;
-    let Some((payload, cached_at)) = row else {
+    let Some((payload, cached_at, invalidated)) = row else {
         return Ok(None);
     };
     let payload: Value =
         serde_json::from_str(&payload).map_err(|_| "Saved browsing data is invalid")?;
     check_payload(&payload, 0)?;
-    Ok(Some(Snapshot { payload, cached_at }))
+    Ok(Some(Snapshot { payload, cached_at, invalidated }))
 }
 pub fn touch(conn: &Connection, scope: &str, key: &str, now: i64) -> Result<(), String> {
     check_identity(scope, key)?;
@@ -148,7 +148,8 @@ pub fn put(
         return Err("Saved browsing page exceeds its limit".into());
     }
     super::atomic_upsert(conn, |conn| {
-        conn.execute("INSERT INTO offline_snapshots(scope,cache_key,payload,byte_count,cached_at,accessed_at) VALUES(?1,?2,?3,?4,?5,?5) ON CONFLICT(scope,cache_key) DO UPDATE SET payload=excluded.payload,byte_count=excluded.byte_count,cached_at=excluded.cached_at,accessed_at=excluded.accessed_at", params![scope,key,serialized,serialized.len() as i64,now]).map_err(|_| "Cannot save browsing page")?;
+        conn.execute("INSERT INTO offline_snapshots(scope,cache_key,payload,byte_count,cached_at,accessed_at) VALUES(?1,?2,?3,?4,?5,?5) ON CONFLICT(scope,cache_key) DO UPDATE SET payload=excluded.payload,byte_count=excluded.byte_count,cached_at=excluded.cached_at,accessed_at=excluded.accessed_at,invalidated=0", params![scope,key,serialized,serialized.len() as i64,now]).map_err(|_| "Cannot save browsing page")?;
+        conn.execute("DELETE FROM offline_snapshots WHERE cached_at<?1", [now.saturating_sub(90 * 24 * 60 * 60 * 1000)]).map_err(|_| "Cannot trim saved browsing pages")?;
         loop {
             let info = info(conn, scope)?;
             if info.entries <= MAX_SCOPE_ENTRIES && info.bytes <= MAX_SCOPE_BYTES {
@@ -186,6 +187,47 @@ pub fn clear(conn: &Connection, scope: &str) -> Result<(), String> {
 
 /// Literal prefixes, never LIKE patterns. A playlist ID cannot match another ID.
 pub fn invalidate(conn: &Connection, scope: &str, prefixes: &[String]) -> Result<(), String> {
+    expire_or_remove(conn, scope, prefixes, false)
+}
+pub fn expire(conn: &Connection, scope: &str, prefixes: &[String]) -> Result<(), String> {
+    expire_or_remove(conn, scope, prefixes, true)
+}
+/// Confirmed Plex deletions repair only disposable browsing references. Explicit
+/// audio bindings, claims and Hibiki playlist history are separate tables.
+pub fn remove_references(conn: &Connection, scope: &str, ids: &[String]) -> Result<(), String> {
+    check_identity(scope, "removed")?;
+    if ids.len() > 2000 || ids.iter().any(|id| id.is_empty() || !id.bytes().all(|c| c.is_ascii_digit())) { return Err("Invalid removed metadata identities".into()); }
+    let ids: std::collections::HashSet<_> = ids.iter().map(String::as_str).collect();
+    fn prune(value: &mut Value, ids: &std::collections::HashSet<&str>) {
+        match value {
+            Value::Array(items) => { items.retain(|item| !item["id"].as_str().is_some_and(|id| ids.contains(id))); for item in items { prune(item, ids); } },
+            Value::Object(object) => {
+                let before = object.get("items").and_then(Value::as_array).map(Vec::len);
+                for item in object.values_mut() { prune(item, ids); }
+                if let (Some(before), Some(after)) = (before, object.get("items").and_then(Value::as_array).map(Vec::len)) {
+                    if let Some(total) = object.get("total").and_then(Value::as_u64) { object.insert("total".into(), Value::from(total.saturating_sub((before-after) as u64))); }
+                }
+            }, _ => {},
+        }
+    }
+    let mut query = conn.prepare("SELECT cache_key,payload FROM offline_snapshots WHERE scope=?1").map_err(|_| "Cannot read saved metadata references")?;
+    let rows = query.query_map([scope], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?))).map_err(|_| "Cannot read saved metadata references")?
+        .collect::<Result<Vec<_>,_>>().map_err(|_| "Cannot read saved metadata references")?;
+    super::atomic_upsert(conn, |conn| {
+        for (key,text) in &rows {
+            let Ok(mut payload) = serde_json::from_str::<Value>(text) else { continue; };
+            if payload["id"].as_str().is_some_and(|id| ids.contains(id)) {
+                conn.execute("DELETE FROM offline_snapshots WHERE scope=?1 AND cache_key=?2",params![scope,key]).map_err(|_| "Cannot remove obsolete metadata")?;
+            } else {
+                prune(&mut payload,&ids);
+                let next = serde_json::to_string(&payload).map_err(|_| "Cannot repair saved metadata")?;
+                if next != *text { conn.execute("UPDATE offline_snapshots SET payload=?3,byte_count=?4,invalidated=1 WHERE scope=?1 AND cache_key=?2",params![scope,key,next,next.len() as i64]).map_err(|_| "Cannot repair saved metadata")?; }
+            }
+        }
+        Ok(())
+    })
+}
+fn expire_or_remove(conn: &Connection, scope: &str, prefixes: &[String], retain: bool) -> Result<(), String> {
     check_identity(scope, "invalidate")?;
     if prefixes.len() > 32
         || prefixes.iter().any(|prefix| {
@@ -196,7 +238,9 @@ pub fn invalidate(conn: &Connection, scope: &str, prefixes: &[String]) -> Result
     }
     super::atomic_upsert(conn, |conn| {
         for prefix in prefixes {
-            conn.execute("DELETE FROM offline_snapshots WHERE scope=?1 AND substr(cache_key,1,length(?2))=?2", params![scope,prefix])
+            let sql = if retain { "UPDATE offline_snapshots SET invalidated=1 WHERE scope=?1 AND substr(cache_key,1,length(?2))=?2" }
+                else { "DELETE FROM offline_snapshots WHERE scope=?1 AND substr(cache_key,1,length(?2))=?2" };
+            conn.execute(sql, params![scope,prefix])
                 .map_err(|_| "Cannot invalidate saved browsing pages")?;
         }
         Ok(())

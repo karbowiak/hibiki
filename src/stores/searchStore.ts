@@ -11,6 +11,7 @@ import { presentSearchSuggestions } from "../lib/searchSuggestions"
 import { useUIStore } from "./uiStore"
 import { linkSearchPlaylists } from "../lib/searchPlaylists"
 import { useMixedPlaylistStore } from "./mixedPlaylistStore"
+import { verifySearchAudio } from "../backends/ytmusic/audioQuality"
 
 interface SearchState {
   query: string
@@ -37,6 +38,7 @@ interface SupplementalSearch {
   search(query: string, force: boolean): Promise<MusicItem[]>
   merge(primary: MusicItem[], supplemental: MusicItem[], associations?: ReadonlyMap<string, string | null>): MusicItem[]
   associate?: (items: MusicItem[], current: () => boolean) => Promise<Map<string, string | null>>
+  quality?: (primary: MusicItem[], secondary: MusicItem[], associations: ReadonlyMap<string, string | null>, provider: MusicProvider, owner: string, current: () => boolean) => Promise<MusicItem[]>
 }
 
 export function createSearchStore(
@@ -61,6 +63,10 @@ export function createSearchStore(
         provider?.cacheScope === scope && provider?.playbackSession === session && supplemental.owner() === owner
       const results = await supplemental.associate(rows, current)
       if (current()) { associations = results; const merged = combined(); set({ results: merged, suggestions: suggest(get().suggestions, merged) }) }
+      if (current() && supplemental.quality && provider && owner) {
+        const verified = await supplemental.quality(primary, rows, results, provider, owner, current)
+        if (current()) { secondary = verified; const merged = combined(); set({ results: merged, suggestions: suggest(get().suggestions, merged) }) }
+      }
     },
     acceptSupplementalRefresh: (query, results) => {
       if (get().query.trim() !== query || !supplemental?.owner() || getProvider()?.isOffline) return
@@ -172,6 +178,7 @@ export const useSearchStore = createSearchStore(() => useProviderStore.getState(
       ytmusic: useYoutubeMusicDiscoveryStore.getState().connected ? useYoutubeMusicDiscoveryStore.getState().accountId ?? undefined : undefined,
     }),
   associate: associateMusicItems,
+  quality: verifySearchAudio,
 })
 useProviderStore.subscribe((state, previous) => {
   if (state.provider !== previous.provider) useSearchStore.getState().clear()

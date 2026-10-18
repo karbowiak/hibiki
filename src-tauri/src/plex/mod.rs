@@ -33,6 +33,7 @@ pub mod artwork_inventory;
 pub mod auth;
 pub mod client;
 pub mod cache_scope;
+pub mod metadata_cache;
 pub mod lyrics;
 pub mod collection;
 pub mod discovery;
