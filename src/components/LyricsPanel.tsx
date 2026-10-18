@@ -10,6 +10,7 @@ import { useResizable } from "../hooks/useResizable"
 import { useLyricsAvailable } from "../hooks/useLyricsAvailable"
 import { useAlbumImage } from "../hooks/useMediaImage"
 import { ArtworkImage } from "./shared/ArtworkImage"
+import { ArtistCredits } from "./shared/ArtistCredits"
 import { PlaybackPalette } from "./PlaybackPalette"
 import "../styles/lyrics.css"
 
@@ -224,7 +225,9 @@ export function LyricsContent() {
           <ArtworkImage src={artwork} alt="" className="lyrics-track-cover" />
           <div className="min-w-0">
             <p className="lyrics-track-title" title={currentTrack.title}>{currentTrack.title}</p>
-            <p className="lyrics-track-artist" title={currentTrack.artistName}>{currentTrack.artistName}</p>
+            <p className="lyrics-track-artist" title={currentTrack.artistName}>
+              <ArtistCredits item={currentTrack} className="hover:underline underline-offset-2 focus-visible:underline" />
+            </p>
           </div>
         </div>
       )}
