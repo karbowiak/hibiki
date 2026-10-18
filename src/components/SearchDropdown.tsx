@@ -1,8 +1,7 @@
 import { ArtistCredits } from "./shared/ArtistCredits"
 import { MusicEntityLink } from "./shared/MusicEntityLink"
 import { trackEntity } from "../lib/musicLinks"
-import { deduplicateAlbumItems } from "../lib/dedup"
-import { useUIStore } from "../stores/uiStore"
+import { appendSearchSuggestions, searchItemKey } from "../lib/searchSuggestions"
 import "../styles/discovery.css"
 import { useArtistImage, useAlbumImage } from "../hooks/useMediaImage"
 import { ArtworkImage, useArtworkFailures } from "./shared/ArtworkImage"
@@ -118,33 +117,13 @@ type DropdownItem =
   | { kind: "album"; item: MusicAlbum & { type: "album" }; href: string }
   | { kind: "track"; item: MusicTrack & { type: "track" } }
 
-export function buildSearchItems(results: MusicItem[]): DropdownItem[] {
-  const artists: DropdownItem[] = []
-  const albums: DropdownItem[] = []
-  const tracks: DropdownItem[] = []
-
-  for (const item of results) {
-    if (item.type === "artist" && artists.length < 3) {
-      artists.push({
-        kind: "artist",
-        item: item as MusicArtist & { type: "artist" },
-        href: item.providerKey === "ytmusic" ? `/ytmusic/${encodeURIComponent(item.id.slice(8))}` : `/artist/${item.id}`,
-      })
-    } else if (item.type === "album" && albums.length < 3) {
-      albums.push({
-        kind: "album",
-        item: item as MusicAlbum & { type: "album" },
-        href: item.providerKey === "ytmusic" ? `/ytmusic/${encodeURIComponent(item.id.slice(8))}` : `/album/${item.id}`,
-      })
-    } else if (item.type === "track" && tracks.length < 3) {
-      tracks.push({
-        kind: "track",
-        item: item as MusicTrack & { type: "track" },
-      })
-    }
-  }
-
-  return [...artists, ...albums, ...tracks]
+export function buildSearchItems(results: MusicItem[], presented = false): DropdownItem[] {
+  return (presented ? results : appendSearchSuggestions([], results)).flatMap((item): DropdownItem[] => {
+    const href = item.providerKey === "ytmusic" ? `/ytmusic/${encodeURIComponent(item.id.slice(8))}` : `/${item.type}/${item.id}`
+    if (item.type === "artist") return [{ kind: "artist", item, href }]
+    if (item.type === "album") return [{ kind: "album", item, href }]
+    return item.type === "track" ? [{ kind: "track", item }] : []
+  })
 }
 
 function SearchArtwork({ item }: { item: MusicItem }) {
@@ -193,9 +172,11 @@ export function SearchDropdown({
   const generatedId = useId()
   const id = suppliedId ?? generatedId
   const [, navigate] = useLocation()
-  const { results, query, error, isSearching, search } = useSearchStore(
+  const { results, suggestions, context, query, error, isSearching, search } = useSearchStore(
     useShallow((s) => ({
       results: s.results,
+      suggestions: s.suggestions,
+      context: s.context,
       query: s.query,
       error: s.error,
       isSearching: s.isSearching,
@@ -204,17 +185,16 @@ export function SearchDropdown({
   )
   const playTrack = usePlayerStore((s) => s.playTrack)
 
-  const shouldDeduplicate=useUIStore(s=>s.deduplicateAlbums)
-  const items = buildSearchItems(shouldDeduplicate ? deduplicateAlbumItems(results) : results)
+  const items = buildSearchItems(suggestions ?? results, !!suggestions)
   const emptyQuery = !query.trim()
-  const totalRows = (emptyQuery ? landingItems.length : items.length) + 1 // +1 for "See all results"
-
-  // Keep activeIndex clamped to valid range
-  useEffect(() => {
-    if (activeIndex >= totalRows) {
-      onActiveIndexChange(0)
-    }
-  }, [activeIndex, totalRows])
+  const count = emptyQuery ? landingItems.length : items.length
+  const previous = useRef({ context, query, count })
+  const sameContext = previous.current.context === context && previous.current.query === query
+  const selected = sameContext ? activeIndex === previous.current.count ? count : activeIndex : -1
+  useLayoutEffect(() => {
+    if (selected !== activeIndex) onActiveIndexChange(selected)
+    previous.current = { context, query, count }
+  }, [context, query, count, selected, activeIndex, onActiveIndexChange])
 
   const activateItem = (index: number) => {
     if (emptyQuery) {
@@ -248,17 +228,17 @@ export function SearchDropdown({
     function onKeyDown(e: KeyboardEvent) {
       const target = e.target as Element | null
       if (target?.getAttribute?.("data-library-search") !== "true") return
-      if (e.key === "Enter" && activeIndex >= 0) {
+      if (e.key === "Enter" && selected >= 0) {
         e.preventDefault()
-        activateItem(activeIndex)
+        activateItem(selected)
       }
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [activeIndex, items, landingItems, emptyQuery])
+  }, [selected, items, landingItems, emptyQuery])
 
   const popupRef = useRef<HTMLDivElement>(null)
-  const [maxHeight, setMaxHeight] = useState(360)
+  const [panelHeight, setPanelHeight] = useState(360)
   const [panelWidth, setPanelWidth] = useState<number>()
   useLayoutEffect(() => {
     const update = () => {
@@ -267,20 +247,28 @@ export function SearchDropdown({
       const left = bounds?.left ?? 0
       const bottom = popupRef.current?.closest(".app-page")?.getBoundingClientRect().bottom ?? window.innerHeight
       setPanelWidth(Math.max(48, Math.min(560, window.innerWidth - left - 12)))
-      setMaxHeight(Math.max(48, Math.min(window.innerHeight, bottom) - top - 12))
+      const viewportBottom = window.visualViewport ? window.visualViewport.height + window.visualViewport.offsetTop : window.innerHeight
+      setPanelHeight(Math.max(48, Math.min(viewportBottom, bottom) - top - 12))
     }
     update()
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update)
+    if (popupRef.current?.parentElement) observer?.observe(popupRef.current.parentElement)
+    const app = popupRef.current?.closest(".app-page")
+    if (app) observer?.observe(app)
+    window.visualViewport?.addEventListener("resize", update)
     window.addEventListener("resize", update)
     window.addEventListener("scroll", update, true)
     return () => {
+      observer?.disconnect()
+      window.visualViewport?.removeEventListener("resize", update)
       window.removeEventListener("resize", update)
       window.removeEventListener("scroll", update, true)
     }
   }, [])
   useLayoutEffect(() => {
-    const popup = popupRef.current
+    const popup = popupRef.current?.querySelector<HTMLElement>("[data-search-scroll]")
     const option = popup?.querySelector<HTMLElement>(
-      `[data-search-index="${activeIndex}"]`
+      `[data-search-index="${selected}"]`
     )
     if (!popup || !option) return
     const footer = popup.querySelector<HTMLElement>("[data-search-footer]")
@@ -294,8 +282,19 @@ export function SearchDropdown({
     if (row.top < bounds.top) popup.scrollTop -= bounds.top - row.top
     else if (row.bottom > visibleBottom)
       popup.scrollTop += row.bottom - visibleBottom
-  }, [activeIndex, results])
+  }, [selected])
+  useLayoutEffect(() => {
+    const scroll = popupRef.current?.querySelector<HTMLElement>("[data-search-scroll]")
+    if (scroll) scroll.scrollTop = 0
+  }, [context, query])
 
+  // Keep each existing group and row in place; late kinds form a new group at
+  // the bottom rather than being inserted above a visible/hovered result.
+  const groups: { kind: DropdownItem["kind"]; rows: { row: DropdownItem; index: number }[] }[] = []
+  items.forEach((row, index) => {
+    if (groups.at(-1)?.kind !== row.kind) groups.push({ kind: row.kind, rows: [] })
+    groups.at(-1)!.rows.push({ row, index })
+  })
   return (
     <div
       ref={popupRef}
@@ -304,214 +303,72 @@ export function SearchDropdown({
       aria-label={emptyQuery ? "Search suggestions" : "Music search results"}
       aria-busy={isSearching}
       onKeyDown={(event) => event.stopPropagation()}
-      style={{ maxHeight: Math.min(480, maxHeight), width: panelWidth }}
-      className="app-overlay-surface discovery-search-popup absolute left-0 top-full z-50 mt-2 w-full max-w-[calc(100vw-24px)] overflow-y-auto overscroll-contain rounded-xl border border-(--border) bg-app-card py-1 text-(--text-primary) shadow-2xl"
+      style={{ height: panelHeight, width: panelWidth }}
+      className="app-overlay-surface discovery-search-popup absolute left-0 top-full z-50 mt-2 flex w-full max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-xl border border-(--border) bg-app-card py-1 text-(--text-primary) shadow-2xl"
     >
-      <div className="discovery-search-caption">
-        {emptyQuery ? "A shortcut to your music" : "Search music"}
+      <div className="discovery-search-caption flex h-10 shrink-0 items-center justify-between gap-3 whitespace-nowrap">
+        <span>{emptyQuery ? "A shortcut to your music" : "Search music"}</span>
+        <span role="status" className="normal-case tracking-normal font-normal">{!emptyQuery && isSearching ? "Searching…" : ""}</span>
       </div>
-      {emptyQuery ? (
-        <>
-          {(["action", "recent", "music"] as const).map((kind) => {
-            const rows = landingItems
-              .map((row, index) => ({ row, index }))
-              .filter(({ row }) => row.kind === kind)
-            if (!rows.length) return null
-            return (
-              <div
-                role="group"
-                aria-label={
-                  kind === "action"
-                    ? "Quick actions"
-                    : kind === "recent"
-                      ? "Recent searches"
-                      : "Jump back in"
-                }
-                key={kind}
-              >
-                <div aria-hidden="true" className="discovery-search-caption">
-                  {kind === "action"
-                    ? "Quick actions"
-                    : kind === "recent"
-                      ? "Recent searches"
-                      : "Jump back in"}
-                </div>
-                {rows.map(({ row, index }) => (
-                  <div
-                    key={`${kind}:${row.title}:${index}`}
-                    id={`${id}-option-${index}`}
-                    role="option"
-                    aria-selected={activeIndex === index}
-                    data-search-index={index}
-                    onMouseEnter={() => onActiveIndexChange(index)}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => activateItem(index)}
-                    className={`flex cursor-pointer items-center gap-3 px-4 py-2.5 ${activeIndex === index ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
-                  >
-                    {row.item ? (
-                      <SearchArtwork item={row.item} />
-                    ) : (
-                      <span
-                        aria-hidden="true"
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-app-surface text-(--text-muted)"
-                      >
-                        {kind === "recent" ? "↶" : "↗"}
-                      </span>
-                    )}
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium">
-                        {row.title}
-                      </span>
-                      <span className="block truncate text-xs text-(--text-secondary)">
-                        {row.description}
-                      </span>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )
-          })}
-          <div
-            data-search-footer
-            className="sticky bottom-0 border-t border-(--border) bg-app-card"
-          >
-            <div
-              role="option"
-              id={`${id}-option-${landingItems.length}`}
-              aria-selected={activeIndex === landingItems.length}
-              data-search-index={landingItems.length}
-              onMouseDown={(event) => event.preventDefault()}
-              onMouseEnter={() => onActiveIndexChange(landingItems.length)}
-              onClick={() => activateItem(landingItems.length)}
-              className={`cursor-pointer px-4 py-3 text-sm ${activeIndex === landingItems.length ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
+      <div data-search-scroll className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        {emptyQuery ? (["action", "recent", "music"] as const).map(kind => {
+          const rows = landingItems.map((row, index) => ({ row, index })).filter(({ row }) => row.kind === kind)
+          if (!rows.length) return null
+          const label = kind === "action" ? "Quick actions" : kind === "recent" ? "Recent searches" : "Jump back in"
+          return <div role="group" aria-label={label} key={kind}>
+            <div aria-hidden="true" className="discovery-search-caption">{label}</div>
+            {rows.map(({ row, index }) => <div
+              key={`${kind}:${row.title}:${index}`} id={`${id}-option-${index}`} role="option"
+              aria-selected={selected === index} data-search-index={index}
+              onMouseEnter={() => onActiveIndexChange(index)} onMouseDown={event => event.preventDefault()}
+              onClick={() => activateItem(index)}
+              className={`flex cursor-pointer items-center gap-3 px-4 py-2.5 ${selected === index ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
             >
-              Explore search and suggestions <span aria-hidden="true">↗</span>
-            </div>
+              {row.item ? <SearchArtwork item={row.item} /> : <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-app-surface text-(--text-muted)">{kind === "recent" ? "↶" : "↗"}</span>}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium">{row.title}</span>
+                <span className="block truncate text-xs text-(--text-secondary)">{row.description}</span>
+              </span>
+            </div>)}
           </div>
-        </>
-      ) : (
-        <>
-          {isSearching && (
-            <p
-              role="status"
-              className="px-3 py-3 text-sm text-(--text-secondary)"
+        }) : items.length === 0 ? error ? (
+          <div role="alert" className="p-3 text-sm text-red-400">
+            <p>Search failed: {error}</p>
+            <button type="button" onMouseDown={event => event.preventDefault()} onClick={() => void search(query)} className="mt-2 rounded-md bg-app-surface px-3 py-2 text-(--text-primary)">Try again</button>
+          </div>
+        ) : !isSearching && <p role="status" className="px-3 py-3 text-sm text-(--text-secondary)">No results for “{query}”.</p> : groups.map(({ kind, rows }) => {
+          const label = kind === "artist" ? "Artists" : kind === "album" ? "Albums" : "Tracks"
+          return <div key={searchItemKey(rows[0].row.item)} role="group" aria-label={label} className="border-b border-(--border) pb-1 last:border-b-0">
+            <div aria-hidden="true" className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-(--text-muted)">{label}</div>
+            {rows.map(({ row, index }) => <div
+              key={searchItemKey(row.item)} id={`${id}-option-${index}`} role="option" aria-selected={index === selected} data-search-index={index}
+              className={`flex cursor-pointer items-center gap-3 px-3 py-2 ${index === selected ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
+              onMouseEnter={() => onActiveIndexChange(index)} onMouseDown={event => event.preventDefault()} onClick={() => activateItem(index)}
             >
-              Searching…
-            </p>
-          )}
-          {results.length === 0 ? (
-            error ? (
-              <div role="alert" className="p-3 text-sm text-red-400">
-                <p>Search failed: {error}</p>
-                <button
-                  type="button"
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => void search(query)}
-                  className="mt-2 rounded-md bg-app-surface px-3 py-2 text-(--text-primary)"
-                >
-                  Try again
-                </button>
-              </div>
-            ) : (
-              !isSearching && (
-                <p
-                  role="status"
-                  className="px-3 py-3 text-sm text-(--text-secondary)"
-                >
-                  No results for “{query}”.
-                </p>
-              )
-            )
-          ) : (
-            <>
-              {(["artist", "album", "track"] as const).map((kind) => {
-                const rows = items
-                  .map((row, index) => ({ row, index }))
-                  .filter(({ row }) => row.kind === kind)
-                if (!rows.length) return null
-                const label =
-                  kind === "artist"
-                    ? "Artists"
-                    : kind === "album"
-                      ? "Albums"
-                      : "Tracks"
-                return (
-                  <div
-                    key={kind}
-                    role="group"
-                    aria-label={label}
-                    className="border-b border-(--border) pb-1 last:border-b-0"
-                  >
-                    <div
-                      aria-hidden="true"
-                      className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-(--text-muted)"
-                    >
-                      {label}
-                    </div>
-                    {rows.map(({ row, index }) => (
-                      <div
-                        key={`${kind}:${row.item.id}`}
-                        id={`${id}-option-${index}`}
-                        role="option"
-                        aria-selected={index === activeIndex}
-                        data-search-index={index}
-                        className={`flex cursor-pointer items-center gap-3 px-3 py-2 ${index === activeIndex ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
-                        onMouseEnter={() => onActiveIndexChange(index)}
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => activateItem(index)}
-                      >
-                        <SearchArtwork item={row.item} />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
-                            <MusicSourceBadge source={row.item.providerKey === "ytmusic" ? "ytmusic" : "plex"} />
-                            <span className="truncate">{row.item.title}</span>
-                          </div>
-                          {row.kind !== "artist" && (
-                            <div className="truncate text-xs text-(--text-secondary)">
-                              <ArtistCredits item={row.item} onNavigate={onClose} className="hover:underline" />
-                              {row.kind === "track" && row.item.albumName && <><span> · </span>
-                                <MusicEntityLink onNavigate={onClose} entity={trackEntity(row.item, "album")} className="hover:underline">{row.item.albumName}</MusicEntityLink></>}
-                            </div>
-                          )}
-                        </div>
-                        {row.kind === "track" && <YoutubeMusicLikeButton track={row.item} />}
-                      </div>
-                    ))}
-                  </div>
-                )
-              })}
-              <div
-                data-search-footer
-                className="sticky bottom-0 z-10 border-t border-(--border) bg-app-card"
-              >
-                <div
-                  id={`${id}-option-${items.length}`}
-                  role="option"
-                  aria-selected={activeIndex === items.length}
-                  data-search-index={items.length}
-                  onMouseEnter={() => onActiveIndexChange(items.length)}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => activateItem(items.length)}
-                  className={`cursor-pointer px-3 py-3 text-sm ${activeIndex === items.length ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
-                >
-                  See all results for{" "}
-                  <span className="font-semibold">“{query}”</span>
+              <SearchArtwork item={row.item} />
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
+                  <MusicSourceBadge source={row.item.providerKey === "ytmusic" ? "ytmusic" : "plex"} />
+                  <span className="truncate">{row.item.title}</span>
                 </div>
+                {row.kind !== "artist" && <div className="truncate text-xs text-(--text-secondary)">
+                  <ArtistCredits item={row.item} onNavigate={onClose} className="hover:underline" />
+                  {row.kind === "track" && row.item.albumName && <><span> · </span><MusicEntityLink onNavigate={onClose} entity={trackEntity(row.item, "album")} className="hover:underline">{row.item.albumName}</MusicEntityLink></>}
+                </div>}
               </div>
-            </>
-          )}
-        </>
-      )}
-      <div className="discovery-search-hints" aria-hidden="true">
-        <span>
-          <kbd>↑ ↓</kbd> move
-        </span>
-        <span>
-          <kbd>Enter</kbd> open
-        </span>
-        <span>
-          <kbd>Esc</kbd> close
-        </span>
+              {row.kind === "track" && <YoutubeMusicLikeButton track={row.item} />}
+            </div>)}
+          </div>
+        })}
+      </div>
+      <div data-search-footer className="shrink-0 border-t border-(--border) bg-app-card">
+        <div id={`${id}-option-${count}`} role="option" aria-selected={selected === count} data-search-index={count}
+          onMouseEnter={() => onActiveIndexChange(count)} onMouseDown={event => event.preventDefault()} onClick={() => activateItem(count)}
+          className={`cursor-pointer px-3 py-3 text-sm ${selected === count ? "bg-hl-menu" : "hover:bg-hl-menu"}`}
+        >{emptyQuery ? <>Explore search and suggestions <span aria-hidden="true">↗</span></> : <>See all results for <span className="font-semibold">“{query}”</span></>}</div>
+      </div>
+      <div className="discovery-search-hints shrink-0" aria-hidden="true">
+        <span><kbd>↑ ↓</kbd> move</span><span><kbd>Enter</kbd> open</span><span><kbd>Esc</kbd> close</span>
       </div>
     </div>
   )

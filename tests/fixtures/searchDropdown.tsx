@@ -78,19 +78,19 @@ const options = [...document.querySelectorAll('[role="option"]')]
 assert.equal(options.length, 4)
 assert.equal(new Set(options.map((element) => element.id)).size, 4)
 assert.equal(options[0].getAttribute("aria-selected"), "true")
-const popup = document.querySelector('[role="listbox"]') as HTMLElement
+const popup = document.querySelector('[data-search-scroll]') as HTMLElement
 popup.getBoundingClientRect = () => ({ top: 100, bottom: 200 }) as DOMRect
 const footer = document.querySelector("[data-search-footer]") as HTMLElement
 footer.getBoundingClientRect = () => ({ top: 160, bottom: 200 }) as DOMRect
 ;(options[2] as HTMLElement).getBoundingClientRect = () =>
   ({ top: 250, bottom: 300 }) as DOMRect
 await act(async () => select(2))
-assert.equal(popup.scrollTop, 140)
+assert.equal(popup.scrollTop, 100)
 assert.equal(options[2].getAttribute("aria-selected"), "true")
 await act(async () => select(3))
 assert.equal(
   popup.scrollTop,
-  140,
+  100,
   "sticky footer selection should not scroll result rows"
 )
 assert.equal(options[3].getAttribute("aria-selected"), "true")
@@ -115,6 +115,30 @@ assert.equal(document.activeElement, input)
 await act(async () => (options[3] as HTMLElement).click())
 assert.equal(navigated.at(-1), "/search")
 assert.equal(closed, 4)
+// A late provider and a background association refresh leave existing row DOM,
+// scroll and the selected action intact. Status is outside the scrolling rows.
+const { appendSearchSuggestions } = await import("../../src/lib/searchSuggestions")
+state.query = "progressive"
+state.suggestions = [{ type: "track", id: "early", title: "Early track", artistName: "A" }]
+state.isSearching = true
+await act(async () => root.render(<Harness />))
+await act(async () => select(0))
+const early = document.querySelector('[data-search-index="0"]')!
+const scroll = document.querySelector('[data-search-scroll]') as HTMLElement
+scroll.scrollTop = 25
+state.suggestions = appendSearchSuggestions(state.suggestions, [{ type: "artist", id: "late", title: "Late artist" } as any])
+state.isSearching = false
+await act(async () => root.render(<Harness />))
+assert.equal(document.querySelector('[data-search-index="0"]'), early)
+assert.equal(early.getAttribute("aria-selected"), "true")
+assert.equal(scroll.scrollTop, 25)
+assert.equal(scroll.querySelector('[role="status"]'), null)
+await act(async () => select(2)) // footer
+state.suggestions = appendSearchSuggestions(state.suggestions, [{ type: "album", id: "later", title: "Later album", artistName: "A" } as any])
+await act(async () => root.render(<Harness />))
+assert.equal(document.querySelector('[data-search-footer] [role="option"]')!.getAttribute("aria-selected"), "true")
+state.suggestions = undefined
+state.query = "empty"
 state.results = []
 state.isSearching = true
 await act(async () => root.render(<Harness />))
@@ -129,10 +153,10 @@ assert.match(
 state.isSearching = false
 await act(async () => root.render(<Harness />))
 assert.match(
-  document.querySelector('[role="status"]')!.textContent!,
+  document.querySelector('[data-search-scroll] [role="status"]')!.textContent!,
   /No results/
 )
-assert.equal(document.querySelectorAll('[role="option"]').length, 0)
+assert.equal(document.querySelectorAll('[role="option"]').length, 1)
 state.query = ""
 landingItems = buildSearchLandingItems(
   [
@@ -148,6 +172,7 @@ await act(async () => {
   select(0)
   root.render(<Harness />)
 })
+await act(async () => select(0))
 assert.deepEqual(
   [...document.querySelectorAll('[role="group"]')].map((x) =>
     x.getAttribute("aria-label")

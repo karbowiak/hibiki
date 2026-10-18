@@ -203,3 +203,32 @@ test("changed local-first search results update only the active owner/query and 
     .acceptLocalRefresh(scope, session, "Query", result("Old session"))
   expect(store.getState().results).toEqual(result("Fresh"))
 })
+
+test("late providers and association refreshes append suggestions without changing visible actions", async () => {
+  const local = deferred<any>(), remote = deferred<any>()
+  const plex = { search: () => local.promise } as any
+  let owner = "account-one"
+  const store = createSearchStore(() => plex, () => {}, {
+    owner: () => owner, search: () => remote.promise, merge: mergeMusicSearchResults,
+  })
+  const query = store.getState().search("test")
+  remote.resolve([{ type: "track", providerKey: "ytmusic", id: "ytmusic:one", title: "First", artistName: "A" }])
+  await Bun.sleep(0)
+  const first = store.getState().suggestions[0]
+  expect(first.id).toBe("ytmusic:one")
+  local.resolve([{ type: "artist", id: "local", title: "Late artist" }])
+  await query
+  expect(store.getState().suggestions[0]).toBe(first)
+  expect(store.getState().suggestions[1].id).toBe("local")
+  store.getState().acceptSupplementalRefresh("test", [])
+  expect(store.getState().suggestions[0]).toBe(first)
+  const context = store.getState().context
+  owner = "account-two"
+  const next = store.getState().search("test")
+  expect(store.getState().suggestions).toEqual([])
+  expect(store.getState().results).toEqual([])
+  expect(store.getState().context).toBeGreaterThan(context)
+  await next
+  store.getState().setQuery("new")
+  expect(store.getState().suggestions).toEqual([])
+})

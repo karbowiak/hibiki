@@ -7,10 +7,14 @@ import { browseYoutubeMusic, subscribeYoutubeMusicCatalog, useYoutubeMusicDiscov
 import { mergeMusicSearchResults } from "../lib/musicMatching"
 import { associateMusicItems } from "../matching/associations"
 import { subscribeMatchingUpdates } from "../matching/updates"
+import { appendSearchSuggestions } from "../lib/searchSuggestions"
+import { useUIStore } from "./uiStore"
 
 interface SearchState {
   query: string
   results: MusicItem[]
+  suggestions: MusicItem[]
+  context: number
   isSearching: boolean
   error: string | null
   setQuery: (q: string) => void
@@ -43,7 +47,9 @@ export function createSearchStore(
   let refreshed: { revision: number; results: MusicItem[] } | null = null
   let primary: MusicItem[] = [], secondary: MusicItem[] = []
   let associations: Map<string, string | null> | undefined, associationRevision = 0
+  let searchOwner: { provider: MusicProvider | null; session: unknown; scope: unknown; extra: string | null } | null = null
   const combined = () => supplemental ? supplemental.merge(primary, secondary, associations) : primary
+  const suggest = (previous: MusicItem[], incoming: MusicItem[]) => appendSearchSuggestions(previous, incoming, useUIStore.getState().deduplicateAlbums)
   return create<SearchState>((set, get) => ({
     refreshAssociations: async () => {
       if (!supplemental?.associate || !secondary.length) return
@@ -52,13 +58,13 @@ export function createSearchStore(
       const current = () => request === associationRevision && search === revision && rows === secondary && getProvider() === provider &&
         provider?.cacheScope === scope && provider?.playbackSession === session && supplemental.owner() === owner
       const results = await supplemental.associate(rows, current)
-      if (current()) { associations = results; set({ results: combined() }) }
+      if (current()) { associations = results; const merged = combined(); set({ results: merged, suggestions: suggest(get().suggestions, merged) }) }
     },
     acceptSupplementalRefresh: (query, results) => {
       if (get().query.trim() !== query || !supplemental?.owner() || getProvider()?.isOffline) return
       secondary = results
       associations = undefined
-      set({ results: combined(), error: null })
+      set({ results: combined(), suggestions: suggest(get().suggestions, combined()), error: null })
       void get().refreshAssociations().catch(() => {})
     },
     acceptLocalRefresh: (scope, session, query, results) => {
@@ -71,32 +77,39 @@ export function createSearchStore(
         return
       refreshed = { revision, results }
       primary = results
-      set({ results: combined(), error: null })
+      set({ results: combined(), suggestions: suggest(get().suggestions, combined()), error: null })
     },
     query: "",
     results: [],
+    suggestions: [],
+    context: 0,
     isSearching: false,
     error: null,
     setQuery: (q) => {
       if (q === get().query) return
       revision++
       primary = []; secondary = []; associations = undefined
-      set({ query: q, results: [], isSearching: !!q.trim(), error: null })
+      set({ query: q, results: [], suggestions: [], context: get().context + 1, isSearching: !!q.trim(), error: null })
     },
     search: async (q, force = false) => {
       const request = ++revision
       const provider = getProvider()
       const session = provider?.playbackSession, scope = provider?.cacheScope
       const extraOwner = !provider?.isOffline ? supplemental?.owner() ?? null : null
+      const sameOwner = searchOwner?.provider === provider && searchOwner?.session === session && searchOwner?.scope === scope && searchOwner?.extra === extraOwner
+      const sameContext = sameOwner && q === get().query
+      searchOwner = { provider, session, scope, extra: extraOwner }
+      if (!sameContext) set({ suggestions: [], context: get().context + 1 })
       if (!q.trim()) {
         primary = []; secondary = []
-        set({ query: q, results: [], isSearching: false, error: null })
+        set({ query: q, results: [], suggestions: [], isSearching: false, error: null })
         return
       }
       if (!provider && extraOwner === null) {
         set({
           query: q,
           results: [],
+          suggestions: [],
           isSearching: false,
           error: "Connect to a music library to search.",
         })
@@ -105,7 +118,7 @@ export function createSearchStore(
       const current = () =>
         request === revision && getProvider() === provider && provider?.playbackSession === session &&
         provider?.cacheScope === scope && get().query === q && (extraOwner === null || supplemental?.owner() === extraOwner)
-      const previous = q === get().query ? get().results : []
+      const previous = sameContext ? get().results : []
       primary = []; secondary = []; associations = undefined
       set({ query: q, results: previous, isSearching: true, error: null })
       let remaining = Number(!!provider) + Number(extraOwner !== null), successes = 0
@@ -113,7 +126,7 @@ export function createSearchStore(
       const publish = () => {
         if (!current()) return
         const results = combined()
-        set({ results, isSearching: remaining > 0, error: !remaining && !results.length && failures.length ? failures.join(" · ") : null })
+        set({ results, suggestions: suggest(get().suggestions, results), isSearching: remaining > 0, error: !remaining && !results.length && failures.length ? failures.join(" · ") : null })
       }
       const run = async (source: string, load: () => Promise<MusicItem[]>, apply: (items: MusicItem[]) => void) => {
         try {
@@ -140,7 +153,7 @@ export function createSearchStore(
     clear: () => {
       revision++
       primary = []; secondary = []; associations = undefined
-      set({ query: "", results: [], isSearching: false, error: null })
+      set({ query: "", results: [], suggestions: [], context: get().context + 1, isSearching: false, error: null })
     },
   }))
 }

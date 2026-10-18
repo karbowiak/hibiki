@@ -78,7 +78,7 @@ export function TopBar() {
   const [showDropdown, setShowDropdown] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
   const searchId = useId()
-  const results = useSearchStore((s) => s.results)
+  const suggestions = useSearchStore((s) => s.suggestions)
   const isSearching = useSearchStore((s) => s.isSearching)
   const hubs = useLibraryStore((s) => s.hubs)
   const landingItems = buildSearchLandingItems(
@@ -88,9 +88,7 @@ export function TopBar() {
   )
   const rowCount = !localQuery.trim()
     ? landingItems.length + 1
-    : results.length
-      ? buildSearchItems(results).length + 1
-      : 0
+    : buildSearchItems(suggestions, true).length + 1
   const inputRef = useRef<HTMLInputElement>(null)
   const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   function cancelPendingBlur() {
