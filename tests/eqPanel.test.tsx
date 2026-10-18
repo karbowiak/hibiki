@@ -292,3 +292,25 @@ test("manual postgain has a stable name and exposes native range changes in dB",
   expect(gain.getAttribute("aria-valuetext")).toBe("+3 dB")
   expect(gain.getAttribute("aria-label")).toBe("Postgain")
 })
+
+test("choosing a preset resets gain to zero with Auto off and keeps gain controls available", async () => {
+  await act(async () => state().setPostgainDb(-7))
+  const buttons = () => [...document.querySelectorAll("button")]
+  await act(async () => buttons().find(button => button.textContent === "Bass Boost")!.click())
+  const automatic = buttons().find(button => button.textContent === "Auto")!
+  expect(automatic.getAttribute("aria-pressed")).toBe("false")
+  expect(state().postgainDb).toBe(0)
+  expect(document.querySelector<HTMLInputElement>('input[aria-label="Postgain"]')!.value).toBe("0")
+  await act(async () => automatic.click())
+  expect(state().autoPostgain).toBe(true)
+  expect(document.querySelector('input[aria-label="Postgain"]')).toBeNull()
+  await act(async () => automatic.click())
+  expect(state().autoPostgain).toBe(false)
+  expect(state().postgainDb).toBe(0)
+  const gain = document.querySelector<HTMLInputElement>('input[aria-label="Postgain"]')!
+  await act(async () => {
+    gain.value = "2"
+    gain.dispatchEvent(new dom.window.Event("input", { bubbles: true }))
+  })
+  expect(state().postgainDb).toBe(2)
+})

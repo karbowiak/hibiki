@@ -45,7 +45,7 @@ const flat = () => ({
   gains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] as EqProfile["gains"],
   enabled: false,
   postgainDb: 0,
-  autoPostgain: true,
+  autoPostgain: false,
 })
 function valid(profile: EqProfile) {
   return (

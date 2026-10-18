@@ -88,6 +88,7 @@ test("stable outputs recall independent tone and correction settings through A â
 
 test("saved output feedback distinguishes actual edits from derived automatic gain", () => {
   state().setCurrentOutput(output("1"))
+  state().setAutoPostgain(true)
   expect(outputEqMatches(state(), undefined)).toBe(false)
   state().saveCorrection(saved())
   state().saveOutputProfile()
@@ -100,6 +101,21 @@ test("saved output feedback distinguishes actual edits from derived automatic ga
   state().recallOutputProfile()
   state().setCorrectionEnabled(false)
   expect(outputEqMatches(state(), profile)).toBe(false)
+})
+
+test("tone presets send zero gain to the output scene and retain its device correction", () => {
+  state().setCurrentOutput(output("1"))
+  state().saveCorrection(saved())
+  state().setAutoPostgain(true)
+  state().applyPreset([8, 6, 4, 2, 0, 0, 0, 0, 0, 0])
+  expect(requests.at(-1)!.settings.postgainDb).toBe(0)
+  expect(requests.at(-1)!.settings.correction).toEqual(correctionProfile(saved()))
+  state().saveOutputProfile()
+  expect(state().outputProfiles["1"].autoPostgain).toBe(false)
+  expect(state().outputProfiles["1"].postgainDb).toBe(0)
+  state().setCurrentOutput(output("2"))
+  expect(state().autoPostgain).toBe(false)
+  expect(requests.at(-1)!.settings.postgainDb).toBe(0)
 })
 
 test("reconnect invalidates acknowledgements and preserves the saved profile for recall", async () => {

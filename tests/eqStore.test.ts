@@ -48,6 +48,45 @@ afterAll(() => {
   useEqStore.setState(snapshot)
 })
 
+test("gain compensation defaults off and presets clear earlier level adjustments", () => {
+  expect(useEqStore.getInitialState().autoPostgain).toBe(false)
+  expect(useEqStore.getInitialState().postgainDb).toBe(0)
+  for (const autoPostgain of [true, false]) {
+    useEqStore.setState({ autoPostgain, postgainDb: -8 })
+    state().applyPreset(bass)
+    expect(state().gains).toEqual(bass)
+    expect(state().autoPostgain).toBe(false)
+    expect(state().postgainDb).toBe(0)
+    expect(requests.at(-1)!.settings.postgainDb).toBe(0)
+  }
+})
+
+test("automatic and manual gain remain opt-in after choosing a preset", () => {
+  state().applyPreset(bass)
+  state().setAutoPostgain(true)
+  expect(requests.at(-1)!.settings.postgainDb).toBeNull()
+  state().setAutoPostgain(false)
+  expect(requests.at(-1)!.settings.postgainDb).toBe(0)
+  state().setPostgainDb(2.5)
+  state().setBand(1, 5)
+  expect(state().autoPostgain).toBe(false)
+  expect(requests.at(-1)!.settings.postgainDb).toBe(2.5)
+})
+
+test("a pending automatic response cannot restore attenuation after choosing a preset", async () => {
+  state().syncToEngine()
+  state().applyPreset(bass)
+  requests[0].result.resolve(-9.75)
+  await settle()
+  expect(state().autoPostgain).toBe(false)
+  expect(state().postgainDb).toBe(0)
+  expect(state().applying).toBe(true)
+  requests[1].result.resolve(0)
+  await settle()
+  expect(state().postgainDb).toBe(0)
+  expect(state().applying).toBe(false)
+})
+
 test("saved automatic gain is recomputed natively with the complete EQ settings", async () => {
   useEqStore.setState({ gains: bass, postgainDb: 8 })
   state().syncToEngine()
@@ -66,7 +105,7 @@ test("saved automatic gain is recomputed natively with the complete EQ settings"
 })
 
 test("an old automatic response cannot overwrite a newer manual gain or pending edit", async () => {
-  state().applyPreset(bass)
+  state().setBand(0, 8)
   state().setPostgainDb(2.5)
   requests[0].result.resolve(-9.75)
   await settle()
@@ -131,7 +170,7 @@ test("switching to an unknown device saves outgoing preferences and applies flat
   expect(requests[0].settings).toEqual({
     gainsDb: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     enabled: false,
-    postgainDb: null,
+    postgainDb: 0,
     duckMs: 30,
   })
   const count = requests.length
@@ -217,10 +256,10 @@ test("configuration errors stay in EQ settings and a retry applies the latest se
   expect(state().eqError).not.toContain("private")
   state().syncToEngine()
   expect(requests[2].settings.gainsDb[0]).toBe(7)
-  requests[2].result.resolve(-8.75)
+  requests[2].result.resolve(0)
   await settle()
   expect(state().eqError).toBeNull()
-  expect(state().postgainDb).toBe(-8.75)
+  expect(state().postgainDb).toBe(0)
 })
 
 test("clearing the current profile survives switching away and later EQ edits", () => {

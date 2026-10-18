@@ -204,7 +204,7 @@ export const useEqStore = create<EqState>()(
       gains: [...FLAT] as EqGains,
       enabled: false,
       postgainDb: 0,
-      autoPostgain: true,
+      autoPostgain: false,
       applying: false,
       eqError: null,
       deviceProfiles: {},
@@ -233,7 +233,8 @@ export const useEqStore = create<EqState>()(
 
       applyPreset: (preset) => {
         if (!validGains(preset)) return
-        set({ gains: clampGains(preset) })
+        // Presets change tone only; level compensation is an explicit opt-in.
+        set({ gains: clampGains(preset), autoPostgain: false, postgainDb: 0 })
         applyConfiguration(get, set)
       },
 
@@ -249,7 +250,10 @@ export const useEqStore = create<EqState>()(
       },
 
       setAutoPostgain: (auto) => {
-        set({ autoPostgain: auto })
+        set({
+          autoPostgain: auto,
+          ...(!auto && get().autoPostgain ? { postgainDb: 0 } : {}),
+        })
         applyConfiguration(get, set)
       },
 
@@ -274,7 +278,7 @@ export const useEqStore = create<EqState>()(
             gains: [...FLAT] as EqGains,
             enabled: false,
             postgainDb: 0,
-            autoPostgain: true,
+            autoPostgain: false,
           })
           applyConfiguration(get, set, true)
         } else {
