@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import { useProviderOwner } from "../hooks/useProviderOwner"
 import { useProviderStore } from "../stores/providerStore"
 import type { MatchingAction, MatchingStatus } from "../matching/types"
+import { withTimeout } from "../lib/withTimeout"
 
 export function MatchingIndexControls() {
   const { provider, scope, session } = useProviderOwner()
@@ -9,6 +10,7 @@ export function MatchingIndexControls() {
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
   const request = useRef(0)
+  const controlRequest = useRef<number | null>(null)
   const owns = () =>
     provider === useProviderStore.getState().provider &&
     provider?.cacheScope === scope &&
@@ -19,12 +21,13 @@ export function MatchingIndexControls() {
     setInfo(null)
     setError("")
     setBusy(false)
+    controlRequest.current = null
     const read = async () => {
-      if (pending || !provider?.matchingIndexStatus) return
+      if (pending || controlRequest.current !== null || !provider?.matchingIndexStatus) return
       pending = true
       const revision = ++request.current
       try {
-        const value = await provider.matchingIndexStatus()
+        const value = await withTimeout(provider.matchingIndexStatus(), 5000, "Matching status timed out.")
         if (active && owns() && revision === request.current) {
           setInfo(value)
           setError("")
@@ -47,12 +50,13 @@ export function MatchingIndexControls() {
     }
   }, [provider, scope, session])
   async function control(action: MatchingAction) {
-    if (!provider?.matchingIndexControl || busy) return
+    if (!provider?.matchingIndexControl || controlRequest.current !== null) return
     const revision = ++request.current
+    controlRequest.current = revision
     setBusy(true)
     setError("")
     try {
-      const value = await provider.matchingIndexControl(action)
+      const value = await withTimeout(provider.matchingIndexControl(action), 10_000, "Matching control timed out.")
       if (owns() && revision === request.current) setInfo(value)
     } catch {
       if (owns() && revision === request.current)
@@ -60,7 +64,10 @@ export function MatchingIndexControls() {
           "The index could not be updated. Your music and saved playlists are retained; try again."
         )
     } finally {
-      if (owns()) setBusy(false)
+      if (controlRequest.current === revision) {
+        controlRequest.current = null
+        if (owns()) setBusy(false)
+      }
     }
   }
   return (
