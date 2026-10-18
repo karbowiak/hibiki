@@ -113,7 +113,7 @@ jobs:
 
       - name: Run patched decoder and container reader regressions
         working-directory: src-tauri
-        run: cargo test --locked -p symphonia-bundle-mp3 -p symphonia-bundle-flac -p symphonia-format-ogg -p symphonia-format-isomp4
+        run: cargo test --locked -p symphonia-bundle-mp3 -p symphonia-bundle-flac -p symphonia-format-ogg -p symphonia-format-isomp4 -p symphonia-format-mkv
 
       # Source checks stay cheap; release.yml validates the actual signed,
       # relocated AppImage before publishing any installers.
