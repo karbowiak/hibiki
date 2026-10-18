@@ -148,3 +148,17 @@ test("a Plex-only name credit can finish after the optional YTM fallback budget"
   })
   expect(await resolve({ kind: "artist", name: "Artist" })).toBe("/artist/123")
 })
+
+test("cached name-only destinations cannot conceal a newly verified or removed Plex mapping", async () => {
+  let href: string | null = "/artist/123"
+  const resolve = createMusicLinkResolver({ current: () => true,
+    indexed: async () => ({ handled: !!href, href, plexChecked: true }), searchPlex: async () => [],
+    searchYoutube: async () => [{ id: "ytmusic:UC_real", name: "Artist" }],
+  })
+  const ref: MusicEntityRef = { kind: "artist", name: "Artist" }
+  expect(await resolve(ref)).toBe("/artist/123")
+  href = null
+  expect(await resolve(ref)).toBe("/ytmusic/UC_real")
+  href = "/artist/456"
+  expect(await resolve(ref)).toBe("/artist/456")
+})

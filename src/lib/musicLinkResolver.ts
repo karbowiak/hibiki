@@ -71,7 +71,15 @@ export function createMusicLinkResolver({ searchPlex, searchYoutube, hydrate, in
     }
     const key = JSON.stringify([ref.kind, ref.id, ref.name, ref.artist, ref.year, ref.trackId])
     const saved = cache.get(key)
-    if (saved && saved.until > now()) return saved.promise
+    if (saved && saved.until > now()) {
+      // A short navigation cache must not conceal a newly verified or removed
+      // local identity. This is a passive proof read, never a live fallback.
+      const proof = indexed ? await withTimeout(indexed(ref), optionalWaitMs, "Plex identity check timed out.").catch(() => null) : null
+      if (!current()) return null
+      if (proof?.handled) return proof.href
+      if (proof?.plexChecked) cache.delete(key)
+      else return saved.promise
+    }
     const promise = (async () => {
       // Start both services together. Optional Plex work cannot hold YTM fallback.
       const local = withTimeout(plex(), lookupTimeoutMs, "Plex lookup timed out. Please try again.")
