@@ -291,10 +291,28 @@ export class PlexProvider implements MusicProvider {
           : type === "artist"
             ? "8"
             : undefined
-    const results = await this.api.searchLibrary(sid, query, libtype)
-    return results
+    const api = this.api
+    if (type) return (await api.searchLibrary(sid, query, libtype))
+      .map(item => plexMediaToMusicItem(item, this.img)).filter((item): item is MusicItem => item !== null)
+    const requests = await Promise.allSettled([
+      api.searchLibrary(sid, query, libtype),
+      // Playlists belong to the connected account/server, rather than one
+      // music section. Search their metadata; never load their song contents.
+      api.getPlaylists(sid),
+    ] as const)
+    if (requests.every(result => result.status === "rejected")) throw (requests[0] as PromiseRejectedResult).reason
+    const results = requests[0].status === "fulfilled" ? requests[0].value : []
+    const items = results
       .map((m) => plexMediaToMusicItem(m, this.img))
       .filter((x): x is MusicItem => x !== null)
+    const playlists = requests[1]
+    const titleKey = (title: string) => title.normalize("NFKC").toLocaleLowerCase().replace(/\s+/g, " ").trim()
+    if (playlists?.status === "fulfilled") for (const playlist of playlists.value) {
+      if (playlist.playlist_type !== "audio") continue
+      if (titleKey(playlist.title).includes(titleKey(query)) && !items.some(item => item.type === "playlist" && item.id === String(playlist.rating_key)))
+        items.push({ ...plexPlaylistToMusicPlaylist(playlist, this.img), type: "playlist" })
+    }
+    return items
   }
 
   async findPlaylistCandidates(

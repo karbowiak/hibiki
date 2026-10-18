@@ -6,6 +6,7 @@ for (const scenario of [
   "filters-reset",
   "playback",
   "card-interactions",
+  "provider-playlists",
   "states-history",
   "compact-shortcut",
   "default-table",

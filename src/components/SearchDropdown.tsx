@@ -2,6 +2,7 @@ import { ArtistCredits } from "./shared/ArtistCredits"
 import { MusicEntityLink } from "./shared/MusicEntityLink"
 import { trackEntity } from "../lib/musicLinks"
 import { appendSearchSuggestions, searchItemKey } from "../lib/searchSuggestions"
+import { searchPlaylistHref } from "../lib/searchPlaylists"
 import "../styles/discovery.css"
 import { useArtistImage, useAlbumImage } from "../hooks/useMediaImage"
 import { ArtworkImage, useArtworkFailures } from "./shared/ArtworkImage"
@@ -18,6 +19,7 @@ import type {
   MusicAlbum,
   MusicArtist,
   MusicHub,
+  MusicPlaylist,
 } from "../types/music"
 
 interface Props {
@@ -116,12 +118,14 @@ type DropdownItem =
   | { kind: "artist"; item: MusicArtist & { type: "artist" }; href: string }
   | { kind: "album"; item: MusicAlbum & { type: "album" }; href: string }
   | { kind: "track"; item: MusicTrack & { type: "track" } }
+  | { kind: "playlist"; item: MusicPlaylist & { type: "playlist" }; href: string }
 
 export function buildSearchItems(results: MusicItem[], presented = false): DropdownItem[] {
   return (presented ? results : appendSearchSuggestions([], results)).flatMap((item): DropdownItem[] => {
     const href = item.providerKey === "ytmusic" ? `/ytmusic/${encodeURIComponent(item.id.slice(8))}` : `/${item.type}/${item.id}`
     if (item.type === "artist") return [{ kind: "artist", item, href }]
     if (item.type === "album") return [{ kind: "album", item, href }]
+    if (item.type === "playlist") return [{ kind: "playlist", item, href: searchPlaylistHref(item) }]
     return item.type === "track" ? [{ kind: "track", item }] : []
   })
 }
@@ -148,7 +152,7 @@ function SearchArtwork({ item }: { item: MusicItem }) {
     item.id,
     failures
   )
-  const src = remote ? item.thumbUrl : item.type === "artist" ? artist : album
+  const src = remote || item.type === "playlist" ? item.thumbUrl : item.type === "artist" ? artist : album
   return src ? (
     <ArtworkImage
       src={src}
@@ -337,7 +341,7 @@ export function SearchDropdown({
             <button type="button" onMouseDown={event => event.preventDefault()} onClick={() => void search(query)} className="mt-2 rounded-md bg-app-surface px-3 py-2 text-(--text-primary)">Try again</button>
           </div>
         ) : !isSearching && <p role="status" className="px-3 py-3 text-sm text-(--text-secondary)">No results for “{query}”.</p> : groups.map(({ kind, rows }) => {
-          const label = kind === "artist" ? "Artists" : kind === "album" ? "Albums" : "Tracks"
+          const label = kind === "artist" ? "Artists" : kind === "album" ? "Albums" : kind === "playlist" ? "Playlists" : "Tracks"
           return <div key={searchItemKey(rows[0].row.item)} role="group" aria-label={label} className="border-b border-(--border) pb-1 last:border-b-0">
             <div aria-hidden="true" className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-(--text-muted)">{label}</div>
             {rows.map(({ row, index }) => <div
@@ -348,10 +352,11 @@ export function SearchDropdown({
               <SearchArtwork item={row.item} />
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
-                  <MusicSourceBadge source={row.item.providerKey === "ytmusic" ? "ytmusic" : "plex"} />
+                  {row.item.providerKey === "hibiki" ? <span className="shrink-0 text-xs text-(--text-secondary)">Hibiki</span> : <MusicSourceBadge source={row.item.providerKey === "ytmusic" ? "ytmusic" : "plex"} />}
                   <span className="truncate">{row.item.title}</span>
                 </div>
-                {row.kind !== "artist" && <div className="truncate text-xs text-(--text-secondary)">
+                {row.kind === "playlist" && <div className="truncate text-xs text-(--text-secondary)">{row.item.trackCount > 0 ? `${row.item.trackCount} songs` : "Playlist"}</div>}
+                {(row.kind === "track" || row.kind === "album") && <div className="truncate text-xs text-(--text-secondary)">
                   <ArtistCredits item={row.item} onNavigate={onClose} className="hover:underline" />
                   {row.kind === "track" && row.item.albumName && <><span> · </span><MusicEntityLink onNavigate={onClose} entity={trackEntity(row.item, "album")} className="hover:underline">{row.item.albumName}</MusicEntityLink></>}
                 </div>}

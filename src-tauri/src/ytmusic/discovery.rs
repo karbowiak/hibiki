@@ -664,9 +664,7 @@ async fn fetch(app: &tauri::AppHandle, request: &CatalogRequest) -> Result<Brows
     }
     if id == "VLLM" { for item in &mut page.items { if item.kind == "song" { item.liked = Some(true); } } }
     if general_search || artist_search {
-        page.items.clear();
-        collect_items(&response.value["contents"], &mut page.items, true, false, 0);
-        page.items.retain(|item| if artist_search { item.kind == "artist" } else { matches!(item.kind.as_str(), "artist" | "album" | "song") });
+        page.items = search_items(&response.value, artist_search);
         page.continuation = None;
     }
     if id == "FEmusic_history" {
@@ -682,6 +680,14 @@ async fn fetch(app: &tauri::AppHandle, request: &CatalogRequest) -> Result<Brows
     }
     if !state.owns(generation) { return Err("YouTube Music connection changed.".into()); }
     Ok(page)
+}
+
+fn search_items(response: &Value, artists_only: bool) -> Vec<Item> {
+    let mut results = Vec::new();
+    collect_items(&response["contents"], &mut results, true, false, 0);
+    results.retain(|item| if artists_only { item.kind == "artist" }
+        else { matches!(item.kind.as_str(), "artist" | "album" | "song" | "playlist") });
+    results
 }
 
 #[cfg(test)]
@@ -760,6 +766,29 @@ mod tests {
         }
         // A nested recommendation's state cannot become the featured song's.
         assert_eq!(liked(&json!({"contents":[{"likeStatus":"LIKE"}]})), None);
+    }
+    #[test]
+    fn normal_search_keeps_playlists_alongside_artists_albums_and_audio_from_one_response() {
+        let artist = json!({"musicTwoRowItemRenderer":{"title":{"runs":[{"text":"Artist"}]},
+            "navigationEndpoint":{"browseEndpoint":{"browseId":"UC_artist"}}}});
+        let playlist = json!({"musicResponsiveListItemRenderer":{
+            "flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Partial Playlist"}]}}},
+                {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"12 songs"}]}}}],
+            "navigationEndpoint":{"browseEndpoint":{"browseId":"VLPL_playlist",
+                "browseEndpointContextSupportedConfigs":{"browseEndpointContextMusicConfig":{"pageType":"MUSIC_PAGE_TYPE_PLAYLIST"}}}},
+            "thumbnail":{"musicThumbnailRenderer":{"thumbnail":{"thumbnails":[{"url":"https://lh3.googleusercontent.com/playlist","width":512,"height":512}]}}}
+        }});
+        let response = json!({"contents":{"sectionListRenderer":{"contents":[
+            shelf("Artists", vec![artist]), shelf("Albums", vec![album()]),
+            shelf("Songs", vec![song("abcdefghijk", "MUSIC_VIDEO_TYPE_ATV"), song("lmnopqrstuv", "MUSIC_VIDEO_TYPE_OMV")]),
+            shelf("Playlists", vec![playlist])
+        ]}}});
+        let items = search_items(&response, false);
+        assert_eq!(items.iter().map(|item| item.kind.as_str()).collect::<Vec<_>>(), ["artist", "album", "song", "playlist"]);
+        assert_eq!(items[3].id, "VLPL_playlist");
+        assert_eq!(items[3].track_count, Some(12));
+        assert_eq!(items[3].thumbnail.as_deref(), Some("https://lh3.googleusercontent.com/playlist"));
+        assert_eq!(search_items(&response, true).len(), 1);
     }
     #[test]
     fn artist_search_recognizes_channel_aliases_without_accepting_other_page_types() {

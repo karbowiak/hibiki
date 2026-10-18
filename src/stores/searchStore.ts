@@ -9,6 +9,8 @@ import { associateMusicItems } from "../matching/associations"
 import { subscribeMatchingUpdates } from "../matching/updates"
 import { appendSearchSuggestions } from "../lib/searchSuggestions"
 import { useUIStore } from "./uiStore"
+import { linkSearchPlaylists } from "../lib/searchPlaylists"
+import { useMixedPlaylistStore } from "./mixedPlaylistStore"
 
 interface SearchState {
   query: string
@@ -164,7 +166,11 @@ export const useSearchStore = createSearchStore(() => useProviderStore.getState(
     return state.connected ? `ytmusic:${state.revision}` : null
   },
   search: async (query, force) => (await browseYoutubeMusic({ browseId: "hibiki_search", params: query.trim() }, null, force)).items.map(youtubeMusicItemMusic),
-  merge: mergeMusicSearchResults,
+  merge: (primary, supplemental, associations) => linkSearchPlaylists(mergeMusicSearchResults(primary, supplemental, associations),
+    useMixedPlaylistStore.getState().playlists, {
+      plex: useProviderStore.getState().provider?.cacheScope,
+      ytmusic: useYoutubeMusicDiscoveryStore.getState().connected ? useYoutubeMusicDiscoveryStore.getState().accountId ?? undefined : undefined,
+    }),
   associate: associateMusicItems,
 })
 useProviderStore.subscribe((state, previous) => {

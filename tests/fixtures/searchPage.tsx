@@ -314,6 +314,17 @@ try {
       )
       assert.equal(plays[1]![0].id, "track-56")
       assert.equal(plays[1]![1].length, 57)
+    } else if (scenario === "provider-playlists") {
+      const { youtubeMusicItemMusic } = await import("../../src/backends/ytmusic/discovery")
+      const remote = youtubeMusicItemMusic({ id: "VLPL_remote", kind: "playlist", title: "Remote playlist", artist: "", thumbnail: null, duration: null, album: null, year: null })
+      const mixed = { ...playlist, id: "mixed:known", title: "Linked playlist", providerKey: "hibiki", _providerData: { mixedPlaylistId: "mixed:known" } }
+      await update({ results: [playlist, remote, mixed] })
+      for (const href of ["/playlist/playlist-1", "/ytmusic/VLPL_remote", "/mixed-playlist/mixed%3Aknown"]) {
+        const link = document.querySelector<HTMLAnchorElement>(`a[href="${href}"]`)
+        assert.ok(link, `missing playlist destination ${href}`)
+        await click(link)
+        assert.equal(navigations.at(-1), href)
+      }
     } else if (scenario === "card-interactions") {
       await update({ results: [artist(0), album(0), playlist] })
       for (const [kind, href] of [

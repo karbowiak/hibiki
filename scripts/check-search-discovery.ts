@@ -167,6 +167,36 @@ try {
             focusBounds.cardRight <= focusBounds.rowRight + 1,
           `${name}/${width}: keyboard focus does not reveal the last mix ${JSON.stringify(focusBounds)}`
         )
+        // Full Search deliberately uses its page results rather than a popup.
+        // Exercise the navbar dropdown from Home, then return to discovery.
+        await page.evaluate(() => { history.pushState({}, "", "/"); dispatchEvent(new PopStateEvent("popstate")) })
+        const input = page.getByRole("combobox", { name: "Search your music library" })
+        await input.focus()
+        await input.click()
+        const popup = page.getByRole("listbox")
+        await popup.waitFor()
+        const panelGeometry = async () => popup.evaluate(element => {
+          const rect = element.getBoundingClientRect()
+          const pane = element.closest(".app-page")!.getBoundingClientRect()
+          const scroll = element.querySelector<HTMLElement>("[data-search-scroll]")!
+          const footer = element.querySelector<HTMLElement>("[data-search-footer]")!.getBoundingClientRect()
+          return { top: rect.top, bottom: rect.bottom, height: rect.height, available: Math.min(innerHeight, pane.bottom) - rect.top - 12,
+            scrollBottom: scroll.getBoundingClientRect().bottom, footerTop: footer.top, scrollOverflow: scroll.scrollHeight - scroll.clientHeight }
+        })
+        const before = await panelGeometry()
+        assert.ok(Math.abs(before.height - before.available) <= 2, `${name}/${width}: dropdown does not fill its available height ${JSON.stringify(before)}`)
+        assert.ok(before.scrollBottom <= before.footerTop + 1, `${name}: results overlap the fixed footer`)
+        await input.fill("Opening")
+        await popup.locator('[role="option"]').filter({ hasText: "Opening Track" }).waitFor()
+        const after = await panelGeometry()
+        assert.ok(Math.abs(after.height - before.height) <= 2, `${name}: short search changed panel height`)
+        if (width === 1440) await page.screenshot({ path: join(artifacts, `${name}-search-panel.png`) })
+        await page.keyboard.press("Escape")
+        await page.evaluate(() => {
+          ;(window as any).fixtureSearch.clear()
+          history.pushState({}, "", "/search"); dispatchEvent(new PopStateEvent("popstate"))
+        })
+        await mixes.waitFor()
       }
       await mixes.locator('a[href="/mix"]').nth(5).press("Enter")
       await page

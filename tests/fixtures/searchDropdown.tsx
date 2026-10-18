@@ -137,6 +137,23 @@ await act(async () => select(2)) // footer
 state.suggestions = appendSearchSuggestions(state.suggestions, [{ type: "album", id: "later", title: "Later album", artistName: "A" } as any])
 await act(async () => root.render(<Harness />))
 assert.equal(document.querySelector('[data-search-footer] [role="option"]')!.getAttribute("aria-selected"), "true")
+state.query = "playlists"
+state.suggestions = [
+  { type: "playlist", id: "123", title: "Same title", providerKey: "plex", trackCount: 12 },
+  { type: "playlist", id: "ytmusic:VLPL_list", title: "Same title", providerKey: "ytmusic", trackCount: 20 },
+  { type: "playlist", id: "mixed:known", title: "Linked playlist", providerKey: "hibiki", _providerData: { mixedPlaylistId: "mixed:known" } },
+]
+await act(async () => root.render(<Harness />))
+assert.equal(document.querySelectorAll('[role="option"]').length, 4)
+assert.equal(document.querySelector('[role="group"]')!.getAttribute("aria-label"), "Playlists")
+assert.equal(document.querySelectorAll('[data-music-source]').length, 2)
+await act(async () => select(1))
+await act(async () => input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })))
+assert.equal(navigated.at(-1), "/ytmusic/VLPL_list")
+await act(async () => (document.querySelector('[data-search-index="0"]') as HTMLElement).click())
+assert.equal(navigated.at(-1), "/playlist/123")
+await act(async () => (document.querySelector('[data-search-index="2"]') as HTMLElement).click())
+assert.equal(navigated.at(-1), "/mixed-playlist/mixed%3Aknown")
 state.suggestions = undefined
 state.query = "empty"
 state.results = []

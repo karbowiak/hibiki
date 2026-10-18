@@ -26,6 +26,7 @@ import { MusicSourceBadge } from "../shared/MusicSource"
 import { originalYoutubeMusicItem } from "../../backends/ytmusic/discovery"
 import { useYoutubeMusicDiscoveryStore } from "../../backends/ytmusic/discovery"
 import { useProviderStore } from "../../stores/providerStore"
+import { searchPlaylistHref } from "../../lib/searchPlaylists"
 
 type MediaType = "artist" | "album" | "track" | "playlist"
 
@@ -121,7 +122,7 @@ function getInfo(item: MusicItem) {
         desc: "Playlist",
         thumb: item.thumbUrl,
         isArtist: false,
-        href: `/playlist/${item.id}`,
+        href: searchPlaylistHref(item),
         id: item.id,
         itemType: "playlist" as const,
       }
@@ -338,10 +339,10 @@ export function Search() {
                           : info.itemType === "album"
                             ? () => prefetchAlbum(info.id)
                             : undefined
-                      const onContextMenu =
+                      const onContextMenu = item.providerKey !== "hibiki" && (
                         item.type === "artist" ||
                         item.type === "album" ||
-                        item.type === "playlist"
+                        item.type === "playlist")
                           ? ctxMenu(item.type, item)
                           : undefined
                       return (
@@ -351,7 +352,7 @@ export function Search() {
                           desc={info.desc}
                           descriptionEntity={item.type === "album" ? albumArtistEntity(item) : item.type === "track" ? trackEntity(item, "artist") : null}
                           thumb={info.thumb}
-                          artworkBadge={<MusicSourceBadge source="plex" />}
+                          artworkBadge={item.providerKey === "hibiki" ? <span className="text-xs">Hibiki</span> : <MusicSourceBadge source="plex" />}
                           isArtist={info.isArtist}
                           href={info.href ?? undefined}
                           prefetch={prefetch}
