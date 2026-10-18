@@ -1,0 +1,355 @@
+<div id="hibiki-settings-concepts">
+  <div class="viz-carousel" aria-label="Hibiki settings layout options">
+    <section data-variant="Service pages" aria-label="Settings with service pages">
+      <div class="hb-app" data-design="sections"></div>
+    </section>
+    <section data-variant="Service tabs" aria-label="Settings with tabs inside each service" hidden>
+      <div class="hb-app" data-design="tabs"></div>
+    </section>
+    <section data-variant="Compact inspector" aria-label="Settings with a compact details pane" hidden>
+      <div class="hb-app" data-design="inspector"></div>
+    </section>
+  </div>
+  <div class="hb-preview-note">Interactive concepts · Illustrative data</div>
+  <style>
+    #hibiki-settings-concepts { width:100%; }
+    #hibiki-settings-concepts .hb-app {
+      --hb-bg:light-dark(#f5f3f1,#181819);
+      --hb-side:light-dark(#eeebe8,#202020);
+      --hb-card:light-dark(#fffefd,#222223);
+      --hb-raised:light-dark(#f0eeec,#2d2c2e);
+      --hb-text:light-dark(#242126,#f5f2f4);
+      --hb-muted:light-dark(#656068,#b7b1b7);
+      --hb-line:light-dark(#ded9dd,#3a363b);
+      --hb-accent:light-dark(#82536e,#d0a0bd);
+      --hb-tint:light-dark(#e8dce4,#3c3039);
+      --hb-positive:light-dark(#347157,#9ecbb3);
+      --hb-danger:light-dark(#a93449,#f0a4b0);
+      color:var(--hb-text); background:var(--hb-bg);
+      font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      font-size:14px; line-height:1.5; font-weight:400;
+      min-height:1120px; display:grid; grid-template-columns:208px minmax(0,1fr);
+      border-radius:14px; overflow:clip; text-align:left;
+    }
+    #hibiki-settings-concepts .hb-app * { box-sizing:border-box; }
+    #hibiki-settings-concepts .hb-app button,
+    #hibiki-settings-concepts .hb-app input,
+    #hibiki-settings-concepts .hb-app select { font:inherit; }
+    #hibiki-settings-concepts .hb-app button { cursor:inherit; }
+    #hibiki-settings-concepts .hb-app button:focus-visible,
+    #hibiki-settings-concepts .hb-app select:focus-visible,
+    #hibiki-settings-concepts .hb-app input:focus-visible { outline:2px solid var(--hb-accent);outline-offset:3px; }
+    #hibiki-settings-concepts .hb-app ::selection { background:var(--hb-tint);color:var(--hb-text); }
+    #hibiki-settings-concepts .hb-app svg { width:17px;height:17px;flex-shrink:0; }
+    #hibiki-settings-concepts .hb-side { background:var(--hb-side);padding:26px 14px 20px;display:flex;flex-direction:column; }
+    #hibiki-settings-concepts .hb-sidebar-title { font-size:15px;font-weight:650;margin:0 12px 24px; }
+    #hibiki-settings-concepts .hb-nav-group { margin-bottom:19px; }
+    #hibiki-settings-concepts .hb-nav-group-label { margin:0 12px 6px;font-size:11px;font-weight:600;letter-spacing:.05em;color:var(--hb-muted); }
+    #hibiki-settings-concepts .hb-nav-item { width:100%;padding:9px 12px;margin:2px 0;border:0;border-radius:7px;background:transparent;color:var(--hb-muted);text-align:left;display:flex;align-items:center;gap:10px;line-height:1.35; }
+    #hibiki-settings-concepts .hb-nav-item:hover { background:var(--hb-raised);color:var(--hb-text); }
+    #hibiki-settings-concepts .hb-nav-item[aria-current="page"] { color:var(--hb-text);background:var(--hb-tint);font-weight:600; }
+    #hibiki-settings-concepts .hb-nav-item[aria-current="page"] svg { color:var(--hb-accent); }
+    #hibiki-settings-concepts .hb-nav-item .hb-nav-dot { width:5px;height:5px;border-radius:50%;background:var(--hb-positive);margin-left:auto;flex-shrink:0; }
+    #hibiki-settings-concepts .hb-side-bottom { margin-top:auto;padding-top:20px; }
+    #hibiki-settings-concepts .hb-main { padding:30px 30px 34px;min-width:0; }
+    #hibiki-settings-concepts .hb-head { display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:25px; }
+    #hibiki-settings-concepts .hb-head h1 { margin:0;font-size:26px;font-weight:650;letter-spacing:-.03em;line-height:1.25;color:var(--hb-text); }
+    #hibiki-settings-concepts .hb-head p { margin:7px 0 0;color:var(--hb-muted);font-size:13px;max-width:50ch; }
+    #hibiki-settings-concepts .hb-status { display:inline-flex;align-items:center;gap:7px;color:var(--hb-positive);white-space:nowrap;font-size:12px;padding-top:5px; }
+    #hibiki-settings-concepts .hb-dot { width:6px;height:6px;border-radius:50%;background:currentColor; }
+    #hibiki-settings-concepts .hb-section { margin-bottom:25px; }
+    #hibiki-settings-concepts .hb-section-title { font-weight:600;font-size:14px;margin:0 0 9px; }
+    #hibiki-settings-concepts .hb-section-help { color:var(--hb-muted);margin:-2px 0 13px;font-size:12px; }
+    #hibiki-settings-concepts .hb-box { background:var(--hb-card);border:1px solid var(--hb-line);border-radius:12px;overflow:hidden; }
+    #hibiki-settings-concepts .hb-row { display:flex;gap:18px;align-items:center;justify-content:space-between;padding:15px 17px;min-height:69px; }
+    #hibiki-settings-concepts .hb-row + .hb-row { border-top:1px solid var(--hb-line); }
+    #hibiki-settings-concepts .hb-row-label { min-width:0; }
+    #hibiki-settings-concepts .hb-row-label strong { font-weight:550;display:block;font-size:13px; }
+    #hibiki-settings-concepts .hb-row-label small { font-size:12px;display:block;color:var(--hb-muted);margin-top:3px; }
+    #hibiki-settings-concepts .hb-actions { display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-shrink:0; }
+    #hibiki-settings-concepts .hb-button { display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:32px;border:1px solid var(--hb-line);border-radius:7px;background:var(--hb-raised);color:var(--hb-text);padding:6px 11px;white-space:nowrap;font-size:12px;font-weight:550; }
+    #hibiki-settings-concepts .hb-button:hover { filter:brightness(1.08); }
+    #hibiki-settings-concepts .hb-button-primary { background:var(--hb-accent);border-color:transparent;color:light-dark(#fff,#241b21); }
+    #hibiki-settings-concepts .hb-button-quiet { background:transparent;border-color:transparent;color:var(--hb-muted); }
+    #hibiki-settings-concepts .hb-button-danger { color:var(--hb-danger); }
+    #hibiki-settings-concepts .hb-icon-button { padding:5px;min-width:28px;min-height:28px; }
+    #hibiki-settings-concepts .hb-select { border:1px solid var(--hb-line);border-radius:7px;padding:7px 28px 7px 10px;background:var(--hb-raised);color:var(--hb-text);max-width:100%;font-size:12px; }
+    #hibiki-settings-concepts .hb-text-input { border:1px solid var(--hb-line);border-radius:7px;padding:8px 10px;background:var(--hb-bg);color:var(--hb-text);max-width:100%;width:100%; }
+    #hibiki-settings-concepts .hb-switch { display:flex;align-items:center;gap:8px;font-size:12px;color:var(--hb-muted); }
+    #hibiki-settings-concepts .hb-switch input { width:17px;height:17px;accent-color:var(--hb-accent);margin:0; }
+    #hibiki-settings-concepts .hb-note { color:var(--hb-muted);font-size:12px;margin:11px 0 0; }
+    #hibiki-settings-concepts .hb-note button { border:0;background:transparent;color:var(--hb-accent);padding:0;text-decoration:underline;text-underline-offset:3px; }
+    #hibiki-settings-concepts .hb-tabs { display:flex;gap:22px;margin:0 0 25px;border-bottom:1px solid var(--hb-line); }
+    #hibiki-settings-concepts .hb-tab { border:0;border-bottom:2px solid transparent;padding:9px 0 11px;background:transparent;color:var(--hb-muted);font-size:13px; }
+    #hibiki-settings-concepts .hb-tab[aria-selected="true"] { color:var(--hb-text);border-bottom-color:var(--hb-accent);font-weight:600; }
+    #hibiki-settings-concepts .hb-service-summary { display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--hb-line);padding:0 0 19px;margin-bottom:20px; }
+    #hibiki-settings-concepts .hb-service-summary strong { display:block;font-size:14px;font-weight:550; }
+    #hibiki-settings-concepts .hb-service-summary small { display:block;color:var(--hb-muted);font-size:12px;margin-top:3px; }
+    #hibiki-settings-concepts .hb-split { display:grid;grid-template-columns:minmax(172px,.8fr) minmax(0,1.5fr);gap:22px;align-items:start; }
+    #hibiki-settings-concepts .hb-inspector-list { border-top:1px solid var(--hb-line); }
+    #hibiki-settings-concepts .hb-inspector-link { display:flex;width:100%;align-items:center;gap:8px;border:0;border-bottom:1px solid var(--hb-line);background:transparent;text-align:left;color:var(--hb-text);padding:15px 10px;font-size:13px; }
+    #hibiki-settings-concepts .hb-inspector-link[aria-pressed="true"] { background:var(--hb-tint); }
+    #hibiki-settings-concepts .hb-inspector-link span { flex:1; }
+    #hibiki-settings-concepts .hb-inspector-link .hb-subtle { flex:0 0 18px; }
+    #hibiki-settings-concepts .hb-inspector { min-width:0; }
+    #hibiki-settings-concepts .hb-inspector .hb-row { align-items:flex-start;flex-wrap:wrap;gap:9px; }
+    #hibiki-settings-concepts .hb-inspector .hb-actions { margin-left:auto; }
+    #hibiki-settings-concepts .hb-detail-title { font-size:18px;font-weight:600;margin:0 0 8px;letter-spacing:-.01em; }
+    #hibiki-settings-concepts .hb-detail-help { color:var(--hb-muted);font-size:12px;margin:0 0 20px; }
+    #hibiki-settings-concepts .hb-source-row { display:flex;align-items:center;gap:10px;padding:13px 0;border-bottom:1px solid var(--hb-line); }
+    #hibiki-settings-concepts .hb-source-order { width:18px;color:var(--hb-muted);font-size:12px;font-variant-numeric:tabular-nums; }
+    #hibiki-settings-concepts .hb-source-main { flex:1;min-width:0; }
+    #hibiki-settings-concepts .hb-source-main strong { display:block;font-size:13px;font-weight:550; }
+    #hibiki-settings-concepts .hb-source-main small { color:var(--hb-muted);font-size:12px;display:block; }
+    #hibiki-settings-concepts .hb-source-details { margin:0 0 10px 28px;padding:15px 0 5px; }
+    #hibiki-settings-concepts .hb-source-details .hb-box { margin-bottom:10px; }
+    #hibiki-settings-concepts .hb-subtle { color:var(--hb-muted);font-size:12px; }
+    #hibiki-settings-concepts .hb-empty { padding:38px 22px;border:1px solid var(--hb-line);border-radius:12px;background:var(--hb-card); }
+    #hibiki-settings-concepts .hb-empty h2 { font-size:19px;margin:0 0 9px;font-weight:600; }
+    #hibiki-settings-concepts .hb-empty p { color:var(--hb-muted);font-size:13px;max-width:42ch;margin:0 0 21px; }
+    #hibiki-settings-concepts .hb-notice { background:var(--hb-tint);color:var(--hb-text);font-size:12px;border-radius:7px;padding:10px 13px;margin-bottom:17px; }
+    #hibiki-settings-concepts .hb-confirm { padding:12px 17px;background:var(--hb-tint);display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12px; }
+    #hibiki-settings-concepts .hb-confirm span { flex:1;min-width:130px; }
+    #hibiki-settings-concepts .hb-mobile-nav { display:none; }
+    #hibiki-settings-concepts .hb-footer { display:flex;justify-content:space-between;gap:12px;margin-top:29px;padding-top:14px;border-top:1px solid var(--hb-line);font-size:11px;color:var(--hb-muted); }
+    #hibiki-settings-concepts .hb-preview-note { padding:9px 0 0;font:12px/1.5 system-ui,sans-serif;color:light-dark(#6a656b,#bcb7bd); }
+    @media (max-width:800px) {
+      #hibiki-settings-concepts .hb-app { grid-template-columns:180px minmax(0,1fr); }
+      #hibiki-settings-concepts .hb-main { padding:26px 22px; }
+      #hibiki-settings-concepts .hb-split { grid-template-columns:1fr;gap:20px; }
+      #hibiki-settings-concepts .hb-inspector-list { display:flex;flex-wrap:wrap;gap:5px;border:0; }
+      #hibiki-settings-concepts .hb-inspector-link { width:auto;border:1px solid var(--hb-line);border-radius:7px;padding:8px 10px; }
+      #hibiki-settings-concepts .hb-inspector-link svg { display:none; }
+      #hibiki-settings-concepts .hb-source-row { gap:7px; }
+    }
+    @media (max-width:600px) {
+      #hibiki-settings-concepts .hb-app { display:block;min-height:1170px; }
+      #hibiki-settings-concepts .hb-side { display:none; }
+      #hibiki-settings-concepts .hb-mobile-nav { display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px;background:var(--hb-side); }
+      #hibiki-settings-concepts .hb-mobile-nav strong { font-size:14px; }
+      #hibiki-settings-concepts .hb-main { padding:23px 18px; }
+      #hibiki-settings-concepts .hb-head { gap:9px; }
+      #hibiki-settings-concepts .hb-head h1 { font-size:23px; }
+      #hibiki-settings-concepts .hb-row { padding:14px;flex-wrap:wrap;gap:10px; }
+      #hibiki-settings-concepts .hb-row-label { flex:1;min-width:140px; }
+      #hibiki-settings-concepts .hb-actions { flex-wrap:wrap; }
+      #hibiki-settings-concepts .hb-tabs { gap:17px;flex-wrap:wrap; }
+      #hibiki-settings-concepts .hb-source-row { flex-wrap:wrap; }
+      #hibiki-settings-concepts .hb-source-row .hb-actions { margin-left:28px; }
+      #hibiki-settings-concepts .hb-footer { flex-wrap:wrap; }
+    }
+    @media (prefers-reduced-motion:reduce) {
+      #hibiki-settings-concepts .hb-app * { scroll-behavior:auto;transition:none; }
+    }
+  </style>
+  <script>
+  (function () {
+    const root = document.getElementById('hibiki-settings-concepts');
+    if (!root) return;
+    const shared = { signedIn:true, theme:'System', cacheLimit:'5 GB' };
+    const navigation = [
+      ['App', [['general','General','settings-2'],['appearance','Appearance','palette'],['audio','Audio & devices','headphones']]],
+      ['Music services', [['plex','Plex','server'],['ytmusic','YouTube Music','circle-play']]],
+      ['Library', [['metadata','Metadata','layers'],['lyrics','Lyrics','align-left'],['sync','Listening & sync','refresh-cw']]],
+      ['App data', [['storage','Shared storage','hard-drive']]]
+    ];
+    const names = { general:'General',appearance:'Appearance',audio:'Audio & devices',plex:'Plex',ytmusic:'YouTube Music',metadata:'Metadata',lyrics:'Lyrics',sync:'Listening & sync',storage:'Shared storage',about:'About',eggs:'Easter eggs' };
+    const initialSources = [
+      ['Deezer','Artist images, album art and fan counts','Public source'],
+      ['Last.fm','Biographies, tags and similar artists','API key saved'],
+      ['Apple Music','Release dates, genres and artwork','Public source'],
+      ['MusicBrainz','Artist and recording identities','Public source'],
+      ['Plex','Your library names and metadata','Library'],
+      ['Wikidata','Verified descriptions and links','Public source'],
+      ['Cover Art Archive','Release and album artwork','Public source'],
+      ['Fanart.tv','Artist portraits and backgrounds','Enabled'],
+      ['HeyaMetadata','Your metadata server','Enabled'],
+      ['TheAudioDB','Additional metadata and artwork','Not configured'],
+      ['SoulSync','Metadata from your music library','Not configured']
+    ];
+    const states = ['sections','tabs','inspector'].map(function(design) {
+      return { design:design,page:'plex',tab:'cache',detail:'cache',source:'Deezer',sourceView:false,expanded:null,order:initialSources.map(function(s){return s.slice();}),notice:'',cleared:{},pending:null,library:'Music',language:'English',notifications:true,correction:true };
+    });
+    function escapeText(value) { return String(value).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+    function icon(name) { return '<i data-lucide="'+name+'" aria-hidden="true"></i>'; }
+    function button(label, attrs, primary) { return '<button type="button" class="hb-button cursor-interaction'+(primary?' hb-button-primary':'')+'" '+(attrs||'')+'>'+label+'</button>'; }
+    function linkButton(label,page) { return '<button type="button" class="hb-button hb-button-quiet cursor-interaction" data-page="'+page+'">'+label+icon('arrow-up-right')+'</button>'; }
+    function row(label,description,action) { return '<div class="hb-row"><div class="hb-row-label"><strong>'+label+'</strong>'+(description?'<small>'+description+'</small>':'')+'</div><div class="hb-actions">'+(action||'')+'</div></div>'; }
+    function box(content) { return '<div class="hb-box">'+content+'</div>'; }
+    function section(title,content,help) { return '<section class="hb-section"><h2 class="hb-section-title">'+title+'</h2>'+(help?'<p class="hb-section-help">'+help+'</p>':'')+content+'</section>'; }
+    function toggle(label,checked,key) { return '<label class="hb-switch"><input type="checkbox" '+(checked?'checked ':'')+'data-toggle="'+key+'"><span>'+label+'</span></label>'; }
+    function selection(options,value,key) { return '<select class="hb-select cursor-interaction" aria-label="'+key+'" data-select="'+key+'">'+options.map(function(o){return '<option'+(o===value?' selected':'')+'>'+escapeText(o)+'</option>';}).join('')+'</select>'; }
+    function sidebar(s) {
+      let out='<aside class="hb-side"><div class="hb-sidebar-title">Settings</div><nav aria-label="Settings">';
+      navigation.forEach(function(group) {
+        out+='<div class="hb-nav-group"><p class="hb-nav-group-label">'+group[0]+'</p>';
+        group[1].forEach(function(item) {
+          out+='<button type="button" class="hb-nav-item cursor-interaction" data-page="'+item[0]+'"'+(s.page===item[0]?' aria-current="page"':'')+'>'+icon(item[2])+'<span>'+item[1]+'</span>'+(item[0]==='ytmusic'&&shared.signedIn?'<span class="hb-nav-dot" aria-label="Signed in"></span>':'')+'</button>';
+        });out+='</div>';
+      });
+      out+='</nav><div class="hb-side-bottom"><button type="button" class="hb-nav-item cursor-interaction" data-page="about"'+(s.page==='about'?' aria-current="page"':'')+'>'+icon('info')+'About</button><button type="button" class="hb-nav-item cursor-interaction" data-page="eggs"'+(s.page==='eggs'?' aria-current="page"':'')+'>'+icon('egg')+'Easter eggs</button></div></aside>';
+      const all=navigation.flatMap(function(g){return g[1];}).concat([['about','About'],['eggs','Easter eggs']]);
+      out+='<div class="hb-mobile-nav"><strong>Settings</strong><select class="hb-select" data-select="page" aria-label="Settings page">'+all.map(function(item){return '<option value="'+item[0]+'"'+(s.page===item[0]?' selected':'')+'>'+item[1]+'</option>';}).join('')+'</select></div>';
+      return out;
+    }
+    function head(s,title,description,status) { return '<header class="hb-head"><div><h1>'+title+'</h1><p>'+description+'</p></div>'+(status?'<span class="hb-status"><span class="hb-dot"></span>'+status+'</span>':'')+'</header>'; }
+    function clearControl(s,key,label) {
+      return button('Clear…','data-clear="'+key+'" aria-label="Clear '+label+'"');
+    }
+    function confirmation(s,key,label) {
+      return s.pending===key?'<div class="hb-confirm"><span>Clear '+label+'?</span>'+button('Cancel','data-action="cancel-clear"')+button('Clear cache','data-confirm="'+key+'"',true)+'</div>':'';
+    }
+    function cacheRows(s,service) {
+      const plex=service==='plex', tag=plex?'Plex':'YTM', audio=service+'-audio', art=service+'-art', data=service+'-data';
+      return box(
+        row('Playback cache',s.cleared[audio]?'No cached songs':plex?'3.5 GB · 260 tracks':'820 MB · 64 songs',clearControl(s,audio,tag+' playback cache'))+
+        confirmation(s,audio,tag+' playback cache')+
+        row(plex?'Saved library data':'Library & discovery',s.cleared[data]?'No saved pages':plex?'Playlists, rated music and visited pages':'36 saved pages · Library, mixes and recommendations',clearControl(s,data,tag+' saved pages'))+
+        confirmation(s,data,tag+' saved pages')+
+        row('Artwork',s.cleared[art]?'No cached artwork':plex?'180 MB · From your Plex server':'52 MB · From YouTube Music',clearControl(s,art,tag+' artwork'))+
+        confirmation(s,art,tag+' artwork')
+      )+'<p class="hb-note">Playback cache shares a '+shared.cacheLimit+' limit. <button type="button" data-page="storage">Manage shared storage</button></p>';
+    }
+    function connection(s,service) {
+      const plex=service==='plex';
+      return box(plex?
+        row('Server','Home server · Local connection',button('Change…','data-action="server"'))+
+        row('Music library','Used for browsing and Plex matching',selection(['Music','Soundtracks'],s.library,'library'))+
+        row('Account','Signed in with Plex',button('Manage account','data-action="plex-account"')):
+        row('Google account','Your YouTube Music session refreshes automatically',button('Refresh session','data-action="refresh-session"')+button('Disconnect','data-action="sign-out"'))+
+        row('Playback tools','Ready on this computer',button('Manage…','data-action="tools"'))
+      );
+    }
+    function library(s,service) {
+      return service==='plex'?box(
+        row('Selected library',s.library,button('Switch…','data-action="switch-library"'))+
+        row('Matching index','Ready · Artists, releases and recordings',button('Manage…','data-action="matching"'))+
+        row('Saved-library browsing','Available when this server is offline',button('Browse offline','data-action="offline"'))
+      ):box(
+        row('Saved library','Liked songs, albums, artists and playlists','<span class="hb-subtle">Connected</span>')+
+        row('Recommendations','Use your signed-in YouTube Music account',toggle('Enabled',true,'recommendations'))
+      );
+    }
+    function downloads(s) { return box(row('Downloads folder','Music / Hibiki · 97 songs · 2.26 GB',button('Open folder','data-action="folder"'))+row('Download location','Saved music stays until you remove it',button('Change…','data-action="download-location"'))); }
+    function serviceContent(s) {
+      const service=s.page,plex=service==='plex',tag=plex?'Plex':'YouTube Music';
+      let out=head(s,tag,plex?'Your server, music library and saved data.':'Your account, library and saved data.',plex?'Connected':shared.signedIn?'Signed in':'');
+      if (!plex&&!shared.signedIn) return out+'<div class="hb-empty">'+icon('circle-play')+'<h2>Connect YouTube Music</h2><p>Bring your library, playlists and recommendations into Hibiki.</p>'+button('Sign in with YouTube Music','data-action="sign-in"',true)+'</div>';
+      if (s.design==='sections') {
+        out+=section('Connection',connection(s,service));
+        if (plex) out+=section('Library',box(row('Matching index','Ready · Helps associate Plex and YTM music',button('Manage…','data-action="matching"'))));
+        out+=section('Saved on this device',cacheRows(s,service),'Cache controls apply to '+tag+' only.');
+        if (plex) out+=section('Downloads',downloads(s));
+        return out;
+      }
+      if (s.design==='tabs') {
+        const tabs=[['connection','Connection'],['library','Library'],['cache','Cache']].concat(plex?[['downloads','Downloads']]:[]);
+        out+='<div class="hb-tabs" role="tablist" aria-label="'+tag+' settings">'+tabs.map(function(t){return '<button type="button" class="hb-tab cursor-interaction" role="tab" aria-selected="'+(s.tab===t[0])+'" data-tab="'+t[0]+'">'+t[1]+'</button>';}).join('')+'</div>';
+        out+='<div class="hb-service-summary"><div><strong>'+(plex?'Home server':tag)+'</strong><small>'+(plex?s.library+' library · Connected':'Account connected · Session refreshed automatically')+'</small></div><span class="hb-status">'+icon('check')+'Ready</span></div>';
+        if (s.tab==='connection') out+=section('Connection',connection(s,service));
+        if (s.tab==='library') out+=section('Library',library(s,service));
+        if (s.tab==='cache') out+=section(tag+' cache',cacheRows(s,service),'Cached files can be fetched again. Downloads are kept.');
+        if (s.tab==='downloads'&&plex) out+=section('Downloads',downloads(s));
+        return out;
+      }
+      const details=[['connection','Connection','plug'],['library','Library','library'],['cache','Saved data','hard-drive']].concat(plex?[['downloads','Downloads','download']]:[]);
+      out+='<div class="hb-service-summary"><div><strong>'+(plex?'Home server · '+s.library:'YouTube Music account')+'</strong><small>'+(plex?'Current Plex connection':'Signed in · Playback tools ready')+'</small></div></div><div class="hb-split"><nav class="hb-inspector-list" aria-label="'+tag+' details">';
+      details.forEach(function(d){out+='<button type="button" class="hb-inspector-link cursor-interaction" data-detail="'+d[0]+'" aria-pressed="'+(s.detail===d[0])+'">'+icon(d[2])+'<span>'+d[1]+'</span>'+icon('chevron-right')+'</button>';});
+      out+='</nav><div class="hb-inspector">';
+      const current=details.find(function(d){return d[0]===s.detail;})||details[2];
+      out+='<h2 class="hb-detail-title">'+current[1]+'</h2><p class="hb-detail-help">'+(s.detail==='cache'?'Files and pages saved for this '+(plex?'Plex connection.':'YouTube Music account.'):'Manage '+tag+' '+current[1].toLowerCase()+'.')+'</p>';
+      out+=s.detail==='connection'?connection(s,service):s.detail==='library'?library(s,service):s.detail==='downloads'?downloads(s):cacheRows(s,service);
+      return out+'</div></div>';
+    }
+    function sourceDetails(s,name) {
+      const info=s.order.find(function(source){return source[0]===name;})||s.order[0];
+      const description=name==='Deezer'?'Public source · No API key needed.':name==='Last.fm'?'Uses your Last.fm API key.':'Source settings and locally saved metadata.';
+      let out='<h2 class="hb-detail-title">'+escapeText(name)+'</h2><p class="hb-detail-help">'+description+'</p>';
+      if (['TheAudioDB','SoulSync','HeyaMetadata','Fanart.tv'].includes(name)) out+=box(row('Connection',info[2],button(info[2]==='Not configured'?'Set up':'Manage','data-action="source-connect"')));
+      out+=box(row('Cached artists',s.cleared['source-'+name]?'0':name==='Deezer'?'213':'84','')+row('Cached albums',s.cleared['source-'+name]?'0':name==='Deezer'?'315':'128',''));
+      out+='<div style="margin-top:13px">'+clearControl(s,'source-'+name,name+' metadata')+'</div>'+confirmation(s,'source-'+name,name+' metadata');
+      out+='<p class="hb-note">Metadata refreshes automatically. Your source priority stays unchanged.</p>';
+      return out;
+    }
+    function metadataContent(s) {
+      let out=head(s,'Metadata','Choose where biographies, artwork and other music details come from.');
+      if (s.design==='tabs'&&s.sourceView) return out+button(icon('arrow-left')+'All sources','data-action="sources-back"')+'<div style="margin-top:24px">'+sourceDetails(s,s.source)+'</div>';
+      out+='<section class="hb-section"><h2 class="hb-section-title">Source priority</h2><p class="hb-section-help">Higher sources take precedence. Library names still come from Plex.</p>';
+      if (s.design==='inspector') {
+        out+='<div class="hb-split"><div class="hb-inspector-list">';
+        s.order.forEach(function(source,index){out+='<button type="button" class="hb-inspector-link cursor-interaction" data-source="'+escapeText(source[0])+'" aria-pressed="'+(s.source===source[0])+'"><span class="hb-subtle">'+(index+1)+'</span><span>'+escapeText(source[0])+'</span>'+icon('chevron-right')+'</button>';});
+        return out+'</div><div class="hb-inspector">'+sourceDetails(s,s.source)+'<div class="hb-actions" style="margin-top:20px">'+button(icon('arrow-up')+'Move up','data-move="-1" data-source-name="'+escapeText(s.source)+'"')+button(icon('arrow-down')+'Move down','data-move="1" data-source-name="'+escapeText(s.source)+'"')+'</div></div></div></section>';
+      }
+      s.order.forEach(function(source,index){
+        out+='<div class="hb-source-row"><span class="hb-source-order">'+(index+1)+'</span><div class="hb-source-main"><strong>'+escapeText(source[0])+'</strong><small>'+escapeText(source[1])+'</small></div><div class="hb-actions"><button type="button" class="hb-button hb-button-quiet hb-icon-button cursor-interaction" data-move="-1" data-source-name="'+escapeText(source[0])+'" aria-label="Move '+escapeText(source[0])+' up">'+icon('chevron-up')+'</button><button type="button" class="hb-button hb-button-quiet hb-icon-button cursor-interaction" data-move="1" data-source-name="'+escapeText(source[0])+'" aria-label="Move '+escapeText(source[0])+' down">'+icon('chevron-down')+'</button>'+button(s.expanded===source[0]?'Close':'Configure','data-source="'+escapeText(source[0])+'"')+'</div></div>';
+        if (s.design==='sections'&&s.expanded===source[0]) out+='<div class="hb-source-details">'+sourceDetails(s,source[0])+'</div>';
+      });
+      return out+'</section>';
+    }
+    function storageContent(s) {
+      let out=head(s,'Shared storage','Shared limits and data used across your music services.');
+      const plexCached=!s.cleared['plex-audio'],ytmCached=shared.signedIn&&!s.cleared['ytmusic-audio'];
+      const total=(plexCached ? 3.5 : 0)+(ytmCached ? 0.82 : 0);
+      out+=section('Playback cache',box(row('Total cached audio',(total?total.toFixed(1)+' GB':'No audio cached')+' on this device',selection(['2 GB','5 GB','10 GB','20 GB'],shared.cacheLimit,'cacheLimit'))+row('Plex',plexCached?'3.5 GB · 260 tracks':'No cached songs',linkButton('Manage Plex','plex'))+(shared.signedIn?row('YouTube Music',ytmCached?'820 MB · 64 songs':'No cached songs',linkButton('Manage YTM','ytmusic')):'')),'The storage limit is shared by Plex and YouTube Music.');
+      out+=section('Shared artwork',box(row('External metadata artwork',s.cleared.shared?'No cached images':'41 MB · Used across music services',clearControl(s,'shared','shared artwork'))+confirmation(s,'shared','shared artwork')),'Images from sources such as Deezer and MusicBrainz.');
+      out+=section('Downloads',box(row('Saved music','97 songs · 2.26 GB · Kept separately',linkButton('Manage in Plex','plex'))));
+      return out;
+    }
+    function otherContent(s) {
+      let out=head(s,names[s.page],s.page==='audio'?'Playback and sound settings shared by every music source.':s.page==='sync'?'Listening accounts, favorites and playlist connections.':s.page==='lyrics'?'Choose lyrics sources and fallback behavior.':s.page==='appearance'?'Make Hibiki feel at home on your screen.':s.page==='general'?'Everyday preferences for Hibiki.':'A desktop player for your music.');
+      if (s.page==='general') out+=section('Preferences',box(row('Language','Used throughout the interface',selection(['English','Dansk'],s.language,'language'))+row('Track notifications','Show the current song in system notifications',toggle('On',s.notifications,'notifications'))+row('System alerts','Warnings and errors while Hibiki is in the background',toggle('On',false,'alerts'))));
+      if (s.page==='appearance') out+=section('Interface',box(row('Appearance','Follow the system or choose a theme',selection(['System','Light','Dark'],shared.theme,'theme'))+row('Artwork colors','Use the current music artwork in the interface',toggle('On',true,'artwork'))+row('Typography','Font and interface scale',selection(['Default','Compact','Large'],'Default','type'))));
+      if (s.page==='audio') out+=section('Output',box(row('Active device','MacBook Pro Speakers',button('Choose…','data-action="devices"'))+row('Equalizer','Custom · Saved for this output device',button('Open equalizer','data-action="equalizer"'))+row('Device profile recall','Apply saved sound settings when this output is used',toggle('Enabled',s.correction,'correction'))))+section('Playback',box(row('Loudness normalization','Keep a consistent listening level',toggle('On',true,'normalization'))));
+      if (s.page==='lyrics') out+=section('Lyrics sources',box(row('YouTube Music',shared.signedIn?'First choice for YTM songs':'Connect YouTube Music to use its lyrics',shared.signedIn?'<span class="hb-subtle">Available</span>':linkButton('Connect','ytmusic'))+row('Plex','Fallback for matching library recordings','<span class="hb-subtle">Available</span>')+row('Genius','Additional fallback when configured',button('Configure','data-action="genius"'))));
+      if (s.page==='sync') out+=section('Accounts',box(row('Last.fm','Listening history and loved tracks',button('Manage account','data-action="lastfm"'))+row('ListenBrainz','Listening history, favorites and playlists',button('Manage account','data-action="listenbrainz"'))))+section('Synchronization',box(row('Liked Songs','Choose services and sync direction',button('Manage…','data-action="likes-sync"'))+row('Playlist sync','Configured on each playlist',button('View playlists','data-action="playlists"'))));
+      if (s.page==='about') out+='<div class="hb-empty"><h2>Hibiki</h2><p>Your music, across Plex and YouTube Music.</p>'+button('View project','data-action="project"')+'</div>';
+      if (s.page==='eggs') out+='<div class="hb-empty"><h2>A little extra</h2><p>Easter eggs keep their own place, away from everyday settings.</p>'+toggle('Enable easter eggs',false,'eggs')+'</div>';
+      return out;
+    }
+    function render(s) {
+      const app=root.querySelector('[data-design="'+s.design+'"]');
+      app.style.colorScheme=shared.theme==='System'?'inherit':shared.theme.toLowerCase();
+      let content=s.page==='plex'||s.page==='ytmusic'?serviceContent(s):s.page==='metadata'?metadataContent(s):s.page==='storage'?storageContent(s):otherContent(s);
+      app.innerHTML=sidebar(s)+'<main class="hb-main" aria-label="'+names[s.page]+' settings">'+(s.notice?'<div class="hb-notice" role="status">'+escapeText(s.notice)+'</div>':'')+content+'<footer class="hb-footer"><span>Changes are saved automatically</span><span>Hibiki</span></footer></main>';
+      if (globalThis.lucide) globalThis.lucide.createIcons({attrs:{width:17,height:17}});
+    }
+    function renderAll(){states.forEach(render);}
+    root.addEventListener('click',function(event){
+      const target=event.target.closest('button');if(!target)return;
+      const app=target.closest('[data-design]');if(!app)return;
+      const s=states.find(function(state){return state.design===app.dataset.design;});if(!s)return;
+      if(target.dataset.page){s.page=target.dataset.page;s.notice='';s.sourceView=false;s.pending=null;if(s.page==='ytmusic'){if(s.detail==='downloads')s.detail='cache';if(s.tab==='downloads')s.tab='cache';}}
+      if(target.dataset.tab){s.tab=target.dataset.tab;s.notice='';}
+      if(target.dataset.detail){s.detail=target.dataset.detail;s.notice='';}
+      if(target.dataset.source){s.source=target.dataset.source;s.notice='';s.pending=null;if(s.design==='tabs')s.sourceView=true;else if(s.design==='sections')s.expanded=s.expanded===s.source?null:s.source;}
+      if(target.dataset.move){const index=s.order.findIndex(function(item){return item[0]===target.dataset.sourceName;});const next=index+Number(target.dataset.move);if(next>=0&&next<s.order.length){const item=s.order.splice(index,1)[0];s.order.splice(next,0,item);}}
+      if(target.dataset.clear)s.pending=target.dataset.clear;
+      if(target.dataset.confirm){s.cleared[target.dataset.confirm]=true;s.pending=null;}
+      const action=target.dataset.action;
+      if(action==='cancel-clear')s.pending=null;
+      if(action==='sources-back')s.sourceView=false;
+      if(action==='sign-in'||action==='sign-out'){shared.signedIn=action==='sign-in';s.notice='';renderAll();return;}
+      if(action==='refresh-session')s.notice='Your YouTube Music session is up to date.';
+      if(action==='switch-library'){s.tab='connection';s.detail='connection';s.notice='Choose the music library for this Plex connection.';}
+      const notices={server:'Connection details and server selection stay together here.', 'plex-account':'Plex account details and disconnect controls live here.',tools:'Playback tools are ready. Installation and updates live on this page.',matching:'Index is ready. Progress, pause, refresh and rebuild controls belong to this Plex connection.',offline:'Saved-library browsing is available for this Plex connection.',folder:'Preview location: Music / Hibiki. No folder has been opened.', 'download-location':'The download location can be changed here. Existing saved music is kept.', 'source-connect':'Provider connection settings expand here, alongside its cache information.',devices:'Output device selection is shared across all music services.',equalizer:'The existing equalizer opens with the current output device selected.',genius:'Genius account and lyrics cache settings belong here.',lastfm:'Last.fm account and listening preferences belong here.',listenbrainz:'ListenBrainz account, listening and playlist preferences belong here.', 'likes-sync':'Service selection and sync direction stay together here.',playlists:'Per-playlist sync remains on each playlist.',project:'This preview stays local.'};
+      if(action&&notices[action])s.notice=notices[action];
+      render(s);
+    });
+    root.addEventListener('change',function(event){
+      const target=event.target;const app=target.closest('[data-design]');if(!app)return;
+      const s=states.find(function(state){return state.design===app.dataset.design;});
+      const key=target.dataset.select;
+      if(key==='page'){s.page=target.value;s.notice='';s.sourceView=false;if(s.page==='ytmusic'){if(s.detail==='downloads')s.detail='cache';if(s.tab==='downloads')s.tab='cache';}render(s);return;}
+      if(key==='theme'||key==='cacheLimit'){shared[key]=target.value;renderAll();return;}
+      if(key==='library'||key==='language'){s[key]=target.value;render(s);return;}
+      if(target.dataset.toggle){s[target.dataset.toggle]=target.checked;}
+    });
+    renderAll();
+    if(globalThis.Tweak){
+      const tweaks=new globalThis.Tweak({container:root,onChange:renderAll});
+      tweaks.addToggle(shared,'signedIn',{label:'YouTube Music signed in'});
+      tweaks.addSelect(shared,'theme',{label:'Preview appearance',options:['System','Dark','Light']});
+    }
+  })();
+  </script>
+</div>
