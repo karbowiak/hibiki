@@ -851,19 +851,23 @@ mod tests {
             resolver_times.push(tick.elapsed().as_secs_f64() * 1000.0);
         }
         resolver_times.sort_by(f64::total_cmp);
-        let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
-        let peak_rss = unsafe {
-            if libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) == 0 {
-                let max = usage.assume_init().ru_maxrss as i64;
-                if cfg!(target_os = "macos") {
-                    max
+        // Even ignored tests compile on Windows. libc is deliberately a Unix
+        // dependency; an unavailable diagnostic must not look like zero usage.
+        #[cfg(unix)]
+        let peak_rss = {
+            let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+            let measured = unsafe {
+                if libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) == 0 {
+                    let max = usage.assume_init().ru_maxrss as i64;
+                    Some(if cfg!(target_os = "macos") { max } else { max * 1024 })
                 } else {
-                    max * 1024
+                    None
                 }
-            } else {
-                0
-            }
+            };
+            measured.map(|bytes| bytes.to_string()).unwrap_or_else(|| "unavailable".into())
         };
+        #[cfg(not(unix))]
+        let peak_rss = "unavailable";
         println!("matching_resolver_benchmark batch=16 p50_ms={:.3} p95_ms={:.3} max_response_bytes={largest_payload} peak_process_rss_bytes={peak_rss} warm_network_requests=0",resolver_times[50],resolver_times[95]);
         running.store(false, std::sync::atomic::Ordering::Relaxed);
         let mut foreground = reader.join().unwrap();
