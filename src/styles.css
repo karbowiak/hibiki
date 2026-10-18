@@ -1,6 +1,7 @@
 @import '@fontsource-variable/inter' layer(base);
 @import './styles/media.css';
 @import './styles/overlaySurfaces.css';
+@import './styles/controls.css';
 @import './styles/detailMedia.css';
 @import './styles/ambientArtwork.css';
 @import './styles/visualizer.css';

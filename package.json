@@ -18,6 +18,7 @@
     "test:search-discovery": "bun scripts/check-search-discovery.ts",
     "test:appearance": "bun scripts/check-appearance.ts",
     "test:device-correction": "bun scripts/check-device-correction.ts",
+    "test:controls": "bun scripts/check-controls.ts",
     "test:notifications": "bun scripts/check-notifications.ts"
   },
   "dependencies": {
