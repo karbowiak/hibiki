@@ -1,6 +1,8 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
 import { engine } from "../audio/RustAudioEngine"
+import { correctionProfile } from "../audio/deviceCorrection"
+import { createOutputEqState, type OutputEqState } from "./outputEqState"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -112,6 +114,30 @@ function applyConfiguration(
   }
   const normalized = clampGains(gains)
   set({ gains: normalized, applying: true, eqError: null })
+  const output = get().currentOutput
+  if (!output && get().outputIdentityKnown) {
+    set({ applying: false, appliedEq: null, appliedOutputKey: null }); return
+  }
+  if (output) {
+    if (!output.available) { set({ applying: false, appliedEq: null, appliedOutputKey: null }); return }
+    let correction = null
+    try {
+      const selected = get().correctionPreview ?? (get().correctionEnabled && get().selectedCorrectionId
+        ? get().corrections[get().selectedCorrectionId!] : null)
+      if (get().correctionEnabled && get().selectedCorrectionId && !selected) throw Error("The selected correction is unavailable.")
+      correction = selected ? correctionProfile(selected) : null
+    } catch (error) { set({ applying: false, eqError: String(error) }); return }
+    void engine.configureEqScene({ gainsDb: normalized, enabled, postgainDb: autoPostgain ? null : postgainDb,
+      outputKey: output.key, correction }).then(result => {
+      if (revision !== configurationRevision || get().currentOutput?.key !== output.key) return
+      if (!result || !Number.isFinite(result.tonePostgainDb)) throw Error("Invalid EQ response")
+      set({ applying: false, postgainDb: result.tonePostgainDb, appliedEq: result, appliedOutputKey: output.key })
+    }).catch(error => {
+      if (revision === configurationRevision) set({ applying: false, appliedEq: null, appliedOutputKey: null,
+        eqError: typeof error === "string" ? error : "Couldn’t apply the output settings. Try again." })
+    })
+    return
+  }
   void engine
     .configureEq({
       gainsDb: normalized,
@@ -139,7 +165,7 @@ function applyConfiguration(
 // Store
 // ---------------------------------------------------------------------------
 
-interface EqState {
+export interface EqState extends OutputEqState {
   // Core EQ
   gains: EqGains
   enabled: boolean
@@ -174,6 +200,7 @@ interface EqState {
 export const useEqStore = create<EqState>()(
   persist(
     (set, get) => ({
+      ...createOutputEqState(set, get, () => applyConfiguration(get, set), () => { ++configurationRevision }),
       gains: [...FLAT] as EqGains,
       enabled: false,
       postgainDb: 0,
@@ -325,6 +352,10 @@ export const useEqStore = create<EqState>()(
         autoPostgain: state.autoPostgain,
         deviceProfiles: state.deviceProfiles,
         clearedDeviceProfiles: state.clearedDeviceProfiles,
+        outputProfiles: state.outputProfiles,
+        clearedOutputProfiles: state.clearedOutputProfiles,
+        legacyOutputOwners: state.legacyOutputOwners,
+        corrections: state.corrections,
       }),
     }
   )

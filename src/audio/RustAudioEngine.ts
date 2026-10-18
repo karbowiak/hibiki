@@ -76,6 +76,17 @@ export interface EqConfiguration {
   postgainDb: number | null
   duckMs?: number
 }
+export interface AppliedEq {
+  tonePostgainDb: number
+  correctionPreampDb: number
+  safetyDb: number
+  effectivePostgainDb: number
+  sampleRate: number
+}
+export interface EqSceneConfiguration extends EqConfiguration {
+  outputKey: string
+  correction: import("./deviceCorrection").CorrectionProfile | null
+}
 
 export class RustAudioEngine {
   private cacheTail: Promise<void> = Promise.resolve()
@@ -89,8 +100,8 @@ export class RustAudioEngine {
   private unlisteners: UnlistenFn[] = []
   private eqConfigurationBusy = false
   private pendingEqConfiguration: {
-    snapshot: EqConfiguration
-    resolve: (gain: number | undefined) => void
+    snapshot: EqConfiguration | EqSceneConfiguration
+    resolve: (gain: number | AppliedEq | undefined) => void
     reject: (error: unknown) => void
   } | null = null
 
@@ -299,11 +310,22 @@ export class RustAudioEngine {
   }
 
   configureEq(configuration: EqConfiguration): Promise<number | undefined> {
-    const snapshot = { ...configuration, gainsDb: [...configuration.gainsDb] }
+    return this.queueEq(configuration) as Promise<number | undefined>
+  }
+
+  configureEqScene(configuration: EqSceneConfiguration): Promise<AppliedEq | undefined> {
+    return this.queueEq(configuration) as Promise<AppliedEq | undefined>
+  }
+
+  private queueEq(configuration: EqConfiguration | EqSceneConfiguration): Promise<number | AppliedEq | undefined> {
+    const snapshot = { ...configuration, gainsDb: [...configuration.gainsDb],
+      ...("outputKey" in configuration ? { correction: configuration.correction ? {
+        ...configuration.correction, filters: configuration.correction.filters.map(filter => ({ ...filter })),
+      } : null } : {}) }
     // At most one invoke and one pending snapshot. Superseded waiting edits
     // resolve without an applied gain; the store fences their stale replies.
     this.pendingEqConfiguration?.resolve(undefined)
-    const applied = new Promise<number | undefined>((resolve, reject) => {
+    const applied = new Promise<number | AppliedEq | undefined>((resolve, reject) => {
       this.pendingEqConfiguration = { snapshot, resolve, reject }
     })
     if (!this.eqConfigurationBusy) void this.flushEqConfigurations()
@@ -316,12 +338,13 @@ export class RustAudioEngine {
       const request = this.pendingEqConfiguration
       this.pendingEqConfiguration = null
       try {
+        const scene = "outputKey" in request.snapshot ? request.snapshot : null
         request.resolve(
-          await this.ipc.invoke<number>("audio_configure_eq", {
+          await this.ipc.invoke<number | AppliedEq>(scene ? "audio_configure_eq_scene" : "audio_configure_eq", {
             gainsDb: request.snapshot.gainsDb,
             enabled: request.snapshot.enabled,
             postgainDb: request.snapshot.postgainDb,
-            duckMs: request.snapshot.duckMs,
+            ...(scene ? { outputKey: scene.outputKey, correction: scene.correction } : { duckMs: request.snapshot.duckMs }),
           })
         )
       } catch (error) {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react"
 import { useEqStore, EQ_LABELS, EQ_PRESETS } from "../stores/eqStore"
 import { useDeviceStore } from "../stores/deviceStore"
 import { PlayerPanelHeader } from "./shared/PlayerPanelHeader"
+import { DeviceCorrectionPanel } from "./DeviceCorrectionPanel"
 
 const MIN_DB = -12
 const MAX_DB = 12
@@ -101,6 +102,7 @@ export default function EqPanel({ onClose }: Props) {
     deviceProfiles,
     saveProfileForDevice,
     deleteProfileForDevice,
+    currentOutput,
   } = useEqStore()
 
   const { currentDevice: deviceStoreDevice } = useDeviceStore()
@@ -242,14 +244,14 @@ export default function EqPanel({ onClose }: Props) {
           <button
             onClick={() => setEnabled(!enabled)}
             aria-pressed={enabled}
-            aria-label="Equalizer"
+            aria-label="Tone equalizer"
             className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
               enabled
                 ? "bg-accent text-(--bg-base)"
                 : "bg-(--bg-surface) text-(--text-muted)"
             }`}
           >
-            {enabled ? "ON" : "OFF"}
+            {enabled ? "Tone on" : "Tone off"}
           </button>
         </>} />
 
@@ -432,7 +434,8 @@ export default function EqPanel({ onClose }: Props) {
       </div>
 
       {/* Device Profiles */}
-      {currentDevice && (
+      {currentOutput && <DeviceCorrectionPanel />}
+      {!currentOutput && currentDevice && (
         <div className="border-t border-(--border) px-4 py-2">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-(--text-muted)">
             Device Profiles

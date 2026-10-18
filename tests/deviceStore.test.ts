@@ -23,40 +23,40 @@ mock.module("@tauri-apps/api/event", () => ({ ...events, listen: (name: string, 
 } }))
 const { useDeviceStore } = await import("../src/stores/deviceStore")
 const { useEqStore } = await import("../src/stores/eqStore")
-const originalApply = useEqStore.getState().setCurrentDevice
-const applyProfile = mock((name: string) => useEqStore.setState({ currentDevice: name }))
-useEqStore.setState({ setCurrentDevice: applyProfile })
+const originalApply = useEqStore.getState().setCurrentOutput
+const applyProfile = mock((output: { name: string } | null) => useEqStore.setState({ currentDevice: output?.name ?? "" }))
+useEqStore.setState({ setCurrentOutput: applyProfile })
 const state = () => useDeviceStore.getState()
 
 function resolveRefresh(index: number, name: string, available: boolean) {
   const group = requests.slice(index * 3, index * 3 + 3)
-  expect(group.map(request => request.name)).toEqual(["get_audio_output_devices", "get_audio_output_device", "audio_get_output_available"])
-  group[0].result.resolve([{ name, is_default: true }]); group[1].result.resolve(name); group[2].result.resolve(available)
+  expect(group.map(request => request.name)).toEqual(["get_audio_output_devices", "audio_get_output_identity", "audio_get_output_available"])
+  group[0].result.resolve([{ id: name, stable: true, name, is_default: true }]); group[1].result.resolve({ id: name, name, stable: true, key: String(index + 1), available }); group[2].result.resolve(available)
 }
 afterEach(() => {
   state().dispose()
-  useDeviceStore.setState({ devices: [], currentDevice: "", outputAvailable: true })
+  useDeviceStore.setState({ devices: [], currentDevice: "", currentOutput: null, outputAvailable: true })
   useEqStore.setState({ currentDevice: "" })
   applyProfile.mockClear()
   requests.splice(0); registrations.splice(0)
 })
 afterAll(() => {
-  useEqStore.setState({ setCurrentDevice: originalApply })
+  useEqStore.setState({ setCurrentOutput: originalApply })
   globalThis.localStorage = previousStorage
   mock.restore()
 })
 
 test("repeated initialization registers once and disposal releases late listener registrations", async () => {
   state().initDeviceTracking(); state().initDeviceTracking()
-  expect(registrations.map(registration => registration.name)).toEqual(["audio-device-changed", "audio-output-availability"])
+  expect(registrations.map(registration => registration.name)).toEqual(["audio-device-changed", "audio-output-availability", "audio-output-identity"])
   expect(requests).toHaveLength(3)
   state().dispose()
-  const stop1 = mock(() => {}), stop2 = mock(() => {})
-  registrations[0].result.resolve(stop1); registrations[1].result.resolve(stop2)
+  const stop1 = mock(() => {}), stop2 = mock(() => {}), stop3 = mock(() => {})
+  registrations[0].result.resolve(stop1); registrations[1].result.resolve(stop2); registrations[2].result.resolve(stop3)
   registrations[0].handler({ payload: "Retired speakers" }); registrations[1].handler({ payload: false })
   resolveRefresh(0, "Retired speakers", false)
   await settle()
-  expect(stop1).toHaveBeenCalledTimes(1); expect(stop2).toHaveBeenCalledTimes(1)
+  expect(stop1).toHaveBeenCalledTimes(1); expect(stop2).toHaveBeenCalledTimes(1); expect(stop3).toHaveBeenCalledTimes(1)
   expect(state().currentDevice).toBe("")
   expect(state().outputAvailable).toBe(true)
   expect(applyProfile).toHaveBeenCalledTimes(0)
@@ -71,7 +71,7 @@ test("a slower device query cannot overwrite a newer default device or EQ profil
   await settle()
   expect(state().currentDevice).toBe("Headphones")
   expect(state().outputAvailable).toBe(false)
-  expect(applyProfile.mock.calls.map(call => call[0])).toEqual(["Headphones"])
+  expect(applyProfile.mock.calls.map(call => call[0]?.name)).toEqual(["Headphones"])
 })
 
 test("availability events fence stale enumeration and recovery refreshes the current device", async () => {
@@ -99,5 +99,5 @@ test("retired mount callbacks cannot change a new mount or leak listener handles
   await settle()
   expect(cleanup).toHaveBeenCalledTimes(1)
   expect(state().currentDevice).toBe("Current")
-  expect(applyProfile.mock.calls.map(call => call[0])).toEqual(["Current"])
+  expect(applyProfile.mock.calls.map(call => call[0]?.name)).toEqual(["Current"])
 })

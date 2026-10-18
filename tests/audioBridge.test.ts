@@ -81,6 +81,26 @@ test("an EQ admission failure cannot strand a later configuration", async () => 
   expect(await latest).toBe(-6)
 })
 
+test("tone and correction share one admission lane with immutable complete filter snapshots", async () => {
+  const first = deferred<number>(), requests: { command: string; args: any }[] = []
+  const audio = new RustAudioEngine({
+    invoke: (async (command, args) => {
+      requests.push({ command, args }); return requests.length === 1 ? first.promise : {
+        tonePostgainDb: 0, correctionPreampDb: -6, safetyDb: 0, effectivePostgainDb: 0, sampleRate: 48000,
+      }
+    }) as AudioTransport["invoke"], listen: async () => () => {},
+  })
+  const tone = audio.configureEq({ gainsDb: Array(10).fill(0), enabled: false, postgainDb: null })
+  const profile = { preampDb: -6, filters: [{ kind: "PK" as const, frequency: 1234, gainDb: 4, q: 2.5, enabled: true }] }
+  const scene = audio.configureEqScene({ gainsDb: Array(10).fill(0), enabled: false, postgainDb: null, outputKey: "18446744073709551614", correction: profile })
+  profile.filters[0].q = 12; profile.preampDb = 6
+  expect(requests).toHaveLength(1); first.resolve(0); await tone; await scene
+  expect(requests[1].command).toBe("audio_configure_eq_scene")
+  expect(requests[1].args.outputKey).toBe("18446744073709551614")
+  expect(requests[1].args.correction.preampDb).toBe(-6)
+  expect(requests[1].args.correction.filters[0].q).toBe(2.5)
+})
+
 test("rapid EQ edits keep only the latest waiting snapshot behind the active invoke", async () => {
   const first = deferred<number>()
   const requests: any[] = []

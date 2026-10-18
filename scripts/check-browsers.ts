@@ -13,6 +13,7 @@ const checks = [
   "virtual-collections",
   "playlist-information",
   "appearance",
+  "device-correction",
 ]
 const requested = process.argv.slice(2)
 const selected = requested.length ? requested : checks

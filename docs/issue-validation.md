@@ -82,15 +82,31 @@ against a user's playlists. No release tag is created by this work.
 
 ## Recorded checks
 
-AutoEq groundwork for #34 adds strict parametric import and prepared native filter
-banks. Arbitrary peak/shelf frequency, gain and Q are retained; tone sliders keep
-their existing limits. Native checks cover original preamp, combined headroom,
-manual gain safety, disabled filters, independent channel state, explicit Nyquist
-rejection, actual PCM frequency response, smooth scene changes and superseding
-deferred updates. The complete native suite passes **869 tests** with 12 ignored
-and 73 remote integration tests excluded. Parser/edit/offline-retention checks
-pass independently. Catalogue, output binding and the correction picker remain
-in progress; this groundwork does not yet expose a completed AutoEq feature.
+AutoEq #34 now includes on-demand catalogue search, exact measurement variants,
+pinned downloads, custom file/text import, retained originals/attribution/local
+edits, offline correction storage and stable output bindings. The correction
+picker supports preview/cancel, apply, save/recall, bypass and removal separately
+from tone EQ. Duplicate names do not share bindings; unresolved system routes
+require manual recall. See [device correction](device-correction.md).
+
+Native checks cover arbitrary peak/shelf frequency/gain/Q, original preamp,
+combined headroom, manual gain safety, disabled tone/filters, channel state,
+Nyquist rejection, PCM response at multiple rates, smooth scene changes,
+superseding updates, and rejecting a retired output's queued configuration without
+changing track/state/position. Large filter banks use a separate bounded lane;
+ordinary playback commands remain small. The complete native suite passes
+**877 tests**, with 13 ignored and 73 remote integration tests excluded.
+
+The complete frontend suite passes **1,262 tests**; the subsequent focused
+EQ/parser/device/bridge suite passes **52 tests**. Both TypeScript projects pass.
+Chromium/WebKit exercise exact variants, preview/cancel, invalid imports,
+save/bypass, A → B → A, offline restart, pasted custom filters and file import.
+Desktop/light/dark and narrow editor captures have no horizontal overflow.
+A separate read-only public check parsed **8,850** live catalogue entries and
+downloaded the HD 650 parametric file from pinned revision
+`7ae0f56d53074872b028649617a22bbb4232feb7`. Corrupt caches, redirects and oversized
+profile responses are rejected. These checks do not establish a listening result:
+actual audible transitions/device switching remain to be checked before #34 closes.
 
 Shared-resolver fixtures cover typed IDs versus generic MBIDs, non-Latin labels,
 collaboration credits, live/version and explicit/duration fences, homonyms,
