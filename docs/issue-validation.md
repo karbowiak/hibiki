@@ -95,7 +95,7 @@ Nyquist rejection, PCM response at multiple rates, smooth scene changes,
 superseding updates, and rejecting a retired output's queued configuration without
 changing track/state/position. Large filter banks use a separate bounded lane;
 ordinary playback commands remain small. The complete native suite passes
-**877 tests**, with 13 ignored and 73 remote integration tests excluded.
+**878 tests**, with 13 ignored and 73 remote integration tests excluded.
 
 The complete frontend suite passes **1,262 tests**; the subsequent focused
 EQ/parser/device/bridge suite passes **52 tests**. Both TypeScript projects pass.
@@ -105,8 +105,17 @@ Desktop/light/dark and narrow editor captures have no horizontal overflow.
 A separate read-only public check parsed **8,850** live catalogue entries and
 downloaded the HD 650 parametric file from pinned revision
 `7ae0f56d53074872b028649617a22bbb4232feb7`. Corrupt caches, redirects and oversized
-profile responses are rejected. These checks do not establish a listening result:
-actual audible transitions/device switching remain to be checked before #34 closes.
+profile responses are rejected.
+
+An explicit macOS check opened the real default output using silent PCM at a
+48 kHz mixer rate. It applied correction, forced stream recovery, rejected the
+retired stream's configuration and applied the replacement's settings while
+retaining playback identity/state. The observed run processed 36 callbacks with
+zero buffer starvations. The retained renderer is allocated once on the output
+owner and handed between streams by pointer, preventing large filter banks from
+overflowing the device-opening stack. A normal unit check bounds the handoff size.
+These checks do not establish a listening result: actual audible transitions and
+device switching remain to be checked before #34 closes.
 
 Shared-resolver fixtures cover typed IDs versus generic MBIDs, non-Latin labels,
 collaboration credits, live/version and explicit/duration fences, homonyms,

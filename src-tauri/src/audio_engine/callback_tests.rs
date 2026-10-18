@@ -356,7 +356,7 @@ fn recovering_a_device_retains_native_playback_identity_pause_seek_and_listening
     renderer.render(&mut [0.0; 9600]);
     let before = renderer.source.deck_mgr.active_deck().played_frames;
     let (returned, recovery) = crossbeam_channel::bounded(1);
-    let mut callback = CallbackOwner::new(renderer, returned);
+    let mut callback = CallbackOwner::new(Box::new(renderer), returned);
     callback.render(&mut [0.0; 9600]);
     drop(callback);
     let mut renderer = recovery.recv().unwrap();

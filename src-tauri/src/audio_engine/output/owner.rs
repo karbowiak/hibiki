@@ -24,12 +24,14 @@ pub struct DeviceSpec {
 /// A callback returns its complete renderer when a device stream is released.
 /// The renderer has one owner at a time; no mutex guards its audio state.
 pub struct CallbackOwner<S> {
-    renderer: Option<DeviceRenderer<S>>,
-    returned: Sender<DeviceRenderer<S>>,
+    // Allocate once on the owner thread, then transfer the same allocation on
+    // recovery. CPAL's format dispatch must not copy large DSP banks on its stack.
+    renderer: Option<Box<DeviceRenderer<S>>>,
+    returned: Sender<Box<DeviceRenderer<S>>>,
 }
 
 impl<S: RenderSource> CallbackOwner<S> {
-    pub fn new(renderer: DeviceRenderer<S>, returned: Sender<DeviceRenderer<S>>) -> Self {
+    pub fn new(renderer: Box<DeviceRenderer<S>>, returned: Sender<Box<DeviceRenderer<S>>>) -> Self {
         Self {
             renderer: Some(renderer),
             returned,
@@ -93,7 +95,7 @@ impl OutputThread {
                 let mut driver = driver();
                 let (returned, recovery) = bounded(1);
                 let mut failed = Arc::new(AtomicBool::new(false));
-                let mut renderer = Some(DeviceRenderer::new(source));
+                let mut renderer = Some(Box::new(DeviceRenderer::new(source)));
                 let mut stream: Option<D::Stream> = None;
                 let mut active: Option<DeviceSpec> = None;
                 let mut availability = None;

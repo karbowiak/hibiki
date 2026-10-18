@@ -53,6 +53,8 @@ during playback without changing the track or playback position. Output changes
 bypass the previous output's complete scene before rendering on the replacement.
 The fixed mixer clock is independent of physical device rates; the existing
 output resampler handles physical rate changes.
+The retained renderer is allocated once outside the callback. Stream recovery
+transfers that allocation by pointer and preserves the DSP/playback state.
 
 The original correction preamp remains effective. Combined correction/tone
 response determines any extra attenuation; automatic gain does not restore the

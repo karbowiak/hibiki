@@ -226,6 +226,10 @@ mod tests {
         inner: CpalDriver,
         opened: Sender<Arc<AtomicBool>>,
     }
+    #[test]
+    fn device_callback_handoffs_have_bounded_stack_size_independent_of_filter_banks() {
+        assert!(std::mem::size_of::<CallbackOwner<AudioCallbackState>>() <= 64);
+    }
     impl OutputDriver<AudioCallbackState> for ProbeDriver {
         type Stream = Stream;
         fn probe(&mut self) -> Result<DeviceSpec, String> {
@@ -249,8 +253,17 @@ mod tests {
     #[test]
     #[ignore = "opens the real default device using silent PCM; run explicitly on a desktop"]
     fn physical_output_returns_the_native_callback_and_reopens_after_a_stream_failure() {
+        use crate::audio_engine::{command::PreparedEq, dsp::{correction::{Filter, FilterKind, Profile}, eq_scene::EqScene}};
+        let wait = |message: &str, ready: &dyn Fn() -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while !ready() {
+                assert!(Instant::now() < deadline, "{message}");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
         let mix = initial_mix_params();
         let atomics = Arc::new(SharedAtomics::new());
+        let (eq, eq_rx) = bounded(2);
         let (_, commands) = bounded(32);
         let (_, samples_a) = bounded(4);
         let (_, samples_b) = bounded(4);
@@ -258,6 +271,7 @@ mod tests {
         let (vis, _vis_rx) = crate::audio_engine::visualizer::transport::channel();
         let mut source =
             AudioCallbackState::new(commands, samples_a, samples_b, events, vis, atomics.clone());
+        source.set_eq_receiver(eq_rx);
         source.device_sample_rate = mix.sample_rate;
         source.device_channels = 2;
         source.dsp_chain.set_sample_rate(mix.sample_rate);
@@ -305,6 +319,19 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(10));
         }
+        wait("physical output did not publish its identity", &|| atomics.identity().is_some_and(|identity| identity.available));
+        let initial_identity = atomics.identity().unwrap();
+        assert!(!initial_identity.id.is_empty());
+        let initial_key = atomics.output_key.load(Ordering::Acquire);
+        assert_eq!(initial_identity.key, initial_key.to_string());
+        let profile = Profile { preamp_db: -6.0, filters: vec![
+            Filter { kind: FilterKind::Peak, frequency: 1234.0, gain_db: 4.0, q: 2.5, enabled: true },
+            Filter { kind: FilterKind::LowShelf, frequency: 100.0, gain_db: 2.0, q: 0.7, enabled: true },
+        ] };
+        let prepare = || EqScene::prepare([0.0;10], true, None, Some(&profile), mix.sample_rate).unwrap().0;
+        atomics.eq_requested_revision.store(1, Ordering::Release);
+        eq.send(PreparedEq { scene: prepare(), output_key: initial_key, revision: 1, rate: mix.sample_rate }).unwrap();
+        wait("physical callback did not adopt prepared correction", &|| atomics.eq_accepted_revision.load(Ordering::Acquire) == 1);
         let position = atomics.position_ms.load(Ordering::Acquire);
         first.store(true, Ordering::Release);
         let replacement = openings
@@ -323,6 +350,22 @@ mod tests {
         }
         assert_eq!(atomics.active_playback_id.load(Ordering::Acquire), 123);
         assert!(atomics.output_available.load(Ordering::Acquire));
+        let replacement_key = atomics.output_key.load(Ordering::Acquire);
+        assert_ne!(initial_key, replacement_key);
+        assert_eq!(atomics.eq_accepted_revision.load(Ordering::Acquire), 0);
+        atomics.eq_requested_revision.store(2, Ordering::Release);
+        eq.send(PreparedEq { scene: prepare(), output_key: initial_key, revision: 2, rate: mix.sample_rate }).unwrap();
+        let before_stale = atomics.position_ms.load(Ordering::Acquire);
+        wait("playback did not progress past stale correction", &|| atomics.position_ms.load(Ordering::Acquire) > before_stale + 50);
+        assert_eq!(atomics.eq_accepted_revision.load(Ordering::Acquire), 0, "retired stream correction was adopted");
+        atomics.eq_requested_revision.store(3, Ordering::Release);
+        eq.send(PreparedEq { scene: prepare(), output_key: replacement_key, revision: 3, rate: mix.sample_rate }).unwrap();
+        wait("replacement callback did not adopt its own correction", &|| atomics.eq_accepted_revision.load(Ordering::Acquire) == 3);
+        assert_eq!(atomics.active_playback_id.load(Ordering::Acquire), 123);
+        assert_eq!(atomics.get_state(), EngineState::Playing);
+        assert_eq!(atomics.diagnostics.starvations.load(Ordering::Acquire), 0);
+        println!("physical_eq_recovery mix_rate={} callbacks={} starvations=0 playback_retained=true stale_rejected=true output_stable={}",
+            mix.sample_rate, atomics.diagnostics.blocks.load(Ordering::Acquire), initial_identity.stable);
         drop(output);
         let deadline = Instant::now() + Duration::from_secs(3);
         while atomics.output_available.load(Ordering::Acquire) {
