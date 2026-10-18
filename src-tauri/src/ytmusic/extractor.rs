@@ -214,6 +214,7 @@ pub(crate) async fn resolve(
         .await
         .map_err(|_| "Could not prepare the playback cache.")?;
     let file = cookie_file(&cookies)?;
+    let request_interval = rate_limit::REQUESTS.interval_seconds();
     let mut command = tokio::process::Command::new(path);
     command
         .args([
@@ -227,9 +228,11 @@ pub(crate) async fn resolve(
             "--socket-timeout",
             "15",
             "--retries",
-            "1",
+            "0",
             "--extractor-retries",
-            "1",
+            "0",
+            "--sleep-requests",
+            &request_interval,
             "--format",
             "bestaudio[ext=m4a][protocol=https]/bestaudio[protocol=https]",
             "--cookies",
@@ -248,9 +251,11 @@ pub(crate) async fn resolve(
         .kill_on_drop(true);
     #[cfg(windows)]
     command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    let permit = rate_limit::REQUESTS.admit(|| state.owns(generation)).await.map_err(str::to_owned)?;
     let mut child = command
         .spawn()
         .map_err(|_| "Could not start yt-dlp. Check that it is installed and executable.")?;
+    drop(permit);
     let stdout = child.stdout.take().ok_or("Could not read yt-dlp output.")?;
     let stderr = child.stderr.take().ok_or("Could not read yt-dlp status.")?;
     let extraction = tokio::time::timeout(std::time::Duration::from_secs(75), async {
@@ -280,6 +285,10 @@ pub(crate) async fn resolve(
     if !status.success() {
         // Never surface stderr: it can include signed URLs, cookies or user paths.
         let error = String::from_utf8_lossy(&error);
+        if error.contains("429") || error.to_ascii_lowercase().contains("too many requests") {
+            rate_limit::REQUESTS.throttle(None);
+            return Err(rate_limit::COOLDOWN.into());
+        }
         if error.contains("cookies are no longer valid") {
             state.update(app, generation, |current| {
                 current.status.phase = Phase::ReauthRequired;

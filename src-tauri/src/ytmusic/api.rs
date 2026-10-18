@@ -30,6 +30,8 @@ impl Failure {
 }
 
 pub(crate) struct Context {
+    state: Arc<YoutubeMusic>,
+    generation: u64,
     body: Value,
     user_agent: String,
     visitor: String,
@@ -48,6 +50,8 @@ impl Context {
 }
 
 pub(super) async fn context(app: &tauri::AppHandle) -> Result<Context, Failure> {
+    let state = app.state::<Arc<YoutubeMusic>>().inner().clone();
+    let generation = state.generation().map_err(|_| Failure::unavailable("Connect YouTube Music first."))?;
     let window = app
         .get_webview_window(WINDOW)
         .ok_or_else(|| Failure::unavailable("Open YouTube Music to sign in first."))?;
@@ -102,7 +106,9 @@ pub(super) async fn context(app: &tauri::AppHandle) -> Result<Context, Failure> 
         .map(str::to_owned)
         .or_else(|| value["account"].as_u64().map(|value| value.to_string()))
         .unwrap_or_else(|| "0".into());
+    if !state.owns(generation) { return Err(Failure::unavailable("YouTube Music session changed.")); }
     Ok(Context {
+        state, generation,
         body: value["context"].clone(),
         user_agent: value["userAgent"].as_str().unwrap_or("Hibiki").to_owned(),
         visitor: value["visitor"].as_str().unwrap_or_default().to_owned(),
@@ -174,6 +180,9 @@ pub(super) async fn request_with_policy(
     mut body: Value,
     fallback_ttl: i64,
 ) -> Result<Response, Failure> {
+    let started = tokio::time::Instant::now();
+    let _permit = rate_limit::REQUESTS.admit(|| context.state.owns(context.generation))
+        .await.map_err(Failure::unavailable)?;
     body["context"] = context.body.clone();
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
@@ -182,6 +191,7 @@ pub(super) async fn request_with_policy(
         .map_err(|_| Failure::unavailable("YouTube Music connection unavailable."))?;
     let mut request = client
         .post(format!("{ORIGIN}/youtubei/v1/{endpoint}?prettyPrint=false"))
+        .timeout(std::time::Duration::from_secs(20).saturating_sub(started.elapsed()))
         .header("User-Agent", &context.user_agent)
         .header("Origin", ORIGIN)
         .header("X-Origin", ORIGIN)
@@ -210,6 +220,12 @@ pub(super) async fn request_with_policy(
     if response.status() == reqwest::StatusCode::UNAUTHORIZED {
         return Err(Failure::auth());
     }
+    let retry_after = rate_limit::retry_after(response.headers());
+    if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS ||
+        response.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE && retry_after.is_some() {
+        rate_limit::REQUESTS.throttle(retry_after);
+        return Err(Failure::unavailable(rate_limit::COOLDOWN));
+    }
     if !response.status().is_success() {
         return Err(Failure::unavailable(
             "YouTube Music rejected the request. Try again later.",
@@ -237,10 +253,16 @@ pub(super) async fn request_with_policy(
         return Err(Failure::auth());
     }
     if value.get("error").is_some() {
+        if value["error"]["code"].as_u64() == Some(429) || value["error"]["status"] == "RESOURCE_EXHAUSTED" {
+            rate_limit::REQUESTS.throttle(retry_after);
+            return Err(Failure::unavailable(rate_limit::COOLDOWN));
+        }
         return Err(Failure::unavailable(
             "YouTube Music API is temporarily unavailable.",
         ));
     }
+    if !context.state.owns(context.generation) { return Err(Failure::unavailable("YouTube Music session changed.")); }
+    rate_limit::REQUESTS.success();
     Ok(Response { value, policy })
 }
 

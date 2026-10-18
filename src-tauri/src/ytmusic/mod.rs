@@ -4,6 +4,7 @@ mod discovery;
 mod discovery_cache;
 mod lyrics;
 mod playlists;
+mod rate_limit;
 mod extractor;
 mod main_window_plugin;
 mod playback;
@@ -142,6 +143,9 @@ fn settings_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
 }
 
 pub fn start(app: tauri::AppHandle) {
+    if let Ok(directory) = app.path().app_config_dir() {
+        rate_limit::REQUESTS.restore(directory.join("youtube-music-request-pace.json"));
+    }
     let state = Arc::new(YoutubeMusic::default());
     if settings_path(&app).is_ok_and(|path| path.is_file()) {
         let mut current = state.current.lock().unwrap();

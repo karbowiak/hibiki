@@ -310,6 +310,8 @@ pub(crate) async fn renew(app: &tauri::AppHandle) -> Result<(), String> {
     {
         return Ok(());
     }
+    let permit = rate_limit::REQUESTS.admit(|| state.owns(generation)).await.map_err(str::to_owned)?;
+    let existing = app.get_webview_window(WINDOW).is_some();
     state.update(app, generation, |current| {
         current.status.phase = Phase::Refreshing;
         // Suppress overlapping startup/timer/page-load attempts.
@@ -321,7 +323,8 @@ pub(crate) async fn renew(app: &tauri::AppHandle) -> Result<(), String> {
     })?;
     // Website JS performs Google's normal cookie rotation; native requests always
     // snapshot this same live store. Never reload an active user sign-in.
-    if state.owns(generation) {
+    // A newly created window already loads ORIGIN. Avoid a second startup load.
+    if existing && state.owns(generation) {
         window
             .navigate(url::Url::parse(ORIGIN).unwrap())
             .map_err(|_| {
@@ -330,6 +333,7 @@ pub(crate) async fn renew(app: &tauri::AppHandle) -> Result<(), String> {
                 message
             })?;
     }
+    drop(permit);
     tokio::time::sleep(std::time::Duration::from_secs(8)).await;
     check(app, generation).await
 }
