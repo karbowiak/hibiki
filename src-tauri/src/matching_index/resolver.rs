@@ -9,7 +9,10 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashSet};
 use unicode_normalization::UnicodeNormalization;
 
-pub const ALGORITHM: i64 = 1;
+// Version 2 rejects unusable target names even for typed-ID matches. Retire
+// earlier positive proofs too: an already-partial census can keep the same
+// coverage string and unchanged punctuation-only row across that policy change.
+pub const ALGORITHM: i64 = 2;
 const CANDIDATES: usize = 64;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1253,7 +1256,7 @@ mod tests {
     fn unnamed_membership_cannot_verify_identifiers_or_authoritative_absence() {
         let conn = db();
         complete(&conn, "track");
-        let mut target = row("track", 7, "");
+        let mut target = row("track", 7, "...");
         let identifier = Identifier { scheme: "musicbrainz:recording".into(),
             value: "22222222-2222-4222-8222-222222222222".into() };
         target.identifiers.push(identifier.clone());
@@ -1266,6 +1269,15 @@ mod tests {
         assert_eq!(result.selected, None);
         assert!(result.candidates.is_empty());
         assert_eq!(entries(&conn, S, "track", &[7]).unwrap()[0].state, "active");
+
+        // A version-1 typed-ID proof could have selected this row while census
+        // coverage was already incomplete. Unchanged coverage/dependencies must
+        // not keep that older, more permissive selection alive after upgrade.
+        conn.execute("UPDATE matching_associations SET algorithm=1,outcome='matched',proof=json_set(proof,'$.result.status','matched','$.result.selected',7) WHERE scope=?1", [S]).unwrap();
+        let upgraded = lookup(&conn, &input);
+        assert!(!upgraded.cached);
+        assert_eq!(upgraded.status, "incomplete");
+        assert_eq!(upgraded.selected, None);
 
         // Once a targeted refresh supplies the missing name, both coverage and
         // the old negative proof are re-evaluated without rebuilding membership.

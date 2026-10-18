@@ -113,6 +113,9 @@ typed identifier, and matching coverage for that kind remains incomplete until
 the missing evidence is refreshed. This prevents one unnamed album from stopping
 the entire index or an incomplete catalogue from proving a false absence. Type,
 library, identity and parent checks remain enforced.
+Resolver policy version 2 retires earlier proofs as well, including positive
+typed-ID matches saved while coverage was already incomplete and the target had
+an unusable normalized name.
 
 Saved proofs reference native rows instead of duplicating their metadata.
 Positive proofs validate row and parent-relationship revisions and relevant new
