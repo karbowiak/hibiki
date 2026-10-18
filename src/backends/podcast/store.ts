@@ -1,14 +1,14 @@
 /**
  * Podcast store — subscriptions, feed cache, listen progress.
  *
- * Persisted to IndexedDB via Zustand persist. This is primary content
+ * Persisted to SQLite via Zustand persist. This is primary content
  * (not metadata augmentation), so it doesn't use createMetadataStore.
  */
 
 import { create } from "zustand"
 import { ScopedPersistence } from "../../stores/scopedPersistence"
 import { boundPodcastCaches } from "./cache"
-import { safePersist, idbStorage } from "../../stores/idbStorage"
+import { safePersist, sqliteStorage } from "../../stores/sqliteStorage"
 import {
   podcastSearch,
   podcastGetFeed,
@@ -246,7 +246,7 @@ export const usePodcastStore = create<PodcastState>()(
   ),
 )
 
-const cachePersistence = new ScopedPersistence(idbStorage, "hibiki-podcast-cache-v1")
+const cachePersistence = new ScopedPersistence(sqliteStorage, "hibiki-podcast-cache-v1")
 let cacheLoading: Promise<void> | undefined
 /** Import legacy disposable snapshots once; primary subscriptions/progress stay in place. */
 function ensurePodcastCaches() {
@@ -254,7 +254,7 @@ function ensurePodcastCaches() {
     const saved = await cachePersistence.activate("feeds") as any
     let legacy: any
     if (!saved) {
-      try { legacy = JSON.parse(await idbStorage.getItem("podcast-store-v1") ?? "null")?.state } catch { /* Optional browsing data. */ }
+      try { legacy = JSON.parse(await sqliteStorage.getItem("podcast-store-v1") ?? "null")?.state } catch { /* Optional browsing data. */ }
     }
     const current = usePodcastStore.getState()
     usePodcastStore.setState(boundPodcastCaches({

@@ -10,7 +10,8 @@ Object.assign(globalThis, {
   IS_REACT_ACT_ENVIRONMENT: true,
 })
 const saved = new Map<string, any>()
-mock.module("idb-keyval", () => ({
+const applicationStorage = await import("../../src/storage/clientStorage")
+mock.module("../../src/storage/clientStorage", () => ({ ...applicationStorage,
   createStore: () => ({}),
   get: async (key: string) => saved.get(key),
   set: async (key: string, value: any) => {

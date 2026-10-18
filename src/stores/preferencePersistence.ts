@@ -70,7 +70,7 @@ function decode(raw: unknown, entry: Entry): Envelope | null {
   return value as Envelope
 }
 
-/** Keeps failed writes, fences hydration, and changes IndexedDB records atomically. */
+/** Keeps failed writes, fences hydration, and changes durable records atomically. */
 export class PreferencePersistence {
   private entries = new Map<string, Entry>()
   private listeners = new Set<() => void>()

@@ -1,3 +1,6 @@
+import { backgroundCall } from "../background/actions"
+import type { CollectionSource } from "./hydrateCollection"
+import { collectionIsFresh } from "./hydrateCollection"
 import { invoke } from "@tauri-apps/api/core"
 import type { MusicProvider } from "../providers/types"
 import type { MusicItem, MusicTrack, PagedResult } from "../types/music"
@@ -11,6 +14,8 @@ import type { CollectionOrder, PagedTrackSource } from "../lib/pagedPlayback"
 import { projectOfflineAvailability } from "./catalogue"
 
 const TTL = 15 * 60_000
+const backgroundProviders = new WeakMap<MusicProvider, MusicProvider>()
+export const collectionBackgroundProvider = (provider: MusicProvider) => backgroundProviders.get(provider) ?? provider
 const MIX_STAMP = "content-seeded-mix-v1"
 interface Info {
   total: number
@@ -25,6 +30,7 @@ interface Job {
   stamp: string
   load: (offset: number, limit: number) => Promise<PagedResult<MusicItem>>
   force: boolean
+  resume?: { completed: number; total: number }
 }
 
 /** One background worker, atomic generations, indexed SQLite reads, bounded renderer pages. */
@@ -50,6 +56,9 @@ export function createCollectionCacheProvider(
   const failures = new Set<string>()
   const preparing = new Map<string, Promise<void>>()
   const foreground = new Set<string>()
+  let automaticPlaylists = new Set<string>()
+  const wanted = (key: string) => !key.startsWith("playlist:") ||
+    foreground.has(key) || automaticPlaylists.has(key)
   const mixPaths = new Map<string, string>()
   async function resolveKey(key: string) {
     if (!key.startsWith("mix:/")) return key
@@ -112,19 +121,27 @@ export function createCollectionCacheProvider(
           [...jobs.values()].find((job) => foreground.has(job.key)) ??
           jobs.values().next().value!
         jobs.delete(job.key)
+        if (!wanted(job.key)) continue
         activeJob = job
         const version = epoch
         try {
+          // Do not occupy a Butler slot just to discover a fresh snapshot.
+          // The worker checks again when claimed, since a mutation may race us.
           const info = await call<Info | null>("info", job.key)
-          if (
-            !job.force &&
-            info?.complete &&
-            !info.dirty &&
-            !info.refreshing &&
-            info.stamp === job.stamp &&
-            Date.now() - info.cachedAt < TTL
-          )
+          if (collectionIsFresh(info, job)) continue
+          const source: CollectionSource | undefined = job.key === "playlists" ? { kind: "playlists" }
+            : job.key.startsWith("playlist:") ? { kind: "playlist", id: job.key.slice(9) }
+            : job.key.startsWith("rated:") ? { kind: "rated", item: job.key.slice(6) as "track" | "album" | "artist" }
+            : mixPaths.has(job.key) ? { kind: "mix", path: mixPaths.get(job.key)! } : undefined
+          const background = source && !foreground.has(job.key) ? backgroundCall({ domain: "collections", method: "hydrate",
+            args: [{ context, source, key: job.key, stamp: job.stamp, force: job.force, resume: job.resume }] }) : undefined
+          if (background) {
+            const result = await background as { done: boolean; changed: boolean; resume?: Job["resume"] }
+            if (!online() || version !== epoch) continue
+            if (result.changed) { notify(job.key); if (mixPaths.has(job.key)) notify(`mix:${mixPaths.get(job.key)}`) }
+            if (!result.done && wanted(job.key) && !jobs.has(job.key)) jobs.set(job.key, { ...job, force: true, resume: result.resume })
             continue
+          }
           const token = await call<{ generation: number; offset: number }>(
             "begin",
             job.key,
@@ -133,7 +150,7 @@ export function createCollectionCacheProvider(
           let offset = token.offset,
             done = false
           // Yield large collections to the remaining queue after four bounded pages.
-          for (let page = 0; page < 4 && online(); page++) {
+          for (let page = 0; page < 4 && online() && wanted(job.key); page++) {
             const result = await job.load(offset, 500)
             if (!online() || version !== epoch) break
             if (result.offset !== undefined && result.offset !== offset)
@@ -167,7 +184,7 @@ export function createCollectionCacheProvider(
             }
             await new Promise((resolve) => setTimeout(resolve, 100))
           }
-          if (!done && online() && version === epoch && !jobs.has(job.key))
+          if (!done && online() && wanted(job.key) && version === epoch && !jobs.has(job.key))
             jobs.set(job.key, { ...job, force: true })
         } catch (error) {
           if (version !== epoch) continue
@@ -221,6 +238,11 @@ export function createCollectionCacheProvider(
     try {
       const playlists = await roster()
       if (!online() || version !== epoch) return
+      // Keep smart playlists in the roster, but leave their potentially huge
+      // dynamic membership to an explicit page/search/playback request.
+      automaticPlaylists = new Set(playlists.filter(playlist => !playlist.smart)
+        .map(playlist => `playlist:${playlist.id}`))
+      for (const key of jobs.keys()) if (!wanted(key)) jobs.delete(key)
       if (!keys || keys.includes("playlists")) {
         await call("maintain", "playlists", { pins: livePins(), playlists: playlists.map(playlist => playlist.id) })
         if (!online() || version !== epoch) return
@@ -253,6 +275,7 @@ export function createCollectionCacheProvider(
       for (const playlist of [...playlists].sort(
         (a, b) => a.trackCount - b.trackCount
       )) {
+        if (playlist.smart) continue
         if (keys && !keys.includes(`playlist:${playlist.id}`)) continue
         enqueue({
           key: `playlist:${playlist.id}`,
@@ -702,6 +725,7 @@ export function createCollectionCacheProvider(
       return method
     },
   })
+  backgroundProviders.set(proxy, raw)
   forwardFreshPlaylistReads(proxy, provider)
   return proxy
 }

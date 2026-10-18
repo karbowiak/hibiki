@@ -1,6 +1,6 @@
 import { create } from "zustand"
 import { listen } from "@tauri-apps/api/event"
-import { safePersist } from "./idbStorage"
+import { safePersist } from "./sqliteStorage"
 import type { RadioStation } from "../lib/radiobrowser"
 import { radiobrowserClick } from "../lib/radiobrowser"
 import { radioPlay, radioStop, radioPause, radioResume, radioOnEvents } from "../lib/radioAudio"

@@ -4,10 +4,11 @@ import { create } from "zustand"
 import { youtubeMusicTrack } from "../../src/backends/ytmusic/tracks"
 import { deferred } from "../helpers/radioAudioFakes"
 const scenario = process.argv[2], disk = new Map<string, unknown>()
-mock.module("idb-keyval", () => ({ createStore: () => ({}), get: async (key: string) => structuredClone(disk.get(key)),
+const applicationStorage = await import("../../src/storage/clientStorage")
+mock.module("../../src/storage/clientStorage", () => ({ ...applicationStorage, createStore: () => ({}), get: async (key: string) => structuredClone(disk.get(key)),
   update: async (key: string, change: (old: unknown) => unknown) => { disk.set(key, structuredClone(change(disk.get(key)))) } }))
 const track = youtubeMusicTrack({ videoId: "a1234567890", title: "Song", artist: "Artist", album: "Album", duration: "3:00", thumbnail: null })
-let owner = "A", revision = 0, failPlex = scenario === "restart"
+let owner = "A", revision = 0, failPlex = scenario === "restart" || scenario === "fairness"
 const ytWrites: boolean[] = [], plexWrites: (number | null)[] = [], remoteWrites: { service: string; liked: boolean }[] = []
 const first = deferred(), matching = deferred(), feedback = { lastfm: false, listenbrainz: false }
 const provider = { cacheScope: "P", playbackSession: {}, isOffline: false,
@@ -49,10 +50,35 @@ mock.module("../../src/favorites/saveRating", () => ({ saveTrackRatingToPlex: as
   if (failPlex) throw Error("Plex unavailable; rating retained")
   plexWrites.push(intent.value)
 } }))
-const { useYoutubeMusicRatingsStore: store, youtubeRatingLiked, scrobbleRatingLoved } = await import("../../src/backends/ytmusic/ratings")
+const { useYoutubeMusicRatingsStore: store, youtubeRatingLiked, scrobbleRatingLoved, ratingNeedsSync } = await import("../../src/backends/ytmusic/ratings")
 const wait = async (condition: () => boolean) => { for (let i = 0; i < 500 && !condition(); i++) await Bun.sleep(1); assert.ok(condition()) }
 await store.getState().load(owner)
-if (scenario.startsWith("index")) {
+if (scenario === "fairness") {
+  const entries = Object.fromEntries(Array.from({ length: 25 }, (_, index) => {
+    const song = { ...track, id: `ytmusic:${index}` }
+    return [song.id, { id: `intent-${index}`, owner, plexOwner: "P", track: song, value: 8, changedAt: 1, saved: { ytmusic: owner } }]
+  }))
+  disk.set("ytmusic-stars-v1:A", structuredClone(entries))
+  store.setState({ entries })
+  await store.getState().resume()
+  assert.equal(Object.values(store.getState().entries).filter(entry => entry.error).length, 20)
+  await store.getState().resume()
+  assert.equal(Object.values(store.getState().entries).filter(entry => entry.error).length, 25)
+  assert.equal(matchCalls, 40)
+  assert.deepEqual(ytWrites, [])
+} else if (scenario === "pending") {
+  const entry = { id: "intent", owner: "A", plexOwner: "P", track, value: 8, changedAt: 1,
+    serviceOwners: { lastfm: "disabled" }, saved: { ytmusic: "A", plex: "P" }, error: "Old failure" }
+  assert.equal(ratingNeedsSync(entry, { ytmusic: "A", plex: "P" }), false)
+  assert.equal(ratingNeedsSync(entry, { ytmusic: "B", plex: "other", lastfm: "other" }), false)
+  assert.equal(ratingNeedsSync(entry, { lastfm: "disabled" }), true)
+  assert.equal(ratingNeedsSync({ ...entry, saved: {} }, { ytmusic: "A" }), true)
+  store.setState({ entries: { [track.id]: entry } })
+  await store.getState().resume()
+  assert.equal(matchCalls, 0)
+  assert.deepEqual(ytWrites, [])
+  assert.deepEqual(plexWrites, [])
+} else if (scenario.startsWith("index")) {
   await store.getState().rate(track, 8)
   await wait(() => !!store.getState().entries[track.id]?.error)
   assert.deepEqual(plexWrites, [])

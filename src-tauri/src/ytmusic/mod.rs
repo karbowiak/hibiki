@@ -155,23 +155,19 @@ pub fn start(app: tauri::AppHandle) {
     }
     app.manage(state.clone());
     tauri::async_runtime::spawn(async move {
-        let mut timer = tokio::time::interval(std::time::Duration::from_secs(30));
-        timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            timer.tick().await;
-            let due = state.current.lock().is_ok_and(|current| {
-                current.status.enabled
-                    && !current.interactive
-                    && current
-                        .status
-                        .next_refresh_at
-                        .is_some_and(|next| now() >= next)
-            });
-            if due {
-                let _ = session::renew(&app).await;
-            }
-        }
+        let _ = crate::background_jobs::every(&app, crate::background_jobs::Task::YoutubeSessionMaintenance, std::time::Duration::from_secs(30)).await;
     });
+}
+
+pub(crate) fn session_due(app: &tauri::AppHandle) -> bool {
+    let Some(state) = app.try_state::<Arc<YoutubeMusic>>() else { return false; };
+    let due = state.current.lock().is_ok_and(|current| current.status.enabled && !current.interactive
+        && current.status.next_refresh_at.is_some_and(|next| now() >= next));
+    due
+}
+pub(crate) async fn background_session(app: &tauri::AppHandle) -> Result<(), String> {
+    if session_due(app) { session::renew(app).await?; }
+    Ok(())
 }
 
 #[tauri::command]
@@ -189,8 +185,13 @@ pub async fn ytmusic_playlist_read(
     app: tauri::AppHandle,
     playlist_id: String,
     expected_account: String,
+    source_only: Option<bool>,
 ) -> Result<playlists::Snapshot, String> {
-    playlists::ytmusic_playlist_read(app, playlist_id, expected_account).await
+    let generation = app.state::<Arc<YoutubeMusic>>().generation()?;
+    let value = crate::background_jobs::call(&app, crate::background_jobs::Task::YoutubePlaylistRead {
+        playlist_id, account: expected_account, generation, source_only: source_only.unwrap_or(false),
+    }).await?;
+    serde_json::from_value(value).map_err(|_| "Background playlist read was incomplete".into())
 }
 
 #[tauri::command]
@@ -201,7 +202,10 @@ pub async fn ytmusic_playlist_write(
     expected: Vec<playlists::Handle>,
     operation: playlists::Operation,
 ) -> Result<String, String> {
-    playlists::ytmusic_playlist_write(app, playlist_id, expected_account, expected, operation).await
+    let owned_app = app.clone();
+    crate::background_jobs::mutation(&app, async move {
+        playlists::ytmusic_playlist_write(owned_app, playlist_id, expected_account, expected, operation).await
+    }).await
 }
 
 #[tauri::command]
@@ -392,8 +396,48 @@ pub async fn ytmusic_install_helpers(app: tauri::AppHandle) -> Result<tools::Hel
 }
 
 #[tauri::command]
-pub async fn ytmusic_browse(browse_id: String, params: Option<String>, continuation: Option<String>, force: Option<bool>, include_performances: Option<bool>, client_revision: Option<u64>, app: tauri::AppHandle) -> Result<discovery::BrowsePage, String> {
+pub async fn ytmusic_browse(browse_id: String, params: Option<String>, continuation: Option<String>, force: Option<bool>, include_performances: Option<bool>, client_revision: Option<u64>, background: Option<bool>, app: tauri::AppHandle) -> Result<discovery::BrowsePage, String> {
+    if background.unwrap_or(false) {
+        let state = app.state::<Arc<YoutubeMusic>>();
+        let generation = state.generation()?;
+        let account = state.current.lock().map_err(|_| "YouTube Music session unavailable")?.status.account_id.clone()
+            .ok_or("Connect YouTube Music first.")?;
+        if !force.unwrap_or(false) {
+            if let Some(page) = discovery::cached_browse(&app, &browse_id, params.as_deref(), continuation.as_deref(),
+                include_performances.unwrap_or(false), client_revision).await? {
+                background_account(&app, &account, generation)?;
+                return Ok(page);
+            }
+        }
+        let value = crate::background_jobs::call(&app, crate::background_jobs::Task::YoutubeBrowse {
+            request: crate::background_jobs::Browse { account, generation, browse_id, params, continuation,
+                force: force.unwrap_or(false), include_performances: include_performances.unwrap_or(false), client_revision },
+        }).await?;
+        return serde_json::from_value(value).map_err(|_| "Background catalog read was incomplete".into());
+    }
     discovery::browse(&app, &browse_id, params.as_deref(), continuation.as_deref(), force.unwrap_or(false), include_performances.unwrap_or(false), client_revision).await
+}
+
+fn background_account(app: &tauri::AppHandle, account: &str, generation: u64) -> Result<(), String> {
+    let state = app.try_state::<Arc<YoutubeMusic>>().ok_or("YouTube Music is starting.")?;
+    let current = state.current.lock().map_err(|_| "YouTube Music session unavailable")?;
+    if !current.status.enabled || current.generation != generation || current.status.account_id.as_deref() != Some(account) {
+        return Err("YouTube Music connection changed.".into());
+    }
+    Ok(())
+}
+pub(crate) async fn background_browse(app: &tauri::AppHandle, request: crate::background_jobs::Browse) -> Result<serde_json::Value, String> {
+    background_account(app, &request.account, request.generation)?;
+    let page = discovery::browse(app, &request.browse_id, request.params.as_deref(), request.continuation.as_deref(),
+        request.force, request.include_performances, request.client_revision).await?;
+    background_account(app, &request.account, request.generation)?;
+    serde_json::to_value(page).map_err(|_| "Background catalog read was incomplete".into())
+}
+pub(crate) async fn background_playlist_read(app: &tauri::AppHandle, playlist_id: String, account: String, generation: u64, source_only: bool) -> Result<serde_json::Value, String> {
+    background_account(app, &account, generation)?;
+    let page = playlists::ytmusic_playlist_read(app.clone(), playlist_id, account.clone(), source_only).await?;
+    background_account(app, &account, generation)?;
+    serde_json::to_value(page).map_err(|_| "Background playlist read was incomplete".into())
 }
 
 #[tauri::command]

@@ -1065,7 +1065,7 @@ export class PlexProvider implements MusicProvider {
 
 /**
  * Resolve MusicBrainz IDs for a track — checks Plex GUID first, then falls
- * back to the MusicBrainz recording lookup (cached in IndexedDB with 30-day TTL).
+ * back to the MusicBrainz recording lookup (cached in SQLite with 30-day TTL).
  *
  * Returns undefined if no MBIDs could be resolved (ListenBrainz will still
  * accept the submission, just without MBID matching).

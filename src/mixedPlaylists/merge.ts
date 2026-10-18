@@ -5,6 +5,7 @@ import { COUNTERPART_POLICY, counterpartAttempt, counterpartDeferred, counterpar
 import { newDraft, type DraftMetadata } from "./drafts"
 import { newOccurrence, verifiedSongReference, type MixedOccurrence, type MixedPlaylist, type Owners, type Service } from "./model"
 import { reconcileRemoteChanges } from "./reconcile"
+import { deduplicateMergeItems } from "./deduplicate"
 
 export type MergeDestination = Service | "mixed"
 export type MergeDuplicates = "preserve" | "verified"
@@ -20,15 +21,32 @@ export interface MergePreview {
 }
 export const mergeServices = (destination: MergeDestination): Service[] => destination === "mixed" ? ["plex", "ytmusic"] : [destination]
 export const sourceFingerprint = (value: unknown) => JSON.stringify(value)
+export interface MergeSelection { key: string; title: string }
+/** Persist the request before any provider reads or matching. */
+export function queuedMerge(sources: [MergeSelection, MergeSelection], destination: MergeDestination, duplicates: MergeDuplicates, metadata: DraftMetadata, owners: Owners, id: string): MixedPlaylist {
+  if (!sources[0]?.key || !sources[1]?.key || sources[0].key === sources[1].key) throw Error("Choose two different playlists.")
+  for (const service of mergeServices(destination)) if (!owners[service]) throw Error(`Connect ${service === "plex" ? "Plex" : "YouTube Music"}.`)
+  return { ...newDraft(metadata, id), owners: { ...owners }, destinations: mergeServices(destination),
+    merge: { sources: sources.map(source => ({ ...source, fingerprint: "" })), duplicates, reviewedAt: Date.now(), pending: true },
+    status: "syncing", message: "Preparing the source playlists in the background." }
+}
+export function removeVerifiedMergeDuplicates(playlist: MixedPlaylist): MixedPlaylist {
+  if (playlist.merge?.duplicates !== "verified" || playlist.write) return playlist
+  const items = deduplicateMergeItems(playlist.items)
+  return items.length === playlist.items.length ? playlist : { ...playlist, items }
+}
 /** Read only, using the same complete paged readers as ordinary playlist sync. */
 export async function readMergeSource(key: string, options: {
   adapters: Partial<Record<Service, MixedAdapter>>; owners: Owners; current(): boolean; local(): Promise<MixedPlaylist[]>
 }): Promise<MergeSource> {
   const check = () => { if (!options.current()) throw Error("Music accounts changed. Review the merge again.") }
   check()
-  const local = (await options.local()).find(item => item.id === key || item.aliases.includes(key))
+  // A provider ID explicitly selects that provider's contents. Mixed entries
+  // have their own IDs; aliases must not silently replace either merge source.
+  const local = (await options.local()).find(item => item.id === key)
   check()
   if (local) {
+    if (local.merge?.pending) throw Error("The source playlist is still being prepared. Hibiki will retry.")
     if (Object.entries(local.owners).some(([service, owner]) => options.owners[service as Service] !== owner)) throw Error("Reconnect the source playlist’s original accounts.")
     if (local.write || local.status === "conflict") throw Error(`Resolve the pending sync for “${local.title}” before merging it.`)
     const snapshots = []
@@ -48,9 +66,12 @@ export async function readMergeSource(key: string, options: {
   const service = key.startsWith("ytmusic:") ? "ytmusic" : "plex"
   const adapter = options.adapters[service]
   if (!adapter || adapter.owner !== options.owners[service]) throw Error("Connect the source playlist’s account to read all its songs.")
-  const snapshot = await adapter.read(key.replace(/^ytmusic:/, "")); check()
-  const items = snapshot.items.map(item => ({ ...newOccurrence(item.track), added: item.added ?? { at: Date.now(), provenance: "observed" as const },
-    copiedFrom: { playlist: key, occurrence: item.occurrenceId } }))
+  const snapshot = await (adapter.readSource ?? adapter.read)(key.replace(/^ytmusic:/, "")); check()
+  const items = snapshot.items.map(item => {
+    const row = newOccurrence(item.track)
+    if (item.unavailable) row.songs[row.original]!.stale = true
+    return { ...row, added: item.added ?? { at: Date.now(), provenance: "observed" as const }, copiedFrom: { playlist: key, occurrence: item.occurrenceId } }
+  })
   return { key, title: snapshot.title, owners: { [service]: snapshot.owner }, items,
     fingerprint: sourceFingerprint([snapshot.title, snapshot.description, snapshot.owner, snapshot.items.map(item => [item.occurrenceId, recordingFingerprint(item.track), item.added])]) }
 }
@@ -58,25 +79,18 @@ function copiedOccurrence(row: MixedOccurrence, key: string): MixedOccurrence {
   return { ...structuredClone(row), id: crypto.randomUUID(), remote: {}, copiedFrom: { playlist: key, occurrence: row.copiedFrom?.occurrence ?? row.id } }
 }
 export function mergeDuplicateCount(items: MixedOccurrence[]) {
-  const seen = new Set<string>()
-  let duplicates = 0
-  for (const row of items) {
-    const keys = (["plex", "ytmusic"] as const).flatMap(service => row.songs[service] && !row.songs[service]?.stale ? [`${service}:${row.songs[service]!.track.id}`] : [])
-    if (keys.some(key => seen.has(key))) duplicates++
-    keys.forEach(key => seen.add(key))
-  }
-  return duplicates
+  return items.length - deduplicateMergeItems(items).length
 }
-/** Matching is bounded to the chosen occurrences, with two concurrent lookups.
- * Shared verified provider IDs establish duplicates; title similarity never does. */
+/** Join local source recordings first, then use two bounded provider lookups. */
 export async function prepareMerge(sources: [MergeSource, MergeSource], destination: MergeDestination, duplicates: MergeDuplicates, options: {
   owners: Owners; current(): boolean; resolve(track: MusicTrack, target: Service): Promise<CounterpartResult>; progress?(done: number, total: number): void
 }): Promise<MergePreview> {
   if (sources[0].key === sources[1].key) throw Error("Choose two different playlists.")
   const services = mergeServices(destination)
   for (const service of services) if (!options.owners[service]) throw Error(`Connect ${service === "plex" ? "Plex" : "YouTube Music"} to create this destination.`)
-  const items = sources.flatMap(source => source.items.map(row => copiedOccurrence(row, source.key)))
-  if (items.length > 10000) throw Error("A merged playlist can contain at most 10,000 occurrences. Choose smaller sources.")
+  const copied = sources.flatMap(source => source.items.map(row => copiedOccurrence(row, source.key)))
+  if (copied.length > 10000) throw Error("A merged playlist can contain at most 10,000 occurrences. Choose smaller sources.")
+  const items = duplicates === "verified" ? deduplicateMergeItems(copied) : copied
   const lookups = new Map<string, Promise<CounterpartResult>>()
   const deferred = new Map<Service, CounterpartResult>()
   let cancelled = false
@@ -103,13 +117,8 @@ export async function prepareMerge(sources: [MergeSource, MergeSource], destinat
     }
   })).catch(error => { cancelled = true; throw error })
   check()
-  const retained: MixedOccurrence[] = [], seen = new Set<string>()
-  for (const row of items) {
-    const keys = (["plex", "ytmusic"] as const).flatMap(service => row.songs[service] && !row.songs[service]?.stale ? [`${service}:${row.songs[service]!.track.id}`] : [])
-    if (duplicates === "preserve" || !keys.some(key => seen.has(key))) retained.push(row)
-    keys.forEach(key => seen.add(key))
-  }
-  return { sources, destination, duplicates, items: retained, removed: items.length - retained.length, reviewedAt: Date.now(), owners: { ...options.owners } }
+  const retained = duplicates === "verified" ? deduplicateMergeItems(items) : items
+  return { sources, destination, duplicates, items: retained, removed: copied.length - retained.length, reviewedAt: Date.now(), owners: { ...options.owners } }
 }
 export function mergedDraft(preview: MergePreview, metadata: DraftMetadata, owners: Owners, id: string): MixedPlaylist {
   const destinations = mergeServices(preview.destination), bound: Owners = {}

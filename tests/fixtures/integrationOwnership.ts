@@ -14,13 +14,15 @@ const pending: {
   response: ReturnType<typeof deferred>
 }[] = []
 mock.module("@tauri-apps/api/core", () => ({
+  isTauri: () => false,
   invoke: (command: string, args: any) => {
     const response = deferred()
     pending.push({ command, args, response })
     return response.promise
   },
 }))
-mock.module("idb-keyval", () => ({
+const applicationStorage = await import("../../src/storage/clientStorage")
+mock.module("../../src/storage/clientStorage", () => ({ ...applicationStorage,
   get: async () => undefined,
   update: async () => {},
   del: async () => {},

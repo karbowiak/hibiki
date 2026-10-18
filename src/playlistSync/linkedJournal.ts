@@ -1,4 +1,4 @@
-import { get, update } from "idb-keyval"
+import { get, update } from "../storage/clientStorage"
 import { playlistJournalDatabase } from "./journal"
 import { samePlaylistIdentity } from "./types"
 import { validateSnapshot } from "./planner"

@@ -75,8 +75,9 @@ pub async fn offline_cache_get(
     let guard = state.0.lock().await;
     state.checked_cache_client(&context, &guard)?;
     drop(guard);
-    if result.is_some() {
-        tauri::async_runtime::spawn(async move {
+    if result.as_ref().is_some_and(|saved| now().is_ok_and(|at| at.saturating_sub(saved.accessed_at) >= 60_000)) {
+        crate::background_jobs::advisory_once(format!("browsing-touch:{}:{}:{key}", context.cache_scope, context.connection_revision),
+            crate::background_jobs::Lane::Metadata, "Maintaining library cache", async move {
             if let Ok(at) = now() {
                 let _ = owned_write(&app, &context, false, move |conn, scope| {
                     offline::touch(conn, scope, &key, at)

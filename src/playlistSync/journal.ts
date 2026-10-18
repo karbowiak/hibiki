@@ -1,4 +1,4 @@
-import { createStore, get, update } from "idb-keyval"
+import { createStore, get, update } from "../storage/clientStorage"
 import {
   samePlaylistIdentity,
   sameAccount,
@@ -25,7 +25,7 @@ export const playlistAttemptJournal: PlaylistAttemptJournal = {
   },
 }
 
-/** Pure transaction reducer, shared by the real IndexedDB journal and synthetic tests. */
+/** Pure transaction reducer, shared by the real SQLite journal and synthetic tests. */
 export function mergePlaylistAttempt(
   previous: PlaylistAttempt[],
   attempt: PlaylistAttempt

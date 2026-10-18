@@ -1,3 +1,4 @@
+import { sqliteLocalStorage } from "../storage/clientStorage"
 import { Button } from "./shared/Button"
 import { ArtistCredits } from "./shared/ArtistCredits"
 import { buildExternalImageUrl } from "../lib/imageUrl"
@@ -374,7 +375,7 @@ export function Player() {
 
   const [showImageModal, setShowImageModal] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(() => {
-    const saved = localStorage.getItem("plex-sidebar-width")
+    const saved = sqliteLocalStorage.getItem("plex-sidebar-width")
     return saved ? parseInt(saved, 10) || 240 : 240
   })
 

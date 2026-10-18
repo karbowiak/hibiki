@@ -1,3 +1,4 @@
+import { useBackgroundWorker } from "./background/runtime"
 import { lazy, Suspense, useEffect } from "react"
 import { isTauri } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
@@ -60,6 +61,7 @@ const HotkeyHelpModal = lazy(() =>
 )
 
 function DesktopApp() {
+  useBackgroundWorker()
   useEffect(initializeQueuePersistence, [])
   useLinkedPlaylistSync()
   useMixedPlaylistSync()

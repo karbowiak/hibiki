@@ -1,3 +1,4 @@
+import { sqliteLocalStorage } from "../storage/clientStorage"
 import { Button } from "./shared/Button"
 import { youtubeMusicContext } from "../backends/ytmusic/contextActions"
 import "../styles/shellArtwork.css"
@@ -48,7 +49,7 @@ import { captureMusicOwner } from "../mixedPlaylists/counterparts"
 import { youtubeMusicSongMetadata } from "../backends/ytmusic/metadata"
 
 // ---------------------------------------------------------------------------
-// Custom order persistence (localStorage)
+// Custom order persistence (sqliteLocalStorage)
 // ---------------------------------------------------------------------------
 
 const LIBRARY_EXPANDED_KEY = "plex-sidebar-library-expanded"
@@ -398,7 +399,7 @@ export function SideBar({
   const justDragged = useRef(false)
   const [libraryExpanded, setLibraryExpanded] = useState(() => {
     try {
-      return localStorage.getItem(LIBRARY_EXPANDED_KEY) === "true"
+      return sqliteLocalStorage.getItem(LIBRARY_EXPANDED_KEY) === "true"
     } catch {
       return false
     }
@@ -507,7 +508,7 @@ export function SideBar({
                         setLibraryExpanded((prev) => {
                           const next = !prev
                           try {
-                            localStorage.setItem(
+                            sqliteLocalStorage.setItem(
                               LIBRARY_EXPANDED_KEY,
                               String(next)
                             )

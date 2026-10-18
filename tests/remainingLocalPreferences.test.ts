@@ -439,7 +439,7 @@ test("preset selection before recovery retains saved history and its 50-item cap
     ...history.slice(0, 49),
   ])
 })
-test("existing localStorage keys restore all five singleton stores on startup", async () => {
+test("migrated SQLite preferences restore all five singleton stores on startup", async () => {
   const script = `
     import assert from "node:assert/strict";
     import { JSDOM } from "jsdom";
@@ -454,7 +454,10 @@ test("existing localStorage keys restore all five singleton stores on startup", 
       "plex-custom-colors": { enabled: true, overrides: { "bg-base": "#123456" } },
       "easter-eggs-v1": { rainbow: true, partyMode: true },
     };
-    for (const [key, state] of Object.entries(saved)) localStorage.setItem(key, JSON.stringify({ state, version: 0 }));
+    const { clientStorage, initializeClientStorage } = await import("./src/storage/clientStorage");
+    const { localStore } = await import("./src/storage/keyValue");
+    for (const [key, state] of Object.entries(saved)) await clientStorage.set(key, JSON.stringify({ state, version: 0 }), localStore);
+    await initializeClientStorage();
     const { useLyricsOffsetStore: lyrics } = await import("./src/stores/lyricsOffsetStore");
     const { useVisualizerStore: viz } = await import("./src/stores/visualizerStore");
     const { useSleepTimerStore: sleep } = await import("./src/stores/sleepTimerStore");
@@ -471,7 +474,7 @@ test("existing localStorage keys restore all five singleton stores on startup", 
     assert.equal(eggs.getState().partyMode, true);
     const { localPreferencePersistence } = await import("./src/stores/localPreferenceStorage");
     await localPreferencePersistence.flush();
-    for (const key of Object.keys(saved)) assert.notEqual(localStorage.getItem(key), null);
+    for (const key of Object.keys(saved)) assert.notEqual(await clientStorage.get(key, localStore), undefined);
     console.log("Local preferences restored");
     dom.window.close();
   `

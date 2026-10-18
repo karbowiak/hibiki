@@ -1,3 +1,4 @@
+import { sqliteLocalStorage } from "../storage/clientStorage"
 const KEY = "hibiki-scrobble-delay-notice-v1"
 export const SCROBBLE_NOTICE_DELAY_MS = 24 * 60 * 60 * 1000
 
@@ -14,7 +15,7 @@ export function claimScrobbleNotice(
   )
     return false
   try {
-    const target = storage ?? (typeof localStorage === "undefined" ? undefined : localStorage)
+    const target = storage ?? (typeof sqliteLocalStorage === "undefined" ? undefined : sqliteLocalStorage)
     const previous = JSON.parse(target?.getItem(KEY) ?? "null")
     if (
       previous?.since === since ||

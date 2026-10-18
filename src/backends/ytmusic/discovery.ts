@@ -14,6 +14,7 @@ import { normalizeArtistCredits } from "../../lib/artistCredits"
 import { withTimeout } from "../../lib/withTimeout"
 
 export interface YoutubeMusicItem {
+  unavailable?: boolean
   id: string
   kind: "song" | "album" | "playlist" | "artist"
   title: string
@@ -108,10 +109,10 @@ export function observeYoutubeMusicPages(destination: YoutubeMusicDestination,
   })
 }
 
-export function browseYoutubeMusic(destination: YoutubeMusicDestination, continuation?: string | null, force = false, includePerformances = false): Promise<YoutubeMusicBrowsePage> {
+export function browseYoutubeMusic(destination: YoutubeMusicDestination, continuation?: string | null, force = false, includePerformances = false, background = false): Promise<YoutubeMusicBrowsePage> {
   const revision = useYoutubeMusicDiscoveryStore.getState().revision
   const pageKey = catalogKey(destination, continuation ?? null, includePerformances)
-  const key = `${revision}:${pageKey}`
+  const key = `${revision}:${pageKey}:${background ? "background" : "foreground"}`
   const existing = catalogRequests.get(key)
   if (existing && (!force || existing.force)) return existing.promise
   const before = catalogSequence
@@ -121,7 +122,7 @@ export function browseYoutubeMusic(destination: YoutubeMusicDestination, continu
     const owns = () => useYoutubeMusicDiscoveryStore.getState().connected && useYoutubeMusicDiscoveryStore.getState().revision === revision
     if (!owns()) throw Error("YouTube Music connection changed.")
     const page = await invoke<YoutubeMusicBrowsePage>("ytmusic_browse", { browseId: destination.browseId,
-      params: destination.params ?? null, continuation: continuation ?? null, force, includePerformances, clientRevision: revision })
+      params: destination.params ?? null, continuation: continuation ?? null, force, includePerformances, clientRevision: revision, background })
     if (!owns()) throw Error("YouTube Music connection changed.")
     // A very fast background response can beat the cached IPC response.
     const updated = catalogUpdates.get(pageKey)
@@ -137,6 +138,7 @@ export function browseYoutubeMusic(destination: YoutubeMusicDestination, continu
 export const youtubeMusicItemCredits = (item: YoutubeMusicItem) => normalizeArtistCredits(item.artist, item.artistId ? `ytmusic:${item.artistId}` : null,
   item.artistCredits?.map(credit => ({ ...credit, id: credit.id ? `ytmusic:${credit.id}` : null })))
 export const youtubeMusicItemTrack = (item: YoutubeMusicItem) => ({ ...youtubeMusicTrack({
+  unavailable: item.unavailable,
   videoId: item.id, title: item.title, artist: item.artist, album: item.album,
   duration: item.duration, thumbnail: item.thumbnail,
 }), year: item.year ?? 0, trackNumber: item.trackNumber ?? 0, explicit: item.explicit ?? undefined,

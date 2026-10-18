@@ -7,6 +7,8 @@ import { subscribeMatchingUpdates } from "../matching/updates"
 import { createMatchingConsumer } from "../matching/consumerQueue"
 import { counterpartPending } from "../mixedPlaylists/matching"
 import { playlistServices } from "../mixedPlaylists/model"
+import { playlistNeedsIndexCheck } from "../mixedPlaylists/indexUpdates"
+import type { MatchingUpdate } from "../matching/updates"
 
 /** Resumable bounded jobs, round-robin; no library-wide matching scan. */
 export function useMixedPlaylistSync() {
@@ -15,15 +17,21 @@ export function useMixedPlaylistSync() {
   const account = useYoutubeMusicDiscoveryStore(state => state.connected ? state.accountId : null)
   const external = useListenBrainzStore(state => state.isAuthenticated)
   useEffect(() => {
-    let active = true, timer: ReturnType<typeof setTimeout>
+    let active = true, timer: ReturnType<typeof setTimeout>, initialCheck = true
     const matching = createMatchingConsumer(update => useMixedPlaylistStore.getState().retryIndexedMatches(update))
-    const unsubscribe = subscribeMatchingUpdates(update => matching.offer(update))
+    const offerMatching = (update?: MatchingUpdate) => {
+      if (!active || !provider?.matchingResolve || provider.isOffline || update && update.provider !== provider) return
+      const relevant = useMixedPlaylistStore.getState().playlists.some(item => item.owners.plex === scope &&
+        item.owners.ytmusic === (account ?? undefined) && playlistNeedsIndexCheck(item, update))
+      if (relevant) matching.offer(update)
+    }
+    const unsubscribe = subscribeMatchingUpdates(offerMatching)
     const checked = new Map<string, number>()
     const tick = async () => {
       try {
         await useMixedPlaylistStore.getState().load()
         if (!active) return
-        matching.offer()
+        if (initialCheck) { initialCheck = false; offerMatching() }
         const playlist = useMixedPlaylistStore.getState().playlists.filter(item => item.automatic &&
           (item.merge || item.items.length || Object.keys(item.providers).length) &&
           Object.entries(item.owners).every(([side, owner]) => side === "plex" ? owner === scope && (!provider?.isOffline || external && item.external?.listenbrainz.enabled && item.external.listenbrainz.automatic) : owner === account) &&

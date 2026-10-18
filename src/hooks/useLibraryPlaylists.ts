@@ -13,7 +13,7 @@ import type { MixedPlaylist } from "../mixedPlaylists/model"
 export type LibraryPlaylist = MusicPlaylist & { youtubeMusic?: YoutubeMusicItem; mixed?: MixedPlaylist }
 export const libraryPlaylistHref = (playlist: LibraryPlaylist) => playlist.mixed ? `/mixed-playlist/${encodeURIComponent(playlist.mixed.id)}` : playlist.youtubeMusic ? youtubeMusicItemHref(playlist.youtubeMusic) : `/playlist/${playlist.id}`
 
-export function useLibraryPlaylists() {
+export function useLibraryPlaylists({ collapseLinked = true }: { collapseLinked?: boolean } = {}) {
   const plex = useLibraryStore(state => state.playlists)
   const youtube = useYoutubeMusicLibrary("playlists")
   const order = usePlaylistOrder()
@@ -27,6 +27,13 @@ export function useLibraryPlaylists() {
       addedAt: null, providerKey: "ytmusic", youtubeMusic: item,
     })) : []
     const linked = mixed.filter(item => item.local || item.owners.plex === scope && item.owners.ytmusic === account)
+    // Merge inputs are individual provider playlists, even when their titles
+    // match or Hibiki already groups them under one mixed library entry.
+    if (!collapseLinked) return sortPlaylists<LibraryPlaylist>([...plex, ...remote, ...linked.map(link => ({
+      id: link.id, title: link.title, smart: false, trackCount: link.items.length,
+      duration: null, thumbUrl: link.artwork ?? link.items[0]?.songs[link.items[0]?.original]?.track.thumbUrl ?? null,
+      summary: link.description ?? null, addedAt: new Date(link.createdAt).toISOString(), providerKey: "hibiki", mixed: link,
+    }))], order)
     const seen = new Set<string>()
     const combined: LibraryPlaylist[] = []
     for (const playlist of [...plex, ...remote]) {
@@ -50,6 +57,8 @@ export function useLibraryPlaylists() {
       item.summary = item.mixed.description ?? null
     }
     return sortPlaylists<LibraryPlaylist>(combined, order)
-  }, [plex, youtube.items, youtube.connected, order, mixed, scope, account])
-  return { playlists, youtube }
+  }, [plex, youtube.items, youtube.connected, order, mixed, scope, account, collapseLinked])
+  const mergeSourceCount = plex.length + (youtube.connected ? youtube.items.length : 0) +
+    mixed.filter(item => item.local || item.owners.plex === scope && item.owners.ytmusic === account).length
+  return { playlists, youtube, mergeSourceCount }
 }

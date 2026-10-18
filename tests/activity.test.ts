@@ -4,7 +4,109 @@ import {
   matchingIndexActivity,
   mixedPlaylistActivity,
   ownsPlaylistActivity,
+  backgroundQueueActivity,
+  backgroundJobActivities,
+  combineBackgroundActivities,
 } from "../src/activity/model"
+
+test("queue and domain reports render each operation once, retaining its navigation and measured progress", () => {
+  const queued = backgroundJobActivities({
+    pending: 1,
+    running: 2,
+    scheduled: 0,
+    failed: 0,
+    jobs: [
+      {
+        id: "one",
+        activityId: "matching-index",
+        label: "Plex matching index",
+        queue: "metadata",
+        state: "processing",
+      },
+      {
+        id: "two",
+        activityId: "ytmusic-ratings",
+        label: "Rating sync",
+        queue: "ratings",
+        state: "processing",
+        progress: {
+          stage: "Syncing song ratings",
+          completed: 4,
+          total: 10,
+          unit: "songs",
+        },
+      },
+      {
+        id: "three",
+        activityId: "ytmusic-ratings",
+        label: "Rating sync",
+        queue: "ratings",
+        state: "pending",
+      },
+    ],
+  })
+  expect(queued).toHaveLength(2)
+  const combined = combineBackgroundActivities(
+    [
+      {
+        id: "matching-index",
+        label: "Plex matching index",
+        busy: true,
+        detail: "Updating recording lookup data",
+        action: { label: "Index settings", href: "/settings/cache" },
+      },
+      { id: "ytmusic-ratings", label: "Syncing song ratings", busy: true },
+    ],
+    queued
+  )
+  expect(combined).toHaveLength(2)
+  expect(combined[0]).toMatchObject({
+    detail: "Updating recording lookup data",
+    action: { label: "Index settings" },
+  })
+  expect(combined[1]).toMatchObject({
+    label: "Syncing song ratings",
+    progress: { value: 4, total: 10 },
+  })
+})
+
+test("a queued retry cannot turn a playlist requiring write verification into a running indicator", () => {
+  const domain = {
+    id: "mixed:one",
+    label: "My playlist",
+    busy: false,
+    state: "paused" as const,
+    detail: "Waiting for playlist write verification",
+    action: { label: "Review sync", href: "/playlist/one?info=sync" },
+  }
+  expect(
+    combineBackgroundActivities(
+      [domain],
+      [{ id: domain.id, label: "Playlist sync", busy: true }]
+    )
+  ).toEqual([domain])
+})
+
+test("native queue activity distinguishes waiting capacity from running jobs", () => {
+  expect(
+    backgroundQueueActivity({
+      pending: 0,
+      running: 0,
+      scheduled: 0,
+      failed: 10,
+    })
+  ).toBeNull()
+  expect(
+    backgroundQueueActivity({ pending: 3, running: 0, scheduled: 1, failed: 0 })
+  ).toMatchObject({
+    busy: false,
+    state: "waiting",
+    detail: "3 queued · 1 scheduled for later",
+  })
+  expect(
+    backgroundQueueActivity({ pending: 3, running: 2, scheduled: 0, failed: 0 })
+  ).toMatchObject({ busy: true, detail: "2 running · 3 queued" })
+})
 import { monitorActivity } from "../src/activity/native"
 import { beginActivity, useActivityStore } from "../src/activity/store"
 import {
@@ -58,6 +160,13 @@ test("playlist progress distinguishes checks, available recordings and acknowled
   })!
   expect(activity.busy).toBe(true)
   expect(activity.detail).toContain("Matching YTM")
+  expect(
+    mixedPlaylistActivity(value, true, {
+      kind: "matching",
+      target: "ytmusic",
+      syncing: true,
+    })?.detail
+  ).toContain("Matching YTM · syncing verified songs")
   expect(activity.detail).toContain("3 of 4 songs checked")
   expect(activity.detail).toContain("Plex · 4 available · 4 synced")
   expect(activity.detail).toContain("YTM · 1 available · 0 synced")
@@ -180,6 +289,8 @@ test("matching index reports actual compact-index work and respects pause/backof
       tasks: [{ ...status.tasks[0], phase: "complete" }],
     })
   ).toBeNull()
+  expect(matchingIndexActivity({ ...status, tasks: [{ ...status.tasks[0], phase: "complete" }],
+    health: { pending: 3, reconciliationPending: true, lastCheck: Date.now(), error: null, filters: {}, refreshes: [] } })).toBeNull()
 })
 
 test("activity leases cannot update or clear a newer operation with the same ID", () => {
@@ -199,6 +310,34 @@ test("activity leases cannot update or clear a newer operation with the same ID"
 })
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 10))
+test("bursts of job notifications respect the activity read budget", async () => {
+  let reads = 0
+  const times: number[] = []
+  const monitor = monitorActivity({
+    current: () => true,
+    read: async () => {
+      reads++
+      times.push(performance.now())
+      return reads
+    },
+    publish: () => {},
+    interval: () => 60000,
+    minIntervalMs: 60,
+  })
+  try {
+    monitor.offer()
+    await flush()
+    expect(reads).toBe(1)
+    for (let i = 0; i < 20; i++) monitor.offer()
+    await flush()
+    expect(reads).toBe(1)
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    expect(reads).toBe(2)
+    expect(times[1] - times[0]).toBeGreaterThanOrEqual(55)
+  } finally {
+    monitor.stop()
+  }
+})
 test("activity polling coalesces wakes and discards late results on account change or unmount", async () => {
   let reads = 0,
     current = true

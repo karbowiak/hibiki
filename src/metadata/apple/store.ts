@@ -1,5 +1,5 @@
 /**
- * iTunes metadata cache — persisted to IndexedDB via Zustand persist.
+ * iTunes metadata cache — persisted to SQLite via Zustand persist.
  *
  * Rust fetches data from the iTunes Search API on demand; this store caches
  * the results client-side with aggressive TTLs to avoid redundant API calls.

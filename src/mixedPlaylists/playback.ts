@@ -1,9 +1,10 @@
 import { usePlayerStore } from "../stores/playerStore"
 import type { MusicTrack } from "../types/music"
 import type { MixedPlaylist } from "./model"
+import { preferredMixedReference } from "./preferredTrack"
 
 export const mixedPlaylistTracks = (playlist: MixedPlaylist) => playlist.items.map(row => {
-  const reference = ((!row.songs.plex?.stale ? row.songs.plex : undefined) ?? (!row.songs.ytmusic?.stale ? row.songs.ytmusic : undefined) ?? row.songs[row.original])!
+  const reference = preferredMixedReference(row)
   const date = reference.libraryAdded
   return { ...reference.track, ...(date ? date.provenance === "provider" ? { addedAt: new Date(date.at).toISOString() } :
     { libraryObservedAt: new Date(date.at).toISOString() } : {}), playlistItemId: row.id }

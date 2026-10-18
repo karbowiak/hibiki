@@ -5,9 +5,12 @@ import { counterpartCandidates, matchPlaylistBatch } from "../src/mixedPlaylists
 import { retainMixedPlaylist } from "../src/mixedPlaylists/repository"
 import { adoptRemote, bindSnapshot, operationIds, projection, reconcileRemoteChanges } from "../src/mixedPlaylists/reconcile"
 import { syncMixedPlaylist } from "../src/mixedPlaylists/sync"
-import { syncAndMatchPlaylist } from "../src/mixedPlaylists/pipeline"
+import { mergeMatchingCheckpoint, syncAndMatchPlaylist } from "../src/mixedPlaylists/pipeline"
 import type { MixedAdapter } from "../src/mixedPlaylists/adapters"
 import { retainLibraryDates } from "../src/mixedPlaylists/libraryDates"
+import { deferred, settle } from "./helpers/radioAudioFakes"
+import { withTimeout } from "../src/lib/withTimeout"
+import { mixedSyncStatus } from "../src/mixedPlaylists/status"
 
 const song = (id: string, title = "Song") => ({ ...youtubeMusicTrack({ videoId: "a1234567890", title, artist: "Artist", album: "Release", duration: "3:00", thumbnail: null }), id })
 const snapshot = (service: Service, ids: string[]): RemotePlaylist => ({ service, owner: `${service}-owner`, id: service === "plex" ? "10" : "VLPLtest", title: "Playlist", readOnly: false,
@@ -183,20 +186,133 @@ test("an interrupted batch settles exactly once and an uncertain partial batch c
   await expect(syncMixedPlaylist(structuredClone(partial.saved()), partial.options)).rejects.toThrow("uncertain outcome")
   expect(partial.batchSizes).toEqual([3])
 })
+test("the 22-song unchanged YTM receipt resumes its 258 available songs without duplicating the original prefix", async () => {
+  const playlist = linked(Array.from({ length: 307 }, (_, index) => String(index + 1)))
+  playlist.merge = { sources: [], duplicates: "verified", reviewedAt: 1 }
+  playlist.items.forEach((row, index) => { if (index >= 258) delete row.songs.ytmusic })
+  const desired = projection(playlist, "ytmusic").map(row => row.songs.ytmusic!.track.id)
+  const before = snapshot("ytmusic", desired.slice(0, 22))
+  playlist.providers.ytmusic = { id: before.id, readOnly: false }
+  playlist.baseline.ytmusic = before
+  playlist.write = { id: "old-interrupted-write", service: "ytmusic", kind: "append", state: "unknown", before, afterIds: [...snapshotIds(before), desired[22]] }
+  playlist.status = "error"
+  const h = harness(playlist, true)
+  h.remote.ytmusic = structuredClone(before)
+  const result = await syncMixedPlaylist(playlist, h.options)
+  expect(result.write).toBeUndefined()
+  expect(result.status).toBe("ready")
+  expect(snapshotIds(h.remote.ytmusic!)).toEqual(desired)
+  expect(h.batchSizes).toEqual([100, 100, 36])
+  expect(h.creates()).toBe(0)
+  expect(result.items).toHaveLength(307)
+})
+test("the same song IDs with replaced occurrences cannot settle an unchanged write", async () => {
+  const playlist = linked(["1", "2"]), before = snapshot("ytmusic", [playlist.items[0].songs.ytmusic!.track.id])
+  playlist.providers.ytmusic = { id: before.id, readOnly: false }; playlist.baseline.ytmusic = before
+  playlist.write = { id: "pending", service: "ytmusic", kind: "append", state: "unknown", before,
+    afterIds: playlist.items.map(row => row.songs.ytmusic!.track.id) }
+  const h = harness(playlist, true)
+  h.remote.ytmusic = { ...before, items: before.items.map(row => ({ ...row, occurrenceId: "replaced-handle" })) }
+  await expect(syncMixedPlaylist(playlist, h.options)).rejects.toThrow("uncertain outcome")
+  expect(h.writes()).toBe(0)
+  expect(h.saved().write?.id).toBe("pending")
+})
+test("playlist controls distinguish queued, matching, syncing and paused verification", () => {
+  const playlist = linked()
+  expect(mixedSyncStatus(playlist, false, true).button).toBe("Queued…")
+  expect(mixedSyncStatus(playlist, true, true, { kind: "matching", syncing: true }).button).toBe("Matching…")
+  expect(mixedSyncStatus(playlist, true, false, { kind: "syncing" }).button).toBe("Syncing…")
+  playlist.write = { id: "pending", service: "ytmusic", kind: "append", afterIds: [], state: "unknown" }
+  expect(mixedSyncStatus(playlist, false, false)).toMatchObject({ button: "Review sync", label: "Sync paused", busy: false, review: true })
+})
 test("an uncertain provider write does not stop local matching or replay the mutation", async () => {
-  const initial = linked(["1", "2"]), h = harness(initial, true)
+  const initial = linked(["1", "2", "3"])
+  delete initial.items[2].songs.ytmusic
+  const h = harness(initial, true)
   h.failReads()
   let matches = 0
-  await expect(syncAndMatchPlaylist(initial, { current: () => true, sync: playlist => syncMixedPlaylist(playlist, h.options),
-    reload: async () => h.saved(), match: async playlist => {
-      expect(playlist.write?.state).toBe("unknown")
+  await expect(syncAndMatchPlaylist(initial, { current: () => true, save: h.options.save,
+    sync: (playlist, save) => syncMixedPlaylist(playlist, { ...h.options, save }), match: async (playlist, save) => {
       matches++
-      return h.options.save({ ...playlist, items: playlist.items.map(row => ({ ...row, match: { status: "matched", confidence: 0.91 } })) })
+      const saved = await save({ ...playlist, items: playlist.items.map(row => ({ ...row,
+        songs: { ...row.songs, ytmusic: row.songs.ytmusic ?? { track: song("ytmusic:aaaaaaaaaa3") } },
+        match: { status: "matched", confidence: 0.91 } })) })
+      expect(saved.write?.state).toBe("unknown")
+      return saved
     } })).rejects.toThrow("Lost read")
   expect(matches).toBe(1)
   expect(h.writes()).toBe(1)
   expect(h.saved().items[0].match.confidence).toBe(0.91)
+  expect(h.saved().items[2].songs.ytmusic?.track.id).toBe("ytmusic:aaaaaaaaaa3")
+  expect(h.saved().write?.afterIds).toHaveLength(2)
   expect(h.saved().write?.state).toBe("unknown")
+})
+test("new matches sync while a later lookup is still pending, and checkpoints preserve in-flight receipts and fresh revisions", async () => {
+  const initial = linked(["1", "2", "3"])
+  initial.items.forEach(row => { delete row.songs.ytmusic })
+  const h = harness(initial, true), adapter = h.options.adapters.ytmusic!, append = adapter.appendMany!, mutate = adapter.mutate
+  const startedWrite = deferred(), releaseWrite = deferred(), startedSecond = deferred(), releaseSecond = deferred()
+  let first = true, secondResolved = false
+  const gateWrite = async () => { if (first) { first = false; startedWrite.resolve(); await releaseWrite.promise } }
+  adapter.appendMany = async (before, ids) => { await gateWrite(); await append(before, ids) }
+  adapter.mutate = async (before, operation) => { await gateWrite(); await mutate(before, operation) }
+  const job = syncAndMatchPlaylist(initial, { current: () => true, flushDelayMs: 0,
+    save: async value => { expect(value.revision).toBe(h.saved().revision); return h.options.save(value) },
+    sync: (playlist, save) => syncMixedPlaylist(playlist, { ...h.options, save }),
+    match: async (playlist, save) => (await matchPlaylistBatch(playlist, "ytmusic", { current: () => true, save,
+      resolve: async track => {
+        if (track.id === "2") { startedSecond.resolve(); await releaseSecond.promise; secondResolved = true }
+        return { status: "matched", track: song(`ytmusic:${track.id.padStart(11, "a")}`), checkedAt: 1, fingerprint: "proof", confidence: 0.93 }
+      } })).playlist,
+  })
+  try {
+    await withTimeout(startedSecond.promise, 1000, "Second lookup did not start")
+    await withTimeout(startedWrite.promise, 1000, "First match waited for the slow lookup")
+    expect(secondResolved).toBe(false)
+    expect(h.saved().write?.afterIds).toEqual(["ytmusic:aaaaaaaaaa1"])
+    releaseSecond.resolve(); await settle()
+    expect(secondResolved).toBe(true)
+    expect(h.saved().write?.afterIds).toEqual(["ytmusic:aaaaaaaaaa1"])
+    releaseWrite.resolve()
+    const result = await job
+    expect(result.write).toBeUndefined()
+    expect(result.items.every(row => row.match.confidence === 0.93 && row.remote.ytmusic)).toBe(true)
+    expect(result.items.map(row => row.id)).toEqual(initial.items.map(row => row.id))
+    expect(snapshotIds(h.remote.ytmusic!)).toEqual(initial.items.map(row => `ytmusic:${row.songs.plex!.track.id.padStart(11, "a")}`))
+  } finally { releaseSecond.resolve(); releaseWrite.resolve(); await job.catch(() => {}) }
+})
+test("fast match checkpoints coalesce into a batch instead of one provider write per song", async () => {
+  const initial = linked(Array.from({ length: 30 }, (_, index) => String(index + 1)))
+  initial.items.forEach(row => { delete row.songs.ytmusic })
+  const h = harness(initial, true)
+  const result = await syncAndMatchPlaylist(initial, { current: () => true, save: h.options.save,
+    sync: (playlist, save) => syncMixedPlaylist(playlist, { ...h.options, save }),
+    match: async (playlist, save) => (await matchPlaylistBatch(playlist, "ytmusic", { current: () => true, save, limit: 30,
+      resolve: async track => ({ status: "matched", track: song(`ytmusic:${track.id.padStart(11, "a")}`), checkedAt: 1, fingerprint: "proof" }) })).playlist,
+  })
+  expect(h.batchSizes).toEqual([30])
+  expect(result.baseline.ytmusic?.items).toHaveLength(30)
+  expect(result.items.every(row => !!row.remote.ytmusic)).toBe(true)
+})
+test("late matching checkpoints keep provider edits, removals and pending-write state", () => {
+  const before = linked(["1", "2", "3"])
+  before.items.forEach(row => { delete row.songs.ytmusic })
+  const next = { ...before, items: before.items.map(row => ({ ...row, songs: { ...row.songs, ytmusic: { track: song(`ytmusic:${row.songs.plex!.track.id.padStart(11, "a")}`) } }, match: { status: "matched" as const, confidence: 0.9 } })) }
+  const latest = structuredClone(before)
+  latest.revision = 42
+  latest.items = [latest.items[2], latest.items[0]]
+  latest.items[0].songs.plex!.track.title = "Changed recording"
+  latest.items[0].songs.plex!.stale = true
+  latest.status = "conflict"
+  latest.write = { id: "pending-write", service: "ytmusic", kind: "append", afterIds: [], state: "unknown" }
+  const merged = mergeMatchingCheckpoint(latest, before, next).playlist
+  expect(merged.revision).toBe(42)
+  expect(merged.write).toEqual(latest.write)
+  expect(merged.status).toBe("conflict")
+  expect(merged.items.map(row => row.id)).toEqual(latest.items.map(row => row.id))
+  expect(merged.items[0].songs.ytmusic).toBeUndefined()
+  expect(merged.items[0].songs.plex?.track.title).toBe("Changed recording")
+  expect(merged.items[1].songs.ytmusic?.track.id).toBe("ytmusic:aaaaaaaaaa1")
 })
 test("one stale YTM post-read is confirmed without repeating the write", async () => {
   const initial = linked(["1", "2"]), h = harness(initial, true)

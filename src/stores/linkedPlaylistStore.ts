@@ -1,3 +1,4 @@
+import { backgroundActions } from "../background/actions"
 import { createVerifiedPlaylistRefresh } from "../playlistSync/verifiedPlaylistRefresh"
 import { create } from "zustand"
 import { linkedPlaylistRepository } from "../playlistSync/linkedJournal"
@@ -847,3 +848,5 @@ export function linksForPlaylist(
     return []
   }
 }
+
+backgroundActions("linked", useLinkedPlaylistStore, ["syncNow", "matchIncomplete", "retryMatching"])

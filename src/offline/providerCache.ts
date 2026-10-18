@@ -1,3 +1,4 @@
+import { backgroundCall } from "../background/actions"
 import type { MusicProvider } from "../providers/types"
 import { startTiming } from "../lib/performance"
 
@@ -47,6 +48,8 @@ const reads = new Set([
   "getArtistPopularTracksInSection",
   "getArtistAlbumsInSection",
 ])
+
+export const backgroundMetadataRead = (method: string) => reads.has(method)
 
 const mutations = new Set([
   "createPlaylist",
@@ -404,7 +407,8 @@ export function createOfflineProvider<T extends MusicProvider>(
         methods.set(property, guarded)
         return guarded
       }
-      const wrapped = async (...args: unknown[]) => {
+      const wrapped = (...args: unknown[]) => read(false, args)
+      const read = async (background: boolean, args: unknown[]) => {
         const timing = startTiming(property)
         const scope = target.cacheScope
         const session = target.playbackSession
@@ -430,7 +434,7 @@ export function createOfflineProvider<T extends MusicProvider>(
           check()
           let result: unknown
           try {
-            result = await bound(...args)
+            result = await (background ? backgroundCall({ domain: "metadata", method: "read", args: [{ method: property, args }] }) ?? bound(...args) : bound(...args))
             timing.phase("upstream")
           } catch (error) {
             check()
@@ -565,7 +569,12 @@ export function createOfflineProvider<T extends MusicProvider>(
           const revalidate = () => {
             let pending = revalidations.get(key)
             if (!pending) {
-              pending = wrapped(...args)
+              // Pace failed refreshes too. A rerender must not immediately
+              // reoffer a rejected authorization/rate-limit/storage request.
+              refreshed.delete(key)
+              refreshed.set(key, Date.now())
+              if (refreshed.size > 256) refreshed.delete(refreshed.keys().next().value!)
+              pending = read(!!saved, args)
                 .then((result) => {
                   check()
                   if (options.isOffline?.()) return result
@@ -587,7 +596,8 @@ export function createOfflineProvider<T extends MusicProvider>(
             return pending
           }
           if (saved) {
-            if (Date.now() - (refreshed.get(key) ?? 0) > 30_000)
+            const checkedAt = Math.max(refreshed.get(key) ?? 0, Number.isFinite(saved.cachedAt) ? saved.cachedAt : 0)
+            if (Date.now() - checkedAt > 30_000)
               void revalidate().catch(() => {})
             return structuredClone(saved.payload)
           }

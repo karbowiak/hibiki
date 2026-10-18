@@ -109,6 +109,15 @@ export function selectPlaylistCounterpart(source: MusicTrack, candidates: MusicT
   const gap = ranked[1] ? best.confidence - ranked[1].confidence : 1
   return { ...best, confidence: Math.round((best.confidence - Math.max(0, 0.04 - gap)) * 100) / 100 }
 }
+/** Local playlist copies can be joined without provider searches. Strong title,
+ * performer and duration agreement is stricter than a search suggestion. */
+export function samePlaylistRecording(source: MusicTrack, candidate: MusicTrack) {
+  if (!source.duration || !candidate.duration || !source.title || !candidate.title) return false
+  const difference = Math.abs(source.duration - candidate.duration)
+  if (difference > 3000 || difference / Math.min(source.duration, candidate.duration) > 0.02 || performerSimilarity(source, candidate) < 0.95) return false
+  const input = (track: MusicTrack) => ({ id: track.id, title: track.title, artist: track.artistName, album: track.albumName })
+  return playlistTitleSimilarity(input(source), input(candidate)) >= 0.98 && rankPlaylistCounterparts(source, [candidate]).length > 0
+}
 export type CounterpartResult = { status: "matched"; track: MusicTrack; checkedAt: number; fingerprint: string; confidence?: number } |
   { status: "missing" | "ambiguous" | "failed"; checkedAt: number; message: string }
 export function counterpartFailure(failure: unknown): CounterpartResult {
@@ -116,7 +125,7 @@ export function counterpartFailure(failure: unknown): CounterpartResult {
     typeof failure === "string" ? failure : "Song lookup failed. Retry matching." }
 }
 export function counterpartDeferred(result: CounterpartResult) {
-  return result.status === "failed" && /YouTube Music (?:is rate limited|request queue is busy)\./.test(result.message)
+  return result.status === "failed" && /YouTube Music (?:is rate limited|request queue is busy)\.|Background queue is (?:busy|unavailable)\./.test(result.message)
 }
 export function counterpartAttempt(result: CounterpartResult): MixedOccurrence["match"] {
   return { status: counterpartDeferred(result) ? "pending" : result.status, policy: COUNTERPART_POLICY,
@@ -144,8 +153,11 @@ export async function matchPlaylistBatch(playlist: MixedPlaylist, target: Servic
     if (group) group.push(row)
     else groups.set(key, [row])
   }
-  for (const row of [...groups.values()].flat()) {
+  for (const queued of [...groups.values()].flat()) {
     if (!options.current() || completed >= (options.limit ?? 20)) break
+    // A concurrent sync may have adopted a remote edit at the last checkpoint.
+    const row = saved.items.find(item => item.id === queued.id)
+    if (!row) continue
     if ((row.songs[target] && !row.songs[target]?.stale) || (!options.retry && !counterpartPending(row, target))) continue
     const source = row.songs[row.original]?.track
     if (!source) continue

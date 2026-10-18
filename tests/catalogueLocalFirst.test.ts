@@ -75,6 +75,32 @@ function fixture(read: () => Promise<unknown>) {
     },
   }
 }
+test("fresh persisted browsing data survives a new provider without submitting revalidation", async () => {
+  const f = fixture(async () => { throw Error("Fresh data must not fetch") })
+  f.saved.set(offlineKey("getAlbum", ["42"]), {
+    payload: { id: "42", title: "Fresh persisted album" }, cachedAt: Date.now(),
+  })
+  expect((await f.wrapped.getAlbum("42")).title).toBe("Fresh persisted album")
+  await tick()
+  expect(f.calls).toBe(0)
+  await f.wrapped.rate("42", 4)
+  await expect(f.wrapped.getAlbum("42")).rejects.toThrow("Fresh data must not fetch")
+  expect(f.calls).toBe(1)
+})
+test("failed stale refreshes are paced, while uncached foreground reads can retry", async () => {
+  const f = fixture(async () => { throw Error("offline") })
+  f.saved.set(offlineKey("getAlbum", ["42"]), {
+    payload: { id: "42", title: "Saved" }, cachedAt: 1,
+  })
+  await f.wrapped.getAlbum("42")
+  await tick()
+  await f.wrapped.getAlbum("42")
+  await tick()
+  expect(f.calls).toBe(1)
+  await expect(f.wrapped.getAlbum("cold")).rejects.toThrow("offline")
+  await expect(f.wrapped.getAlbum("cold")).rejects.toThrow("offline")
+  expect(f.calls).toBe(3)
+})
 test("local-first returns SQLite data before the pending remote read and refreshes once when changed", async () => {
   const remote = deferred<unknown>(),
     f = fixture(() => remote.promise)

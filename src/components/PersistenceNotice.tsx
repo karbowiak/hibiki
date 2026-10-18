@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react"
-import { preferencePersistence } from "../stores/idbStorage"
+import { preferencePersistence } from "../stores/sqliteStorage"
 import { localPreferencePersistence } from "../stores/localPreferenceStorage"
 import { useNotificationCenterStore } from "../stores/notificationCenterStore"
 import type { PersistenceIssue } from "../stores/preferencePersistence"
+import { clientStorageIssues, subscribeClientStorage, retryClientStorage } from "../storage/clientStorage"
 
 function savedDataLabel(key: string): string {
   const labels: Record<string, string> = {
@@ -108,23 +109,28 @@ export function PersistenceNotice({
 
 let lastIdb: PersistenceIssue[] | undefined
 let lastLocal: PersistenceIssue[] | undefined
+let lastClient: PersistenceIssue[] | undefined
 let combined: PersistenceIssue[] = []
 function storageSnapshot() {
   const idb = preferencePersistence.snapshot()
   const local = localPreferencePersistence.snapshot()
-  if (idb !== lastIdb || local !== lastLocal) {
+  const client = clientStorageIssues()
+  if (idb !== lastIdb || local !== lastLocal || client !== lastClient) {
     lastIdb = idb
     lastLocal = local
-    combined = [...idb, ...local]
+    lastClient = client
+    combined = [...idb, ...local, ...client]
   }
   return combined
 }
 function subscribeStorage(callback: () => void) {
   const idb = preferencePersistence.subscribe(callback)
   const local = localPreferencePersistence.subscribe(callback)
+  const client = subscribeClientStorage(callback)
   return () => {
     idb()
     local()
+    client()
   }
 }
 
@@ -141,6 +147,7 @@ export function StorageStatus() {
         const results = await Promise.allSettled([
           preferencePersistence.retry(),
           localPreferencePersistence.retry(),
+          retryClientStorage(),
         ])
         if (results.some((result) => result.status === "rejected")) {
           throw new Error("Storage recovery is incomplete")

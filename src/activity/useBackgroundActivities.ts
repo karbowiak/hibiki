@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { invoke, isTauri } from "@tauri-apps/api/core"
+import { listen } from "@tauri-apps/api/event"
 import { useShallow } from "zustand/react/shallow"
 import { useProviderStore } from "../stores/providerStore"
 import { useCatalogueStore } from "../offline/catalogueStore"
 import { useMixedPlaylistStore } from "../stores/mixedPlaylistStore"
 import { useLinkedPlaylistStore } from "../stores/linkedPlaylistStore"
 import { useFavoritesStore } from "../stores/favoritesStore"
+import type { FavoriteService } from "../favorites/types"
 import { useListenBrainzStore } from "../metadata/listenbrainz/authStore"
 import { useYoutubeMusicDiscoveryStore } from "../backends/ytmusic/discovery"
 import { useYoutubeMusicRatingsStore } from "../backends/ytmusic/ratings"
@@ -13,12 +15,19 @@ import { providerPlaylistAccount } from "../playlistSync/provider"
 import { samePlaylistIdentity } from "../playlistSync/types"
 import { syncCreationAccounts } from "../playlistSync/creation"
 import { useActivityStore } from "./store"
-import { monitorActivity, refreshNativeActivity, subscribeNativeActivity } from "./native"
+import {
+  monitorActivity,
+  refreshNativeActivity,
+  subscribeNativeActivity,
+} from "./native"
 import {
   downloadActivity,
   matchingIndexActivity,
   mixedPlaylistActivity,
   ownsPlaylistActivity,
+  backgroundJobActivities,
+  combineBackgroundActivities,
+  type BackgroundQueueStatus,
   type Activity,
   type DownloadActivitySummary,
 } from "./model"
@@ -26,7 +35,36 @@ import {
 export function useBackgroundActivities(open: boolean): Activity[] {
   const opened = useRef(open)
   opened.current = open
-  useEffect(() => { if (open) refreshNativeActivity() }, [open])
+  const [queueActivities, setQueueActivities] = useState<Activity[]>([])
+  useEffect(() => {
+    if (!isTauri()) return
+    const monitor = monitorActivity({
+      current: () => true,
+      minIntervalMs: 500,
+      read: () => invoke<BackgroundQueueStatus>("background_queue_status"),
+      publish: (value) => setQueueActivities(backgroundJobActivities(value)),
+      interval: (value) =>
+        opened.current || value?.running || value?.pending ? 3000 : 15000,
+    })
+    const unsubscribe = subscribeNativeActivity(() => monitor.offer())
+    let active = true
+    const unlisten = listen("background://changed", () => monitor.offer())
+      .then((stop) => {
+        if (!active) stop()
+        return stop
+      })
+      .catch(() => () => {})
+    monitor.offer()
+    return () => {
+      active = false
+      void unlisten.then((stop) => stop())
+      unsubscribe()
+      monitor.stop()
+    }
+  }, [])
+  useEffect(() => {
+    if (open) refreshNativeActivity()
+  }, [open])
   const { provider, scope, session, offline } = useProviderStore(
     useShallow((state) => ({
       provider: state.provider,
@@ -71,6 +109,7 @@ export function useBackgroundActivities(open: boolean): Activity[] {
       session: state.session,
       running: state.running,
       resetting: state.resetting,
+      pending: Object.entries(state.collection.bindings).filter(([service, binding]) => state.collection.settings[service as FavoriteService] && (binding?.pending || binding?.creation)).map(([service]) => service === "lastfm" ? "Last.fm" : service === "listenbrainz" ? "ListenBrainz" : "Plex").join(" and "),
     }))
   )
   const ratings = useYoutubeMusicRatingsStore(
@@ -251,15 +290,16 @@ export function useBackgroundActivities(open: boolean): Activity[] {
     if (
       favorites.provider === provider &&
       favorites.session === session &&
-      !jobs["favorite-matching"]?.current() &&
-      (favorites.running || favorites.resetting)
+      (favorites.running || favorites.resetting || favorites.pending)
     )
       activities.push({
         id: "favorites",
         label: favorites.resetting
           ? "Resetting favorite sync"
-          : "Syncing liked songs",
-        busy: true,
+          : favorites.running ? "Syncing liked songs" : "Liked-song sync needs review",
+        busy: favorites.running || favorites.resetting,
+        state: favorites.running || favorites.resetting ? undefined : "paused",
+        detail: !favorites.running && favorites.pending ? `Unverified saved changes on ${favorites.pending}.` : undefined,
         action: { label: "Liked songs", href: "/collection/tracks" },
       })
     if (youtube.connected && ratings.owner === youtube.accountId) {
@@ -275,7 +315,12 @@ export function useBackgroundActivities(open: boolean): Activity[] {
         })
     }
     for (const job of Object.values(jobs))
-      if (job.current()) activities.push(job.activity)
+      if (job.current())
+        activities.push(
+          job.activity.id === "favorite-sync"
+            ? { ...job.activity, id: "favorites" }
+            : job.activity
+        )
     if (
       native?.provider === provider &&
       native.session === session &&
@@ -284,7 +329,7 @@ export function useBackgroundActivities(open: boolean): Activity[] {
     )
       activities.push(...native.activities)
     // Keep rows in place as phases change; moving them on every checkpoint makes progress hard to follow.
-    return activities.sort((a, b) => a.id.localeCompare(b.id))
+    return combineBackgroundActivities(activities, queueActivities)
   }, [
     provider,
     scope,
@@ -297,6 +342,7 @@ export function useBackgroundActivities(open: boolean): Activity[] {
     favorites,
     ratings,
     jobs,
+    queueActivities,
     native,
     context?.connectionRevision,
   ])

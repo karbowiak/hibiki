@@ -111,13 +111,24 @@ mod priority_tests {
 /// pause/resume that happened while the previous job was finishing.
 pub fn start_watchdog(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
-        loop {
-            if let Some(context) = app.state::<PlexState>().current_request_context().await {
-                let _ = start(&app, &context).await;
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        if let Err(error) = crate::background_jobs::every(&app, crate::background_jobs::Task::PlexMaintenance, std::time::Duration::from_secs(10)).await {
+            tracing::warn!(%error, "Plex maintenance schedule could not be retained");
         }
     });
+}
+pub(crate) async fn maintain(app: &tauri::AppHandle) -> Result<(), String> {
+    if let Some(context) = app.state::<PlexState>().current_request_context().await {
+        start(app, &context).await?;
+    }
+    Ok(())
+}
+pub(crate) async fn maintenance_due(app: &tauri::AppHandle) -> Result<bool, String> {
+    if foreground_busy(app) { return Ok(false); }
+    let Some(context) = app.state::<PlexState>().current_request_context().await else { return Ok(false); };
+    if client(app, &context).await?.offline_only { return Ok(false); }
+    if app.state::<IndexState>().running.lock().map_err(|_| "Matching index unavailable")?
+        .contains(&(context.connection_revision, context.cache_scope.clone())) { return Ok(false); }
+    app.state::<DbState>().read(move |conn| freshness::work_due(conn, &context.cache_scope)).await
 }
 async fn client(
     app: &tauri::AppHandle,
@@ -385,7 +396,7 @@ pub async fn matching_index_yield(
 }
 async fn start(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<(), String> {
     let plex = client(app, context).await?;
-    if plex.offline_only {
+    if plex.offline_only || foreground_busy(app) {
         return Ok(());
     }
     let key = (context.connection_revision, context.cache_scope.clone());
@@ -399,9 +410,10 @@ async fn start(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<(
         return Ok(());
     }
     let scope = context.cache_scope.clone();
-    app.state::<DbState>()
-        .write(move |conn| store::ensure_scope(conn, &scope))
+    let due = app.state::<DbState>()
+        .read(move |conn| freshness::work_due(conn, &scope))
         .await?;
+    if !due { return Ok(()); }
     if !app
         .state::<IndexState>()
         .running
@@ -411,19 +423,26 @@ async fn start(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<(
     {
         return Ok(());
     }
-    let app = app.clone();
-    let context = context.clone();
-    tauri::async_runtime::spawn(async move {
-        if let Err(_) = worker(&app, &context).await {
-            tracing::debug!("Matching index worker retired or unavailable");
-        }
-        if let Ok(mut running) = app.state::<IndexState>().running.lock() {
-            running.remove(&key);
-        }
-    });
+    crate::background_jobs::spawn(app.clone(), crate::background_jobs::Task::PlexMatchingIndex { context: context.clone() }, true);
     Ok(())
 }
+pub(crate) fn retire_index_worker(app: &tauri::AppHandle, context: &PlexRequestContext) {
+    if let Ok(mut running) = app.state::<IndexState>().running.lock() {
+        running.remove(&(context.connection_revision, context.cache_scope.clone()));
+    }
+}
+pub(crate) async fn run_index_worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<(), String> {
+    let result = worker(app, context).await;
+    retire_index_worker(app, context);
+    result
+}
 async fn worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<(), String> {
+    let scope = context.cache_scope.clone();
+    if foreground_busy(app) || !app.state::<DbState>().read(move |conn| freshness::work_due(conn, &scope)).await? {
+        return Ok(());
+    }
+    let scope = context.cache_scope.clone();
+    app.state::<DbState>().write(move |conn| store::ensure_scope(conn, &scope)).await?;
     let mut verified = None;
     let permit = app
         .state::<IndexState>()
@@ -443,22 +462,29 @@ async fn worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<
         .is_some_and(|identity| transport::modern(&identity.version));
     drop(permit);
     let mut next_kind = 0;
+    let started = std::time::Instant::now();
     loop {
+        // Yield the metadata lane between bounded turns. Durable index cursors
+        // resume on the next maintenance tick, including after reconnects.
+        if started.elapsed() >= std::time::Duration::from_secs(30) { return Ok(()); }
         let plex = client(app, context).await?;
         if plex.offline_only {
             return Ok(());
         }
         let status = snapshot(app, context).await?;
-        let priority = app.state::<IndexState>().busy_until.load(Ordering::Relaxed) > store::now()
-            || app
-                .try_state::<crate::audio_engine::bridge::AudioEngineState>()
-                .is_some_and(|engine| engine.0.is_buffering());
-        if status.paused || priority {
-            tokio::time::sleep(std::time::Duration::from_millis(750)).await;
-            continue;
-        }
+        if status.paused || foreground_busy(app) { return Ok(()); }
+        let scope = context.cache_scope.clone();
+        if !app.state::<DbState>().read(move |conn| freshness::work_due(conn, &scope)).await? { return Ok(()); }
         let kind = ["artist", "album", "track"][next_kind % 3];
         next_kind += 1;
+        let indexed = status.tasks.iter().map(|task| task.count.max(0) as u64).sum();
+        let total = (status.tasks.len() == 3 && status.tasks.iter().all(|task| task.total.is_some()))
+            .then(|| status.tasks.iter().filter_map(|task| task.total).map(|n| n.max(0) as u64).sum());
+        if status.tasks.len() == 3 && status.tasks.iter().all(|task| task.phase == "complete") {
+            crate::background_jobs::report("Checking Plex library changes", Some(kind.into()), 0, None, "").await?;
+        } else {
+            crate::background_jobs::report("Indexing Plex metadata", Some(kind.into()), indexed, total, "items").await?;
+        }
         if background_refresh(app, context, status.epoch, kind, modern).await? {
             tokio::time::sleep(std::time::Duration::from_millis(125)).await;
             continue;
@@ -638,6 +664,11 @@ async fn worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<
         }
         tokio::time::sleep(std::time::Duration::from_millis(125)).await;
     }
+}
+fn foreground_busy(app: &tauri::AppHandle) -> bool {
+    app.state::<IndexState>().busy_until.load(Ordering::Relaxed) > store::now()
+        || app.try_state::<crate::audio_engine::bridge::AudioEngineState>()
+            .is_some_and(|engine| engine.0.is_buffering())
 }
 async fn background_refresh(
     app: &tauri::AppHandle,

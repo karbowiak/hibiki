@@ -7,7 +7,7 @@ use discovery::find;
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Handle { pub video_id: String, pub occurrence_id: String }
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
     id: String, title: String, description: String, read_only: bool,
@@ -36,6 +36,39 @@ fn count_rows(value: &Value, depth: usize) -> usize {
         _ => 0,
     }
 }
+fn source_items(body: &Value, offset: usize) -> Vec<discovery::Item> {
+    fn rows<'a>(value: &'a Value, output: &mut Vec<&'a Value>, depth: usize) {
+        if depth > 40 { return; }
+        if value.get("musicResponsiveListItemRenderer").is_some() { output.push(value); return; }
+        match value {
+            Value::Array(values) => for value in values { rows(value, output, depth + 1); },
+            Value::Object(values) => for (key, value) in values { if !matches!(key.as_str(), "menu" | "header") { rows(value, output, depth + 1); } },
+            _ => {}
+        }
+    }
+    fn text(value: &Value) -> String {
+        value["simpleText"].as_str().map(str::to_owned).unwrap_or_else(|| value["runs"].as_array().into_iter().flatten().filter_map(|run| run["text"].as_str()).collect())
+    }
+    let mut contents = Vec::new();
+    rows(body, &mut contents, 0);
+    contents.into_iter().enumerate().map(|(index, row)| {
+        let renderer = &row["musicResponsiveListItemRenderer"];
+        let page = discovery::parse(&json!({ "musicPlaylistShelfRenderer": { "contents": [row] } }), false, false, true);
+        let mut item = page.items.into_iter().find(|item| item.kind == "song").unwrap_or_else(|| {
+            let column = |index: usize| text(&renderer["flexColumns"][index]["musicResponsiveListItemFlexColumnRenderer"]["text"]);
+            let title = column(0);
+            discovery::Item { id: renderer.pointer("/playlistItemData/videoId").and_then(Value::as_str).filter(|id| api::valid_video_id(id)).map(str::to_owned).unwrap_or_else(|| format!("unavailable-{}", offset + index)),
+                kind: "song".into(), title: if title.is_empty() { "Unavailable song".into() } else { title }, artist: column(1),
+                album: Some(column(2)).filter(|value| !value.is_empty()), unavailable: true,
+                playlist_item_id: renderer.pointer("/playlistItemData/playlistSetVideoId").or_else(|| find(renderer, "setVideoId", 0)).and_then(Value::as_str).map(str::to_owned),
+                ..Default::default() }
+        });
+        item.unavailable |= renderer["isPlayable"] == false || renderer["musicItemRendererDisplayPolicy"] == "MUSIC_ITEM_RENDERER_DISPLAY_POLICY_GREY_OUT";
+        // These handles describe source rows only. They never authorize edits.
+        if item.playlist_item_id.is_none() { item.playlist_item_id = Some(format!("source-{}", offset + index)); }
+        item
+    }).collect()
+}
 async fn connection(app: &tauri::AppHandle, expected: &str) -> Result<(u64, api::Context, session::Cookies), String> {
     let state = app.state::<Arc<YoutubeMusic>>();
     let generation = state.generation()?;
@@ -53,7 +86,7 @@ async fn request(app: &tauri::AppHandle, generation: u64, context: &api::Context
     if !app.state::<Arc<YoutubeMusic>>().owns(generation) { return Err("YouTube Music session changed.".into()); }
     Ok(value)
 }
-async fn read(app: &tauri::AppHandle, generation: u64, context: &api::Context, cookies: &session::Cookies, id: &str) -> Result<Snapshot, String> {
+async fn read(app: &tauri::AppHandle, generation: u64, context: &api::Context, cookies: &session::Cookies, id: &str, source_only: bool) -> Result<Snapshot, String> {
     if !valid_playlist(id) { return Err("Choose a regular YouTube Music playlist. Mixes and generated playlists cannot be edited.".into()); }
     let mut value = request(app, generation, context, cookies, "browse", json!({ "browseId": format!("VL{id}") })).await?;
     let first = discovery::parse(&value, false, false, false);
@@ -67,13 +100,15 @@ async fn read(app: &tauri::AppHandle, generation: u64, context: &api::Context, c
             .ok_or("YouTube Music did not return a complete playlist shelf. It cannot be safely edited.")?;
         let page = discovery::parse(&json!({ "musicPlaylistShelfRenderer": body }), false, false, true);
         let songs = page.items.iter().filter(|item| item.kind == "song").count();
-        if songs != count_rows(body, 0) { return Err("This playlist contains unavailable songs. Its original entries will not be removed by a partial sync.".into()); }
-        for item in page.items.into_iter().filter(|item| item.kind == "song") {
+        if !source_only && songs != count_rows(body, 0) { return Err("This playlist contains unavailable songs. Its original entries will not be removed by a partial sync.".into()); }
+        let items = if source_only { source_items(body, output.items.len()) } else { page.items };
+        for item in items.into_iter().filter(|item| item.kind == "song") {
             let occurrence_id = item.playlist_item_id.clone().ok_or("This playlist contains unavailable songs or missing occurrence IDs. It cannot be safely edited.")?;
             if output.handles.iter().any(|old| old.occurrence_id == occurrence_id) { return Err("YouTube Music repeated a playlist page.".into()); }
             output.handles.push(Handle { video_id: item.id.clone(), occurrence_id });
             output.items.push(item);
         }
+        crate::background_jobs::report("Reading playlist songs", Some(output.title.clone()), output.items.len() as u64, None, "songs").await?;
         if output.items.len() > 10000 { return Err("This playlist exceeds the supported 10,000 song limit.".into()); }
         let Some(token) = page.continuation else { return Ok(output); };
         if !cursors.insert(token.clone()) { return Err("YouTube Music repeated a playlist cursor.".into()); }
@@ -81,9 +116,14 @@ async fn read(app: &tauri::AppHandle, generation: u64, context: &api::Context, c
     }
     Err("YouTube Music playlist was incomplete. Try again.".into())
 }
-pub(super) async fn ytmusic_playlist_read(app: tauri::AppHandle, playlist_id: String, expected_account: String) -> Result<Snapshot, String> {
+pub(super) async fn ytmusic_playlist_read(app: tauri::AppHandle, playlist_id: String, expected_account: String, source_only: bool) -> Result<Snapshot, String> {
+    // Verification must not observe an edit still running in this process.
+    // The mutation uses internal read(), so taking this gate cannot recurse.
+    let state = app.state::<Arc<YoutubeMusic>>();
+    let lock = state.discovery_cache.request("playlist-mutation");
+    let _guard = lock.lock().await;
     let (generation, context, cookies) = connection(&app, &expected_account).await?;
-    read(&app, generation, &context, &cookies, &playlist_id).await
+    read(&app, generation, &context, &cookies, &playlist_id, source_only).await
 }
 pub(super) async fn ytmusic_playlist_write(app: tauri::AppHandle, playlist_id: Option<String>, expected_account: String,
     expected: Vec<Handle>, operation: Operation) -> Result<String, String> {
@@ -102,7 +142,7 @@ pub(super) async fn ytmusic_playlist_write(app: tauri::AppHandle, playlist_id: O
         return Ok(id.into());
     }
     let id = playlist_id.filter(|id| valid_playlist(id)).ok_or("Choose a regular YouTube Music playlist.")?;
-    let before = read(&app, generation, &context, &cookies, &id).await?;
+    let before = read(&app, generation, &context, &cookies, &id, false).await?;
     if before.read_only { return Err("This YouTube Music playlist is read-only.".into()); }
     if before.handles != expected { return Err("Playlist changed before the write. Read it again.".into()); }
     let actions = match operation {
@@ -141,6 +181,28 @@ fn append_actions(video_ids: Vec<String>, current_len: usize) -> Result<Vec<Valu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merge_sources_preserve_repeated_and_unavailable_rows_in_order() {
+        let song = |handle: &str| json!({"musicResponsiveListItemRenderer": {
+            "flexColumns": [{"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Song", "navigationEndpoint": {"watchEndpoint": {"videoId": "a1234567890"}}}]}}}],
+            "playlistItemData": {"playlistSetVideoId": handle, "videoId": "a1234567890"}
+        }});
+        let body = json!({"contents": [song("first"), song("repeat"), {"musicResponsiveListItemRenderer": {
+            "flexColumns": [{"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Unavailable song"}]}}}],
+            "playlistItemData": {"playlistSetVideoId": "missing"}, "isPlayable": false
+        }}]});
+        let rows = source_items(&body, 0);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].id, rows[1].id);
+        assert_ne!(rows[0].playlist_item_id, rows[1].playlist_item_id);
+        assert!(rows[2].unavailable);
+        assert_eq!(rows[2].playlist_item_id.as_deref(), Some("missing"));
+        assert!(!api::valid_video_id(&rows[2].id));
+        // Ordinary editing still requires a complete real occurrence snapshot.
+        assert_eq!(count_rows(&body, 0), 3);
+        assert_eq!(discovery::parse(&json!({"musicPlaylistShelfRenderer":body}), false, false, true).items.len(), 2);
+    }
 
     #[test]
     fn append_batch_retains_order_and_repeats_with_bounded_actions() {

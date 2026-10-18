@@ -65,7 +65,6 @@
     "clsx": "^2.1.1",
     "dompurify": "^3.4.17",
     "i18next": "^26.4.7",
-    "idb-keyval": "^6.3.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-i18next": "^17.0.21",

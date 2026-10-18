@@ -25,6 +25,7 @@ mock.module("../../src/metadata/listenbrainz/authStore", () => ({
   useListenBrainzStore: auth,
 }))
 let calls = 0,
+  pages = 0,
   resets = 0,
   resetFailure: unknown,
   saves: any[] = [],
@@ -40,6 +41,7 @@ mock.module("../../src/favorites/native", () => ({
     }),
     page: async (_: any, offset: number) => {
       calls++
+      pages++
       return { offset, rows: [], total: 0 }
     },
     peek: async () => false,
@@ -128,7 +130,103 @@ const track: any = {
   year: 2026,
   playCount: 0,
 }
-if (
+if (scenario === "sync_schedule" || scenario === "sync_drain") {
+  await useFavoritesStore.getState().load()
+  if (scenario === "sync_drain") {
+    const { setFavorite } = await import("../../src/favorites/model")
+    await useFavoritesStore.getState().update(state => {
+      for (let i = 1; i <= 45; i++) state = setFavorite(state, { key: `local:${i}`, localTrackId: String(i), title: `Song ${i}`, artist: "Artist" }, true)
+      return { ...state, settings: { ...state.settings, lastfm: true }, bindings: { lastfm: { account: { service: "lastfm", user: "listener", revision: "lease" }, initialized: true } } }
+    })
+  }
+  const { useFavorites } = await import("../../src/hooks/useFavorites")
+  const { createRoot } = await import("react-dom/client")
+  let syncs = 0, now = 0, sequence = 0
+  const requests: { refresh?: boolean }[] = []
+  const sync = useFavoritesStore.getState().sync
+  const timers = new Map<number, { at: number; run: () => unknown }>()
+  const nativeTimeout = globalThis.setTimeout, nativeClear = globalThis.clearTimeout
+  globalThis.setTimeout = ((run: () => unknown, delay = 0) => {
+    const id = ++sequence; timers.set(id, { at: now + delay, run }); return id
+  }) as any
+  globalThis.clearTimeout = ((id: number) => { timers.delete(id) }) as any
+  useFavoritesStore.setState({ sync: async (options = {}) => {
+    syncs++
+    requests.push(options)
+    if (scenario === "sync_drain") { await sync(options); return }
+    // A worker publishes a new saved collection together with running=false.
+    const collection = useFavoritesStore.getState().collection
+    profile = { ...profile, revision: collection.revision + 1 }
+    useFavoritesStore.setState({ collection: { ...collection, revision: collection.revision + 1 }, running: false })
+  } })
+  const root = createRoot(document.getElementById("root")!)
+  function Harness() { useFavorites(); return null }
+  async function advance(until: number) {
+    while (true) {
+      const next = [...timers].sort((a, b) => a[1].at - b[1].at)[0]
+      if (!next || next[1].at > until) break
+      now = next[1].at; timers.delete(next[0])
+      await act(async () => { await next[1].run() })
+    }
+    now = until
+  }
+  try {
+    await act(async () => root.render(<Harness />))
+    assert.equal(syncs, 1)
+    if (scenario === "sync_drain") {
+      const { pendingFavoriteSync } = await import("../../src/favorites/work")
+      assert.equal(pendingFavoriteSync(useFavoritesStore.getState().collection), 25)
+      await advance(5000)
+      assert.equal(syncs, 3)
+      assert.equal(pendingFavoriteSync(useFavoritesStore.getState().collection), 0)
+      assert.equal(pages, 2, "export continuations must not reread the remote likes roster")
+      await advance(120000)
+      assert.equal(syncs, 3, "a finished drain must become idle")
+      assert.deepEqual(requests, [{ refresh: true }, { refresh: false }, { refresh: false }])
+    } else {
+    await advance(5000)
+    assert.equal(syncs, 1, "worker acknowledgements must not restart imports")
+    await act(async () => { await useFavoritesStore.getState().toggle(track, true) })
+    await advance(7500)
+    assert.equal(syncs, 2, "user edits should request sync")
+    await advance(15000)
+    assert.equal(syncs, 2)
+    await advance(120000)
+    assert.equal(syncs, 2, "idle sync must not poll every two minutes")
+    await advance(3600000)
+    assert.equal(syncs, 3, "periodic refresh remains scheduled")
+    assert.deepEqual(requests, [{ refresh: true }, { refresh: false }, { refresh: true }])
+    }
+  } finally {
+    await act(async () => root.unmount())
+    globalThis.setTimeout = nativeTimeout; globalThis.clearTimeout = nativeClear
+  }
+} else if (scenario === "matching_backlog") {
+  const { setFavorite } = await import("../../src/favorites/model")
+  const { favoriteMatchBacklog } = await import("../../src/favorites/matchingProgress")
+  const { useActivityStore } = await import("../../src/activity/store")
+  await useFavoritesStore.getState().load()
+  await useFavoritesStore.getState().update(state => {
+    for (let i = 0; i < 45; i++) state = setFavorite(state, { key: `remote:${i}`, title: `Missing ${i}`, artist: "Absent Artist" }, true, false)
+    return state
+  })
+  provider.search = async () => []
+  let progress: any
+  const unsubscribe = useActivityStore.subscribe(state => {
+    if (state.jobs["favorite-matching"]) progress = state.jobs["favorite-matching"].activity.progress
+  })
+  for (const checked of [20, 40, 45]) {
+    await useFavoritesStore.getState().matchMissing()
+    assert.equal(progress.value, checked)
+    assert.equal(progress.total, 45)
+    assert.equal(favoriteMatchBacklog(useFavoritesStore.getState().collection).length, 45 - checked)
+  }
+  const before = saves.length
+  await useFavoritesStore.getState().matchMissing()
+  assert.equal(saves.length, before)
+  assert.equal(calls, 0, "matching batches must not fetch full remote rosters")
+  unsubscribe()
+} else if (
   scenario === "reset" ||
   scenario === "reset_matching" ||
   scenario === "reset_controls"

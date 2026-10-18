@@ -85,28 +85,9 @@ export function mergeAlbumTracks(
   offline = false
 ): MusicTrack[] {
   const groups = new Map<string, MusicTrack>()
-  const quality = (track: MusicTrack) =>
-    [
-      offline
-        ? Number(
-            track.mediaInfo?.localAudio ||
-              track.mediaInfo?.offlineAvailable === true
-          )
-        : Number(track.mediaInfo?.hasAudioStream !== false),
-      Number(LOSSLESS_CODECS.has((track.codec ?? "").toLowerCase())),
-      LOSSLESS_CODECS.has((track.codec ?? "").toLowerCase())
-        ? (track.bitDepth ?? 16)
-        : 0,
-      LOSSLESS_CODECS.has((track.codec ?? "").toLowerCase())
-        ? (track.samplingRate ?? 44100)
-        : 0,
-      track.bitrate ?? 0,
-    ].map((value) => (Number.isFinite(value) ? value : 0))
   const better = (a: MusicTrack, b: MusicTrack) => {
-    const aq = quality(a),
-      bq = quality(b)
-    for (let i = 0; i < aq.length; i++)
-      if (aq[i] !== bq[i]) return aq[i] > bq[i]
+    const comparison = compareTrackQuality(a, b, offline)
+    if (comparison) return comparison > 0
     return a.id.localeCompare(b.id, undefined, { numeric: true }) < 0
   }
   for (const track of tracks) {
@@ -225,6 +206,20 @@ export function processArtistAlbums(
 // ---------------------------------------------------------------------------
 
 const LOSSLESS_CODECS = new Set(["flac", "alac", "wav", "aiff", "dsd"])
+
+/** Compare available audio first, then known lossless resolution and bitrate.
+ * Unknown provider metadata stays unknown; callers choose their tie-breaker. */
+export function compareTrackQuality(a: MusicTrack, b: MusicTrack, offline = false) {
+  const quality = (track: MusicTrack) => {
+    const lossless = LOSSLESS_CODECS.has((track.codec ?? "").toLowerCase())
+    return [offline ? Number(!!(track.mediaInfo?.localAudio || track.mediaInfo?.offlineAvailable)) : Number(track.mediaInfo?.hasAudioStream !== false),
+      Number(lossless), lossless ? track.bitDepth ?? 16 : 0, lossless ? track.samplingRate ?? 44100 : 0, track.bitrate ?? 0]
+      .map(value => Number.isFinite(value) ? value : 0)
+  }
+  const left = quality(a), right = quality(b)
+  for (let i = 0; i < left.length; i++) if (left[i] !== right[i]) return left[i] - right[i]
+  return 0
+}
 
 /**
  * Score a Plex Media entry for quality comparison.

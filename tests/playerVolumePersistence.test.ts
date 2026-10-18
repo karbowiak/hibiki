@@ -3,7 +3,7 @@ import { resolve } from "node:path"
 
 test("a saved muted player restores its previous audible volume after hydration", async () => {
   // Existing store tests share imported singletons. This fresh process installs
-  // browser storage before the application's real persistence middleware starts.
+  // SQLite-shaped storage before the real persistence middleware starts.
   const child = Bun.spawn(
     [
       process.execPath,
@@ -13,7 +13,8 @@ test("a saved muted player restores its previous audible volume after hydration"
     const dom = new JSDOM("", { url: "https://hibiki.example.test" });
     globalThis.window = dom.window;
     globalThis.document = dom.window.document;
-    globalThis.localStorage = dom.window.localStorage;
+    const { get } = await import("./src/storage/clientStorage");
+    const { localStore } = await import("./src/storage/keyValue");
     const { usePlayerStore: store } = await import("./src/stores/playerStore");
     const { engine } = await import("./src/audio/RustAudioEngine");
     engine.setVolume = () => {};
@@ -21,7 +22,7 @@ test("a saved muted player restores its previous audible volume after hydration"
     store.getState().toggleMute();
     const { localPreferencePersistence } = await import("./src/stores/localPreferenceStorage");
     await localPreferencePersistence.flushForShutdown();
-    let saved = JSON.parse(localStorage.getItem("plex-player-prefs"));
+    let saved = JSON.parse(await get("plex-player-prefs", localStore));
     if (saved.state.volume !== 0 || saved.state.lastAudibleVolume !== 19) throw Error("Muted level was not persisted");
     store.persist.setOptions({ storage: {
       getItem: () => saved,

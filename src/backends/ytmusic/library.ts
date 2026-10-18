@@ -5,6 +5,8 @@ import { browseYoutubeMusic, subscribeYoutubeMusicCatalog, useYoutubeMusicDiscov
 import { discoveryPages } from "../../lib/discoveryPages"
 import { useYoutubeMusicLikesStore } from "./likes"
 import type { MusicTrack } from "../../types/music"
+import { backgroundCall } from "../../background/actions"
+import { createYoutubePlaylistCache, hydrateYoutubePlaylist, sameYoutubePlaylistOwner } from "../../offline/youtubePlaylistCache"
 
 export type YoutubeMusicLibraryKind = "playlists" | "songs" | "videos" | "albums" | "artists"
 const destinations = {
@@ -32,6 +34,23 @@ const songsDirty = new Set<YoutubeMusicLibraryKind>()
 const songCollection = (kind: YoutubeMusicLibraryKind) => kind === "songs" || kind === "videos"
 const createPages = () => discoveryPages<YoutubeMusicItem>(item => item.id)
 const pages = { playlists: createPages(), songs: createPages(), videos: createPages(), albums: createPages(), artists: createPages() }
+const playlistCache = createYoutubePlaylistCache({
+  owner: () => {
+    const state = useYoutubeMusicDiscoveryStore.getState()
+    return state.connected ? state : null
+  },
+  run: job => {
+    const queued = backgroundCall({ domain: "collections", method: "hydrateYoutubeMusic", args: [job] })
+    return (queued as ReturnType<typeof hydrateYoutubePlaylist> | undefined) ?? hydrateYoutubePlaylist(job, {
+      active: () => {
+        const state = useYoutubeMusicDiscoveryStore.getState()
+        return state.connected && sameYoutubePlaylistOwner(job.owner, state)
+      },
+      read: cursor => browseYoutubeMusic({ browseId: job.id }, cursor, false, false, true),
+      progress: () => {},
+    })
+  },
+})
 
 function songItem(track: MusicTrack): YoutubeMusicItem {
   const original = (track._providerData as { youtubeMusic?: YoutubeMusicItem } | null)?.youtubeMusic
@@ -93,6 +112,7 @@ function savePage(kind: YoutubeMusicLibraryKind, cursor: string | null, page: Yo
     initialized: true, error: !!result.invalid, checked: Date.now(), refresh: useUIStore.getState().pageRefreshKey,
     version: saved.version + (background && cursor === null ? 1 : 0),
   } })
+  if (kind === "playlists") playlistCache.offer(result.items)
 }
 
 subscribeYoutubeMusicCatalog(update => {
@@ -106,6 +126,7 @@ subscribeYoutubeMusicCatalog(update => {
 useYoutubeMusicDiscoveryStore.subscribe((state, previous) => {
   if (state.revision !== previous.revision || (!state.connected && previous.connected)) {
     pending.clear()
+    playlistCache.reset()
     songsDirty.clear()
     for (const kind of Object.keys(pages) as YoutubeMusicLibraryKind[]) pages[kind] = createPages()
     useYoutubeMusicLibraryStore.setState(collections())

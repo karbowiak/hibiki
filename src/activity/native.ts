@@ -16,19 +16,26 @@ export function monitorActivity<T>(options: {
   read(): Promise<T>
   publish(value: T): void
   interval(value?: T): number
+  minIntervalMs?: number
 }) {
   let stopped = false,
     running = false,
     again = false
   let timer: ReturnType<typeof setTimeout> | undefined
+  let lastRead = -Infinity
   const current = () => !stopped && options.current()
   const schedule = (delay: number) => {
     if (!current()) return
     clearTimeout(timer)
-    timer = setTimeout(() => {
-      timer = undefined
-      void read()
-    }, delay)
+    const remaining =
+      (options.minIntervalMs ?? 0) - (performance.now() - lastRead)
+    timer = setTimeout(
+      () => {
+        timer = undefined
+        void read()
+      },
+      Math.max(delay, remaining, 0)
+    )
   }
   async function read() {
     if (!current()) return
@@ -37,6 +44,7 @@ export function monitorActivity<T>(options: {
       return
     }
     running = true
+    lastRead = performance.now()
     let value: T | undefined
     try {
       value = await options.read()

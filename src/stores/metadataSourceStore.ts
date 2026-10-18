@@ -1,5 +1,5 @@
 /**
- * Metadata source priority — persisted to IndexedDB via Zustand persist.
+ * Metadata source priority — persisted to SQLite via Zustand persist.
  *
  * Controls the order in which metadata sources are consulted for bio text,
  * images, genres, tags, and supplemental info.
@@ -9,7 +9,7 @@
  */
 
 import { create } from "zustand"
-import { safePersist } from "./idbStorage"
+import { safePersist } from "./sqliteStorage"
 
 export type MetadataSource =
   | "plex"

@@ -506,7 +506,10 @@ pub fn start(app: tauri::AppHandle, context: PlexRequestContext, section: i64) {
     if section <= 0 {
         return;
     }
-    tauri::async_runtime::spawn(async move {
+    let owner = (context.cache_scope.clone(), context.connection_revision);
+    if app.state::<Bootstrap>().seen.lock().is_ok_and(|seen| seen.contains(&owner)) { return; }
+    crate::background_jobs::advisory_once(format!("default-playlists:{}:{}:{section}", owner.0, owner.1),
+        crate::background_jobs::Lane::Sync, "Preparing default Plex playlists", async move {
         let bootstrap = app.state::<Bootstrap>();
         let owner = (context.cache_scope.clone(), context.connection_revision);
         if !bootstrap

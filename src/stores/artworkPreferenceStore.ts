@@ -1,5 +1,5 @@
 import { create } from "zustand"
-import { safePersist } from "./idbStorage"
+import { safePersist } from "./sqliteStorage"
 export type ArtworkSource =
   "plex" | "deezer" | "apple" | "coverartarchive" | "fanart" | "heya" | "theaudiodb"
 export type ArtworkKind = "artist" | "album"

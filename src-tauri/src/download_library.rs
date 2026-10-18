@@ -261,12 +261,12 @@ async fn move_to(app: &tauri::AppHandle, destination: PathBuf) -> Result<(), Str
 }
 
 pub fn start(app: tauri::AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        let desired = (|| {
-            let db = app.state::<DbState>();
-            let conn = db.0.lock().map_err(|_| "Download settings unavailable")?;
-            Ok::<_, String>(configured(&conn)?.unwrap_or(default_directory(&app)?))
-        })();
+    crate::background_jobs::advisory(crate::background_jobs::Lane::Refresh, "Checking downloaded music", async move {
+        let desired = match app.state::<DbState>().read(configured).await {
+            Ok(Some(path)) => Ok(path),
+            Ok(None) => default_directory(&app),
+            Err(error) => Err(error),
+        };
         let outcome = match desired {
             Ok(path) => match reconcile_downloads(&app).await {
                 Ok(()) => move_to(&app, path).await,
@@ -311,13 +311,19 @@ async fn reconcile_downloads(app: &tauri::AppHandle) -> Result<(), String> {
     .await
     .map_err(|_| "Could not reconcile legacy downloads")?
 }
+struct ExportLease(tauri::AppHandle);
+impl Drop for ExportLease {
+    fn drop(&mut self) { self.0.state::<DownloadLibrary>().scheduled.store(false, Ordering::Release); }
+}
 pub fn schedule(app: tauri::AppHandle) {
     let library = app.state::<DownloadLibrary>();
     library.dirty.store(true, Ordering::Release);
     if library.scheduled.swap(true, Ordering::AcqRel) {
         return;
     }
-    tauri::async_runtime::spawn(async move {
+    let lease = ExportLease(app.clone());
+    crate::background_jobs::advisory(crate::background_jobs::Lane::Metadata, "Updating downloaded playlists and files", async move {
+        let lease = lease;
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             app.state::<DownloadLibrary>()
@@ -328,9 +334,7 @@ pub fn schedule(app: tauri::AppHandle) {
                 break;
             }
         }
-        app.state::<DownloadLibrary>()
-            .scheduled
-            .store(false, Ordering::Release);
+        drop(lease);
         if app.state::<DownloadLibrary>().dirty.load(Ordering::Acquire) {
             schedule(app.clone());
         }

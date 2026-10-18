@@ -18,8 +18,128 @@ export interface Activity {
   action?: { label: string; href: string }
 }
 export interface PlaylistActivityPhase {
-  kind: "checking" | "matching" | "syncing" | "details" | "listenbrainz"
+  kind: "preparing" | "checking" | "matching" | "syncing" | "details" | "listenbrainz"
   target?: Service
+  syncing?: boolean
+}
+export interface BackgroundQueueJob {
+  id: string
+  label: string
+  queue: string
+  activityId?: string | null
+  state: "pending" | "processing" | "scheduled"
+  progress?: {
+    stage: string
+    current?: string | null
+    completed: number
+    total?: number | null
+    unit: string
+  } | null
+}
+export interface BackgroundQueueStatus {
+  pending: number
+  running: number
+  scheduled: number
+  failed: number
+  jobs?: BackgroundQueueJob[]
+}
+export function backgroundJobActivities(
+  status: BackgroundQueueStatus
+): Activity[] {
+  if (!status.jobs?.length) {
+    const summary = backgroundQueueActivity(status)
+    return summary ? [summary] : []
+  }
+  const grouped = new Map<string, BackgroundQueueJob[]>()
+  for (const job of status.jobs) {
+    const id = job.activityId ?? `job:${job.id}`
+    grouped.set(id, [...(grouped.get(id) ?? []), job])
+  }
+  return [...grouped].map(([id, jobs]) => {
+    const job = jobs.find((job) => job.state === "processing") ?? jobs[0]
+    const running = job.state === "processing",
+      progress = job.progress
+    const valid =
+      progress?.total != null &&
+      progress.total > 0 &&
+      Number.isFinite(progress.total) &&
+      Number.isFinite(progress.completed)
+    return {
+      id,
+      label: job.label,
+      busy: running,
+      state: running ? undefined : "waiting",
+      detail: [
+        running
+          ? progress?.stage || "Starting"
+          : job.state === "scheduled"
+            ? "Scheduled for later"
+            : "Queued",
+        progress?.current,
+        progress && (valid || progress.completed > 0)
+          ? `${progress.completed.toLocaleString()}${valid ? ` of ${progress.total!.toLocaleString()}` : ""} ${progress.unit}`
+          : "",
+        jobs.length > 1 ? `${jobs.length - 1} more queued` : "",
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      progress: valid
+        ? {
+            value: Math.min(progress.completed, progress.total!),
+            total: progress.total!,
+            label: progress.unit,
+          }
+        : undefined,
+    } satisfies Activity
+  })
+}
+
+/** Domain rows carry names, review state and navigation. Queue rows add capacity
+ * and progress to that same operation instead of rendering a second report. */
+export function combineBackgroundActivities(
+  domain: Activity[],
+  queued: Activity[]
+): Activity[] {
+  const rows = new Map(domain.map((row) => [row.id, row]))
+  for (const job of queued) {
+    const row = rows.get(job.id)
+    if (!row) {
+      rows.set(job.id, job)
+      continue
+    }
+    const review = row.state === "paused" || row.state === "error"
+    rows.set(row.id, {
+      ...job,
+      ...row,
+      busy: review ? row.busy : row.busy || job.busy,
+      state: review || row.busy ? row.state : job.state,
+      detail: row.detail || job.detail,
+      progress: row.progress ?? job.progress,
+    })
+  }
+  return [...rows.values()].sort((a, b) => a.id.localeCompare(b.id))
+}
+/** Queue totals describe execution capacity; playlist/download rows retain the
+ * useful per-item progress. Finished/dead jobs stay in diagnostics, not alerts. */
+export function backgroundQueueActivity(
+  status: BackgroundQueueStatus
+): Activity | null {
+  if (!status.running && !status.pending && !status.scheduled) return null
+  return {
+    id: "background-queue",
+    label: "Background jobs",
+    busy: status.running > 0,
+    state: status.running ? undefined : "waiting",
+    detail: [
+      status.running ? `${status.running.toLocaleString()} running` : "",
+      status.pending ? `${status.pending.toLocaleString()} queued` : "",
+      status.scheduled
+        ? `${status.scheduled.toLocaleString()} scheduled for later`
+        : "",
+    ]
+      .filter(Boolean)
+      .join(" · "),
+  }
 }
 const serviceName = (service: Service) => (service === "plex" ? "Plex" : "YTM")
 const count = (value: number) => value.toLocaleString()
@@ -54,7 +174,7 @@ export function mixedPlaylistActivity(
   )
   const review =
     playlist.status === "conflict" || playlist.status === "error" || unsettled
-  const queued = playlist.automatic && pending > 0
+  const queued = playlist.automatic && (pending > 0 || !!playlist.merge?.pending)
   const throttled = playlist.items.some(
     (row) =>
       row.match.status === "pending" &&
@@ -65,14 +185,18 @@ export function mixedPlaylistActivity(
   if (!running && !review && !queued) return null
   const mode = !running
     ? review
-      ? "Sync needs review"
+      ? playlist.write
+        ? "Waiting for playlist write verification"
+        : "Sync needs review"
       : offline
         ? "Matching paused"
         : throttled
           ? "Waiting for YouTube Music · retries automatically"
-          : "Matching queued"
-    : phase?.kind === "matching"
-      ? `Matching ${phase.target ? serviceName(phase.target) : "songs"}`
+          : playlist.merge?.pending ? "Preparing merge queued" : "Matching queued"
+    : phase?.kind === "preparing"
+      ? "Preparing source playlists"
+      : phase?.kind === "matching"
+      ? `Matching ${phase.target ? serviceName(phase.target) : "songs"}${phase.syncing ? " · syncing verified songs" : ""}`
       : phase?.kind === "checking"
         ? "Checking recordings"
         : phase?.kind === "details"
@@ -161,12 +285,9 @@ export function matchingIndexActivity(
   const tasks = status.tasks.filter((task) => task.phase !== "complete")
   const refreshing =
     status.health?.refreshes.filter((task) => task.active) ?? []
-  if (
-    !tasks.length &&
-    !refreshing.length &&
-    !status.health?.pending &&
-    !status.health?.reconciliationPending
-  )
+  // Saved notification/catch-up hints are scheduled work, not a running index.
+  // A claimed worker supplies its own queue activity while applying them.
+  if (!tasks.length && !refreshing.length)
     return null
   const waiting = tasks.length > 0 && tasks.every((task) => task.retryAt > now)
   const busy = !status.paused && !waiting

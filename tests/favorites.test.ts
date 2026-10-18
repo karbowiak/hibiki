@@ -16,6 +16,7 @@ import {
   type FavoriteSyncServices,
 } from "../src/favorites/sync"
 import { favoriteTracks, sortLikedTracks } from "../src/favorites/collection"
+import { pendingFavoriteSync } from "../src/favorites/work"
 import {
   validFavorite,
   validFavoriteMetadata,
@@ -566,6 +567,59 @@ test("unchanged unknown writes require explicit retry before resubmission", asyn
     retryUnknown: true,
   })
   expect(calls).toBe(2)
+})
+test("a blocked saved receipt is checked before full remote lists and is not treated as runnable work", async () => {
+  const f = fixture(setFavorite(connected("lastfm", true), row(1), true))
+  f.services.set = async () => { throw Error("lost response") }
+  await syncFavorites(f.repository, f.services, f.current, { refresh: false })
+  expect(f.state.bindings.lastfm?.pending).toBeDefined()
+  expect(pendingFavoriteSync(f.state)).toBe(0)
+  let reads = 0, verified = 0
+  const peek = f.services.peek
+  f.services.page = async () => { reads++; throw Error("must not reread the whole roster") }
+  f.services.peek = async (...args) => { verified++; return peek(...args) }
+  const issues: string[] = []
+  await syncFavorites(f.repository, f.services, f.current, { onIssue: (_service, message) => issues.push(message) })
+  expect(verified).toBe(1)
+  expect(reads).toBe(0)
+  expect(issues).toEqual(["An unconfirmed favorite change needs review before retrying"])
+})
+test("already applied likes are acknowledged in bounded turns, without reading rosters or resubmitting writes", async () => {
+  let state = connected("lastfm", true)
+  for (let i = 1; i <= 45; i++) state = setFavorite(state, row(i), true)
+  const f = fixture(state)
+  f.roster = Array.from({ length: 45 }, (_, i) => row(i + 1))
+  f.services.page = async () => { throw Error("must not import during an export turn") }
+  for (const remaining of [25, 5, 0]) {
+    await syncFavorites(f.repository, f.services, f.current, { refresh: false })
+    expect(pendingFavoriteSync(f.state)).toBe(remaining)
+    expect(f.writes).toBe(0)
+  }
+})
+test("new likes export in bounded jobs and a manual sync still imports immediately", async () => {
+  let state = connected("lastfm", true)
+  for (let i = 1; i <= 45; i++) state = setFavorite(state, row(i), true)
+  const f = fixture(state)
+  let pages = 0
+  const page = f.services.page
+  f.services.page = async (...args) => { pages++; return page(...args) }
+  for (const remaining of [25, 5, 0]) {
+    await syncFavorites(f.repository, f.services, f.current, { refresh: false })
+    expect(pendingFavoriteSync(f.state)).toBe(remaining)
+  }
+  expect(pages).toBe(0)
+  expect(f.writes).toBe(45)
+  await syncFavorites(f.repository, f.services, f.current)
+  expect(pages).toBe(2)
+  expect(f.writes).toBe(45)
+})
+test("a failed first import waits for the hourly or manual refresh rather than entering the export drain", async () => {
+  const f = fixture(setFavorite(connected("lastfm"), row(1), true))
+  f.services.page = async () => { throw Error("temporarily unavailable") }
+  await syncFavorites(f.repository, f.services, f.current)
+  expect(f.state.bindings.lastfm?.initialized).toBe(false)
+  expect(pendingFavoriteSync(f.state)).toBe(0)
+  expect(f.writes).toBe(0)
 })
 test("retirement and disabling during admission prevent a new external verb", async () => {
   const f = fixture(setFavorite(connected("lastfm", true), row(1), true))

@@ -256,6 +256,7 @@ pub(super) async fn levels(
             .acquire_owned()
             .await
             .map_err(|_| "Waveform worker unavailable")?;
+        crate::background_jobs::report("Decoding waveform", None, 0, Some(1), "songs").await?;
         let ext = stamp.extension();
         tokio::task::spawn_blocking(move || {
             let (_permit, _guard) = (permit, guard);
@@ -284,7 +285,11 @@ pub(super) async fn levels(
 }
 
 pub(super) fn schedule(cache: Arc<AudioCache>, key: String, request: PlaybackRequest) {
-    tauri::async_runtime::spawn(async move {
+    if !request.is_current() { return; }
+    let Some((_, stamp)) = cache.open_with_stamp(&key) else { return; };
+    if cache.waveform(&key, &stamp).is_some() { return; }
+    let work_key = format!("waveform:{:p}:{key}:{}:{}:{:?}", Arc::as_ptr(&cache), request.epoch, request.load_id, request.preload_revision());
+    crate::background_jobs::advisory_once(work_key, crate::background_jobs::Lane::Analysis, "Generating waveform", async move {
         let _ = levels(cache, key, request, false).await;
     });
 }

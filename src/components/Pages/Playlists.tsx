@@ -10,7 +10,7 @@ import { DiscoveryMore } from "../shared/DiscoveryMore"
 export function Playlists() {
   const [showSync, setShowSync] = useState(false)
   const [showMerge, setShowMerge] = useState(false)
-  const { playlists, youtube } = useLibraryPlaylists()
+  const { playlists, youtube, mergeSourceCount } = useLibraryPlaylists()
 
   const count = playlists.length
 
@@ -31,7 +31,7 @@ export function Playlists() {
             {count.toLocaleString()} {count === 1 ? "playlist" : "playlists"}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2"><Button size="md" disabled={count < 2} onClick={() => setShowMerge(true)}>Merge playlists</Button>
+        <div className="flex flex-wrap gap-2"><Button size="md" disabled={mergeSourceCount < 2} onClick={() => setShowMerge(true)}>Merge playlists</Button>
         <Button
           size="md"
           variant="secondary"

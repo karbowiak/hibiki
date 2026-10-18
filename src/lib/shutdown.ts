@@ -1,10 +1,11 @@
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
-import { preferencePersistence } from "../stores/idbStorage"
+import { preferencePersistence } from "../stores/sqliteStorage"
 import { localPreferencePersistence } from "../stores/localPreferenceStorage"
 import { preparePlaybackShutdown } from "../stores/playerStore"
 import { flushQueuePersistence } from "./queuePersistence"
 import { GracefulShutdown } from "./gracefulShutdown"
+import { flushClientStorage, retryClientStorage } from "../storage/clientStorage"
 
 export type ShutdownStatus = { phase: "idle" | "preparing" | "failed"; message: string }
 let status: ShutdownStatus = { phase: "idle", message: "" }
@@ -17,6 +18,7 @@ const shutdown = new GracefulShutdown({
   async stopAndRetain() { await flushQueuePersistence(); await preparePlaybackShutdown(); await flushQueuePersistence() },
   async flushPreferences() {
     await Promise.all([preferencePersistence.flushForShutdown(), localPreferencePersistence.flushForShutdown()])
+    await flushClientStorage()
     if ([...preferencePersistence.snapshot(), ...localPreferencePersistence.snapshot()].some(issue => issue.hasPendingChanges || issue.operation !== "read"))
       throw new Error("Some preferences could not be saved. Retry before closing Hibiki.")
   },
@@ -66,6 +68,7 @@ export async function retryClose(): Promise<void> {
     await keepOpen()
     await preferencePersistence.retry()
     await localPreferencePersistence.retry()
+    await retryClientStorage()
     const { getCurrentWindow } = await import("@tauri-apps/api/window")
     await getCurrentWindow().close()
   } catch (error) {

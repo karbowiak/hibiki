@@ -354,10 +354,10 @@ pub async fn autoeq_search(app: tauri::AppHandle, query: String) -> Result<Searc
     let state = app.state::<Arc<AutoEqState>>().inner().clone();
     if let Some(catalogue) = load(&app, &state).await? {
         let result = search(&catalogue, &query);
-        if result.stale {
+        if result.stale && state.retry_at.load(Ordering::Relaxed) <= now() {
             let background = app.clone();
             let owner = state.clone();
-            tauri::async_runtime::spawn(async move {
+            crate::background_jobs::advisory_once("headphone-eq-catalogue".into(), crate::background_jobs::Lane::Refresh, "Refreshing headphone EQ catalog", async move {
                 if let Ok(_guard) = owner.refresh.try_lock() {
                     let _ = refresh(&background, &owner).await;
                 }

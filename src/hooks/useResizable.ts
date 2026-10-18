@@ -1,9 +1,10 @@
+import { sqliteLocalStorage } from "../storage/clientStorage"
 import { useCallback, useEffect, useRef, useState } from "react"
 
 
 
 interface UseResizableOptions {
-  /** localStorage key for persistence */
+  /** sqliteLocalStorage key for persistence */
   key: string
   defaultWidth: number
   minWidth: number
@@ -15,7 +16,7 @@ interface UseResizableOptions {
 export function useResizable({ key, defaultWidth, minWidth, maxWidth, direction }: UseResizableOptions) {
   const [width, setWidth] = useState(() => {
     try {
-      const stored = localStorage.getItem(key)
+      const stored = sqliteLocalStorage.getItem(key)
       if (stored) {
         const n = Number(stored)
         if (!isNaN(n) && n >= minWidth && n <= maxWidth) return n
@@ -50,7 +51,7 @@ export function useResizable({ key, defaultWidth, minWidth, maxWidth, direction 
         ? e.clientX - startX.current
         : startX.current - e.clientX
       const final = Math.max(minWidth, Math.min(maxWidth, startW.current + dx))
-      try { localStorage.setItem(key, String(final)) } catch { /* ignore */ }
+      try { sqliteLocalStorage.setItem(key, String(final)) } catch { /* ignore */ }
     }
 
     document.addEventListener("mousemove", onMove)

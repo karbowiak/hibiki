@@ -1,3 +1,4 @@
+import { sqliteLocalStorage } from "../storage/clientStorage"
 import { create } from "zustand"
 
 /** Default base opacities for each highlight category */
@@ -22,7 +23,7 @@ interface Persisted {
 
 function load(): Persisted {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = sqliteLocalStorage.getItem(STORAGE_KEY)
     if (raw) return { ...defaults(), ...JSON.parse(raw) }
   } catch { /* ignore */ }
   return defaults()
@@ -33,7 +34,7 @@ function defaults(): Persisted {
 }
 
 function save(state: Persisted) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+  sqliteLocalStorage.setItem(STORAGE_KEY, JSON.stringify(state))
 }
 
 function clampOpacity(v: number): number {

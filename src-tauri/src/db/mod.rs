@@ -9,6 +9,7 @@ pub mod albums;
 pub mod artists;
 pub mod audio;
 pub mod catalogue;
+pub mod client_state;
 // Legacy writers build historical databases for read-compatibility tests only.
 #[cfg(test)]
 pub mod catalogue_incremental;

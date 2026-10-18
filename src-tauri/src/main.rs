@@ -7,6 +7,7 @@ mod platform_blocks_tests;
 mod audio_engine;
 mod cache_files;
 mod commands;
+mod client_storage;
 mod db;
 mod offline_commands;
 mod collection_cache_commands;
@@ -50,6 +51,7 @@ mod podcast;
 mod podcastindex;
 mod radiobrowser;
 mod shutdown;
+mod background_jobs;
 mod window_geometry;
 mod default_playlists;
 mod ytmusic;
@@ -302,10 +304,8 @@ pub fn run() {
             app.manage(offline_audio::AudioDownloads::new(download_root));
             app.manage(download_library::DownloadLibrary::default());
             app.manage(catalogue_commands::CatalogueSync::new());
-            matching_index::start_watchdog(app.handle().clone());
             app.manage(library_picker::LibraryPicker::default());
             app.manage(default_playlists::Bootstrap::default());
-            listening_history::start_worker(app.handle().clone());
 
             // Start the system Now Playing / media-key integration.
             // Must be called from setup (main thread) so macOS can register
@@ -331,6 +331,9 @@ pub fn run() {
                 }
             }
 
+            background_jobs::start(app.handle(), &app.path().app_data_dir()?.join("jobs.sqlite3"))?;
+            matching_index::start_watchdog(app.handle().clone());
+            listening_history::start_worker(app.handle().clone());
             download_library::start(app.handle().clone());
             ytmusic::start(app.handle().clone());
 
@@ -419,6 +422,10 @@ pub fn run() {
             ytmusic::ytmusic_install_helpers,
             performance::record_performance,
             shutdown::shutdown_listener_ready,
+            background_jobs::background_queue_status,
+            background_jobs::client::background_client_owner,
+            background_jobs::client::background_client_call,
+            background_jobs::client::background_client_signal,
             shutdown::prepare_app_shutdown,
             shutdown::complete_app_shutdown,
             shutdown::cancel_app_shutdown,
@@ -575,6 +582,9 @@ pub fn run() {
             commands::itunes_search_album,
             // Local SQLite database
             commands::db_kv_get,
+            client_storage::client_storage_read,
+            client_storage::client_storage_write,
+            client_storage::client_storage_local,
             commands::db_kv_set,
             commands::db_get_info,
             commands::db_upsert_artist,
@@ -713,6 +723,7 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
+            if matches!(&event, tauri::RunEvent::Exit) { background_jobs::stop(app); }
             let state = app.state::<shutdown::ShutdownState>();
             if state.approved() { return; }
             match event {

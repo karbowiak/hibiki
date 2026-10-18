@@ -387,6 +387,19 @@ pub fn delta_due(conn: &Connection, scope: &str, kind: &str) -> Result<bool> {
     }
     conn.query_row("SELECT EXISTS(SELECT 1 FROM matching_refresh r JOIN matching_tasks t ON t.scope=r.scope AND t.kind=r.kind WHERE r.scope=?1 AND r.kind=?2 AND t.phase='complete' AND r.watermark IS NOT NULL AND r.retry_at<=?3 AND (r.delta_generation IS NOT NULL OR r.last_checked<?4))",params![scope,kind,store::now(),store::now()-900000],|r|r.get(0)).map_err(error)
 }
+/// Admit a worker only for actionable durable work, never for an idle index.
+/// Deferred hints and failed pages wait for their saved retry deadline.
+pub fn work_due(conn: &Connection, scope: &str) -> Result<bool> {
+    let status = store::status(conn, scope)?;
+    if status.paused { return Ok(false); }
+    let now = store::now();
+    for kind in ["artist", "album", "track"] {
+        if status.tasks.iter().find(|task| task.kind == kind)
+            .is_none_or(|task| task.phase != "complete" && task.retry_at <= now)
+            || delta_due(conn, scope, kind)? { return Ok(true); }
+    }
+    Ok(next_check(conn, scope)?.is_some() || !hints(conn, scope)?.is_empty())
+}
 pub fn delta(conn: &Connection, scope: &str, kind: &str, epoch: i64) -> Result<Option<Window>> {
     store::admit(conn, scope, epoch)?;
     if !delta_due(conn, scope, kind)? {
@@ -593,6 +606,24 @@ mod tests {
         conn.query_row(sql, [S], |r| r.get(0)).unwrap()
     }
 
+    #[test]
+    fn idle_index_is_not_work_and_retry_deadlines_are_respected() {
+        let conn = db();
+        for kind in ["artist", "album", "track"] { store::begin(&conn, S, kind, 0).unwrap(); }
+        conn.execute("UPDATE matching_tasks SET phase='complete' WHERE scope=?1", [S]).unwrap();
+        conn.execute("UPDATE matching_health SET checked=wanted,last_check=?2,force_census=0,capabilities_checked=?2 WHERE scope=?1", params![S, store::now()]).unwrap();
+        assert!(!work_due(&conn, S).unwrap());
+        conn.execute("UPDATE matching_tasks SET phase='scan',retry_at=?2 WHERE scope=?1 AND kind='track'", params![S, store::now()+60000]).unwrap();
+        assert!(!work_due(&conn, S).unwrap());
+        conn.execute("UPDATE matching_tasks SET retry_at=0 WHERE scope=?1", [S]).unwrap();
+        assert!(work_due(&conn, S).unwrap());
+        conn.execute("UPDATE matching_scopes SET paused=1 WHERE scope=?1", [S]).unwrap();
+        assert!(!work_due(&conn, S).unwrap());
+        conn.execute("UPDATE matching_scopes SET paused=0 WHERE scope=?1", [S]).unwrap();
+        conn.execute("UPDATE matching_tasks SET phase='complete' WHERE scope=?1", [S]).unwrap();
+        conn.execute("UPDATE matching_health SET last_check=0 WHERE scope=?1", [S]).unwrap();
+        assert!(work_due(&conn, S).unwrap());
+    }
     #[test]
     fn coalesced_hints_cannot_ack_or_publish_a_successor_and_missing_is_not_deletion() {
         let conn = db();

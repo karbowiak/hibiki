@@ -441,9 +441,9 @@ pub fn run(conn: &Connection, scope: &str, request: &Request, now: i64) -> Resul
                 "INSERT OR IGNORE INTO collection_cache(scope,key) VALUES(?1,?2)",
                 params![scope, key],
             ))?;
-            let (revision,old_stamp,staged): (i64,String,i64)=sql(conn.query_row("SELECT revision,stamp,staged_count FROM collection_cache WHERE scope=?1 AND key=?2",params![scope,key],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))))?;
+            let (revision,old_stamp,staged,total): (i64,String,i64,i64)=sql(conn.query_row("SELECT revision,stamp,staged_count,staged_total FROM collection_cache WHERE scope=?1 AND key=?2",params![scope,key],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))))?;
             if &old_stamp == stamp && staged > 0 {
-                return Ok(json!({"generation":revision,"offset":staged}));
+                return Ok(json!({"generation":revision,"offset":staged,"total":total}));
             }
             sql(conn.execute("DELETE FROM collection_cache_members WHERE scope=?1 AND key=?2 AND generation!=COALESCE((SELECT active_generation FROM collection_cache WHERE scope=?1 AND key=?2),-1) AND NOT EXISTS(SELECT 1 FROM collection_cache_pins p WHERE p.scope=collection_cache_members.scope AND p.key=collection_cache_members.key AND p.generation=collection_cache_members.generation)",params![scope,key]))?;
             sql(conn.execute("UPDATE collection_cache SET revision=revision+1,stamp=?3,staged_count=0,staged_total=0,changed=0 WHERE scope=?1 AND key=?2",params![scope,key,stamp]))?;

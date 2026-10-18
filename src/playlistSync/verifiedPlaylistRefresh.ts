@@ -10,8 +10,11 @@ export function createVerifiedPlaylistRefresh(
   current: () => boolean,
   dependencies = {
     getProvider: () => useProviderStore.getState().provider,
-    refresh: (id: string, count: number, description?: string) =>
-      useLibraryStore.getState().onPlaylistSyncVerified(id, count, description),
+    refresh: (id: string, count: number, description?: string) => {
+      const remote = (provider as MusicProvider & { __playlistVerified?: (...args: unknown[]) => void }).__playlistVerified
+      if (remote) remote(id, count, description)
+      else useLibraryStore.getState().onPlaylistSyncVerified(id, count, description)
+    },
   }
 ): (snapshot: PlaylistSnapshot) => void {
   const scope = provider.cacheScope,

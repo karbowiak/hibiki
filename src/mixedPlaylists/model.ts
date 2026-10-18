@@ -35,7 +35,7 @@ export interface RemotePlaylist {
   title: string
   description?: string
   readOnly: boolean
-  items: { occurrenceId: string; track: MusicTrack; added?: AddedDate }[]
+  items: { occurrenceId: string; track: MusicTrack; added?: AddedDate; unavailable?: boolean }[]
 }
 export interface MixedPlaylist {
   version: 1
@@ -45,7 +45,7 @@ export interface MixedPlaylist {
   owners: Owners
   /** Explicit merge destinations; source ownership must not imply a write target. */
   destinations?: Service[]
-  merge?: { sources: { key: string; fingerprint: string; title: string }[]; duplicates: "preserve" | "verified"; reviewedAt: number }
+  merge?: { sources: { key: string; fingerprint: string; title: string }[]; duplicates: "preserve" | "verified"; reviewedAt: number; pending?: boolean }
   /** App-owned drafts remain browseable/editable independently of connections. */
   local?: true
   description?: string
@@ -77,7 +77,7 @@ export interface MixedPlaylist {
   baselineOrder?: string[]
   baselineTitle?: string
   /** Saved before an external write. An uncertain write is read back, never blindly retried. */
-  write?: { id: string; service: Service; kind: "create" | "append" | "delete" | "move"; before?: RemotePlaylist; afterIds: string[]; destinationId?: string; state: "admitted" | "unknown" }
+  write?: { id: string; service: Service; kind: "create" | "append" | "delete" | "move"; before?: RemotePlaylist; afterIds: string[]; destinationId?: string; state: "admitted" | "unknown"; failure?: string }
   admittedDrops: string[]
   reviewedCreations?: { receipt: NonNullable<MixedPlaylist["write"]>; reviewedAt: number }[]
 }

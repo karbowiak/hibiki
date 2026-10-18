@@ -15,7 +15,8 @@ const core = await import("@tauri-apps/api/core")
 const events = await import("@tauri-apps/api/event")
 mock.module("@tauri-apps/api/core", () => ({ ...core, invoke: async () => undefined }))
 const storage = new Map<string, string>()
-mock.module("idb-keyval", () => ({
+const applicationStorage = await import("../src/storage/clientStorage")
+mock.module("../src/storage/clientStorage", () => ({ ...applicationStorage,
   get: async (name: string) => storage.get(name),
   set: async (name: string, value: string) => { storage.set(name, value) },
   update: async (name: string, transform: (value: unknown) => string) => { storage.set(name, transform(storage.get(name))) },

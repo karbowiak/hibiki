@@ -478,6 +478,38 @@ fn count_reports(conn: &rusqlite::Connection) -> Result<usize, String> {
     .map(|count| count.max(0) as usize)
     .map_err(|_| "Listening queue unavailable".into())
 }
+
+/// Select only due work for the current accounts before applying the batch
+/// bound. Old identities and delayed retries cannot starve newer listens.
+fn due_reports(conn: &rusqlite::Connection, binding: &Binding, now: u64, limit: usize) -> Result<Vec<(String, Report)>, String> {
+    let now = now.min(i64::MAX as u64) as i64;
+    let limit = limit.min(32) as i64;
+    let mut query = conn.prepare("SELECT key,value FROM kv
+        WHERE key LIKE 'listening-outbox-v1/%' AND json_valid(value)
+        AND COALESCE(json_extract(value,'$.retry_at'),0)<=?1
+        AND json_extract(value,'$.binding') = CASE json_extract(value,'$.service')
+            WHEN 'plexTimeline' THEN ?2 WHEN 'plexPlayed' THEN ?2
+            WHEN 'lastfm' THEN ?3 WHEN 'listenbrainz' THEN ?4 END
+        ORDER BY key LIMIT ?5").map_err(|_| "Listening queue unavailable")?;
+    let rows = query.query_map(rusqlite::params![now, binding.plex, binding.lastfm, binding.listenbrainz, limit],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))).map_err(|_| "Listening queue unavailable")?;
+    rows.map(|row| {
+        let (key, value) = row.map_err(|_| "Listening queue unavailable")?;
+        let report = serde_json::from_str(&value).map_err(|_| "A retained listen could not be read")?;
+        Ok((key, report))
+    }).collect()
+}
+async fn due_batch(app: &tauri::AppHandle, limit: usize) -> Result<Vec<(String, Report)>, String> {
+    use tauri::Manager;
+    let config = app.path().app_config_dir().map_err(|_| "Account settings unavailable")?;
+    let settings = crate::plex::load_settings(&config).map_err(|_| "Account settings unavailable")?;
+    let scope = app.state::<crate::commands::PlexState>().0.lock().await.as_ref().map(|client| client.library_scope.clone());
+    let binding = Binding::capture(&settings, scope);
+    app.state::<crate::db::DbState>().read(move |conn| due_reports(conn, &binding, unix_time(), limit)).await
+}
+pub(crate) async fn work_due(app: &tauri::AppHandle) -> Result<bool, String> {
+    Ok(!due_batch(app, 1).await?.is_empty())
+}
 fn timeline_session_identifier(job: &str) -> String {
     use sha2::{Digest, Sha256};
     format!("history-{}", hex::encode(Sha256::digest(job.as_bytes())))
@@ -572,27 +604,24 @@ pub async fn drain(app: &tauri::AppHandle) -> Result<OutboxStatus, String> {
     use tauri::Manager;
     let reporting = app.state::<ReportingState>();
     let _serial = reporting.serial.lock().await;
+    let db = app.state::<crate::db::DbState>();
     let directory = app
         .path()
         .app_data_dir()
         .map_err(|_| "Listening queue directory unavailable")?;
     if !reporting.owns_outbox(&directory)? {
-        let db = app.state::<crate::db::DbState>();
-        let conn = db.0.lock().map_err(|_| "Listening database unavailable")?;
         return Ok(OutboxStatus {
-            pending: count_reports(&conn)?,
+            pending: db.read(count_reports).await?,
         });
     }
     let config = app
         .path()
         .app_config_dir()
         .map_err(|_| "Account settings unavailable")?;
-    let reports = {
-        let db = app.state::<crate::db::DbState>();
-        let conn = db.0.lock().map_err(|_| "Listening database unavailable")?;
-        read_reports(&conn)?
-    };
-    for (key, report) in reports {
+    let reports = due_batch(app, 32).await?;
+    let total = reports.len() as u64;
+    for (index, (key, report)) in reports.into_iter().enumerate() {
+        crate::background_jobs::report("Submitting listening history", Some(report.labels.track.clone()), index as u64, Some(total), "reports").await?;
         if report.retry_at > unix_time() {
             continue;
         }
@@ -630,9 +659,7 @@ pub async fn drain(app: &tauri::AppHandle) -> Result<OutboxStatus, String> {
         }
         match result {
             Ok(true) => {
-                let db = app.state::<crate::db::DbState>();
-                let conn = db.0.lock().map_err(|_| "Listening database unavailable")?;
-                crate::db::kv::delete(&conn, &key)?;
+                db.write(move |conn| crate::db::kv::delete(conn, &key)).await?;
             }
             Ok(false) => {} // Account/library changed: retain for that identity.
             Err(_) => {
@@ -643,21 +670,14 @@ pub async fn drain(app: &tauri::AppHandle) -> Result<OutboxStatus, String> {
                 }
                 retry.retry_at = unix_time()
                     .saturating_add((30_u64.saturating_mul(1 << retry.attempts.min(7))).min(3600));
-                let db = app.state::<crate::db::DbState>();
-                let conn = db.0.lock().map_err(|_| "Listening database unavailable")?;
-                crate::db::kv::set(
-                    &conn,
-                    &key,
-                    &serde_json::to_string(&retry)
-                        .map_err(|_| "Listening retry could not be saved")?,
-                )?;
+                let saved = serde_json::to_string(&retry)
+                    .map_err(|_| "Listening retry could not be saved")?;
+                db.write(move |conn| crate::db::kv::set(conn, &key, &saved)).await?;
             }
         }
     }
-    let db = app.state::<crate::db::DbState>();
-    let conn = db.0.lock().map_err(|_| "Listening database unavailable")?;
     Ok(OutboxStatus {
-        pending: count_reports(&conn)?,
+        pending: db.read(count_reports).await?,
     })
 }
 #[tauri::command]
@@ -668,19 +688,16 @@ pub async fn flush_listening_outbox(app: tauri::AppHandle) -> Result<OutboxStatu
         Ok(result) => result,
         Err(_) => {
             let db = app.state::<crate::db::DbState>();
-            let conn = db.0.lock().map_err(|_| "Listening database unavailable")?;
             Ok(OutboxStatus {
-                pending: count_reports(&conn)?,
+                pending: db.read(count_reports).await?,
             })
         }
     }
 }
 pub fn start_worker(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
-        loop {
-            interval.tick().await;
-            let _ = drain(&app).await;
+        if let Err(error) = crate::background_jobs::every(&app, crate::background_jobs::Task::ListeningOutbox, std::time::Duration::from_secs(30)).await {
+            tracing::warn!(%error, "Listening sync schedule could not be retained");
         }
     });
 }
@@ -829,6 +846,27 @@ mod tests {
             binding: Binding::capture(&settings(), Some("original-library".into())),
             labels: Some(labels()),
         }
+    }
+    #[test]
+    fn due_history_filters_accounts_and_backoff_before_bounding_the_batch() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT NOT NULL)").unwrap();
+        let report = reports(&completed(1, 100_000), &labels())[0].clone();
+        for index in 0..100 {
+            let mut pending = report.clone();
+            if index < 40 { pending.binding = "old-library".into(); }
+            else if index < 60 { pending.retry_at = 200; }
+            conn.execute("INSERT INTO kv(key,value) VALUES(?1,?2)", rusqlite::params![
+                format!("{PREFIX}{index:03}"), serde_json::to_string(&pending).unwrap()]).unwrap();
+        }
+        let binding = Binding::capture(&settings(), Some("original-library".into()));
+        let batch = due_reports(&conn, &binding, 100, 1000).unwrap();
+        assert_eq!(batch.len(), 32);
+        assert!(batch.iter().all(|(_, report)| report.matches_binding(&binding) && report.retry_at <= 100));
+        assert_eq!(batch[0].0, format!("{PREFIX}060"));
+        assert_eq!(due_reports(&conn, &binding, 100, 1).unwrap().len(), 1);
+        assert!(due_reports(&conn, &Binding::default(), 100, 32).unwrap().is_empty());
+        assert_eq!(count_reports(&conn).unwrap(), 100, "Selection must retain other accounts and delayed retries");
     }
     #[test]
     fn acknowledged_public_shutdown_proofs_are_bounded_separate_and_arrival_ordered() {

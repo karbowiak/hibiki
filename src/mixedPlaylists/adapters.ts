@@ -9,6 +9,8 @@ export interface MixedAdapter {
   service: Service
   owner: string
   read(id: string): Promise<RemotePlaylist>
+  /** Complete read-only merge source, including unavailable placeholders. */
+  readSource?(id: string): Promise<RemotePlaylist>
   create(title: string): Promise<string>
   mutate(before: RemotePlaylist, operation: SequenceOperation): Promise<void>
   /** One preflighted append and one exact post-read for an ordered batch. */
@@ -79,18 +81,19 @@ export function mixedAdapters(capture = captureMusicOwner()): Partial<Record<Ser
       assert()
       return id
     }
-    result.ytmusic = { service: "ytmusic", owner: owners.ytmusic,
-      read: async id => {
+    const read = async (id: string, sourceOnly = false): Promise<RemotePlaylist> => {
         assert()
-        const snapshot = await invoke<NativeSnapshot>("ytmusic_playlist_read", { playlistId: id.replace(/^VL/, ""), expectedAccount: owners.ytmusic })
+        const snapshot = await invoke<NativeSnapshot>("ytmusic_playlist_read", { playlistId: id.replace(/^VL/, ""), expectedAccount: owners.ytmusic, sourceOnly })
         assert()
         if (snapshot.items.length !== snapshot.handles.length) throw Error("Incomplete YouTube Music playlist.")
         return { service: "ytmusic", owner: owners.ytmusic!, id: `VL${snapshot.id}`, title: snapshot.title, description: snapshot.description, readOnly: snapshot.readOnly,
           items: snapshot.items.map((item, index) => {
             if (snapshot.handles[index].videoId !== item.id) throw Error("YouTube Music occurrence identity changed.")
-            return { occurrenceId: snapshot.handles[index].occurrenceId, track: youtubeMusicItemTrack(item) }
+            return { occurrenceId: snapshot.handles[index].occurrenceId, track: youtubeMusicItemTrack(item), unavailable: item.unavailable }
           }) }
-      },
+      }
+    result.ytmusic = { service: "ytmusic", owner: owners.ytmusic,
+      read, readSource: id => read(id, true),
       create: async title => `VL${await write(null, [], { kind: "create", title })}`,
       describe: async (before, title, description) => {
         await write(before.id.replace(/^VL/, ""), before.items, { kind: "metadata", title, description,

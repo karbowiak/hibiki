@@ -250,43 +250,47 @@ async fn prepare_download(
         .iter()
         .map(crate::db::catalogue::clean_document)
         .collect::<Result<Vec<_>, _>>()?;
-    let revision = {
-        let guard = state.0.lock().await;
-        state.checked_client(&context, &guard)?;
-        let conn = db.0.lock().map_err(|_| "Download storage unavailable")?;
-        let revision = if let Some(expected) = refresh_revision {
+    let captured = context.clone();
+    let saved_kind = kind.clone();
+    let saved_ids = ids.clone();
+    let expected = refresh_revision.map(str::to_owned);
+    let owner = app.clone();
+    let revision = db.write(move |conn| {
+        let state = owner.state::<PlexState>();
+        let _identity = state.cache_commit_guard(&captured)?;
+        let revision = if let Some(expected) = expected.as_deref() {
             intents::refresh(
-                &conn,
-                &context.cache_scope,
-                &kind,
+                conn,
+                &captured.cache_scope,
+                &saved_kind,
                 id,
                 &title,
-                &ids,
+                &saved_ids,
                 entries,
                 expected,
             )?
         } else {
             intents::remember(
-                &conn,
-                &context.cache_scope,
-                &kind,
+                conn,
+                &captured.cache_scope,
+                &saved_kind,
                 id,
                 &title,
-                &ids,
+                &saved_ids,
                 entries,
             )?
         };
         save_source(
-            &conn,
-            &context.cache_scope,
-            &kind,
+            conn,
+            &captured.cache_scope,
+            &saved_kind,
             id,
             &revision,
             &source,
             &documents,
         )?;
-        revision
-    };
+        Ok(revision)
+    }).await?;
     // Admit bounded batches through the existing durable/validated audio pipeline.
     // Completed and in-flight jobs are unchanged by enqueue. Failed jobs get
     // one new attempt on this hourly pass, without a notification or tight loop.
@@ -307,60 +311,32 @@ async fn prepare_download(
 
 /// Follow only explicitly requested collections; never scan the entire library.
 pub(crate) fn start_requested_refresh(app: tauri::AppHandle, context: PlexRequestContext) {
-    let key = (context.connection_revision, context.cache_scope.clone());
-    let downloads = app.state::<AudioDownloads>();
-    let Ok(mut scheduled) = downloads.collection_refreshes.lock() else {
-        return;
-    };
-    if !scheduled.insert(key.clone()) {
-        return;
-    }
-    drop(scheduled);
     tauri::async_runtime::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-        let mut last = None::<std::time::Instant>;
-        loop {
-            interval.tick().await;
-            let state = app.state::<PlexState>();
-            {
-                let guard = state.0.lock().await;
-                if state.checked_client(&context, &guard).is_err() {
-                    break;
-                }
-            }
-            if last.is_some_and(|checked| checked.elapsed() < std::time::Duration::from_secs(3600))
-            {
-                continue;
-            }
-            last = Some(std::time::Instant::now());
-            let scope = context.cache_scope.clone();
-            let db = app.state::<DbState>();
-            let Ok(requests) = db
-                .read(move |conn| intents::requested_collections(conn, &scope))
-                .await
-            else {
-                continue;
-            };
-            for (kind, id, revision) in requests {
-                if let Err(error) = prepare_download(
-                    context.clone(),
-                    kind,
-                    id,
-                    app.clone(),
-                    state.clone(),
-                    db.clone(),
-                    Some(&revision),
-                )
-                .await
-                {
-                    tracing::debug!(%error,"Requested download refresh deferred");
-                }
-            }
-        }
-        if let Ok(mut scheduled) = app.state::<AudioDownloads>().collection_refreshes.lock() {
-            scheduled.remove(&key);
-        }
+        let _ = crate::background_jobs::every(&app, crate::background_jobs::Task::PlexRequestedDownloads { context }, std::time::Duration::from_secs(3600)).await;
     });
+}
+
+pub(crate) async fn refresh_due(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<bool, String> {
+    let state = app.state::<PlexState>();
+    { let guard = state.0.lock().await; if state.checked_client(context, &guard).is_err() { return Ok(false); } }
+    let scope = context.cache_scope.clone();
+    app.state::<DbState>().read(move |conn| Ok(!intents::requested_collections(conn, &scope)?.is_empty())).await
+}
+pub(crate) async fn refresh_requested(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<(), String> {
+    let state = app.state::<PlexState>();
+    { let guard = state.0.lock().await; if state.checked_client(context, &guard).is_err() { return Ok(()) } }
+    let scope = context.cache_scope.clone();
+    let db = app.state::<DbState>();
+    let requests = db.read(move |conn| intents::requested_collections(conn, &scope)).await?;
+    let total = requests.len() as u64;
+    for (index, (kind, id, revision)) in requests.into_iter().enumerate() {
+        crate::background_jobs::report("Refreshing download sources", Some(format!("{kind} {id}")), index as u64, Some(total), "collections").await?;
+        if let Err(error) = prepare_download(context.clone(), kind, id, app.clone(), state.clone(), db.clone(), Some(&revision)).await {
+            tracing::debug!(%error, "Requested download refresh deferred");
+        }
+    }
+    crate::background_jobs::report("Download sources refreshed", None, total, Some(total), "collections").await?;
+    Ok(())
 }
 
 fn entity_members(

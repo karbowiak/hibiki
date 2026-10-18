@@ -1,5 +1,5 @@
 /**
- * Last.fm metadata cache — persisted to IndexedDB via Zustand persist.
+ * Last.fm metadata cache — persisted to SQLite via Zustand persist.
  *
  * Rust fetches data from Last.fm on demand; this store caches the results
  * client-side with TTL to avoid redundant API calls.
@@ -23,7 +23,7 @@ import {
   type LastfmArtistInfo,
   type LastfmTrackInfo,
 } from "./api"
-import { safePersist } from "../../stores/idbStorage"
+import { safePersist } from "../../stores/sqliteStorage"
 import { evictStaleEntries } from "../../stores/cacheUtils"
 import { CacheRequests } from "../../lib/cacheRequests"
 import { useLastfmStore } from "./authStore"
@@ -52,7 +52,7 @@ interface LastfmMetadataState {
   albums: Record<string, CacheEntry<LastfmAlbumInfo>>
   tracks: Record<string, CacheEntry<LastfmTrackInfo>>
 
-  /** True once IndexedDB hydration has completed. Hooks should wait for this before fetching. */
+  /** True once SQLite hydration has completed. Hooks should wait for this before fetching. */
   _hasHydrated: boolean
 
   getArtist: (artist: string) => Promise<LastfmArtistInfo | null>

@@ -9,6 +9,17 @@ export interface MixedSyncOptions {
   maxWrites?: number
   verify?: (playlist: MixedPlaylist, snapshots: RemotePlaylist[]) => Promise<MixedPlaylist>
 }
+export function mixedWriteOutcome(receipt: NonNullable<MixedPlaylist["write"]>, actual: RemotePlaylist): "applied" | "unchanged" | "diverged" {
+  const before = receipt.before
+  if (actual.service !== receipt.service || actual.readOnly || before && (before.id !== actual.id || before.owner !== actual.owner)) return "diverged"
+  if (sameSequence(snapshotIds(actual), receipt.afterIds)) return "applied"
+  // A full fresh snapshot, including occurrence IDs, confirms that this edit
+  // never took effect. A read with changed handles is not an unchanged playlist.
+  if (receipt.kind !== "create" && before && sameSequence(snapshotIds(actual), snapshotIds(before)) &&
+    sameSequence(actual.items.map(item => item.occurrenceId), before.items.map(item => item.occurrenceId))) return "unchanged"
+  return "diverged"
+}
+const failureMessage = (failure: unknown) => failure instanceof Error ? failure.message : String(failure)
 /** A receipt is durably retained before every write. Unknown creations never
  * create again; unknown edits can settle only against a fresh exact post-read. */
 export async function syncMixedPlaylist(initial: MixedPlaylist, options: MixedSyncOptions) {
@@ -30,12 +41,13 @@ export async function syncMixedPlaylist(initial: MixedPlaylist, options: MixedSy
     const id = receipt.destinationId ?? playlist.providers[receipt.service]?.id
     if (!id) throw Error("A playlist creation has an unknown outcome. Select the playlist created on that service to recover it; another copy will not be created.")
     const actual = await adapter.read(id); owns()
-    if (!sameSequence(snapshotIds(actual), receipt.afterIds)) throw Error("The pending playlist write has an uncertain outcome. Review the provider's current contents before retrying.")
+    const outcome = mixedWriteOutcome(receipt, actual)
+    if (outcome === "diverged") throw Error("The pending playlist write has an uncertain outcome. Review the provider's current contents before retrying." + (receipt.failure ? ` ${receipt.failure}` : ""))
     if (options.verify) playlist = await options.verify(playlist, [actual])
     owns()
     const providers = { ...playlist.providers, [receipt.service]: { id: actual.id, readOnly: actual.readOnly } }
-    await save({ ...playlist, providers, baseline: { ...playlist.baseline, [receipt.service]: actual }, write: undefined })
-    if (receipt.kind !== "create" && sameSequence(projection(playlist, receipt.service).map(row => row.songs[receipt.service]!.track.id), snapshotIds(actual)))
+    await save({ ...playlist, providers, baseline: { ...playlist.baseline, [receipt.service]: actual }, write: undefined, status: "syncing", message: undefined })
+    if (outcome === "applied" && receipt.kind !== "create" && sameSequence(projection(playlist, receipt.service).map(row => row.songs[receipt.service]!.track.id), snapshotIds(actual)))
       await save(bindSnapshot(playlist, actual))
   }
   for (const service of services) {
@@ -69,7 +81,7 @@ export async function syncMixedPlaylist(initial: MixedPlaylist, options: MixedSy
         await save({ ...playlist, providers: { ...playlist.providers, [service]: { id, readOnly: false } },
           aliases: [...new Set([...playlist.aliases, service === "ytmusic" ? `ytmusic:${id}` : id])],
           baseline: { ...playlist.baseline, [service]: actual }, write: undefined })
-      } catch (failure) { if (options.current()) await save({ ...playlist, write: { ...playlist.write!, state: "unknown" } }); throw failure }
+      } catch (failure) { if (options.current()) await save({ ...playlist, write: { ...playlist.write!, state: "unknown", failure: failureMessage(failure) } }); throw failure }
     }
     let before = playlist.baseline[service]!
     if (before.readOnly) throw Error("Smart, generated and read-only playlists cannot be sync destinations.")
@@ -97,7 +109,7 @@ export async function syncMixedPlaylist(initial: MixedPlaylist, options: MixedSy
         if (!sameSequence(snapshotIds(actual), afterIds)) throw Error("Provider contents did not match the expected write. Review this playlist.")
         await save({ ...playlist, baseline: { ...playlist.baseline, [service]: actual }, write: undefined })
         before = actual
-      } catch (failure) { if (options.current()) await save({ ...playlist, write: { ...playlist.write!, state: "unknown" } }); throw failure }
+      } catch (failure) { if (options.current()) await save({ ...playlist, write: { ...playlist.write!, state: "unknown", failure: failureMessage(failure) } }); throw failure }
     }
     if (!sameSequence(snapshotIds(before), desired)) return playlist
     await save(bindSnapshot(playlist, before))

@@ -6,6 +6,7 @@ import {
   lastfmFavoriteKey,
 } from "./model"
 import { sameAccount, type PlaylistAccount } from "../playlistSync/types"
+import { favoriteSyncCandidates } from "./work"
 import type {
   FavoriteRecording,
   FavoritePage,
@@ -33,6 +34,12 @@ export interface FavoriteSyncServices {
     operation: NonNullable<FavoritePending["operation"]>
   ): Promise<FavoritePlexSnapshot>
 }
+export interface FavoriteSyncProgress {
+  service: FavoriteService
+  stage: "reading" | "verifying" | "writing"
+  completed: number
+  total?: number
+}
 const SIDES: FavoriteService[] = ["plex", "listenbrainz", "lastfm"]
 function reference(item: FavoriteRecording): FavoriteRecording {
   return {
@@ -50,12 +57,14 @@ function reference(item: FavoriteRecording): FavoriteRecording {
 export async function readFavoriteRoster(
   account: PlaylistAccount,
   services: Pick<FavoriteSyncServices, "page">,
-  current: () => boolean
+  current: () => boolean,
+  progress?: (completed: number, total?: number) => void
 ): Promise<FavoriteRecording[]> {
   const rows: FavoriteRecording[] = [],
     seen = new Set<string>()
   let total: number | undefined
   const pageLimit = account.service === "listenbrainz" ? 1000 : 100
+  progress?.(0)
   do {
     if (!current()) throw Error("Favorite owner changed")
     const page = await services.page(account, rows.length)
@@ -78,6 +87,7 @@ export async function readFavoriteRoster(
       seen.add(row.key)
       rows.push(row)
     }
+    progress?.(rows.length, total)
   } while (rows.length < total!)
   return rows
 }
@@ -91,16 +101,22 @@ export async function syncFavorites(
   options: {
     retryUnknown?: boolean
     maxWrites?: number
+    maxChecks?: number
+    /** Exports still verify each mutation; only periodic imports need rosters. */
+    refresh?: boolean
     onIssue?: (service: FavoriteService, message: string) => void
+    onProgress?: (progress: FavoriteSyncProgress) => void
   } = {}
 ): Promise<void> {
   const owns = () => {
     if (!current()) throw Error("Favorite owner changed")
   }
-  let budget = options.maxWrites ?? 20
+  let budget = options.maxWrites ?? 20, checks = options.maxChecks ?? 20
   for (const service of SIDES) {
     owns()
     if (!repository.read().settings[service]) continue
+    const progress = (stage: FavoriteSyncProgress["stage"], completed: number, total?: number) =>
+      options.onProgress?.({ service, stage, completed, total })
     try {
       const account = await services.account(service)
       owns()
@@ -211,21 +227,11 @@ export async function syncFavorites(
         binding = repository.read().bindings[service]!
       }
       let plex: FavoritePlexSnapshot | undefined
-      if (service === "plex")
-        plex = await services.plexRead(binding.playlistId!)
-      const first =
-        plex?.rows ?? (await readFavoriteRoster(account, services, enabled))
-      owns()
-      const second =
-        service === "plex"
-          ? (await services.plexRead(binding.playlistId!)).rows
-          : await readFavoriteRoster(account, services, enabled)
-      owns()
-      if (rosterKey(first) !== rosterKey(second))
-        throw Error("Favorite list changed during reading; retry when stable")
       // Recover before importing the roster, so an old uncertain write is not mistaken for a new user edit.
       let pending = repository.read().bindings[service]!.pending
       if (pending) {
+        progress("verifying", 0, 1)
+        if (service === "plex") plex = await services.plexRead(binding.playlistId!)
         const actual =
           service === "plex"
             ? await favoritePlaylistHash(
@@ -257,47 +263,31 @@ export async function syncFavorites(
             },
           }))
         }
+        progress("verifying", 1, 1)
       }
       if (!enabled()) continue
-      await repository.update((state) =>
-        mergeFavoriteSnapshot(state, service, first, true)
-      )
+      if (options.refresh !== false || !binding.initialized) {
+        progress("reading", 0)
+        if (service === "plex" && !plex) plex = await services.plexRead(binding.playlistId!)
+        const first = plex?.rows ?? await readFavoriteRoster(account, services, enabled, (done, total) => progress("reading", done, total))
+        owns()
+        progress("verifying", 0)
+        const second = service === "plex" ? (await services.plexRead(binding.playlistId!)).rows :
+          await readFavoriteRoster(account, services, enabled, (done, total) => progress("verifying", done, total))
+        owns()
+        if (rosterKey(first) !== rosterKey(second)) throw Error("Favorite list changed during reading; retry when stable")
+        await repository.update(state => mergeFavoriteSnapshot(state, service, first, true))
+      }
       owns()
-      while (budget > 0 && enabled()) {
+      const total = favoriteSyncCandidates(repository.read(), service).length
+      progress("writing", 0, total)
+      while (budget > 0 && checks > 0 && enabled()) {
         const state = repository.read()
-        const stillLovedIds = new Set(
-          Object.values(state.entries)
-            .filter((item) => item.liked)
-            .flatMap((item) => item.localTrackIds)
-        )
-        const candidates = Object.values(state.entries).filter((item) => {
-          const prior = item.sources[service]?.liked ?? false
-          return (
-            prior !== item.liked &&
-            (service !== "plex" ||
-              (item.localTrackIds.length > 0 &&
-                (item.liked ||
-                  !item.localTrackIds.some((id) => stillLovedIds.has(id)))))
-          )
-        })
-        let item = candidates.find(
-          (item) =>
-            service !== "listenbrainz" ||
-            !!(item.recordingMbid || item.recordingMsid)
-        )
-        if (service === "lastfm")
-          item = candidates.find(
-            (item) =>
-              item.title &&
-              item.artist &&
-              (item.liked ||
-                !Object.values(state.entries).some(
-                  (other) =>
-                    other.liked &&
-                    lastfmFavoriteKey(other) === lastfmFavoriteKey(item)
-                ))
-          )
+        const candidates = favoriteSyncCandidates(state, service)
+        const item = candidates[0]
         if (!item) break
+        checks--
+        progress("writing", Math.max(0, total - candidates.length), total)
         let recording = reference(item),
           operation: FavoritePending["operation"],
           beforeHash: string | undefined,
@@ -456,6 +446,7 @@ export async function syncFavorites(
           throw error
         }
       }
+      progress("writing", Math.max(0, total - favoriteSyncCandidates(repository.read(), service).length), total)
     } catch (error) {
       owns()
       options.onIssue?.(

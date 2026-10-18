@@ -9,6 +9,7 @@ import {
   type ButtonHTMLAttributes,
   type CSSProperties,
   type KeyboardEvent,
+  type ReactNode,
   type SelectHTMLAttributes,
 } from "react"
 import { createPortal } from "react-dom"
@@ -17,7 +18,7 @@ import clsx from "clsx"
 import { Button } from "./Button"
 import { DropdownSurface } from "./DropdownSurface"
 
-type Option = {
+export type SelectOption = {
   value: string
   label: string
   disabled: boolean
@@ -32,6 +33,8 @@ export type SelectProps = Omit<
     "onFocus" | "onBlur" | "onKeyDown" | "onClick"
   > & {
     size?: "sm" | "md"
+    /** Presentation only; native labels still drive forms and keyboard search. */
+    renderOption?: (option: SelectOption) => ReactNode
   }
 
 /** Custom single-select with native form values/change events and a portalled, keyboard-driven list. */
@@ -43,6 +46,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
       style,
       id,
       size = "sm",
+      renderOption,
       onChange,
       onFocus,
       onBlur,
@@ -62,7 +66,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
       trigger = useRef<HTMLButtonElement>(null),
       list = useRef<HTMLDivElement>(null)
     useImperativeHandle(ref, () => native.current!)
-    const [options, setOptions] = useState<Option[]>([]),
+    const [options, setOptions] = useState<SelectOption[]>([]),
       [selected, setSelected] = useState(""),
       [open, setOpen] = useState(false),
       [active, setActive] = useState(-1),
@@ -405,7 +409,10 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
           }}
         >
           <span className="ui-select-value">
-            {options.find((option) => option.value === selected)?.label ?? ""}
+            {(() => {
+              const option = options.find((option) => option.value === selected)
+              return option ? renderOption?.(option) ?? option.label : ""
+            })()}
           </span>
           <IconChevronDown
             size={14}
@@ -455,7 +462,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
                     }}
                     onClick={() => choose(index)}
                   >
-                    <span>{option.label}</span>
+                    <span className="min-w-0 flex-1">{renderOption?.(option) ?? option.label}</span>
                     <IconCheck
                       size={15}
                       aria-hidden="true"

@@ -541,9 +541,13 @@ fn rank(conn: &Connection, scope: &str, source: &Source, row: Row) -> Result<Can
         evidence,
     })
 }
+const REMOVED_PARENT_SQL: &str = "SELECT EXISTS(SELECT 1 FROM matching_rows WHERE scope=?1 AND kind='artist' AND id=?2 AND removed=1) OR EXISTS(SELECT 1 FROM matching_rows WHERE scope=?1 AND kind='album' AND id=?3 AND removed=1)";
 fn removed_parent(conn:&Connection,scope:&str,row:&Row)->Result<bool> {
     if row.kind=="artist" {return Ok(false)}
-    conn.query_row("SELECT EXISTS(SELECT 1 FROM matching_rows WHERE scope=?1 AND removed=1 AND ((kind='artist' AND id=?2) OR (kind='album' AND id=?3)))",params![scope,row.artist_id,row.album_id],|r|r.get(0)).map_err(error)
+    // Keep both parent checks as primary-key lookups. Combining the kinds in
+    // one OR made SQLite scan the library scope for every candidate, holding
+    // the shared writer for tens of seconds in a playlist matching batch.
+    conn.query_row(REMOVED_PARENT_SQL,params![scope,row.artist_id,row.album_id],|r|r.get(0)).map_err(error)
 }
 #[derive(Serialize)]
 pub struct Entry {pub id:i64,pub state:String,pub row:Option<Row>}
@@ -957,6 +961,27 @@ mod tests {
     }
     fn lookup(conn: &Connection, source: &Source) -> Resolution {
         resolve(conn, S, "ytm-account", source, false).unwrap()
+    }
+
+    #[test]
+    fn removed_parent_checks_seek_both_primary_keys_without_scanning_the_library() {
+        let conn = db();
+        put(&conn, &row("artist", 1, "Artist"));
+        put(&conn, &row("album", 2, "Album"));
+        let track = row("track", 3, "Song");
+        assert!(!removed_parent(&conn, S, &track).unwrap());
+        conn.execute("UPDATE matching_rows SET removed=1 WHERE kind='album'", []).unwrap();
+        assert!(removed_parent(&conn, S, &track).unwrap());
+        conn.execute("UPDATE matching_rows SET removed=(kind='artist')", []).unwrap();
+        assert!(removed_parent(&conn, S, &track).unwrap());
+        assert!(!removed_parent(&conn, "another-library", &track).unwrap());
+
+        let mut plan = conn.prepare(&format!("EXPLAIN QUERY PLAN {REMOVED_PARENT_SQL}")).unwrap();
+        let details = plan.query_map(params![S, 1, 2], |r| r.get::<_, String>(3))
+            .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+        let searches: Vec<_> = details.iter().filter(|step| step.contains("SEARCH matching_rows")).collect();
+        assert_eq!(searches.len(), 2);
+        assert!(searches.iter().all(|step| step.contains("scope=? AND kind=? AND id=?")), "{details:?}");
     }
 
     #[test]

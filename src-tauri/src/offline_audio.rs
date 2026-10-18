@@ -25,7 +25,6 @@ pub struct AudioDownloads {
     pub(crate) worker: Arc<tokio::sync::Mutex<()>>,
     active: Mutex<Option<(String, i64, Arc<AtomicBool>)>>,
     scheduled: Mutex<HashSet<(u64, String)>>,
-    pub(crate) collection_refreshes: Mutex<HashSet<(u64, String)>>,
     analysis: tokio::sync::Mutex<()>,
     analysis_scheduled: Mutex<HashSet<(u64, String)>>,
     loudness_jobs:
@@ -67,7 +66,6 @@ impl AudioDownloads {
             worker: Arc::new(tokio::sync::Mutex::new(())),
             active: Mutex::new(None),
             scheduled: Mutex::new(HashSet::new()),
-            collection_refreshes: Mutex::new(HashSet::new()),
             analysis: tokio::sync::Mutex::new(()),
             analysis_scheduled: Mutex::new(HashSet::new()),
             loudness_jobs: Mutex::new(HashMap::new()),
@@ -478,7 +476,7 @@ pub async fn audio_prepare_plex_track(
                     let owner = context.clone();
                     let saved = binding.clone();
                     let scope = client.library_scope.clone();
-                    tauri::async_runtime::spawn(async move {
+                    crate::background_jobs::advisory(crate::background_jobs::Lane::Metadata, "Saving playback metadata", async move {
                         let _ = crate::catalogue_commands::save_checked(&app, &owner, |conn| {
                             audio::remember(conn, &scope, &saved, now())?;
                             crate::db::catalogue::save(conn, &scope, "track", track_id, &raw, true)
@@ -770,10 +768,14 @@ pub async fn audio_download_list(
     downloads: State<'_, AudioDownloads>,
     engine: State<'_, crate::audio_engine::bridge::AudioEngineState>,
 ) -> Result<DownloadPage, String> {
-    let guard = plex.0.lock().await;
-    let client = plex.checked_cache_client(&context, &guard)?;
-    let conn = db.0.lock().map_err(|_| "Local audio storage unavailable")?;
-    let scope = &client.library_scope;
+    let scope = {
+        let guard = plex.0.lock().await;
+        plex.checked_cache_client(&context, &guard)?.library_scope.clone()
+    };
+    let downloaded = downloads.cache();
+    let automatic = engine.0.cache().clone();
+    let page = db.read(move |conn| {
+    let scope = &scope;
     let mut items = Vec::new();
     let total;
     if cached {
@@ -796,7 +798,7 @@ pub async fn audio_download_list(
         for id in ids {
             let bindings = audio::bindings(&conn, scope, id)?;
             let latest = bindings.first().map(|b| b.metadata.clone());
-            let found = available(bindings, &downloads.cache(), engine.0.cache());
+            let found = available(bindings, &downloaded, &automatic);
             items.push(DownloadItem {
                 track_id: id,
                 track: found.as_ref().map(|(b, _)| b.metadata.clone()).or(latest),
@@ -831,7 +833,7 @@ pub async fn audio_download_list(
                 && job
                     .cache_key
                     .as_ref()
-                    .is_some_and(|key| downloads.cache().lookup(key).is_some());
+                    .is_some_and(|key| downloaded.lookup(key).is_some());
             items.push(DownloadItem {
                 track_id: job.track_id,
                 track,
@@ -850,8 +852,12 @@ pub async fn audio_download_list(
     Ok(DownloadPage {
         items,
         total: total.max(0) as u64,
-        downloaded_bytes: downloads.cache().stats().total_bytes,
+        downloaded_bytes: downloaded.stats().total_bytes,
     })
+    }).await?;
+    let guard = plex.0.lock().await;
+    plex.checked_cache_client(&context, &guard)?;
+    Ok(page)
 }
 
 #[tauri::command]
@@ -863,14 +869,19 @@ pub async fn audio_local_track(
     downloads: State<'_, AudioDownloads>,
     engine: State<'_, crate::audio_engine::bridge::AudioEngineState>,
 ) -> Result<Option<Value>, String> {
+    let scope = {
+        let guard = plex.0.lock().await;
+        plex.checked_cache_client(&context, &guard)?.library_scope.clone()
+    };
+    let downloaded = downloads.cache();
+    let automatic = engine.0.cache().clone();
+    let result = db.read_urgent(move |conn| {
+        let values = audio::bindings(conn, &scope, track_id)?;
+        Ok(available(values, &downloaded, &automatic).map(|(binding, _)| binding.metadata))
+    }).await?;
     let guard = plex.0.lock().await;
-    let client = plex.checked_cache_client(&context, &guard)?;
-    let values = audio::bindings(
-        &*db.0.lock().map_err(|_| "Local audio storage unavailable")?,
-        &client.library_scope,
-        track_id,
-    )?;
-    Ok(available(values, &downloads.cache(), engine.0.cache()).map(|(binding, _)| binding.metadata))
+    plex.checked_cache_client(&context, &guard)?;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -897,41 +908,50 @@ pub(crate) async fn enqueue_download_batch(
     for track in &track_ids {
         id(*track)?;
     }
-    let guard = plex.0.lock().await;
-    let client = plex.checked_client(&context, &guard)?;
-    let conn = db.0.lock().map_err(|_| "Download storage unavailable")?;
+    {
+        let guard = plex.0.lock().await;
+        plex.checked_client(&context, &guard)?;
+    }
+    let captured = context.clone();
+    let owner = app.clone();
+    let source = source.map(|(kind, id, revision)| (kind.to_owned(), id, revision.to_owned()));
+    let admitted = db.write(move |conn| {
+    let state = owner.state::<PlexState>();
+    let _identity = state.cache_commit_guard(&captured)?;
+    let scope = &captured.cache_scope;
     let track_ids = if let Some((kind, id, revision)) = source {
         crate::db::download_entities::admit(
-            &conn,
-            &client.library_scope,
-            kind,
+            conn,
+            scope,
+            &kind,
             id,
-            revision,
+            &revision,
             &track_ids,
         )?
     } else {
         track_ids
     };
     if track_ids.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     // Missing completed files may be explicitly downloaded again.
     for id in &track_ids {
-        if let Some(mut job) = audio::jobs_for_id(&conn, &client.library_scope, *id)? {
+        if let Some(mut job) = audio::jobs_for_id(conn, scope, *id)? {
             if job.status == "downloaded"
                 && job
                     .cache_key
                     .as_ref()
-                    .is_none_or(|key| app.state::<AudioDownloads>().cache().lookup(key).is_none())
+                    .is_none_or(|key| owner.state::<AudioDownloads>().cache().lookup(key).is_none())
             {
                 job.status = "error".into();
-                audio::update(&conn, &client.library_scope, &job)?;
+                audio::update(conn, scope, &job)?;
             }
         }
     }
-    audio::enqueue(&conn, &client.library_scope, &track_ids, now())?;
-    drop(conn);
-    drop(guard);
+    audio::enqueue(conn, scope, &track_ids, now())?;
+    Ok(true)
+    }).await?;
+    if !admitted { return Ok(()) }
     start_analysis_backfill(app.clone(), context.clone());
     start_worker(app, context);
     Ok(())
@@ -939,29 +959,21 @@ pub(crate) async fn enqueue_download_batch(
 #[tauri::command]
 pub async fn audio_download_resume(
     context: PlexRequestContext,
-    plex: State<'_, PlexState>,
-    db: State<'_, DbState>,
+    _plex: State<'_, PlexState>,
+    _db: State<'_, DbState>,
     downloads: State<'_, AudioDownloads>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    let guard = plex.0.lock().await;
-    let client = plex.checked_client(&context, &guard)?;
     // Do not requeue a current writer. Crash/reconnect leftovers have no live owner.
-    let active = downloads
-        .active
-        .lock()
-        .map_err(|_| "Download worker unavailable")?;
-    if active
-        .as_ref()
-        .is_none_or(|(scope, _, _)| scope != &client.library_scope)
-    {
-        audio::resume(
-            &*db.0.lock().map_err(|_| "Download storage unavailable")?,
-            &client.library_scope,
-        )?;
-    }
-    drop(active);
-    drop(guard);
+    // Acquire SQLite off-thread before checking ownership; never retain Plex's
+    // playback admission lock while waiting behind background database writes.
+    let application = app.clone();
+    crate::offline_commands::owned_write(&app, &context, true, move |conn, scope| {
+        let downloads = application.state::<AudioDownloads>();
+        let active = downloads.active.lock().map_err(|_| "Download worker unavailable")?;
+        if active.as_ref().is_none_or(|(owner, _, _)| owner != scope) { audio::resume(conn, scope)?; }
+        Ok(())
+    }).await?;
     let owner = context.clone();
     let application = app.clone();
     let downloaded = downloads.cache();
@@ -970,7 +982,7 @@ pub async fn audio_download_resume(
         .0
         .cache()
         .clone();
-    tauri::async_runtime::spawn(async move {
+    crate::background_jobs::advisory_once(format!("saved-audio:{}:{}", owner.cache_scope, owner.connection_revision), crate::background_jobs::Lane::Metadata, "Maintaining saved audio metadata", async move {
         let _ = crate::offline_commands::owned_write(
             &application,
             &owner,
@@ -992,29 +1004,25 @@ pub async fn audio_download_resume(
 pub async fn audio_download_remove(
     context: PlexRequestContext,
     track_id: i64,
-    plex: State<'_, PlexState>,
-    db: State<'_, DbState>,
-    downloads: State<'_, AudioDownloads>,
+    _plex: State<'_, PlexState>,
+    _db: State<'_, DbState>,
+    _downloads: State<'_, AudioDownloads>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    let guard = plex.0.lock().await;
-    let client = plex.checked_cache_client(&context, &guard)?;
-    if let Some((scope, id, cancel)) = downloads
-        .active
-        .lock()
-        .map_err(|_| "Download worker unavailable")?
-        .as_ref()
-    {
-        if scope == &client.library_scope && *id == track_id {
-            cancel.store(true, Ordering::Release);
+    id(track_id)?;
+    let owner = app.clone();
+    crate::offline_commands::owned_write(&app, &context, false, move |conn, scope| {
+        let downloads = owner.state::<AudioDownloads>();
+        if let Some((active_scope, active_id, cancel)) = downloads.active.lock()
+            .map_err(|_| "Download worker unavailable")?.as_ref() {
+            if active_scope == scope && *active_id == track_id { cancel.store(true, Ordering::Release); }
         }
-    }
-    let conn = db.0.lock().map_err(|_| "Download storage unavailable")?;
-    // Only files bound to this owner and track can be removed; no renderer paths/keys.
-    for binding in audio::bindings(&conn, &client.library_scope, track_id)? {
-        downloads.cache().remove(&binding.cache_key)?;
-    }
-    audio::remove(&conn, &client.library_scope, track_id)?;
+        // Only files bound to this owner and track can be removed.
+        for binding in audio::bindings(conn, scope, track_id)? {
+            downloads.cache().remove(&binding.cache_key)?;
+        }
+        audio::remove(conn, scope, track_id)
+    }).await?;
     crate::download_library::schedule(app);
     Ok(())
 }
@@ -1031,14 +1039,17 @@ fn start_analysis_backfill(app: tauri::AppHandle, context: PlexRequestContext) {
         return;
     }
     drop(scheduled);
-    tauri::async_runtime::spawn(async move {
-        if let Err(error) = backfill_analysis(&app, &context).await {
-            tracing::debug!(%error,"Saved audio analysis backfill stopped");
-        }
-        if let Ok(mut scheduled) = app.state::<AudioDownloads>().analysis_scheduled.lock() {
-            scheduled.remove(&key);
-        }
-    });
+    crate::background_jobs::spawn(app, crate::background_jobs::Task::PlexAnalysis { context }, true);
+}
+pub(crate) fn retire_analysis_backfill(app: &tauri::AppHandle, context: &PlexRequestContext) {
+    if let Ok(mut scheduled) = app.state::<AudioDownloads>().analysis_scheduled.lock() {
+        scheduled.remove(&(context.connection_revision, context.cache_scope.clone()));
+    }
+}
+pub(crate) async fn run_analysis_backfill(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<(), String> {
+    let result = backfill_analysis(app, context).await;
+    retire_analysis_backfill(app, context);
+    result
 }
 async fn backfill_analysis(
     app: &tauri::AppHandle,
@@ -1050,38 +1061,47 @@ async fn backfill_analysis(
     let engine = app.state::<crate::audio_engine::bridge::AudioEngineState>();
     let mut cursor = 0i64;
     let mut failures = 0;
+    let mut checked = 0;
     loop {
-        let (client, ids) = {
+        let client = {
             let guard = plex.0.lock().await;
-            let client = plex.checked_client(context, &guard)?.clone();
-            let conn = db.0.lock().map_err(|_| "Analysis storage unavailable")?;
+            plex.checked_client(context, &guard)?.clone()
+        };
+        let scope = client.library_scope.clone();
+        let ids = db.read(move |conn| {
             let mut query = conn.prepare("SELECT DISTINCT track_id FROM local_audio WHERE scope=?1 AND track_id>?2 ORDER BY track_id LIMIT 100").map_err(|_|"Cannot read saved audio")?;
             let ids = query
-                .query_map(rusqlite::params![client.library_scope, cursor], |row| {
+                .query_map(rusqlite::params![scope, cursor], |row| {
                     row.get::<_, i64>(0)
                 })
                 .map_err(|_| "Cannot read saved audio")?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|_| "Cannot read saved audio")?;
-            (client, ids)
-        };
+            Ok(ids)
+        }).await?;
         if ids.is_empty() {
             return Ok(());
         }
         let section = library_id(app, &client)?;
         for track_id in ids {
             cursor = track_id;
-            let saved = {
+            crate::background_jobs::report("Checking saved audio analysis", None, checked, None, "songs").await?;
+            checked += 1;
+            {
                 let guard = plex.0.lock().await;
                 plex.checked_client(context, &guard)?;
-                let conn = db.0.lock().map_err(|_| "Analysis storage unavailable")?;
+            }
+            let scope = client.library_scope.clone();
+            let automatic = engine.0.cache().clone();
+            let downloaded = downloads.cache();
+            let saved = db.read(move |conn| {
                 let saved = available(
-                    audio::bindings(&conn, &client.library_scope, track_id)?,
-                    &downloads.cache(),
-                    engine.0.cache(),
+                    audio::bindings(conn, &scope, track_id)?,
+                    &downloaded,
+                    &automatic,
                 )
                 .map(|(binding, _)| binding);
-                match saved {
+                Ok(match saved {
                     Some(binding)
                         if binding.metadata["localAnalysisVersion"].is_string()
                             && binding.metadata["mediaInfo"]["audioStreamId"]
@@ -1096,8 +1116,8 @@ async fn backfill_analysis(
                             binding.metadata["localAnalysisVersion"].as_str(),
                         ) {
                             (Some(stream), Some(version)) => crate::db::catalogue::levels(
-                                &conn,
-                                &client.library_scope,
+                                conn,
+                                &scope,
                                 &binding.cache_key,
                                 stream,
                                 version,
@@ -1112,8 +1132,8 @@ async fn backfill_analysis(
                         }
                     }
                     None => None,
-                }
-            };
+                })
+            }).await?;
             let Some(saved) = saved else { continue };
             let result = async {
                 let (track, raw) = tokio::time::timeout(
@@ -1128,20 +1148,18 @@ async fn backfill_analysis(
                 if fresh.cache_key != saved.cache_key {
                     return Ok(());
                 }
-                {
-                    let guard = plex.0.lock().await;
-                    plex.checked_client(context, &guard)?;
-                    let conn = db.0.lock().map_err(|_| "Analysis storage unavailable")?;
-                    audio::remember(&conn, &client.library_scope, &fresh, now())?;
+                let save_binding = fresh.clone();
+                crate::offline_commands::owned_write(app, context, true, move |conn, scope| {
+                    audio::remember(conn, scope, &save_binding, now())?;
                     crate::db::catalogue::save(
-                        &conn,
-                        &client.library_scope,
+                        conn,
+                        scope,
                         "track",
                         track_id,
                         &raw,
                         true,
-                    )?;
-                }
+                    )
+                }).await?;
                 // Some files have no server analysis. Keep their full metadata
                 // and continue; unavailable levels remain retryable on reconnect.
                 let _ = ensure_levels(app, context, &fresh, false).await;
@@ -1174,32 +1192,33 @@ pub(crate) fn start_worker(app: tauri::AppHandle, context: PlexRequestContext) {
         return;
     }
     drop(scheduled);
-    tauri::async_runtime::spawn(async move {
-        if let Err(error) = worker(&app, &context).await {
-            tracing::warn!(%error,"download queue stopped");
-        }
-        let downloads = app.state::<AudioDownloads>();
-        if let Ok(mut scheduled) = downloads.scheduled.lock() {
-            scheduled.remove(&key);
-        }
+    crate::background_jobs::spawn(app, crate::background_jobs::Task::PlexDownloads { context }, false);
+}
+pub(crate) fn retire_download_worker(app: &tauri::AppHandle, context: &PlexRequestContext) {
+    if let Ok(mut scheduled) = app.state::<AudioDownloads>().scheduled.lock() {
+        scheduled.remove(&(context.connection_revision, context.cache_scope.clone()));
+    }
+}
+pub(crate) async fn run_download_worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<(), String> {
+        let result = worker(app, context).await;
+        retire_download_worker(app, context);
         // Admission can race the last empty-queue read. Recheck after releasing
         // the scheduling flag so an accepted intention is never left dormant.
         let plex = app.state::<PlexState>();
-        let guard = plex.0.lock().await;
-        if let Ok(client) = plex.checked_client(&context, &guard) {
+        let scope = {
+            let guard = plex.0.lock().await;
+            plex.checked_client(context, &guard).ok().map(|client| client.library_scope.clone())
+        };
+        if let Some(scope) = scope.filter(|_| result.is_ok()) {
             let queued = app
                 .state::<DbState>()
-                .0
-                .lock()
-                .ok()
-                .and_then(|conn| audio::next(&conn, &client.library_scope).ok())
-                .flatten()
-                .is_some();
+                .read(move |conn| Ok(audio::next(conn, &scope)?.is_some()))
+                .await.unwrap_or(false);
             if queued {
                 start_worker(app.clone(), context.clone());
             }
         }
-    });
+        result
 }
 async fn current(app: &tauri::AppHandle, context: &PlexRequestContext) -> bool {
     let plex = app.state::<PlexState>();
@@ -1210,83 +1229,80 @@ async fn worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<
     let downloads = app.state::<AudioDownloads>();
     let worker = downloads.worker.clone();
     let _owner = worker.lock().await;
-    {
-        let plex = app.state::<PlexState>();
-        let guard = plex.0.lock().await;
-        let client = match plex.checked_client(context, &guard) {
-            Ok(client) => client,
-            Err(_) => return Ok(()),
-        };
-        // A reconnect may have waited for the previous same-scope writer to retire.
-        audio::resume(
-            &*app
-                .state::<DbState>()
-                .0
-                .lock()
-                .map_err(|_| "Download storage unavailable")?,
-            &client.library_scope,
-        )?;
-    }
+    // Waiting for the database must never retain Plex's playback admission lock.
+    crate::offline_commands::owned_write(app, context, true, |conn, scope| {
+        audio::resume(conn, scope)
+    }).await?;
     loop {
         if downloads.relocating.load(Ordering::Acquire) {
             return Ok(());
         }
         let plex = app.state::<PlexState>();
         let db = app.state::<DbState>();
-        let (client, mut job, cancel) = {
+        let client = {
             let guard = plex.0.lock().await;
-            let client = match plex.checked_client(context, &guard) {
+            match plex.checked_client(context, &guard) {
                 Ok(client) => client.clone(),
                 Err(_) => return Ok(()),
-            };
-            let conn = db.0.lock().map_err(|_| "Download storage unavailable")?;
-            let Some(mut job) = audio::next(&conn, &client.library_scope)? else {
-                return Ok(());
+            }
+        };
+        let owner = app.clone();
+        let next = crate::offline_commands::owned_write(app, context, true, move |conn, scope| {
+            let Some(mut job) = audio::next(conn, scope)? else {
+                return Ok(None);
             };
             let cancel = Arc::new(AtomicBool::new(false));
-            *downloads
+            *owner.state::<AudioDownloads>()
                 .active
                 .lock()
                 .map_err(|_| "Download worker unavailable")? =
-                Some((client.library_scope.clone(), job.track_id, cancel.clone()));
+                Some((scope.to_owned(), job.track_id, cancel.clone()));
             job.status = "downloading".into();
-            audio::update(&conn, &client.library_scope, &job)?;
-            (client, job, cancel)
-        };
+            audio::update(conn, scope, &job)?;
+            Ok(Some((job, cancel)))
+        }).await?;
+        let Some((mut job, cancel)) = next else { return Ok(()) };
         let scope = &client.library_scope;
         let received = Arc::new(AtomicU64::new(0));
         let total = Arc::new(AtomicU64::new(0));
+        // The pinned transfer can outlive its select branch. Keep its identity
+        // separate from the mutable progress/final-status record below.
+        let transfer_job = job.clone();
         let transfer = async {
             let section = library_id(app, &client)?;
             let (track, raw) = tokio::time::timeout(
                 std::time::Duration::from_secs(30),
-                client.get_track_document(job.track_id),
+                client.get_track_document(transfer_job.track_id),
             )
             .await
             .map_err(|_| "Plex track request timed out")?
             .map_err(|_| "Plex could not load this track")?;
-            let (binding, source, expected_size) = binding(&client, section, job.track_id, &track)?;
+            let (binding, source, expected_size) = binding(&client, section, transfer_job.track_id, &track)?;
+            let captured_scope = scope.clone();
+            let summary = db.read(move |conn| audio::activity(conn, &captured_scope)).await?;
+            crate::background_jobs::report("Downloading audio", Some(track.title.clone()), summary.downloaded,
+                Some(summary.downloaded + summary.queued + summary.downloading), "songs").await?;
             if expected_size.is_some_and(|size| size > MAX_TRACK_BYTES) {
                 return Err("This audio file exceeds the 2 GB per-track download limit".into());
             }
-            {
-                let guard = plex.0.lock().await;
-                plex.checked_client(context, &guard)?;
+            let saved_binding = binding.clone();
+            let track_id = transfer_job.track_id;
+            crate::offline_commands::owned_write(app, context, true, move |conn, scope| {
                 audio::remember(
-                    &*db.0.lock().map_err(|_| "Download storage unavailable")?,
+                    conn,
                     scope,
-                    &binding,
+                    &saved_binding,
                     now(),
                 )?;
                 crate::db::catalogue::save(
-                    &*db.0.lock().map_err(|_| "Download storage unavailable")?,
+                    conn,
                     scope,
                     "track",
-                    job.track_id,
+                    track_id,
                     &raw,
                     true,
-                )?;
-            }
+                )
+            }).await?;
             // Optional analysis cannot prevent a valid audio file being saved.
             let _ = ensure_levels(app, context, &binding, false).await;
             if let Some(file) = downloads.cache().open(&binding.cache_key) {
@@ -1314,16 +1330,22 @@ async fn worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<
             )
             .await?;
             // Cancellation, disconnect, and a remove/re-add must not publish old work.
-            let guard = plex.0.lock().await;
-            plex.checked_client(context, &guard)?;
-            let conn = db.0.lock().map_err(|_| "Download storage unavailable")?;
-            if cancel.load(Ordering::Acquire)
-                || audio::jobs_for_id(&conn, scope, job.track_id)?
-                    .is_none_or(|fresh| fresh.revision != job.revision)
-            {
-                return Err("Download cancelled".into());
-            }
-            writer.finish(&cache)?;
+            let owner = app.clone();
+            let captured = context.clone();
+            let expected = transfer_job;
+            let cancellation = cancel.clone();
+            db.write(move |conn| {
+                let state = owner.state::<PlexState>();
+                let _identity = state.cache_commit_guard(&captured)?;
+                if cancellation.load(Ordering::Acquire)
+                    || audio::jobs_for_id(conn, &captured.cache_scope, expected.track_id)?
+                        .is_none_or(|fresh| fresh.revision != expected.revision)
+                {
+                    return Err("Download cancelled".into());
+                }
+                writer.finish(&cache)?;
+                Ok(())
+            }).await?;
             Ok::<_, String>(binding)
         };
         tokio::pin!(transfer);
@@ -1333,7 +1355,7 @@ async fn worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<
                 _=tokio::time::sleep(std::time::Duration::from_millis(250))=> {
                     if cancel.load(Ordering::Acquire)||!current(app,context).await {cancel.store(true,Ordering::Release);break None;}
                     let mut progress=job.clone();progress.received=received.load(Ordering::Acquire);progress.total=match total.load(Ordering::Acquire){0=>None,length=>Some(length)};
-                    if let Ok(conn)=db.0.lock(){let _=audio::update(&conn,scope,&progress);}
+                    if let Ok(conn)=db.0.try_lock(){let _=audio::update(&conn,scope,&progress);}
                 }
             }
         };
@@ -1364,14 +1386,15 @@ async fn worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<
                 job.error = None;
             }
         }
-        if let Ok(conn) = db.0.lock() {
-            let _ = audio::update(&conn, scope, &job);
-        }
+        let finished = job.clone();
+        let captured_scope = scope.clone();
+        let retained = db.write(move |conn| audio::update(conn, &captured_scope, &finished)).await;
         *downloads
             .active
             .lock()
             .map_err(|_| "Download worker unavailable")? = None;
         crate::download_library::schedule(app.clone());
+        retained?;
         if !connected {
             return Ok(());
         }
@@ -2205,20 +2228,22 @@ pub async fn audio_availability(
     if track_ids.len() > 10000 || track_ids.iter().any(|id| *id <= 0) {
         return Err("Invalid availability batch".into());
     }
-    let guard = plex.0.lock().await;
-    let client = plex.checked_cache_client(&context, &guard)?;
-    let conn = db.0.lock().map_err(|_| "Local audio storage unavailable")?;
-    let mut result = Vec::new();
-    for id in track_ids {
-        if available(
-            audio::bindings(&conn, &client.library_scope, id)?,
-            &downloads.cache(),
-            engine.0.cache(),
-        )
-        .is_some()
-        {
-            result.push(id);
+    let scope = {
+        let guard = plex.0.lock().await;
+        plex.checked_cache_client(&context, &guard)?.library_scope.clone()
+    };
+    let downloaded = downloads.cache();
+    let automatic = engine.0.cache().clone();
+    let result = db.read(move |conn| {
+        let mut result = Vec::new();
+        for id in track_ids {
+            if available(audio::bindings(conn, &scope, id)?, &downloaded, &automatic).is_some() {
+                result.push(id);
+            }
         }
-    }
+        Ok(result)
+    }).await?;
+    let guard = plex.0.lock().await;
+    plex.checked_cache_client(&context, &guard)?;
     Ok(result)
 }

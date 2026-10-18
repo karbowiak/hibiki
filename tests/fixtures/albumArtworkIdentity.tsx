@@ -48,7 +48,8 @@ const values = new Map<string, string>()
 if (scenario === "hydration")
   for (const key of ["deezer-metadata-v1", "itunes-metadata-v2"])
     values.set(key, JSON.stringify({ state: { artists, albums }, version: 0 }))
-mock.module("idb-keyval", () => ({
+const applicationStorage = await import("../../src/storage/clientStorage")
+mock.module("../../src/storage/clientStorage", () => ({ ...applicationStorage,
   get: async (key: string) => values.get(key),
   update: async (key: string, transform: (value: unknown) => string) => {
     values.set(key, transform(values.get(key)))

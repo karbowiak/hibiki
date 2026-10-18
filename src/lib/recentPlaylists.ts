@@ -1,3 +1,4 @@
+import { sqliteLocalStorage } from "../storage/clientStorage"
 import { useProviderStore } from "../stores/providerStore"
 import type { MusicProvider } from "../providers/types"
 
@@ -41,7 +42,7 @@ export function createRecentPlaylists({ getProvider, getStorage }: RecentPlaylis
 
 const recent = createRecentPlaylists({
   getProvider: () => useProviderStore.getState().provider,
-  getStorage: () => (typeof localStorage === "undefined" ? undefined : localStorage)
+  getStorage: () => (typeof sqliteLocalStorage === "undefined" ? undefined : sqliteLocalStorage)
 })
 export const getRecentPlaylistIds = recent.read
 export const recordRecentPlaylist = recent.record

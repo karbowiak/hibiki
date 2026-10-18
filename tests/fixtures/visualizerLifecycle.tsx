@@ -75,7 +75,8 @@ mock.module("@tauri-apps/api/core", () => ({
   isTauri: () => scenario === "native" || scenario === "fullscreen-window",
   invoke: async () => undefined,
 }))
-mock.module("idb-keyval", () => ({
+const applicationStorage = await import("../../src/storage/clientStorage")
+mock.module("../../src/storage/clientStorage", () => ({ ...applicationStorage,
   createStore: () => () => Promise.resolve(),
   get: async () => undefined,
   set: async () => {},

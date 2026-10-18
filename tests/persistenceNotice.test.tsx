@@ -77,7 +77,7 @@ async function fixture(scenario: string) {
   }
   const idb = service(),
     local = service()
-  mock.module("../src/stores/idbStorage", () => ({
+  mock.module("../src/stores/sqliteStorage", () => ({
     preferencePersistence: idb.persistence,
   }))
   mock.module("../src/stores/localPreferenceStorage", () => ({

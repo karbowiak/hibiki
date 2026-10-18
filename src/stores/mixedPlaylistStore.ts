@@ -1,12 +1,13 @@
+import { backgroundActions } from "../background/actions"
 import { create } from "zustand"
 import { mixedPlaylistRepository } from "../mixedPlaylists/repository"
 import { captureMusicOwner, createPlaylistCounterpartResolver, resolvePlaylistCounterpart } from "../mixedPlaylists/counterparts"
 import { mixedAdapters } from "../mixedPlaylists/adapters"
 import { counterpartPending, matchPlaylistBatch } from "../mixedPlaylists/matching"
 import { adoptRemote } from "../mixedPlaylists/reconcile"
-import { hydratePlaylist, sameSequence, snapshotIds, playlistServices, type MixedPlaylist, type Service } from "../mixedPlaylists/model"
+import { hydratePlaylist, playlistServices, type MixedPlaylist, type Service } from "../mixedPlaylists/model"
 import { appendDraftSongs, newDraft, reviewUnappliedCreation, validateDraftMetadata, type DraftMetadata } from "../mixedPlaylists/drafts"
-import { syncMixedPlaylist } from "../mixedPlaylists/sync"
+import { syncMixedPlaylist, mixedWriteOutcome } from "../mixedPlaylists/sync"
 import { syncAndMatchPlaylist } from "../mixedPlaylists/pipeline"
 import { syncDraftDetails } from "../mixedPlaylists/details"
 import { syncDraftListenBrainz } from "../mixedPlaylists/listenbrainz"
@@ -17,8 +18,9 @@ import { matchingUpdateAffectsRecording } from "../matching/changes"
 import type { MatchingUpdate } from "../matching/updates"
 import { queryIndexedMusic } from "../matching/service"
 import { trackMatchingSource } from "../matching/sources"
-import { mergedDraft, readMergeSource, revalidateMerge, type MergePreview } from "../mixedPlaylists/merge"
+import { mergedDraft, queuedMerge, prepareMerge, removeVerifiedMergeDuplicates, readMergeSource, revalidateMerge, type MergePreview, type MergeSelection, type MergeDestination, type MergeDuplicates } from "../mixedPlaylists/merge"
 import type { PlaylistActivityPhase } from "../activity/model"
+import { playlistNeedsIndexCheck } from "../mixedPlaylists/indexUpdates"
 
 interface State {
   playlists: MixedPlaylist[]
@@ -29,6 +31,7 @@ interface State {
   load(): Promise<void>
   createDraft(metadata: DraftMetadata, id?: string): Promise<MixedPlaylist>
   createMerge(preview: MergePreview, metadata: DraftMetadata, id: string): Promise<MixedPlaylist>
+  queueMerge(sources: [MergeSelection, MergeSelection], destination: MergeDestination, duplicates: MergeDuplicates, metadata: DraftMetadata, id: string): Promise<MixedPlaylist>
   metadata(id: string, metadata: DraftMetadata): Promise<void>
   externalSync(id: string, options?: { recoveryId?: string; prefer?: "hibiki" | "listenbrainz"; reviewNoCreation?: boolean }): Promise<void>
   convert(alias: string): Promise<MixedPlaylist>
@@ -98,6 +101,14 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
     }
     return save(newDraft(metadata, id))
   }),
+  queueMerge: (sources, destination, duplicates, metadata, id) => serial(id, async () => {
+    const existing = (await mixedPlaylistRepository.load()).find(item => item.id === id)
+    if (existing) { publish(existing); return existing }
+    const capture = captureMusicOwner()
+    const playlist = await save(queuedMerge(sources, destination, duplicates, metadata, capture.owners, id))
+    void get().sync(id).catch(() => {})
+    return playlist
+  }),
   createMerge: (preview, metadata, id) => serial(id, async () => {
     // This stable local ID is the admission receipt, including after restart.
     const existing = (await mixedPlaylistRepository.load()).find(item => item.id === id)
@@ -156,16 +167,36 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
     }
     set(state => ({ running: { ...state.running, [id]: true }, phases: { ...state.phases, [id]: { kind: "checking" } } }))
     try {
+      const adapters = mixedAdapters(capture)
+      if (playlist.merge?.pending) {
+        phase({ kind: "preparing" })
+        // A failed source read retains the intent for retry/restart without
+        // creating a partial provider destination.
+        const sources = await Promise.all(playlist.merge.sources.map(source => readMergeSource(source.key, { ...capture, adapters, local: mixedPlaylistRepository.load })))
+        const preview = await prepareMerge([sources[0], sources[1]], playlist.destinations?.length === 2 ? "mixed" : playlist.destinations?.[0] ?? "mixed", playlist.merge.duplicates,
+          { owners: playlist.owners, current, resolve: async () => ({ status: "missing", checkedAt: Date.now(), message: "Waiting for background matching." }) })
+        if (!current()) return
+        playlist = await save({ ...playlist, items: preview.items.map(row => playlistServices(playlist).every(side => row.songs[side] && !row.songs[side]?.stale) ? row : ({ ...row, match: { status: "pending" } })),
+          baselineOrder: preview.items.map(row => row.id), merge: { ...playlist.merge, pending: false, sources: preview.sources.map(({ key, title, fingerprint }) => ({ key, title, fingerprint })) } })
+      }
       const checked = await verifyPlaylistIdentity(playlist, { provider: capture.provider, current })
       if (checked !== playlist) playlist = await save(checked)
-      const verify = async (value: MixedPlaylist, snapshots: import("../mixedPlaylists/model").RemotePlaylist[]) => {
-        const checked = await verifyPlaylistIdentity(value, { provider: capture.provider, current, snapshots })
-        return checked === value ? value : save(checked)
+      if (playlist.merge?.duplicates === "verified" && playlist.write) {
+        // Settle the one retained receipt first, without starting more writes.
+        // Local deduplication needn't wait for another full matching/sync turn.
+        playlist = await syncMixedPlaylist(playlist, { adapters, current, save, maxWrites: 0 })
       }
+      const joined = removeVerifiedMergeDuplicates(playlist)
+      if (joined !== playlist) playlist = await save(joined)
       if (!playlist.merge && !retry && !playlist.write && playlist.items.some(row => Object.values(row.songs).some(song => song?.stale))) return
-      const adapters = mixedAdapters(capture)
-      playlist = await syncAndMatchPlaylist(playlist, { current, reload: () => latest(id), sync: async value => {
-        phase({ kind: "syncing" })
+      let matchingTarget: Service | undefined, syncing = false
+      const workPhase = () => phase(matchingTarget ? { kind: "matching", target: matchingTarget, syncing } : { kind: "syncing" })
+      playlist = await syncAndMatchPlaylist(playlist, { current, save,
+        onSyncState: running => { syncing = running; workPhase() }, sync: async (value, save) => {
+        const verify = async (value: MixedPlaylist, snapshots: import("../mixedPlaylists/model").RemotePlaylist[]) => {
+          const checked = await verifyPlaylistIdentity(value, { provider: capture.provider, current, snapshots })
+          return checked === value ? value : save(checked)
+        }
         value = await syncDraftDetails(value, { adapters, current, save, provider: capture.provider, review: retry, settleOnly: true })
         if (value.status === "conflict" || value.write) {
           value = await syncMixedPlaylist(value, { adapters, current, save, maxWrites: 0, verify })
@@ -173,20 +204,29 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
         }
         // Flush known songs first. Readback problems pause writes, not matching.
         return syncMixedPlaylist(value, { adapters, current, save, maxWrites: 10, verify })
-      }, match: async value => {
+      }, match: async (value, save) => {
         const resolve = createPlaylistCounterpartResolver(value.items.flatMap(row => row.songs[row.original] ? [row.songs[row.original]!.track] : []), retry, current)
-        for (const target of playlistServices(value)) {
-          phase({ kind: "matching", target })
-          // Finish new work before recycling old misses back to the front.
-          if (retry || (!value.items.some(row => counterpartPending(row, target)) && value.items.some(row => !row.songs[target] && row.match.checkedAt && Date.now() - row.match.checkedAt > 3600000)))
-            value = await save({ ...value, items: value.items.map(row => (row.songs[target] && !row.songs[target]?.stale) || (!retry && (!row.match.checkedAt || Date.now() - row.match.checkedAt <= 3600000)) ? row : { ...row, match: { status: "pending" } }) })
-          const batch = await matchPlaylistBatch(value, target, { current, save, limit: 20,
-            resolve: track => resolve(track, target) })
-          value = batch.playlist
-        }
+        try {
+          for (const target of playlistServices(value)) {
+            matchingTarget = target; workPhase()
+            // Finish new work before recycling old misses back to the front.
+            if (retry || (!value.items.some(row => counterpartPending(row, target)) && value.items.some(row => !row.songs[target] && row.match.checkedAt && Date.now() - row.match.checkedAt > 3600000)))
+              value = await save({ ...value, items: value.items.map(row => (row.songs[target] && !row.songs[target]?.stale) || (!retry && (!row.match.checkedAt || Date.now() - row.match.checkedAt <= 3600000)) ? row : { ...row, match: { status: "pending" } }) })
+            const batch = await matchPlaylistBatch(value, target, { current, save, limit: 20,
+              resolve: track => resolve(track, target) })
+            value = batch.playlist
+          }
+        } finally { matchingTarget = undefined; workPhase() }
         return value
       } })
       if (!current()) return
+      const deduplicated = removeVerifiedMergeDuplicates(playlist)
+      if (deduplicated !== playlist) {
+        playlist = await save(deduplicated)
+        // Matching may have just proved that two source rows are one recording.
+        // Apply the selected duplicate policy without waiting for the next poll.
+        playlist = await syncMixedPlaylist(playlist, { adapters, current, save, maxWrites: 10 })
+      }
       if (playlist.status === "conflict" || playlist.write) return
       if (!playlist.merge && playlist.items.some(row => Object.values(row.songs).some(song => song?.stale))) return
       if (useListenBrainzStore.getState().isAuthenticated) {
@@ -267,9 +307,7 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
     if (!target) throw Error("Enter the ID of the playlist created on the service.")
     const actual = await adapter.read(target)
     if (!capture.current()) return
-    const complete = sameSequence(snapshotIds(actual), receipt.afterIds)
-    const unchanged = receipt.before && sameSequence(snapshotIds(actual), snapshotIds(receipt.before))
-    if (!complete && !unchanged) throw Error("The current playlist matches neither the before nor after snapshot. Resolve its contents on the provider before retrying.")
+    if (mixedWriteOutcome(receipt, actual) === "diverged") throw Error("The current playlist matches neither the before nor after snapshot. Resolve its contents on the provider before retrying.")
     if (actual.readOnly) throw Error("The recovery playlist must be writable.")
     await save({ ...playlist, write: undefined, providers: { ...playlist.providers, [receipt.service]: { id: actual.id, readOnly: actual.readOnly } },
       baseline: { ...playlist.baseline, [receipt.service]: actual }, status: "ready", message: "Write reviewed. Sync can continue." })
@@ -282,13 +320,16 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
     for (const retained of get().playlists) {
       if (!capture.current()) return
       if (retained.owners.plex !== capture.owners.plex || retained.owners.ytmusic !== capture.owners.ytmusic) continue
+      if (!playlistNeedsIndexCheck(retained, update)) continue
       await serial(retained.id, async () => {
         let playlist = await latest(retained.id)
+        // A queued check may wait behind a sync which already resolved it.
+        if (!playlistNeedsIndexCheck(playlist, update)) return
         const current = () => capture.current()
         set(state => ({ running: { ...state.running, [retained.id]: true }, phases: { ...state.phases, [retained.id]: { kind: "matching", target: "plex" } } }))
         try {
           if (update) {
-            const ids = update.reset ? undefined : new Set(update.changes.filter(change => change.kind === "track").map(change => String(change.id)))
+            const ids = update.reset || update.coverageChanged ? undefined : new Set(update.changes.filter(change => change.kind === "track").map(change => String(change.id)))
             if (ids) for (const row of playlist.items) {
               const track = row.songs.plex?.track
               if (track && update.changes.some(change => change.kind === "album" && String(change.id) === track.albumId || change.kind === "artist" && String(change.id) === track.artistId)) ids.add(track.id)
@@ -318,3 +359,5 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
     }
   },
 }))
+
+backgroundActions("mixed", useMixedPlaylistStore, ["sync", "externalSync", "retryIndexedMatches"])

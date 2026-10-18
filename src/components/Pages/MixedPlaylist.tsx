@@ -25,10 +25,14 @@ import { PlaylistAction } from "../shared/PlaylistAction"
 import { useContextMenuStore } from "../../stores/contextMenuStore"
 import { PlaylistInformationDialog } from "../PlaylistInformationDialog"
 import { draftPlaylistSummary } from "../../mixedPlaylists/create"
+import { useBackgroundCallStore } from "../../background/status"
+import { mixedSyncStatus } from "../../mixedPlaylists/status"
+import { IconLoader2, IconClock } from "@tabler/icons-react"
 
 export function MixedPlaylist({ id }: { id: string }) {
   const heroRef = useRef<HTMLDivElement>(null)
   const state = useMixedPlaylistStore(), provider = useProviderStore(s => s.provider)
+  const queued = useBackgroundCallStore(s => !!s.pending[`mixed:${id}`])
   const youtube = useYoutubeMusicDiscoveryStore()
   const playlist = state.playlists.find(item => item.id === id)
   const [error, setError] = useState<string | null>(null), [recovery, setRecovery] = useState("")
@@ -67,7 +71,8 @@ export function MixedPlaylist({ id }: { id: string }) {
     if (all.length) void playMixedPlaylist(playlist, track ? index : 0, all)
   }
   const services = playlistServices(playlist)
-  const busy = state.running[id], pending = playlist.items.filter(row => services.some(service => !row.songs[service] || row.songs[service]?.stale))
+  const syncStatus = mixedSyncStatus(playlist, !!state.running[id], queued, state.phases[id])
+  const busy = syncStatus.busy, pending = playlist.items.filter(row => services.some(service => !row.songs[service] || row.songs[service]?.stale))
   const totalMs = tracks.reduce((sum, track) => sum + track.duration, 0)
   const syncError = error ?? (playlist.status === "error" || playlist.status === "conflict" ? playlist.message : null)
   const needsSyncDetails = syncError || playlist.external?.listenbrainz.enabled || playlist.status === "conflict" ||
@@ -76,6 +81,7 @@ export function MixedPlaylist({ id }: { id: string }) {
   const missingLabel = missingByService.map(({ service, count }) => `${count} unmatched ${service === "plex" ? "Plex" : "YTM"}`).join(", ")
   const syncDetails = needsSyncDetails && <div className="space-y-3 text-sm text-(--text-secondary)">
       {syncError && <p role="alert">{syncError}</p>}
+      {syncError && !playlist.write && <Button disabled={busy} onClick={() => run(state.sync(id, true))}>Retry sync</Button>}
       {!busy && (playlist.detailsWrite || playlist.artworkWrite) && <div className="space-y-2"><p>Review the current details on the service before retrying. For a changed Plex image, this accepts its current image.</p><Button size="md" variant="secondary" type="button" className="media-secondary" disabled={busy} onClick={() => run(state.sync(id, true))}>Review and retry details</Button></div>}
       {playlist.external?.listenbrainz.enabled && <details className="space-y-3"><summary className="cursor-pointer">ListenBrainz sync</summary>
         <p>{playlist.listenbrainz?.message ?? "Only verified recording IDs are synced. Unmatched songs stay in Hibiki."}</p>
@@ -133,7 +139,10 @@ export function MixedPlaylist({ id }: { id: string }) {
           <PlaylistAction action="play" disabled={!sorted.length} onClick={() => play()} />
           <PlaylistAction action="shuffle" disabled={!sorted.length} onClick={() => void playMixedPlaylist(playlist, 0, sorted, true)} />
           <PlaylistAction action="radio" disabled={!sorted.length || (!youtube.connected && (!provider?.createRadioQueue || provider.isOffline))} onClick={radio} />
-          <PlaylistAction action="sync" title="Match and sync this playlist" aria-label="Match and sync playlist" disabled={busy} onClick={() => run(state.sync(id, true))}>{busy ? "Syncing…" : "Sync"}</PlaylistAction>
+          <PlaylistAction action="sync" className="min-w-28" title={syncStatus.title} aria-label={syncStatus.title} aria-busy={busy} disabled={busy} onClick={() => syncStatus.review ? setInformation(true) : run(state.sync(id, true))}>
+            {busy && (syncStatus.queued ? <IconClock size={15} aria-hidden="true" /> : <IconLoader2 size={15} className="animate-spin" aria-hidden="true" />)}
+            {syncStatus.button}
+          </PlaylistAction>
           <PlaylistAction action="more" title="More actions" aria-haspopup="dialog" onClick={event => {
             const rect = event.currentTarget.getBoundingClientRect()
             useContextMenuStore.getState().showActions(rect.right, rect.bottom + 4, { title: playlist.title, owner: menuOwner, actions: [
@@ -148,7 +157,7 @@ export function MixedPlaylist({ id }: { id: string }) {
       <div><dt>Songs</dt><dd>{tracks.length.toLocaleString()}</dd></div>
       {totalMs > 0 && <div><dt>Runtime</dt><dd>{formatTotalMs(totalMs)}</dd></div>}
       {services.length > 0 && <div className="playlist-sync-summary" data-mixed-sync-status aria-live="polite" aria-busy={!!busy}>
-        <dt className="flex items-center gap-3"><span>{busy ? "Syncing" : "Sync"}</span>
+        <dt className="flex items-center gap-3"><span>{syncStatus.label}</span>
           {!!progressLabel && <span className="playlist-sync-pending" title={remaining ? `${remaining} songs awaiting matching. Matches and sync details are in Info.` : `${missingLabel}. Review song links in Edit playlist.`}>{progressLabel}</span>}
         </dt>
         <dd>
@@ -158,7 +167,7 @@ export function MixedPlaylist({ id }: { id: string }) {
         </dd>
       </div>}
     </dl>
-    {!tracks.length ? <div className={`py-16 text-center ${hovered ? "bg-accent-tint" : ""}`}><h2 className="text-xl font-semibold">Make it your playlist</h2><p className="mt-3 text-sm text-(--text-secondary)">Drag songs here or onto this playlist in the sidebar. They’re saved in Hibiki before syncing.</p></div> : <TrackTable tracks={sorted} visibleCols={visible} toggleCol={toggle} sortCol={sortCol} sortDir={sortDir} onSort={handleSort}
+    {!tracks.length ? <div className={`py-16 text-center ${hovered ? "bg-accent-tint" : ""}`}><h2 className="text-xl font-semibold">{playlist.merge?.pending ? "Preparing your playlist" : "Make it your playlist"}</h2><p className="mt-3 text-sm text-(--text-secondary)">{playlist.merge?.pending ? "Songs are being collected from both sources. Matching and syncing continue in the background." : "Drag songs here or onto this playlist in the sidebar. They’re saved in Hibiki before syncing."}</p></div> : <TrackTable tracks={sorted} visibleCols={visible} toggleCol={toggle} sortCol={sortCol} sortDir={sortDir} onSort={handleSort}
       columns={ALL_COLUMNS} filterQuery={query} onFilterChange={setQuery} searchPlaceholder="Search in playlist…" defaultResetTitle="Restore playlist order" currentTrackId={activeTrack}
       onPlay={play} onAddToQueue={items => usePlayerStore.getState().addToQueue(items)} onPlayRadio={(trackId, type) => { void usePlayerStore.getState().playRadio(trackId, type) }}
       onRemoveTrack={async track => { await state.edit(id, { kind: "delete", index: playlist.items.findIndex(row => row.id === track.playlistItemId) }) }}

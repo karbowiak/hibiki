@@ -652,6 +652,7 @@ fn control_thread_main(
     device_channels: u16,
 ) {
     let rt = tauri::async_runtime::handle().inner().clone();
+    let analysis = analysis.map(Arc::new);
     let mut crossfade_settings = CrossfadeSettings::default();
     // Track what's preloaded on the pending deck so we can skip re-fetching
     let mut pending_source_key = String::new();
@@ -668,47 +669,7 @@ fn control_thread_main(
         }
     }
 
-    let mut preparation: Option<(u64, u64, std::collections::VecDeque<preparation::Track>)> = None;
     loop {
-        // Commands always take priority over speculative transfers and measurement.
-        // Interrupted work remains queued so a new preload cannot lose the rest
-        // of the warming batch. No background job owns a physical playback deck.
-        if cmd_rx.is_empty() {
-            if let Some((epoch, revision, tracks)) = preparation.as_mut() {
-                if *epoch != atomics.request_epoch.load(Ordering::SeqCst)
-                    || *revision != atomics.preparation_revision.load(Ordering::SeqCst)
-                {
-                    preparation = None;
-                } else if let Some(track) = tracks.pop_front() {
-                    let commands = cmd_rx.clone();
-                    let revoked = AtomicBool::new(false);
-                    let request = PlaybackRequest::new(
-                        *epoch,
-                        atomics.request_epoch.clone(),
-                        Arc::new(std::sync::atomic::AtomicU64::new(0)),
-                    )
-                    .for_preload(atomics.preparation_revision.clone(), *revision)
-                    .while_background(move || {
-                        if !commands.is_empty() {
-                            revoked.store(true, Ordering::SeqCst);
-                        }
-                        !revoked.load(Ordering::SeqCst)
-                    });
-                    if let Err(error) =
-                        preparation::prepare(&track, &cache, &rt, &request, analysis.as_ref())
-                    {
-                        if !request.is_current() {
-                            tracks.push_front(track);
-                        } else {
-                            debug!(%error, "queue audio preparation unavailable");
-                        }
-                    }
-                    continue;
-                } else {
-                    preparation = None;
-                }
-            }
-        }
         let Ok(ControlCommand {
             epoch,
             preload_revision,
@@ -722,8 +683,37 @@ fn control_thread_main(
         }
         match command {
             Command::PrepareQueue { revision, tracks } => {
-                if revision == atomics.preparation_revision.load(Ordering::SeqCst) {
-                    preparation = Some((epoch, revision, tracks.into()));
+                if revision != atomics.preparation_revision.load(Ordering::SeqCst) { continue; }
+                for (index, track) in tracks.into_iter().enumerate() {
+                    if preparation::ready(&track, &cache, analysis.is_some() && atomics.normalization_is_enabled()) { continue; }
+                    let key = format!("prepare:{:p}:{}:{epoch}:{revision}", Arc::as_ptr(&cache), track.source.cache_key);
+                    let cache = cache.clone();
+                    let analysis = analysis.clone();
+                    let atomics = atomics.clone();
+                    let commands = cmd_rx.clone();
+                    let rt = rt.clone();
+                    crate::background_jobs::advisory_once(key, crate::background_jobs::Lane::Prefetch, "Preparing upcoming audio", async move {
+                        let base = PlaybackRequest::new(epoch, atomics.request_epoch.clone(), Arc::new(std::sync::atomic::AtomicU64::new(0)))
+                            .for_preload(atomics.preparation_revision.clone(), revision);
+                        loop {
+                            if !base.is_current() { return; }
+                            if !commands.is_empty() { tokio::time::sleep(Duration::from_millis(100)).await; continue; }
+                            let pending = commands.clone();
+                            let revoked = AtomicBool::new(false);
+                            let request = base.clone().while_background(move || {
+                                if !pending.is_empty() { revoked.store(true, Ordering::SeqCst); }
+                                !revoked.load(Ordering::SeqCst)
+                            });
+                            let owned = request.clone();
+                            let work = preparation::Track { source: match track.source.try_clone() { Ok(source) => source, Err(_) => return }, duration_ms: track.duration_ms, gain_db: track.gain_db };
+                            let cache = cache.clone(); let analysis = analysis.clone(); let rt = rt.clone();
+                            if crate::background_jobs::report("Caching and measuring upcoming audio", Some(format!("Upcoming song {}", index + 1)), 0, Some(1), "songs").await.is_err() { return; }
+                            let result = tokio::task::spawn_blocking(move || preparation::prepare(&work, &cache, &rt, &owned, analysis.as_deref())).await;
+                            if !request.is_current() && base.is_current() { continue; }
+                            if let Ok(Err(error)) = result { debug!(%error, "queue audio preparation unavailable"); }
+                            return;
+                        }
+                    });
                 }
             }
             Command::Play { source, meta } => {
@@ -759,7 +749,7 @@ fn control_thread_main(
                     &rt,
                     &atomics,
                     &cache,
-                    analysis.as_ref(),
+                    analysis.as_deref(),
                     &crossfade_settings,
                     device_sample_rate,
                     device_channels,
@@ -830,7 +820,7 @@ fn control_thread_main(
                     &rt,
                     &atomics,
                     &cache,
-                    analysis.as_ref(),
+                    analysis.as_deref(),
                     &crossfade_settings,
                     device_sample_rate,
                     device_channels,

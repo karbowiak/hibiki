@@ -4,7 +4,7 @@ import type { MusicProvider } from "../providers/types"
 import { ScopedPersistence } from "./scopedPersistence"
 import type { MusicPlaylist, MusicTrack, MusicAlbum, MusicArtist, MusicItem, MusicHub, PagedResult } from "../types/music"
 import { useProviderStore } from "./providerStore"
-import { idbStorage } from "./idbStorage"
+import { sqliteStorage } from "./sqliteStorage"
 
 export interface SeedItem {
   id: string
@@ -883,5 +883,5 @@ export function createLibraryStore({
 
 export const useLibraryStore = createLibraryStore({
   getProvider: () => useProviderStore.getState().provider,
-  storage: idbStorage
+  storage: sqliteStorage
 })

@@ -12,6 +12,7 @@ import { matchPlaylistBatch } from "../src/mixedPlaylists/matching"
 import { createMusicLinkResolver } from "../src/lib/musicLinkResolver"
 import { mergeMusicSearchResults } from "../src/lib/musicMatching"
 import { deferred } from "./helpers/radioAudioFakes"
+import { playlistNeedsIndexCheck } from "../src/mixedPlaylists/indexUpdates"
 
 const song = (id: string, title = "Song") => ({ ...youtubeMusicTrack({ videoId: "a1234567890", title, artist: "Artist", album: "Release", duration: "3:00", thumbnail: null }), id })
 const baseline: RemotePlaylist = { service: "plex", owner: "scope", id: "10", title: "List", readOnly: false,
@@ -19,6 +20,32 @@ const baseline: RemotePlaylist = { service: "plex", owner: "scope", id: "10", ti
 const playlist = () => ({ ...hydratePlaylist(structuredClone(baseline)), owners: { plex: "scope", ytmusic: "account" } })
 const update = (id: number): MatchingUpdate => ({ provider: {} as MusicProvider, coverageChanged: false, coverage: "complete", reset: false,
   revision: id, cursor: id, changes: [{ sequence: id, kind: "track", id }] })
+
+test("fully resolved playlists do not request idle index checks or unrelated update jobs", () => {
+  const saved = playlist()
+  expect(playlistNeedsIndexCheck(saved)).toBe(false)
+  expect(playlistNeedsIndexCheck(saved, update(999))).toBe(false)
+  expect(playlistNeedsIndexCheck(saved, { ...update(1), changes: [] })).toBe(false)
+})
+test("missing counterparts get an initial check and retry only for relevant index changes", () => {
+  const saved = playlist()
+  saved.items[0] = { ...saved.items[0], original: "ytmusic", songs: { ytmusic: { track: song("ytmusic:a1234567890", "Missing Song") } } }
+  expect(playlistNeedsIndexCheck(saved)).toBe(true)
+  expect(playlistNeedsIndexCheck(saved, update(999))).toBe(false)
+  expect(playlistNeedsIndexCheck(saved, { ...update(999), changes: [{ ...update(999).changes[0], titleKey: "missing song" }] })).toBe(true)
+  saved.items[0].songs.plex = { track: song("999", "Missing Song") }
+  expect(playlistNeedsIndexCheck(saved)).toBe(false)
+})
+test("recording, parent and index reset changes still verify retained Plex identities", () => {
+  const saved = playlist()
+  saved.items[0].songs.plex!.track.albumId = "20"
+  saved.items[0].songs.plex!.track.artistId = "30"
+  expect(playlistNeedsIndexCheck(saved, update(1))).toBe(true)
+  for (const [kind, id] of [["album", 20], ["artist", 30]] as const)
+    expect(playlistNeedsIndexCheck(saved, { ...update(id), changes: [{ sequence: id, kind, id }] })).toBe(true)
+  expect(playlistNeedsIndexCheck(saved, { ...update(999), reset: true })).toBe(true)
+  expect(playlistNeedsIndexCheck(saved, { ...update(999), coverageChanged: true })).toBe(true)
+})
 
 test("slow consumers coalesce changes, bound backlog and retain a later pass", async () => {
   const gate = deferred<void>(), seen: (MatchingUpdate | undefined)[] = []

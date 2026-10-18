@@ -1,5 +1,5 @@
 /**
- * MusicBrainz metadata cache — persisted to IndexedDB via Zustand persist.
+ * MusicBrainz metadata cache — persisted to SQLite via Zustand persist.
  *
  * Rust fetches data from MusicBrainz on demand; this store caches the results
  * client-side with a 7-day TTL to avoid redundant API calls.

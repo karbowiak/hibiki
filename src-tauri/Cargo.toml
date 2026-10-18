@@ -6,7 +6,7 @@ authors = ["you"]
 license = "MIT"
 repository = ""
 edition = "2021"
-rust-version = "1.90"
+rust-version = "1.96"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -26,6 +26,8 @@ serde_json = "1.0.154"
 # Async runtime
 tokio = { version = "1.53.3", features = ["full"] }
 futures = "0.3.34"
+# Embedded durable jobs. SQLite only; no broker or separate worker executable.
+butler = { package = "butler-jobs", version = "=0.1.0", default-features = false, features = ["sqlite", "tokio"] }
 
 # HTTP client with retry logic
 # Preserve the native TLS, text decoding, HTTP/2, and system proxy behavior of 0.11.

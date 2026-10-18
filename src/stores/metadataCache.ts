@@ -1,5 +1,5 @@
 import { createMetadataCache } from "./metadataCacheCore"
-import { idbStorage } from "./idbStorage"
+import { sqliteStorage } from "./sqliteStorage"
 import { useProviderStore } from "./providerStore"
 import { useUIStore } from "./uiStore"
 import { playbackMetadata } from "../audio/playbackMetadata"
@@ -7,7 +7,7 @@ export type { ArtistCacheEntry, AlbumCacheEntry, MetadataCacheSession } from "./
 
 const metadata = createMetadataCache({
   getProvider: () => useProviderStore.getState().provider,
-  storage: idbStorage,
+  storage: sqliteStorage,
   deduplicate: () => useUIStore.getState().deduplicateAlbums
 })
 export const getCachedArtist = metadata.getArtist

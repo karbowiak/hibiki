@@ -4,14 +4,33 @@ import { resolve } from "node:path"
 async function isolated(body: string) {
   const child = Bun.spawn([process.execPath, "-e", `
     import { JSDOM } from "jsdom";
+    import { mock } from "bun:test";
     const dom = new JSDOM("<div id='root'></div>", { url: "https://hibiki.example.test" });
     globalThis.window = dom.window; globalThis.document = dom.window.document;
-    const values = new Map(); let unreadable = false, unwritable = false;
-    const backend = { getItem(key) { if (unreadable) throw Error("read failed"); return values.get(key) ?? null; },
-      setItem(key, value) { if (unwritable) throw Error("write failed"); values.set(key, value); }, removeItem(key) { values.delete(key); } };
-    Object.defineProperty(globalThis, "localStorage", { configurable: true, get() { if (unreadable) throw Error("storage unavailable"); return backend; } });
+    let unreadable = false, unwritable = false, refresh = () => {};
+    const revisions = new Map();
+    const values = new class extends Map {
+      set(key, value) { super.set(key, value); revisions.set(key, (revisions.get(key) ?? 0) + 1); if (!unreadable) refresh(key, value); return this; }
+    }();
+    const realCore = await import("@tauri-apps/api/core");
+    mock.module("@tauri-apps/api/core", () => ({ ...realCore, isTauri: () => true, invoke: async (method, args) => {
+      if (method === "client_storage_read") {
+        if (unreadable) throw Error("read failed");
+        const raw = args.namespace === "local" ? values.get(args.key) : undefined;
+        return { revision: revisions.get(args.key) ?? 0, value: raw === undefined ? null : JSON.stringify(raw) };
+      }
+      if (method === "client_storage_write") {
+        if (unwritable) throw Error("write failed");
+        if ((revisions.get(args.key) ?? 0) !== args.expectedRevision) return false;
+        if (args.value === null) { values.delete(args.key); revisions.set(args.key, args.expectedRevision + 1); }
+        else values.set(args.key, JSON.parse(args.value));
+        return true;
+      }
+      throw Error("Unexpected storage call: " + method);
+    }}));
+    ({ refreshLocalPreference: refresh } = await import("./src/storage/clientStorage"));
     const check = (condition, message) => { if (!condition) throw Error(message); };
-    const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+    const settle = async () => { for (let i = 0; i < 24; i++) await Promise.resolve(); };
     ${body}
     dom.window.close(); console.log("verified");
   `], { cwd: resolve(import.meta.dir, ".."), stdout: "pipe", stderr: "pipe" })
@@ -22,7 +41,7 @@ async function isolated(body: string) {
 
 test("scalar startup survives unavailable storage and recovery preserves later local intent", async () => {
   await isolated(`
-    values.set("plex-queue-pinned", "1"); values.set("plex-debug-enabled", "1"); unreadable = true;
+    unreadable = true; values.set("plex-queue-pinned", "1"); values.set("plex-debug-enabled", "1");
     const { useUIStore: ui } = await import("./src/stores/uiStore");
     const { useDebugStore: debug } = await import("./src/stores/debugStore");
     const { useNotificationStore: notices } = await import("./src/stores/notificationStore");
@@ -118,7 +137,7 @@ test("unreadable column preferences keep edits pending and replay them after sto
     const React = await import("react"); const { createRoot } = await import("react-dom/client"); const { flushSync } = await import("react-dom");
     const { usePlaylistColumns } = await import("./src/hooks/useColumnPicker");
     const { localPreferencePersistence: persistence } = await import("./src/stores/localPreferenceStorage");
-    values.set("unreadable-columns", '["artist"]'); unreadable = true;
+    unreadable = true; values.set("unreadable-columns", '["artist"]');
     let result; function Fixture() { result = usePlaylistColumns("unreadable-columns", ["album"]); return null; }
     const root = createRoot(document.getElementById("root"));
     flushSync(() => root.render(React.createElement(Fixture)));

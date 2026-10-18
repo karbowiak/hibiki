@@ -1,5 +1,6 @@
+import { backgroundActions } from "../../background/actions"
 import { create } from "zustand"
-import { get, update } from "idb-keyval"
+import { get, update } from "../../storage/clientStorage"
 import { invoke } from "@tauri-apps/api/core"
 import type { MusicTrack } from "../../types/music"
 import { playlistJournalDatabase } from "../../playlistSync/journal"
@@ -27,6 +28,17 @@ export interface YoutubeMusicRating {
   saved: Partial<Record<"ytmusic" | "plex" | "lastfm" | "listenbrainz", string>>
   error?: string
 }
+type RatingOwners = Partial<Record<"ytmusic" | "plex" | "lastfm" | "listenbrainz", string>>
+export function ratingNeedsSync(entry: YoutubeMusicRating, owners: RatingOwners) {
+  const intended: RatingOwners = { ...entry.serviceOwners, ytmusic: entry.owner, plex: entry.plexOwner }
+  return Object.entries(intended).some(([service, owner]) => owner && owner === owners[service] && entry.saved[service] !== owner)
+}
+export function currentRatingOwners(): RatingOwners {
+  const capture = captureMusicOwner(), lastfm = useLastfmStore.getState(), listenbrainz = useListenBrainzStore.getState()
+  return { ytmusic: capture.owners.ytmusic, plex: capture.provider?.isOffline ? undefined : capture.owners.plex,
+    lastfm: lastfm.isAuthenticated && lastfm.isEnabled ? lastfm.username ?? undefined : undefined,
+    listenbrainz: listenbrainz.isAuthenticated && listenbrainz.isEnabled ? listenbrainz.username ?? undefined : undefined }
+}
 interface State {
   owner: string | null
   entries: Record<string, YoutubeMusicRating>
@@ -42,7 +54,7 @@ const key = (owner: string) => `ytmusic-stars-v1:${owner}`
 const lanes = new Map<string, Promise<void>>()
 const pendingLoads = new Map<string, Promise<void>>()
 let loadVersion = 0
-let matchingRetry: Promise<void> | undefined, matchingCursor = 0
+let matchingRetry: Promise<void> | undefined, matchingCursor = 0, resumeCursor = 0
 async function retain(entry: YoutubeMusicRating, expected?: string) {
   let saved: YoutubeMusicRating | undefined
   await update<Record<string, YoutubeMusicRating>>(key(entry.owner), previous => {
@@ -135,7 +147,8 @@ async function syncSong(owner: string, trackId: string) {
           } catch (failure) { failures.push(failure instanceof Error ? failure.message : `${service} feedback is pending.`) }
         }
         if (!latest()) continue
-        await retain({ ...entry, error: failures.length ? failures.join(" ") : undefined }, intent)
+        const error = failures.length ? failures.join(" ") : undefined
+        if (entry.error !== error) await retain({ ...entry, error }, intent)
         return
       }
     } finally {
@@ -161,12 +174,15 @@ export const useYoutubeMusicRatingsStore = create<State>((set, state) => ({
     const pending = pendingLoads.get(owner)
     if (pending && state().owner === owner) return pending
     const version = ++loadVersion
+    resumeCursor = 0
     set({ owner, entries: {}, loaded: false, syncing: {} })
     const work = (async () => {
       const entries = (await get<Record<string, YoutubeMusicRating>>(key(owner), playlistJournalDatabase())) ?? {}
       if (version !== loadVersion || state().owner !== owner) return
       set({ entries, loaded: true })
-      void state().resume().catch(() => {})
+      const owners = currentRatingOwners()
+      if (Object.values(state().entries).some(entry => ratingNeedsSync(entry, owners)))
+        void state().resume().catch(() => {})
     })()
     pendingLoads.set(owner, work)
     void work.finally(() => { if (pendingLoads.get(owner) === work) pendingLoads.delete(owner) }).catch(() => {})
@@ -185,7 +201,7 @@ export const useYoutubeMusicRatingsStore = create<State>((set, state) => ({
     set(s => ({ saving: { ...s.saving, [track.id]: true } }))
     try {
       await retain(entry)
-      if (capture.current()) void syncSong(owner, track.id).catch(() => {})
+      if (capture.current()) void state().resume().catch(() => {})
       return true
     } finally { set(s => ({ saving: { ...s.saving, [track.id]: false } })) }
   },
@@ -193,8 +209,13 @@ export const useYoutubeMusicRatingsStore = create<State>((set, state) => ({
     const owner = state().owner
     if (!owner || !state().loaded) return
     // Bounded per tick; already acknowledged songs require no YTM/Plex writes.
-    for (const entry of Object.values(state().entries).filter(entry => !entry.saved.ytmusic || (entry.plexOwner && !entry.saved.plex) || entry.error ||
-      Object.entries(entry.serviceOwners ?? {}).some(([service, account]) => entry.saved[service] !== account)).slice(0, 20))
+    const owners = currentRatingOwners()
+    const pending = Object.values(state().entries).filter(entry => ratingNeedsSync(entry, owners))
+    if (!pending.length) return
+    // An early unmatched recording must not starve later retained intentions.
+    const batch = Array.from({ length: Math.min(20, pending.length) }, (_, index) => pending[(resumeCursor + index) % pending.length])
+    resumeCursor = (resumeCursor + batch.length) % pending.length
+    for (const entry of batch)
       await syncSong(owner, entry.track.id)
   },
   retryPlexMatches: update => {
@@ -220,3 +241,5 @@ export const useYoutubeMusicRatingsStore = create<State>((set, state) => ({
     return work
   },
 }))
+
+backgroundActions("ratings", useYoutubeMusicRatingsStore, ["resume", "retryPlexMatches"])

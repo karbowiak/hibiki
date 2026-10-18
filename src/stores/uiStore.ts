@@ -20,12 +20,12 @@ interface UIState {
   /** Incremented by the Refresh button — pages add this to their useEffect deps to re-run fetches. */
   pageRefreshKey: number
   isQueueOpen: boolean
-  /** When true the queue renders as a fixed sidebar column rather than a slide-over overlay. Persisted to localStorage. */
+  /** When true the queue renders as a fixed sidebar column. Persisted in SQLite. */
   isQueuePinned: boolean
 
   /** Whether the lyrics panel is currently visible (overlay or sidebar). */
   isLyricsOpen: boolean
-  /** When true the lyrics panel renders as a fixed sidebar (only when queue is not pinned). Persisted to localStorage. */
+  /** When true the lyrics panel renders as a fixed sidebar (only when queue is not pinned). Persisted in SQLite. */
   isLyricsPinned: boolean
   /** Active tab in the pinned queue panel. Only relevant when isQueuePinned is true. */
   queueActiveTab: "queue" | "lyrics"

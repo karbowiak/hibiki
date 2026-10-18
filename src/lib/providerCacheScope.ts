@@ -1,4 +1,4 @@
-/** No credential, server address or library name appears in an IndexedDB key. */
+/** No credential, server address or library name appears in a SQLite record key. */
 export async function providerCacheScope(
   backend: string,
   server: string,

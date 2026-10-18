@@ -1,5 +1,5 @@
 /**
- * MusicBrainz recording MBID cache — persisted to IndexedDB via Zustand persist.
+ * MusicBrainz recording MBID cache — persisted to SQLite via Zustand persist.
  *
  * Caches recording MBIDs (+ associated artist/release/release-group MBIDs)
  * keyed by `artist::track::album`. Used by ListenBrainz to submit properly
@@ -10,7 +10,7 @@
 
 import { CacheRequests } from "../../lib/cacheRequests"
 import { create } from "zustand"
-import { safePersist } from "../../stores/idbStorage"
+import { safePersist } from "../../stores/sqliteStorage"
 import { evictStaleEntries } from "../../stores/cacheUtils"
 import {
   musicbrainzLookupRecording,

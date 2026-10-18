@@ -8,7 +8,106 @@ import type { MusicProvider } from "../src/providers/types"
 import { orderMixTracks } from "../src/lib/mixOrder"
 import { deferred } from "./helpers/radioAudioFakes"
 import type { MusicTrack } from "../src/types/music"
+import { setBackgroundDispatcher } from "../src/background/actions"
 const cached = { id: "1", title: "Cached song", type: "track" }
+
+test("fresh persisted collections never submit a background hydration job", async () => {
+  const admitted: string[] = [], checked: string[] = []
+  const playlists = [{ id: "1", trackCount: 1, duration: 1000 }]
+  const rosterStamp = Buffer.from(await crypto.subtle.digest("SHA-256",
+    new TextEncoder().encode(JSON.stringify(playlists)))).toString("hex")
+  const raw = { cacheScope: "owner", playbackSession: {}, isConnected: () => true,
+    getPlaylists: async () => playlists,
+    getPlaylistItems: async () => { throw Error("Fresh membership must not fetch") },
+  } as unknown as MusicProvider
+  setBackgroundDispatcher(async call => { admitted.push(call.method); return { done: true, changed: false } })
+  const provider = createCollectionCacheProvider(raw, raw, { cacheScope: "owner", connectionRevision: 1 },
+    async <T>(_command: string, { request }: any): Promise<T> => {
+      if (request.op === "info") {
+        checked.push(request.key)
+        return { complete: true, dirty: false, refreshing: false, cachedAt: Date.now(),
+          stamp: request.key === "playlist:1" ? JSON.stringify([1, 1000, undefined]) : rosterStamp } as T
+      }
+      return null as T
+    })
+  try {
+    provider.warmCollections!()
+    for (let i = 0; i < 50 && !checked.includes("playlist:1"); i++) await Bun.sleep(10)
+    expect(checked).toContain("playlist:1")
+    expect(admitted).toEqual([])
+  } finally { provider.stopCollectionWarmup!(); setBackgroundDispatcher(undefined) }
+})
+
+test("warmup retains smart playlists in the roster without fetching their contents", async () => {
+  const loaded: [string, number, number][] = [], complete = new Set<string>()
+  const roster: any[] = [], ready = deferred<void>()
+  const playlists = [
+    { id: "all", title: "All Music", smart: true, trackCount: 381397, duration: null },
+    { id: "normal", title: "Favorites", smart: false, trackCount: 1, duration: null },
+  ]
+  const raw = {
+    cacheScope: "owner", playbackSession: {}, isConnected: () => true,
+    getPlaylists: async () => playlists,
+    getPlaylistItems: async (id: string, offset: number, limit: number) => {
+      loaded.push([id, offset, limit])
+      return { items: [cached], total: id === "all" ? 381397 : 1, offset }
+    },
+  } as unknown as MusicProvider
+  const provider = createCollectionCacheProvider(raw, raw, { connectionRevision: 1, cacheScope: "owner" },
+    async <T>(_command: string, { request }: any): Promise<T> => {
+      if (request.op === "begin") return { generation: 1, offset: 0 } as T
+      if (request.op === "put" && request.key === "playlists") roster.push(...request.items)
+      if (request.op === "commit") {
+        complete.add(request.key)
+        if (request.key === "playlist:normal") ready.resolve()
+        return { changed: false } as T
+      }
+      return null as T
+    })
+  try {
+    provider.warmCollections!()
+    await ready.promise
+    expect(loaded).toEqual([["normal", 0, 500]])
+    expect(roster.map(item => [item.id, item.smart])).toEqual([["all", true], ["normal", false]])
+    expect(complete.has("playlist:all")).toBe(false)
+    const viewed = await provider.getPlaylistItems("all", 20, 40)
+    expect(viewed.total).toBe(381397)
+    expect(loaded).toEqual([["normal", 0, 500], ["all", 20, 40]])
+  } finally { provider.stopCollectionWarmup!() }
+})
+
+test("a playlist that becomes smart stops warming after its current page", async () => {
+  let smart = false, rosters = 0
+  const started = deferred<void>(), gate = deferred<void>(), updated = deferred<void>()
+  const pages: number[] = []
+  const raw = {
+    cacheScope: "owner", playbackSession: {}, isConnected: () => true,
+    getPlaylists: async () => { rosters++; return [{ id: "all", smart, trackCount: 5000, duration: null }] },
+    getPlaylistItems: async (_id: string, offset: number) => {
+      pages.push(offset)
+      started.resolve()
+      await gate.promise
+      return { items: Array.from({ length: 500 }, () => cached), total: 5000, offset }
+    },
+  } as unknown as MusicProvider
+  const provider = createCollectionCacheProvider(raw, raw, { connectionRevision: 1, cacheScope: "owner" },
+    async <T>(_command: string, { request }: any): Promise<T> => {
+      if (request.op === "begin") return { generation: 1, offset: 0 } as T
+      if (request.op === "commit") return { changed: false } as T
+      if (request.op === "maintain" && rosters >= 2) updated.resolve()
+      return null as T
+    })
+  try {
+    provider.warmCollections!()
+    await started.promise
+    smart = true
+    provider.warmCollections!()
+    await updated.promise
+    gate.resolve()
+    await Bun.sleep(250)
+    expect(pages).toEqual([0])
+  } finally { gate.resolve(); provider.stopCollectionWarmup!() }
+})
 
 test("clearing library caches retires a collection page still arriving from Plex", async () => {
   const started = deferred<void>(), gate = deferred<void>()

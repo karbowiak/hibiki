@@ -1,5 +1,5 @@
 import { create } from "zustand"
-import { safePersist } from "./idbStorage"
+import { safePersist } from "./sqliteStorage"
 import { evictStaleEntries } from "./cacheUtils"
 
 const DEFAULT_TTL_MS = 7 * 24 * 60 * 60_000 // 7 days

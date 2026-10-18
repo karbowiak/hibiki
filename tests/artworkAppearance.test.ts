@@ -8,8 +8,9 @@ async function isolated(body: string) {
       `
 import assert from "node:assert/strict";
 const values=new Map();let blockedRead=false,blockedWrite=false;
-Object.defineProperty(globalThis,"localStorage",{get(){if(blockedRead)throw Error("blocked");return {getItem:key=>values.get(key)??null,setItem(key,value){if(blockedWrite)throw Error("blocked");values.set(key,value)},removeItem:key=>values.delete(key)}}});
-const settle=async()=>{for(let i=0;i<20;i++)await Promise.resolve()};
+const { installLocalPreferenceBackend } = await import("./tests/helpers/localPreferenceBackend");
+installLocalPreferenceBackend(values, { canRead: () => !blockedRead, canWrite: () => !blockedWrite });
+const settle=async()=>{for(let i=0;i<32;i++)await Promise.resolve()};
 ${body}
 `,
     ],

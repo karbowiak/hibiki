@@ -13,9 +13,9 @@ async function isolated(body: string) {
     let light = true; const listeners = new Set();
     window.matchMedia = () => ({get matches(){return light},addEventListener(event, fn){listeners.add(fn)},removeEventListener(event,fn){listeners.delete(fn)}});
     const values = new Map(); let readBlocked=false, writeBlocked=false;
-    const backend = {getItem(key){if(readBlocked)throw Error("blocked");return values.get(key)??null},setItem(key,value){if(writeBlocked)throw Error("blocked");values.set(key,value)},removeItem(key){values.delete(key)}};
-    Object.defineProperty(globalThis,"localStorage",{get(){if(readBlocked)throw Error("blocked getter");return backend}});
-    const settle=async()=>{for(let i=0;i<20;i++)await Promise.resolve()};
+    const { installLocalPreferenceBackend } = await import("./tests/helpers/localPreferenceBackend");
+    installLocalPreferenceBackend(values, { canRead: () => !readBlocked, canWrite: () => !writeBlocked });
+    const settle=async()=>{for(let i=0;i<32;i++)await Promise.resolve()};
     ${body}
     dom.window.close();
   `,

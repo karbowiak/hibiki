@@ -14,6 +14,8 @@ const MAX_GLOBAL_ENTRIES: i64 = 8000;
 pub struct Snapshot {
     pub payload: Value,
     pub cached_at: i64,
+    #[serde(skip)]
+    pub accessed_at: i64,
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -107,21 +109,21 @@ pub fn get(
 /// Reading a visited snapshot never requires the catalogue writer.
 pub fn peek(conn: &Connection, scope: &str, key: &str) -> Result<Option<Snapshot>, String> {
     check_identity(scope, key)?;
-    let row: Option<(String, i64)> = conn
+    let row: Option<(String, i64, i64)> = conn
         .query_row(
-            "SELECT payload,cached_at FROM offline_snapshots WHERE scope=?1 AND cache_key=?2",
+            "SELECT payload,cached_at,accessed_at FROM offline_snapshots WHERE scope=?1 AND cache_key=?2",
             params![scope, key],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()
         .map_err(|_| "Cannot read saved browsing data")?;
-    let Some((payload, cached_at)) = row else {
+    let Some((payload, cached_at, accessed_at)) = row else {
         return Ok(None);
     };
     let payload: Value =
         serde_json::from_str(&payload).map_err(|_| "Saved browsing data is invalid")?;
     check_payload(&payload, 0)?;
-    Ok(Some(Snapshot { payload, cached_at }))
+    Ok(Some(Snapshot { payload, cached_at, accessed_at }))
 }
 pub fn touch(conn: &Connection, scope: &str, key: &str, now: i64) -> Result<(), String> {
     check_identity(scope, key)?;
@@ -213,7 +215,12 @@ mod tests {
         let scope = format!("plex-{}", "a".repeat(64));
         put(&conn, &scope, "page", &serde_json::json!({"title":"Saved"}), 1).unwrap();
         conn.pragma_update(None, "query_only", true).unwrap();
-        assert_eq!(peek(&conn, &scope, "page").unwrap().unwrap().cached_at, 1);
+        let snapshot = peek(&conn, &scope, "page").unwrap().unwrap();
+        assert_eq!(snapshot.cached_at, 1);
+        assert_eq!(snapshot.accessed_at, 1);
+        assert_eq!(serde_json::to_value(snapshot).unwrap(), serde_json::json!({
+            "payload": { "title": "Saved" }, "cachedAt": 1
+        }), "Native LRU bookkeeping must not change the browsing IPC shape");
         assert!(peek(&conn, &scope, "missing").unwrap().is_none());
         assert_eq!(conn.query_row("SELECT accessed_at FROM offline_snapshots WHERE scope=?1",[&scope],|r|r.get::<_,i64>(0)).unwrap(),1);
     }

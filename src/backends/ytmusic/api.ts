@@ -16,6 +16,7 @@ export interface YoutubeMusicStatus {
   accountId?: string | null
 }
 export interface YoutubeMusicSong {
+  unavailable?: boolean
   videoId: string
   title: string
   artist: string

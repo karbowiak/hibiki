@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { prepareMerge, mergedDraft, readMergeSource, revalidateMerge, type MergeSource, type MergeDestination } from "../src/mixedPlaylists/merge"
+import { prepareMerge, mergedDraft, queuedMerge, removeVerifiedMergeDuplicates, readMergeSource, revalidateMerge, type MergeSource, type MergeDestination } from "../src/mixedPlaylists/merge"
 import { defaultPlaylistSync } from "../src/mixedPlaylists/drafts"
 import { newOccurrence, playlistServices, type MixedPlaylist, type RemotePlaylist, type Service } from "../src/mixedPlaylists/model"
 import { youtubeMusicTrack } from "../src/backends/ytmusic/tracks"
@@ -11,6 +11,40 @@ const song = (id: string, title = "Song") => ({ ...youtubeMusicTrack({ videoId: 
 const source = (key: string, ids: string[]): MergeSource => ({ key, title: key, fingerprint: JSON.stringify(ids), owners, items: ids.map(id => newOccurrence(song(id), 10)) })
 const metadata = { title: "Merged", description: "New playlist", artwork: null, external: defaultPlaylistSync() }
 const options = { owners, current: () => true, resolve: async () => ({ status: "missing" as const, checkedAt: 1, message: "Unavailable" }) }
+
+test("merge creation retains a restartable request without waiting for source IO or matching", () => {
+  const playlist = queuedMerge([{ key: "42", title: "Same name" }, { key: "ytmusic:VLlist", title: "Same name" }], "mixed", "verified", metadata, owners, "mixed:queued")
+  const saved = JSON.parse(JSON.stringify(playlist))
+  expect(saved.id).toBe("mixed:queued")
+  expect(saved.merge.pending).toBe(true)
+  expect(saved.merge.sources.map(source => source.key)).toEqual(["42", "ytmusic:VLlist"])
+  expect(saved.destinations).toEqual(["plex", "ytmusic"])
+  expect(saved.items).toEqual([])
+  expect(saved.providers).toEqual({})
+  expect(saved.automatic).toBe(true)
+  expect(saved.owners).toEqual(owners)
+})
+test("merge source reads keep unavailable occurrences for background matching", async () => {
+  const unavailable = { occurrenceId: "unavailable", track: song("ytmusic:b1234567890"), unavailable: true }
+  const adapter = { owner: owners.ytmusic, read: async () => { throw Error("Strict editor snapshot must not be used") }, readSource: async () => ({
+    service: "ytmusic", owner: owners.ytmusic, id: "VLlist", title: "Source", readOnly: false,
+    items: [{ occurrenceId: "available", track: song("ytmusic:a1234567890") }, unavailable],
+  }) } as any
+  const loaded = await readMergeSource("ytmusic:VLlist", { ...options, adapters: { ytmusic: adapter }, local: async () => [] })
+  expect(loaded.items).toHaveLength(2)
+  expect(loaded.items[1].songs.ytmusic?.stale).toBe(true)
+  expect(loaded.items[1].copiedFrom?.occurrence).toBe("unavailable")
+})
+test("background duplicate removal joins local source recordings, retains both references, and waits for pending writes", () => {
+  const playlist = queuedMerge([{ key: "one", title: "One" }, { key: "two", title: "Two" }], "mixed", "verified", metadata, owners, "mixed:dedupe")
+  playlist.items = [newOccurrence(song("1")), newOccurrence(song("ytmusic:a1234567890"))]
+  expect(removeVerifiedMergeDuplicates(playlist).items).toHaveLength(1)
+  expect(Object.keys(removeVerifiedMergeDuplicates(playlist).items[0].songs).sort()).toEqual(["plex", "ytmusic"])
+  playlist.items[1].songs.plex = { track: song("1") }
+  expect(removeVerifiedMergeDuplicates(playlist).items).toHaveLength(1)
+  playlist.write = { id: "write", kind: "append", service: "ytmusic", afterIds: [], state: "unknown" }
+  expect(removeVerifiedMergeDuplicates(playlist).items).toHaveLength(2)
+})
 
 test("a throttled merge stops new lookups and retains all songs for later matching", async () => {
   const sources: [MergeSource, MergeSource] = [source("one", Array.from({ length: 150 }, (_, i) => String(i + 1))), source("two", ["200"])]
@@ -50,9 +84,11 @@ test("merge retains ordered occurrences, source dates and provenance with fresh 
   expect(playlist.aliases).toEqual([]); expect(playlist.providers).toEqual({}); expect(playlist.baseline).toEqual({})
   expect(playlist.items[0].id).not.toBe(sources[0].items[0].id)
 })
-test("verified duplicate removal needs common recording IDs and retains version and ambiguous matches", async () => {
+test("duplicate removal joins local recordings and retains different versions and performers", async () => {
   const sources: [MergeSource, MergeSource] = [source("one", ["1", "1"]), source("two", ["ytmusic:b1234567890", "ytmusic:c1234567890", "ytmusic:d1234567890"])]
   sources[1].items[1].songs.ytmusic!.track.title = "Song (Live)"
+  sources[1].items[2].songs.ytmusic!.track.artistName = "Different Artist"
+  sources[1].items[2].songs.ytmusic!.track.artistCredits = [{ name: "Different Artist" }]
   const preview = await prepareMerge(sources, "plex", "verified", { ...options, resolve: async track => track.id === "ytmusic:b1234567890"
     ? { status: "matched", track: song("1"), fingerprint: "proof", checkedAt: 1 }
     : { status: "ambiguous", checkedAt: 1, message: "More than one recording" } })
@@ -102,6 +138,22 @@ test("read source never binds original remote handles to a new destination and p
   expect(loaded.items.every(row => Object.keys(row.remote).length === 0)).toBe(true)
   const again = await readMergeSource("1", { ...options, local: async () => [], adapters: { plex: { owner: owners.plex, read: async () => snapshot } as any } })
   expect(again.fingerprint).toBe(loaded.fingerprint)
+})
+test("same-named provider sources keep separate contents even when a mixed playlist links both", async () => {
+  const linked = mergedDraft(await prepareMerge([source("1", ["1"]), source("ytmusic:list", ["ytmusic:b1234567890"])], "mixed", "preserve", options), metadata, owners, "mixed:linked")
+  linked.aliases = ["1", "ytmusic:list"]
+  linked.write = { id: "pending", service: "ytmusic", kind: "append", state: "unknown", afterIds: [] } as any
+  const snapshots: Record<string, RemotePlaylist> = {
+    plex: { service: "plex", owner: owners.plex, id: "1", title: "Same name", readOnly: false, items: [{ occurrenceId: "p", track: song("1") }] },
+    ytmusic: { service: "ytmusic", owner: owners.ytmusic, id: "list", title: "Same name", readOnly: false, items: [{ occurrenceId: "y", track: song("ytmusic:b1234567890") }] },
+  }
+  const adapters = Object.fromEntries(Object.entries(snapshots).map(([service, snapshot]) => [service, { owner: snapshot.owner, read: async () => snapshot }])) as any
+  const first = await readMergeSource("1", { ...options, adapters, local: async () => [linked] })
+  const second = await readMergeSource("ytmusic:list", { ...options, adapters, local: async () => [linked] })
+  expect(first.title).toBe(second.title)
+  expect(first.key).not.toBe(second.key)
+  expect(first.items.map(row => row.original)).toEqual(["plex"])
+  expect(second.items.map(row => row.original)).toEqual(["ytmusic"])
 })
 test("empty merges retain explicit creation intent unlike ordinary empty drafts", async () => {
   const preview = await prepareMerge([source("one", []), source("two", [])], "plex", "preserve", options)

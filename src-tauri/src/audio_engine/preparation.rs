@@ -15,6 +15,18 @@ pub(crate) struct Track {
     pub gain_db: Option<f32>,
 }
 
+/// Avoid admitting speculative jobs whose file and requested analysis already
+/// exist. The worker checks again after admission and resolves cold sources.
+pub(super) fn ready(track: &Track, default_cache: &Arc<AudioCache>, analyze: bool) -> bool {
+    if track.duration_ms == 0 || default_cache.stats().max_bytes == 0 { return true; }
+    let cache = track.source.local_cache.as_ref().unwrap_or(default_cache);
+    let key = &track.source.cache_key;
+    let Some((_, stamp)) = cache.open_with_stamp(key) else { return false; };
+    if track.source.prepare_waveform && cache.waveform(key, &stamp).is_none() { return false; }
+    !analyze || track.gain_db.or(track.source.gain_db).is_some_and(|gain| gain.is_finite())
+        || cache.get_computed_gain(key).is_some()
+}
+
 pub(super) fn prepare(
     track: &Track,
     default_cache: &Arc<AudioCache>,
@@ -176,8 +188,10 @@ mod tests {
             )
             .unwrap();
             let runtime = tokio::runtime::Runtime::new().unwrap();
+            assert!(!ready(&track, &cache, true), "A cold file must still be admitted");
             prepare(&track, &cache, runtime.handle(), &request, Some(&analysis)).unwrap();
             server.join().unwrap();
+            assert!(ready(&track, &cache, true), "Cached file and gain need no speculative job");
             prepare(&track, &cache, runtime.handle(), &request, Some(&analysis)).unwrap();
             assert_eq!(lookups.load(Ordering::SeqCst), 1);
             assert_eq!(

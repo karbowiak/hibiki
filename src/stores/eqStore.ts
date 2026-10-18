@@ -1,5 +1,5 @@
 import { create } from "zustand"
-import { persist } from "zustand/middleware"
+import { safeLocalPersist as persist } from "./localPreferenceStorage"
 import { engine } from "../audio/RustAudioEngine"
 import { correctionProfile } from "../audio/deviceCorrection"
 import { createOutputEqState, type OutputEqState } from "./outputEqState"
@@ -197,28 +197,6 @@ export interface EqState extends OutputEqState {
   loadProfileForDevice: (deviceName: string) => void
 }
 
-/** Old settings inherited Auto on. Retire that default once, including recalled profiles. */
-function migrateAutoGainDefault(saved: unknown): Partial<EqState> {
-  function disableAuto<T>(value: T): T {
-    if (value && typeof value === "object" && !Array.isArray(value) &&
-        "autoPostgain" in value && value.autoPostgain === true)
-      return { ...value, autoPostgain: false, postgainDb: 0 }
-    return value
-  }
-  const state = disableAuto(
-    saved && typeof saved === "object" && !Array.isArray(saved)
-      ? saved as Partial<EqState> : {}
-  )
-  function profilesWithoutAuto<T>(profiles: Record<string, T>): Record<string, T> {
-    if (typeof profiles !== "object" || Array.isArray(profiles)) return profiles
-    return Object.fromEntries(Object.entries(profiles).map(([id, profile]) => [id, disableAuto(profile)]))
-  }
-  const next = { ...state }
-  if (state.deviceProfiles) next.deviceProfiles = profilesWithoutAuto(state.deviceProfiles)
-  if (state.outputProfiles) next.outputProfiles = profilesWithoutAuto(state.outputProfiles)
-  return next
-}
-
 export const useEqStore = create<EqState>()(
   persist(
     (set, get) => ({
@@ -372,7 +350,6 @@ export const useEqStore = create<EqState>()(
     {
       name: "plex-eq-v1",
       version: 1,
-      migrate: (saved, version) => version < 1 ? migrateAutoGainDefault(saved) : saved as Partial<EqState>,
       partialize: (state): Partial<EqState> => ({
         gains: state.gains,
         enabled: state.enabled,

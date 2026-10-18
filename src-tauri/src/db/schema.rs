@@ -34,6 +34,8 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (21, include_str!("migrations/V21__matching_associations.sql")),
     (22, include_str!("migrations/V22__matching_relationships.sql")),
     (23, include_str!("migrations/V23__matching_reverse_lookup.sql")),
+    // V24/V25 have already been used by development builds in other worktrees.
+    (26, include_str!("migrations/V26__client_state.sql")),
 ];
 
 /// Run all pending migrations against the given connection.
@@ -72,6 +74,17 @@ fn apply_migration(conn: &Connection, version: i64, sql: &str) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn client_storage_is_created_after_a_newer_development_schema() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "user_version", 25).unwrap();
+        run_migrations(&conn).unwrap();
+        conn.execute("INSERT INTO client_state(namespace,key,value,revision,updated_at) VALUES('local','test','\"saved\"',1,0)", []).unwrap();
+        run_migrations(&conn).unwrap();
+        let value: String = conn.query_row("SELECT value FROM client_state WHERE key='test'", [], |row| row.get(0)).unwrap();
+        assert_eq!(value, "\"saved\"");
+    }
 
     #[test]
     fn v9_upgrade_resumes_duplicate_tag_saves_without_rewriting_metadata_or_progress() {

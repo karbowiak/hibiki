@@ -14,7 +14,7 @@ const persistence = new PreferencePersistence({
     stored = undefined
   },
 })
-mock.module("../../src/stores/idbStorage", () => ({
+mock.module("../../src/stores/sqliteStorage", () => ({
   safePersist: persistenceMiddleware(persistence),
 }))
 const status = (revision: string, enabled = true) => ({

@@ -21,9 +21,9 @@ mock.module("@tauri-apps/api/event", () => ({ listen: async () => () => {} }))
 mock.module("@tauri-apps/api/core", () => ({ invoke(command: string, args: any) {
   const pending = deferred<any>(); requests.push({ command, args, pending }); return pending.promise
 } }))
-mock.module("../../src/stores/idbStorage", () => ({
+mock.module("../../src/stores/sqliteStorage", () => ({
   safePersist: (creator: any) => creator,
-  idbStorage: { getItem: async () => null, setItem: async () => {}, removeItem: async () => {} },
+  sqliteStorage: { getItem: async () => null, setItem: async () => {}, removeItem: async () => {} },
 }))
 const player = create<any>((set) => ({ currentTrack: null, isPlaying: false, playTrack: mock(async () => {}), pause: mock(() => set({ isPlaying: false })), resume: mock(() => set({ isPlaying: true })) }))
 mock.module("../../src/stores/playerStore", () => ({ usePlayerStore: player }))

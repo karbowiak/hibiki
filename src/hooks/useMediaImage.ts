@@ -260,7 +260,7 @@ export function useArtistArtwork(
     }), originalIdentity
   )
   // Warm the Deezer cache when this artist hasn't been fetched yet.
-  // Gate on hydration to avoid firing fetches before IndexedDB data loads.
+  // Gate on hydration to avoid firing fetches before SQLite data loads.
   useEffect(() => {
     if (
       !allowFetch ||
@@ -526,7 +526,7 @@ export function useAlbumArtwork(
     }), originalIdentity
   )
   // Warm caches when entries are missing.
-  // Gate on hydration to avoid firing fetches before IndexedDB data loads.
+  // Gate on hydration to avoid firing fetches before SQLite data loads.
   // An available lower-priority image must not prevent an upgrade.
   useEffect(() => {
     if (!allowFetch || !artistName || !albumName) return

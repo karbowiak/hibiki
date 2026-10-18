@@ -1,3 +1,4 @@
+import { backgroundActions } from "../background/actions"
 import { create } from "zustand"
 import { useProviderStore } from "./providerStore"
 import { useLastfmStore } from "../metadata/lastfm/authStore"
@@ -30,6 +31,7 @@ import { matchTrack, recordingMbid } from "../playlistSync/matching"
 import type { MusicProvider } from "../providers/types"
 import type { MusicTrack } from "../types/music"
 import { beginActivity } from "../activity/store"
+import { favoriteMatchBacklog, favoriteMatchingProgress } from "../favorites/matchingProgress"
 interface State {
   collection: FavoriteState
   likedTrackIds: Set<string>
@@ -39,6 +41,8 @@ interface State {
   loaded: boolean
   loading: boolean
   running: boolean
+  /** Local user changes only; provider imports/checkpoints never request sync. */
+  syncRequest: number
   resetting: boolean
   error: string | null
   issues: Partial<Record<FavoriteService, string>>
@@ -66,7 +70,7 @@ interface State {
     enabled: boolean,
     playlistId?: string
   ): Promise<void>
-  sync(options?: { retryUnknown?: boolean }): Promise<void>
+  sync(options?: { retryUnknown?: boolean; refresh?: boolean }): Promise<void>
   resetSync(): Promise<void>
   recoverPlex(id: string): Promise<void>
   matchMissing(force?: boolean): Promise<void>
@@ -79,6 +83,10 @@ let queue: Promise<unknown> = Promise.resolve(),
   loadingSession: unknown
 let syncOwner: { provider: MusicProvider; session: unknown } | undefined
 let matchEpoch = 0
+let matchOwner: { provider: MusicProvider; session: unknown; epoch: number } | undefined
+function requestSync() {
+  useFavoritesStore.setState(state => ({ syncRequest: state.syncRequest + 1 }))
+}
 function owns(provider: MusicProvider | null, session: unknown) {
   return (
     !!provider &&
@@ -102,6 +110,7 @@ export const useFavoritesStore = create<State>((set, get) => ({
   loaded: false,
   loading: false,
   running: false,
+  syncRequest: 0,
   resetting: false,
   error: null,
   issues: {},
@@ -322,6 +331,7 @@ export const useFavoritesStore = create<State>((set, get) => ({
     await get().update((state) =>
       setFavorite(state, favoriteReference(track), liked, true)
     )
+    requestSync()
   },
   async toggleEntry(id, liked) {
     await get().update((state) => {
@@ -335,6 +345,7 @@ export const useFavoritesStore = create<State>((set, get) => ({
         },
       }
     })
+    requestSync()
   },
   async assignRecording(id, mbid) {
     const verified = recordingMbid(mbid.trim())
@@ -352,6 +363,7 @@ export const useFavoritesStore = create<State>((set, get) => ({
         },
       }
     })
+    requestSync()
   },
   async seedRatings(tracks) {
     if (get().collection.ratingsImported) return
@@ -373,6 +385,7 @@ export const useFavoritesStore = create<State>((set, get) => ({
           })
       )
     })
+    requestSync()
   },
   async ratingChanged(id, title, artist, rating, track) {
     const intent = favoriteRatingIntent(rating, id)
@@ -388,6 +401,7 @@ export const useFavoritesStore = create<State>((set, get) => ({
           entries[key] = { ...entry, rating: intent }
       return { ...next, entries }
     })
+    requestSync()
     return intent
   },
   async confirmRating(intent, provider) {
@@ -433,6 +447,7 @@ export const useFavoritesStore = create<State>((set, get) => ({
             : state.bindings,
       }
     })
+    requestSync()
   },
   async resetSync() {
     const provider = useProviderStore.getState().provider,
@@ -537,6 +552,8 @@ export const useFavoritesStore = create<State>((set, get) => ({
       }
     const runIssues: Partial<Record<FavoriteService, string>> = {}
     set({ running: true })
+    const activity = beginActivity({ id: "favorite-sync", label: "Syncing liked songs", busy: true,
+      action: { label: "Liked songs", href: "/collection/tracks" } }, current)
     try {
       await syncFavorites(
         {
@@ -550,6 +567,12 @@ export const useFavoritesStore = create<State>((set, get) => ({
         current,
         {
           ...options,
+          onProgress: progress => {
+            const service = progress.service === "lastfm" ? "Last.fm" : progress.service === "listenbrainz" ? "ListenBrainz" : "Plex"
+            const verb = progress.stage === "reading" ? "Reading" : progress.stage === "verifying" ? "Verifying" : "Syncing"
+            activity.update({ detail: `${verb} ${service} liked songs`, progress: progress.total == null ? undefined :
+              { value: progress.completed, total: progress.total, label: progress.stage === "writing" ? "changes verified" : "liked songs read" } })
+          },
           onIssue: (service, message) => {
             if (!current()) return
             runIssues[service] = message
@@ -561,9 +584,9 @@ export const useFavoritesStore = create<State>((set, get) => ({
       )
       if (current()) {
         set({ issues: runIssues })
-        await get().matchMissing()
       }
     } finally {
+      activity.finish()
       active = false
       retireProvider()
       retireLb()
@@ -601,34 +624,27 @@ export const useFavoritesStore = create<State>((set, get) => ({
       }),
       provider
     )
+    requestSync()
   },
   async matchMissing(force = false) {
     const provider = useProviderStore.getState().provider,
       session = provider?.playbackSession
-    if (!provider || provider.isOffline || !get().loaded || get().resetting)
+    if (!provider || provider.isOffline || !get().loaded || get().resetting ||
+      (matchOwner?.provider === provider && matchOwner.session === session && matchOwner.epoch === matchEpoch))
       return
     const epoch = matchEpoch
     const current = () =>
       owns(provider, session) && epoch === matchEpoch && !get().resetting
-    const candidates = Object.values(get().collection.entries)
-      .filter(
-        (item) =>
-          item.liked &&
-          (force ||
-            !item.matchCheckedAt ||
-            Date.now() - item.matchCheckedAt > 86400000) &&
-          (!item.localTrackIds.length ||
-            (get().collection.settings.listenbrainz &&
-              !item.recordingMbid &&
-              !item.recordingMsid))
-      )
-      .sort((a, b) => (a.matchCheckedAt ?? 0) - (b.matchCheckedAt ?? 0))
-      .slice(0, 20)
+    const backlog = favoriteMatchBacklog(get().collection, force)
+    const candidates = backlog.slice(0, 20)
     if (!candidates.length) return
+    const run = { provider, session, epoch }
+    matchOwner = run
+    const progress = favoriteMatchingProgress(get().collection, backlog.length)
     let completed = 0
     const activity = beginActivity({ id: "favorite-matching", label: "Matching liked songs", busy: true,
       action: { label: "Liked songs", href: "/collection/tracks" },
-      progress: { value: 0, total: candidates.length, label: "Liked songs checked" } }, current)
+      progress: { value: progress.checked, total: progress.total, label: "Liked songs checked" } }, current)
     try {
       for (const item of candidates) {
         if (!current()) return
@@ -700,10 +716,10 @@ export const useFavoritesStore = create<State>((set, get) => ({
           }
         }, provider)
         completed++
-        activity.update({ detail: `${completed} of ${candidates.length} songs checked in this batch`,
-          progress: { value: completed, total: candidates.length, label: "Liked songs checked" } })
+        activity.update({ detail: `${progress.checked + completed} of ${progress.total} liked songs checked`,
+          progress: { value: progress.checked + completed, total: progress.total, label: "Liked songs checked" } })
       }
-    } finally { activity.finish() }
+    } finally { activity.finish(); if (matchOwner === run) matchOwner = undefined }
   },
   async linkTrack(entryId, track) {
     await get().update((state) => {
@@ -724,5 +740,8 @@ export const useFavoritesStore = create<State>((set, get) => ({
         },
       }
     })
+    requestSync()
   },
 }))
+
+backgroundActions("favorites", useFavoritesStore, ["sync", "matchMissing"])

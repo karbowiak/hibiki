@@ -19,7 +19,8 @@ export function hasIndependentAudio(track: MusicTrack): boolean {
 }
 
 export function youtubeMusicTrack(song: YoutubeMusicSong): MusicTrack {
-  if (!/^[A-Za-z0-9_-]{11}$/.test(song.videoId))
+  const valid = /^[A-Za-z0-9_-]{11}$/.test(song.videoId)
+  if (!valid && !song.unavailable)
     throw Error("Choose a valid YouTube Music song.")
   const parts = song.duration?.split(":").map(Number) ?? []
   const duration =
@@ -35,11 +36,11 @@ export function youtubeMusicTrack(song: YoutubeMusicSong): MusicTrack {
   // Use the shared native disk cache. Older saved queues have no artwork URL;
   // the public video thumbnail recovers their cover without another API lookup.
   const thumbnail = buildExternalImageUrl(
-    song.thumbnail || `https://i.ytimg.com/vi/${song.videoId}/hqdefault.jpg`
+    song.thumbnail || (valid ? `https://i.ytimg.com/vi/${song.videoId}/hqdefault.jpg` : null)
   )
   return {
     id,
-    streamUrl: id,
+    streamUrl: song.unavailable ? undefined : id,
     providerKey: "ytmusic",
     title: song.title,
     artistName: song.artist,

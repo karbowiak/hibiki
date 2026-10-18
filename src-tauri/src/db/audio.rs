@@ -106,11 +106,11 @@ pub struct Job {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivitySummary {
-    queued: u64,
-    downloading: u64,
+    pub(crate) queued: u64,
+    pub(crate) downloading: u64,
     paused: u64,
     failed: u64,
-    downloaded: u64,
+    pub(crate) downloaded: u64,
     received: u64,
     total: Option<u64>,
 }

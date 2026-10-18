@@ -11,7 +11,7 @@ pub struct ArtistCredit {
     pub id: Option<String>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Item {
     pub id: String,
@@ -38,6 +38,8 @@ pub struct Item {
     pub playlist_item_id: Option<String>,
     #[serde(default)]
     pub video_type: Option<String>,
+    #[serde(default)]
+    pub unavailable: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -201,7 +203,7 @@ fn card(value: &Value, collection: bool, live: bool) -> Option<Item> {
             description: text(&panel["longBylineText"]), artist, artist_credits, thumbnail: thumbnail(panel),
             duration: Some(text(&panel["lengthText"])).filter(|value| !value.is_empty()), album, year: None, release_date: None, track_count: None,
             album_id, artist_id, track_number: None, explicit: None, view_count: None, liked: liked(panel), playlist_item_id: None,
-            video_type: video_type.map(str::to_owned) });
+            video_type: video_type.map(str::to_owned), unavailable: false });
     }
     let flat = value.get("musicResponsiveListItemRenderer");
     let item = flat.or_else(|| value.get("musicTwoRowItemRenderer"))
@@ -317,7 +319,7 @@ fn card(value: &Value, collection: bool, live: bool) -> Option<Item> {
     Some(Item { id, kind: kind.into(), title, description: text(subtitle), artist: artists.join(", "), artist_credits, thumbnail: thumbnail(item), duration, album, year, release_date, track_count,
         album_id, artist_id, track_number, explicit, view_count, liked: liked(item),
         video_type: watch.and_then(|watch| find(watch, "musicVideoType", 0)).and_then(Value::as_str).map(str::to_owned),
-        playlist_item_id: item.pointer("/playlistItemData/playlistSetVideoId").or_else(|| find(item, "setVideoId", 0)).and_then(Value::as_str).map(str::to_owned) })
+        playlist_item_id: item.pointer("/playlistItemData/playlistSetVideoId").or_else(|| find(item, "setVideoId", 0)).and_then(Value::as_str).map(str::to_owned), unavailable: false })
 }
 
 fn items(value: &Value, output: &mut Vec<Item>, collection: bool, depth: usize) {
@@ -543,10 +545,37 @@ impl CatalogRequest {
         let path = self.directory.as_ref()?.join(format!("{}.json", self.key.as_ref()?));
         state.discovery_cache.read(path).await
     }
+
+    async fn cached(&self, app: &tauri::AppHandle, client_revision: Option<u64>) -> Result<Option<BrowsePage>, String> {
+        let state = app.state::<Arc<YoutubeMusic>>();
+        let Some(saved) = self.saved(&state).await else { return Ok(None); };
+        if !state.owns(self.generation) { return Err("YouTube Music connection changed.".into()); }
+        if !saved.fresh {
+            let key = self.key.as_deref().unwrap_or(&self.query.browse_id);
+            let lock = state.discovery_cache.request(key);
+            if let Ok(guard) = lock.try_lock_owned() {
+                if state.discovery_cache.begin_refresh(key) {
+                    let app = app.clone();
+                    let request = self.clone();
+                    let previous = saved.page.clone();
+                    crate::background_jobs::advisory(crate::background_jobs::Lane::Refresh, "Refreshing YTM catalog", async move {
+                        let _guard = guard;
+                        if let Ok(page) = fetch(&app, &request).await {
+                            let state = app.state::<Arc<YoutubeMusic>>();
+                            if state.owns(request.generation) && serde_json::to_value(&previous).ok() != serde_json::to_value(&page).ok() {
+                                let _ = app.emit_to("main", "ytmusic://catalog", Update { query: request.query, client_revision, page });
+                            }
+                        }
+                    });
+                }
+            }
+        }
+        Ok(Some(saved.page))
+    }
 }
 
-pub async fn browse(app: &tauri::AppHandle, id: &str, params: Option<&str>, token: Option<&str>, force: bool,
-    performances: bool, client_revision: Option<u64>) -> Result<BrowsePage, String> {
+fn catalog_request(app: &tauri::AppHandle, id: &str, params: Option<&str>, token: Option<&str>,
+    performances: bool) -> Result<CatalogRequest, String> {
     if !valid_id(id) || params.is_some_and(|p| p.len() > 16384) || token.is_some_and(|t| t.is_empty() || t.len() > 16384) {
         return Err("Invalid YouTube Music collection.".into());
     }
@@ -562,37 +591,29 @@ pub async fn browse(app: &tauri::AppHandle, id: &str, params: Option<&str>, toke
     // Older search snapshots omitted the featured result. Leave other catalog
     // caches intact, but fetch search data again with the complete parser.
     let cache_id = format!("credits-v1:{}", if search { format!("search-v2:{cache_id}") } else { cache_id });
-    let request = CatalogRequest {
+    Ok(CatalogRequest {
         query: Query { browse_id: id.into(), params: params.map(str::to_owned), continuation: token.map(str::to_owned), include_performances: performances },
         generation: state.generation()?, cache_epoch: state.discovery_cache.epoch(),
         directory: app.path().app_cache_dir().ok().map(|directory| directory.join("ytmusic-discovery")),
         key: playback::cache_owner(app).ok().map(|owner| discovery_cache::key(&owner, &cache_id, params, token)),
-    };
-    let lock = state.discovery_cache.request(request.key.as_deref().unwrap_or(id));
+    })
+}
+
+/// Cached matching lookups are reads, not new Butler jobs. Stale pages keep the
+/// same coalesced SWR refresh as foreground browsing; misses enter the queue.
+pub(super) async fn cached_browse(app: &tauri::AppHandle, id: &str, params: Option<&str>, token: Option<&str>,
+    performances: bool, client_revision: Option<u64>) -> Result<Option<BrowsePage>, String> {
+    catalog_request(app, id, params, token, performances)?.cached(app, client_revision).await
+}
+
+pub async fn browse(app: &tauri::AppHandle, id: &str, params: Option<&str>, token: Option<&str>, force: bool,
+    performances: bool, client_revision: Option<u64>) -> Result<BrowsePage, String> {
+    let request = catalog_request(app, id, params, token, performances)?;
     if !force {
-        if let Some(saved) = request.saved(&state).await {
-            if !state.owns(request.generation) { return Err("YouTube Music connection changed.".into()); }
-            if !saved.fresh {
-                if let Ok(guard) = lock.clone().try_lock_owned() {
-                    if state.discovery_cache.begin_refresh(request.key.as_deref().unwrap_or(id)) {
-                        let app = app.clone();
-                        let request = request.clone();
-                        let previous = saved.page.clone();
-                        tauri::async_runtime::spawn(async move {
-                            let _guard = guard;
-                            if let Ok(page) = fetch(&app, &request).await {
-                                let state = app.state::<Arc<YoutubeMusic>>();
-                                if state.owns(request.generation) && serde_json::to_value(&previous).ok() != serde_json::to_value(&page).ok() {
-                                    let _ = app.emit_to("main", "ytmusic://catalog", Update { query: request.query, client_revision, page });
-                                }
-                            }
-                        });
-                    }
-                }
-            }
-            return Ok(saved.page);
-        }
+        if let Some(page) = request.cached(app, client_revision).await? { return Ok(page); }
     }
+    let state = app.state::<Arc<YoutubeMusic>>();
+    let lock = state.discovery_cache.request(request.key.as_deref().unwrap_or(id));
     let _guard = lock.lock().await;
     if !state.owns(request.generation) { return Err("YouTube Music connection changed.".into()); }
     let previous = request.saved(&state).await;
@@ -607,6 +628,7 @@ pub async fn browse(app: &tauri::AppHandle, id: &str, params: Option<&str>, toke
 }
 
 async fn fetch(app: &tauri::AppHandle, request: &CatalogRequest) -> Result<BrowsePage, String> {
+    crate::background_jobs::report("Fetching YTM catalog", None, 0, None, "pages").await?;
     let state = app.state::<Arc<YoutubeMusic>>();
     let generation = request.generation;
     if !state.owns(generation) { return Err("YouTube Music connection changed.".into()); }

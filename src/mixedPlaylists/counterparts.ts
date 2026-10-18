@@ -1,4 +1,4 @@
-import { get, set } from "idb-keyval"
+import { get, set } from "../storage/clientStorage"
 import { playlistJournalDatabase } from "../playlistSync/journal"
 import { useProviderStore } from "../stores/providerStore"
 import { browseYoutubeMusic, useYoutubeMusicDiscoveryStore, youtubeMusicItemTrack } from "../backends/ytmusic/discovery"
@@ -104,7 +104,7 @@ export function resolveCounterpart(track: MusicTrack, target: Service, force = f
         // Individual ranked searches are reserved for remaining catalog misses.
         candidates = await youtubeCounterpartCandidates(track, {
           current: owner.current, fuzzy: mode === "playlist", catalog: catalogCandidates, search: async query => {
-            const page = await browseYoutubeMusic({ browseId: "hibiki_song_search", params: query }, null, force)
+            const page = await browseYoutubeMusic({ browseId: "hibiki_song_search", params: query }, null, force, false, true)
             return page.items.filter(item => item.kind === "song").map(youtubeMusicItemTrack)
           } })
       }
@@ -136,7 +136,7 @@ export function createPlaylistCounterpartResolver(tracks: MusicTrack[], force = 
   const owner = captureMusicOwner()
   const owns = () => current() && owner.current()
   const catalog = createYoutubeCatalogMatcher(tracks, { current: owns, toTrack: youtubeMusicItemTrack,
-    browse: (destination, cursor) => browseYoutubeMusic(destination, cursor, force),
+    browse: (destination, cursor) => browseYoutubeMusic(destination, cursor, force, false, true),
     knownArtists: async group => {
       const ids = [...new Set(group.flatMap(track => itemArtistCredits(track)[0]?.id ? [itemArtistCredits(track)[0].id!] : []))].slice(0, 3)
       const sources = []

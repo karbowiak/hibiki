@@ -1,4 +1,4 @@
-import { get, update } from "idb-keyval"
+import { get, update } from "../storage/clientStorage"
 import { playlistJournalDatabase } from "../playlistSync/journal"
 import { sameOwners, type MixedPlaylist } from "./model"
 import { retainLibraryDates, type LibraryDates } from "./libraryDates"
