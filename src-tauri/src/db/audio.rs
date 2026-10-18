@@ -103,6 +103,42 @@ pub struct Job {
     pub error: Option<String>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivitySummary {
+    queued: u64,
+    downloading: u64,
+    paused: u64,
+    failed: u64,
+    downloaded: u64,
+    received: u64,
+    total: Option<u64>,
+}
+
+/// One compact, scoped snapshot. Jobs are unique by song, even when several
+/// albums/playlists request the same file. No audio bodies or metadata are read.
+pub fn activity(conn: &Connection, scope: &str) -> Result<ActivitySummary, String> {
+    super::offline::check_identity(scope, "downloads")?;
+    conn.query_row(
+        "SELECT COALESCE(SUM(status='queued'),0), COALESCE(SUM(status='downloading'),0),
+         COALESCE(SUM(status='paused'),0), COALESCE(SUM(status='error'),0),
+         COALESCE(SUM(status='downloaded'),0),
+         COALESCE(MAX(CASE WHEN status='downloading' THEN received END),0),
+         MAX(CASE WHEN status='downloading' THEN total END)
+         FROM audio_download_jobs WHERE scope=?1",
+        [scope],
+        |row| Ok(ActivitySummary {
+            queued: row.get::<_, i64>(0)?.max(0) as u64,
+            downloading: row.get::<_, i64>(1)?.max(0) as u64,
+            paused: row.get::<_, i64>(2)?.max(0) as u64,
+            failed: row.get::<_, i64>(3)?.max(0) as u64,
+            downloaded: row.get::<_, i64>(4)?.max(0) as u64,
+            received: row.get::<_, i64>(5)?.max(0) as u64,
+            total: row.get::<_, Option<i64>>(6)?.map(|n| n.max(0) as u64),
+        }),
+    ).map_err(|_| "Cannot read download activity".to_string())
+}
+
 pub fn jobs(conn: &Connection, scope: &str, offset: u32, limit: u32) -> Result<Vec<Job>, String> {
     super::offline::check_identity(scope, "downloads")?;
     let mut query=conn.prepare("SELECT track_id,revision,status,cache_key,received,total,error FROM audio_download_jobs WHERE scope=?1 ORDER BY created_at DESC,track_id LIMIT ?2 OFFSET ?3")
@@ -184,6 +220,23 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         super::super::schema::run_migrations(&conn).unwrap();
         (conn, format!("plex-{}", "a".repeat(64)))
+    }
+    #[test]
+    fn activity_counts_unique_jobs_only_in_the_requested_library() {
+        let (conn, scope) = fixture();
+        let other = format!("plex-{}", "b".repeat(64));
+        enqueue(&conn, &scope, &[1, 1, 2, 3, 4, 5], 1).unwrap();
+        enqueue(&conn, &other, &[1, 2], 1).unwrap();
+        for (id, status) in [(2, "downloading"), (3, "paused"), (4, "error"), (5, "downloaded")] {
+            let mut job = jobs_for_id(&conn, &scope, id).unwrap().unwrap();
+            job.status = status.into(); job.received = 25; job.total = Some(100);
+            update(&conn, &scope, &job).unwrap();
+        }
+        let result = activity(&conn, &scope).unwrap();
+        assert_eq!((result.queued, result.downloading, result.paused, result.failed, result.downloaded), (1, 1, 1, 1, 1));
+        assert_eq!((result.received, result.total), (25, Some(100)));
+        assert_eq!(activity(&conn, &other).unwrap().queued, 2);
+        assert_eq!(activity(&conn, &format!("plex-{}", "c".repeat(64))).unwrap().queued, 0);
     }
     #[test]
     fn owned_bindings_do_not_adopt_legacy_ids_or_save_credentials() {

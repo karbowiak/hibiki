@@ -32,6 +32,7 @@ interface State {
   entries: Record<string, YoutubeMusicRating>
   loaded: boolean
   saving: Record<string, boolean>
+  syncing: Record<string, { current(): boolean }>
   load(owner: string): Promise<void>
   rate(track: MusicTrack, value: number | null): Promise<boolean>
   resume(): Promise<void>
@@ -60,79 +61,89 @@ async function syncSong(owner: string, trackId: string) {
   const work = (async () => {
     const capture = captureMusicOwner()
     const current = () => capture.current() && capture.owners.ytmusic === owner && useYoutubeMusicRatingsStore.getState().owner === owner
-    for (let pass = 0; pass < 8 && current(); pass++) {
-      let entry = useYoutubeMusicRatingsStore.getState().entries[trackId]
-      if (!entry) return
-      const intent = entry.id
-      const latest = () => current() && useYoutubeMusicRatingsStore.getState().entries[trackId]?.id === intent
-      const acknowledge = async (service: keyof YoutubeMusicRating["saved"], account: string) => {
-        if (!latest()) return
-        entry = { ...useYoutubeMusicRatingsStore.getState().entries[trackId], error: undefined,
-          saved: { ...useYoutubeMusicRatingsStore.getState().entries[trackId].saved, [service]: account } }
-        await retain(entry, intent)
-      }
-      const failures: string[] = []
-      if (entry.saved.ytmusic !== owner) try {
+    if (!current()) return
+    useYoutubeMusicRatingsStore.setState(state => ({ syncing: { ...state.syncing, [trackId]: { current } } }))
+    try {
+      for (let pass = 0; pass < 8 && current(); pass++) {
+        let entry = useYoutubeMusicRatingsStore.getState().entries[trackId]
+        if (!entry) return
+        const intent = entry.id
+        const latest = () => current() && useYoutubeMusicRatingsStore.getState().entries[trackId]?.id === intent
+        const acknowledge = async (service: keyof YoutubeMusicRating["saved"], account: string) => {
+          if (!latest()) return
+          entry = { ...useYoutubeMusicRatingsStore.getState().entries[trackId], error: undefined,
+            saved: { ...useYoutubeMusicRatingsStore.getState().entries[trackId].saved, [service]: account } }
+          await retain(entry, intent)
+        }
+        const failures: string[] = []
+        if (entry.saved.ytmusic !== owner) try {
+          if (!latest()) continue
+          const liked = youtubeRatingLiked(entry.value)
+          await invoke("ytmusic_set_song_like", { videoId: trackId.slice(8), liked, expectedAccount: owner })
+          if (!latest()) continue
+          useYoutubeMusicLikesStore.setState(state => ({ mutation: state.mutation + 1, entries: { ...state.entries,
+            [trackId]: { ...state.entries[trackId], track: entry.track, liked, manual: true, checking: false, saving: false, error: null, changedAt: new Date(entry.changedAt).toISOString() } } }))
+          await acknowledge("ytmusic", owner)
+        } catch { failures.push("YouTube Music like is pending.") }
         if (!latest()) continue
-        const liked = youtubeRatingLiked(entry.value)
-        await invoke("ytmusic_set_song_like", { videoId: trackId.slice(8), liked, expectedAccount: owner })
+        let matched: MusicTrack | undefined, recordingMbid: string | undefined
+        if (entry.plexOwner && entry.plexOwner === capture.owners.plex && capture.provider && !capture.provider.isOffline && entry.saved.plex !== entry.plexOwner) {
+          try {
+            const match = await resolveCounterpart(entry.track, "plex")
+            if (!latest()) continue
+            if (match.status !== "matched") throw Error(match.status === "ambiguous" ? "Plex match is ambiguous." : "Plex recording has not been matched yet.")
+            matched = match.track
+            const favorites = useFavoritesStore.getState()
+            if (!favorites.loaded || favorites.provider !== capture.provider || favorites.session !== capture.provider.playbackSession) await favorites.load(capture.provider)
+            if (!latest()) continue
+            const rating = await useFavoritesStore.getState().ratingChanged(matched.id, matched.title, matched.artistName, entry.value, matched)
+            if (!latest()) continue
+            await saveTrackRatingToPlex(capture.provider, rating)
+            if (!latest()) continue
+            await acknowledge("plex", entry.plexOwner)
+          } catch (failure) { failures.push(failure instanceof Error ? failure.message : "Plex rating is pending.") }
+        }
         if (!latest()) continue
-        useYoutubeMusicLikesStore.setState(state => ({ mutation: state.mutation + 1, entries: { ...state.entries,
-          [trackId]: { ...state.entries[trackId], track: entry.track, liked, manual: true, checking: false, saving: false, error: null, changedAt: new Date(entry.changedAt).toISOString() } } }))
-        await acknowledge("ytmusic", owner)
-      } catch { failures.push("YouTube Music like is pending.") }
-      if (!latest()) continue
-      let matched: MusicTrack | undefined, recordingMbid: string | undefined
-      if (entry.plexOwner && entry.plexOwner === capture.owners.plex && capture.provider && !capture.provider.isOffline && entry.saved.plex !== entry.plexOwner) {
-        try {
-          const match = await resolveCounterpart(entry.track, "plex")
-          if (!latest()) continue
-          if (match.status !== "matched") throw Error(match.status === "ambiguous" ? "Plex match is ambiguous." : "Plex recording has not been matched yet.")
-          matched = match.track
-          const favorites = useFavoritesStore.getState()
-          if (!favorites.loaded || favorites.provider !== capture.provider || favorites.session !== capture.provider.playbackSession) await favorites.load(capture.provider)
-          if (!latest()) continue
-          const rating = await useFavoritesStore.getState().ratingChanged(matched.id, matched.title, matched.artistName, entry.value, matched)
-          if (!latest()) continue
-          await saveTrackRatingToPlex(capture.provider, rating)
-          if (!latest()) continue
-          await acknowledge("plex", entry.plexOwner)
-        } catch (failure) { failures.push(failure instanceof Error ? failure.message : "Plex rating is pending.") }
-      }
-      if (!latest()) continue
-      for (const service of ["lastfm", "listenbrainz"] as const) {
-        const state = service === "lastfm" ? useLastfmStore.getState() : useListenBrainzStore.getState()
-        if (!state.isAuthenticated || !state.isEnabled || !state.username || entry.serviceOwners?.[service] !== state.username || entry.saved[service] === state.username) continue
-        const accountName = state.username
-        const serviceCurrent = () => latest() && (service === "lastfm" ? useLastfmStore.getState() : useListenBrainzStore.getState()).username === accountName
-        try {
-          const account = await favoritesRemote.account(service)
-          if (!serviceCurrent() || account.user !== accountName) continue
-          if (service === "listenbrainz") {
-            if (!matched && capture.provider && entry.plexOwner === capture.owners.plex) {
-              const result = await resolveCounterpart(entry.track, "plex")
-              if (result.status === "matched") matched = result.track
+        for (const service of ["lastfm", "listenbrainz"] as const) {
+          const state = service === "lastfm" ? useLastfmStore.getState() : useListenBrainzStore.getState()
+          if (!state.isAuthenticated || !state.isEnabled || !state.username || entry.serviceOwners?.[service] !== state.username || entry.saved[service] === state.username) continue
+          const accountName = state.username
+          const serviceCurrent = () => latest() && (service === "lastfm" ? useLastfmStore.getState() : useListenBrainzStore.getState()).username === accountName
+          try {
+            const account = await favoritesRemote.account(service)
+            if (!serviceCurrent() || account.user !== accountName) continue
+            if (service === "listenbrainz") {
+              if (!matched && capture.provider && entry.plexOwner === capture.owners.plex) {
+                const result = await resolveCounterpart(entry.track, "plex")
+                if (result.status === "matched") matched = result.track
+              }
+              if (!serviceCurrent()) continue
+              if (matched && capture.provider?.resolvePlaylistRecording) {
+                const resolved = await capture.provider.resolvePlaylistRecording({ id: matched.id, title: matched.title, artist: matched.artistName, album: matched.albumName, durationMs: matched.duration })
+                if (resolved.status === "verified") recordingMbid = resolved.recordingMbid
+              }
+              if (!recordingMbid) throw Error("ListenBrainz feedback is pending a verified recording ID.")
             }
             if (!serviceCurrent()) continue
-            if (matched && capture.provider?.resolvePlaylistRecording) {
-              const resolved = await capture.provider.resolvePlaylistRecording({ id: matched.id, title: matched.title, artist: matched.artistName, album: matched.albumName, durationMs: matched.duration })
-              if (resolved.status === "verified") recordingMbid = resolved.recordingMbid
-            }
-            if (!recordingMbid) throw Error("ListenBrainz feedback is pending a verified recording ID.")
-          }
-          if (!serviceCurrent()) continue
-          const record = { key: `${service}:${trackId}`, title: entry.track.title, artist: entry.track.originalTitle || entry.track.artistName,
-            album: entry.track.albumName, durationMs: entry.track.duration, recordingMbid }
-          const before = await favoritesRemote.peek(account, record)
-          if (!serviceCurrent()) continue
-          const desired = scrobbleRatingLoved(entry.value)
-          if (before !== desired && await favoritesRemote.set(account, record, desired, before) !== desired) throw Error("Feedback could not be verified.")
-          if (serviceCurrent()) await acknowledge(service, accountName)
-        } catch (failure) { failures.push(failure instanceof Error ? failure.message : `${service} feedback is pending.`) }
+            const record = { key: `${service}:${trackId}`, title: entry.track.title, artist: entry.track.originalTitle || entry.track.artistName,
+              album: entry.track.albumName, durationMs: entry.track.duration, recordingMbid }
+            const before = await favoritesRemote.peek(account, record)
+            if (!serviceCurrent()) continue
+            const desired = scrobbleRatingLoved(entry.value)
+            if (before !== desired && await favoritesRemote.set(account, record, desired, before) !== desired) throw Error("Feedback could not be verified.")
+            if (serviceCurrent()) await acknowledge(service, accountName)
+          } catch (failure) { failures.push(failure instanceof Error ? failure.message : `${service} feedback is pending.`) }
+        }
+        if (!latest()) continue
+        await retain({ ...entry, error: failures.length ? failures.join(" ") : undefined }, intent)
+        return
       }
-      if (!latest()) continue
-      await retain({ ...entry, error: failures.length ? failures.join(" ") : undefined }, intent)
-      return
+    } finally {
+      if (useYoutubeMusicRatingsStore.getState().owner === owner)
+        useYoutubeMusicRatingsStore.setState(state => {
+          const syncing = { ...state.syncing }; delete syncing[trackId]
+          return { syncing }
+        })
     }
   })()
   lanes.set(lane, work)
@@ -144,13 +155,13 @@ async function syncSong(owner: string, trackId: string) {
 }
 
 export const useYoutubeMusicRatingsStore = create<State>((set, state) => ({
-  owner: null, entries: {}, loaded: false, saving: {},
+  owner: null, entries: {}, loaded: false, saving: {}, syncing: {},
   load: owner => {
     if (state().owner === owner && state().loaded) return Promise.resolve()
     const pending = pendingLoads.get(owner)
     if (pending && state().owner === owner) return pending
     const version = ++loadVersion
-    set({ owner, entries: {}, loaded: false })
+    set({ owner, entries: {}, loaded: false, syncing: {} })
     const work = (async () => {
       const entries = (await get<Record<string, YoutubeMusicRating>>(key(owner), playlistJournalDatabase())) ?? {}
       if (version !== loadVersion || state().owner !== owner) return

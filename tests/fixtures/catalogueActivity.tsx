@@ -4,6 +4,7 @@ import { JSDOM } from "jsdom"
 import { act } from "react"
 import { createRoot } from "react-dom/client"
 import { create } from "zustand"
+import type { Activity } from "../../src/activity/model"
 const dom = new JSDOM("<div id='root'></div>", { url: "https://hibiki.test/" })
 Object.assign(globalThis, {
   window: dom.window,
@@ -19,6 +20,10 @@ const library = create(() => ({
   libraryScanProgress: null as number | null,
 }))
 mock.module("../../src/stores/index.ts", () => ({ useLibraryStore: library }))
+const background = create(() => ({ rows: [] as Activity[] }))
+mock.module("../../src/activity/useBackgroundActivities.ts", () => ({ useBackgroundActivities: () => background(state => state.rows) }))
+const routes: string[] = []
+mock.module("wouter", () => ({ useLocation: () => ["/", (href: string) => routes.push(href)] }))
 const calls: string[] = []
 mock.module("@tauri-apps/api/core", () => ({
   invoke: async (command: string) => {
@@ -70,6 +75,24 @@ await act(async () => {
 })
 assert.equal(opener.title, "1 active operation")
 assert.match(document.body.textContent!, /Library scanning · 50%/)
+await act(async () => {
+  library.setState({ libraryScanning: false })
+  background.setState({ rows: [
+    { id: "matching", label: "I got the need, for speed!", detail: "Matching YTM\n100 of 307 songs checked\nYTM · 70 available · 60 synced", busy: true,
+      progress: { label: "Songs checked", value: 100, total: 307 } },
+    { id: "review", label: "Another playlist", detail: "Sync needs review", state: "paused",
+      action: { label: "Review sync", href: "/mixed-playlist/example?info=sync" } },
+  ] })
+})
+assert.equal(opener.title, "1 active operation")
+assert.match(document.body.textContent!, /70 available · 60 synced/)
+assert.equal(document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow"), "100")
+await act(async () => {
+  ;(Array.from(document.querySelectorAll("button")).find(button => button.textContent === "Review sync") as HTMLButtonElement).click()
+})
+assert.deepEqual(routes, ["/mixed-playlist/example?info=sync"])
+assert.equal(document.querySelector('[role="dialog"]'), null)
+assert.deepEqual(calls, [], "activity actions only navigate; they never retry an uncertain write")
 await act(async () => {
   root.unmount()
 })

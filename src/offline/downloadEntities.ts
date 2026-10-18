@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core"
 import type { MusicProvider } from "../providers/types"
 import type { PlexRequestContext } from "../backends/plex/scopedApi"
+import { beginActivity } from "../activity/store"
+import { refreshNativeActivity } from "../activity/native"
 
 export type DownloadKind = "track" | "album" | "artist" | "playlist"
 export interface DownloadEntity {
@@ -82,12 +84,15 @@ export function createEntityDownloads(
       call<EntityDownloadStatus[]>("download_entity_status", {
         entities: entities.map((item) => entity(item.kind, item.id)),
       }),
-    download: (kind: DownloadKind, id: string) => {
+    download: (kind: DownloadKind, id: string, title?: string) => {
       if (owner.provider.isOffline)
         return Promise.reject(
           new Error("Reconnect to Plex before downloading.")
         )
-      return call<number>("download_entity", entity(kind, id))
+      const args = entity(kind, id)
+      const activity = beginActivity({ id: `download-prepare:${context.cacheScope}:${kind}:${id}`,
+        label: `Preparing ${kind} download`, detail: title ? `${title}\nReading songs from Plex` : "Reading songs from Plex", busy: true }, owns)
+      return call<number>("download_entity", args).finally(() => { activity.finish(); refreshNativeActivity() })
     },
     issues: (kind: DownloadKind, id: string, offset = 0) =>
       call<{ items: DownloadIssue[]; total: number }>(
@@ -95,6 +100,6 @@ export function createEntityDownloads(
         { ...entity(kind, id), offset }
       ),
     remove: (kind: DownloadKind, id: string) =>
-      call<void>("remove_entity_download", entity(kind, id)),
+      call<void>("remove_entity_download", entity(kind, id)).finally(refreshNativeActivity),
   }
 }

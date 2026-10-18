@@ -18,6 +18,7 @@ import { useNotificationCenterStore } from "../../stores/notificationCenterStore
 export function DownloadMenuItems({
   kind,
   id,
+  title,
   close,
   current,
 }: {
@@ -42,7 +43,7 @@ export function DownloadMenuItems({
     close()
     try {
       if (remove) await api.remove(kind, id)
-      else await api.download(kind, id)
+      else await api.download(kind, id, title)
       if (!owns()) return
       refreshDownloadStatuses()
     } catch (reason) {

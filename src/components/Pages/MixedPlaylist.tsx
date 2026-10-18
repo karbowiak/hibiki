@@ -1,6 +1,7 @@
 import { Button } from "../shared/Button"
 import { Checkbox } from "../shared/Checkbox"
 import { useEffect, useMemo, useRef, useState } from "react"
+import { useLocation, useSearch } from "wouter"
 import { mixedPlaylistTracks, playMixedPlaylist } from "../../mixedPlaylists/playback"
 import { useMixedPlaylistStore } from "../../stores/mixedPlaylistStore"
 import { useProviderStore } from "../../stores/providerStore"
@@ -37,6 +38,14 @@ export function MixedPlaylist({ id }: { id: string }) {
   useEffect(() => { setNoCreation(false); setNoExternalCreation(false) }, [id, playlist?.write?.id, playlist?.listenbrainz?.link?.id])
   const [editing, setEditing] = useState(false)
   const [information, setInformation] = useState(false)
+  const search = useSearch()
+  const [location, navigate] = useLocation()
+  useEffect(() => {
+    if (new URLSearchParams(search).get("info") === "sync") {
+      setInformation(true)
+      navigate(location, { replace: true })
+    }
+  }, [id, search, location, navigate])
   const [matchLimit, setMatchLimit] = useState(50)
   const menuOwner = useMemo(() => ({}), [id])
   useEffect(() => () => {

@@ -29,6 +29,7 @@ import { retrievePlaylistCandidates } from "../playlistSync/candidateRetrieval"
 import { matchTrack, recordingMbid } from "../playlistSync/matching"
 import type { MusicProvider } from "../providers/types"
 import type { MusicTrack } from "../types/music"
+import { beginActivity } from "../activity/store"
 interface State {
   collection: FavoriteState
   likedTrackIds: Set<string>
@@ -623,76 +624,86 @@ export const useFavoritesStore = create<State>((set, get) => ({
       )
       .sort((a, b) => (a.matchCheckedAt ?? 0) - (b.matchCheckedAt ?? 0))
       .slice(0, 20)
-    for (const item of candidates) {
-      if (!current()) return
-      let localId = item.localTrackIds[0],
-        mbid = item.recordingMbid
-      try {
-        if (!localId && item.title && item.artist) {
-          const track = {
-            id: item.id,
-            title: item.title,
-            artist: item.artist,
-            album: item.album,
-            durationMs: item.durationMs,
-            recordingMbid: item.recordingMbid,
+    if (!candidates.length) return
+    let completed = 0
+    const activity = beginActivity({ id: "favorite-matching", label: "Matching liked songs", busy: true,
+      action: { label: "Liked songs", href: "/collection/tracks" },
+      progress: { value: 0, total: candidates.length, label: "Liked songs checked" } }, current)
+    try {
+      for (const item of candidates) {
+        if (!current()) return
+        let localId = item.localTrackIds[0],
+          mbid = item.recordingMbid
+        try {
+          if (!localId && item.title && item.artist) {
+            const track = {
+              id: item.id,
+              title: item.title,
+              artist: item.artist,
+              album: item.album,
+              durationMs: item.durationMs,
+              recordingMbid: item.recordingMbid,
+            }
+            const found = await retrievePlaylistCandidates(
+              provider,
+              track,
+              current
+            )
+            const match = matchTrack(track, found)
+            if (match.status === "matched") localId = match.track.id
           }
-          const found = await retrievePlaylistCandidates(
-            provider,
-            track,
-            current
-          )
-          const match = matchTrack(track, found)
-          if (match.status === "matched") localId = match.track.id
+          if (
+            localId &&
+            !mbid &&
+            !item.recordingMsid &&
+            provider.resolvePlaylistRecording &&
+            get().collection.settings.listenbrainz
+          ) {
+            const track = await provider.getTrack(localId)
+            const result = await provider.resolvePlaylistRecording({
+              id: track.id,
+              title: track.title,
+              artist: favoriteReference(track).artist,
+              album: track.albumName,
+              durationMs: track.duration,
+            })
+            if (result.status === "verified") mbid = result.recordingMbid
+          }
+        } catch {
+          /* Unresolved records remain retained and can be searched again. */
         }
-        if (
-          localId &&
-          !mbid &&
-          !item.recordingMsid &&
-          provider.resolvePlaylistRecording &&
-          get().collection.settings.listenbrainz
-        ) {
-          const track = await provider.getTrack(localId)
-          const result = await provider.resolvePlaylistRecording({
-            id: track.id,
-            title: track.title,
-            artist: favoriteReference(track).artist,
-            album: track.albumName,
-            durationMs: track.duration,
-          })
-          if (result.status === "verified") mbid = result.recordingMbid
-        }
-      } catch {
-        /* Unresolved records remain retained and can be searched again. */
-      }
-      if (!current()) return
-      await get().update((state) => {
-        const latest = state.entries[item.id]
-        if (!latest || !current()) return state
-        const sameMatch =
-          JSON.stringify(latest.localTrackIds) ===
-          JSON.stringify(item.localTrackIds)
-        return {
-          ...state,
-          entries: {
-            ...state.entries,
-            [item.id]: {
-              ...latest,
-              localTrackIds:
-                sameMatch && localId
-                  ? [...new Set([localId, ...latest.localTrackIds])].slice(
-                      0,
-                      16
-                    )
-                  : latest.localTrackIds,
-              recordingMbid:
-                latest.recordingMbid || (sameMatch ? mbid : undefined),
-              matchCheckedAt: Date.now(),
+        if (!current()) return
+        await get().update((state) => {
+          const latest = state.entries[item.id]
+          if (!latest || !current()) return state
+          const sameMatch =
+            JSON.stringify(latest.localTrackIds) ===
+            JSON.stringify(item.localTrackIds)
+          return {
+            ...state,
+            entries: {
+              ...state.entries,
+              [item.id]: {
+                ...latest,
+                localTrackIds:
+                  sameMatch && localId
+                    ? [...new Set([localId, ...latest.localTrackIds])].slice(
+                        0,
+                        16
+                      )
+                    : latest.localTrackIds,
+                recordingMbid:
+                  latest.recordingMbid || (sameMatch ? mbid : undefined),
+                matchCheckedAt: Date.now(),
+              },
             },
-          },
-        }
-      }, provider)
-    }
+          }
+        }, provider)
+        completed++
+        activity.update({ detail: `${completed} of ${candidates.length} songs checked in this batch`,
+          progress: { value: completed, total: candidates.length, label: "Liked songs checked" } })
+      }
+    } finally { activity.finish() }
   },
   async linkTrack(entryId, track) {
     await get().update((state) => {

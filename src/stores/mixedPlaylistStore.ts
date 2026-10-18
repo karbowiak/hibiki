@@ -18,12 +18,14 @@ import type { MatchingUpdate } from "../matching/updates"
 import { queryIndexedMusic } from "../matching/service"
 import { trackMatchingSource } from "../matching/sources"
 import { mergedDraft, readMergeSource, revalidateMerge, type MergePreview } from "../mixedPlaylists/merge"
+import type { PlaylistActivityPhase } from "../activity/model"
 
 interface State {
   playlists: MixedPlaylist[]
   loaded: boolean
   error: string | null
   running: Record<string, boolean>
+  phases: Record<string, PlaylistActivityPhase | undefined>
   load(): Promise<void>
   createDraft(metadata: DraftMetadata, id?: string): Promise<MixedPlaylist>
   createMerge(preview: MergePreview, metadata: DraftMetadata, id: string): Promise<MixedPlaylist>
@@ -75,7 +77,7 @@ async function register(alias: string) {
 }
 
 export const useMixedPlaylistStore = create<State>((set, get) => ({
-  playlists: [], loaded: false, running: {}, error: null,
+  playlists: [], loaded: false, running: {}, phases: {}, error: null,
   load: () => {
     if (load) return load
     const work = mixedPlaylistRepository.load().then(playlists => set({ playlists, loaded: true, error: null }))
@@ -149,7 +151,10 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
       throw Error("Connect the original music account, then choose Match and sync to connect these local songs.")
     const current = () => capture.current() && Object.entries(playlist.owners).every(([side, owner]) => capture.owners[side as Service] === owner)
     if (!current()) throw Error("Reconnect this playlist's original accounts to sync.")
-    set(state => ({ running: { ...state.running, [id]: true } }))
+    const phase = (value: PlaylistActivityPhase) => {
+      if (current()) set(state => ({ phases: { ...state.phases, [id]: value } }))
+    }
+    set(state => ({ running: { ...state.running, [id]: true }, phases: { ...state.phases, [id]: { kind: "checking" } } }))
     try {
       const checked = await verifyPlaylistIdentity(playlist, { provider: capture.provider, current })
       if (checked !== playlist) playlist = await save(checked)
@@ -160,6 +165,7 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
       if (!playlist.merge && !retry && !playlist.write && playlist.items.some(row => Object.values(row.songs).some(song => song?.stale))) return
       const adapters = mixedAdapters(capture)
       playlist = await syncAndMatchPlaylist(playlist, { current, reload: () => latest(id), sync: async value => {
+        phase({ kind: "syncing" })
         value = await syncDraftDetails(value, { adapters, current, save, provider: capture.provider, review: retry, settleOnly: true })
         if (value.status === "conflict" || value.write) {
           value = await syncMixedPlaylist(value, { adapters, current, save, maxWrites: 0, verify })
@@ -170,6 +176,7 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
       }, match: async value => {
         const resolve = createPlaylistCounterpartResolver(value.items.flatMap(row => row.songs[row.original] ? [row.songs[row.original]!.track] : []), retry, current)
         for (const target of playlistServices(value)) {
+          phase({ kind: "matching", target })
           // Finish new work before recycling old misses back to the front.
           if (retry || (!value.items.some(row => counterpartPending(row, target)) && value.items.some(row => !row.songs[target] && row.match.checkedAt && Date.now() - row.match.checkedAt > 3600000)))
             value = await save({ ...value, items: value.items.map(row => (row.songs[target] && !row.songs[target]?.stale) || (!retry && (!row.match.checkedAt || Date.now() - row.match.checkedAt <= 3600000)) ? row : { ...row, match: { status: "pending" } }) })
@@ -183,8 +190,10 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
       if (playlist.status === "conflict" || playlist.write) return
       if (!playlist.merge && playlist.items.some(row => Object.values(row.songs).some(song => song?.stale))) return
       if (useListenBrainzStore.getState().isAuthenticated) {
+        phase({ kind: "listenbrainz" })
         playlist = await syncDraftListenBrainz(playlist, { current, save, provider: capture.provider, manual: retry, owners: capture.owners })
       }
+      phase({ kind: "details" })
       await syncDraftDetails(playlist, { adapters, current, save, provider: capture.provider, review: retry })
     } catch (failure) {
       if (current()) {
@@ -192,14 +201,14 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
         await save({ ...retained, status: retained.status === "conflict" ? "conflict" : "error", message: String(failure instanceof Error ? failure.message : failure) })
       }
       throw failure
-    } finally { set(state => ({ running: { ...state.running, [id]: false } })) }
+    } finally { set(state => ({ running: { ...state.running, [id]: false }, phases: { ...state.phases, [id]: undefined } })) }
   }),
   externalSync: (id, options = {}) => serial(id, async () => {
     const capture = captureMusicOwner()
     let playlist = await latest(id)
     const current = () => capture.current() && Object.entries(playlist.owners).every(([side, owner]) => capture.owners[side as Service] === owner)
     if (!current()) throw Error("Reconnect this playlist’s original music accounts.")
-    set(state => ({ running: { ...state.running, [id]: true } }))
+    set(state => ({ running: { ...state.running, [id]: true }, phases: { ...state.phases, [id]: { kind: "listenbrainz" } } }))
     try {
       const adapters = mixedAdapters(capture)
       const snapshots = playlist.providers.plex && adapters.plex ? [await adapters.plex.read(playlist.providers.plex.id)] : []
@@ -211,7 +220,7 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
     } catch (failure) {
       if (current()) await save({ ...await latest(id), status: "error", message: failure instanceof Error ? failure.message : String(failure) })
       throw failure
-    } finally { set(state => ({ running: { ...state.running, [id]: false } })) }
+    } finally { set(state => ({ running: { ...state.running, [id]: false }, phases: { ...state.phases, [id]: undefined } })) }
   }),
   edit: (id, operation) => serial(id, async () => {
     const playlist = await latest(id), capture = captureMusicOwner()
@@ -276,7 +285,7 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
       await serial(retained.id, async () => {
         let playlist = await latest(retained.id)
         const current = () => capture.current()
-        set(state => ({ running: { ...state.running, [retained.id]: true } }))
+        set(state => ({ running: { ...state.running, [retained.id]: true }, phases: { ...state.phases, [retained.id]: { kind: "matching", target: "plex" } } }))
         try {
           if (update) {
             const ids = update.reset ? undefined : new Set(update.changes.filter(change => change.kind === "track").map(change => String(change.id)))
@@ -303,7 +312,7 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
           await matchPlaylistBatch(playlist, "plex", { current, save, limit: 20, retry: true, eligible: track => eligible.has(track),
             resolve: track => resolvePlaylistCounterpart(track, "plex") })
         } finally {
-          set(state => ({ running: { ...state.running, [retained.id]: false } }))
+          set(state => ({ running: { ...state.running, [retained.id]: false }, phases: { ...state.phases, [retained.id]: undefined } }))
         }
       })
     }

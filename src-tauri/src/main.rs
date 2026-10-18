@@ -440,6 +440,7 @@ pub fn run() {
             offline_audio::audio_prepare_plex_track,
             download_entities::download_entity,
             download_entities::download_entity_status,
+            download_entities::download_activity,
             download_entities::download_entity_issues,
             download_entities::remove_entity_download,
             download_library::download_storage_info,

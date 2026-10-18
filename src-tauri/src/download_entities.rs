@@ -470,6 +470,23 @@ fn read_statuses(
 }
 
 #[tauri::command]
+pub async fn download_activity(
+    context: PlexRequestContext,
+    state: State<'_, PlexState>,
+    db: State<'_, DbState>,
+) -> Result<audio::ActivitySummary, String> {
+    {
+        let guard = state.0.lock().await;
+        state.checked_cache_client(&context, &guard)?;
+    }
+    let scope = context.cache_scope.clone();
+    let result = db.read(move |conn| audio::activity(conn, &scope)).await?;
+    let guard = state.0.lock().await;
+    state.checked_cache_client(&context, &guard)?;
+    Ok(result)
+}
+
+#[tauri::command]
 pub async fn download_entity_status(
     context: PlexRequestContext,
     entities: Vec<Entity>,

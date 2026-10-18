@@ -1,6 +1,7 @@
 import { Button } from "./shared/Button"
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
+import { useLocation } from "wouter"
 import { useShallow } from "zustand/react/shallow"
 import {
   IconDisc,
@@ -12,15 +13,8 @@ import {
 } from "@tabler/icons-react"
 import { useLibraryStore } from "../stores"
 import { useNotificationCenterStore } from "../stores/notificationCenterStore"
-
-interface Activity {
-  id: string
-  label: string
-  detail?: string
-  busy?: boolean
-  state?: "paused" | "error" | "complete" | "waiting"
-  retry?: () => void
-}
+import { useBackgroundActivities } from "../activity/useBackgroundActivities"
+import type { Activity } from "../activity/model"
 export function ActivityIndicator() {
   const {
     prefetchStatus,
@@ -38,12 +32,13 @@ export function ActivityIndicator() {
     }))
   )
   const [isOpen, setIsOpen] = useState(false)
+  const background = useBackgroundActivities(isOpen)
+  const [, navigate] = useLocation()
   const panelRef = useRef<HTMLDivElement>(null),
     buttonRef = useRef<HTMLButtonElement>(null),
     panelId = useId()
   const [position, setPosition] = useState({ left: 0, top: 0, width: 320 })
-  // Retire notifications from the former full-library mirror. Downloads keep
-  // their own status on the affected entity; Plex scanning is still shown here.
+  // Retire notifications from the former full-library mirror.
   useEffect(() => {
     const notices = useNotificationCenterStore.getState()
     for (const id of [
@@ -53,7 +48,7 @@ export function ActivityIndicator() {
     ])
       notices.resolve(id)
   }, [])
-  const activities: Activity[] = []
+  const activities: Activity[] = [...background]
   if (libraryScanning)
     activities.push({
       id: "library-scan",
@@ -82,6 +77,7 @@ export function ActivityIndicator() {
       label: "Loading more tracks…",
     })
   const active = activities.filter((activity) => activity.busy).length
+  const waiting = activities.length - active
   useLayoutEffect(() => {
     if (!isOpen) return
     const place = () => {
@@ -134,19 +130,23 @@ export function ActivityIndicator() {
         aria-expanded={isOpen}
         aria-controls={panelId}
         aria-haspopup="dialog"
+        aria-label="Activity"
         title={
           active
             ? `${active} active operation${active === 1 ? "" : "s"}`
-            : "No active operations"
+            : waiting ? `${waiting} operation${waiting === 1 ? "" : "s"} waiting` : "No active operations"
         }
         className={`topbar-control topbar-icon-control relative flex items-center justify-center rounded-full text-(--text-secondary) transition-colors hover:bg-app-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${isOpen ? "bg-app-surface-hover" : "bg-app-surface"}`}
       >
         <IconDisc
           aria-hidden="true"
           size={18}
-          className={active ? "animate-spin text-accent" : ""}
+          className={active ? "animate-spin motion-reduce:animate-none text-accent" : ""}
           style={active ? { animationDuration: "2s" } : undefined}
         />
+        {activities.some(activity => activity.state === "error" || activity.state === "paused") && (
+          <span aria-hidden="true" className="absolute bottom-0 right-0 h-2 w-2 rounded-full bg-amber-400" />
+        )}
       </Button>
       {isOpen &&
         createPortal(
@@ -186,10 +186,10 @@ export function ActivityIndicator() {
                       <Icon
                         aria-hidden="true"
                         size={17}
-                        className={`mt-0.5 shrink-0 ${activity.busy ? "animate-spin text-accent" : "text-(--text-secondary)"}`}
+                        className={`mt-0.5 shrink-0 ${activity.busy ? "animate-spin motion-reduce:animate-none text-accent" : "text-(--text-secondary)"}`}
                       />
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm text-(--text-primary)">
+                        <p className="break-words text-sm font-medium text-(--text-primary)">
                           {activity.label}
                         </p>
                         {activity.detail && (
@@ -197,14 +197,22 @@ export function ActivityIndicator() {
                             {activity.detail}
                           </p>
                         )}
-                        {activity.retry && (
+                        {activity.progress && activity.progress.total > 0 && (
+                          <div role="progressbar" aria-label={activity.progress.label}
+                            aria-valuemin={0} aria-valuemax={activity.progress.total}
+                            aria-valuenow={Math.min(activity.progress.total, Math.max(0, activity.progress.value))}
+                            className="mt-2 h-1 overflow-hidden rounded-full bg-app-surface-hover">
+                            <div className="h-full bg-accent" style={{ width: `${Math.min(100, Math.max(0, activity.progress.value / activity.progress.total * 100))}%` }} />
+                          </div>
+                        )}
+                        {activity.action && (
                           <Button
                             variant="secondary"
                             type="button"
-                            onClick={activity.retry}
+                            onClick={() => { setIsOpen(false); navigate(activity.action!.href) }}
                             className="mt-2 rounded-md border border-(--border) px-2 py-1 text-xs text-(--text-primary) hover:bg-app-surface-hover"
                           >
-                            Retry indexing
+                            {activity.action.label}
                           </Button>
                         )}
                       </div>

@@ -16,6 +16,7 @@ import { artworkFile } from "../../lib/playlistArtwork"
 import { MusicSourceBadge } from "../shared/MusicSource"
 import { Button } from "../shared/Button"
 import { Select } from "../shared/Select"
+import { beginActivity } from "../../activity/store"
 
 export function MergePlaylistsDialog({ onClose }: { onClose(): void }) {
   const { playlists } = useLibraryPlaylists()
@@ -36,8 +37,9 @@ export function MergePlaylistsDialog({ onClose }: { onClose(): void }) {
   const lifetime = useRef({ active: true, request: 0, saving: false })
   const id = useRef(`mixed:${crypto.randomUUID()}`)
   const reviewOwner = useRef<ReturnType<typeof captureMusicOwner> | null>(null)
+  const reviewActivity = useRef<ReturnType<typeof beginActivity> | null>(null)
   const label = useId()
-  useEffect(() => { lifetime.current.active = true; return () => { lifetime.current.active = false; lifetime.current.request++ } }, [])
+  useEffect(() => { lifetime.current.active = true; return () => { lifetime.current.active = false; lifetime.current.request++; reviewActivity.current?.finish() } }, [])
   useModalLifecycle(dialog, { onClose, initialFocus, ownTabOrder: true, canClose: busy !== "save" })
   const reset = () => { lifetime.current.request++; setPreview(null); setError(null); setPage(0) }
   const metadata = { title: name, description, artwork, external: defaultPlaylistSync() }
@@ -49,6 +51,8 @@ export function MergePlaylistsDialog({ onClose }: { onClose(): void }) {
     const session = lifetime.current, request = ++session.request, capture = captureMusicOwner()
     let cancelled = false
     const current = () => !cancelled && session.active && session.request === request && capture.current()
+    const activity = beginActivity({ id: `merge-review:${id.current}`, label: "Reviewing playlist merge", detail: "Reading both playlists", busy: true }, current)
+    reviewActivity.current = activity
     setBusy("review"); setError(null); setPreview(null); setProgress("Reading both playlists completely…")
     try {
       const options = { ...capture, current, adapters: mixedAdapters({ ...capture, current }), local: mixedPlaylistRepository.load }
@@ -56,12 +60,15 @@ export function MergePlaylistsDialog({ onClose }: { onClose(): void }) {
       if (!current()) throw Error("Music accounts changed. Review the merge again.")
       const resolve = createPlaylistCounterpartResolver(sources.flatMap(source => source.items.flatMap(row => row.songs[row.original] ? [row.songs[row.original]!.track] : [])), false, current)
       const result = await prepareMerge([sources[0], sources[1]], destination, duplicates, { ...capture, current, resolve,
-        progress: (done, total) => { if (current()) setProgress(`Checking destination coverage · ${done.toLocaleString()} of ${total.toLocaleString()} songs`) } })
+        progress: (done, total) => { if (current()) {
+          setProgress(`Checking destination coverage · ${done.toLocaleString()} of ${total.toLocaleString()} songs`)
+          activity.update({ detail: `${done.toLocaleString()} of ${total.toLocaleString()} songs checked`, progress: { value: done, total, label: "Merge songs checked" } })
+        } } })
       if (!current()) return
       reviewOwner.current = capture; setPreview(result); setPage(0)
       if (!name.trim()) setName(`${sources[0].title} + ${sources[1].title}`.slice(0, 500))
     } catch (failure) { cancelled = true; if (session.active && session.request === request) setError(String(failure instanceof Error ? failure.message : failure)) }
-    finally { if (session.active && session.request === request) setBusy(null) }
+    finally { activity.finish(); if (session.active && session.request === request) setBusy(null) }
   }
   async function save() {
     if (!preview || !name.trim() || busy || lifetime.current.saving) return
