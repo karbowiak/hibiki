@@ -12,6 +12,8 @@ import type {
 import { processArtistAlbums } from "../lib/dedup"
 import { loadAlbumContents } from "../lib/albumContents"
 import { startTiming } from "../lib/performance"
+import { sanitizeOfflineData } from "../offline/providerCache"
+const METADATA_RETENTION_MS = 90 * 24 * 60 * 60_000
 
 export interface ArtistCacheEntry {
   artist: MusicArtist
@@ -24,17 +26,18 @@ export interface ArtistCacheEntry {
   stations: MusicPlaylist[]
   deduplicated: boolean
   fetchedAt: number
+  invalidated?: boolean
 }
 export interface AlbumCacheEntry {
   album: MusicAlbum
   tracks: MusicTrack[]
   relatedHubs: MusicHub[]
   fetchedAt: number
+  invalidated?: boolean
   deduplicated?: boolean
 }
 
-const STALE_MS = 30 * 60_000
-const EVICT_MS = 24 * 60 * 60_000
+const EVICT_MS = METADATA_RETENTION_MS
 const MAX_ARTISTS = 50
 const MAX_ALBUMS = 100
 export interface MetadataCacheSession {
@@ -68,6 +71,8 @@ function evict<T extends { fetchedAt: number }>(
           b[1].fetchedAt - a[1].fetchedAt
       )
       .slice(0, max)
+      .filter(([, entry]) => JSON.stringify(entry).length <= 1024 * 1024)
+      .filter((() => { let bytes = 0; return ([, entry]: [string, T]) => (bytes += JSON.stringify(entry).length) <= 8 * 1024 * 1024 })())
   )
 }
 function item(value: any) {
@@ -182,6 +187,8 @@ export function createMetadataCache({
     albums: Record<string, AlbumCacheEntry> = {}
   const artistRequests = new Map<string, PageRequest<ArtistCacheEntry>>()
   const albumRequests = new Map<string, PageRequest<AlbumCacheEntry>>()
+  const listeners = new Set<(kind: "artist" | "album", id: string) => void>()
+  const notify = (kind: "artist" | "album", id: string) => listeners.forEach(listener => listener(kind, id))
   const capture = (candidate = getProvider()): MetadataCacheSession | null =>
     candidate && candidate === provider && getProvider() === candidate
       ? { owner, provider: candidate, epoch }
@@ -195,7 +202,7 @@ export function createMetadataCache({
   const check = (session: MetadataCacheSession | null) => {
     if (!current(session)) throw new MetadataRequestSuperseded()
   }
-  const save = () => persistence.save({ artists, albums })
+  const save = () => persistence.save({ policyVersion: 1, artists: sanitizeOfflineData(artists), albums: sanitizeOfflineData(albums) })
   const retire = () => {
     epoch++
     artistRequests.clear()
@@ -239,8 +246,6 @@ export function createMetadataCache({
     const existing = artistRequests.get(id)
     if (!opts.force && existing?.deduplicated === shouldDeduplicate)
       return joinPage(existing, opts.onCore)
-    if (!opts.force && cached && Date.now() - cached.fetchedAt < STALE_MS)
-      return Promise.resolve(cached)
     const request: PageRequest<ArtistCacheEntry> = {
       deduplicated: shouldDeduplicate,
       promise: Promise.resolve(null as unknown as ArtistCacheEntry),
@@ -253,6 +258,7 @@ export function createMetadataCache({
         throw new MetadataRequestSuperseded()
     }
     request.promise = (async () => {
+      valid()
       const timing = startTiming("artistPage")
       try {
         const p = session.provider
@@ -311,6 +317,7 @@ export function createMetadataCache({
         }
         artists = evict({ ...artists, [id]: core }, MAX_ARTISTS, id)
         save()
+        notify("artist", id)
         publishCore(request, core)
         const [similarArtists, sonicallySimilar, relatedHubs, stations] =
           await recommendations
@@ -325,6 +332,7 @@ export function createMetadataCache({
         }
         artists = evict({ ...artists, [id]: entry }, MAX_ARTISTS, id)
         save()
+        notify("artist", id)
         return entry
       } finally {
         timing.end("load")
@@ -332,6 +340,11 @@ export function createMetadataCache({
     })().finally(() => {
       if (artistRequests.get(id) === request) artistRequests.delete(id)
     })
+    if (!opts.force && cached) {
+      if (opts.onCore) void request.promise.then(opts.onCore).catch(() => {})
+      void request.promise.catch(() => {})
+      return Promise.resolve(cached)
+    }
     return request.promise
   }
 
@@ -346,8 +359,6 @@ export function createMetadataCache({
     const existing = albumRequests.get(id)
     if (!opts.force && existing?.deduplicated === shouldDeduplicate)
       return joinPage(existing, opts.onCore)
-    if (!opts.force && cached && Date.now() - cached.fetchedAt < STALE_MS)
-      return Promise.resolve(cached)
     const request: PageRequest<AlbumCacheEntry> = {
       deduplicated: shouldDeduplicate,
       promise: Promise.resolve(null as unknown as AlbumCacheEntry),
@@ -355,11 +366,14 @@ export function createMetadataCache({
     }
     albumRequests.set(id, request)
     request.promise = (async () => {
+      check(session)
+      if (albumRequests.get(id) !== request) throw new MetadataRequestSuperseded()
       const timing = startTiming("albumPage")
       try {
-        const related = session.provider.getRelatedHubs(id).catch(() => [])
+        const p = session.provider
+        const related = p.getRelatedHubs(id).catch(() => [])
         const { album, tracks } = await loadAlbumContents(
-          session.provider,
+          p,
           id,
           shouldDeduplicate
         )
@@ -378,6 +392,7 @@ export function createMetadataCache({
         }
         albums = evict({ ...albums, [id]: core }, MAX_ALBUMS, id)
         save()
+        notify("album", id)
         publishCore(request, core)
         const relatedHubs = await related
         check(session)
@@ -387,6 +402,7 @@ export function createMetadataCache({
         const entry = { ...core, relatedHubs }
         albums = evict({ ...albums, [id]: entry }, MAX_ALBUMS, id)
         save()
+        notify("album", id)
         return entry
       } finally {
         timing.end("load")
@@ -394,6 +410,11 @@ export function createMetadataCache({
     })().finally(() => {
       if (albumRequests.get(id) === request) albumRequests.delete(id)
     })
+    if (!opts.force && cached) {
+      if (opts.onCore) void request.promise.then(opts.onCore).catch(() => {})
+      void request.promise.catch(() => {})
+      return Promise.resolve(cached)
+    }
     return request.promise
   }
 
@@ -404,6 +425,42 @@ export function createMetadataCache({
     getAlbum,
     loadArtist,
     loadAlbum,
+    subscribe: (listener: (kind: "artist" | "album", id: string) => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
+    parents: (kind: "artist" | "album" | "track", id: string) => {
+      const albumIds = new Set<string>(), artistIds = new Set<string>()
+      for (const [key, entry] of Object.entries(albums)) {
+        if (kind === "album" && (key === id || entry.album._alternateIds?.includes(id)) || kind === "track" && entry.tracks.some(track => track.id === id)) {
+          albumIds.add(key); if (entry.album.artistId) artistIds.add(entry.album.artistId)
+        }
+      }
+      for (const [key, entry] of Object.entries(artists)) {
+        if (kind === "album" && [...entry.albums, ...entry.singles].some(album => album.id === id || album._alternateIds?.includes(id)) ||
+          kind === "track" && entry.popularTracks.some(track => track.id === id)) artistIds.add(key)
+      }
+      return { albums: [...albumIds], artists: [...artistIds] }
+    },
+    expire: (kind?: "artist" | "album" | "track", id?: string, removed = false) => {
+      persistence.cancelHydration()
+      for (const [key, entry] of Object.entries(albums)) {
+        const related = !kind || kind === "album" && (key === id || entry.album._alternateIds?.includes(id!)) ||
+          kind === "artist" && entry.album.artistId === id || kind === "track" && entry.tracks.some(track => track.id === id)
+        if (!related) continue
+        albumRequests.delete(key)
+        albums[key] = { ...entry, invalidated: true, tracks: removed && kind === "track" ? entry.tracks.filter(track => track.id !== id) : entry.tracks }
+        notify("album", key)
+      }
+      for (const [key, entry] of Object.entries(artists)) {
+        const related = !kind || kind === "artist" && key === id || kind === "album" && [...entry.albums,...entry.singles].some(album => album.id === id) || kind === "track" && entry.popularTracks.some(track => track.id === id)
+        if (!related) continue
+        artistRequests.delete(key)
+        artists[key] = { ...entry, invalidated: true,
+          albums: removed && kind === "album" ? entry.albums.filter(album => album.id !== id) : entry.albums,
+          singles: removed && kind === "album" ? entry.singles.filter(album => album.id !== id) : entry.singles,
+          popularTracks: removed && kind === "track" ? entry.popularTracks.filter(track => track.id !== id) : entry.popularTracks }
+        notify("artist", key)
+      }
+      save()
+    },
     refresh: (method: string, args: unknown[], payload: unknown) => {
       const id = String(args[0] ?? "")
       if (method === "getArtist" && artists[id])
@@ -417,7 +474,7 @@ export function createMetadataCache({
           // the merged page. An in-flight full composition will refresh it;
           // otherwise expire it for the next load instead of losing tracks.
           if (!albumRequests.has(id))
-            albums[id] = { ...albums[id], fetchedAt: 0 }
+            albums[id] = { ...albums[id], invalidated: true }
         } else if (method === "getAlbum")
           albums[id] = { ...albums[id], album: payload as MusicAlbum }
         else albums[id] = { ...albums[id], tracks: payload as MusicTrack[] }
@@ -458,6 +515,7 @@ export function createMetadataCache({
         artists[id] = { ...artists[id], stations: payload as MusicPlaylist[] }
       else return false
       save()
+      notify(artists[id] ? "artist" : "album", id)
       return true
     },
     invalidate: (kind: "artist" | "album", id: string) => {

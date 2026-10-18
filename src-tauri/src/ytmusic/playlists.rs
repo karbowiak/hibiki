@@ -138,7 +138,7 @@ pub(super) async fn ytmusic_playlist_write(app: tauri::AppHandle, playlist_id: O
         let value = request(&app, generation, &context, &cookies, "playlist/create",
             json!({ "title": title, "description": "", "privacyStatus": "PRIVATE" })).await?;
         let id = value["playlistId"].as_str().filter(|id| valid_playlist(id)).ok_or("Playlist creation returned no receipt. Inspect YouTube Music before retrying.")?;
-        if let Ok(directory) = app.path().app_cache_dir() { state.discovery_cache.playlist_changed(directory.join("ytmusic-discovery"), format!("VL{id}")).await; }
+        if let Ok(directory) = app.path().app_cache_dir() { state.discovery_cache.playlist_changed(directory.join("metadata"), format!("VL{id}")).await; }
         return Ok(id.into());
     }
     let id = playlist_id.filter(|id| valid_playlist(id)).ok_or("Choose a regular YouTube Music playlist.")?;
@@ -166,7 +166,7 @@ pub(super) async fn ytmusic_playlist_write(app: tauri::AppHandle, playlist_id: O
     };
     let value = request(&app, generation, &context, &cookies, "browse/edit_playlist", json!({ "playlistId": id, "actions": actions })).await?;
     if value["status"] != "STATUS_SUCCEEDED" { return Err("Playlist write was not acknowledged. Read the playlist before retrying.".into()); }
-    if let Ok(directory) = app.path().app_cache_dir() { state.discovery_cache.playlist_changed(directory.join("ytmusic-discovery"), format!("VL{id}")).await; }
+    if let Ok(directory) = app.path().app_cache_dir() { state.discovery_cache.playlist_changed(directory.join("metadata"), format!("VL{id}")).await; }
     Ok(id)
 }
 

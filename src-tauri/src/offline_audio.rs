@@ -23,7 +23,7 @@ pub struct AudioDownloads {
     cache: std::sync::RwLock<Arc<AudioCache>>,
     pub(crate) relocating: AtomicBool,
     pub(crate) worker: Arc<tokio::sync::Mutex<()>>,
-    active: Mutex<Option<(String, i64, Arc<AtomicBool>)>>,
+    pub(crate) active: Mutex<Option<(String, i64, Arc<AtomicBool>)>>,
     scheduled: Mutex<HashSet<(u64, String)>>,
     analysis: tokio::sync::Mutex<()>,
     analysis_scheduled: Mutex<HashSet<(u64, String)>>,
@@ -1403,7 +1403,7 @@ async fn worker(app: &tauri::AppHandle, context: &PlexRequestContext) -> Result<
 
 /// Stage and validate outside all connection/SQLite locks. Publication belongs to
 /// the caller, after rechecking both connection revision and durable job revision.
-async fn stage_download(
+pub(crate) async fn stage_download(
     source: &MediaSource,
     expected_size: Option<u64>,
     duration: u64,

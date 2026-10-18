@@ -25,6 +25,7 @@ globalThis.clearInterval = (() => {}) as any
 const requests: { command: string; reply: ReturnType<typeof deferred<any>> }[] =
   []
 mock.module("@tauri-apps/api/core", () => ({
+  isTauri: () => false,
   invoke(command: string) {
     const reply = deferred<any>()
     requests.push({ command, reply })

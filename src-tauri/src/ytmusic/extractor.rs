@@ -1,6 +1,7 @@
 //! yt-dlp resolves media; the existing Symphonia decoder verifies real audio.
 //! Cookie files are private, short lived, and never exposed through IPC or logs.
 use super::*;
+use serde::Deserialize;
 use serde_json::Value;
 use std::{io::Write, process::Stdio};
 use tokio::io::AsyncReadExt;
@@ -83,7 +84,8 @@ pub(crate) fn media_url(url: &url::Url) -> bool {
 
 pub(crate) struct ResolvedStream {
     pub gain_db: Option<f32>,
-    format_id: Option<String>,
+    pub format_id: Option<String>,
+    pub codec: Option<String>,
     pub video_id: String,
     pub title: String,
     pub url: url::Url,
@@ -147,10 +149,11 @@ fn parse_stream(bytes: &[u8], expected_id: &str) -> Result<ResolvedStream, Strin
     }
     Ok(ResolvedStream {
         gain_db: None,
-        format_id: url
+        codec: value["acodec"].as_str().filter(|codec| *codec != "none").map(str::to_owned),
+        format_id: value["format_id"].as_str().map(str::to_owned).or_else(|| url
             .query_pairs()
             .find(|(key, _)| key == "itag")
-            .map(|(_, value)| value.into_owned()),
+            .map(|(_, value)| value.into_owned())),
         video_id: expected_id.to_owned(),
         title: value["track"]
             .as_str()
@@ -234,7 +237,8 @@ pub(crate) async fn resolve(
             "--sleep-requests",
             &request_interval,
             "--format",
-            "bestaudio[ext=m4a][protocol=https]/bestaudio[protocol=https]",
+            "bestaudio[protocol=https][acodec~='^(mp4a|aac|opus|vorbis)']",
+            "--check-formats",
             "--cookies",
         ])
         .arg(file.path())
@@ -305,6 +309,14 @@ pub(crate) async fn resolve(
         .ok()
         .and_then(Result::ok)
         .and_then(|value| api::player_gain(&value, video_id, stream.format_id.as_deref()));
+    // Public format facts only; signed URLs, cookies and request headers remain native.
+    if state.owns(generation) {
+        let account = state.current.lock().ok().and_then(|current| current.status.account_id.clone());
+        let _ = app.emit_to("main", "ytmusic://audio-format", serde_json::json!({
+            "accountId":account,"videoId":video_id,"codec":stream.codec,
+            "bitrate":stream.bitrate,"formatId":stream.format_id,"checkedAt":now() * 1000,
+        }));
+    }
     tracing::info!(
         lookup_ms = started.elapsed().as_millis() as u64,
         verification_ms,
@@ -350,7 +362,7 @@ fn extraction_error(error: &str) -> &'static str {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StreamTest {
     video_id: String,
@@ -360,6 +372,8 @@ pub struct StreamTest {
     decoded_ms: u64,
     checked_bytes: usize,
     bitrate: Option<f64>,
+    codec: Option<String>,
+    format_id: Option<String>,
     checked_at: i64,
 }
 
@@ -437,6 +451,8 @@ pub(crate) async fn test_stream(
         decoded_ms,
         checked_bytes,
         bitrate: stream.bitrate,
+        codec: stream.codec,
+        format_id: stream.format_id,
         checked_at: now(),
     })
 }
@@ -444,6 +460,17 @@ pub(crate) async fn test_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn stream_quality_is_the_actual_selected_format_not_a_service_maximum() {
+        let stream = parse_stream(&serde_json::to_vec(&serde_json::json!({
+            "id":"abcdefghijk","url":"https://rr1.googlevideo.com/audio?itag=251",
+            "vcodec":"none","acodec":"opus","ext":"webm","abr":138.7,"format_id":"251"
+        })).unwrap(), "abcdefghijk").unwrap();
+        assert_eq!(stream.codec.as_deref(),Some("opus"));
+        assert_eq!(stream.bitrate,Some(138.7));
+        assert_eq!(stream.format_id.as_deref(),Some("251"));
+        assert_eq!(stream.extension,"webm");
+    }
     #[test]
     fn extractor_diagnostics_never_return_raw_urls_or_credentials() {
         for error in [

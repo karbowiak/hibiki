@@ -8,6 +8,9 @@ import { deferred, settle } from "../helpers/radioAudioFakes"
 
 const kind = process.argv[2] as "artist" | "album"
 const matchingListeners = new Set<(update: any) => void>()
+mock.module("../../src/offline/nativeCache", () => ({
+  expireNativeMetadata: async () => {},
+}))
 mock.module("../../src/matching/updates", () => ({
   subscribeMatchingUpdates: (listener: (update: any) => void) => { matchingListeners.add(listener); return () => matchingListeners.delete(listener) },
   matchingKey: (value: string) => value.toLowerCase(),
@@ -146,6 +149,8 @@ function load(_id: string, options: { force: boolean }) {
 }
 mock.module("../../src/stores/metadataCache", () => ({
   invalidateMetadataItem() {},
+  expireMetadataItem() {},
+  subscribeMetadataPages: () => () => {},
   getCachedArtist: () => cached,
   getCachedAlbum: () => cached,
   loadArtistPage: load,

@@ -72,6 +72,8 @@ mock.module("../../src/stores/playerStore", () => ({
 }))
 mock.module("../../src/stores/metadataCache", () => ({
   invalidateMetadataItem() {},
+  expireMetadataItem() {},
+  subscribeMetadataPages: () => () => {},
   getCachedArtist: () => null,
   getCachedAlbum: () => null,
   prefetchAlbum() {},

@@ -50,6 +50,7 @@ import { COUNTERPART_POLICY } from "../../../src/mixedPlaylists/matching.ts"
 import { HoverInformation } from "../../../src/components/HoverInformation.tsx"
 import { useCatalogueStore } from "../../../src/offline/catalogueStore.ts"
 import { initializeQueuePersistence, flushQueuePersistence } from "../../../src/lib/queuePersistence.ts"
+import { useBackgroundCallStore } from "../../../src/background/status.ts"
 import LyricsPanel from "../../../src/components/LyricsPanel.tsx"
 import "../../../src/styles.css"
 ;(window as any).visualFixtureReady = false
@@ -88,6 +89,7 @@ async function setup() {
     transformCallback: () => ++callback,
     unregisterCallback: () => {},
     invoke: async (command: string, args:any={}) => {
+      if (command.startsWith("client_storage_")) return w.fixtureClientStorage.invoke(command, args)
       if (/^(?:create_playlist|edit_playlist|ytmusic_playlist_write|save_library_artwork|playlist_sync_listenbrainz_(?:create|mutate|describe))$/.test(command))
         (w.fixturePlaylistWrites ??= []).push(command)
       if (command === "ytmusic_status") return { enabled: youtubeArtistEnabled, phase: youtubeArtistEnabled ? "connected" : "disconnected", accountId: youtubeArtistEnabled ? "fixture-youtube-owner" : null, lastCheckedAt: null, nextRefreshAt: null, message: null }
@@ -579,7 +581,7 @@ async function setup() {
         editPlaylist: async (id: string, title: string, summary: string) => { const item = playlists.find(item => item.id === id); if (item) Object.assign(item, { title, summary }) },
       })
     },
-    mixedSyncProgress: (phase: "admitted" | "verified" | "unknown" | "complete") => {
+    mixedSyncProgress: (phase: "queued" | "preparing" | "admitted" | "verified" | "unknown" | "complete") => {
       const items = Array.from({ length: 307 }, (_, index) => {
         const row = newOccurrence({ ...tracks[index % tracks.length], id: String(10000 + index) }, 100)
         row.id = `sync-occurrence-${index}`
@@ -591,13 +593,16 @@ async function setup() {
         items: items.slice(0, phase === "verified" || phase === "complete" ? 307 : 14).map((row, index) => ({ track: row.songs.plex!.track, occurrenceId: `plex-${index}` })) }
       const playlist = { ...newDraft({ title: before.title, description: "", artwork: null, external: defaultPlaylistSync() }, "mixed:sync-progress"),
         owners: { plex: provider.cacheScope, ytmusic: "fixture-youtube-owner" }, automatic: true, items,
-        merge: { sources: [], duplicates: "verified" as const, reviewedAt: 1 },
+        merge: { sources: [], duplicates: "verified" as const, reviewedAt: 1, pending: phase === "queued" || phase === "preparing" },
         providers: { plex: { id: before.id, readOnly: false } }, baseline: { plex: before },
         message: "304 unmatched songs retained in Hibiki.", status: phase === "unknown" ? "error" as const : "ready" as const,
         write: phase === "admitted" || phase === "unknown" ? { id: "progress-receipt", service: "plex" as const, kind: "append" as const,
           before, afterIds: items.map(row => row.songs.plex!.track.id), state: phase === "unknown" ? "unknown" as const : "admitted" as const } : undefined }
       useYoutubeMusicDiscoveryStore.setState({ connected: true, accountId: "fixture-youtube-owner" })
-      useMixedPlaylistStore.setState({ loaded: true, playlists: [playlist], running: { [playlist.id]: phase === "admitted" || phase === "verified" }, load: async () => {} })
+      if (phase === "queued" || phase === "preparing") playlist.items = []
+      useBackgroundCallStore.setState({ pending: phase === "queued" ? { [`mixed:${playlist.id}`]: 1 } : {} })
+      useMixedPlaylistStore.setState({ loaded: true, playlists: [playlist], running: { [playlist.id]: ["preparing", "admitted", "verified"].includes(phase) },
+        phases: phase === "preparing" ? { [playlist.id]: { kind: "preparing" } } : {}, load: async () => {} })
     },
     drafts: {
       disconnect: () => { useProviderStore.setState({ provider: null }); useYoutubeMusicDiscoveryStore.setState({ connected: false, accountId: null }) },

@@ -5,9 +5,9 @@ mod discovery_cache;
 mod lyrics;
 mod playlists;
 mod rate_limit;
-mod extractor;
+pub(crate) mod extractor;
 mod main_window_plugin;
-mod playback;
+pub(crate) mod playback;
 mod session;
 mod tools;
 
@@ -89,7 +89,7 @@ pub(crate) fn now() -> i64 {
 }
 
 impl YoutubeMusic {
-    fn generation(&self) -> Result<u64, String> {
+    pub(crate) fn generation(&self) -> Result<u64, String> {
         let current = self
             .current
             .lock()
@@ -100,7 +100,7 @@ impl YoutubeMusic {
         Ok(current.generation)
     }
 
-    fn owns(&self, generation: u64) -> bool {
+    pub(crate) fn owns(&self, generation: u64) -> bool {
         self.current
             .lock()
             .is_ok_and(|current| current.status.enabled && current.generation == generation)
@@ -324,7 +324,7 @@ pub async fn ytmusic_disconnect(app: tauri::AppHandle) -> Result<(), String> {
     let _ = app.emit_to("main", "ytmusic://status", status);
     playback::forget_cache_owner(&app);
     if let Ok(directory) = app.path().app_cache_dir() {
-        state.discovery_cache.clear(directory.join("ytmusic-discovery")).await;
+        state.discovery_cache.clear(directory.join("metadata")).await;
     }
     if let Ok(path) = settings_path(&app) {
         match std::fs::remove_file(path) {
@@ -380,8 +380,19 @@ pub async fn ytmusic_search(
 #[tauri::command]
 pub async fn ytmusic_test_stream(
     video_id: String,
+    background: Option<bool>,
     app: tauri::AppHandle,
 ) -> Result<extractor::StreamTest, String> {
+    if background.unwrap_or(false) {
+        let state = app.state::<Arc<YoutubeMusic>>();
+        let generation = state.generation()?;
+        let account = state.current.lock().map_err(|_| "YouTube Music session unavailable")?.status.account_id.clone()
+            .ok_or("Connect YouTube Music first.")?;
+        let value = crate::background_jobs::call(&app, crate::background_jobs::Task::YoutubeAudioProbe {
+            video_id, account, generation,
+        }).await?;
+        return serde_json::from_value(value).map_err(|_| "Background audio check was incomplete".into());
+    }
     extractor::test_stream(&app, &video_id).await
 }
 
@@ -438,6 +449,12 @@ pub(crate) async fn background_playlist_read(app: &tauri::AppHandle, playlist_id
     let page = playlists::ytmusic_playlist_read(app.clone(), playlist_id, account.clone(), source_only).await?;
     background_account(app, &account, generation)?;
     serde_json::to_value(page).map_err(|_| "Background playlist read was incomplete".into())
+}
+pub(crate) async fn background_audio_probe(app: &tauri::AppHandle, video_id: String, account: String, generation: u64) -> Result<serde_json::Value, String> {
+    background_account(app, &account, generation)?;
+    let proof = extractor::test_stream(app, &video_id).await?;
+    background_account(app, &account, generation)?;
+    serde_json::to_value(proof).map_err(|_| "Background audio check was incomplete".into())
 }
 
 #[tauri::command]

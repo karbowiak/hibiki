@@ -5,6 +5,7 @@ import { act } from "react"
 import { Router } from "wouter"
 import { create } from "zustand"
 import { settle } from "../helpers/radioAudioFakes"
+import { sqliteLocalStorage } from "../../src/storage/clientStorage"
 const scenario = process.argv[2]!
 const dom = new JSDOM("<input id='global-query'><div id='root'></div>", {
   url: "https://synthetic.test",
@@ -527,7 +528,7 @@ try {
       await click(button("Try again"))
       assert.deepEqual(searches, ["Yoshiko"])
       assert.ok(document.body.textContent!.includes("No results for"))
-      localStorage.setItem("plex-recent-searches", JSON.stringify(["Previous"]))
+      sqliteLocalStorage.setItem("plex-recent-searches", JSON.stringify(["Previous"]))
       await update({ query: "", results: [], error: null })
       assert.equal(document.querySelector("h1")!.textContent, "Search")
       assert.ok(button("Previous"), "recorded history remains reachable")

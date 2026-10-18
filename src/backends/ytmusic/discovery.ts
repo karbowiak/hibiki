@@ -294,6 +294,18 @@ function start() {
   started = true
   let events = 0
   void (async () => {
+    await listen<{ accountId: string | null; videoId: string; codec: string | null; bitrate: number | null; formatId: string | null; checkedAt: number }>("ytmusic://audio-format", async event => {
+      const format = event.payload
+      const owner = useYoutubeMusicDiscoveryStore.getState()
+      if (!owner.connected || !owner.accountId || format.accountId !== owner.accountId || !format.codec) return
+      const { usePlayerStore } = await import("../../stores/playerStore")
+      if (useYoutubeMusicDiscoveryStore.getState().revision !== owner.revision) return
+      const patch = (track: import("../../types/music").MusicTrack) => track.id === `ytmusic:${format.videoId}` ? {
+        ...track, codec: format.codec, bitrate: format.bitrate,
+        mediaInfo: { ...track.mediaInfo, selectedAudio: { codec: format.codec!, bitrate: format.bitrate, formatId: format.formatId, checkedAt: format.checkedAt } },
+      } : track
+      usePlayerStore.setState(state => ({ currentTrack: state.currentTrack ? patch(state.currentTrack) : null, queue: state.queue.map(patch) }))
+    }).catch(() => {})
     await youtubeMusicApi.subscribe(status => { events++; receive(status) })
     const before = events
     const status = await youtubeMusicApi.status()

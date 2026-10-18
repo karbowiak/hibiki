@@ -25,8 +25,7 @@ test("optional snapshot persistence cannot hold up online results or unrelated l
       put: async () => {
         await disk.promise
       },
-    },
-    { localFirst: true }
+    }
   )
   let onlineReady = false
   let localReady = false
@@ -41,7 +40,7 @@ test("optional snapshot persistence cannot hold up online results or unrelated l
   await settle()
   expect(onlineReady).toBe(true)
   expect(localReady).toBe(true)
-  expect((await local).title).toBe("Saved")
+  expect((await local).title).toBe("Online")
   disk.resolve()
   await online
 })

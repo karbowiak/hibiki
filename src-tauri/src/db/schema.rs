@@ -34,8 +34,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (21, include_str!("migrations/V21__matching_associations.sql")),
     (22, include_str!("migrations/V22__matching_relationships.sql")),
     (23, include_str!("migrations/V23__matching_reverse_lookup.sql")),
-    // V24/V25 have already been used by development builds in other worktrees.
+    (24, include_str!("migrations/V24__provider_playlist_downloads.sql")),
+    (25, include_str!("migrations/V25__metadata_freshness.sql")),
     (26, include_str!("migrations/V26__client_state.sql")),
+    (27, include_str!("migrations/V27__provider_metadata_integration.sql")),
 ];
 
 /// Run all pending migrations against the given connection.
@@ -63,6 +65,18 @@ fn apply_migration(conn: &Connection, version: i64, sql: &str) -> Result<(), Str
     transaction
         .execute_batch(sql)
         .map_err(|_| format!("Migration V{version} failed"))?;
+    if version == 27 {
+        let exists: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='offline_snapshots')",[],|row|row.get(0))
+            .map_err(|_| "Cannot inspect saved browsing schema")?;
+        if exists {
+            let invalidated: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('offline_snapshots') WHERE name='invalidated')",[],|row|row.get(0))
+                .map_err(|_| "Cannot inspect metadata freshness schema")?;
+            if !invalidated {
+                transaction.execute_batch("ALTER TABLE offline_snapshots ADD COLUMN invalidated INTEGER NOT NULL DEFAULT 0")
+                    .map_err(|_| "Cannot upgrade metadata freshness")?;
+            }
+        }
+    }
     transaction
         .pragma_update(None, "user_version", version)
         .map_err(|_| format!("Cannot record migration V{version}"))?;
@@ -74,6 +88,24 @@ fn apply_migration(conn: &Connection, version: i64, sql: &str) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn queue_sqlite_cutover_upgrades_missing_provider_tables_without_losing_client_records() {
+        let conn=Connection::open_in_memory().unwrap();
+        for &(version,sql) in MIGRATIONS.iter().filter(|(version,_)|*version<=23 || *version==26) {
+            apply_migration(&conn,version,sql).unwrap();
+        }
+        conn.execute("INSERT INTO client_state(namespace,key,value,revision,updated_at) VALUES('local','queue-proof','\"retained\"',3,0)",[]).unwrap();
+        let scope=format!("plex-{}","a".repeat(64));
+        conn.execute("INSERT INTO offline_snapshots(scope,cache_key,payload,byte_count,cached_at,accessed_at) VALUES(?1,'visited','{}',2,42,43)",[&scope]).unwrap();
+        run_migrations(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+        let record:(String,i64)=conn.query_row("SELECT value,revision FROM client_state WHERE key='queue-proof'",[],|row|Ok((row.get(0)?,row.get(1)?))).unwrap();
+        assert_eq!(record,("\"retained\"".into(),3));
+        let snapshot:(i64,i64,bool)=conn.query_row("SELECT cached_at,accessed_at,invalidated FROM offline_snapshots WHERE scope=?1",[&scope],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
+        assert_eq!(snapshot,(42,43,false));
+        conn.execute("INSERT INTO provider_playlist_downloads VALUES('owner','playlist',1,'{}','[]','revision')",[]).unwrap();
+    }
 
     #[test]
     fn client_storage_is_created_after_a_newer_development_schema() {

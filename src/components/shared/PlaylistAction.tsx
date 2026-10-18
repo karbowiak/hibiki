@@ -1,4 +1,4 @@
-import { IconInfoCircle } from "@tabler/icons-react"
+import { IconInfoCircle, IconDownload, IconLink } from "@tabler/icons-react"
 import { Button, type ButtonProps } from "./Button"
 
 const icons = {
@@ -36,6 +36,8 @@ const icons = {
     </svg>
   ),
   sync: null,
+  link: <IconLink size={16} aria-hidden="true" />,
+  download: <IconDownload size={16} aria-hidden="true" />,
   more: (
     <svg
       aria-hidden="true"
@@ -56,6 +58,8 @@ const labels = {
   shuffle: "Shuffle",
   radio: "Radio",
   sync: "Sync",
+  link: "Link Plex + YTM",
+  download: "Download",
   more: "More",
   info: "Info",
 }

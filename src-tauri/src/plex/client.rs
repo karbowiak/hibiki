@@ -104,6 +104,7 @@ impl std::fmt::Debug for PlexClientConfig {
 /// Plex API client with retry logic and connection pooling
 #[derive(Clone)]
 pub struct PlexClient {
+    pub(crate) metadata_cache: Option<super::metadata_cache::Context>,
     base_url: String,
     pub token: String,
     pub client_id: String,
@@ -254,6 +255,7 @@ impl PlexClient {
             .build();
 
         Ok(Self {
+            metadata_cache: None,
             base_url: config.base_url,
             token: config.token,
             client_id: config.client_id,
@@ -281,6 +283,19 @@ impl PlexClient {
     where
         T: DeserializeOwned,
     {
+        if let Some(context) = self.metadata_cache.as_ref().filter(|_| super::metadata_cache::eligible(path)) {
+            let value = super::metadata_cache::get(context,self,path).await.map_err(anyhow::Error::msg)?;
+            return serde_json::from_value(value).context("Failed to parse cached Plex metadata");
+        }
+        self.get_uncached(path).await
+    }
+
+    pub(crate) async fn get_uncached<T>(&self, path: &str) -> Result<T>
+    where T: DeserializeOwned,
+    {
+        self.get_uncached_with_policy(path,0).await.map(|(value,_)| value)
+    }
+    pub(crate) async fn get_uncached_with_policy<T: DeserializeOwned>(&self, path: &str, fallback: i64) -> Result<(T,crate::metadata_cache::HttpPolicy)> {
         let operation = if path.starts_with("/hubs") { "plex.hubs" }
             else if path.starts_with("/playlists") && path.contains("/items") { "plex.playlist_items" }
             else if path.starts_with("/playlists") { "plex.playlists" }
@@ -310,13 +325,14 @@ impl PlexClient {
             ));
         }
 
+        let policy = crate::metadata_cache::HttpPolicy::from_headers(response.headers(),fallback,crate::metadata_cache::now());
         let wrapper = response
             .bounded_plex_json::<PlexApiResponse<T>>(MAX_PLEX_BYTES)
             .await
             .context("Failed to parse JSON response")?;
         timing.phase("body_decode");
 
-        Ok(wrapper.container)
+        Ok((wrapper.container,policy))
     }
 
     /// Fetch raw response text — for non-JSON endpoints (e.g., TTML/LRC lyrics).

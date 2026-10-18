@@ -495,6 +495,54 @@ pub(crate) mod tests {
     use super::*;
 
     #[test]
+    fn youtube_webm_opus_decodes_and_repeated_seeks_match_fresh_decoders() {
+        let data = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/audio/opus-stereo.webm"));
+        let mut used = probe_audio(data.to_vec()).unwrap();
+        let pcm = decode_all(&mut used).unwrap();
+        assert!(!pcm.is_empty() && pcm.iter().all(|sample| sample.is_finite()));
+        assert!(!used.had_decode_errors && !used.aborted);
+        assert_eq!((used.sample_rate,used.channels),(48000,2));
+        for position in [0, 720, 333, 1200, 0] {
+            let mut fresh = probe_audio(data.to_vec()).unwrap();
+            seek_to_ms(&mut fresh,position).unwrap();
+            let expected = decode_batch(&mut fresh,4096).unwrap();
+            seek_to_ms(&mut used,position).unwrap();
+            let actual = decode_batch(&mut used,4096).unwrap();
+            assert!(!actual.is_empty());
+            assert_eq!(actual,expected,"WebM seek to {position} retained prior decoder history");
+        }
+    }
+
+    #[test]
+    fn youtube_webm_starts_from_a_prefix_and_rewinds_without_tail_cues() {
+        use super::super::streaming::{SharedBuffer, StreamingReader};
+        let data = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/audio/opus-stereo.webm"));
+        let buffer=SharedBuffer::new(Some(data.len() as u64)).unwrap();
+        let split=data.len()*3/4;
+        buffer.push(&data[..split]).unwrap();
+        let input=buffer.clone();
+        let (send,receive)=std::sync::mpsc::channel();
+        let worker=std::thread::spawn(move || {
+            let mut setup=probe_stream(StreamingReader::new(input),Some("webm")).unwrap();
+            assert!(!decode_batch(&mut setup,4096).unwrap().is_empty());
+            seek_to_ms(&mut setup,0).unwrap();
+            assert!(!decode_batch(&mut setup,4096).unwrap().is_empty());
+            send.send(setup).unwrap();
+        });
+        let ready=receive.recv_timeout(std::time::Duration::from_secs(2));
+        if ready.is_err() { buffer.abort(); }
+        worker.join().unwrap();
+        let mut setup=ready.expect("WebM must start and seek before tail metadata is downloaded");
+        buffer.push(&data[split..]).unwrap();buffer.finish();
+        seek_to_ms(&mut setup,0).unwrap();
+        let mut fresh=probe_audio(data.to_vec()).unwrap();
+        seek_to_ms(&mut fresh,0).unwrap();
+        let actual=decode_all(&mut setup).unwrap();let expected=decode_all(&mut fresh).unwrap();
+        assert_eq!(actual.len(),expected.len());
+        assert!(actual.iter().zip(expected).all(|(left,right)| *left == right),"Streamed WebM rewind must match a fresh cached rewind");
+    }
+
+    #[test]
     fn flac_metadata_tags_preserve_the_short_final_block() {
         let raw = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),

@@ -25,6 +25,19 @@ export interface MusicMediaVersion {
 
 /** Extended audio/media details that list endpoints may not include. */
 export interface MediaInfo {
+  /** Verified current-account stream, never an advertised service maximum. */
+  verifiedAudio?: {
+    codec: string
+    bitrate: number
+    formatId: string
+    checkedAt: number
+  }
+  selectedAudio?: {
+    codec: string
+    bitrate: number | null
+    formatId: string | null
+    checkedAt: number
+  }
   /** A local-audio selection must not request playback, gain or waveform from Plex. */
   localAudio?: boolean
   /** Complete native cache/download exists; false disables offline play actions. */
@@ -54,6 +67,8 @@ export interface MusicArtistCredit {
 }
 
 export interface MusicTrack {
+  /** Other confirmed source identities retained by unified search. */
+  counterparts?: { plex?: string; ytmusic?: string }
   artistCredits?: MusicArtistCredit[]
   explicit?: boolean
   viewCount?: number
@@ -109,6 +124,7 @@ export interface MusicTrack {
 }
 
 export interface MusicAlbum {
+  counterparts?: { plex?: string; ytmusic?: string }
   artistCredits?: MusicArtistCredit[]
   id: string
   title: string
@@ -141,6 +157,7 @@ export interface MusicAlbum {
 }
 
 export interface MusicArtist {
+  counterparts?: { plex?: string; ytmusic?: string }
   id: string
   title: string
   thumbUrl: string | null

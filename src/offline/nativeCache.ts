@@ -61,6 +61,7 @@ export function createNativeOfflineCache(
     },
     invalidate: (prefixes) =>
       invoke<void>("offline_cache_invalidate", { context: owned, prefixes }),
+    expire: (prefixes, removedIds) => invoke<void>("offline_cache_invalidate", { context: owned, prefixes, retain: true, removedIds }),
     put: (key, payload) =>
       invoke<void>("offline_cache_put", { context: owned, key, payload }),
   }
@@ -69,4 +70,12 @@ export function restoreOfflineContext(
   revision: number
 ): Promise<OfflineContext> {
   return invoke("restore_offline_context", { revision })
+}
+
+/** Explicit UI refresh invalidates native freshness while retaining SWR data. */
+export async function expireNativeMetadata(provider: import("../providers/types").MusicProvider, ids: string[]) {
+  const { useCatalogueStore } = await import("./catalogueStore")
+  const context=useCatalogueStore.getState().context
+  if (!context || context.cacheScope !== provider.cacheScope || provider.isOffline) return
+  await invoke("plex_metadata_expire", { context, ids, catchup:false, removed:[] })
 }

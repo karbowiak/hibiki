@@ -10,10 +10,12 @@ import {
   loadAlbumPage,
   type ArtistCacheEntry,
   type AlbumCacheEntry,
-  invalidateMetadataItem,
+  expireMetadataItem,
+  subscribeMetadataPages,
 } from "../stores/metadataCache"
 import { retryMetadataRefresh } from "../lib/metadataLoadError"
 import { subscribeMatchingUpdates } from "../matching/updates"
+import { expireNativeMetadata } from "../offline/nativeCache"
 
 interface PageSource<T> {
   kind: "artist" | "album"
@@ -39,7 +41,7 @@ const albumSource: PageSource<AlbumCacheEntry> = {
 }
 
 /** Navigation shares prefetches; only an explicit refresh/retry supersedes a read. */
-function useMetadataPage<T extends { fetchedAt: number }>(id: string | null, source: PageSource<T>) {
+function useMetadataPage<T extends { fetchedAt: number; invalidated?: boolean }>(id: string | null, source: PageSource<T>) {
   const provider = useProviderStore((state) => state.provider)
   const ownerSession = provider?.playbackSession, ownerScope = provider?.cacheScope
   const refresh = useUIStore((state) => state.pageRefreshKey)
@@ -49,6 +51,12 @@ function useMetadataPage<T extends { fetchedAt: number }>(id: string | null, sou
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
   const previous = useRef({ provider, ownerSession, ownerScope, id, refresh, attempt })
+  const manualRetry = useRef(false)
+  useEffect(() => subscribeMetadataPages((kind, updated) => {
+    if (kind !== source.kind || updated !== id || useProviderStore.getState().provider !== provider || provider?.playbackSession !== ownerSession) return
+    const saved = source.read(updated, deduplicate)
+    if (saved) { setEntry(saved); if (saved.invalidated) setAttempt(value => value + 1) }
+  }), [provider, ownerSession, id, source, deduplicate])
   useEffect(() => {
     let admitted = 0
     if (!provider || !id) return
@@ -59,7 +67,7 @@ function useMetadataPage<T extends { fetchedAt: number }>(id: string | null, sou
         (change.kind === source.kind && String(change.id) === id || source.kind === "artist" && String(change.artistId) === id || source.kind === "album" && String(change.albumId) === id))
       if (!changed.length) return
       admitted = Math.max(...changed.map(change => change.observed ?? 0))
-      invalidateMetadataItem(source.kind, id)
+      expireMetadataItem(source.kind, id)
       setAttempt(value => value + 1)
     })
   }, [provider, ownerSession, ownerScope, id, source, deduplicate])
@@ -73,6 +81,8 @@ function useMetadataPage<T extends { fetchedAt: number }>(id: string | null, sou
       samePage &&
       (previous.current.refresh !== refresh ||
         previous.current.attempt !== attempt)
+    const manual = samePage && previous.current.refresh !== refresh || manualRetry.current
+    manualRetry.current = false
     previous.current = { provider, ownerSession, ownerScope, id, refresh, attempt }
     setError(null)
     const saved = id ? source.read(id, deduplicate) : undefined
@@ -91,7 +101,11 @@ function useMetadataPage<T extends { fetchedAt: number }>(id: string | null, sou
       setIsLoading(false)
     }
     void retryMetadataRefresh(
-      () => source.load(id, { force, deduplicate, onCore: apply }),
+      async () => {
+        if (manual) await expireNativeMetadata(provider,[id]).catch(() => {})
+        if (!current()) throw Error("Metadata request was superseded")
+        return source.load(id, { force, deduplicate, onCore: apply })
+      },
       current
     )
       .then(apply)
@@ -109,7 +123,7 @@ function useMetadataPage<T extends { fetchedAt: number }>(id: string | null, sou
     entry,
     isLoading,
     error,
-    retry: useCallback(() => setAttempt((value) => value + 1), []),
+    retry: useCallback(() => { manualRetry.current = true; setAttempt((value) => value + 1) }, []),
   }
 }
 

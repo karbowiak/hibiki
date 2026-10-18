@@ -6,6 +6,7 @@ mod audio_devices;
 mod platform_blocks_tests;
 mod audio_engine;
 mod cache_files;
+mod metadata_cache;
 mod commands;
 mod client_storage;
 mod db;
@@ -19,6 +20,7 @@ mod matching_index;
 mod library_picker;
 mod download_entities;
 mod download_library;
+mod provider_downloads;
 mod artwork_commands;
 mod deezer;
 mod genius;
@@ -418,6 +420,10 @@ pub fn run() {
             ytmusic::ytmusic_browse,
             ytmusic::ytmusic_set_song_like,
             ytmusic::ytmusic_test_stream,
+            provider_downloads::playlist_download_save,
+            provider_downloads::playlist_download_read,
+            provider_downloads::playlist_download_issues,
+            provider_downloads::playlist_download_remove,
             ytmusic::ytmusic_helpers,
             ytmusic::ytmusic_install_helpers,
             performance::record_performance,
@@ -438,6 +444,7 @@ pub fn run() {
             commands::disconnect_plex,
             offline_commands::restore_offline_context,
             offline_commands::offline_cache_get,
+            plex::metadata_cache::plex_metadata_expire,
             collection_cache_commands::collection_cache,
             queue_commands::saved_queue,
             offline_commands::offline_cache_put,

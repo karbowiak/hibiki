@@ -76,8 +76,10 @@ work. Ordinary sync polling does not enqueue these index checks.
 YTM catalog matching checks the native catalog cache before admitting a read job.
 Fresh hits return immediately, while stale hits retain the ordinary coalesced SWR
 refresh. Cold or explicitly forced lookups still run in the matching queue.
-Plex browsing SWR also uses the persisted snapshot timestamp after restart and
-paces failed refreshes; cache invalidation still forces a new foreground read.
+Plex and YTM browsing use the shared native Moka/SQLite metadata store. Their
+provider-owned SWR returns stale data immediately and admits refreshes in Butler's
+refresh lane. Persisted fetch timestamps survive restart, failed refreshes back off,
+and changed results notify the visible client without remounting its page.
 
 Recurring schedules check whether their domain has work before admission. Empty
 listening outboxes, unrequested download collections, fresh matching indexes and
@@ -100,6 +102,11 @@ unmatched recordings cannot starve later intentions.
   the client. Only existing explicit sync settings and links are followed.
 - Plex download transfers and hourly requested playlist/album/artist refreshes,
   including their existing manifest reconciliation for new/removed members.
+- Explicit YTM and mixed-playlist downloads, using native playlist manifests,
+  shared audio claims and the existing download transfer lock. The v2 task remains
+  distinct from the deliberately retired experimental YTM download task.
+- Bounded automatic YTM audio-quality probes for verified search counterparts,
+  fenced by account and session in the matching lane.
 - Speculative upcoming audio caching and loudness measurement, independently of
   the playback control thread, plus waveform generation and saved audio analysis
   backfill. Actual selected playback and deck preloads retain their immediate path.

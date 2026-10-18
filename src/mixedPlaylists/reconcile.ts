@@ -34,7 +34,7 @@ export function bindSnapshot(playlist: MixedPlaylist, snapshot: RemotePlaylist):
   }), baseline: { ...playlist.baseline, [snapshot.service]: snapshot } }
 }
 function remoteChanged(a: RemotePlaylist, b: RemotePlaylist) {
-  return a.title !== b.title || !sameSequence(a.items.map(item => `${item.occurrenceId}:${item.track.id}`), b.items.map(item => `${item.occurrenceId}:${item.track.id}`))
+  return a.title !== b.title || (a.description ?? "") !== (b.description ?? "") || !sameSequence(a.items.map(item => `${item.occurrenceId}:${item.track.id}`), b.items.map(item => `${item.occurrenceId}:${item.track.id}`))
 }
 /** Apply edits only to occurrences present in the last verified source snapshot.
  * Hidden/unmatched entries retain their relative anchor and never look deleted. */
@@ -64,7 +64,7 @@ export function adoptRemote(playlist: MixedPlaylist, snapshot: RemotePlaylist): 
     const at = next ? changed.findIndex(row => row.id === next.id) : changed.length
     changed.splice(at, 0, row)
   }
-  return { ...playlist, title: snapshot.title, items: changed, baseline: { ...playlist.baseline, [service]: snapshot } }
+  return { ...playlist, title: snapshot.title, description: snapshot.description ?? playlist.description, items: changed, baseline: { ...playlist.baseline, [service]: snapshot } }
 }
 export function reconcileRemoteChanges(playlist: MixedPlaylist, snapshots: RemotePlaylist[]): MixedPlaylist {
   const changed = snapshots.filter(snapshot => {
@@ -73,7 +73,8 @@ export function reconcileRemoteChanges(playlist: MixedPlaylist, snapshots: Remot
     return remoteChanged(baseline, snapshot)
   })
   if (!changed.length) return playlist
-  const localChanged = playlist.baselineOrder && (!sameSequence(playlist.items.map(row => row.id), playlist.baselineOrder) || playlist.title !== playlist.baselineTitle)
+  const localChanged = playlist.baselineOrder && (!sameSequence(playlist.items.map(row => row.id), playlist.baselineOrder) || playlist.title !== playlist.baselineTitle ||
+    playlist.baselineDescription !== undefined && (playlist.description ?? "") !== playlist.baselineDescription)
   if (localChanged || changed.length > 1) return { ...playlist, status: "conflict", message: "This playlist changed in more than one place. Choose which current order to keep before syncing." }
   return adoptRemote(playlist, changed[0])
 }

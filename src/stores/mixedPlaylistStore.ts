@@ -35,6 +35,7 @@ interface State {
   metadata(id: string, metadata: DraftMetadata): Promise<void>
   externalSync(id: string, options?: { recoveryId?: string; prefer?: "hibiki" | "listenbrainz"; reviewNoCreation?: boolean }): Promise<void>
   convert(alias: string): Promise<MixedPlaylist>
+  copy(title: string, description: string, tracks: MusicTrack[], receipt: string): Promise<MixedPlaylist>
   append(alias: string, tracks: MusicTrack[], admission: string): Promise<void>
   sync(id: string, retry?: boolean): Promise<void>
   edit(id: string, operation: { kind: "move"; from: number; to: number } | { kind: "delete"; index: number }): Promise<void>
@@ -76,7 +77,7 @@ async function register(alias: string) {
   if (!capture.current()) throw Error("Music accounts changed.")
   if (snapshot.readOnly) throw Error("Choose an owned, regular playlist. Smart playlists and generated mixes are read-only.")
   const initial = hydratePlaylist(snapshot)
-  return save({ ...initial, owners: capture.owners, automatic: true, baselineOrder: initial.items.map(row => row.id), baselineTitle: initial.title })
+  return save({ ...initial, local: true, description: snapshot.description ?? "", owners: capture.owners, automatic: true, baselineOrder: initial.items.map(row => row.id), baselineTitle: initial.title, baselineDescription: snapshot.description ?? "" })
 }
 
 export const useMixedPlaylistStore = create<State>((set, get) => ({
@@ -135,6 +136,16 @@ export const useMixedPlaylistStore = create<State>((set, get) => ({
     const playlist = await register(alias)
     void get().sync(playlist.id).catch(() => {})
     return playlist
+  }),
+  copy: (title, description, tracks, receipt) => serial(receipt, async () => {
+    const existing = (await mixedPlaylistRepository.load()).find(item => item.id === receipt)
+    if (existing) return existing
+    const capture = captureMusicOwner()
+    let draft = newDraft({ title: `${title} (copy)`, description, artwork: null,
+      automatic: false, external: { listenbrainz: { enabled: false, automatic: false, direction: "export" } } }, receipt)
+    for (let at = 0; at < tracks.length; at += 1000) draft = appendDraftSongs(draft, tracks.slice(at, at + 1000), capture.owners, `${receipt}:${at}`)
+    if (!capture.current()) throw Error("Music accounts changed before copying the playlist.")
+    return save({ ...draft, automatic: false })
   }),
   append: (alias, tracks, admission) => serial(`alias:${alias}`, async () => {
     if (!tracks.length || tracks.length > 1000) throw Error("Choose between 1 and 1,000 songs to add at once.")

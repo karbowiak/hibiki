@@ -422,11 +422,16 @@ pub(super) fn parse(response: &Value, home: bool, album: bool, performances: boo
     let title = find(header, "title", 0).or_else(|| body.get("title")).map(text).unwrap_or_default();
     let cover = thumbnail(header);
     let artists = find(header, "straplineTextOne", 0).map(text).unwrap_or_default();
+    let release_year = header["subtitle"]["runs"].as_array().into_iter().flatten()
+        .filter(|run| run.get("navigationEndpoint").is_none())
+        .filter_map(|run| run["text"].as_str()?.trim().parse::<i32>().ok())
+        .find(|year| (1900..=2200).contains(year));
     for item in &mut contents {
         if item.kind == "song" {
             if item.thumbnail.is_none() { item.thumbnail = cover.clone(); }
             if item.artist.is_empty() { item.artist = artists.clone(); }
             if item.album.is_none() && album { item.album = Some(title.clone()); }
+            if album && item.year.is_none() { item.year = release_year; }
         }
     }
     let description = find(header, "description", 0).or_else(|| find(header, "descriptionText", 0)).map(text).filter(|text| !text.is_empty());
@@ -549,7 +554,9 @@ impl CatalogRequest {
     async fn cached(&self, app: &tauri::AppHandle, client_revision: Option<u64>) -> Result<Option<BrowsePage>, String> {
         let state = app.state::<Arc<YoutubeMusic>>();
         let Some(saved) = self.saved(&state).await else { return Ok(None); };
-        if !state.owns(self.generation) { return Err("YouTube Music connection changed.".into()); }
+        if !state.owns(self.generation) || state.discovery_cache.epoch() != self.cache_epoch {
+            return Err("YouTube Music metadata request was superseded.".into());
+        }
         if !saved.fresh {
             let key = self.key.as_deref().unwrap_or(&self.query.browse_id);
             let lock = state.discovery_cache.request(key);
@@ -560,8 +567,10 @@ impl CatalogRequest {
                     let previous = saved.page.clone();
                     crate::background_jobs::advisory(crate::background_jobs::Lane::Refresh, "Refreshing YTM catalog", async move {
                         let _guard = guard;
-                        if let Ok(page) = fetch(&app, &request).await {
-                            let state = app.state::<Arc<YoutubeMusic>>();
+                        let refreshed = fetch(&app, &request).await;
+                        let state = app.state::<Arc<YoutubeMusic>>();
+                        state.discovery_cache.finish_refresh(request.key.as_deref().unwrap_or_default(),refreshed.is_ok());
+                        if let Ok(page) = refreshed {
                             if state.owns(request.generation) && serde_json::to_value(&previous).ok() != serde_json::to_value(&page).ok() {
                                 let _ = app.emit_to("main", "ytmusic://catalog", Update { query: request.query, client_revision, page });
                             }
@@ -594,7 +603,7 @@ fn catalog_request(app: &tauri::AppHandle, id: &str, params: Option<&str>, token
     Ok(CatalogRequest {
         query: Query { browse_id: id.into(), params: params.map(str::to_owned), continuation: token.map(str::to_owned), include_performances: performances },
         generation: state.generation()?, cache_epoch: state.discovery_cache.epoch(),
-        directory: app.path().app_cache_dir().ok().map(|directory| directory.join("ytmusic-discovery")),
+        directory: app.path().app_cache_dir().ok().map(|directory| directory.join("metadata")),
         key: playback::cache_owner(app).ok().map(|owner| discovery_cache::key(&owner, &cache_id, params, token)),
     })
 }
@@ -617,6 +626,7 @@ pub async fn browse(app: &tauri::AppHandle, id: &str, params: Option<&str>, toke
     let _guard = lock.lock().await;
     if !state.owns(request.generation) { return Err("YouTube Music connection changed.".into()); }
     let previous = request.saved(&state).await;
+    if !state.owns(request.generation) || state.discovery_cache.epoch() != request.cache_epoch { return Err("YouTube Music metadata request was superseded.".into()); }
     if !force {
         if let Some(saved) = previous.as_ref().filter(|saved| saved.fresh) { return Ok(saved.page.clone()); }
     }
@@ -628,6 +638,26 @@ pub async fn browse(app: &tauri::AppHandle, id: &str, params: Option<&str>, toke
 }
 
 async fn fetch(app: &tauri::AppHandle, request: &CatalogRequest) -> Result<BrowsePage, String> {
+    if let (Some(directory),Some(key)) = (&request.directory,&request.key) {
+        let directory=directory.clone(); let key=key.clone();
+        let epoch={ let directory=directory.clone(); tokio::task::spawn_blocking(move || crate::metadata_cache::CACHE.epoch(&directory,"ytmusic")).await };
+        let epoch=match epoch { Ok(Ok(epoch))=>epoch,_=>return fetch_uncached(app,request).await.map(|(page,_)|page) };
+        // The YTM SWR layer calls fetch only after a miss, expiry or explicit
+        // refresh. Its per-key guard already owns this revalidation.
+        crate::metadata_cache::CACHE.forget_fresh(&directory,"ytmusic",&key,epoch).await;
+        let entry=crate::metadata_cache::CACHE.fetch(directory,"ytmusic".into(),key,epoch,async {
+            let (page,policy)=fetch_uncached(app,request).await?;
+            Ok(crate::metadata_cache::Write { payload:serde_json::to_value(page).map_err(|_| "Cannot encode YTM metadata")?,
+                tag:request.query.browse_id.clone(),fresh_for:policy.fresh_for,retain_for:policy.stale_for,store:policy.store })
+        }).await?;
+        let state=app.state::<Arc<YoutubeMusic>>();
+        if !state.owns(request.generation) || state.discovery_cache.epoch() != request.cache_epoch { return Err("YouTube Music metadata request was superseded.".into()); }
+        return serde_json::from_value(entry.payload.clone()).map_err(|_| "Cannot decode YTM metadata".into());
+    }
+    fetch_uncached(app,request).await.map(|(page,_)|page)
+}
+
+async fn fetch_uncached(app: &tauri::AppHandle, request: &CatalogRequest) -> Result<(BrowsePage,discovery_cache::Policy), String> {
     crate::background_jobs::report("Fetching YTM catalog", None, 0, None, "pages").await?;
     let state = app.state::<Arc<YoutubeMusic>>();
     let generation = request.generation;
@@ -703,11 +733,9 @@ async fn fetch(app: &tauri::AppHandle, request: &CatalogRequest) -> Result<Brows
         page.continuation = continuation(&list["continuations"]);
     }
     if id.starts_with("UC") && params.is_none() && token.is_none() { artist_page(&response.value, id, &mut page); }
-    if let (Some(directory), Some(key)) = (&request.directory, &request.key) {
-        state.discovery_cache.write(directory.clone(), key.clone(), id.into(), page.clone(), response.policy, request.cache_epoch).await;
-    }
-    if !state.owns(generation) { return Err("YouTube Music connection changed.".into()); }
-    Ok(page)
+    let policy = response.policy.for_page(id, &page, now());
+    if !state.owns(generation) || state.discovery_cache.epoch() != request.cache_epoch { return Err("YouTube Music metadata changed during the request.".into()); }
+    Ok((page,policy))
 }
 
 fn search_items(response: &Value, artists_only: bool) -> Vec<Item> {
@@ -909,6 +937,7 @@ mod tests {
             "flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Track"}]}}}],
             "overlay":{"musicItemThumbnailOverlayRenderer":{"content":{"musicPlayButtonRenderer":{"playNavigationEndpoint":{"watchEndpoint":{"videoId":"abcdefghijk"}}}}}}}});
         let response = json!({"header":{"musicResponsiveHeaderRenderer":{"title":{"runs":[{"text":"Album"}]},
+            "subtitle":{"runs":[{"text":"Album"},{"text":" • "},{"text":"2000"}]},
             "straplineTextOne":{"runs":[{"text":"Artist"}]},"thumbnail":{"thumbnails":[{"url":"https://lh3.googleusercontent.com/cover","width":512,"height":512}]}}},
             "contents":{"musicShelfRenderer":{"contents":[flat],"continuations":[{"nextContinuationData":{"continuation":"songs-next"}}]}},
             "related":[album()]});
@@ -916,6 +945,9 @@ mod tests {
         assert_eq!(page.items.len(), 1);
         assert_eq!(page.items[0].artist, "Artist");
         assert_eq!(page.items[0].album.as_deref(), Some("Album"));
+        assert_eq!(page.items[0].year,Some(2000));
+        let policy=discovery_cache::Policy::from_headers(&reqwest::header::HeaderMap::new(),900,now()).for_page("MPREalbum",&page,now());
+        assert_eq!(policy.fresh_for,30*24*3600);
         assert_eq!(page.items[0].thumbnail.as_deref(), Some("https://lh3.googleusercontent.com/cover"));
         assert_eq!(page.continuation.as_deref(), Some("songs-next"));
     }

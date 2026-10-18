@@ -3,26 +3,25 @@ import assert from "node:assert/strict"
 import { JSDOM } from "jsdom"
 import { act } from "react"
 import { deferred } from "../helpers/radioAudioFakes"
+import { memoryTransport } from "../../src/storage/keyValue"
 const dom = new JSDOM("<div id='root'></div>", { url: "https://hibiki.test" })
 globalThis.window = dom.window as any
 globalThis.document = dom.window.document
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 let blocked = true
-const values = new Map<string, string>()
-Object.defineProperty(globalThis, "localStorage", {
-  get: () => ({
-    getItem(key: string) {
-      return values.get(key) ?? null
-    },
-    setItem(key: string, value: string) {
-      if (blocked) throw Error("blocked")
-      values.set(key, value)
-    },
-    removeItem(key: string) {
-      values.delete(key)
-    },
-  }),
-})
+const storage = memoryTransport()
+mock.module("@tauri-apps/api/core", () => ({
+  isTauri: () => true,
+  invoke(command: string, args: any) {
+    if (command === "client_storage_read") return storage.read(args.namespace, args.key)
+    if (command === "client_storage_local") return storage.local()
+    if (command === "client_storage_write") {
+      if (blocked) return Promise.reject(Error("blocked"))
+      return storage.write(args.namespace, args.key, args.value, args.expectedRevision)
+    }
+    return Promise.reject(Error(`Unexpected fixture command ${command}`))
+  },
+}))
 document.documentElement.style.setProperty("--accent", "#112233")
 const pending: Array<{
     src: string
@@ -115,7 +114,7 @@ assert(
 )
 blocked = false
 await persistence.retry()
-assert.equal(values.get("plex-artwork-colors"), "0")
+assert.equal(JSON.parse((await storage.read("local", "plex-artwork-colors")).value!), "0")
 assert.equal(
   document.documentElement.style.getPropertyValue("--accent"),
   "#112233"

@@ -1,4 +1,5 @@
-import { afterEach, expect, test } from "bun:test"
+import { afterEach, expect, spyOn, test } from "bun:test"
+import { sqliteLocalStorage } from "../src/storage/clientStorage"
 import { createSearchStore } from "../src/stores/searchStore"
 import { youtubeMusicItemMusic } from "../src/backends/ytmusic/discovery"
 import { mergeMusicSearchResults } from "../src/lib/musicMatching"
@@ -131,9 +132,9 @@ test("an empty Plex response cannot hide a failed YTM search", async () => {
   expect(store.getState().isSearching).toBe(false)
   expect(store.getState().error).toContain("YouTube Music: Error: Temporary failure")
 })
-const originalStorage = globalThis.localStorage
+const storageSpies: Array<{ mockRestore(): void }> = []
 afterEach(() => {
-  globalThis.localStorage = originalStorage
+  storageSpies.splice(0).forEach(spy => spy.mockRestore())
 })
 test("malformed or unavailable history is safe to render and remains untouched by recording", () => {
   for (const raw of [
@@ -143,28 +144,28 @@ test("malformed or unavailable history is safe to render and remains untouched b
     '{"query":"wrong shape"}',
   ]) {
     let saved = raw
-    globalThis.localStorage = {
-      getItem: () => saved,
-      setItem: (_key: string, value: string) => {
-        saved = value
-      },
-    } as any
+    storageSpies.splice(0).forEach(spy => spy.mockRestore())
+    storageSpies.push(
+      spyOn(sqliteLocalStorage, "getItem").mockImplementation(() => saved),
+      spyOn(sqliteLocalStorage, "setItem").mockImplementation((_key, value) => { saved = value }),
+    )
     expect(getRecentSearches()).toEqual([])
     recordRecentSearch("New")
     expect(saved).toBe(raw)
   }
   let writes = 0
-  globalThis.localStorage = {
-    getItem: () => {
+  storageSpies.splice(0).forEach(spy => spy.mockRestore())
+  storageSpies.push(
+    spyOn(sqliteLocalStorage, "getItem").mockImplementation(() => {
       throw new Error("Denied")
-    },
-    setItem: () => {
+    }),
+    spyOn(sqliteLocalStorage, "setItem").mockImplementation(() => {
       writes++
-    },
-    removeItem: () => {
+    }),
+    spyOn(sqliteLocalStorage, "removeItem").mockImplementation(() => {
       throw new Error("Denied")
-    },
-  } as any
+    }),
+  )
   expect(getRecentSearches()).toEqual([])
   recordRecentSearch("New")
   expect(writes).toBe(0)

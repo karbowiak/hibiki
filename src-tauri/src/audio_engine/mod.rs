@@ -653,6 +653,7 @@ fn control_thread_main(
 ) {
     let rt = tauri::async_runtime::handle().inner().clone();
     let analysis = analysis.map(Arc::new);
+    let foreground_revision = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let mut crossfade_settings = CrossfadeSettings::default();
     // Track what's preloaded on the pending deck so we can skip re-fetching
     let mut pending_source_key = String::new();
@@ -681,6 +682,11 @@ fn control_thread_main(
         if epoch != atomics.request_epoch.load(Ordering::SeqCst) {
             continue;
         }
+        // A command can be consumed between a background request's cancellation
+        // polls. Retain that edge so queue preparation still yields and resumes.
+        if !matches!(&command, Command::PrepareQueue { .. }) {
+            foreground_revision.fetch_add(1, Ordering::SeqCst);
+        }
         match command {
             Command::PrepareQueue { revision, tracks } => {
                 if revision != atomics.preparation_revision.load(Ordering::SeqCst) { continue; }
@@ -691,6 +697,7 @@ fn control_thread_main(
                     let analysis = analysis.clone();
                     let atomics = atomics.clone();
                     let commands = cmd_rx.clone();
+                    let foreground_revision = foreground_revision.clone();
                     let rt = rt.clone();
                     crate::background_jobs::advisory_once(key, crate::background_jobs::Lane::Prefetch, "Preparing upcoming audio", async move {
                         let base = PlaybackRequest::new(epoch, atomics.request_epoch.clone(), Arc::new(std::sync::atomic::AtomicU64::new(0)))
@@ -699,9 +706,11 @@ fn control_thread_main(
                             if !base.is_current() { return; }
                             if !commands.is_empty() { tokio::time::sleep(Duration::from_millis(100)).await; continue; }
                             let pending = commands.clone();
+                            let foreground_revision = foreground_revision.clone();
+                            let observed_revision = foreground_revision.load(Ordering::SeqCst);
                             let revoked = AtomicBool::new(false);
                             let request = base.clone().while_background(move || {
-                                if !pending.is_empty() { revoked.store(true, Ordering::SeqCst); }
+                                if !pending.is_empty() || foreground_revision.load(Ordering::SeqCst) != observed_revision { revoked.store(true, Ordering::SeqCst); }
                                 !revoked.load(Ordering::SeqCst)
                             });
                             let owned = request.clone();

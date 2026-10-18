@@ -23,6 +23,7 @@ w.__TAURI_INTERNALS__ = {
   },
   unregisterCallback: () => {},
   invoke: async (command: string, args: any = {}) => {
+    if (command.startsWith("client_storage_")) return w.fixtureClientStorage.invoke(command, args)
     calls.push({ command, args })
     if (command === "plugin:event|listen") return count
     if (command === "plugin:event|unlisten") return null
@@ -83,6 +84,9 @@ const output = (id: string, key = id) => ({
   stable: true,
   available: true,
 })
+// Native device discovery is asynchronous. Restore SQLite preferences before
+// announcing this fixture's synchronous synthetic output.
+await useEqStore.persist.rehydrate()
 useDeviceStore.setState({
   currentDevice: "USB DAC",
   outputAvailable: true,

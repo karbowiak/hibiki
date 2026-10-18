@@ -50,6 +50,15 @@ pub(crate) enum Task {
     PlexDownloads {
         context: PlexRequestContext,
     },
+    YoutubeDownloads {
+        scope: String,
+        generation: u64,
+    },
+    YoutubeAudioProbe {
+        video_id: String,
+        account: String,
+        generation: u64,
+    },
     PlexMatchingIndex {
         context: PlexRequestContext,
     },
@@ -97,6 +106,8 @@ impl Task {
             Self::YoutubeSessionMaintenance => "Refreshing YTM sign-in",
             Self::PlexRequestedDownloads { .. } => "Refreshing Plex downloads",
             Self::PlexDownloads { .. } => "Plex downloads",
+            Self::YoutubeDownloads { .. } => "YouTube Music downloads",
+            Self::YoutubeAudioProbe { .. } => "Checking YTM audio quality",
             Self::PlexMatchingIndex { .. } => "Plex matching index",
             Self::YoutubeBrowse { .. } => "YTM catalog matching",
             Self::YoutubePlaylistRead { .. } => "Checking YTM playlist",
@@ -118,6 +129,7 @@ impl Task {
             },
             Self::PlexMatchingIndex { .. } => "matching-index".into(),
             Self::PlexDownloads { .. } => "downloads".into(),
+            Self::YoutubeDownloads { .. } => "downloads:ytmusic".into(),
             Self::PlexAnalysis { .. } => "audio-analysis".into(),
             Self::Advisory { lane, label, .. } => format!("advisory:{}:{label}", lane.name()),
             _ => return None,
@@ -133,6 +145,8 @@ impl Task {
             Self::YoutubeSessionMaintenance => "hibiki.youtube-session.v1",
             Self::PlexRequestedDownloads { .. } => "hibiki.plex-requested-downloads.v1",
             Self::PlexDownloads { .. } => NAMES[1],
+            Self::YoutubeDownloads { .. } => "hibiki.youtube-downloads.v2",
+            Self::YoutubeAudioProbe { .. } => "hibiki.youtube-audio-probe.v1",
             Self::PlexMatchingIndex { .. } => "hibiki.plex-matching-index.v1",
             Self::YoutubeBrowse { .. } => "hibiki.youtube-browse.v1",
             Self::YoutubePlaylistRead { .. } => "hibiki.youtube-playlist-read.v1",
@@ -157,6 +171,8 @@ impl Task {
             Self::PlexAnalysis { .. } => Lane::Metadata,
             Self::YoutubeSessionMaintenance | Self::PlexRequestedDownloads { .. } => Lane::Refresh,
             Self::PlexDownloads { .. } => Lane::Download,
+            Self::YoutubeDownloads { .. } => Lane::Download,
+            Self::YoutubeAudioProbe { .. } => Lane::Matching,
             Self::PlexMatchingIndex { .. } => Lane::Metadata,
             Self::YoutubeBrowse { .. } => Lane::Matching,
             Self::YoutubePlaylistRead { .. } => Lane::Sync,
@@ -180,7 +196,7 @@ impl Task {
 
 // Distinct task names make Butler's diagnostics and per-type metrics useful,
 // while sharing one versioned envelope decoder and account-fenced dispatcher.
-pub(super) const NAMES: [&str; 12] = [
+pub(super) const NAMES: [&str; 14] = [
     "hibiki.listening-outbox.v1",
     "hibiki.plex-downloads.v1",
     "hibiki.plex-matching-index.v1",
@@ -194,6 +210,8 @@ pub(super) const NAMES: [&str; 12] = [
     "hibiki.client.v1",
     // Retire persisted work from the removed, experimental download backend.
     "hibiki.youtube-downloads.v1",
+    "hibiki.youtube-downloads.v2",
+    "hibiki.youtube-audio-probe.v1",
 ];
 pub(super) fn definition(name: &'static str) -> butler::JobDef {
     if name == "hibiki.youtube-downloads.v1" {
@@ -252,7 +270,7 @@ async fn perform(app: &tauri::AppHandle, task: Task) -> Result<Value, Failure> {
     let retry = matches!(task, Task::ListeningOutbox);
     let read = matches!(
         task,
-        Task::YoutubeBrowse { .. } | Task::YoutubePlaylistRead { .. }
+        Task::YoutubeBrowse { .. } | Task::YoutubePlaylistRead { .. } | Task::YoutubeAudioProbe { .. }
     );
     let result = match task {
         Task::Client { request } => super::client::run(app, request).await,
@@ -293,12 +311,15 @@ async fn perform(app: &tauri::AppHandle, task: Task) -> Result<Value, Failure> {
         Task::PlexDownloads { context } => crate::offline_audio::run_download_worker(app, &context)
             .await
             .map(|_| Value::Null),
+        Task::YoutubeDownloads { scope,generation } => crate::provider_downloads::run_youtube_download_worker(app,scope,generation)
+            .await.map(|_|Value::Null),
         Task::PlexMatchingIndex { context } => {
             crate::matching_index::run_index_worker(app, &context)
                 .await
                 .map(|_| Value::Null)
         }
         Task::YoutubeBrowse { request } => crate::ytmusic::background_browse(app, request).await,
+        Task::YoutubeAudioProbe { video_id, account, generation } => crate::ytmusic::background_audio_probe(app, video_id, account, generation).await,
         Task::YoutubePlaylistRead {
             playlist_id,
             account,

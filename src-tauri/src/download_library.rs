@@ -6,6 +6,7 @@ use crate::{
 };
 use serde::Serialize;
 use serde_json::Value;
+use sha2::{Digest,Sha256};
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -368,7 +369,7 @@ struct Playlist {
     scope: String,
     id: i64,
     title: String,
-    tracks: Vec<i64>,
+    tracks: Vec<crate::provider_downloads::Member>,
 }
 struct Inventory {
     songs: Vec<Song>,
@@ -403,7 +404,7 @@ fn inventory(conn: &rusqlite::Connection) -> Result<Inventory, String> {
     if songs.len() > 32768 {
         return Err("There are too many saved audio files to export".into());
     }
-    let mut stmt=conn.prepare("SELECT scope,entity_id,title FROM audio_download_entities WHERE kind='playlist' ORDER BY scope,entity_id LIMIT 10001").map_err(|_|"Cannot read downloaded playlists")?;
+    let mut stmt=conn.prepare("SELECT scope,entity_id,title FROM audio_download_entities e WHERE kind='playlist' AND NOT EXISTS(SELECT 1 FROM provider_playlist_downloads p WHERE p.entity_id=e.entity_id) ORDER BY scope,entity_id LIMIT 10001").map_err(|_|"Cannot read downloaded playlists")?;
     let entities = stmt
         .query_map([], |r| {
             Ok((
@@ -428,9 +429,8 @@ fn inventory(conn: &rusqlite::Connection) -> Result<Inventory, String> {
         for row in rows {
             let text = row.map_err(|_| "Cannot read playlist order")?;
             let raw: Value = serde_json::from_str(&text).map_err(|_| "Invalid playlist order")?;
-            tracks.push(
-                crate::plex::catalogue::number(&raw["ratingKey"]).ok_or("Invalid playlist song")?,
-            );
+            tracks.push(crate::provider_downloads::Member { scope: scope.clone(), id:
+                crate::plex::catalogue::number(&raw["ratingKey"]).ok_or("Invalid playlist song")? });
         }
         if tracks.len() > 10000 {
             return Err("This playlist exceeds the download limit".into());
@@ -441,6 +441,18 @@ fn inventory(conn: &rusqlite::Connection) -> Result<Inventory, String> {
             title,
             tracks,
         });
+    }
+    let mut stmt = conn.prepare("SELECT owner,entity_id,metadata,members FROM provider_playlist_downloads ORDER BY owner,id LIMIT 10001").map_err(|_| "Cannot read downloaded playlists")?;
+    let saved = stmt.query_map([], |row| Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?))).map_err(|_| "Cannot read downloaded playlists")?;
+    for row in saved {
+        let (owner,id,metadata,members) = row.map_err(|_| "Cannot read downloaded playlists")?;
+        // A mixed manifest owner contains both account scopes. Export ownership
+        // needs one bounded opaque identity; song lookup retains each member's
+        // actual provider scope below.
+        let scope=format!("ytmusic-{}",hex::encode(Sha256::digest(owner.as_bytes())));
+        let metadata: Value = serde_json::from_str(&metadata).map_err(|_| "Invalid playlist metadata")?;
+        playlists.push(Playlist { scope, id, title: metadata["title"].as_str().unwrap_or("Playlist").into(),
+            tracks: serde_json::from_str(&members).map_err(|_| "Invalid playlist membership")? });
     }
     Ok(Inventory { songs, playlists })
 }
@@ -515,8 +527,8 @@ fn m3u(
         owner(playlist),
         line(&playlist.title)
     );
-    for id in &playlist.tracks {
-        let Some(song) = songs.get(&(playlist.scope.as_str(), *id)) else {
+    for member in &playlist.tracks {
+        let Some(song) = songs.get(&(member.scope.as_str(), member.id)) else {
             continue;
         };
         let Some(path) = paths
@@ -675,7 +687,7 @@ mod tests {
             scope: scope.clone(),
             id: 8,
             title: "Favorites\n#injected".into(),
-            tracks: vec![2, 1, 2, 3, 4],
+            tracks: [2, 1, 2, 3, 4].into_iter().map(|id| crate::provider_downloads::Member { scope: scope.clone(), id }).collect(),
         };
         export(
             &cache,
@@ -736,7 +748,7 @@ mod tests {
                     scope: scope.clone(),
                     id: 1,
                     title: "Old title".into(),
-                    tracks: vec![1],
+                    tracks: vec![crate::provider_downloads::Member { scope: scope.clone(), id: 1 }],
                 }],
             },
         )
@@ -754,10 +766,10 @@ mod tests {
             Inventory {
                 songs: vec![song(1, &scope, 'a')],
                 playlists: vec![Playlist {
-                    scope,
+                    scope: scope.clone(),
                     id: 1,
                     title: "New title".into(),
-                    tracks: vec![1],
+                    tracks: vec![crate::provider_downloads::Member { scope: scope.clone(), id: 1 }],
                 }],
             },
         )
@@ -794,6 +806,31 @@ mod tests {
             conn.execute("INSERT INTO plex_catalogue_playlist_members(scope,playlist_id,generation,position,document) VALUES(?1,8,'download:test',?2,?3)",rusqlite::params![scope,position as i64,json!({"ratingKey":id.to_string()}).to_string()]).unwrap();
         }
         let inventory = inventory(&conn).unwrap();
-        assert_eq!(inventory.playlists[0].tracks, vec![2, 1, 2]);
+        assert_eq!(inventory.playlists[0].tracks.iter().map(|member| member.id).collect::<Vec<_>>(), vec![2, 1, 2]);
+    }
+    #[test]
+    fn mixed_manifest_exports_use_valid_ownership_and_preserve_both_member_scopes() {
+        let conn=rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::schema::run_migrations(&conn).unwrap();
+        let plex=format!("plex-{}","a".repeat(64));let youtube=format!("ytmusic-{}","b".repeat(64));
+        let members=vec![crate::provider_downloads::Member{scope:plex.clone(),id:1},
+            crate::provider_downloads::Member{scope:youtube.clone(),id:2},crate::provider_downloads::Member{scope:plex.clone(),id:1}];
+        conn.execute("INSERT INTO provider_playlist_downloads VALUES(?1,'mixed:list',8,?2,?3,'revision')",
+            rusqlite::params![format!("{plex}:{youtube}"),json!({"title":"Mixed"}).to_string(),serde_json::to_string(&members).unwrap()]).unwrap();
+        let mut inventory=inventory(&conn).unwrap();
+        assert_eq!(inventory.playlists.len(),1);
+        let playlist=&inventory.playlists[0];
+        crate::db::download_entities::check(&playlist.scope,"playlist",playlist.id).unwrap();
+        assert_eq!(playlist.tracks.iter().map(|member|member.scope.as_str()).collect::<Vec<_>>(),vec![plex.as_str(),youtube.as_str(),plex.as_str()]);
+        let root=tempfile::tempdir().unwrap();
+        let cache=AudioCache::downloads(root.path().to_owned());
+        let first=song(1,&plex,'a');let second=song(2,&youtube,'b');
+        write(&cache,&first);write(&cache,&second);
+        inventory.songs=vec![first,second];
+        export(&cache,inventory).unwrap();
+        assert_eq!(fs::read_dir(root.path().join("Playlists")).unwrap().count(),1);
+        let file=fs::read_dir(root.path().join("Playlists")).unwrap().next().unwrap().unwrap().path();
+        let text=fs::read_to_string(file).unwrap();
+        assert_eq!(text.lines().filter(|line|line.starts_with("#EXTINF:")).count(),3);
     }
 }

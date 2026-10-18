@@ -162,7 +162,7 @@ pub(crate) async fn set_song_like(app: &tauri::AppHandle, video_id: &str, liked:
         return Err("YouTube Music could not save this like. Try again.".into());
     }
     if let Ok(directory) = app.path().app_cache_dir() {
-        state.discovery_cache.song_like_changed(directory.join("ytmusic-discovery"), video_id.into(), liked, epoch).await;
+        state.discovery_cache.song_like_changed(directory.join("metadata"), video_id.into(), liked, epoch).await;
     }
     if !state.owns(generation) { return Err("YouTube Music connection changed.".into()); }
     Ok(())

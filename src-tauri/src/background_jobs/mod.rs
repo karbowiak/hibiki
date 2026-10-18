@@ -828,6 +828,25 @@ mod tests {
     }
 
     #[test]
+    fn provider_audio_jobs_use_live_handlers_and_retire_with_their_owner() {
+        let download = Task::YoutubeDownloads { scope: "ytmusic-owner".into(), generation: 1 };
+        assert_eq!(download.name(), "hibiki.youtube-downloads.v2");
+        assert_eq!(download.lane().name(), "download");
+        assert!(tasks::NAMES.contains(&download.name()));
+        assert_ne!(download.name(), "hibiki.youtube-downloads.v1", "The experimental v1 handler deliberately discards work");
+        assert_ne!(download.key().unwrap(), Task::YoutubeDownloads { scope: "ytmusic-owner".into(), generation: 2 }.key().unwrap());
+        let work = tasks::Work::new(download);
+        let restored: tasks::Work = serde_json::from_value(serde_json::to_value(&work).unwrap()).unwrap();
+        assert_eq!(restored.id, work.id);
+        assert_eq!(restored.task.activity_id().as_deref(), Some("downloads:ytmusic"));
+        let probe = |account: &str, generation| Task::YoutubeAudioProbe { video_id: "abcdefghijk".into(), account: account.into(), generation };
+        assert_eq!(probe("one", 1).lane().name(), "matching");
+        assert!(tasks::NAMES.contains(&probe("one", 1).name()));
+        assert_ne!(probe("one", 1).key().unwrap(), probe("two", 1).key().unwrap());
+        assert_ne!(probe("one", 1).key().unwrap(), probe("one", 2).key().unwrap());
+    }
+
+    #[test]
     fn reconciliation_domains_have_independent_single_writer_queues() {
         let mut lanes = std::collections::HashSet::new();
         for (domain, activity) in [

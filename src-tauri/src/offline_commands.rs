@@ -115,14 +115,25 @@ pub async fn offline_cache_put(
 pub async fn offline_cache_invalidate(
     context: PlexRequestContext,
     prefixes: Vec<String>,
+    retain: Option<bool>,
+    removed_ids: Option<Vec<String>>,
     state: State<'_, PlexState>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let guard = state.0.lock().await;
     state.checked_client(&context, &guard)?;
     drop(guard);
+    if !retain.unwrap_or(false) {
+        let root = app.path().app_cache_dir().map_err(|_| "Metadata cache unavailable")?.join("metadata");
+        let owner = context.cache_scope.clone();
+        let affected=prefixes.clone();
+        tokio::task::spawn_blocking(move || crate::plex::metadata_cache::invalidate_mutation(&root,&owner,&affected))
+            .await.map_err(|_| "Metadata invalidation stopped")??;
+    }
     owned_write(&app, &context, true, move |conn, scope| {
-        offline::invalidate(conn, scope, &prefixes)
+        if retain.unwrap_or(false) { offline::expire(conn, scope, &prefixes)?; } else { offline::invalidate(conn, scope, &prefixes)?; }
+        if let Some(ids) = &removed_ids { offline::remove_references(conn, scope, ids)?; }
+        Ok(())
     }).await
 }
 
@@ -153,6 +164,10 @@ pub async fn offline_cache_clear(
     let guard = state.0.lock().await;
     state.checked_cache_client(&context, &guard)?;
     drop(guard);
+    let root = app.path().app_cache_dir().map_err(|_| "Metadata cache unavailable")?.join("metadata");
+    let owner = context.cache_scope.clone();
+    tokio::task::spawn_blocking(move || crate::metadata_cache::CACHE.clear(&root,&owner))
+        .await.map_err(|_| "Metadata clear stopped")??;
     owned_write(&app, &context, false, |conn, scope| {
         crate::db::atomic_upsert(conn, |conn| {
             offline::clear(conn, scope)?;
